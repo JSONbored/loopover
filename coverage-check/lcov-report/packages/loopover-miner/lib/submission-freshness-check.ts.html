@@ -1,0 +1,592 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for packages/loopover-miner/lib/submission-freshness-check.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../../prettify.css" />
+    <link rel="stylesheet" href="../../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../../index.html">All files</a> / <a href="index.html">packages/loopover-miner/lib</a> submission-freshness-check.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/72</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/92</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/10</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/43</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Late-binding freshness check before open_pr fires (#3007). A soft-claim made at the start of a long
+// create/iterate loop can go stale by the time a candidate reaches submission: the target issue may have been
+// closed, already fixed by another author, or the miner's own claim may have been released/expired in the
+// interim. This is a FINAL, read-only check immediately before open_pr spec construction -- complementing, not
+// replacing, the claim-time check (src/miner/soft-claim.ts) -- so a stale submission never reaches the Governor
+// chokepoint (governor-chokepoint.js) as a live write attempt: check freshness first, THEN prepareOpenPrSubmission
+// (harness-submission-trigger.js), THEN the Governor. These are separate, sequentially-composed units, not nested
+// calls -- attempt-runner.js (#2337) is the real call site that wires them together in that order.
+//
+// READ-ONLY BY CONTRACT: never writes anything except its own abort-reason audit event (on staleness only, not
+// on every check -- mirrors this issue's own "log the abort reason" wording, not a per-decision audit trail).
+// The live-state fetch is an injected dependency so this stays testable without real network I/O and agnostic
+// to HOW the caller sources issue/PR state (raw GitHub API, loopover's own cached MCP data, etc.).
+//
+// FAIL CLOSED: an unreachable/failed live-state fetch is treated as stale (aborts), never as "no evidence of
+// staleness, so proceed" -- mirrors this package's fail-closed convention elsewhere (harness-submission-
+// trigger.js's predicted_gate_unavailable/slop_assessment_unavailable, iterate-loop.ts's ambiguous-on-error).
+// That fail-closed OUTCOME is unchanged; a single transient blip just gets a bounded retry-with-backoff to
+// resolve itself FIRST (#7089) -- the same window claim-conflict-resolver.js's resolveClaimConflict (#6058)
+// already gives its own call to this identical fetchLiveIssueSnapshot, reusing http-retry.js's shared backoff.
+// Aborting here discards a fully-completed create/iterate loop's local work, so riding out a brief 5xx /
+// GraphQL-index propagation lag before failing closed matters more here than in the post-submission case.
+//
+// NOT a rejection outcome: staleness is caught BEFORE any PR exists, so it is not the same lifecycle event as
+// rejection-state-machine.js's DISENGAGED_OUTCOME (which handles an EXISTING PR a maintainer closed). "No PR,
+// no noisy failure" here just means: return a quiet not-fresh result, same shape as any other blocked gate
+// decision in this package -- never throw, never surface anything to the target repo.
+&nbsp;
+import { defaultRetryBackoffMs } from "./http-retry.js";
+&nbsp;
+export const SUBMISSION_FRESHNESS_ABORT_EVENT = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >"submission_freshness_abort" as const;</span></span>
+&nbsp;
+export type FreshnessAbortReason = "issue_closed" | "already_addressed" | "claim_superseded" | "live_state_unavailable";
+&nbsp;
+export type SubmissionFreshnessCandidate = {
+  repoFullName: string;
+  issueNumber: number;
+  minerLogin: string;
+};
+&nbsp;
+export type LiveIssueSnapshot = {
+  state: "open" | "closed";
+  referencingPrs: Array&lt;{ number: number; state: "open" | "closed" | "merged"; authorLogin: string; createdAt: string | null }&gt;;
+};
+&nbsp;
+export type SubmissionFreshnessClaimLedger = {
+  listClaims(filter: { repoFullName?: string; status?: string }): Array&lt;{ repoFullName: string; issueNumber: number; status: string }&gt;;
+};
+&nbsp;
+export type SubmissionFreshnessEventLedger = {
+  appendEvent(event: { type: string; repoFullName?: string; payload: Record&lt;string, unknown&gt; }): unknown;
+};
+&nbsp;
+export type SubmissionFreshnessDeps = {
+  claimLedger: SubmissionFreshnessClaimLedger;
+  fetchLiveIssueSnapshot: (repoFullName: string, issueNumber: number) =&gt; Promise&lt;LiveIssueSnapshot | null&gt;;
+  eventLedger: SubmissionFreshnessEventLedger;
+};
+&nbsp;
+export type SubmissionFreshnessResult = { fresh: true } | { fresh: false; reason: FreshnessAbortReason };
+&nbsp;
+export type SubmissionFreshnessRetryOptions = {
+  maxAttempts?: number;
+  sleepFn?: (ms: number) =&gt; Promise&lt;unknown&gt;;
+  backoffMs?: (attempt: number) =&gt; number;
+};
+&nbsp;
+// Bounded retry for the pre-submission live-state fetch (#7089), mirroring claim-conflict-resolver.js's
+// resolveClaimConflict (#6058): a few attempts with exponential backoff let a transient GitHub blur (a brief
+// 5xx, or GraphQL-index propagation lag) resolve itself before we fail closed, without an unbounded loop.
+const DEFAULT_SNAPSHOT_MAX_ATTEMPTS = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >3;</span></span>
+const <span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >defaultSnapshotSleep = <span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >(d</span></span>elayMs: number): Promise&lt;void&gt; =&gt; <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >new <span class="fstat-no" title="function not covered" >Promise((r</span>esolve) =&gt; <span class="cstat-no" title="statement not covered" >setTimeout(resolve, delayMs))</span>;</span></span></span></span>
+&nbsp;
+/**
+ * Evaluate whether a submission candidate's live repo state is still fresh enough to proceed toward open_pr.
+ * Checks the miner's own claim-ledger status first (local, free) before spending a network round-trip on the
+ * live issue/PR snapshot. Fails closed (throws) on a malformed candidate or missing dependency.
+ *
+ * Bounded retry for the live-state snapshot fetch (#7089): up to `maxAttempts` (default 3) attempts with
+ * `backoffMs(attempt)` backoff between them, returning as soon as a real (non-null, well-formed) snapshot is
+ * obtained. Optional -- every existing caller works unchanged. Pure over the injected `sleepFn`/`backoffMs`
+ * -- no real timers in tests. Only the fetch itself is retried; a well-formed snapshot's own signals
+ * (issue_closed / already_addressed) are decided once, never retried.
+ */
+export async function <span class="fstat-no" title="function not covered" ><span class="fstat-no" title="function not covered" >checkSubmissionFreshness(</span></span>
+  candidate: SubmissionFreshnessCandidate,
+  deps: SubmissionFreshnessDeps,
+  options: SubmissionFreshnessRetryOptions = <span class="branch-0 cbranch-no" title="branch not covered" ><span class="branch-0 cbranch-no" title="branch not covered" >{},</span></span>
+): Promise&lt;SubmissionFreshnessResult&gt; {
+<span class="cstat-no" title="statement not covered" >  if (!candidate || typeof candidate !== "object") <span class="cstat-no" title="statement not covered" >throw new Error("invalid_freshness_candidate");</span></span>
+  const repoFullName = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >typeof candidate.repoFullName === "string" ? candidate.repoFullName.trim() : "";</span></span>
+<span class="cstat-no" title="statement not covered" >  if (!repoFullName) <span class="cstat-no" title="statement not covered" >throw new Error("invalid_repo_full_name");</span></span>
+<span class="cstat-no" title="statement not covered" >  if (!Number.isInteger(candidate.issueNumber) || candidate.issueNumber &lt; 1) <span class="cstat-no" title="statement not covered" >throw new Error("invalid_issue_number");</span></span>
+  const minerLogin = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >typeof candidate.minerLogin === "string" ? candidate.minerLogin.trim() : "";</span></span>
+<span class="cstat-no" title="statement not covered" >  if (!minerLogin) <span class="cstat-no" title="statement not covered" >throw new Error("invalid_miner_login");</span></span>
+&nbsp;
+<span class="cstat-no" title="statement not covered" >  if (!deps || typeof deps !== "object") <span class="cstat-no" title="statement not covered" >throw new Error("invalid_freshness_deps");</span></span>
+  const { claimLedger, fetchLiveIssueSnapshot, eventLedger } = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >deps;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (!claimLedger || typeof claimLedger.listClaims !== "function") <span class="cstat-no" title="statement not covered" >throw new Error("invalid_claim_ledger");</span></span>
+<span class="cstat-no" title="statement not covered" >  if (typeof fetchLiveIssueSnapshot !== "function") <span class="cstat-no" title="statement not covered" >throw new Error("invalid_live_state_fetcher");</span></span>
+<span class="cstat-no" title="statement not covered" >  if (!eventLedger || typeof eventLedger.appendEvent !== "function") <span class="cstat-no" title="statement not covered" >throw new Error("invalid_event_ledger");</span></span>
+&nbsp;
+  const maxAttempts =
+<span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >    Number.isFinite(options.maxAttempts) &amp;&amp; (options.maxAttempts as number) &gt;= 1</span></span>
+      ? Math.floor(options.maxAttempts as number)
+      : DEFAULT_SNAPSHOT_MAX_ATTEMPTS;
+  const sleepFn = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >typeof options.sleepFn === "function" ? options.sleepFn : defaultSnapshotSleep;</span></span>
+  const backoffMs = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >typeof options.backoffMs === "function" ? options.backoffMs : defaultRetryBackoffMs;</span></span>
+&nbsp;
+  const claim = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >claimLedger.listClaims({ repoFullName }).<span class="fstat-no" title="function not covered" >find((c</span>) =&gt; <span class="cstat-no" title="statement not covered" >c.issueNumber === candidate.issueNumber)</span>;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (!claim || claim.status !== "active") {</span>
+<span class="cstat-no" title="statement not covered" >    return abort(eventLedger, repoFullName, candidate.issueNumber, "claim_superseded");</span>
+  }
+&nbsp;
+  let snapshot: LiveIssueSnapshot | null = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >null;</span></span>
+<span class="cstat-no" title="statement not covered" >  for (let attempt = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >1;</span> a</span>ttempt &lt;= maxAttempts; attempt += 1) {</span>
+    let current: LiveIssueSnapshot | null;
+<span class="cstat-no" title="statement not covered" >    try {</span>
+<span class="cstat-no" title="statement not covered" >      current = await fetchLiveIssueSnapshot(repoFullName, candidate.issueNumber);</span>
+    } catch {
+<span class="cstat-no" title="statement not covered" >      current = null;</span>
+    }
+<span class="cstat-no" title="statement not covered" >    if (current &amp;&amp; typeof current === "object") {</span>
+      // A real, well-formed snapshot resolves the transient window: stop retrying and decide on it now.
+<span class="cstat-no" title="statement not covered" >      snapshot = current;</span>
+<span class="cstat-no" title="statement not covered" >      break;</span>
+    }
+    // Back off before the next attempt (transient 5xx / index-propagation lag); never after the last one.
+<span class="cstat-no" title="statement not covered" >    if (attempt &lt; maxAttempts) <span class="cstat-no" title="statement not covered" >await sleepFn(backoffMs(attempt));</span></span>
+  }
+<span class="cstat-no" title="statement not covered" >  if (!snapshot) {</span>
+    // Retry budget exhausted with no usable snapshot -- fail closed exactly as before (#7089 only widens the window).
+<span class="cstat-no" title="statement not covered" >    return abort(eventLedger, repoFullName, candidate.issueNumber, "live_state_unavailable");</span>
+  }
+&nbsp;
+<span class="cstat-no" title="statement not covered" >  if (snapshot.state === "closed") {</span>
+<span class="cstat-no" title="statement not covered" >    return abort(eventLedger, repoFullName, candidate.issueNumber, "issue_closed");</span>
+  }
+&nbsp;
+  // GitHub logins are case-insensitive for identity purposes (the same account can be echoed back with
+  // different casing by different API responses), so a strict `!==` would misclassify the miner's own
+  // referencing PR as "another author" whenever the casing happens to differ -- compare case-normalized.
+  const minerLoginKey = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >minerLogin.toLowerCase();</span></span>
+  const referencingPrs = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >Array.isArray(snapshot.referencingPrs) ? snapshot.referencingPrs : [];</span></span>
+  const addressedByAnotherAuthor = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >referencingPrs.<span class="fstat-no" title="function not covered" >some(</span></span></span>
+<span class="fstat-no" title="function not covered" >    (<span class="cstat-no" title="statement not covered" >p</span>r) =&gt;</span>
+<span class="cstat-no" title="statement not covered" >      (pr.state === "merged" || pr.state === "open") &amp;&amp;</span>
+      (typeof pr.authorLogin !== "string" || pr.authorLogin.trim().toLowerCase() !== minerLoginKey),
+  );
+<span class="cstat-no" title="statement not covered" >  if (addressedByAnotherAuthor) {</span>
+<span class="cstat-no" title="statement not covered" >    return abort(eventLedger, repoFullName, candidate.issueNumber, "already_addressed");</span>
+  }
+&nbsp;
+<span class="cstat-no" title="statement not covered" >  return { fresh: true };</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" ><span class="fstat-no" title="function not covered" >abort(</span></span>
+  eventLedger: SubmissionFreshnessEventLedger,
+  repoFullName: string,
+  issueNumber: number,
+  reason: FreshnessAbortReason,
+): { fresh: false; reason: FreshnessAbortReason } {
+<span class="cstat-no" title="statement not covered" >  eventLedger.appendEvent({</span>
+    type: SUBMISSION_FRESHNESS_ABORT_EVENT,
+    repoFullName,
+    payload: { issueNumber, reason },
+  });
+<span class="cstat-no" title="statement not covered" >  return { fresh: false, reason };</span>
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../../sorter.js"></script>
+        <script src="../../../block-navigation.js"></script>
+    </body>
+</html>
+    

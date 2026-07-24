@@ -1,0 +1,406 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/review/visual/preview-poll-budget.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../../prettify.css" />
+    <link rel="stylesheet" href="../../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../../index.html">All files</a> / <a href="index.html">src/review/visual</a> preview-poll-budget.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/33</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/22</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/5</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/26</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Durable visual-preview poll budget (#6323): bounds how many times buildCapture will treat a still-building
+// preview deploy as "keep trying" for a given head SHA, REGARDLESS of which trigger (the dedicated self-poll
+// job chain, a CI-completion webhook, a deployment_status webhook, or a sweep pass) caused this particular
+// buildCapture call.
+//
+// The pre-existing MAX_PREVIEW_POLLS cap in processors.ts only bounded the self-poll job chain's OWN
+// `attempt` payload field. Every OTHER re-review trigger calls reReviewStoredPullRequest without threading
+// that counter through at all, so it silently reads back as 0 -- each one independently re-arms a fresh
+// 5-attempt budget. A repo whose CI never produces a discoverable preview deployment (buildCapture's
+// discovery chain finds nothing to attach a URL to) then gets polled far more than 5 times total, for as
+// long as ANY of those other triggers keeps firing. Confirmed live: JSONbored/metagraphed#6036 -- 12+
+// re-review comment edits over 52+ minutes on a single PR, still ongoing when observed.
+//
+// This module makes the budget durable and keyed by headSha instead of by job-chain payload, mirroring
+// actions-fallback.ts's own isFallbackDispatchInFlight/markFallbackDispatched R2-marker pattern exactly
+// (same fail-open-on-read-error contract, same best-effort-write contract, same max-age fail-safe expiry so
+// a marker can never block a genuinely NEW attempt forever). buildCapture consults + increments this before
+// treating a "still building" preview-build state as poll-worthy; once the budget is exhausted for a head,
+// buildCapture stops signaling previewPending for it, so EVERY caller's existing "only reschedule when
+// previewPending" logic naturally stops rescheduling too -- no other call site needs to change.
+import { sha256Hex } from "../../utils/crypto";
+&nbsp;
+const BUDGET_R2_NAMESPACE = <span class="cstat-no" title="statement not covered" >"loopover/preview-poll-budget/";</span>
+// A stale marker must eventually stop mattering even if nothing ever explicitly resets it (an abandoned PR,
+// a repo whose preview pipeline was reconfigured) -- 24h comfortably outlives any real preview-build wait,
+// well past actions-fallback.ts's own 18-minute dispatch-marker expiry for the same reason.
+const BUDGET_MARKER_MAX_AGE_MS = <span class="cstat-no" title="statement not covered" >24 * 60 * 60 * 1000;</span>
+// The total number of "still building, keep trying" attempts allowed per head SHA across ALL triggers
+// combined -- the single source of truth processors.ts's own scheduling logic also imports, so the two
+// never drift out of sync.
+export const MAX_PREVIEW_POLL_ATTEMPTS = <span class="cstat-no" title="statement not covered" >5;</span>
+&nbsp;
+type BudgetMarker = { count: number; firstAttemptAt: number };
+// A read of the marker plus the R2 httpEtag it was stored under (null when no object exists yet). The etag is
+// what recordPreviewPollAttempt's conditional write compares-and-swaps against so two triggers racing for the
+// same head SHA can't both read count=N and both write count=N+1, silently losing one increment (#7780).
+type BudgetRead = { marker: BudgetMarker | null; etag: string | null };
+// How many times recordPreviewPollAttempt re-reads + retries its conditional write when another trigger wins
+// the compare-and-swap first. Small: the race window is a single R2 round-trip and realistically at most a
+// handful of triggers ever contend for one head SHA at once, so a couple of retries converges; exhausting them
+// just degrades to the pre-#7780 best-effort "this attempt didn't count" outcome, the same safe direction the
+// module already accepts for a genuine write failure.
+const BUDGET_CAS_MAX_ATTEMPTS = <span class="cstat-no" title="statement not covered" >3;</span>
+&nbsp;
+async function <span class="fstat-no" title="function not covered" >budgetR2Key(h</span>eadSha: string): Promise&lt;string&gt; {
+  const fingerprint = <span class="cstat-no" title="statement not covered" >await sha256Hex(`${headSha}:preview-poll-budget`);</span>
+<span class="cstat-no" title="statement not covered" >  return `${BUDGET_R2_NAMESPACE}${fingerprint.slice(0, 40)}.json`;</span>
+}
+&nbsp;
+/** Validate a raw stored payload into a BudgetMarker, or null when it's malformed or older than
+ *  BUDGET_MARKER_MAX_AGE_MS -- a stale marker is treated as absent, not as "budget still exhausted from a
+ *  previous, unrelated review cycle". */
+function <span class="fstat-no" title="function not covered" >parseBudgetMarker(t</span>ext: string): BudgetMarker | null {
+  const marker = <span class="cstat-no" title="statement not covered" >JSON.parse(text) as Partial&lt;BudgetMarker&gt;;</span>
+<span class="cstat-no" title="statement not covered" >  if (typeof marker.count !== "number" || typeof marker.firstAttemptAt !== "number") <span class="cstat-no" title="statement not covered" >return null;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (Date.now() - marker.firstAttemptAt &gt;= BUDGET_MARKER_MAX_AGE_MS) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+<span class="cstat-no" title="statement not covered" >  return { count: marker.count, firstAttemptAt: marker.firstAttemptAt };</span>
+}
+&nbsp;
+/** Shared read path for both public functions below. Returns a fail-open read (marker null, etag null) on any
+ *  read error or a malformed/stale marker. Also surfaces the object's httpEtag so the increment path can do a
+ *  compare-and-swap write against exactly the version it read (#7780). */
+async function <span class="fstat-no" title="function not covered" >readBudgetMarker(e</span>nv: Env, headSha: string): Promise&lt;BudgetRead&gt; {
+<span class="cstat-no" title="statement not covered" >  if (!env.REVIEW_AUDIT) <span class="cstat-no" title="statement not covered" >return { marker: null, etag: null };</span></span>
+<span class="cstat-no" title="statement not covered" >  try {</span>
+    const object = <span class="cstat-no" title="statement not covered" >await env.REVIEW_AUDIT.get(await budgetR2Key(headSha));</span>
+<span class="cstat-no" title="statement not covered" >    if (!object) <span class="cstat-no" title="statement not covered" >return { marker: null, etag: null };</span></span>
+<span class="cstat-no" title="statement not covered" >    return { marker: parseBudgetMarker(await new Response(object.body).text()), etag: object.httpEtag };</span>
+  } catch {
+<span class="cstat-no" title="statement not covered" >    return { marker: null, etag: null };</span>
+  }
+}
+&nbsp;
+/** How many preview-poll attempts have already been recorded for `headSha` -- 0 when no marker exists,
+ *  storage is unavailable, or the existing marker has expired. Consulted by buildCapture BEFORE treating a
+ *  "still building" preview state as worth another attempt. */
+export async function <span class="fstat-no" title="function not covered" >previewPollAttemptCount(e</span>nv: Env, headSha: string): Promise&lt;number&gt; {
+<span class="cstat-no" title="statement not covered" >  return (await readBudgetMarker(env, headSha)).marker?.count ?? 0;</span>
+}
+&nbsp;
+/** Record one more preview-poll attempt for `headSha`, preserving the marker's original `firstAttemptAt`
+ *  across increments so BUDGET_MARKER_MAX_AGE_MS expires from the FIRST attempt in this cycle, not resets on
+ *  every poll (which would let a marker live forever as long as attempts keep arriving inside the window).
+ *  Best effort -- a failed write just means this specific attempt doesn't count toward the budget, degrading
+ *  toward "keep trying a bit longer" rather than toward "stuck forever", the safer failure direction for a
+ *  budget whose whole purpose is bounding retries, not enabling them. */
+export async function <span class="fstat-no" title="function not covered" >recordPreviewPollAttempt(e</span>nv: Env, headSha: string): Promise&lt;void&gt; {
+<span class="cstat-no" title="statement not covered" >  if (!env.REVIEW_AUDIT) <span class="cstat-no" title="statement not covered" >return;</span></span>
+<span class="cstat-no" title="statement not covered" >  try {</span>
+    const key = <span class="cstat-no" title="statement not covered" >await budgetR2Key(headSha);</span>
+<span class="cstat-no" title="statement not covered" >    for (let attempt = <span class="cstat-no" title="statement not covered" >0; a</span>ttempt &lt; BUDGET_CAS_MAX_ATTEMPTS; attempt += 1) {</span>
+      const existing = <span class="cstat-no" title="statement not covered" >await readBudgetMarker(env, headSha);</span>
+      const marker: BudgetMarker = <span class="cstat-no" title="statement not covered" >{ count: (existing.marker?.count ?? 0) + 1, firstAttemptAt: existing.marker?.firstAttemptAt ?? Date.now() };</span>
+      // Compare-and-swap against exactly the version we just read: only overwrite the existing object if its
+      // etag is unchanged (etagMatches), or -- when we read no object -- only create one if none exists yet
+      // (etagDoesNotMatch: "*"). If another trigger wrote in between, R2 returns null instead of writing, and
+      // we loop to re-read its newer count and retry, so no increment is lost (#7780).
+      const onlyIf: R2Conditional = <span class="cstat-no" title="statement not covered" >existing.etag !== null ? { etagMatches: existing.etag } : { etagDoesNotMatch: "*" };</span>
+      const written = <span class="cstat-no" title="statement not covered" >await env.REVIEW_AUDIT.put(key, JSON.stringify(marker), { httpMetadata: { contentType: "application/json" }, onlyIf });</span>
+<span class="cstat-no" title="statement not covered" >      if (written) <span class="cstat-no" title="statement not covered" >return;</span></span>
+    }
+    // Exhausted retries under sustained contention -- degrade to "this attempt didn't count", the same safe
+    // failure direction the module already accepts for a genuine write failure (see doc comment above).
+  } catch {
+    // best effort -- see doc comment above
+  }
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../../sorter.js"></script>
+        <script src="../../../block-navigation.js"></script>
+    </body>
+</html>
+    

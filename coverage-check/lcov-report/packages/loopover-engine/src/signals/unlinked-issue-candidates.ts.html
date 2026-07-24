@@ -1,0 +1,418 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for packages/loopover-engine/src/signals/unlinked-issue-candidates.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../../../prettify.css" />
+    <link rel="stylesheet" href="../../../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../../../index.html">All files</a> / <a href="index.html">packages/loopover-engine/src/signals</a> unlinked-issue-candidates.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/35</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/24</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/9</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/28</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Deterministic pre-filter for the unlinked-issue guardrail (#unlinked-issue-guardrail). PURE — no IO, no
+// AI call — so it can run on every unlinked PR for free and only hand a SHORT, bounded candidate list to the
+// expensive AI verifier (src/review/unlinked-issue-match.ts), which is the actual precision gate. This stage
+// is deliberately RECALL-oriented (a coincidental token/path overlap is cheap to false-positive here — the AI
+// step is what must be accurate), never the reverse: it must never silently drop a genuinely-matching issue
+// just to save an AI call.
+//
+// Extracted out of `src/signals/unlinked-issue-candidates.ts` into the shared engine (#4883) so the published
+// loopover-miner/loopover-mcp CLIs can run the identical recall pass the maintainer gate uses, instead of
+// a driftable second copy; `src/signals/unlinked-issue-candidates.ts` is now a thin re-export shim (imported
+// via relative source path, matching this repo's existing engine-consumption convention — see src/signals/slop.ts).
+&nbsp;
+export type CandidateOpenIssue = {
+  number: number;
+  title: string;
+  body: string | null;
+  labels: string[];
+};
+&nbsp;
+export type UnlinkedIssueCandidateMatch = {
+  issue: CandidateOpenIssue;
+  score: number;
+  matchedTokens: string[];
+  pathMentioned: boolean;
+};
+&nbsp;
+export type FindUnlinkedIssueCandidatesInput = {
+  prTitle: string;
+  prBody: string | null | undefined;
+  changedPaths: string[];
+  openIssues: CandidateOpenIssue[];
+};
+&nbsp;
+// Bound the AI-verifier fan-out per PR: even a repo with hundreds of open issues only ever sends its
+// top-scoring handful for a real (paid/self-host-compute) AI call. Exported so the guardrail orchestrator
+// (unlinked-issue-guardrail.ts, #4515) can size its own worst-case per-PR AI-spend estimate off the same
+// number, rather than a second, driftable copy of this constant.
+export const MAX_CANDIDATES = <span class="cstat-no" title="statement not covered" >3;</span>
+// A path/basename mention is a much stronger signal than shared vocabulary — worth several tokens' score,
+// and (deliberately) enough on its own to qualify a candidate even with zero token overlap (an issue that
+// names the exact file this PR touches is worth checking regardless of shared wording).
+const PATH_MENTION_SCORE_BONUS = <span class="cstat-no" title="statement not covered" >5;</span>
+// Token overlap alone only qualifies a candidate once it clears this bar — a single shared common word
+// (even after stopword filtering) is not enough evidence to spend an AI call on.
+const MIN_TOKEN_OVERLAP = <span class="cstat-no" title="statement not covered" >3;</span>
+// Tokens shorter than this are dropped before counting — short tokens (case IDs, "PR", "fix") are too
+// common across unrelated issues to be distinctive evidence of a real match.
+const MIN_TOKEN_LENGTH = <span class="cstat-no" title="statement not covered" >4;</span>
+&nbsp;
+// A small, curated stopword list for the vocabulary shared by nearly every PR/issue description
+// regardless of topic — without this, "this PR fixes the issue where..." style boilerplate would dominate
+// the token-overlap score and swamp genuinely distinctive words.
+const STOPWORDS = <span class="cstat-no" title="statement not covered" >new Set([</span>
+  "this", "that", "with", "from", "have", "when", "where", "which", "there", "their",
+  "issue", "issues", "should", "would", "could", "about", "into", "your", "were",
+  "then", "than", "will", "does", "doesn", "cannot", "currently", "instead", "because",
+  "these", "those", "being", "only", "also", "still", "even", "some", "each", "such",
+]);
+&nbsp;
+function <span class="fstat-no" title="function not covered" >tokenize(t</span>ext: string): Set&lt;string&gt; {
+  const tokens = <span class="cstat-no" title="statement not covered" >text</span>
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .<span class="fstat-no" title="function not covered" >filter((t</span>oken) =&gt; <span class="cstat-no" title="statement not covered" >token.length &gt;= MIN_TOKEN_LENGTH &amp;&amp; !STOPWORDS.has(token))</span>;
+<span class="cstat-no" title="statement not covered" >  return new Set(tokens);</span>
+}
+&nbsp;
+/** True when an issue's body names one of the PR's changed files — either the full repo-relative path or
+ *  just its basename (issues commonly reference "the X.ts file" without the full path). Basenames shorter
+ *  than {@link MIN_TOKEN_LENGTH} are skipped as too generic (e.g. `db.ts`, `index.ts` collide across repos).
+ *  The full-path check stays a plain substring match (a repo-relative path is already distinctive enough
+ *  that a coincidental false positive is not realistic). The basename check instead matches against
+ *  path-like TOKENS extracted from the body, requiring an exact token match (or a longer path token ending
+ *  in `/basename`) rather than raw substring containment — a naive `.includes()` would let a basename like
+ *  `reader.ts` match inside an unrelated, longer filename such as `csv-reader.ts`. */
+function <span class="fstat-no" title="function not covered" >issueMentionsChangedPath(i</span>ssueBody: string, changedPaths: string[]): boolean {
+  const lowerBody = <span class="cstat-no" title="statement not covered" >issueBody.toLowerCase();</span>
+  const <span class="cstat-no" title="statement not covered" >bodyPathTokens = (lowerBody.match(/[a-z0-9_\-./]+/g) ?? []).<span class="fstat-no" title="function not covered" >map((t</span>oken) =&gt; <span class="cstat-no" title="statement not covered" >token.replace(/\.+$/g, ""))</span>;</span>
+<span class="cstat-no" title="statement not covered" >  return changedPaths.<span class="fstat-no" title="function not covered" >some((p</span>ath) =&gt; {</span>
+    const lowerPath = <span class="cstat-no" title="statement not covered" >path.toLowerCase();</span>
+<span class="cstat-no" title="statement not covered" >    if (lowerBody.includes(lowerPath)) <span class="cstat-no" title="statement not covered" >return true;</span></span>
+    const basename = <span class="cstat-no" title="statement not covered" >lowerPath.slice(lowerPath.lastIndexOf("/") + 1);</span>
+<span class="cstat-no" title="statement not covered" >    if (basename.length &lt; MIN_TOKEN_LENGTH) <span class="cstat-no" title="statement not covered" >return false;</span></span>
+<span class="cstat-no" title="statement not covered" >    return bodyPathTokens.<span class="fstat-no" title="function not covered" >some((t</span>oken) =&gt; <span class="cstat-no" title="statement not covered" >token === basename || token.endsWith(`/${basename}`))</span>;</span>
+  });
+}
+&nbsp;
+/**
+ * Rank a repo's open issues by how strongly they overlap an unlinked PR, returning at most
+ * {@link MAX_CANDIDATES} qualifying matches (highest score first, ties broken by lower issue number —
+ * the earlier-filed issue is the more likely original target). An issue qualifies via EITHER a
+ * distinctive-token overlap clearing {@link MIN_TOKEN_OVERLAP}, OR a changed-path mention in its body
+ * (see {@link issueMentionsChangedPath}) — either alone is sufficient. Returns `[]` when nothing qualifies;
+ * this function never calls out to AI or GitHub, so a repo with no genuine candidates costs nothing beyond
+ * this pass.
+ */
+export function <span class="fstat-no" title="function not covered" >findUnlinkedIssueCandidates(i</span>nput: FindUnlinkedIssueCandidatesInput): UnlinkedIssueCandidateMatch[] {
+  const prTokens = <span class="cstat-no" title="statement not covered" >tokenize(`${input.prTitle} ${input.prBody ?? ""}`);</span>
+  const matches: UnlinkedIssueCandidateMatch[] = <span class="cstat-no" title="statement not covered" >[];</span>
+<span class="cstat-no" title="statement not covered" >  for (const issue of input.openIssues) {</span>
+    const issueBody = <span class="cstat-no" title="statement not covered" >issue.body ?? "";</span>
+    const issueTokens = <span class="cstat-no" title="statement not covered" >tokenize(`${issue.title} ${issueBody}`);</span>
+    const matchedTokens = <span class="cstat-no" title="statement not covered" >[...prTokens].<span class="fstat-no" title="function not covered" >filter((t</span>oken) =&gt; <span class="cstat-no" title="statement not covered" >issueTokens.has(token))</span>;</span>
+    const pathMentioned = <span class="cstat-no" title="statement not covered" >issueBody.length &gt; 0 &amp;&amp; issueMentionsChangedPath(issueBody, input.changedPaths);</span>
+<span class="cstat-no" title="statement not covered" >    if (matchedTokens.length &lt; MIN_TOKEN_OVERLAP &amp;&amp; !pathMentioned) <span class="cstat-no" title="statement not covered" >continue;</span></span>
+    const score = <span class="cstat-no" title="statement not covered" >matchedTokens.length + (pathMentioned ? PATH_MENTION_SCORE_BONUS : 0);</span>
+<span class="cstat-no" title="statement not covered" >    matches.push({ issue, score, matchedTokens, pathMentioned });</span>
+  }
+<span class="cstat-no" title="statement not covered" >  matches.<span class="fstat-no" title="function not covered" >sort((a</span>, b) =&gt; <span class="cstat-no" title="statement not covered" >b.score - a.score || a.issue.number - b.issue.number)</span>;</span>
+<span class="cstat-no" title="statement not covered" >  return matches.slice(0, MAX_CANDIDATES);</span>
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../../../sorter.js"></script>
+        <script src="../../../../block-navigation.js"></script>
+    </body>
+</html>
+    

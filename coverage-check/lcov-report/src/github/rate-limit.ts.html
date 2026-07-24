@@ -1,0 +1,226 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/github/rate-limit.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/github</a> rate-limit.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/13</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/12</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/3</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/10</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import { listLatestGitHubRateLimitObservations } from "../db/repositories";
+&nbsp;
+// All managed repos share ONE GitHub App installation → ONE hourly REST bucket. To keep heavy maintenance work
+// from draining the budget real-time contributor-PR-review traffic needs, maintenance yields while there is
+// still headroom:
+//   - webhooks AND current-head agent-regate-pr reconciliation (a trailing coalesced re-review, an over-cap
+//     sibling wake, a linked-issue-change re-review, an outage-repair enqueue -- see
+//     isScheduledRegateSweepJob/#selfhost-queue-liveness) yield at LOW_REST_RATE_LIMIT_REMAINING: this is
+//     LIVE work someone is waiting on, not maintenance, regardless of which one of these triggered it;
+//   - the re-gate SWEEP's own stale-candidate fan-out (deliveryId prefixed "regate-sweep:") yields EARLIER, at
+//     MAINTENANCE_RESERVED_HEADROOM, reserving the budget between the two floors for the live work above —
+//     this is genuinely deferrable periodic maintenance, not a response to anything happening on a PR right now;
+//   - historical/scheduled hydration that isn't needed for any CURRENT PR (e.g. backfilling file lists for old
+//     merged pull requests) yields EARLIEST, at HISTORICAL_BACKFILL_RESERVED_HEADROOM — it is the least urgent
+//     GitHub REST consumer, so it must never be the reason a live review or an open-PR convergence pass stalls.
+// Self-host queues also use the latest persisted observation for admission control, so a known-exhausted bucket
+// delays webhook jobs before they start and avoids burning the first live delivery just to discover the limit.
+// (#audit-rate-headroom)
+export const LOW_REST_RATE_LIMIT_REMAINING = <span class="cstat-no" title="statement not covered" >75;</span>
+export const MAINTENANCE_RESERVED_HEADROOM = <span class="cstat-no" title="statement not covered" >150;</span>
+export const HISTORICAL_BACKFILL_RESERVED_HEADROOM = <span class="cstat-no" title="statement not covered" >300;</span>
+&nbsp;
+/** The REST rate-limit reset time to wait until when the latest recorded REST budget is at/below `floor`, or
+ *  undefined when there is headroom, no usable observation, or the reset is already in the past. Reads the latest
+ *  recorded observation (recordGitHubRateLimitObservation writes one per GitHub call) — no live GitHub call.
+ *
+ *  `admissionKey`, when given, scopes the read to that bucket ONLY (#audit-rate-scoping) — every installation and
+ *  the shared public/registry token draw from DIFFERENT GitHub-side REST buckets, so checking the caller's own
+ *  bucket instead of "whichever bucket was most recently observed" avoids one bucket's health masking or falsely
+ *  throttling an unrelated one. Omitted (as at a few call sites with no natural single bucket to check, e.g. a
+ *  pre-dispatch scheduler tick) preserves the prior globally-newest-observation behavior unchanged. */
+export async function <span class="fstat-no" title="function not covered" >shouldWaitForGitHubRateLimit(e</span>nv: Env, floor: number = <span class="branch-0 cbranch-no" title="branch not covered" >LOW_REST_RATE_LIMIT_REMAINING, a</span>dmissionKey?: string): Promise&lt;string | undefined&gt; {
+  const observations = <span class="cstat-no" title="statement not covered" >await listLatestGitHubRateLimitObservations(env, 10, admissionKey);</span>
+  // Type-guard the find so `remaining` narrows to a number — null/undefined observations are excluded here, so the
+  // headroom check below needs no further nullish guard.
+  const rest = <span class="cstat-no" title="statement not covered" >observations.<span class="fstat-no" title="function not covered" >find((o</span>bservation): observation is typeof observation &amp; { remaining: number } =&gt; <span class="cstat-no" title="statement not covered" >observation.resource === "rest" &amp;&amp; observation.remaining !== null &amp;&amp; observation.remaining !== undefined)</span>;</span>
+<span class="cstat-no" title="statement not covered" >  if (!rest?.resetAt || rest.remaining &gt; floor) <span class="cstat-no" title="statement not covered" >return undefined;</span></span>
+<span class="cstat-no" title="statement not covered" >  return Date.parse(rest.resetAt) &gt; Date.now() ? rest.resetAt : undefined;</span>
+}
+&nbsp;
+/** Seconds to defer a job until a GitHub rate-limit reset, clamped to [30, 900] with a 15s safety margin. An
+ *  unparseable reset uses a conservative 60s. */
+export function <span class="fstat-no" title="function not covered" >delayUntil(i</span>so: string): number {
+  const ms = <span class="cstat-no" title="statement not covered" >Date.parse(iso) - Date.now();</span>
+<span class="cstat-no" title="statement not covered" >  if (!Number.isFinite(ms)) <span class="cstat-no" title="statement not covered" >return 60;</span></span>
+<span class="cstat-no" title="statement not covered" >  return Math.max(30, Math.min(900, Math.ceil(ms / 1000) + 15));</span>
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    

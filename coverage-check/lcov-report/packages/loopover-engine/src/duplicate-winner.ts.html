@@ -1,0 +1,340 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for packages/loopover-engine/src/duplicate-winner.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../../prettify.css" />
+    <link rel="stylesheet" href="../../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../../index.html">All files</a> / <a href="index.html">packages/loopover-engine/src</a> duplicate-winner.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/29</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/22</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/5</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/19</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">/**
+ * Duplicate-winner adjudication (#dup-winner). Flag-gated by LOOPOVER_DUPLICATE_WINNER.
+ *
+ * When several OPEN PRs link the same issue (a duplicate cluster), the legacy behavior gate-blocks +
+ * auto-closes EVERY sibling as a duplicate — no winner survives. With the flag ON, exactly ONE winner is
+ * spared: the earliest claimant. Sparse legacy rows that do not yet have claim timing fail closed so unknown
+ * ordering cannot arbitrarily suppress duplicate evidence. Only the LOSERS are blocked/closed; the winner
+ * still must pass CI / conflict / gate / linked-issue / slop on its OWN merits.
+ *
+ * This module is PURE — no IO, no Date, no random — so the same inputs always yield the same verdict and the
+ * caller can compute the winner ONCE per review run and thread the result boolean consistently into every
+ * surface (advisory finding, close reason, slop, panels), so they agree by construction.
+ *
+ * ELECTION ORDER: compare `linkedIssueClaimedAt`, the time loopover first observed the PR claiming
+ * the issue. GitHub `pull_request.created_at` is intentionally not an ordering signal here: contributors can
+ * edit an old placeholder PR to add a linked issue later, so creation time would let backdated claims steal
+ * duplicate-winner credit from the PR that actually claimed the issue first. Sparse legacy rows that lack
+ * claim timing keep failing closed so unknown ordering cannot suppress duplicate evidence.
+ *
+ * INVARIANT (the caller MUST honor it): {@link openSiblingNumbers} carries OPEN-only sibling PR numbers. The
+ * existing sources already exclude closed/merged PRs. Once the winner closes (e.g. red CI), it leaves the open
+ * set and the next-earliest OPEN claimant becomes the winner on re-eval — no permanently-orphaned cluster.
+ *
+ * SECOND CONSUMER (#2278): this module is intentionally engine-hosted (not `src/`-only) because its election
+ * logic is reusable for the miner's own soft-claim adjudication — deciding which of several miners claiming
+ * the same issue proceeds. A future contributor wiring the miner's local claim ledger should import this
+ * module rather than reimplementing the election rule, so both the maintainer gate and the miner agree on
+ * exactly one winner by construction.
+ */
+&nbsp;
+export type DuplicateClaimMember = {
+  number: number;
+  linkedIssueClaimedAt?: string | null | undefined;
+  /** GitHub's true PR creation time. Retained for caller compatibility; not used for winner ordering. */
+  createdAt?: string | null | undefined;
+};
+&nbsp;
+/**
+ * True iff `pr` is the earliest-elected claimant in the open duplicate cluster (see the module doc's
+ * "ELECTION ORDER" note). Sparse legacy rows fail closed; ties between equally-ordered members use PR number.
+ */
+export function <span class="fstat-no" title="function not covered" >isDuplicateClusterWinnerByClaim(p</span>r: DuplicateClaimMember, openSiblings: DuplicateClaimMember[]): boolean {
+<span class="cstat-no" title="statement not covered" >  if (openSiblings.length === 0) <span class="cstat-no" title="statement not covered" >return true;</span></span>
+<span class="cstat-no" title="statement not covered" >  for (const sibling of openSiblings) {</span>
+<span class="cstat-no" title="statement not covered" >    if (!prPrecedesSibling(pr, sibling)) <span class="cstat-no" title="statement not covered" >return false;</span></span>
+  }
+<span class="cstat-no" title="statement not covered" >  return true;</span>
+}
+&nbsp;
+/**
+ * True iff `pr` is ordered at or ahead of `sibling` for cluster-winner purposes. Only the observed linked-issue
+ * claim time participates in the election; `createdAt` is deliberately ignored because an older PR can claim a
+ * linked issue later by editing its body.
+ */
+function <span class="fstat-no" title="function not covered" >prPrecedesSibling(p</span>r: DuplicateClaimMember, sibling: DuplicateClaimMember): boolean {
+  const prClaim = <span class="cstat-no" title="statement not covered" >claimTimeMs(pr.linkedIssueClaimedAt);</span>
+<span class="cstat-no" title="statement not covered" >  if (prClaim === null) <span class="cstat-no" title="statement not covered" >return false;</span></span>
+  const siblingClaim = <span class="cstat-no" title="statement not covered" >claimTimeMs(sibling.linkedIssueClaimedAt);</span>
+<span class="cstat-no" title="statement not covered" >  if (siblingClaim === null) <span class="cstat-no" title="statement not covered" >return false;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (siblingClaim &lt; prClaim) <span class="cstat-no" title="statement not covered" >return false;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (siblingClaim === prClaim &amp;&amp; sibling.number &lt; pr.number) <span class="cstat-no" title="statement not covered" >return false;</span></span>
+<span class="cstat-no" title="statement not covered" >  return true;</span>
+}
+&nbsp;
+/**
+ * The winning PR number among `pr` and its open duplicate siblings, or `null` when the election is not
+ * determinable (mirrors {@link isDuplicateClusterWinnerByClaim}'s fail-closed semantics — this never guesses a
+ * specific winner when the ordering data is too sparse/ambiguous to be sure). Used only for DISPLAY (naming the
+ * winner in a loser's close comment, #dup-winner-credit) — the close/hold decision for any given PR is still
+ * driven directly by {@link isDuplicateClusterWinnerByClaim}, not by this function's return value.
+ */
+export function <span class="fstat-no" title="function not covered" >resolveDuplicateClusterWinnerNumber(p</span>r: DuplicateClaimMember, openSiblings: DuplicateClaimMember[]): number | null {
+<span class="cstat-no" title="statement not covered" >  if (isDuplicateClusterWinnerByClaim(pr, openSiblings)) <span class="cstat-no" title="statement not covered" >return pr.number;</span></span>
+<span class="cstat-no" title="statement not covered" >  for (const sibling of openSiblings) {</span>
+    const rest = <span class="cstat-no" title="statement not covered" >openSiblings.<span class="fstat-no" title="function not covered" >filter((o</span>ther) =&gt; <span class="cstat-no" title="statement not covered" >other.number !== sibling.number)</span>;</span>
+<span class="cstat-no" title="statement not covered" >    if (isDuplicateClusterWinnerByClaim(sibling, [pr, ...rest])) <span class="cstat-no" title="statement not covered" >return sibling.number;</span></span>
+  }
+<span class="cstat-no" title="statement not covered" >  return null;</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >claimTimeMs(v</span>alue: string | null | undefined): number | null {
+<span class="cstat-no" title="statement not covered" >  if (!value) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+  const parsed = <span class="cstat-no" title="statement not covered" >Date.parse(value);</span>
+<span class="cstat-no" title="statement not covered" >  return Number.isFinite(parsed) ? parsed : null;</span>
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../../sorter.js"></script>
+        <script src="../../../block-navigation.js"></script>
+    </body>
+</html>
+    

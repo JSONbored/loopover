@@ -1,0 +1,853 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/selfhost/health.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/selfhost</a> health.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/87</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/70</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/28</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/73</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a>
+<a name='L185'></a><a href='#L185'>185</a>
+<a name='L186'></a><a href='#L186'>186</a>
+<a name='L187'></a><a href='#L187'>187</a>
+<a name='L188'></a><a href='#L188'>188</a>
+<a name='L189'></a><a href='#L189'>189</a>
+<a name='L190'></a><a href='#L190'>190</a>
+<a name='L191'></a><a href='#L191'>191</a>
+<a name='L192'></a><a href='#L192'>192</a>
+<a name='L193'></a><a href='#L193'>193</a>
+<a name='L194'></a><a href='#L194'>194</a>
+<a name='L195'></a><a href='#L195'>195</a>
+<a name='L196'></a><a href='#L196'>196</a>
+<a name='L197'></a><a href='#L197'>197</a>
+<a name='L198'></a><a href='#L198'>198</a>
+<a name='L199'></a><a href='#L199'>199</a>
+<a name='L200'></a><a href='#L200'>200</a>
+<a name='L201'></a><a href='#L201'>201</a>
+<a name='L202'></a><a href='#L202'>202</a>
+<a name='L203'></a><a href='#L203'>203</a>
+<a name='L204'></a><a href='#L204'>204</a>
+<a name='L205'></a><a href='#L205'>205</a>
+<a name='L206'></a><a href='#L206'>206</a>
+<a name='L207'></a><a href='#L207'>207</a>
+<a name='L208'></a><a href='#L208'>208</a>
+<a name='L209'></a><a href='#L209'>209</a>
+<a name='L210'></a><a href='#L210'>210</a>
+<a name='L211'></a><a href='#L211'>211</a>
+<a name='L212'></a><a href='#L212'>212</a>
+<a name='L213'></a><a href='#L213'>213</a>
+<a name='L214'></a><a href='#L214'>214</a>
+<a name='L215'></a><a href='#L215'>215</a>
+<a name='L216'></a><a href='#L216'>216</a>
+<a name='L217'></a><a href='#L217'>217</a>
+<a name='L218'></a><a href='#L218'>218</a>
+<a name='L219'></a><a href='#L219'>219</a>
+<a name='L220'></a><a href='#L220'>220</a>
+<a name='L221'></a><a href='#L221'>221</a>
+<a name='L222'></a><a href='#L222'>222</a>
+<a name='L223'></a><a href='#L223'>223</a>
+<a name='L224'></a><a href='#L224'>224</a>
+<a name='L225'></a><a href='#L225'>225</a>
+<a name='L226'></a><a href='#L226'>226</a>
+<a name='L227'></a><a href='#L227'>227</a>
+<a name='L228'></a><a href='#L228'>228</a>
+<a name='L229'></a><a href='#L229'>229</a>
+<a name='L230'></a><a href='#L230'>230</a>
+<a name='L231'></a><a href='#L231'>231</a>
+<a name='L232'></a><a href='#L232'>232</a>
+<a name='L233'></a><a href='#L233'>233</a>
+<a name='L234'></a><a href='#L234'>234</a>
+<a name='L235'></a><a href='#L235'>235</a>
+<a name='L236'></a><a href='#L236'>236</a>
+<a name='L237'></a><a href='#L237'>237</a>
+<a name='L238'></a><a href='#L238'>238</a>
+<a name='L239'></a><a href='#L239'>239</a>
+<a name='L240'></a><a href='#L240'>240</a>
+<a name='L241'></a><a href='#L241'>241</a>
+<a name='L242'></a><a href='#L242'>242</a>
+<a name='L243'></a><a href='#L243'>243</a>
+<a name='L244'></a><a href='#L244'>244</a>
+<a name='L245'></a><a href='#L245'>245</a>
+<a name='L246'></a><a href='#L246'>246</a>
+<a name='L247'></a><a href='#L247'>247</a>
+<a name='L248'></a><a href='#L248'>248</a>
+<a name='L249'></a><a href='#L249'>249</a>
+<a name='L250'></a><a href='#L250'>250</a>
+<a name='L251'></a><a href='#L251'>251</a>
+<a name='L252'></a><a href='#L252'>252</a>
+<a name='L253'></a><a href='#L253'>253</a>
+<a name='L254'></a><a href='#L254'>254</a>
+<a name='L255'></a><a href='#L255'>255</a>
+<a name='L256'></a><a href='#L256'>256</a>
+<a name='L257'></a><a href='#L257'>257</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Self-host liveness/readiness probes (#982). Liveness is binding-free (the process is up); readiness asserts
+// the things a request actually depends on — the DB answers and the schema migrations have been applied.
+// Backend-agnostic: runs through the D1 surface, so it works on both the SQLite and Postgres adapters.
+&nbsp;
+export interface Readiness {
+  ok: boolean;
+  checks: Record&lt;string, boolean&gt;;
+  durationsMs: Record&lt;string, number&gt;;
+}
+&nbsp;
+export interface HealthBody {
+  status: "ok";
+}
+&nbsp;
+export function <span class="fstat-no" title="function not covered" >buildHealthBody(): HealthBody {</span>
+<span class="cstat-no" title="statement not covered" >  return { status: "ok" };</span>
+}
+&nbsp;
+/** An extra readiness check for a CONFIGURED optional backend (Redis, Qdrant …). `check` resolves true when the
+ *  backend is reachable; it OWNS its own timeout (the caller wires it that way) so a hung backend can't hang /ready.
+ *  A configured backend that fails to answer means the instance is degraded — a multi-instance load balancer should
+ *  stop routing to it — so every probe gates readiness. */
+export type ReadinessProbe = { name: string; check: () =&gt; Promise&lt;boolean&gt; };
+&nbsp;
+async function <span class="fstat-no" title="function not covered" >timedReadinessCheck(</span>
+  name: string,
+  durationsMs: Record&lt;string, number&gt;,
+  check: () =&gt; Promise&lt;boolean&gt;,
+): Promise&lt;boolean&gt; {
+  const startedAt = <span class="cstat-no" title="statement not covered" >performance.now();</span>
+<span class="cstat-no" title="statement not covered" >  try {</span>
+<span class="cstat-no" title="statement not covered" >    return await check();</span>
+  } catch {
+<span class="cstat-no" title="statement not covered" >    return false;</span>
+  } finally {
+<span class="cstat-no" title="statement not covered" >    durationsMs[name] = Math.max(0, performance.now() - startedAt);</span>
+  }
+}
+&nbsp;
+/** Readiness: the DB answers a trivial query, the migrations table shows applied rows, and every configured
+ *  optional-backend probe (Redis/Qdrant, when wired) answers. An instance can no longer report ready while a
+ *  backend it actually depends on is down. */
+export async function <span class="fstat-no" title="function not covered" >readiness(d</span>b: D1Database, probes: ReadinessProbe[] = <span class="branch-0 cbranch-no" title="branch not covered" >[]): Promise&lt;Readiness&gt; {</span>
+  const durationsMs: Record&lt;string, number&gt; = <span class="cstat-no" title="statement not covered" >{};</span>
+  const dbOk = <span class="cstat-no" title="statement not covered" >await timedReadinessCheck("db", durationsMs, <span class="fstat-no" title="function not covered" >async () =&gt; {</span></span>
+<span class="cstat-no" title="statement not covered" >    await db.prepare("SELECT 1 AS one").first();</span>
+<span class="cstat-no" title="statement not covered" >    return true;</span>
+  });
+  const migrations = <span class="cstat-no" title="statement not covered" >await timedReadinessCheck("migrations", durationsMs, <span class="fstat-no" title="function not covered" >async () =&gt; {</span></span>
+    const row = <span class="cstat-no" title="statement not covered" >await db.prepare("SELECT COUNT(*) AS c FROM _selfhost_migrations").first&lt;{ c: number }&gt;();</span>
+    // COUNT(*) always returns one row on D1/SQLite; if an adapter violates that, this try/catch fails closed.
+<span class="cstat-no" title="statement not covered" >    return Number(row!.c) &gt; 0;</span>
+  });
+  const checks: Record&lt;string, boolean&gt; = <span class="cstat-no" title="statement not covered" >{ db: dbOk, migrations };</span>
+<span class="cstat-no" title="statement not covered" >  for (const probe of probes) {</span>
+<span class="cstat-no" title="statement not covered" >    checks[probe.name] = await timedReadinessCheck(probe.name, durationsMs, probe.check);</span>
+  }
+<span class="cstat-no" title="statement not covered" >  return { ok: Object.values(checks).every(Boolean), checks, durationsMs };</span>
+}
+&nbsp;
+/** Decide whether the GitHub App auth readiness probe should be registered, and how its check() behaves, from
+ *  the two config vars (#2497). Registered whenever EITHER var is set -- gating registration on BOTH being set
+ *  would silently skip the probe entirely for a partial config (e.g. the App ID set but the private key unset
+ *  or a load failure), letting /ready report ready anyway even though GitHub App auth cannot mint a JWT. The
+ *  returned check() itself re-verifies both are present before minting, so a partial config fails closed
+ *  (false) in EITHER direction — not just the one a JWT-mint helper's own internal validation happens to catch.
+ *  Neither var set is the legitimate brokered-mode deployment (central Orb App, no own App credentials):
+ *  correctly returns null (no probe registered, since there is nothing of this instance's own to check).
+ *  Scope: a successful mint only proves the private key is present and locally well-formed (importable +
+ *  signable) -- it does NOT call GitHub, so it can't catch a valid key paired with the wrong App ID, or a
+ *  key GitHub has since revoked. Those still surface (via the executor's own token mint) on the next real
+ *  write, just not here. */
+export function <span class="fstat-no" title="function not covered" >githubAppReadinessProbe(</span>
+  githubAppId: string | undefined,
+  githubAppPrivateKey: string | undefined,
+  mintAppJwt: () =&gt; Promise&lt;unknown&gt;,
+): ReadinessProbe | null {
+<span class="cstat-no" title="statement not covered" >  if (!githubAppId &amp;&amp; !githubAppPrivateKey) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    name: "github_app",
+<span class="fstat-no" title="function not covered" >    check: () =&gt;</span>
+<span class="cstat-no" title="statement not covered" >      githubAppId &amp;&amp; githubAppPrivateKey</span>
+        ? mintAppJwt().<span class="fstat-no" title="function not covered" >then(() =&gt; <span class="cstat-no" title="statement not covered" >t</span>rue)</span>.<span class="fstat-no" title="function not covered" >catch(() =&gt; <span class="cstat-no" title="statement not covered" >f</span>alse)</span>
+        : Promise.resolve(false),
+  };
+}
+&nbsp;
+/** Readiness probe for the codex CLI auth (#GITTENSORY-C). Runs `codex --version` in the restricted codex
+ *  environment to confirm the binary is present AND authenticated before any review is attempted. A missing auth
+ *  volume or an unauthenticated CLI exits non-zero here rather than silently inside a subprocess spawned mid-review.
+ *  Only registered when `LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER=1` (the opt-in for the codex reviewer path). */
+/** `codex --version` only proves the binary starts — it exits 0 with no usable credentials at all, so on its
+ *  own it can't catch the exact missing/empty-auth-volume misconfiguration this probe exists to surface.
+ *  Also stat the auth file so a present-but-empty or altogether-missing auth.json still fails readiness. */
+async function <span class="fstat-no" title="function not covered" >defaultCodexAuthFileCheck(e</span>nv: Record&lt;string, string | undefined&gt;): Promise&lt;boolean&gt; {
+  const { stat } = <span class="cstat-no" title="statement not covered" >await import("node:fs/promises");</span>
+  const base = <span class="cstat-no" title="statement not covered" >env.CODEX_HOME ?? `${env.HOME ?? "~"}/.codex`;</span>
+<span class="cstat-no" title="statement not covered" >  try {</span>
+    const info = <span class="cstat-no" title="statement not covered" >await stat(`${base}/auth.json`);</span>
+<span class="cstat-no" title="statement not covered" >    return info.size &gt; 0;</span>
+  } catch {
+<span class="cstat-no" title="statement not covered" >    return false;</span>
+  }
+}
+&nbsp;
+export function <span class="fstat-no" title="function not covered" >codexAuthReadinessProbe(</span>
+  env: Record&lt;string, string | undefined&gt;,
+  runCodexVersion: (env: Record&lt;string, string | undefined&gt;) =&gt; Promise&lt;{ code: number | null }&gt;,
+  checkAuthFile: (env: Record&lt;string, string | undefined&gt;) =&gt; Promise&lt;boolean&gt; = <span class="branch-0 cbranch-no" title="branch not covered" >defaultCodexAuthFileCheck,</span>
+  cacheMs = <span class="branch-0 cbranch-no" title="branch not covered" >30_000,</span>
+): ReadinessProbe | null {
+  // Strict "1"-only, matching this flag's intentionally narrow (non-loose-truthy) opt-in convention.
+<span class="cstat-no" title="statement not covered" >  if (env.LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER !== "1") <span class="cstat-no" title="statement not covered" >return null;</span></span>
+  let cached: boolean | undefined;
+  let cachedUntil = <span class="cstat-no" title="statement not covered" >0;</span>
+  let inFlight: Promise&lt;boolean&gt; | undefined;
+  const evaluate = <span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >async (): Promise&lt;boolean&gt; =&gt; {</span></span>
+    const [versionOk, authFileOk] = <span class="cstat-no" title="statement not covered" >await Promise.all([</span>
+      runCodexVersion(env)
+        .<span class="fstat-no" title="function not covered" >then(({</span> code }) =&gt; <span class="cstat-no" title="statement not covered" >code === 0)</span>
+        .<span class="fstat-no" title="function not covered" >catch(() =&gt; <span class="cstat-no" title="statement not covered" >f</span>alse)</span>,
+      checkAuthFile(env).<span class="fstat-no" title="function not covered" >catch(() =&gt; <span class="cstat-no" title="statement not covered" >f</span>alse)</span>,
+    ]);
+<span class="cstat-no" title="statement not covered" >    return versionOk &amp;&amp; authFileOk;</span>
+  };
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    name: "codex_auth",
+<span class="fstat-no" title="function not covered" >    check: () =&gt; {</span>
+      const now = <span class="cstat-no" title="statement not covered" >Date.now();</span>
+<span class="cstat-no" title="statement not covered" >      if (cached !== undefined &amp;&amp; now &lt; cachedUntil) <span class="cstat-no" title="statement not covered" >return Promise.resolve(cached);</span></span>
+<span class="cstat-no" title="statement not covered" >      if (inFlight) <span class="cstat-no" title="statement not covered" >return inFlight;</span></span>
+<span class="cstat-no" title="statement not covered" >      inFlight = evaluate()</span>
+        .<span class="fstat-no" title="function not covered" >then((o</span>k) =&gt; {
+<span class="cstat-no" title="statement not covered" >          cached = ok;</span>
+<span class="cstat-no" title="statement not covered" >          cachedUntil = Date.now() + cacheMs;</span>
+<span class="cstat-no" title="statement not covered" >          return ok;</span>
+        })
+        .<span class="fstat-no" title="function not covered" >finally(() =&gt; {</span>
+<span class="cstat-no" title="statement not covered" >          inFlight = undefined;</span>
+        });
+<span class="cstat-no" title="statement not covered" >      return inFlight;</span>
+    },
+  };
+}
+&nbsp;
+/** Boot-time DATA-SAFETY advisory. A single SQLite file with no acknowledged backup is a data-loss SPOF — yet
+ *  `/ready` would still answer 200, so an operator can run with zero durability believing they're healthy. Returns
+ *  the warning to log at boot (or null on Postgres, or once the operator sets `BACKUP_ACKNOWLEDGED=true` after
+ *  wiring Litestream or another backup). */
+export function <span class="fstat-no" title="function not covered" >sqliteBackupAdvisory(o</span>pts: { usingSqlite: boolean; backupAcknowledged: boolean }): string | null {
+<span class="cstat-no" title="statement not covered" >  if (!opts.usingSqlite || opts.backupAcknowledged) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+<span class="cstat-no" title="statement not covered" >  return "Running on a single SQLite file with no acknowledged backup — if the volume is lost, ALL review state is lost. Enable the Litestream sidecar (see the maintainer self-hosting docs) to stream the WAL to S3/B2/MinIO, then set BACKUP_ACKNOWLEDGED=true to silence this warning. (Multi-instance: use DATABASE_URL=postgres://… instead.)";</span>
+}
+&nbsp;
+/** Prometheus gauge value mirroring {@link sqliteBackupAdvisory}: 1 when Postgres or backup is acknowledged, 0 when the advisory would fire. */
+export function <span class="fstat-no" title="function not covered" >backupAcknowledgedGaugeValue(o</span>pts: { usingSqlite: boolean; backupAcknowledged: boolean }): 0 | 1 {
+<span class="cstat-no" title="statement not covered" >  return sqliteBackupAdvisory(opts) === null ? 1 : 0;</span>
+}
+&nbsp;
+// Hostnames that are NEVER reachable from the public internet, regardless of deployment — loopback, RFC1918
+// private ranges, and the mDNS/internal-DNS conventions no public resolver honors. Deliberately excludes
+// Tailscale's own *.ts.net MagicDNS suffix from this "never" list: a node with Funnel explicitly enabled DOES
+// serve that exact hostname over public HTTPS, so *.ts.net gets its own softer check below rather than being
+// treated as definitely non-public.
+function <span class="fstat-no" title="function not covered" >isDefinitelyPrivateHostname(h</span>ostname: string): boolean {
+  const host = <span class="cstat-no" title="statement not covered" >hostname.toLowerCase();</span>
+  // URL.hostname keeps the brackets on an IPv6 literal ("[::1]", not "::1") — compare against the bracketed
+  // form, not the bare address.
+<span class="cstat-no" title="statement not covered" >  if (host === "localhost" || host === "0.0.0.0" || host === "[::1]") <span class="cstat-no" title="statement not covered" >return true;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (host.endsWith(".local") || host.endsWith(".internal")) <span class="cstat-no" title="statement not covered" >return true;</span></span>
+  const ipv4 = <span class="cstat-no" title="statement not covered" >/^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(host);</span>
+<span class="cstat-no" title="statement not covered" >  if (ipv4) {</span>
+    const first = <span class="cstat-no" title="statement not covered" >Number(ipv4[1]);</span>
+    const second = <span class="cstat-no" title="statement not covered" >Number(ipv4[2]);</span>
+<span class="cstat-no" title="statement not covered" >    if (first === 127 || first === 10) <span class="cstat-no" title="statement not covered" >return true;</span></span>
+<span class="cstat-no" title="statement not covered" >    if (first === 192 &amp;&amp; second === 168) <span class="cstat-no" title="statement not covered" >return true;</span></span>
+<span class="cstat-no" title="statement not covered" >    if (first === 172 &amp;&amp; second &gt;= 16 &amp;&amp; second &lt;= 31) <span class="cstat-no" title="statement not covered" >return true;</span></span>
+  }
+<span class="cstat-no" title="statement not covered" >  return false;</span>
+}
+&nbsp;
+/** True when `origin` parses as a URL whose hostname is a well-known non-public pattern (loopback, RFC1918,
+ *  mDNS/`.internal`), OR a bare Tailscale MagicDNS hostname (`*.ts.net`) — publicly reachable ONLY when the
+ *  operator has explicitly enabled Tailscale Funnel for that node, which this check has no way to observe.
+ *  An unparseable value is this function's job to reject as "not a URL at all", not "looks non-public" — but
+ *  that is a distinct, well-formedness problem this advisory doesn't cover (PUBLIC_API_ORIGIN's own
+ *  first-run-setup preflight check already validates that shape; nothing else currently reads
+ *  PUBLIC_SITE_ORIGIN at boot), so it's silently false here rather than double-reported. */
+function <span class="fstat-no" title="function not covered" >looksNonPublic(o</span>rigin: string): boolean {
+<span class="cstat-no" title="statement not covered" >  try {</span>
+    const { hostname } = <span class="cstat-no" title="statement not covered" >new URL(origin);</span>
+<span class="cstat-no" title="statement not covered" >    return isDefinitelyPrivateHostname(hostname) || hostname.toLowerCase().endsWith(".ts.net");</span>
+  } catch {
+<span class="cstat-no" title="statement not covered" >    return false;</span>
+  }
+}
+&nbsp;
+/** Boot-time advisory (JSONbored/loopover PR #4180's live bug): `PUBLIC_API_ORIGIN`/`PUBLIC_SITE_ORIGIN` get
+ *  embedded VERBATIM as `&lt;img src&gt;` in the public "Visual preview" PR comment table (see
+ *  `src/review/visual/capture.ts`) — a value GitHub's own servers, not this instance, must be able to fetch.
+ *  `PUBLIC_API_ORIGIN`'s existing preflight check (see `isBareHttpsOrigin` above) only confirms it's a
+ *  WELL-FORMED bare https origin — a private tailnet hostname like `https://node.example.ts.net` passes that
+ *  check fine while still being completely unfetchable by GitHub, so every screenshot silently renders as a
+ *  broken image with no operator-visible signal until a human notices. This never hard-fails boot (unlike
+ *  `assertSelfHostPreflight`'s checks): a false positive here (e.g. a legitimately Funnel-exposed `*.ts.net`
+ *  node) would only be a degraded review feature, not a security or data-loss risk, so — mirroring
+ *  {@link sqliteBackupAdvisory}'s own acknowledgment escape hatch — it warns rather than blocks, and the
+ *  operator can silence it with `PUBLIC_ORIGIN_ACKNOWLEDGED=true` once they've confirmed the origin really is
+ *  public (Funnel enabled, a reverse proxy in front of it, etc.). Neither var set is left alone: visual
+ *  capture degrades to dash cells in that case (see capture.ts), not a broken image, so there's nothing to warn
+ *  about until an operator sets one of these to something that looks wrong. */
+export function <span class="fstat-no" title="function not covered" >publicOriginReachabilityAdvisory(o</span>pts: {
+  publicApiOrigin: string | undefined;
+  publicSiteOrigin: string | undefined;
+  acknowledged: boolean;
+}): string | null {
+<span class="cstat-no" title="statement not covered" >  if (opts.acknowledged) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+  const suspect = <span class="cstat-no" title="statement not covered" >[opts.publicApiOrigin, opts.publicSiteOrigin]</span>
+    .<span class="fstat-no" title="function not covered" >filter((v</span>alue): value is string =&gt; <span class="cstat-no" title="statement not covered" >Boolean(value?.trim()))</span>
+    .<span class="fstat-no" title="function not covered" >find((v</span>alue) =&gt; <span class="cstat-no" title="statement not covered" >looksNonPublic(value))</span>;
+<span class="cstat-no" title="statement not covered" >  if (!suspect) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+<span class="cstat-no" title="statement not covered" >  return `PUBLIC_API_ORIGIN/PUBLIC_SITE_ORIGIN includes "${suspect}", which looks like a private/internal hostname — GitHub's servers cannot fetch it, so visual-capture screenshots embedded in PR comments will render as broken images. Set it to a real publicly-reachable origin (or, if this host has Tailscale Funnel enabled and IS genuinely public, set PUBLIC_ORIGIN_ACKNOWLEDGED=true to silence this warning).`;</span>
+}
+&nbsp;
+/** Prometheus gauge value mirroring {@link publicOriginReachabilityAdvisory}: 1 when no suspect origin is
+ *  configured (or the operator acknowledged it), 0 when the advisory would fire. */
+export function <span class="fstat-no" title="function not covered" >publicOriginAcknowledgedGaugeValue(o</span>pts: {
+  publicApiOrigin: string | undefined;
+  publicSiteOrigin: string | undefined;
+  acknowledged: boolean;
+}): 0 | 1 {
+<span class="cstat-no" title="statement not covered" >  return publicOriginReachabilityAdvisory(opts) === null ? 1 : 0;</span>
+}
+&nbsp;
+/** Boot-time advisory (a live incident during the gittensory-&gt;loopover rename): `LOOPOVER_REPO_CONFIG_DIR`
+ *  points the focus-manifest loader at a container-private per-repo config mount (`private-config.ts`) that
+ *  silently and validly degrades to "no local config" when the mounted directory is empty — every setting
+ *  (labels, gate, autonomy, ...) then falls back to built-in defaults with NO error, because an empty mount is
+ *  also the correct, expected state for a brand-new install that hasn't written any `.loopover.yml` yet. The
+ *  incident: a docker-compose.yml change renamed the bind-mount source directory convention
+ *  (`./gittensory-config` -&gt; `./loopover-config`) as a documented breaking change requiring operators to `mv`
+ *  their existing directory to match — that manual step was missed on deploy, Docker silently created an empty
+ *  directory at the new path, and every repo's config-driven settings (including `autoLabelEnabled`) reverted
+ *  to defaults for about a day before anyone noticed. Mirrors {@link sqliteBackupAdvisory}'s shape: warns
+ *  rather than blocks (an empty dir is legitimate for a fresh install), and the operator can silence it with
+ *  `CONFIG_DIR_EMPTY_ACKNOWLEDGED=true` once they've confirmed it's intentional. */
+export function <span class="fstat-no" title="function not covered" >emptyConfigDirAdvisory(o</span>pts: { configured: boolean; entryCount: number; acknowledged: boolean }): string | null {
+<span class="cstat-no" title="statement not covered" >  if (!opts.configured || opts.acknowledged || opts.entryCount &gt; 0) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+<span class="cstat-no" title="statement not covered" >  return `LOOPOVER_REPO_CONFIG_DIR is set but the mounted directory is empty — every per-repo and global setting (labels, gate, autonomy, ...) is silently using built-in defaults instead of your .loopover.yml config. This usually means the host directory was renamed or moved without updating the bind mount (see docker-compose.yml's "volumes:" comment), or the volume didn't mount as expected. If this is intentional — a fresh install with no config written yet — set CONFIG_DIR_EMPTY_ACKNOWLEDGED=true to silence this warning.`;</span>
+}
+&nbsp;
+/** Prometheus gauge value mirroring {@link emptyConfigDirAdvisory}: 1 when the mount isn't configured, has
+ *  entries, or the operator acknowledged it, 0 when the advisory would fire. */
+export function <span class="fstat-no" title="function not covered" >emptyConfigDirAcknowledgedGaugeValue(o</span>pts: { configured: boolean; entryCount: number; acknowledged: boolean }): 0 | 1 {
+<span class="cstat-no" title="statement not covered" >  return emptyConfigDirAdvisory(opts) === null ? 1 : 0;</span>
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    

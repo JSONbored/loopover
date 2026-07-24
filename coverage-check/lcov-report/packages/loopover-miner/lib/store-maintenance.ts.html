@@ -1,0 +1,715 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for packages/loopover-miner/lib/store-maintenance.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../../prettify.css" />
+    <link rel="stylesheet" href="../../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../../index.html">All files</a> / <a href="index.html">packages/loopover-miner/lib</a> store-maintenance.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/106</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/58</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/18</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/65</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a>
+<a name='L185'></a><a href='#L185'>185</a>
+<a name='L186'></a><a href='#L186'>186</a>
+<a name='L187'></a><a href='#L187'>187</a>
+<a name='L188'></a><a href='#L188'>188</a>
+<a name='L189'></a><a href='#L189'>189</a>
+<a name='L190'></a><a href='#L190'>190</a>
+<a name='L191'></a><a href='#L191'>191</a>
+<a name='L192'></a><a href='#L192'>192</a>
+<a name='L193'></a><a href='#L193'>193</a>
+<a name='L194'></a><a href='#L194'>194</a>
+<a name='L195'></a><a href='#L195'>195</a>
+<a name='L196'></a><a href='#L196'>196</a>
+<a name='L197'></a><a href='#L197'>197</a>
+<a name='L198'></a><a href='#L198'>198</a>
+<a name='L199'></a><a href='#L199'>199</a>
+<a name='L200'></a><a href='#L200'>200</a>
+<a name='L201'></a><a href='#L201'>201</a>
+<a name='L202'></a><a href='#L202'>202</a>
+<a name='L203'></a><a href='#L203'>203</a>
+<a name='L204'></a><a href='#L204'>204</a>
+<a name='L205'></a><a href='#L205'>205</a>
+<a name='L206'></a><a href='#L206'>206</a>
+<a name='L207'></a><a href='#L207'>207</a>
+<a name='L208'></a><a href='#L208'>208</a>
+<a name='L209'></a><a href='#L209'>209</a>
+<a name='L210'></a><a href='#L210'>210</a>
+<a name='L211'></a><a href='#L211'>211</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Local-store maintenance for the miner (#4834): SQLite integrity checks + append-only ledger retention.
+//
+// Three independent, side-effect-light helpers used by `doctor`, the ledgers, and `purge-cli.js`:
+//   1. checkStoreIntegrity — run `PRAGMA integrity_check` on one store file and report health, so `doctor` can
+//      flag a corrupted store instead of only probing a single one with `SELECT 1`.
+//   2. resolveLedgerRetentionPolicy / pruneLedgerByRetention — an opt-in, age- and/or size-based retention
+//      policy for the unbounded append-only ledgers (event, governor, prediction), which otherwise grow forever.
+//      OFF by default: retention only runs when an operator sets the env opt-in.
+//   3. purgeStoreByRepo — an explicit, operator-invoked delete of every row for one repo (#5564, right-to-be-
+//      forgotten). Distinct from retention pruning: never runs automatically, always caller-initiated via
+//      `purge-cli.js`, and always reports how many rows it removed so a purge is never silent.
+// Pure control flow over injected inputs (a DB handle, an env object, a caller-supplied clock) — no network, and
+// no internal clock read in the prune path so it stays deterministic and unit-testable.
+import { existsSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+import { CONTRIBUTION_PROFILE_STORE_TABLE } from "./contribution-profile.js";
+&nbsp;
+/** Env opt-ins for ledger retention (unset ⇒ retention disabled). */
+export const LEDGER_RETENTION_DAYS_ENV = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >"LOOPOVER_MINER_LEDGER_RETENTION_DAYS";</span></span>
+export const LEDGER_RETENTION_MAX_ROWS_ENV = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >"LOOPOVER_MINER_LEDGER_RETENTION_MAX_ROWS";</span></span>
+&nbsp;
+export type LedgerRetentionSpec = { table: string; timestampColumn: string; orderColumn: string };
+&nbsp;
+/** Fixed retention specs for the three append-only ledgers. These identifiers are INTERNAL constants — never
+ *  caller/user text — and are validated as plain identifiers before interpolation as defence in depth. */
+export const EVENT_LEDGER_RETENTION_SPEC: LedgerRetentionSpec = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >{ table: "miner_event_ledger", timestampColumn: "created_at", orderColumn: "id" };</span></span>
+export const GOVERNOR_LEDGER_RETENTION_SPEC: LedgerRetentionSpec = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >{ table: "governor_events", timestampColumn: "ts", orderColumn: "id" };</span></span>
+export const PREDICTION_LEDGER_RETENTION_SPEC: LedgerRetentionSpec = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >{ table: "predictions", timestampColumn: "ts", orderColumn: "id" };</span></span>
+&nbsp;
+export type LedgerPurgeSpec = { table: string; repoColumn: string };
+&nbsp;
+/** Fixed purge specs (#5564, #6599) for the six stores whose rows are directly scoped by a `repoColumn`. Same
+ *  internal-constant-only discipline as the retention specs above. `attempt-log.js` is deliberately absent: its
+ *  payload is a free-form `Record&lt;string, unknown&gt;` with no dedicated repo column, so a precise per-repo purge
+ *  isn't possible there without risking false matches — `purge-cli.js` reports it as not-purgeable instead. */
+export const CLAIM_LEDGER_PURGE_SPEC: LedgerPurgeSpec = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >{ table: "miner_claims", repoColumn: "repo_full_name" };</span></span>
+export const EVENT_LEDGER_PURGE_SPEC: LedgerPurgeSpec = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >{ table: "miner_event_ledger", repoColumn: "repo_full_name" };</span></span>
+export const GOVERNOR_LEDGER_PURGE_SPEC: LedgerPurgeSpec = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >{ table: "governor_events", repoColumn: "repo_full_name" };</span></span>
+export const PREDICTION_LEDGER_PURGE_SPEC: LedgerPurgeSpec = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >{ table: "predictions", repoColumn: "repo_full_name" };</span></span>
+export const PORTFOLIO_QUEUE_PURGE_SPEC: LedgerPurgeSpec = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >{ table: "miner_portfolio_queue", repoColumn: "repo_full_name" };</span></span>
+export const RUN_STATE_PURGE_SPEC: LedgerPurgeSpec = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >{ table: "miner_run_state", repoColumn: "repo_full_name" };</span></span>
+&nbsp;
+/** Three more repo-scoped stores the original six missed (#7091), same `repoColumn` shape and same internal-
+ *  constant-only discipline. The contribution-profile-cache table name comes from its schema module's own
+ *  `CONTRIBUTION_PROFILE_STORE_TABLE` constant so this spec can't drift from a second hardcoded literal.
+ *  governor-state holds two genuinely repo-scoped tables (reputation history + own submissions);
+ *  `governor_scalar_state` is intentionally excluded — it is a single whole-run scalar row with no repo
+ *  dimension. `governor_reputation_history` is purged on `repo_full_name` alone (its key is composite with
+ *  `api_base_url`), so a right-to-be-forgotten sweep clears the repo across every forge host it was recorded
+ *  against, not just the default one. */
+export const CONTRIBUTION_PROFILE_CACHE_PURGE_SPEC: LedgerPurgeSpec = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >{ table: CONTRIBUTION_PROFILE_STORE_TABLE, repoColumn: "repo_full_name" };</span></span>
+export const GOVERNOR_REPUTATION_HISTORY_PURGE_SPEC: LedgerPurgeSpec = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >{ table: "governor_reputation_history", repoColumn: "repo_full_name" };</span></span>
+export const GOVERNOR_OWN_SUBMISSIONS_PURGE_SPEC: LedgerPurgeSpec = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >{ table: "governor_own_submissions", repoColumn: "repo_full_name" };</span></span>
+&nbsp;
+/** policy-verdict-cache (#6987), another repo-scoped store the earlier sweeps missed. Its `repo_scope TEXT
+ *  PRIMARY KEY` is the per-repo column (a tenant forge host + `owner/repo`), the same `repoColumn` shape and
+ *  internal-constant-only discipline as the specs above. `policy-doc-cache.js` stays out (keyed by URL, no repo
+ *  column, exactly like `attempt-log.js`). */
+export const POLICY_VERDICT_CACHE_PURGE_SPEC: LedgerPurgeSpec = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >{ table: "policy_verdict_cache", repoColumn: "repo_scope" };</span></span>
+&nbsp;
+/** Three more repo-scoped stores the #5564/#7091/#6987 sweeps missed (#8009), same `repoColumn` shape and same
+ *  internal-constant-only discipline. ranked-candidates is a wholesale-replaced snapshot, but its rows persist
+ *  between discover runs; replay_snapshots embeds commit SHAs and README content. deny-hook-synthesis's live
+ *  table is always `deny_rule_proposals` (`deny_rule_proposals_v2` exists only transiently mid-rebuild inside
+ *  its forge-scope migration, never at rest, so one spec covers both pre- and post-migration files), and — like
+ *  `governor_reputation_history` above — it is purged on `repo_full_name` alone (its key is composite with
+ *  `api_base_url`), so a right-to-be-forgotten sweep clears the repo across every forge host it was recorded
+ *  against, not just the default one. */
+export const RANKED_CANDIDATES_PURGE_SPEC: LedgerPurgeSpec = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >{ table: "miner_ranked_candidates", repoColumn: "repo_full_name" };</span></span>
+export const REPLAY_SNAPSHOT_PURGE_SPEC: LedgerPurgeSpec = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >{ table: "replay_snapshots", repoColumn: "repo_full_name" };</span></span>
+export const DENY_HOOK_SYNTHESIS_PURGE_SPEC: LedgerPurgeSpec = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >{ table: "deny_rule_proposals", repoColumn: "repo_full_name" };</span></span>
+&nbsp;
+export type StoreIntegrityResult = { name: string; ok: boolean; detail: string };
+export type LedgerRetentionPolicy = { maxAgeMs?: number; maxRows?: number };
+&nbsp;
+const SQL_IDENTIFIER = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >/^[A-Za-z_][A-Za-z0-9_]*$/;</span></span>
+&nbsp;
+/** A readable message for a caught value, whether or not it is an Error. */
+export function <span class="fstat-no" title="function not covered" ><span class="fstat-no" title="function not covered" >describeError(</span>e</span>rror: unknown): string {
+<span class="cstat-no" title="statement not covered" >  return error instanceof Error ? error.message : String(error);</span>
+}
+&nbsp;
+/**
+ * Classify raw `PRAGMA integrity_check` rows. A healthy database yields a single `"ok"` row; a corrupt one yields
+ * one row per problem. Pure — extracted so both the healthy and problem paths are testable without a genuinely
+ * corrupt file (which SQLite typically refuses to open at all, i.e. the catch path below).
+ */
+export function <span class="fstat-no" title="function not covered" ><span class="fstat-no" title="function not covered" >classifyIntegrityRows(</span>r</span>ows: Array&lt;{ integrity_check?: unknown }&gt;): { ok: boolean; note: string } {
+  const problems = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >rows.<span class="fstat-no" title="function not covered" >map((r</span>ow) =&gt; <span class="cstat-no" title="statement not covered" >String(row.integrity_check))</span>.<span class="fstat-no" title="function not covered" >filter((v</span>alue) =&gt; <span class="cstat-no" title="statement not covered" >value !== "ok")</span>;</span></span>
+<span class="cstat-no" title="statement not covered" >  return problems.length === 0 ? { ok: true, note: "ok" } : { ok: false, note: problems.join("; ") };</span>
+}
+&nbsp;
+/**
+ * Run `PRAGMA integrity_check` on a single store file. A store that does not exist yet is healthy by absence
+ * (nothing to corrupt). Never throws: a store that cannot be opened or read is reported as not-ok, so one bad
+ * store cannot abort the whole doctor sweep. Opens the connection driver-enforced read-only -- `readOnly`
+ * (camelCase) is the only option key node:sqlite recognizes for this; the lowercase `readonly` is silently
+ * ignored and opens read-write instead (the exact gotcha claim-ledger.js's own openClaimLedgerReadOnly already
+ * documents), which would defeat the read-only guarantee this function's own docs claim.
+ */
+export function <span class="fstat-no" title="function not covered" ><span class="fstat-no" title="function not covered" >checkStoreIntegrity(</span>n</span>ame: string, dbPath: string): StoreIntegrityResult {
+<span class="cstat-no" title="statement not covered" >  if (!existsSync(dbPath)) {</span>
+<span class="cstat-no" title="statement not covered" >    return { name, ok: true, detail: `${dbPath}: not created yet` };</span>
+  }
+  let db: DatabaseSync | undefined;
+<span class="cstat-no" title="statement not covered" >  try {</span>
+<span class="cstat-no" title="statement not covered" >    db = new DatabaseSync(dbPath, { readOnly: true });</span>
+    const { ok, note } = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >classifyIntegrityRows(db.prepare("PRAGMA integrity_check").all());</span></span>
+<span class="cstat-no" title="statement not covered" >    return { name, ok, detail: `${dbPath}: ${note}` };</span>
+  } catch (error) {
+<span class="cstat-no" title="statement not covered" >    return { name, ok: false, detail: `${dbPath}: ${describeError(error)}` };</span>
+  } finally {
+<span class="cstat-no" title="statement not covered" >    db?.close();</span>
+  }
+}
+&nbsp;
+/** Coerce an env value to a positive integer, or null (unset/blank/zero/negative/non-finite ⇒ null ⇒ disabled).
+ *  Floors BEFORE the positivity test, so a fractional value below 1 (e.g. "0.5") floors to 0 and disables the
+ *  bound rather than becoming a dangerous 0 that would prune the whole ledger. */
+function <span class="fstat-no" title="function not covered" ><span class="fstat-no" title="function not covered" >positiveIntOrNull(</span>r</span>aw: string | undefined): number | null {
+<span class="cstat-no" title="statement not covered" >  if (raw === undefined || raw === null || String(raw).trim() === "") <span class="cstat-no" title="statement not covered" >return null;</span></span>
+  const numeric = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >Math.floor(Number(raw));</span></span>
+<span class="cstat-no" title="statement not covered" >  return Number.isFinite(numeric) &amp;&amp; numeric &gt; 0 ? numeric : null;</span>
+}
+&nbsp;
+/**
+ * Resolve the opt-in ledger retention policy from an env object. OFF by default: returns null unless at least
+ * one bound is set to a positive value. A zero/negative/non-numeric value is treated as unset. When set, returns
+ * `{ maxAgeMs? }` (from a day count) and/or `{ maxRows? }`.
+ */
+export function <span class="fstat-no" title="function not covered" ><span class="fstat-no" title="function not covered" >resolveLedgerRetentionPolicy(</span></span>
+  env: Record&lt;string, string | undefined&gt; = <span class="branch-0 cbranch-no" title="branch not covered" ><span class="branch-0 cbranch-no" title="branch not covered" >process.env,</span></span>
+): LedgerRetentionPolicy | null {
+  const maxAgeDays = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >positiveIntOrNull(env[LEDGER_RETENTION_DAYS_ENV]);</span></span>
+  const maxRows = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >positiveIntOrNull(env[LEDGER_RETENTION_MAX_ROWS_ENV]);</span></span>
+<span class="cstat-no" title="statement not covered" >  if (maxAgeDays === null &amp;&amp; maxRows === null) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+  const policy: LedgerRetentionPolicy = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >{};</span></span>
+<span class="cstat-no" title="statement not covered" >  if (maxAgeDays !== null) <span class="cstat-no" title="statement not covered" >policy.maxAgeMs = maxAgeDays * 24 * 60 * 60 * 1000;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (maxRows !== null) <span class="cstat-no" title="statement not covered" >policy.maxRows = maxRows;</span></span>
+<span class="cstat-no" title="statement not covered" >  return policy;</span>
+}
+&nbsp;
+/**
+ * Prune one append-only ledger per a resolved retention policy: delete rows older than the age bound AND rows
+ * beyond the row-count bound (keeping the newest `maxRows` by `orderColumn`), atomically. A null policy is a
+ * no-op. `nowMs` is caller-supplied (no internal clock). Timestamp columns are UTC ISO-8601 strings, which sort
+ * lexicographically in chronological order, so a string comparison against the ISO cutoff selects older rows.
+ */
+export function <span class="fstat-no" title="function not covered" ><span class="fstat-no" title="function not covered" >pruneLedgerByRetention(</span></span>
+  db: DatabaseSync,
+  spec: LedgerRetentionSpec,
+  policy: LedgerRetentionPolicy | null,
+  nowMs: number,
+): number {
+<span class="cstat-no" title="statement not covered" >  if (!policy) <span class="cstat-no" title="statement not covered" >return 0;</span></span>
+<span class="cstat-no" title="statement not covered" >  for (const identifier of [spec.table, spec.timestampColumn, spec.orderColumn]) {</span>
+<span class="cstat-no" title="statement not covered" >    if (!SQL_IDENTIFIER.test(identifier)) <span class="cstat-no" title="statement not covered" >throw new Error(`unsafe SQL identifier: ${identifier}`);</span></span>
+  }
+  let deleted = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >0;</span></span>
+<span class="cstat-no" title="statement not covered" >  db.exec("BEGIN");</span>
+<span class="cstat-no" title="statement not covered" >  try {</span>
+    // Both bounds are guarded to be strictly positive as defence in depth: a 0 age would prune everything older
+    // than `now`, and a 0 row-cap makes `LIMIT 0` match no rows so `NOT IN (empty)` would delete the whole ledger.
+<span class="cstat-no" title="statement not covered" >    if (policy.maxAgeMs !== undefined &amp;&amp; policy.maxAgeMs &gt; 0) {</span>
+      const cutoff = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >new Date(nowMs - policy.maxAgeMs).toISOString();</span></span>
+      const info = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >db.prepare(`DELETE FROM ${spec.table} WHERE ${spec.timestampColumn} &lt; ?`).run(cutoff);</span></span>
+<span class="cstat-no" title="statement not covered" >      deleted += Number(info.changes);</span>
+    }
+<span class="cstat-no" title="statement not covered" >    if (policy.maxRows !== undefined &amp;&amp; policy.maxRows &gt;= 1) {</span>
+      const info = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >db</span></span>
+        .prepare(
+          `DELETE FROM ${spec.table} WHERE ${spec.orderColumn} NOT IN ` +
+            `(SELECT ${spec.orderColumn} FROM ${spec.table} ORDER BY ${spec.orderColumn} DESC LIMIT ?)`,
+        )
+        .run(policy.maxRows);
+<span class="cstat-no" title="statement not covered" >      deleted += Number(info.changes);</span>
+    }
+<span class="cstat-no" title="statement not covered" >    db.exec("COMMIT");</span>
+  } catch (error) {
+<span class="cstat-no" title="statement not covered" >    db.exec("ROLLBACK");</span>
+<span class="cstat-no" title="statement not covered" >    throw error;</span>
+  }
+<span class="cstat-no" title="statement not covered" >  return deleted;</span>
+}
+&nbsp;
+/**
+ * Delete every row for one repo from a store (#5564). Unlike `pruneLedgerByRetention`, this never runs
+ * automatically — it exists solely so `purge-cli.js` can give an operator a real right-to-be-forgotten path.
+ * `repoFullName` is caller-normalized (owner/repo) before reaching here; this function only guards the SQL
+ * identifiers, matching `pruneLedgerByRetention`'s own defence-in-depth discipline.
+ */
+export function <span class="fstat-no" title="function not covered" ><span class="fstat-no" title="function not covered" >purgeStoreByRepo(</span>d</span>b: DatabaseSync, spec: LedgerPurgeSpec, repoFullName: string): number {
+<span class="cstat-no" title="statement not covered" >  for (const identifier of [spec.table, spec.repoColumn]) {</span>
+<span class="cstat-no" title="statement not covered" >    if (!SQL_IDENTIFIER.test(identifier)) <span class="cstat-no" title="statement not covered" >throw new Error(`unsafe SQL identifier: ${identifier}`);</span></span>
+  }
+  const info = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >db.prepare(`DELETE FROM ${spec.table} WHERE ${spec.repoColumn} = ?`).run(repoFullName);</span></span>
+<span class="cstat-no" title="statement not covered" >  return Number(info.changes);</span>
+}
+&nbsp;
+/**
+ * Count rows for one repo in a store without deleting anything (#5564) — the read-only counterpart to
+ * `purgeStoreByRepo`, used by `purge-cli.js --dry-run` to report what a real purge would remove.
+ */
+export function <span class="fstat-no" title="function not covered" ><span class="fstat-no" title="function not covered" >countStoreByRepo(</span>d</span>b: DatabaseSync, spec: LedgerPurgeSpec, repoFullName: string): number {
+<span class="cstat-no" title="statement not covered" >  for (const identifier of [spec.table, spec.repoColumn]) {</span>
+<span class="cstat-no" title="statement not covered" >    if (!SQL_IDENTIFIER.test(identifier)) <span class="cstat-no" title="statement not covered" >throw new Error(`unsafe SQL identifier: ${identifier}`);</span></span>
+  }
+  const row = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >db.prepare(`SELECT COUNT(*) AS count FROM ${spec.table} WHERE ${spec.repoColumn} = ?`).get(repoFullName);</span></span>
+<span class="cstat-no" title="statement not covered" >  return Number(row?.count);</span>
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../../sorter.js"></script>
+        <script src="../../../block-navigation.js"></script>
+    </body>
+</html>
+    

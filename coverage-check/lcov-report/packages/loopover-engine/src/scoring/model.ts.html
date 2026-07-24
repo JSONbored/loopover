@@ -1,0 +1,592 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for packages/loopover-engine/src/scoring/model.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../../../prettify.css" />
+    <link rel="stylesheet" href="../../../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../../../index.html">All files</a> / <a href="index.html">packages/loopover-engine/src/scoring</a> model.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/32</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/20</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/9</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/28</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import type { ScoringModelSnapshotRecord } from "./types.js";
+&nbsp;
+// Deterministic subset of the backend's `src/scoring/model.ts`, extracted so a miner can run the same
+// score-preview constants/classification logic locally (#2282). The upstream-fetching, D1-persisting half
+// of that file (`refreshScoringModelSnapshot`, `getOrCreateScoringModelSnapshot`, and their private fetch
+// helpers) is Cloudflare/D1-bound and stays in `src/scoring/model.ts`, which imports the pure pieces below
+// back from this package.
+&nbsp;
+export const DEFAULT_ISSUE_DISCOVERY_SHARE = <span class="cstat-no" title="statement not covered" >0.5;</span>
+&nbsp;
+export const DEFAULT_SCORING_CONSTANTS: Record&lt;string, number&gt; = <span class="cstat-no" title="statement not covered" >{</span>
+  OSS_EMISSION_SHARE: 0.9,
+  // Upstream name is ISSUES_TREASURY_EMISSION_SHARE (plural). The prior singular spelling never matched
+  // upstream, freezing this at the local default and showing up as a false "unmodeled" drift warning (#806).
+  ISSUES_TREASURY_EMISSION_SHARE: 0.1,
+  // Lookback window used upstream for PR history; stored so it syncs and does not surface as unmodeled drift.
+  PR_LOOKBACK_DAYS: 30,
+  MERGED_PR_BASE_SCORE: 25,
+  // Upstream MAX_CONTRIBUTION_BONUS is 5. This local value is only the fetch-failure fallback; keeping it at
+  // 25 silently 5x-inflated the contribution bonus whenever the upstream fetch failed (#807).
+  MAX_CONTRIBUTION_BONUS: 5,
+  CONTRIBUTION_SCORE_FOR_FULL_BONUS: 1500,
+  // Applied in preview.ts when computing totalTokenScore from components (#808).
+  TEST_FILE_CONTRIBUTION_WEIGHT: 0.05,
+  // Upstream-enforced eligibility floors for PR and issue-discovery history (#808).
+  // These gate whether a validator counts a contributor's submissions, not the per-PR/issue score itself.
+  // Stored here so they sync from upstream and no longer appear as unmodeled drift warnings.
+  MIN_VALID_MERGED_PRS: 3,
+  MIN_CREDIBILITY: 0.8,
+  MIN_VALID_SOLVED_ISSUES: 3,
+  MIN_ISSUE_CREDIBILITY: 0.8,
+  MIN_TOKEN_SCORE_FOR_VALID_ISSUE: 5,
+  // Open-issue spam gate constants — wired into the issue-discovery scoring lane in preview.ts (#808).
+  OPEN_ISSUE_SPAM_BASE_THRESHOLD: 2,
+  OPEN_ISSUE_SPAM_TOKEN_SCORE_PER_SLOT: 300,
+  MAX_OPEN_ISSUE_THRESHOLD: 30,
+  OPEN_PR_COLLATERAL_PERCENT: 0.2,
+  MAX_OPEN_PR_REVIEW_COLLATERAL_MULTIPLIER: 2.0,
+  MAX_LINES_SCORED_FOR_NON_CODE_EXT: 300,
+  DEFAULT_ISSUE_DISCOVERY_SHARE,
+  REVIEW_PENALTY_RATE: 0.15,
+  STANDARD_ISSUE_MULTIPLIER: 1.33,
+  MAINTAINER_ISSUE_MULTIPLIER: 1.66,
+  EXCESSIVE_PR_PENALTY_BASE_THRESHOLD: 2,
+  OPEN_PR_THRESHOLD_TOKEN_SCORE: 300,
+  MAX_OPEN_PR_THRESHOLD: 30,
+  SRC_TOK_SATURATION_SCALE: 58,
+  // Density-era constants (#812): upstream is on the saturation model, but `current_density_model` is still
+  // a supported `activeModel` (types.ts union, the public OpenAPI schema, the DB parser, ~20 test fixtures,
+  // and src/services/score-breakdown.ts). The density branch in preview.ts is therefore NOT dead — it is the
+  // supported alternate/fallback model. Single-sourcing these fallbacks HERE (instead of as silent hardcoded
+  // literals at every constant() call site) closes the duplicate-source-of-truth gap without a breaking
+  // removal of a still-supported model.
+  MIN_TOKEN_SCORE_FOR_BASE_SCORE: 5,
+  MAX_CODE_DENSITY_MULTIPLIER: 1.15,
+  // Upstream time-decay (#703): a merged PR's score decays on a sigmoid after a grace period. Modeled here
+  // so they no longer surface as unmodeled drift (#690); APPLICATION is opt-in + default-off (see preview).
+  TIME_DECAY_GRACE_PERIOD_HOURS: 12,
+  TIME_DECAY_SIGMOID_MIDPOINT: 10,
+  TIME_DECAY_SIGMOID_STEEPNESS_SCALAR: 0.4,
+  TIME_DECAY_MIN_MULTIPLIER: 0.05,
+};
+&nbsp;
+export const DEFAULT_GITTENSOR_UPSTREAM_REPO = <span class="cstat-no" title="statement not covered" >"entrius/gittensor";</span>
+export const DEFAULT_GITTENSOR_UPSTREAM_REF = <span class="cstat-no" title="statement not covered" >"test";</span>
+&nbsp;
+// Single source of truth (#812): every recognized upstream constant name is a key of
+// DEFAULT_SCORING_CONSTANTS, so the known-only parser, the unmodeled-drift detector, and the preview-side
+// fallbacks all derive from one place. The density-era constants are included because the density model is
+// still a supported activeModel (see comment above). Exported so the D1-bound refresh in
+// `src/scoring/model.ts` can reuse it for its `recognizedCount` sanity floor without duplicating the Set.
+export const SCORING_CONSTANT_NAMES = <span class="cstat-no" title="statement not covered" >new Set(Object.keys(DEFAULT_SCORING_CONSTANTS));</span>
+&nbsp;
+// Mirror Pipeline B's UPSTREAM_STALE_MS (upstream/ruleset.ts): a served scoring snapshot older than this
+// window means the last upstream refresh failed or has not run, so previews are quietly using last-good (or
+// DEFAULT) constants with no other staleness signal on the scoring side (#810).
+export const SCORING_SNAPSHOT_STALE_MS = <span class="cstat-no" title="statement not covered" >2 * 60 * 60 * 1000;</span>
+&nbsp;
+export function <span class="fstat-no" title="function not covered" >scoringSnapshotStalenessWarning(s</span>napshot: Pick&lt;ScoringModelSnapshotRecord, "fetchedAt"&gt;, now: number = <span class="branch-0 cbranch-no" title="branch not covered" >Date.now()): string | null {</span>
+<span class="cstat-no" title="statement not covered" >  if (Date.parse(snapshot.fetchedAt) + SCORING_SNAPSHOT_STALE_MS &gt;= now) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+<span class="cstat-no" title="statement not covered" >  return "Scoring constants snapshot is stale: the last upstream refresh is older than the freshness window, so scoring may be using last-good or default constants and be behind upstream.";</span>
+}
+&nbsp;
+export function <span class="fstat-no" title="function not covered" >parsePythonNumberConstants(s</span>ource: string, options: { knownOnly?: boolean } = <span class="branch-0 cbranch-no" title="branch not covered" >{ knownOnly: true }): Record&lt;string, number&gt; {</span>
+  const constants: Record&lt;string, number&gt; = <span class="cstat-no" title="statement not covered" >{};</span>
+<span class="cstat-no" title="statement not covered" >  for (const line of source.split("\n")) {</span>
+    // Match Python numeric literals including underscore separators in integer and fractional parts
+    // (1_000_000, 0.000_001, 3.14_15), floats, and exponents (1e-9, 5.8e1). The previous regex only
+    // allowed `_` in the integer part, truncating 0.000_001 -&gt; 0 and 3.14_15 -&gt; 3.14 (#992).
+    const match = <span class="cstat-no" title="statement not covered" >line.match(/^([A-Z][A-Z0-9_]+)\s*=\s*([-+]?(?:\d[\d_]*\.?[\d_]*|\.\d[\d_]*)(?:[eE][-+]?\d+)?)/);</span>
+<span class="cstat-no" title="statement not covered" >    if (!match) <span class="cstat-no" title="statement not covered" >continue;</span></span>
+    const name = <span class="cstat-no" title="statement not covered" >match[1]!;</span>
+    const raw = <span class="cstat-no" title="statement not covered" >match[2]!;</span>
+<span class="cstat-no" title="statement not covered" >    if (options.knownOnly !== false &amp;&amp; !SCORING_CONSTANT_NAMES.has(name)) <span class="cstat-no" title="statement not covered" >continue;</span></span>
+    // Number() rejects underscore separators, so strip them before parsing.
+<span class="cstat-no" title="statement not covered" >    constants[name] = Number(raw.replace(/_/g, ""));</span>
+  }
+<span class="cstat-no" title="statement not covered" >  return constants;</span>
+}
+&nbsp;
+/**
+ * Upstream operational/infra constants loopover intentionally does not model in score previews.
+ * They are not scoring dimensions — surfacing them as "unmodeled drift" is noise (#809).
+ */
+const NON_SCORING_UPSTREAM_CONSTANT_NAMES = <span class="cstat-no" title="statement not covered" >new Set([</span>
+  "SECONDS_PER_DAY",
+  "SECONDS_PER_HOUR",
+  "GITHUB_HTTP_TIMEOUT_SECONDS",
+  "MIRROR_HTTP_TIMEOUT_SECONDS",
+  "MIRROR_MAX_ATTEMPTS",
+  "TREE_SITTER_PARSE_TIMEOUT_MICROS",
+  "SCORING_SUBPROCESS_BUDGET_S",
+  "MAX_FILE_SIZE_BYTES",
+  "RECYCLE_UID",
+  "ISSUES_TREASURY_UID",
+  "MAX_ISSUE_ID",
+  // Floating-point epsilon for the registry emission_share-sum validation
+  // (load_weights.py: `total_share &gt; 1.0 + EMISSION_SHARE_TOLERANCE`), not a scoring dimension — without
+  // this entry the parser (which reads exponent literals like `1e-9`, #992) flagged it as a permanent
+  // false-positive unmodeled-scoring-drift warning (#809).
+  "EMISSION_SHARE_TOLERANCE",
+  // Fallback weight applied by the validator's load_programming_language_weights() for extensions absent from
+  // the JSON file; loopover reads the JSON directly and does not track this loader default (#1692).
+  "DEFAULT_PROGRAMMING_LANGUAGE_WEIGHT",
+]);
+&nbsp;
+/**
+ * Numeric constant names upstream gittensor defines that loopover's scoring engine does NOT model.
+ * The normal parse is `knownOnly` (it keeps only constants we already encode), which silently hides
+ * upstream ADDITIONS — e.g. a newly-introduced time-decay constant. Surfacing these makes scoring
+ * staleness visible: if upstream adds a scoring dimension, an operator sees it instead of the gate
+ * silently drifting behind. Detection only — it does not change any score.
+ */
+export function <span class="fstat-no" title="function not covered" >findUnmodeledConstantKeys(a</span>llConstants: Record&lt;string, number&gt;): string[] {
+<span class="cstat-no" title="statement not covered" >  return Object.keys(allConstants)</span>
+    .<span class="fstat-no" title="function not covered" >filter((n</span>ame) =&gt; <span class="cstat-no" title="statement not covered" >!SCORING_CONSTANT_NAMES.has(name) &amp;&amp; !NON_SCORING_UPSTREAM_CONSTANT_NAMES.has(name))</span>
+    .sort();
+}
+&nbsp;
+export function <span class="fstat-no" title="function not covered" >findUnmodeledUpstreamConstants(s</span>ource: string): string[] {
+<span class="cstat-no" title="statement not covered" >  return findUnmodeledConstantKeys(parsePythonNumberConstants(source, { knownOnly: false }));</span>
+}
+&nbsp;
+/**
+ * Owner-controlled global gate for applying upstream time-decay to score previews (#703). Default OFF: the
+ * roadmap deferral requires the owner to review a before/after ranking diff before enabling. Even when on,
+ * a fresh PR is unaffected (decay 1.0), so it only changes aged-PR projections.
+ */
+export function <span class="fstat-no" title="function not covered" >isTimeDecayEnabled(e</span>nv: { SCORING_TIME_DECAY_ENABLED?: string | null | undefined }): boolean {
+<span class="cstat-no" title="statement not covered" >  return /^(1|true|yes|on)$/i.test(env.SCORING_TIME_DECAY_ENABLED ?? "");</span>
+}
+&nbsp;
+export function <span class="fstat-no" title="function not covered" >detectActiveModel(c</span>onstants: Record&lt;string, number&gt;): ScoringModelSnapshotRecord["activeModel"] {
+<span class="cstat-no" title="statement not covered" >  if (hasSaturationConstants(constants)) <span class="cstat-no" title="statement not covered" >return "pending_saturation_model";</span></span>
+<span class="cstat-no" title="statement not covered" >  if (hasDensityConstants(constants)) {</span>
+<span class="cstat-no" title="statement not covered" >    return "current_density_model";</span>
+  }
+<span class="cstat-no" title="statement not covered" >  return "unknown";</span>
+}
+&nbsp;
+// Exported (unlike the backend original, where these stay private) so `src/scoring/model.ts`'s
+// D1-bound `refreshScoringModelSnapshot`/`activeModelWarnings` can reuse them without duplication.
+export function <span class="fstat-no" title="function not covered" >hasSaturationConstants(c</span>onstants: Record&lt;string, number&gt;): boolean {
+<span class="cstat-no" title="statement not covered" >  return Number.isFinite(constants.SRC_TOK_SATURATION_SCALE);</span>
+}
+&nbsp;
+export function <span class="fstat-no" title="function not covered" >hasDensityConstants(c</span>onstants: Record&lt;string, number&gt;): boolean {
+<span class="cstat-no" title="statement not covered" >  return Number.isFinite(constants.MAX_CODE_DENSITY_MULTIPLIER) &amp;&amp; Number.isFinite(constants.MIN_TOKEN_SCORE_FOR_BASE_SCORE);</span>
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../../../sorter.js"></script>
+        <script src="../../../../block-navigation.js"></script>
+    </body>
+</html>
+    

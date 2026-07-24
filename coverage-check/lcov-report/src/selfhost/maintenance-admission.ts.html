@@ -1,0 +1,928 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/selfhost/maintenance-admission.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/selfhost</a> maintenance-admission.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/42</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/36</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/7</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/36</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a>
+<a name='L185'></a><a href='#L185'>185</a>
+<a name='L186'></a><a href='#L186'>186</a>
+<a name='L187'></a><a href='#L187'>187</a>
+<a name='L188'></a><a href='#L188'>188</a>
+<a name='L189'></a><a href='#L189'>189</a>
+<a name='L190'></a><a href='#L190'>190</a>
+<a name='L191'></a><a href='#L191'>191</a>
+<a name='L192'></a><a href='#L192'>192</a>
+<a name='L193'></a><a href='#L193'>193</a>
+<a name='L194'></a><a href='#L194'>194</a>
+<a name='L195'></a><a href='#L195'>195</a>
+<a name='L196'></a><a href='#L196'>196</a>
+<a name='L197'></a><a href='#L197'>197</a>
+<a name='L198'></a><a href='#L198'>198</a>
+<a name='L199'></a><a href='#L199'>199</a>
+<a name='L200'></a><a href='#L200'>200</a>
+<a name='L201'></a><a href='#L201'>201</a>
+<a name='L202'></a><a href='#L202'>202</a>
+<a name='L203'></a><a href='#L203'>203</a>
+<a name='L204'></a><a href='#L204'>204</a>
+<a name='L205'></a><a href='#L205'>205</a>
+<a name='L206'></a><a href='#L206'>206</a>
+<a name='L207'></a><a href='#L207'>207</a>
+<a name='L208'></a><a href='#L208'>208</a>
+<a name='L209'></a><a href='#L209'>209</a>
+<a name='L210'></a><a href='#L210'>210</a>
+<a name='L211'></a><a href='#L211'>211</a>
+<a name='L212'></a><a href='#L212'>212</a>
+<a name='L213'></a><a href='#L213'>213</a>
+<a name='L214'></a><a href='#L214'>214</a>
+<a name='L215'></a><a href='#L215'>215</a>
+<a name='L216'></a><a href='#L216'>216</a>
+<a name='L217'></a><a href='#L217'>217</a>
+<a name='L218'></a><a href='#L218'>218</a>
+<a name='L219'></a><a href='#L219'>219</a>
+<a name='L220'></a><a href='#L220'>220</a>
+<a name='L221'></a><a href='#L221'>221</a>
+<a name='L222'></a><a href='#L222'>222</a>
+<a name='L223'></a><a href='#L223'>223</a>
+<a name='L224'></a><a href='#L224'>224</a>
+<a name='L225'></a><a href='#L225'>225</a>
+<a name='L226'></a><a href='#L226'>226</a>
+<a name='L227'></a><a href='#L227'>227</a>
+<a name='L228'></a><a href='#L228'>228</a>
+<a name='L229'></a><a href='#L229'>229</a>
+<a name='L230'></a><a href='#L230'>230</a>
+<a name='L231'></a><a href='#L231'>231</a>
+<a name='L232'></a><a href='#L232'>232</a>
+<a name='L233'></a><a href='#L233'>233</a>
+<a name='L234'></a><a href='#L234'>234</a>
+<a name='L235'></a><a href='#L235'>235</a>
+<a name='L236'></a><a href='#L236'>236</a>
+<a name='L237'></a><a href='#L237'>237</a>
+<a name='L238'></a><a href='#L238'>238</a>
+<a name='L239'></a><a href='#L239'>239</a>
+<a name='L240'></a><a href='#L240'>240</a>
+<a name='L241'></a><a href='#L241'>241</a>
+<a name='L242'></a><a href='#L242'>242</a>
+<a name='L243'></a><a href='#L243'>243</a>
+<a name='L244'></a><a href='#L244'>244</a>
+<a name='L245'></a><a href='#L245'>245</a>
+<a name='L246'></a><a href='#L246'>246</a>
+<a name='L247'></a><a href='#L247'>247</a>
+<a name='L248'></a><a href='#L248'>248</a>
+<a name='L249'></a><a href='#L249'>249</a>
+<a name='L250'></a><a href='#L250'>250</a>
+<a name='L251'></a><a href='#L251'>251</a>
+<a name='L252'></a><a href='#L252'>252</a>
+<a name='L253'></a><a href='#L253'>253</a>
+<a name='L254'></a><a href='#L254'>254</a>
+<a name='L255'></a><a href='#L255'>255</a>
+<a name='L256'></a><a href='#L256'>256</a>
+<a name='L257'></a><a href='#L257'>257</a>
+<a name='L258'></a><a href='#L258'>258</a>
+<a name='L259'></a><a href='#L259'>259</a>
+<a name='L260'></a><a href='#L260'>260</a>
+<a name='L261'></a><a href='#L261'>261</a>
+<a name='L262'></a><a href='#L262'>262</a>
+<a name='L263'></a><a href='#L263'>263</a>
+<a name='L264'></a><a href='#L264'>264</a>
+<a name='L265'></a><a href='#L265'>265</a>
+<a name='L266'></a><a href='#L266'>266</a>
+<a name='L267'></a><a href='#L267'>267</a>
+<a name='L268'></a><a href='#L268'>268</a>
+<a name='L269'></a><a href='#L269'>269</a>
+<a name='L270'></a><a href='#L270'>270</a>
+<a name='L271'></a><a href='#L271'>271</a>
+<a name='L272'></a><a href='#L272'>272</a>
+<a name='L273'></a><a href='#L273'>273</a>
+<a name='L274'></a><a href='#L274'>274</a>
+<a name='L275'></a><a href='#L275'>275</a>
+<a name='L276'></a><a href='#L276'>276</a>
+<a name='L277'></a><a href='#L277'>277</a>
+<a name='L278'></a><a href='#L278'>278</a>
+<a name='L279'></a><a href='#L279'>279</a>
+<a name='L280'></a><a href='#L280'>280</a>
+<a name='L281'></a><a href='#L281'>281</a>
+<a name='L282'></a><a href='#L282'>282</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Maintenance-job backpressure / admission policy (#selfhost-runtime-pressure). User-facing work --
+// github-webhook, agent-regate-pr, the regate sweep trigger, recapture-preview (everything at or above
+// FOREGROUND_QUEUE_PRIORITY_FLOOR, see queue-common.ts) -- must always win a resource race against periodic
+// maintenance sweeps (contributor evidence, burden forecasts, RAG re-indexing, drift scans, product rollups,
+// notifications...). Those sweeps already run on a conservative cadence (every 30min/hourly/6-hourly, see
+// index.ts's enqueueScheduledJobs); the subset that makes real GitHub REST calls ALSO yields to an EXHAUSTED
+// GitHub REST budget (shouldWaitForGitHubRateLimit) via isGitHubBudgetBackgroundJob / GITHUB_BUDGET_BACKGROUND_TYPES
+// (queue-common.ts) -- purely-internal sweeps that touch no GitHub API (product-usage rollups, retention
+// pruning, notification delivery, and similar) have no such budget to yield to and correctly aren't in that set.
+// This module adds an ORTHOGONAL signal on top of whichever of those a job type already has: is the box itself
+// under load RIGHT NOW (a live-work backlog, an aging live job, a hot host CPU), independent of whether GitHub's
+// API happens to be rate-limited. The queue backends (sqlite-queue.ts / pg-queue.ts) consult this at CLAIM time,
+// the same way they already consult GitHub rate-limit admission where applicable: a denied maintenance job is
+// pushed back to 'pending' with a jittered future run_after -- its original enqueue time is left untouched, so
+// the age-based trickle below still works -- never dropped and never run early.
+//
+// TRICKLE: a maintenance job that has been pending since `maxDeferAgeMs` is force-admitted regardless of
+// current pressure, so a box under SUSTAINED load can never starve maintenance work forever -- it just runs at
+// a bounded minimum rate instead of its normal cadence.
+//
+// DRAIN (#selfhost-maintenance-self-pin): `maintenance_pending_high` alone is a LANE-WIDE aggregate count, with
+// no feedback loop back to that count as individual jobs age out via the trickle above -- so once the lane backs
+// up past `maxMaintenancePendingCount` and stays there (new maintenance work keeps arriving as fast as, or faster
+// than, the trickle drains it), EVERY claim is denied `maintenance_pending_high` until each job independently
+// reaches the full `maxDeferAgeMs` (hours later), and the aggregate count never has a chance to fall back under
+// the threshold in the meantime -- the backlog is deferred because it's high, and stays high because it's
+// deferred. `maintenanceDrainAgeMs` is a second, much shorter age escape scoped ONLY to the
+// `maintenance_pending_high` branch: a job that has waited at least this long is admitted despite the lane still
+// being over threshold, so the oldest jobs steadily leak through (throttled further by the queue's own
+// `backgroundConcurrency` claim cap) and the aggregate count can actually shrink well before the 4h backstop.
+// Newly-arrived jobs in the same burst still wait out `maintenanceDrainAgeMs` first, so this is a bounded trickle,
+// not a flood -- and it applies to `maintenance_pending_high` alone: `live_pending_high` / `live_job_age_high` /
+// `host_load_high` keep blocking maintenance outright, so live-review priority and host-load safety are untouched.
+import { deterministicJitterMs, parsePositiveIntEnv } from "./queue-common";
+&nbsp;
+// Periodic, repo/contributor-set-wide sweeps -- the heavy, deferrable maintenance lane. Deliberately EXCLUDES
+// the targeted, per-PR/per-repo jobs fanned out FROM some of these (or that serve a specific in-flight
+// PR/webhook directly): "backfill-repo-segment", "backfill-pr-details", "run-agent", "submit-draft",
+// "retry-orb-relay" stay on the normal background lane, unthrottled by this policy. Foreground job types
+// (github-webhook, agent-regate-pr, agent-regate-sweep, recapture-preview) are never listed here either -- they
+// are already priority-gated (FOREGROUND_QUEUE_PRIORITY_FLOOR) and this policy only ever runs for a
+// background-priority job.
+export const MAINTENANCE_JOB_TYPES: ReadonlySet&lt;string&gt; = <span class="cstat-no" title="statement not covered" >new Set([</span>
+  "backfill-registered-repos",
+  "refresh-registry",
+  "sync-brokered-installed-repos",
+  "refresh-installation-health",
+  "refresh-scoring-model",
+  "refresh-upstream-drift",
+  "file-upstream-drift-issues",
+  "build-contributor-evidence",
+  "build-contributor-decision-packs",
+  "refresh-contributor-activity",
+  "build-burden-forecasts",
+  "repair-data-fidelity",
+  "rollup-product-usage",
+  "prune-retention",
+  "generate-weekly-value-report",
+  "generate-review-recap",
+  "generate-maintainer-recap",
+  "generate-signal-snapshots",
+  "notify-evaluate",
+  "notify-deliver",
+  "ops-alerts",
+  "sweep-liveness-watchdog",
+  "loop-escalation-sweep",
+  "reconcile-open-prs",
+  "selftune",
+  "rag-index-repo",
+  "backlog-convergence-sweep",
+]);
+&nbsp;
+export function <span class="fstat-no" title="function not covered" >isMaintenanceJobType(t</span>ype: string): boolean {
+<span class="cstat-no" title="statement not covered" >  return MAINTENANCE_JOB_TYPES.has(type);</span>
+}
+&nbsp;
+export interface MaintenancePressureSignals {
+  /** Foreground-priority rows in pending/processing regardless of run_after -- includes work deliberately
+   *  scheduled for later (e.g. agent-regate-pr's staggered/rate-deferred per-PR backlog, index.ts:24-29's
+   *  "normal, expected, can legitimately stay nonzero for long periods"). Retained ONLY for the
+   *  loopover_queue_live_pending observability gauge (server.ts) -- evaluateMaintenanceAdmission deliberately
+   *  does NOT gate on this (#selfhost-maintenance-admission-runnable-signal): a raw count would starve
+   *  maintenance on backlog that was never actually competing for a claim slot. Use liveRunnableNowCount for
+   *  any real pressure decision. */
+  livePendingCount: number;
+  /** Age in ms of the oldest live row by created_at, regardless of run_after -- same "observability only,
+   *  not an admission signal" caveat as livePendingCount above; a deliberately future-scheduled job inflates
+   *  this without meaning anything is stuck. Use oldestLiveRunnableAgeMs for a real pressure decision. */
+  oldestLivePendingAgeMs: number | null;
+  /** Foreground-priority jobs that are genuinely active RIGHT NOW: either 'processing' (already claimed,
+   *  real in-flight resource use) or 'pending' AND due (run_after&lt;=now, not currently deferred by any
+   *  mechanism) -- distinct from livePendingCount, which also includes work deliberately deferred to the
+   *  future. #selfhost-queue-liveness's own diagnostic: "queue large but intentionally deferred" (this count
+   *  can be 0 with livePendingCount &gt; 0, transiently, and that is fine) vs. "queue stuck" (this count stays 0
+   *  while oldestLiveRunnableAgeMs -- once something IS active -- climbs, or while releaseStaleForegroundDeferrals
+   *  keeps finding stale work every sweep). This is the field evaluateMaintenanceAdmission's live_pending_high
+   *  check actually gates on. */
+  liveRunnableNowCount: number;
+  /** Age in ms of the oldest genuinely-active (processing, or pending AND due) foreground job -- null when
+   *  none qualifies right now. Distinct from oldestLivePendingAgeMs, which is dominated by a job intentionally
+   *  scheduled far in the future and says nothing about how long already-active work has sat unclaimed/running.
+   *  This is the field evaluateMaintenanceAdmission's live_job_age_high check actually gates on. */
+  oldestLiveRunnableAgeMs: number | null;
+  maintenancePendingCount: number;
+  oldestMaintenancePendingAgeMs: number | null;
+  /** Null when unavailable (see host-pressure.ts) -- a caller must treat null as "skip this check". */
+  hostLoadAvg1PerCore: number | null;
+  /** #selfhost-backlog-convergence: pending+processing count of `agent-regate-pr` jobs tagged
+   *  `foreground_lane='backlog'` (queue-fairness.ts) -- the backlog-convergence sweeper's own output, DISTINCT
+   *  from `livePendingCount` (which is priority-gated, not lane-gated, and includes fresh webhook/foreground
+   *  work too). A high count here means a real, currently-unresolved PR-review backlog exists; generic
+   *  maintenance should yield to draining it, same as it already yields to live webhook pressure. */
+  backlogConvergencePendingCount: number;
+  /** #selfhost-lane-observability: pending+processing count of `github-webhook` PR open/reopen/synchronize/
+   *  ready-for-review jobs tagged `foreground_lane='fresh'` (queue-fairness.ts) -- the COMPLEMENT of
+   *  backlogConvergencePendingCount within the fairness mechanism's classified lanes, exposed purely for the
+   *  dashboard breakdown (unlike backlogConvergencePendingCount, evaluateMaintenanceAdmission never consults
+   *  this field -- fresh-intake pressure has no maintenance-admission gate of its own). */
+  freshIntakePendingCount: number;
+}
+&nbsp;
+export interface MaintenanceAdmissionConfig {
+  enabled: boolean;
+  maxLivePendingCount: number;
+  maxLiveJobAgeMs: number;
+  maxMaintenancePendingCount: number;
+  maxHostLoadAvg1PerCore: number;
+  maxBacklogConvergencePendingCount: number;
+  deferMs: number;
+  maxDeferAgeMs: number;
+  maintenanceDrainAgeMs: number;
+}
+&nbsp;
+const DEFAULT_MAX_LIVE_PENDING_COUNT = <span class="cstat-no" title="statement not covered" >5;</span>
+const DEFAULT_MAX_LIVE_JOB_AGE_MS = <span class="cstat-no" title="statement not covered" >2 * 60_000;</span>
+const DEFAULT_MAX_MAINTENANCE_PENDING_COUNT = <span class="cstat-no" title="statement not covered" >15;</span>
+const DEFAULT_MAX_HOST_LOAD_AVG1_PER_CORE = <span class="cstat-no" title="statement not covered" >1.5;</span>
+// Deliberately more permissive than maxLivePendingCount (5): a real incident's backlog-convergence sweep can
+// legitimately queue several PRs across several repos at once (BACKLOG_CONVERGENCE_SWEEP_MAX_PRS=5 per repo per
+// sweep, selfhost/backlog-convergence.ts) without that alone meaning maintenance must fully yield -- only a
+// SUSTAINED backlog (this threshold exceeded) should compete with maintenance for admission.
+const DEFAULT_MAX_BACKLOG_CONVERGENCE_PENDING_COUNT = <span class="cstat-no" title="statement not covered" >10;</span>
+const DEFAULT_DEFER_MS = <span class="cstat-no" title="statement not covered" >3 * 60_000;</span>
+const DEFAULT_MAX_DEFER_AGE_MS = <span class="cstat-no" title="statement not covered" >4 * 60 * 60_000;</span>
+const DEFAULT_MAINTENANCE_DRAIN_AGE_MS = <span class="cstat-no" title="statement not covered" >10 * 60_000;</span>
+&nbsp;
+function <span class="fstat-no" title="function not covered" >maintenanceAdmissionEnabled(): boolean {</span>
+  const <span class="cstat-no" title="statement not covered" >raw = (process.env.MAINTENANCE_ADMISSION_ENABLED ?? "").trim().toLowerCase();</span>
+<span class="cstat-no" title="statement not covered" >  return raw !== "0" &amp;&amp; raw !== "false" &amp;&amp; raw !== "off" &amp;&amp; raw !== "no";</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >parsePositiveFloatEnv(n</span>ame: string, fallback: number): number {
+  const supplied = <span class="cstat-no" title="statement not covered" >process.env[name];</span>
+<span class="cstat-no" title="statement not covered" >  if (supplied === undefined) <span class="cstat-no" title="statement not covered" >return fallback;</span></span>
+  const parsed = <span class="cstat-no" title="statement not covered" >Number(supplied);</span>
+<span class="cstat-no" title="statement not covered" >  return Number.isFinite(parsed) &amp;&amp; parsed &gt;= 0 ? parsed : fallback;</span>
+}
+&nbsp;
+/** Reads every MAINTENANCE_ADMISSION_* knob from process.env, each with a sane, protective default. Resolved
+ *  ONCE per queue instance (mirrors queueBackgroundConcurrency / queueStartupJitterMs) rather than per job, so
+ *  a misconfigured value only warns once at startup instead of on every claim. */
+export function <span class="fstat-no" title="function not covered" >resolveMaintenanceAdmissionConfig(): MaintenanceAdmissionConfig {</span>
+  const maxDeferAgeMs = <span class="cstat-no" title="statement not covered" >parsePositiveIntEnv("MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS", {</span>
+    min: 60_000,
+    fallback: DEFAULT_MAX_DEFER_AGE_MS,
+  });
+  const requestedDrainAgeMs = <span class="cstat-no" title="statement not covered" >parsePositiveIntEnv("MAINTENANCE_ADMISSION_DRAIN_AGE_MS", {</span>
+    min: 1_000,
+    fallback: DEFAULT_MAINTENANCE_DRAIN_AGE_MS,
+  });
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    enabled: maintenanceAdmissionEnabled(),
+    maxLivePendingCount: parsePositiveIntEnv("MAINTENANCE_ADMISSION_MAX_LIVE_PENDING", {
+      min: 0,
+      fallback: DEFAULT_MAX_LIVE_PENDING_COUNT,
+    }),
+    maxLiveJobAgeMs: parsePositiveIntEnv("MAINTENANCE_ADMISSION_MAX_LIVE_AGE_MS", {
+      min: 0,
+      fallback: DEFAULT_MAX_LIVE_JOB_AGE_MS,
+    }),
+    maxMaintenancePendingCount: parsePositiveIntEnv("MAINTENANCE_ADMISSION_MAX_PENDING", {
+      min: 0,
+      fallback: DEFAULT_MAX_MAINTENANCE_PENDING_COUNT,
+    }),
+    maxHostLoadAvg1PerCore: parsePositiveFloatEnv(
+      "MAINTENANCE_ADMISSION_MAX_HOST_LOAD",
+      DEFAULT_MAX_HOST_LOAD_AVG1_PER_CORE,
+    ),
+    maxBacklogConvergencePendingCount: parsePositiveIntEnv("MAINTENANCE_ADMISSION_MAX_BACKLOG_CONVERGENCE_PENDING", {
+      min: 0,
+      fallback: DEFAULT_MAX_BACKLOG_CONVERGENCE_PENDING_COUNT,
+    }),
+    deferMs: parsePositiveIntEnv("MAINTENANCE_ADMISSION_DEFER_MS", { min: 1_000, fallback: DEFAULT_DEFER_MS }),
+    maxDeferAgeMs,
+    // Never longer than the trickle backstop itself -- a misconfigured drain age above maxDeferAgeMs would be a
+    // no-op (the trickle would always win first), so clamp it down rather than let it silently do nothing.
+    maintenanceDrainAgeMs: Math.min(requestedDrainAgeMs, maxDeferAgeMs),
+  };
+}
+&nbsp;
+export type MaintenanceAdmissionReason =
+  | "disabled"
+  | "trickle_max_defer_age"
+  | "live_pending_high"
+  | "live_job_age_high"
+  | "backlog_convergence_high"
+  | "maintenance_pending_high"
+  | "maintenance_pending_high_drain"
+  | "host_load_high"
+  | "pressure_clear";
+&nbsp;
+export interface MaintenanceAdmissionDecision {
+  admit: boolean;
+  reason: MaintenanceAdmissionReason;
+}
+&nbsp;
+/** PURE policy decision: admit this maintenance job now, or defer it? Checked in priority order -- the
+ *  trickle (age) escape hatch first, so a starved job is never re-denied by a later check, then each pressure
+ *  signal in turn. `pendingSinceMs` is the job's ORIGINAL enqueue time (its row's created_at), which the queue
+ *  backends (sqlite-queue.ts / pg-queue.ts) preserve across BOTH an admission-deferral requeue AND a coalesced
+ *  re-enqueue (a periodic scheduler re-requesting the same still-pending maintenance need) -- only a truly
+ *  fresh need, enqueued after the prior row was fully processed and deleted, starts a new clock. Otherwise a
+ *  re-enqueue cadence shorter than `maxDeferAgeMs` would keep re-arming the clock and defeat the trickle
+ *  entirely under sustained pressure.
+ *
+ *  `maintenance_pending_high` alone gets a SECOND, shorter age escape (`maintenanceDrainAgeMs`, see the module
+ *  comment above) so an aggregate-count block on the whole lane can't self-pin indefinitely -- live-pending,
+ *  live-job-age, and host-load stay hard blocks with no drain, since those signals aren't about the maintenance
+ *  lane's own size and letting maintenance through under THEM would defeat their purpose. */
+export function <span class="fstat-no" title="function not covered" >evaluateMaintenanceAdmission(</span>
+  signals: MaintenancePressureSignals,
+  config: MaintenanceAdmissionConfig,
+  pendingSinceMs: number,
+  nowMs: number,
+): MaintenanceAdmissionDecision {
+<span class="cstat-no" title="statement not covered" >  if (!config.enabled) <span class="cstat-no" title="statement not covered" >return { admit: true, reason: "disabled" };</span></span>
+<span class="cstat-no" title="statement not covered" >  if (nowMs - pendingSinceMs &gt;= config.maxDeferAgeMs) <span class="cstat-no" title="statement not covered" >return { admit: true, reason: "trickle_max_defer_age" };</span></span>
+  // Gated on genuinely ACTIVE live work (processing, or pending AND due), not the raw pending/processing
+  // count (#selfhost-maintenance-admission-runnable-signal): agent-regate-pr's normal, expected, staggered/
+  // rate-deferred per-PR backlog (index.ts:24-29) sits in 'pending' for a long time by design without being
+  // due yet, so counting it here would starve maintenance on work that was never actually competing for a
+  // claim slot -- exactly the "queue large but intentionally deferred" case liveRunnableNowCount's own doc
+  // comment (above) distinguishes from a genuinely stuck queue.
+<span class="cstat-no" title="statement not covered" >  if (signals.liveRunnableNowCount &gt; config.maxLivePendingCount) <span class="cstat-no" title="statement not covered" >return { admit: false, reason: "live_pending_high" };</span></span>
+<span class="cstat-no" title="statement not covered" >  if (signals.oldestLiveRunnableAgeMs !== null &amp;&amp; signals.oldestLiveRunnableAgeMs &gt; config.maxLiveJobAgeMs) {</span>
+<span class="cstat-no" title="statement not covered" >    return { admit: false, reason: "live_job_age_high" };</span>
+  }
+<span class="cstat-no" title="statement not covered" >  if (signals.backlogConvergencePendingCount &gt; config.maxBacklogConvergencePendingCount) {</span>
+<span class="cstat-no" title="statement not covered" >    return { admit: false, reason: "backlog_convergence_high" };</span>
+  }
+  const hostLoadHigh =
+<span class="cstat-no" title="statement not covered" >    signals.hostLoadAvg1PerCore !== null &amp;&amp; signals.hostLoadAvg1PerCore &gt; config.maxHostLoadAvg1PerCore;</span>
+<span class="cstat-no" title="statement not covered" >  if (signals.maintenancePendingCount &gt; config.maxMaintenancePendingCount) {</span>
+<span class="cstat-no" title="statement not covered" >    if (nowMs - pendingSinceMs &gt;= config.maintenanceDrainAgeMs) {</span>
+      // Host load is re-checked HERE, gating the drain escape specifically: draining more maintenance work onto
+      // an already CPU-overloaded box is exactly what host_load_high exists to prevent. A job that hasn't hit
+      // drain age yet is denied `maintenance_pending_high` regardless of host load (unchanged from before this
+      // escape existed) -- this check only ever changes the outcome for a job the drain would otherwise admit.
+<span class="cstat-no" title="statement not covered" >      if (hostLoadHigh) <span class="cstat-no" title="statement not covered" >return { admit: false, reason: "host_load_high" };</span></span>
+<span class="cstat-no" title="statement not covered" >      return { admit: true, reason: "maintenance_pending_high_drain" };</span>
+    }
+<span class="cstat-no" title="statement not covered" >    return { admit: false, reason: "maintenance_pending_high" };</span>
+  }
+<span class="cstat-no" title="statement not covered" >  if (hostLoadHigh) <span class="cstat-no" title="statement not covered" >return { admit: false, reason: "host_load_high" };</span></span>
+<span class="cstat-no" title="statement not covered" >  return { admit: true, reason: "pressure_clear" };</span>
+}
+&nbsp;
+/** Admission reasons that grant a maintenance job despite active pressure -- every reason except the two
+ *  "pressure was never a problem" ones (disabled / pressure_clear). Callers record a dedicated
+ *  granted-under-pressure metric for these, the counterpart to the existing deferred-by-reason metric, so an
+ *  operator can see the bounded trickle/drain actually firing instead of only ever seeing denials. */
+export function <span class="fstat-no" title="function not covered" >isMaintenanceAdmissionGrantedUnderPressure(r</span>eason: MaintenanceAdmissionReason): boolean {
+<span class="cstat-no" title="statement not covered" >  return reason === "trickle_max_defer_age" || reason === "maintenance_pending_high_drain";</span>
+}
+&nbsp;
+/** Jittered defer duration for a denied maintenance job -- the base `deferMs` plus up to another `deferMs` of
+ *  deterministic jitter (seeded by the job's own identity) so a whole cohort of denied jobs doesn't wake up on
+ *  the same tick and immediately re-trip the same pressure check (mirrors rateLimitRetryDelayWithJitter). */
+export function <span class="fstat-no" title="function not covered" >maintenanceAdmissionDeferMs(c</span>onfig: MaintenanceAdmissionConfig, jitterSeed: string): number {
+<span class="cstat-no" title="statement not covered" >  return config.deferMs + deterministicJitterMs(jitterSeed, config.deferMs);</span>
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    

@@ -1,0 +1,2833 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/review/visual/capture.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../../prettify.css" />
+    <link rel="stylesheet" href="../../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../../index.html">All files</a> / <a href="index.html">src/review/visual</a> capture.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/295</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/360</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/41</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/238</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a>
+<a name='L185'></a><a href='#L185'>185</a>
+<a name='L186'></a><a href='#L186'>186</a>
+<a name='L187'></a><a href='#L187'>187</a>
+<a name='L188'></a><a href='#L188'>188</a>
+<a name='L189'></a><a href='#L189'>189</a>
+<a name='L190'></a><a href='#L190'>190</a>
+<a name='L191'></a><a href='#L191'>191</a>
+<a name='L192'></a><a href='#L192'>192</a>
+<a name='L193'></a><a href='#L193'>193</a>
+<a name='L194'></a><a href='#L194'>194</a>
+<a name='L195'></a><a href='#L195'>195</a>
+<a name='L196'></a><a href='#L196'>196</a>
+<a name='L197'></a><a href='#L197'>197</a>
+<a name='L198'></a><a href='#L198'>198</a>
+<a name='L199'></a><a href='#L199'>199</a>
+<a name='L200'></a><a href='#L200'>200</a>
+<a name='L201'></a><a href='#L201'>201</a>
+<a name='L202'></a><a href='#L202'>202</a>
+<a name='L203'></a><a href='#L203'>203</a>
+<a name='L204'></a><a href='#L204'>204</a>
+<a name='L205'></a><a href='#L205'>205</a>
+<a name='L206'></a><a href='#L206'>206</a>
+<a name='L207'></a><a href='#L207'>207</a>
+<a name='L208'></a><a href='#L208'>208</a>
+<a name='L209'></a><a href='#L209'>209</a>
+<a name='L210'></a><a href='#L210'>210</a>
+<a name='L211'></a><a href='#L211'>211</a>
+<a name='L212'></a><a href='#L212'>212</a>
+<a name='L213'></a><a href='#L213'>213</a>
+<a name='L214'></a><a href='#L214'>214</a>
+<a name='L215'></a><a href='#L215'>215</a>
+<a name='L216'></a><a href='#L216'>216</a>
+<a name='L217'></a><a href='#L217'>217</a>
+<a name='L218'></a><a href='#L218'>218</a>
+<a name='L219'></a><a href='#L219'>219</a>
+<a name='L220'></a><a href='#L220'>220</a>
+<a name='L221'></a><a href='#L221'>221</a>
+<a name='L222'></a><a href='#L222'>222</a>
+<a name='L223'></a><a href='#L223'>223</a>
+<a name='L224'></a><a href='#L224'>224</a>
+<a name='L225'></a><a href='#L225'>225</a>
+<a name='L226'></a><a href='#L226'>226</a>
+<a name='L227'></a><a href='#L227'>227</a>
+<a name='L228'></a><a href='#L228'>228</a>
+<a name='L229'></a><a href='#L229'>229</a>
+<a name='L230'></a><a href='#L230'>230</a>
+<a name='L231'></a><a href='#L231'>231</a>
+<a name='L232'></a><a href='#L232'>232</a>
+<a name='L233'></a><a href='#L233'>233</a>
+<a name='L234'></a><a href='#L234'>234</a>
+<a name='L235'></a><a href='#L235'>235</a>
+<a name='L236'></a><a href='#L236'>236</a>
+<a name='L237'></a><a href='#L237'>237</a>
+<a name='L238'></a><a href='#L238'>238</a>
+<a name='L239'></a><a href='#L239'>239</a>
+<a name='L240'></a><a href='#L240'>240</a>
+<a name='L241'></a><a href='#L241'>241</a>
+<a name='L242'></a><a href='#L242'>242</a>
+<a name='L243'></a><a href='#L243'>243</a>
+<a name='L244'></a><a href='#L244'>244</a>
+<a name='L245'></a><a href='#L245'>245</a>
+<a name='L246'></a><a href='#L246'>246</a>
+<a name='L247'></a><a href='#L247'>247</a>
+<a name='L248'></a><a href='#L248'>248</a>
+<a name='L249'></a><a href='#L249'>249</a>
+<a name='L250'></a><a href='#L250'>250</a>
+<a name='L251'></a><a href='#L251'>251</a>
+<a name='L252'></a><a href='#L252'>252</a>
+<a name='L253'></a><a href='#L253'>253</a>
+<a name='L254'></a><a href='#L254'>254</a>
+<a name='L255'></a><a href='#L255'>255</a>
+<a name='L256'></a><a href='#L256'>256</a>
+<a name='L257'></a><a href='#L257'>257</a>
+<a name='L258'></a><a href='#L258'>258</a>
+<a name='L259'></a><a href='#L259'>259</a>
+<a name='L260'></a><a href='#L260'>260</a>
+<a name='L261'></a><a href='#L261'>261</a>
+<a name='L262'></a><a href='#L262'>262</a>
+<a name='L263'></a><a href='#L263'>263</a>
+<a name='L264'></a><a href='#L264'>264</a>
+<a name='L265'></a><a href='#L265'>265</a>
+<a name='L266'></a><a href='#L266'>266</a>
+<a name='L267'></a><a href='#L267'>267</a>
+<a name='L268'></a><a href='#L268'>268</a>
+<a name='L269'></a><a href='#L269'>269</a>
+<a name='L270'></a><a href='#L270'>270</a>
+<a name='L271'></a><a href='#L271'>271</a>
+<a name='L272'></a><a href='#L272'>272</a>
+<a name='L273'></a><a href='#L273'>273</a>
+<a name='L274'></a><a href='#L274'>274</a>
+<a name='L275'></a><a href='#L275'>275</a>
+<a name='L276'></a><a href='#L276'>276</a>
+<a name='L277'></a><a href='#L277'>277</a>
+<a name='L278'></a><a href='#L278'>278</a>
+<a name='L279'></a><a href='#L279'>279</a>
+<a name='L280'></a><a href='#L280'>280</a>
+<a name='L281'></a><a href='#L281'>281</a>
+<a name='L282'></a><a href='#L282'>282</a>
+<a name='L283'></a><a href='#L283'>283</a>
+<a name='L284'></a><a href='#L284'>284</a>
+<a name='L285'></a><a href='#L285'>285</a>
+<a name='L286'></a><a href='#L286'>286</a>
+<a name='L287'></a><a href='#L287'>287</a>
+<a name='L288'></a><a href='#L288'>288</a>
+<a name='L289'></a><a href='#L289'>289</a>
+<a name='L290'></a><a href='#L290'>290</a>
+<a name='L291'></a><a href='#L291'>291</a>
+<a name='L292'></a><a href='#L292'>292</a>
+<a name='L293'></a><a href='#L293'>293</a>
+<a name='L294'></a><a href='#L294'>294</a>
+<a name='L295'></a><a href='#L295'>295</a>
+<a name='L296'></a><a href='#L296'>296</a>
+<a name='L297'></a><a href='#L297'>297</a>
+<a name='L298'></a><a href='#L298'>298</a>
+<a name='L299'></a><a href='#L299'>299</a>
+<a name='L300'></a><a href='#L300'>300</a>
+<a name='L301'></a><a href='#L301'>301</a>
+<a name='L302'></a><a href='#L302'>302</a>
+<a name='L303'></a><a href='#L303'>303</a>
+<a name='L304'></a><a href='#L304'>304</a>
+<a name='L305'></a><a href='#L305'>305</a>
+<a name='L306'></a><a href='#L306'>306</a>
+<a name='L307'></a><a href='#L307'>307</a>
+<a name='L308'></a><a href='#L308'>308</a>
+<a name='L309'></a><a href='#L309'>309</a>
+<a name='L310'></a><a href='#L310'>310</a>
+<a name='L311'></a><a href='#L311'>311</a>
+<a name='L312'></a><a href='#L312'>312</a>
+<a name='L313'></a><a href='#L313'>313</a>
+<a name='L314'></a><a href='#L314'>314</a>
+<a name='L315'></a><a href='#L315'>315</a>
+<a name='L316'></a><a href='#L316'>316</a>
+<a name='L317'></a><a href='#L317'>317</a>
+<a name='L318'></a><a href='#L318'>318</a>
+<a name='L319'></a><a href='#L319'>319</a>
+<a name='L320'></a><a href='#L320'>320</a>
+<a name='L321'></a><a href='#L321'>321</a>
+<a name='L322'></a><a href='#L322'>322</a>
+<a name='L323'></a><a href='#L323'>323</a>
+<a name='L324'></a><a href='#L324'>324</a>
+<a name='L325'></a><a href='#L325'>325</a>
+<a name='L326'></a><a href='#L326'>326</a>
+<a name='L327'></a><a href='#L327'>327</a>
+<a name='L328'></a><a href='#L328'>328</a>
+<a name='L329'></a><a href='#L329'>329</a>
+<a name='L330'></a><a href='#L330'>330</a>
+<a name='L331'></a><a href='#L331'>331</a>
+<a name='L332'></a><a href='#L332'>332</a>
+<a name='L333'></a><a href='#L333'>333</a>
+<a name='L334'></a><a href='#L334'>334</a>
+<a name='L335'></a><a href='#L335'>335</a>
+<a name='L336'></a><a href='#L336'>336</a>
+<a name='L337'></a><a href='#L337'>337</a>
+<a name='L338'></a><a href='#L338'>338</a>
+<a name='L339'></a><a href='#L339'>339</a>
+<a name='L340'></a><a href='#L340'>340</a>
+<a name='L341'></a><a href='#L341'>341</a>
+<a name='L342'></a><a href='#L342'>342</a>
+<a name='L343'></a><a href='#L343'>343</a>
+<a name='L344'></a><a href='#L344'>344</a>
+<a name='L345'></a><a href='#L345'>345</a>
+<a name='L346'></a><a href='#L346'>346</a>
+<a name='L347'></a><a href='#L347'>347</a>
+<a name='L348'></a><a href='#L348'>348</a>
+<a name='L349'></a><a href='#L349'>349</a>
+<a name='L350'></a><a href='#L350'>350</a>
+<a name='L351'></a><a href='#L351'>351</a>
+<a name='L352'></a><a href='#L352'>352</a>
+<a name='L353'></a><a href='#L353'>353</a>
+<a name='L354'></a><a href='#L354'>354</a>
+<a name='L355'></a><a href='#L355'>355</a>
+<a name='L356'></a><a href='#L356'>356</a>
+<a name='L357'></a><a href='#L357'>357</a>
+<a name='L358'></a><a href='#L358'>358</a>
+<a name='L359'></a><a href='#L359'>359</a>
+<a name='L360'></a><a href='#L360'>360</a>
+<a name='L361'></a><a href='#L361'>361</a>
+<a name='L362'></a><a href='#L362'>362</a>
+<a name='L363'></a><a href='#L363'>363</a>
+<a name='L364'></a><a href='#L364'>364</a>
+<a name='L365'></a><a href='#L365'>365</a>
+<a name='L366'></a><a href='#L366'>366</a>
+<a name='L367'></a><a href='#L367'>367</a>
+<a name='L368'></a><a href='#L368'>368</a>
+<a name='L369'></a><a href='#L369'>369</a>
+<a name='L370'></a><a href='#L370'>370</a>
+<a name='L371'></a><a href='#L371'>371</a>
+<a name='L372'></a><a href='#L372'>372</a>
+<a name='L373'></a><a href='#L373'>373</a>
+<a name='L374'></a><a href='#L374'>374</a>
+<a name='L375'></a><a href='#L375'>375</a>
+<a name='L376'></a><a href='#L376'>376</a>
+<a name='L377'></a><a href='#L377'>377</a>
+<a name='L378'></a><a href='#L378'>378</a>
+<a name='L379'></a><a href='#L379'>379</a>
+<a name='L380'></a><a href='#L380'>380</a>
+<a name='L381'></a><a href='#L381'>381</a>
+<a name='L382'></a><a href='#L382'>382</a>
+<a name='L383'></a><a href='#L383'>383</a>
+<a name='L384'></a><a href='#L384'>384</a>
+<a name='L385'></a><a href='#L385'>385</a>
+<a name='L386'></a><a href='#L386'>386</a>
+<a name='L387'></a><a href='#L387'>387</a>
+<a name='L388'></a><a href='#L388'>388</a>
+<a name='L389'></a><a href='#L389'>389</a>
+<a name='L390'></a><a href='#L390'>390</a>
+<a name='L391'></a><a href='#L391'>391</a>
+<a name='L392'></a><a href='#L392'>392</a>
+<a name='L393'></a><a href='#L393'>393</a>
+<a name='L394'></a><a href='#L394'>394</a>
+<a name='L395'></a><a href='#L395'>395</a>
+<a name='L396'></a><a href='#L396'>396</a>
+<a name='L397'></a><a href='#L397'>397</a>
+<a name='L398'></a><a href='#L398'>398</a>
+<a name='L399'></a><a href='#L399'>399</a>
+<a name='L400'></a><a href='#L400'>400</a>
+<a name='L401'></a><a href='#L401'>401</a>
+<a name='L402'></a><a href='#L402'>402</a>
+<a name='L403'></a><a href='#L403'>403</a>
+<a name='L404'></a><a href='#L404'>404</a>
+<a name='L405'></a><a href='#L405'>405</a>
+<a name='L406'></a><a href='#L406'>406</a>
+<a name='L407'></a><a href='#L407'>407</a>
+<a name='L408'></a><a href='#L408'>408</a>
+<a name='L409'></a><a href='#L409'>409</a>
+<a name='L410'></a><a href='#L410'>410</a>
+<a name='L411'></a><a href='#L411'>411</a>
+<a name='L412'></a><a href='#L412'>412</a>
+<a name='L413'></a><a href='#L413'>413</a>
+<a name='L414'></a><a href='#L414'>414</a>
+<a name='L415'></a><a href='#L415'>415</a>
+<a name='L416'></a><a href='#L416'>416</a>
+<a name='L417'></a><a href='#L417'>417</a>
+<a name='L418'></a><a href='#L418'>418</a>
+<a name='L419'></a><a href='#L419'>419</a>
+<a name='L420'></a><a href='#L420'>420</a>
+<a name='L421'></a><a href='#L421'>421</a>
+<a name='L422'></a><a href='#L422'>422</a>
+<a name='L423'></a><a href='#L423'>423</a>
+<a name='L424'></a><a href='#L424'>424</a>
+<a name='L425'></a><a href='#L425'>425</a>
+<a name='L426'></a><a href='#L426'>426</a>
+<a name='L427'></a><a href='#L427'>427</a>
+<a name='L428'></a><a href='#L428'>428</a>
+<a name='L429'></a><a href='#L429'>429</a>
+<a name='L430'></a><a href='#L430'>430</a>
+<a name='L431'></a><a href='#L431'>431</a>
+<a name='L432'></a><a href='#L432'>432</a>
+<a name='L433'></a><a href='#L433'>433</a>
+<a name='L434'></a><a href='#L434'>434</a>
+<a name='L435'></a><a href='#L435'>435</a>
+<a name='L436'></a><a href='#L436'>436</a>
+<a name='L437'></a><a href='#L437'>437</a>
+<a name='L438'></a><a href='#L438'>438</a>
+<a name='L439'></a><a href='#L439'>439</a>
+<a name='L440'></a><a href='#L440'>440</a>
+<a name='L441'></a><a href='#L441'>441</a>
+<a name='L442'></a><a href='#L442'>442</a>
+<a name='L443'></a><a href='#L443'>443</a>
+<a name='L444'></a><a href='#L444'>444</a>
+<a name='L445'></a><a href='#L445'>445</a>
+<a name='L446'></a><a href='#L446'>446</a>
+<a name='L447'></a><a href='#L447'>447</a>
+<a name='L448'></a><a href='#L448'>448</a>
+<a name='L449'></a><a href='#L449'>449</a>
+<a name='L450'></a><a href='#L450'>450</a>
+<a name='L451'></a><a href='#L451'>451</a>
+<a name='L452'></a><a href='#L452'>452</a>
+<a name='L453'></a><a href='#L453'>453</a>
+<a name='L454'></a><a href='#L454'>454</a>
+<a name='L455'></a><a href='#L455'>455</a>
+<a name='L456'></a><a href='#L456'>456</a>
+<a name='L457'></a><a href='#L457'>457</a>
+<a name='L458'></a><a href='#L458'>458</a>
+<a name='L459'></a><a href='#L459'>459</a>
+<a name='L460'></a><a href='#L460'>460</a>
+<a name='L461'></a><a href='#L461'>461</a>
+<a name='L462'></a><a href='#L462'>462</a>
+<a name='L463'></a><a href='#L463'>463</a>
+<a name='L464'></a><a href='#L464'>464</a>
+<a name='L465'></a><a href='#L465'>465</a>
+<a name='L466'></a><a href='#L466'>466</a>
+<a name='L467'></a><a href='#L467'>467</a>
+<a name='L468'></a><a href='#L468'>468</a>
+<a name='L469'></a><a href='#L469'>469</a>
+<a name='L470'></a><a href='#L470'>470</a>
+<a name='L471'></a><a href='#L471'>471</a>
+<a name='L472'></a><a href='#L472'>472</a>
+<a name='L473'></a><a href='#L473'>473</a>
+<a name='L474'></a><a href='#L474'>474</a>
+<a name='L475'></a><a href='#L475'>475</a>
+<a name='L476'></a><a href='#L476'>476</a>
+<a name='L477'></a><a href='#L477'>477</a>
+<a name='L478'></a><a href='#L478'>478</a>
+<a name='L479'></a><a href='#L479'>479</a>
+<a name='L480'></a><a href='#L480'>480</a>
+<a name='L481'></a><a href='#L481'>481</a>
+<a name='L482'></a><a href='#L482'>482</a>
+<a name='L483'></a><a href='#L483'>483</a>
+<a name='L484'></a><a href='#L484'>484</a>
+<a name='L485'></a><a href='#L485'>485</a>
+<a name='L486'></a><a href='#L486'>486</a>
+<a name='L487'></a><a href='#L487'>487</a>
+<a name='L488'></a><a href='#L488'>488</a>
+<a name='L489'></a><a href='#L489'>489</a>
+<a name='L490'></a><a href='#L490'>490</a>
+<a name='L491'></a><a href='#L491'>491</a>
+<a name='L492'></a><a href='#L492'>492</a>
+<a name='L493'></a><a href='#L493'>493</a>
+<a name='L494'></a><a href='#L494'>494</a>
+<a name='L495'></a><a href='#L495'>495</a>
+<a name='L496'></a><a href='#L496'>496</a>
+<a name='L497'></a><a href='#L497'>497</a>
+<a name='L498'></a><a href='#L498'>498</a>
+<a name='L499'></a><a href='#L499'>499</a>
+<a name='L500'></a><a href='#L500'>500</a>
+<a name='L501'></a><a href='#L501'>501</a>
+<a name='L502'></a><a href='#L502'>502</a>
+<a name='L503'></a><a href='#L503'>503</a>
+<a name='L504'></a><a href='#L504'>504</a>
+<a name='L505'></a><a href='#L505'>505</a>
+<a name='L506'></a><a href='#L506'>506</a>
+<a name='L507'></a><a href='#L507'>507</a>
+<a name='L508'></a><a href='#L508'>508</a>
+<a name='L509'></a><a href='#L509'>509</a>
+<a name='L510'></a><a href='#L510'>510</a>
+<a name='L511'></a><a href='#L511'>511</a>
+<a name='L512'></a><a href='#L512'>512</a>
+<a name='L513'></a><a href='#L513'>513</a>
+<a name='L514'></a><a href='#L514'>514</a>
+<a name='L515'></a><a href='#L515'>515</a>
+<a name='L516'></a><a href='#L516'>516</a>
+<a name='L517'></a><a href='#L517'>517</a>
+<a name='L518'></a><a href='#L518'>518</a>
+<a name='L519'></a><a href='#L519'>519</a>
+<a name='L520'></a><a href='#L520'>520</a>
+<a name='L521'></a><a href='#L521'>521</a>
+<a name='L522'></a><a href='#L522'>522</a>
+<a name='L523'></a><a href='#L523'>523</a>
+<a name='L524'></a><a href='#L524'>524</a>
+<a name='L525'></a><a href='#L525'>525</a>
+<a name='L526'></a><a href='#L526'>526</a>
+<a name='L527'></a><a href='#L527'>527</a>
+<a name='L528'></a><a href='#L528'>528</a>
+<a name='L529'></a><a href='#L529'>529</a>
+<a name='L530'></a><a href='#L530'>530</a>
+<a name='L531'></a><a href='#L531'>531</a>
+<a name='L532'></a><a href='#L532'>532</a>
+<a name='L533'></a><a href='#L533'>533</a>
+<a name='L534'></a><a href='#L534'>534</a>
+<a name='L535'></a><a href='#L535'>535</a>
+<a name='L536'></a><a href='#L536'>536</a>
+<a name='L537'></a><a href='#L537'>537</a>
+<a name='L538'></a><a href='#L538'>538</a>
+<a name='L539'></a><a href='#L539'>539</a>
+<a name='L540'></a><a href='#L540'>540</a>
+<a name='L541'></a><a href='#L541'>541</a>
+<a name='L542'></a><a href='#L542'>542</a>
+<a name='L543'></a><a href='#L543'>543</a>
+<a name='L544'></a><a href='#L544'>544</a>
+<a name='L545'></a><a href='#L545'>545</a>
+<a name='L546'></a><a href='#L546'>546</a>
+<a name='L547'></a><a href='#L547'>547</a>
+<a name='L548'></a><a href='#L548'>548</a>
+<a name='L549'></a><a href='#L549'>549</a>
+<a name='L550'></a><a href='#L550'>550</a>
+<a name='L551'></a><a href='#L551'>551</a>
+<a name='L552'></a><a href='#L552'>552</a>
+<a name='L553'></a><a href='#L553'>553</a>
+<a name='L554'></a><a href='#L554'>554</a>
+<a name='L555'></a><a href='#L555'>555</a>
+<a name='L556'></a><a href='#L556'>556</a>
+<a name='L557'></a><a href='#L557'>557</a>
+<a name='L558'></a><a href='#L558'>558</a>
+<a name='L559'></a><a href='#L559'>559</a>
+<a name='L560'></a><a href='#L560'>560</a>
+<a name='L561'></a><a href='#L561'>561</a>
+<a name='L562'></a><a href='#L562'>562</a>
+<a name='L563'></a><a href='#L563'>563</a>
+<a name='L564'></a><a href='#L564'>564</a>
+<a name='L565'></a><a href='#L565'>565</a>
+<a name='L566'></a><a href='#L566'>566</a>
+<a name='L567'></a><a href='#L567'>567</a>
+<a name='L568'></a><a href='#L568'>568</a>
+<a name='L569'></a><a href='#L569'>569</a>
+<a name='L570'></a><a href='#L570'>570</a>
+<a name='L571'></a><a href='#L571'>571</a>
+<a name='L572'></a><a href='#L572'>572</a>
+<a name='L573'></a><a href='#L573'>573</a>
+<a name='L574'></a><a href='#L574'>574</a>
+<a name='L575'></a><a href='#L575'>575</a>
+<a name='L576'></a><a href='#L576'>576</a>
+<a name='L577'></a><a href='#L577'>577</a>
+<a name='L578'></a><a href='#L578'>578</a>
+<a name='L579'></a><a href='#L579'>579</a>
+<a name='L580'></a><a href='#L580'>580</a>
+<a name='L581'></a><a href='#L581'>581</a>
+<a name='L582'></a><a href='#L582'>582</a>
+<a name='L583'></a><a href='#L583'>583</a>
+<a name='L584'></a><a href='#L584'>584</a>
+<a name='L585'></a><a href='#L585'>585</a>
+<a name='L586'></a><a href='#L586'>586</a>
+<a name='L587'></a><a href='#L587'>587</a>
+<a name='L588'></a><a href='#L588'>588</a>
+<a name='L589'></a><a href='#L589'>589</a>
+<a name='L590'></a><a href='#L590'>590</a>
+<a name='L591'></a><a href='#L591'>591</a>
+<a name='L592'></a><a href='#L592'>592</a>
+<a name='L593'></a><a href='#L593'>593</a>
+<a name='L594'></a><a href='#L594'>594</a>
+<a name='L595'></a><a href='#L595'>595</a>
+<a name='L596'></a><a href='#L596'>596</a>
+<a name='L597'></a><a href='#L597'>597</a>
+<a name='L598'></a><a href='#L598'>598</a>
+<a name='L599'></a><a href='#L599'>599</a>
+<a name='L600'></a><a href='#L600'>600</a>
+<a name='L601'></a><a href='#L601'>601</a>
+<a name='L602'></a><a href='#L602'>602</a>
+<a name='L603'></a><a href='#L603'>603</a>
+<a name='L604'></a><a href='#L604'>604</a>
+<a name='L605'></a><a href='#L605'>605</a>
+<a name='L606'></a><a href='#L606'>606</a>
+<a name='L607'></a><a href='#L607'>607</a>
+<a name='L608'></a><a href='#L608'>608</a>
+<a name='L609'></a><a href='#L609'>609</a>
+<a name='L610'></a><a href='#L610'>610</a>
+<a name='L611'></a><a href='#L611'>611</a>
+<a name='L612'></a><a href='#L612'>612</a>
+<a name='L613'></a><a href='#L613'>613</a>
+<a name='L614'></a><a href='#L614'>614</a>
+<a name='L615'></a><a href='#L615'>615</a>
+<a name='L616'></a><a href='#L616'>616</a>
+<a name='L617'></a><a href='#L617'>617</a>
+<a name='L618'></a><a href='#L618'>618</a>
+<a name='L619'></a><a href='#L619'>619</a>
+<a name='L620'></a><a href='#L620'>620</a>
+<a name='L621'></a><a href='#L621'>621</a>
+<a name='L622'></a><a href='#L622'>622</a>
+<a name='L623'></a><a href='#L623'>623</a>
+<a name='L624'></a><a href='#L624'>624</a>
+<a name='L625'></a><a href='#L625'>625</a>
+<a name='L626'></a><a href='#L626'>626</a>
+<a name='L627'></a><a href='#L627'>627</a>
+<a name='L628'></a><a href='#L628'>628</a>
+<a name='L629'></a><a href='#L629'>629</a>
+<a name='L630'></a><a href='#L630'>630</a>
+<a name='L631'></a><a href='#L631'>631</a>
+<a name='L632'></a><a href='#L632'>632</a>
+<a name='L633'></a><a href='#L633'>633</a>
+<a name='L634'></a><a href='#L634'>634</a>
+<a name='L635'></a><a href='#L635'>635</a>
+<a name='L636'></a><a href='#L636'>636</a>
+<a name='L637'></a><a href='#L637'>637</a>
+<a name='L638'></a><a href='#L638'>638</a>
+<a name='L639'></a><a href='#L639'>639</a>
+<a name='L640'></a><a href='#L640'>640</a>
+<a name='L641'></a><a href='#L641'>641</a>
+<a name='L642'></a><a href='#L642'>642</a>
+<a name='L643'></a><a href='#L643'>643</a>
+<a name='L644'></a><a href='#L644'>644</a>
+<a name='L645'></a><a href='#L645'>645</a>
+<a name='L646'></a><a href='#L646'>646</a>
+<a name='L647'></a><a href='#L647'>647</a>
+<a name='L648'></a><a href='#L648'>648</a>
+<a name='L649'></a><a href='#L649'>649</a>
+<a name='L650'></a><a href='#L650'>650</a>
+<a name='L651'></a><a href='#L651'>651</a>
+<a name='L652'></a><a href='#L652'>652</a>
+<a name='L653'></a><a href='#L653'>653</a>
+<a name='L654'></a><a href='#L654'>654</a>
+<a name='L655'></a><a href='#L655'>655</a>
+<a name='L656'></a><a href='#L656'>656</a>
+<a name='L657'></a><a href='#L657'>657</a>
+<a name='L658'></a><a href='#L658'>658</a>
+<a name='L659'></a><a href='#L659'>659</a>
+<a name='L660'></a><a href='#L660'>660</a>
+<a name='L661'></a><a href='#L661'>661</a>
+<a name='L662'></a><a href='#L662'>662</a>
+<a name='L663'></a><a href='#L663'>663</a>
+<a name='L664'></a><a href='#L664'>664</a>
+<a name='L665'></a><a href='#L665'>665</a>
+<a name='L666'></a><a href='#L666'>666</a>
+<a name='L667'></a><a href='#L667'>667</a>
+<a name='L668'></a><a href='#L668'>668</a>
+<a name='L669'></a><a href='#L669'>669</a>
+<a name='L670'></a><a href='#L670'>670</a>
+<a name='L671'></a><a href='#L671'>671</a>
+<a name='L672'></a><a href='#L672'>672</a>
+<a name='L673'></a><a href='#L673'>673</a>
+<a name='L674'></a><a href='#L674'>674</a>
+<a name='L675'></a><a href='#L675'>675</a>
+<a name='L676'></a><a href='#L676'>676</a>
+<a name='L677'></a><a href='#L677'>677</a>
+<a name='L678'></a><a href='#L678'>678</a>
+<a name='L679'></a><a href='#L679'>679</a>
+<a name='L680'></a><a href='#L680'>680</a>
+<a name='L681'></a><a href='#L681'>681</a>
+<a name='L682'></a><a href='#L682'>682</a>
+<a name='L683'></a><a href='#L683'>683</a>
+<a name='L684'></a><a href='#L684'>684</a>
+<a name='L685'></a><a href='#L685'>685</a>
+<a name='L686'></a><a href='#L686'>686</a>
+<a name='L687'></a><a href='#L687'>687</a>
+<a name='L688'></a><a href='#L688'>688</a>
+<a name='L689'></a><a href='#L689'>689</a>
+<a name='L690'></a><a href='#L690'>690</a>
+<a name='L691'></a><a href='#L691'>691</a>
+<a name='L692'></a><a href='#L692'>692</a>
+<a name='L693'></a><a href='#L693'>693</a>
+<a name='L694'></a><a href='#L694'>694</a>
+<a name='L695'></a><a href='#L695'>695</a>
+<a name='L696'></a><a href='#L696'>696</a>
+<a name='L697'></a><a href='#L697'>697</a>
+<a name='L698'></a><a href='#L698'>698</a>
+<a name='L699'></a><a href='#L699'>699</a>
+<a name='L700'></a><a href='#L700'>700</a>
+<a name='L701'></a><a href='#L701'>701</a>
+<a name='L702'></a><a href='#L702'>702</a>
+<a name='L703'></a><a href='#L703'>703</a>
+<a name='L704'></a><a href='#L704'>704</a>
+<a name='L705'></a><a href='#L705'>705</a>
+<a name='L706'></a><a href='#L706'>706</a>
+<a name='L707'></a><a href='#L707'>707</a>
+<a name='L708'></a><a href='#L708'>708</a>
+<a name='L709'></a><a href='#L709'>709</a>
+<a name='L710'></a><a href='#L710'>710</a>
+<a name='L711'></a><a href='#L711'>711</a>
+<a name='L712'></a><a href='#L712'>712</a>
+<a name='L713'></a><a href='#L713'>713</a>
+<a name='L714'></a><a href='#L714'>714</a>
+<a name='L715'></a><a href='#L715'>715</a>
+<a name='L716'></a><a href='#L716'>716</a>
+<a name='L717'></a><a href='#L717'>717</a>
+<a name='L718'></a><a href='#L718'>718</a>
+<a name='L719'></a><a href='#L719'>719</a>
+<a name='L720'></a><a href='#L720'>720</a>
+<a name='L721'></a><a href='#L721'>721</a>
+<a name='L722'></a><a href='#L722'>722</a>
+<a name='L723'></a><a href='#L723'>723</a>
+<a name='L724'></a><a href='#L724'>724</a>
+<a name='L725'></a><a href='#L725'>725</a>
+<a name='L726'></a><a href='#L726'>726</a>
+<a name='L727'></a><a href='#L727'>727</a>
+<a name='L728'></a><a href='#L728'>728</a>
+<a name='L729'></a><a href='#L729'>729</a>
+<a name='L730'></a><a href='#L730'>730</a>
+<a name='L731'></a><a href='#L731'>731</a>
+<a name='L732'></a><a href='#L732'>732</a>
+<a name='L733'></a><a href='#L733'>733</a>
+<a name='L734'></a><a href='#L734'>734</a>
+<a name='L735'></a><a href='#L735'>735</a>
+<a name='L736'></a><a href='#L736'>736</a>
+<a name='L737'></a><a href='#L737'>737</a>
+<a name='L738'></a><a href='#L738'>738</a>
+<a name='L739'></a><a href='#L739'>739</a>
+<a name='L740'></a><a href='#L740'>740</a>
+<a name='L741'></a><a href='#L741'>741</a>
+<a name='L742'></a><a href='#L742'>742</a>
+<a name='L743'></a><a href='#L743'>743</a>
+<a name='L744'></a><a href='#L744'>744</a>
+<a name='L745'></a><a href='#L745'>745</a>
+<a name='L746'></a><a href='#L746'>746</a>
+<a name='L747'></a><a href='#L747'>747</a>
+<a name='L748'></a><a href='#L748'>748</a>
+<a name='L749'></a><a href='#L749'>749</a>
+<a name='L750'></a><a href='#L750'>750</a>
+<a name='L751'></a><a href='#L751'>751</a>
+<a name='L752'></a><a href='#L752'>752</a>
+<a name='L753'></a><a href='#L753'>753</a>
+<a name='L754'></a><a href='#L754'>754</a>
+<a name='L755'></a><a href='#L755'>755</a>
+<a name='L756'></a><a href='#L756'>756</a>
+<a name='L757'></a><a href='#L757'>757</a>
+<a name='L758'></a><a href='#L758'>758</a>
+<a name='L759'></a><a href='#L759'>759</a>
+<a name='L760'></a><a href='#L760'>760</a>
+<a name='L761'></a><a href='#L761'>761</a>
+<a name='L762'></a><a href='#L762'>762</a>
+<a name='L763'></a><a href='#L763'>763</a>
+<a name='L764'></a><a href='#L764'>764</a>
+<a name='L765'></a><a href='#L765'>765</a>
+<a name='L766'></a><a href='#L766'>766</a>
+<a name='L767'></a><a href='#L767'>767</a>
+<a name='L768'></a><a href='#L768'>768</a>
+<a name='L769'></a><a href='#L769'>769</a>
+<a name='L770'></a><a href='#L770'>770</a>
+<a name='L771'></a><a href='#L771'>771</a>
+<a name='L772'></a><a href='#L772'>772</a>
+<a name='L773'></a><a href='#L773'>773</a>
+<a name='L774'></a><a href='#L774'>774</a>
+<a name='L775'></a><a href='#L775'>775</a>
+<a name='L776'></a><a href='#L776'>776</a>
+<a name='L777'></a><a href='#L777'>777</a>
+<a name='L778'></a><a href='#L778'>778</a>
+<a name='L779'></a><a href='#L779'>779</a>
+<a name='L780'></a><a href='#L780'>780</a>
+<a name='L781'></a><a href='#L781'>781</a>
+<a name='L782'></a><a href='#L782'>782</a>
+<a name='L783'></a><a href='#L783'>783</a>
+<a name='L784'></a><a href='#L784'>784</a>
+<a name='L785'></a><a href='#L785'>785</a>
+<a name='L786'></a><a href='#L786'>786</a>
+<a name='L787'></a><a href='#L787'>787</a>
+<a name='L788'></a><a href='#L788'>788</a>
+<a name='L789'></a><a href='#L789'>789</a>
+<a name='L790'></a><a href='#L790'>790</a>
+<a name='L791'></a><a href='#L791'>791</a>
+<a name='L792'></a><a href='#L792'>792</a>
+<a name='L793'></a><a href='#L793'>793</a>
+<a name='L794'></a><a href='#L794'>794</a>
+<a name='L795'></a><a href='#L795'>795</a>
+<a name='L796'></a><a href='#L796'>796</a>
+<a name='L797'></a><a href='#L797'>797</a>
+<a name='L798'></a><a href='#L798'>798</a>
+<a name='L799'></a><a href='#L799'>799</a>
+<a name='L800'></a><a href='#L800'>800</a>
+<a name='L801'></a><a href='#L801'>801</a>
+<a name='L802'></a><a href='#L802'>802</a>
+<a name='L803'></a><a href='#L803'>803</a>
+<a name='L804'></a><a href='#L804'>804</a>
+<a name='L805'></a><a href='#L805'>805</a>
+<a name='L806'></a><a href='#L806'>806</a>
+<a name='L807'></a><a href='#L807'>807</a>
+<a name='L808'></a><a href='#L808'>808</a>
+<a name='L809'></a><a href='#L809'>809</a>
+<a name='L810'></a><a href='#L810'>810</a>
+<a name='L811'></a><a href='#L811'>811</a>
+<a name='L812'></a><a href='#L812'>812</a>
+<a name='L813'></a><a href='#L813'>813</a>
+<a name='L814'></a><a href='#L814'>814</a>
+<a name='L815'></a><a href='#L815'>815</a>
+<a name='L816'></a><a href='#L816'>816</a>
+<a name='L817'></a><a href='#L817'>817</a>
+<a name='L818'></a><a href='#L818'>818</a>
+<a name='L819'></a><a href='#L819'>819</a>
+<a name='L820'></a><a href='#L820'>820</a>
+<a name='L821'></a><a href='#L821'>821</a>
+<a name='L822'></a><a href='#L822'>822</a>
+<a name='L823'></a><a href='#L823'>823</a>
+<a name='L824'></a><a href='#L824'>824</a>
+<a name='L825'></a><a href='#L825'>825</a>
+<a name='L826'></a><a href='#L826'>826</a>
+<a name='L827'></a><a href='#L827'>827</a>
+<a name='L828'></a><a href='#L828'>828</a>
+<a name='L829'></a><a href='#L829'>829</a>
+<a name='L830'></a><a href='#L830'>830</a>
+<a name='L831'></a><a href='#L831'>831</a>
+<a name='L832'></a><a href='#L832'>832</a>
+<a name='L833'></a><a href='#L833'>833</a>
+<a name='L834'></a><a href='#L834'>834</a>
+<a name='L835'></a><a href='#L835'>835</a>
+<a name='L836'></a><a href='#L836'>836</a>
+<a name='L837'></a><a href='#L837'>837</a>
+<a name='L838'></a><a href='#L838'>838</a>
+<a name='L839'></a><a href='#L839'>839</a>
+<a name='L840'></a><a href='#L840'>840</a>
+<a name='L841'></a><a href='#L841'>841</a>
+<a name='L842'></a><a href='#L842'>842</a>
+<a name='L843'></a><a href='#L843'>843</a>
+<a name='L844'></a><a href='#L844'>844</a>
+<a name='L845'></a><a href='#L845'>845</a>
+<a name='L846'></a><a href='#L846'>846</a>
+<a name='L847'></a><a href='#L847'>847</a>
+<a name='L848'></a><a href='#L848'>848</a>
+<a name='L849'></a><a href='#L849'>849</a>
+<a name='L850'></a><a href='#L850'>850</a>
+<a name='L851'></a><a href='#L851'>851</a>
+<a name='L852'></a><a href='#L852'>852</a>
+<a name='L853'></a><a href='#L853'>853</a>
+<a name='L854'></a><a href='#L854'>854</a>
+<a name='L855'></a><a href='#L855'>855</a>
+<a name='L856'></a><a href='#L856'>856</a>
+<a name='L857'></a><a href='#L857'>857</a>
+<a name='L858'></a><a href='#L858'>858</a>
+<a name='L859'></a><a href='#L859'>859</a>
+<a name='L860'></a><a href='#L860'>860</a>
+<a name='L861'></a><a href='#L861'>861</a>
+<a name='L862'></a><a href='#L862'>862</a>
+<a name='L863'></a><a href='#L863'>863</a>
+<a name='L864'></a><a href='#L864'>864</a>
+<a name='L865'></a><a href='#L865'>865</a>
+<a name='L866'></a><a href='#L866'>866</a>
+<a name='L867'></a><a href='#L867'>867</a>
+<a name='L868'></a><a href='#L868'>868</a>
+<a name='L869'></a><a href='#L869'>869</a>
+<a name='L870'></a><a href='#L870'>870</a>
+<a name='L871'></a><a href='#L871'>871</a>
+<a name='L872'></a><a href='#L872'>872</a>
+<a name='L873'></a><a href='#L873'>873</a>
+<a name='L874'></a><a href='#L874'>874</a>
+<a name='L875'></a><a href='#L875'>875</a>
+<a name='L876'></a><a href='#L876'>876</a>
+<a name='L877'></a><a href='#L877'>877</a>
+<a name='L878'></a><a href='#L878'>878</a>
+<a name='L879'></a><a href='#L879'>879</a>
+<a name='L880'></a><a href='#L880'>880</a>
+<a name='L881'></a><a href='#L881'>881</a>
+<a name='L882'></a><a href='#L882'>882</a>
+<a name='L883'></a><a href='#L883'>883</a>
+<a name='L884'></a><a href='#L884'>884</a>
+<a name='L885'></a><a href='#L885'>885</a>
+<a name='L886'></a><a href='#L886'>886</a>
+<a name='L887'></a><a href='#L887'>887</a>
+<a name='L888'></a><a href='#L888'>888</a>
+<a name='L889'></a><a href='#L889'>889</a>
+<a name='L890'></a><a href='#L890'>890</a>
+<a name='L891'></a><a href='#L891'>891</a>
+<a name='L892'></a><a href='#L892'>892</a>
+<a name='L893'></a><a href='#L893'>893</a>
+<a name='L894'></a><a href='#L894'>894</a>
+<a name='L895'></a><a href='#L895'>895</a>
+<a name='L896'></a><a href='#L896'>896</a>
+<a name='L897'></a><a href='#L897'>897</a>
+<a name='L898'></a><a href='#L898'>898</a>
+<a name='L899'></a><a href='#L899'>899</a>
+<a name='L900'></a><a href='#L900'>900</a>
+<a name='L901'></a><a href='#L901'>901</a>
+<a name='L902'></a><a href='#L902'>902</a>
+<a name='L903'></a><a href='#L903'>903</a>
+<a name='L904'></a><a href='#L904'>904</a>
+<a name='L905'></a><a href='#L905'>905</a>
+<a name='L906'></a><a href='#L906'>906</a>
+<a name='L907'></a><a href='#L907'>907</a>
+<a name='L908'></a><a href='#L908'>908</a>
+<a name='L909'></a><a href='#L909'>909</a>
+<a name='L910'></a><a href='#L910'>910</a>
+<a name='L911'></a><a href='#L911'>911</a>
+<a name='L912'></a><a href='#L912'>912</a>
+<a name='L913'></a><a href='#L913'>913</a>
+<a name='L914'></a><a href='#L914'>914</a>
+<a name='L915'></a><a href='#L915'>915</a>
+<a name='L916'></a><a href='#L916'>916</a>
+<a name='L917'></a><a href='#L917'>917</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Realtime visual capture (reviewbot→loopover convergence — visual port). taopedia-style before/after.
+//
+// before = production (review.visual.production_url, falling back to the global PUBLIC_SITE_ORIGIN env var);
+// after = the PR's preview-deploy URL, discovered the
+// provider-agnostic way (Deployments API → commit checks → cloudflare-bot PR comment). Each page is
+// rendered once here (in the queue consumer, which has the time budget), stored as a PNG in R2
+// (env.REVIEW_AUDIT), and embedded either as &lt;PUBLIC_API_ORIGIN&gt;/loopover/shot?key=&lt;r2key&gt; (this
+// instance's own proxy route) or, when REVIEW_AUDIT_S3_PUBLIC_URL is configured (an operator's own
+// publicly-readable S3-compatible bucket — see src/selfhost/s3-blob-store.ts), a direct link at the
+// bucket's own public URL — see resolveShotUrl below. Either way, GitHub's image proxy fetches a fast
+// static object instead of waiting on a live browser render.
+//
+// PORTED from reviewbot's src/agents/loopover/capture.ts (mapFilesToRoutes / routeForFile / capturePage /
+// buildCapture), adapted to loopover bindings + origins. The agent-config-driven route rules, authed-route
+// preview session, and explicit-route override are intentionally dropped here — loopover's UI uses the
+// default TanStack route convention; those hooks can return if a per-repo visual config is added.
+import { base64Encode, sha256Hex } from "../../utils/crypto";
+import type { AiContentBlock } from "../../types";
+import { isSafeHttpUrl } from "../content-lane/safe-url";
+import { downscaleForDisplay, downscaleForVision, isDisplayDownscaleAvailable } from "./image-downscale";
+import type { GitHubRateLimitAdmissionKey } from "../../github/client";
+import { dispatchVisualCaptureFallback, fallbackShotR2Key, isFallbackDispatchInFlight, markFallbackDispatched } from "./actions-fallback";
+import { MAX_PREVIEW_POLL_ATTEMPTS, previewPollAttemptCount, recordPreviewPollAttempt } from "./preview-poll-budget";
+import {
+  findPreviewUrlFromChecks,
+  findPreviewUrlFromPrComments,
+  getLatestDeploymentStatus,
+  getPreviewBuildState,
+  parseRepo,
+} from "./preview-url";
+import { captureInteractionFrames, captureScrollFrames, captureShot, DESKTOP_VIEWPORT, MOBILE_VIEWPORT, type InteractionAction, type ShotTheme, type Viewport } from "./shot";
+import { compareCapturedScreenshots, isVisualDiffAvailable, type VisualDiffOutcome } from "./pixel-diff";
+import { encodeScrollGif, isScrollGifAvailable } from "./scroll-gif";
+import { detectAutoHoverInteractions, type ChangedCssFile } from "./interaction-detection";
+&nbsp;
+const NAMESPACE = <span class="cstat-no" title="statement not covered" >"loopover";</span>
+const DEFAULT_ROUTES = <span class="cstat-no" title="statement not covered" >["/"];</span>
+// The app-folder segment is a wildcard, not hardcoded to loopover-ui: metagraphed's UI (apps/ui/src/routes/)
+// uses the identical TanStack flat-file convention `routeForFile` below implements, just under a different app
+// folder name. Only ever matched against the CURRENT repo's own changed-file paths (see mapFilesToRoutes'
+// caller), so widening this carries no cross-repo ambiguity risk.
+const DEFAULT_ROUTE_FILE = <span class="cstat-no" title="statement not covered" >/apps\/[^/]+\/src\/routes\/(.+?)\.(?:tsx|jsx)$/i;</span>
+// Each route renders desktop + mobile for before + after (up to 4 PNGs). Cap routes to bound browser-render
+// wall-clock — Browser Rendering is the costliest binding.
+const MAX_ROUTES = <span class="cstat-no" title="statement not covered" >2;</span>
+const MAX_CONFIGURED_ROUTES = <span class="cstat-no" title="statement not covered" >5;</span>
+const MAX_EXTERNAL_SCREENSHOT_REDIRECTS = <span class="cstat-no" title="statement not covered" >2;</span>
+const MAX_EXTERNAL_SCREENSHOT_BYTES = <span class="cstat-no" title="statement not covered" >4 * 1024 * 1024;</span>
+const EXTERNAL_SCREENSHOT_FETCH_TIMEOUT_MS = <span class="cstat-no" title="statement not covered" >8_000;</span>
+const ALLOWED_EXTERNAL_SCREENSHOT_MIME_TYPES = <span class="cstat-no" title="statement not covered" >new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);</span>
+&nbsp;
+/** A single captured route's before/after shot URLs (desktop + mobile), plus an optional pixel-diff overlay
+ *  per viewport (#3674) — self-host only (isVisualDiffAvailable), and only when the diff clears the visual-
+ *  diff module's own noise threshold; undefined slot ⇒ a dash cell either way. `theme` is set only when
+ *  `review.visual.themes` (#3678) configured more than the implicit single default capture — undefined means
+ *  "the one, un-emulated default render", exactly like today. `beforeGifUrl`/`afterGifUrl` (#3612) are a
+ *  short scroll-through animation — self-host only (isScrollGifAvailable) and only when `review.visual.gif`
+ *  opts in; desktop viewport only in this first cut (see buildCapture's scoping note). */
+export interface CaptureRoute {
+  path: string;
+  theme?: ShotTheme | undefined;
+  beforeUrl?: string | undefined;
+  beforeUrlMobile?: string | undefined;
+  afterUrl?: string | undefined;
+  afterUrlMobile?: string | undefined;
+  // #6324: a separate, downscaled DISPLAY copy of each shot -- self-host only (see capturePage's own doc
+  // comment for why). beforeUrl/afterUrl above are UNCHANGED in meaning (still the full-resolution original,
+  // still what "click to open full-size" resolves to); these are additive fields the comment table prefers
+  // for the embedded &lt;img&gt; when present, falling back to beforeUrl/afterUrl when absent (hosted mode, or a
+  // resize that didn't actually shrink anything). desktop/mobile get independent thumb fields, mirroring
+  // beforeUrl/beforeUrlMobile's own split -- both viewports need a bounded thumbnail (see the mobile fix's
+  // own doc comment on capturePage's thumbKey below), not just desktop.
+  beforeThumbUrl?: string | undefined;
+  afterThumbUrl?: string | undefined;
+  beforeThumbUrlMobile?: string | undefined;
+  afterThumbUrlMobile?: string | undefined;
+  diffUrl?: string | undefined;
+  diffUrlMobile?: string | undefined;
+  beforeGifUrl?: string | undefined;
+  afterGifUrl?: string | undefined;
+}
+&nbsp;
+/** The capture pipeline's result: the rendered routes, any captured interaction GIFs, plus whether a
+ *  preview build is still pending. `interactions` is always `[]` when `review.visual.interactions` is
+ *  unconfigured — byte-identical to today for every repo that hasn't opted in. */
+export interface CaptureResult {
+  routes: CaptureRoute[];
+  interactions: CaptureInteractionRoute[];
+  previewPending: boolean;
+}
+&nbsp;
+/** True when `url` is a persisted rendered shot. `capturePage` can also return an on-demand `?url=`
+ *  fallback when R2 is unavailable or a browser render fails; that link is useful review UI, but it is not
+ *  proof the bot produced a before/after PNG pair for the current head. Only cached `?key=` shots are strong
+ *  enough to satisfy the screenshot-table gate without a hand-authored table. */
+function <span class="fstat-no" title="function not covered" >isPersistedShotUrl(u</span>rl: string | undefined): boolean {
+<span class="cstat-no" title="statement not covered" >  return (</span>
+    typeof url === "string" &amp;&amp;
+    url.length &gt; 0 &amp;&amp;
+    url.includes("/shot?") &amp;&amp;
+    url.includes("key=") &amp;&amp;
+    !url.includes("placeholder=")
+  );
+}
+&nbsp;
+/** True when `route` has a real before+after PAIR on at least one viewport (desktop or mobile) — the
+ *  deterministic signal {@link hasSuccessfulBotCapture} uses per-route. Requiring BOTH sides of the SAME
+ *  viewport (not "any before" + "any after" mixed across viewports) mirrors what a reviewer actually sees in
+ *  the "Visual preview" table: one comparable pair, not two unrelated renders. */
+function <span class="fstat-no" title="function not covered" >routeHasRealBeforeAfterPair(r</span>oute: CaptureRoute): boolean {
+  const desktopReal = <span class="cstat-no" title="statement not covered" >isPersistedShotUrl(route.beforeUrl) &amp;&amp; isPersistedShotUrl(route.afterUrl);</span>
+  const mobileReal = <span class="cstat-no" title="statement not covered" >isPersistedShotUrl(route.beforeUrlMobile) &amp;&amp; isPersistedShotUrl(route.afterUrlMobile);</span>
+<span class="cstat-no" title="statement not covered" >  return desktopReal || mobileReal;</span>
+}
+&nbsp;
+/**
+ * True when at least one captured route has a REAL before+after render pair (#4110) — the deterministic
+ * signal the screenshot-table gate (`review/screenshot-table-gate.ts`) treats as equivalent to a hand-authored
+ * before/after table: a bot-rendered pair already proves the reviewer can SEE the change, so demanding a
+ * manual table on top of it would be redundant friction. A capture whose routes are all placeholders (preview
+ * still building, deploy failed, auth-walled) or empty (capture never ran / found nothing) does NOT satisfy —
+ * only a genuinely rendered pair does.
+ */
+export function <span class="fstat-no" title="function not covered" >hasSuccessfulBotCapture(r</span>outes: readonly CaptureRoute[]): boolean {
+<span class="cstat-no" title="statement not covered" >  return routes.some(routeHasRealBeforeAfterPair);</span>
+}
+&nbsp;
+/**
+ * Fetch an already-captured shot (a `CaptureRoute.before*`/`after*` URL) and return it as an `AiContentBlock`
+ * for a vision-capable AI call (#4111 wiring) — every captured shot is a PNG (see `capturePage`'s
+ * `screenshot({type: "png", ...})` call in `./shot.ts`), so the MIME type is fixed rather than sniffed.
+ * Returns undefined on any fetch/read failure so one broken image degrades to "drop this image", never a
+ * thrown error — mirrors `capturePage`'s own "returns null on any failure so callers degrade gracefully"
+ * convention.
+ */
+export async function <span class="fstat-no" title="function not covered" >fetchShotContentBlock(u</span>rl: string): Promise&lt;AiContentBlock | undefined&gt; {
+<span class="cstat-no" title="statement not covered" >  try {</span>
+    // Bound the fetch like every other external screenshot call in this file (#7070) -- resolveShotUrl below
+    // already uses this same timeout; a TimeoutError rejection is caught by the surrounding catch.
+    const response = <span class="cstat-no" title="statement not covered" >await fetch(url, { signal: AbortSignal.timeout(EXTERNAL_SCREENSHOT_FETCH_TIMEOUT_MS) });</span>
+<span class="cstat-no" title="statement not covered" >    if (!response.ok) <span class="cstat-no" title="statement not covered" >return undefined;</span></span>
+    const bytes = <span class="cstat-no" title="statement not covered" >new Uint8Array(await response.arrayBuffer());</span>
+<span class="cstat-no" title="statement not covered" >    return { type: "image", data: base64Encode(await downscaleForVision(bytes)), mimeType: "image/png" };</span>
+  } catch {
+<span class="cstat-no" title="statement not covered" >    return undefined;</span>
+  }
+}
+&nbsp;
+&nbsp;
+function <span class="fstat-no" title="function not covered" >redirectLocation(r</span>esponse: Response, currentUrl: string): string {
+  const location = <span class="cstat-no" title="statement not covered" >response.headers.get("location");</span>
+<span class="cstat-no" title="statement not covered" >  if (!location) <span class="cstat-no" title="statement not covered" >return "";</span></span>
+<span class="cstat-no" title="statement not covered" >  try {</span>
+<span class="cstat-no" title="statement not covered" >    return new URL(location, currentUrl).toString();</span>
+  } catch {
+<span class="cstat-no" title="statement not covered" >    return "";</span>
+  }
+}
+&nbsp;
+async function <span class="fstat-no" title="function not covered" >readBoundedResponseBytes(r</span>esponse: Response, maxBytes: number): Promise&lt;Uint8Array | undefined&gt; {
+  const contentLength = <span class="cstat-no" title="statement not covered" >Number(response.headers.get("content-length") ?? "");</span>
+<span class="cstat-no" title="statement not covered" >  if (Number.isFinite(contentLength) &amp;&amp; contentLength &gt; maxBytes) <span class="cstat-no" title="statement not covered" >return undefined;</span></span>
+  /* v8 ignore next -- Fetch Response bodies are present in Workers/Node; keep the fallback for nonstandard test doubles. */
+  if (!response.body) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    return bytes.byteLength &gt; maxBytes ? undefined : bytes;
+  }
+&nbsp;
+  const reader = <span class="cstat-no" title="statement not covered" >response.body.getReader();</span>
+  const chunks: Uint8Array[] = <span class="cstat-no" title="statement not covered" >[];</span>
+  let total = <span class="cstat-no" title="statement not covered" >0;</span>
+<span class="cstat-no" title="statement not covered" >  try {</span>
+<span class="cstat-no" title="statement not covered" >    for (;;) {</span>
+      const { done, value } = <span class="cstat-no" title="statement not covered" >await reader.read();</span>
+<span class="cstat-no" title="statement not covered" >      if (done) <span class="cstat-no" title="statement not covered" >break;</span></span>
+<span class="cstat-no" title="statement not covered" >      total += value.byteLength;</span>
+<span class="cstat-no" title="statement not covered" >      if (total &gt; maxBytes) <span class="cstat-no" title="statement not covered" >return undefined;</span></span>
+<span class="cstat-no" title="statement not covered" >      chunks.push(value);</span>
+    }
+  } finally {
+<span class="cstat-no" title="statement not covered" >    reader.releaseLock();</span>
+  }
+  const bytes = <span class="cstat-no" title="statement not covered" >new Uint8Array(total);</span>
+  let offset = <span class="cstat-no" title="statement not covered" >0;</span>
+<span class="cstat-no" title="statement not covered" >  for (const chunk of chunks) {</span>
+<span class="cstat-no" title="statement not covered" >    bytes.set(chunk, offset);</span>
+<span class="cstat-no" title="statement not covered" >    offset += chunk.byteLength;</span>
+  }
+<span class="cstat-no" title="statement not covered" >  return bytes;</span>
+}
+&nbsp;
+/**
+ * Fetch a contributor-supplied screenshot-table image with SSRF/resource guards before it can be compared
+ * locally or forwarded to a vision provider. Unlike bot-produced shot URLs, these URLs come from PR markdown:
+ * re-check every redirect hop, cap bytes before buffering, require a real image content type, and time out.
+ */
+export async function <span class="fstat-no" title="function not covered" >fetchExternalScreenshotContentBlock(u</span>rl: string): Promise&lt;AiContentBlock | undefined&gt; {
+<span class="cstat-no" title="statement not covered" >  try {</span>
+    let currentUrl = <span class="cstat-no" title="statement not covered" >url;</span>
+<span class="cstat-no" title="statement not covered" >    for (let redirects = <span class="cstat-no" title="statement not covered" >0; r</span>edirects &lt;= MAX_EXTERNAL_SCREENSHOT_REDIRECTS; redirects += 1) {</span>
+<span class="cstat-no" title="statement not covered" >      if (!isSafeHttpUrl(currentUrl)) <span class="cstat-no" title="statement not covered" >return undefined;</span></span>
+      const response = <span class="cstat-no" title="statement not covered" >await fetch(currentUrl, { redirect: "manual", signal: AbortSignal.timeout(EXTERNAL_SCREENSHOT_FETCH_TIMEOUT_MS) });</span>
+<span class="cstat-no" title="statement not covered" >      if (response.status &gt;= 300 &amp;&amp; response.status &lt; 400) {</span>
+        const nextUrl = <span class="cstat-no" title="statement not covered" >redirectLocation(response, currentUrl);</span>
+<span class="cstat-no" title="statement not covered" >        if (!nextUrl) <span class="cstat-no" title="statement not covered" >return undefined;</span></span>
+<span class="cstat-no" title="statement not covered" >        currentUrl = nextUrl;</span>
+<span class="cstat-no" title="statement not covered" >        continue;</span>
+      }
+<span class="cstat-no" title="statement not covered" >      if (!response.ok) <span class="cstat-no" title="statement not covered" >return undefined;</span></span>
+      const mimeType = <span class="cstat-no" title="statement not covered" >response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() ?? "";</span>
+<span class="cstat-no" title="statement not covered" >      if (!ALLOWED_EXTERNAL_SCREENSHOT_MIME_TYPES.has(mimeType)) <span class="cstat-no" title="statement not covered" >return undefined;</span></span>
+      const bytes = <span class="cstat-no" title="statement not covered" >await readBoundedResponseBytes(response, MAX_EXTERNAL_SCREENSHOT_BYTES);</span>
+<span class="cstat-no" title="statement not covered" >      if (!bytes) <span class="cstat-no" title="statement not covered" >return undefined;</span></span>
+      const imageBytes = <span class="cstat-no" title="statement not covered" >mimeType === "image/png" ? await downscaleForVision(bytes) : bytes;</span>
+<span class="cstat-no" title="statement not covered" >      return { type: "image", data: base64Encode(imageBytes), mimeType };</span>
+    }
+<span class="cstat-no" title="statement not covered" >    return undefined;</span>
+  } catch {
+<span class="cstat-no" title="statement not covered" >    return undefined;</span>
+  }
+}
+&nbsp;
+/** Inputs the capture pipeline needs about the PR under review (resolved by the caller from loopover data). */
+export interface CaptureTarget {
+  repoFullName: string;
+  prNumber: number;
+  headSha?: string | undefined;
+  headRef?: string | undefined;
+  /** Preview URL carried from a deployment_status webhook (no API call needed when present). */
+  previewUrl?: string | undefined;
+  /** True when a deployment_status webhook reported the preview deploy FAILED. */
+  previewFailed?: boolean | undefined;
+  /** Whether to scan commit checks / the cloudflare-bot PR comment for the preview URL (Workers Builds). */
+  previewFromChecks?: boolean | undefined;
+  /** The repo's default branch -- REQUIRED to dispatch the actions_fallback workflow (#4112) against a
+   *  trusted ref rather than the PR's own branch. Absent ⇒ the fallback is never dispatched (fail-safe: no
+   *  ref to pin to means no dispatch, not a guess at "main"). */
+  defaultBranchRef?: string | undefined;
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >joinUrl(b</span>ase: string, path: string): string {
+<span class="cstat-no" title="statement not covered" >  return `${base.replace(/\/+$/, "")}${path.startsWith("/") ? path : `/${path}`}`;</span>
+}
+&nbsp;
+/** Per-repo `review.visual.preview` config, as resolved by the caller from the manifest (#3609). */
+export type VisualPreviewInput = { urlTemplate?: string | null | undefined };
+&nbsp;
+/**
+ * Substitute `{number}`/`{head_sha}`/`{head_sha_short}` in a `review.visual.preview.url_template` (#3609).
+ * Pure string substitution — `number` and `headSha` are GitHub-controlled facts about the PR, never
+ * attacker-supplied free text, so this carries no injection risk regardless of the template's own content
+ * (which is maintainer-authored and already validated at parse time — see parseVisualUrlTemplate). A missing
+ * headSha leaves the sha placeholders empty rather than throwing; the resolved URL still goes through the
+ * SAME isSafeHttpUrl check every other capture URL does (in captureShot), so an unresolved/malformed result
+ * degrades to a null render, never a crash.
+ */
+export function <span class="fstat-no" title="function not covered" >resolvePreviewUrlTemplate(t</span>emplate: string, vars: { number: number; headSha?: string | undefined }): string {
+  const headSha = <span class="cstat-no" title="statement not covered" >vars.headSha ?? "";</span>
+<span class="cstat-no" title="statement not covered" >  return template</span>
+    .split("{number}").join(String(vars.number))
+    .split("{head_sha_short}").join(headSha.slice(0, 7))
+    .split("{head_sha}").join(headSha);
+}
+&nbsp;
+/**
+ * Map changed UI files to navigable routes, honoring TanStack Router's file conventions (flat routing uses
+ * `.` as the path separator; folders use `/`):
+ *   __root.tsx / index.tsx -&gt; "/"   ·   app.index.tsx -&gt; "/app"   ·   app.analytics.tsx -&gt; "/app/analytics"
+ *   _authed.app.tsx -&gt; "/app" (pathless `_` layout) · (marketing).about.tsx -&gt; "/about" (route group)
+ *   posts.$id.tsx -&gt; "/" (dynamic param has no concrete value to render)
+ * Anything we can't resolve to a concrete path falls back to "/" so we never screenshot a 404.
+ */
+export function <span class="fstat-no" title="function not covered" >mapFilesToRoutes(f</span>iles: string[], pattern: RegExp = <span class="branch-0 cbranch-no" title="branch not covered" >DEFAULT_ROUTE_FILE, m</span>axRoutes: number = <span class="branch-0 cbranch-no" title="branch not covered" >MAX_ROUTES): string[] {</span>
+  const routes = <span class="cstat-no" title="statement not covered" >new Set&lt;string&gt;();</span>
+<span class="cstat-no" title="statement not covered" >  for (const file of files) {</span>
+    const match = <span class="cstat-no" title="statement not covered" >file.match(pattern);</span>
+<span class="cstat-no" title="statement not covered" >    if (match) <span class="cstat-no" title="statement not covered" >routes.add(routeForFile(match[1] as string));</span></span>
+  }
+<span class="cstat-no" title="statement not covered" >  if (routes.size === 0) <span class="cstat-no" title="statement not covered" >for (const route of DEFAULT_ROUTES) <span class="cstat-no" title="statement not covered" >routes.add(route);</span></span></span>
+<span class="cstat-no" title="statement not covered" >  return [...routes].slice(0, maxRoutes);</span>
+}
+&nbsp;
+/** Per-repo `review.visual.routes` config, as resolved by the caller from the manifest (#3610). */
+export type VisualRoutesInput = { paths?: readonly string[] | null | undefined; maxRoutes?: number | null | undefined };
+&nbsp;
+/**
+ * Resolve which routes to screenshot for this PR: an explicit, always-screenshotted `paths` list from
+ * `review.visual.routes` REPLACES automatic file-to-route inference entirely when non-empty (simpler and
+ * more robust for a repo whose routing convention isn't loopover-ui's TanStack file-based one); absent/
+ * empty config falls through to `mapFilesToRoutes` unchanged, so this is byte-identical to today by default.
+ * `maxRoutes` applies to either path — an explicit list is capped too, not just inferred routes.
+ */
+export function <span class="fstat-no" title="function not covered" >resolveVisualRoutes(f</span>iles: string[], config?: VisualRoutesInput | null): string[] {
+  const maxRoutes = <span class="cstat-no" title="statement not covered" >config?.maxRoutes &amp;&amp; config.maxRoutes &gt; 0 ? Math.min(config.maxRoutes, MAX_CONFIGURED_ROUTES) : MAX_ROUTES;</span>
+<span class="cstat-no" title="statement not covered" >  if (config?.paths &amp;&amp; config.paths.length &gt; 0) <span class="cstat-no" title="statement not covered" >return [...config.paths].slice(0, maxRoutes);</span></span>
+<span class="cstat-no" title="statement not covered" >  return mapFilesToRoutes(files, DEFAULT_ROUTE_FILE, maxRoutes);</span>
+}
+&nbsp;
+/** Resolve one TanStack route-file name (extension already stripped) to a navigable path. */
+function <span class="fstat-no" title="function not covered" >routeForFile(r</span>aw: string): string {
+<span class="cstat-no" title="statement not covered" >  if (/(^|[./])__/.test(raw)) <span class="cstat-no" title="statement not covered" >return "/"; // root layout / "__"-prefixed framework file — not navigable</span></span>
+  const segments: string[] = <span class="cstat-no" title="statement not covered" >[];</span>
+<span class="cstat-no" title="statement not covered" >  for (const seg of raw.split(/[./]/)) {</span>
+<span class="cstat-no" title="statement not covered" >    if (!seg) <span class="cstat-no" title="statement not covered" >continue;</span></span>
+<span class="cstat-no" title="statement not covered" >    if (/^(?:index|route|layout)$/i.test(seg)) <span class="cstat-no" title="statement not covered" >continue; // index/layout markers add no path segment</span></span>
+<span class="cstat-no" title="statement not covered" >    if (/^\(.*\)$/.test(seg)) <span class="cstat-no" title="statement not covered" >continue; // route groups: (marketing)</span></span>
+<span class="cstat-no" title="statement not covered" >    if (seg.startsWith("_")) <span class="cstat-no" title="statement not covered" >continue; // pathless layout segments: _authed</span></span>
+<span class="cstat-no" title="statement not covered" >    if (seg.startsWith("$")) <span class="cstat-no" title="statement not covered" >return "/"; // dynamic param — no concrete value to render</span></span>
+<span class="cstat-no" title="statement not covered" >    segments.push(seg);</span>
+  }
+<span class="cstat-no" title="statement not covered" >  return `/${segments.join("/")}`.replace(/\/+/g, "/").replace(/\/$/, "") || "/";</span>
+}
+&nbsp;
+/**
+ * The publicly-servable URL for an already-stored REVIEW_AUDIT key. Prefers a direct link at the operator's
+ * own S3-compatible bucket (REVIEW_AUDIT_S3_PUBLIC_URL) so GitHub's image proxy — and every other viewer —
+ * fetches straight from that bucket's own CDN, never touching this instance at all. Falls back to this
+ * instance's own /loopover/shot?key= proxy route (today's only option, and still the only option for the
+ * filesystem-backed self-host store, which has no public URL of its own). Empty string when neither is
+ * configured, matching every call site's existing "no shotBase" degradation.
+ */
+function <span class="fstat-no" title="function not covered" >resolveShotUrl(e</span>nv: Env, key: string): string {
+<span class="cstat-no" title="statement not covered" >  if (env.REVIEW_AUDIT_S3_PUBLIC_URL) {</span>
+<span class="cstat-no" title="statement not covered" >    return `${env.REVIEW_AUDIT_S3_PUBLIC_URL.replace(/\/+$/, "")}/${key}`;</span>
+  }
+  const shotBase = <span class="cstat-no" title="statement not covered" >env.PUBLIC_API_ORIGIN;</span>
+<span class="cstat-no" title="statement not covered" >  return shotBase ? `${shotBase}/${NAMESPACE}/shot?key=${encodeURIComponent(key)}` : "";</span>
+}
+&nbsp;
+/**
+ * Render `page`, store the PNG in R2, and return its /loopover/shot?key= URL. Falls back to an on-demand
+ * ?url= link if R2 or the render is unavailable; returns {} when there is no page (no preview deploy yet) so
+ * the cell shows a dash. Reuses an identical cached fingerprint (a deployment_status re-run filling "after"
+ * cells would otherwise re-render the same screenshot — Browser Rendering is the costliest binding).
+ */
+async function <span class="fstat-no" title="function not covered" >capturePage(</span>
+  env: Env,
+  target: CaptureTarget,
+  page: string,
+  slot: "before" | "after",
+  viewportName: "desktop" | "mobile",
+  viewport: Viewport,
+  // #3674: when true, ALSO resolve the raw PNG bytes (not just the URL) so the caller can pixel-diff
+  // before+after — including on a cache hit, which is the COMMON case for "before" (the same production
+  // shot is reused across many PR reviews). Costs one extra read on a cache hit; false (every existing
+  // caller) skips it entirely, so this is zero-cost unless a caller opts in.
+  includeBytes = <span class="branch-0 cbranch-no" title="branch not covered" >false,</span>
+  // #3678: emulate prefers-color-scheme before rendering. Undefined (every pre-#3678 caller) ⇒ no emulation
+  // call and an UNCHANGED cache key — byte-identical to today.
+  theme?: ShotTheme | undefined,
+  // #4109: ALSO force `theme` via localStorage.setItem(themeStorageKey, theme) + a reload, for a target whose
+  // theming ignores prefers-color-scheme (see shot.ts's CaptureShotOptions.theme doc). Only takes effect
+  // together with `theme`; undefined (every pre-#4109 caller) ⇒ byte-identical to today.
+  themeStorageKey?: string | undefined,
+): Promise&lt;{ url?: string | undefined; thumbUrl?: string | undefined; png?: Uint8Array | undefined }&gt; {
+<span class="cstat-no" title="statement not covered" >  if (!page) <span class="cstat-no" title="statement not covered" >return {};</span></span>
+  const shotBase = <span class="cstat-no" title="statement not covered" >env.PUBLIC_API_ORIGIN; // this worker's public origin (serves /loopover/shot)</span>
+  // Carries the theme (#3678) and, when set, the storage key (#4109) so a LATER on-demand fetch of this
+  // exact URL (e.g. a failed/never-persisted render retried by GitHub's image proxy) still requests the
+  // matching prefers-color-scheme/localStorage forcing, not the default — handleShot's Mode B reads these
+  // same &amp;theme=/&amp;themeStorageKey= params. Omitted when unset, unchanged from today.
+  const onDemand = <span class="cstat-no" title="statement not covered" >shotBase</span>
+    ? `${shotBase}/${NAMESPACE}/shot?url=${encodeURIComponent(page)}&amp;w=${viewport.width}&amp;h=${viewport.height}${theme ? `&amp;theme=${theme}` : ""}${theme &amp;&amp; themeStorageKey ? `&amp;themeStorageKey=${encodeURIComponent(themeStorageKey)}` : ""}`
+    : page;
+&nbsp;
+<span class="cstat-no" title="statement not covered" >  if (env.REVIEW_AUDIT) {</span>
+    // Key includes the viewport (and, when set, the theme + storage key) so desktop/mobile, light/dark, and
+    // differently-configured-storage-key shots of the same page don't collide in R2.
+    const fingerprint = <span class="cstat-no" title="statement not covered" >await sha256Hex(</span>
+      `${target.headSha ?? target.prNumber}:${slot}:${viewportName}:${page}${theme ? `:${theme}` : ""}${theme &amp;&amp; themeStorageKey ? `:${themeStorageKey}` : ""}`,
+    );
+    const key = <span class="cstat-no" title="statement not covered" >`${NAMESPACE}/shots/${fingerprint.slice(0, 40)}.png`;</span>
+    const url = <span class="cstat-no" title="statement not covered" >resolveShotUrl(env, key) || onDemand;</span>
+    // #6324 / mobile-thumb-fix: a downscaled DISPLAY copy, stored at a SIBLING key so the original at `key`
+    // never changes -- diffing (compareCapturedScreenshots, via includeBytes below) always reads the true
+    // original on both a fresh render AND a cache hit, and "click to open full-size" keeps resolving to it
+    // unchanged. Self-host only (isDisplayDownscaleAvailable). Generated for BOTH viewports, not desktop-only
+    // as originally shipped: that desktop-only gate assumed the mobile viewport's 390px WIDTH being already
+    // close to the table's 360px display width meant a resize would "save little" -- true for width, but
+    // shot.ts captures `fullPage: true`, so a mobile screenshot's HEIGHT is just as unbounded as desktop's,
+    // and a narrow-but-very-tall capture rendered at native size in the comment table (the reported bug).
+    // downscaleForDisplay now bounds height too (see its own doc comment), so a mobile thumb is worth
+    // generating exactly like a desktop one.
+    const thumbKey = <span class="cstat-no" title="statement not covered" >isDisplayDownscaleAvailable() ? `${NAMESPACE}/shots/${fingerprint.slice(0, 40)}-thumb.png` : undefined;</span>
+    const cached = <span class="cstat-no" title="statement not covered" >await env.REVIEW_AUDIT.get(key).<span class="fstat-no" title="function not covered" >catch(() =&gt; <span class="cstat-no" title="statement not covered" >n</span>ull)</span>;</span>
+<span class="cstat-no" title="statement not covered" >    if (cached) {</span>
+      // Verified via a real read, not assumed from the original's own existence -- the sibling write below
+      // is best-effort and can independently fail, so a stale/missing thumb must fall back to the full-res
+      // URL rather than ever risk embedding a broken image link.
+      const thumbCached = <span class="cstat-no" title="statement not covered" >thumbKey ? await env.REVIEW_AUDIT.get(thumbKey).<span class="fstat-no" title="function not covered" >catch(() =&gt; <span class="cstat-no" title="statement not covered" >n</span>ull)</span> : null;</span>
+      const thumbUrl = <span class="cstat-no" title="statement not covered" >thumbCached &amp;&amp; thumbKey ? resolveShotUrl(env, thumbKey) || undefined : undefined;</span>
+<span class="cstat-no" title="statement not covered" >      if (!includeBytes) <span class="cstat-no" title="statement not covered" >return { url, ...(thumbUrl ? { thumbUrl } : {}) };</span></span>
+      const bytes = <span class="cstat-no" title="statement not covered" >await new Response(cached.body).arrayBuffer().<span class="fstat-no" title="function not covered" >then((b</span>uf) =&gt; <span class="cstat-no" title="statement not covered" >new Uint8Array(buf))</span>.<span class="fstat-no" title="function not covered" >catch(() =&gt; <span class="cstat-no" title="statement not covered" >u</span>ndefined)</span>;</span>
+<span class="cstat-no" title="statement not covered" >      return { url, ...(thumbUrl ? { thumbUrl } : {}), ...(bytes ? { png: bytes } : {}) };</span>
+    }
+    const { png, authWalled } = <span class="cstat-no" title="statement not covered" >await captureShot(env, page, viewport, theme ? { theme, ...(themeStorageKey ? { themeStorageKey } : {}) } : {}).<span class="fstat-no" title="function not covered" >catch(() =&gt; (<span class="cstat-no" title="statement not covered" >{</span> png: null, authWalled: false }))</span>;</span>
+    // A protected route that redirected to a sign-in wall: show an honest "requires authentication"
+    // placeholder rather than caching/serving a screenshot of the login screen.
+<span class="cstat-no" title="statement not covered" >    if (authWalled) {</span>
+<span class="cstat-no" title="statement not covered" >      return { url: shotBase ? `${shotBase}/${NAMESPACE}/shot?placeholder=auth` : onDemand };</span>
+    }
+<span class="cstat-no" title="statement not covered" >    if (png) {</span>
+<span class="cstat-no" title="statement not covered" >      await env.REVIEW_AUDIT.put(key, png, { httpMetadata: { contentType: "image/png" } }).<span class="fstat-no" title="function not covered" >catch(() =&gt; <span class="cstat-no" title="statement not covered" >u</span>ndefined)</span>;</span>
+      let thumbUrl: string | undefined;
+<span class="cstat-no" title="statement not covered" >      if (thumbKey) {</span>
+        const displayPng = <span class="cstat-no" title="statement not covered" >await downscaleForDisplay(png).<span class="fstat-no" title="function not covered" >catch(() =&gt; <span class="cstat-no" title="statement not covered" >p</span>ng)</span>;</span>
+        // Skip storing/using the thumb entirely when downscaling genuinely didn't shrink anything (an
+        // already-narrow capture, or a decode/resize failure that degraded to the original bytes) -- a
+        // byte-identical copy at a second key is pure waste, not an optimization.
+<span class="cstat-no" title="statement not covered" >        if (displayPng.byteLength &lt; png.byteLength) {</span>
+          // thumbUrl must only be set once the write is CONFIRMED to have succeeded -- a bare
+          // `.catch(() =&gt; undefined)` here would swallow a write failure and still fall through to embed a
+          // URL for an object that was never actually stored, a broken image link for every viewer.
+          const stored = <span class="cstat-no" title="statement not covered" >await env.REVIEW_AUDIT.put(thumbKey, displayPng, { httpMetadata: { contentType: "image/png" } }).<span class="fstat-no" title="function not covered" >then(() =&gt; <span class="cstat-no" title="statement not covered" >t</span>rue)</span>.<span class="fstat-no" title="function not covered" >catch(() =&gt; <span class="cstat-no" title="statement not covered" >f</span>alse)</span>;</span>
+<span class="cstat-no" title="statement not covered" >          if (stored) <span class="cstat-no" title="statement not covered" >thumbUrl = resolveShotUrl(env, thumbKey) || undefined;</span></span>
+        }
+      }
+<span class="cstat-no" title="statement not covered" >      return { url, ...(thumbUrl ? { thumbUrl } : {}), ...(includeBytes ? { png } : {}) };</span>
+    }
+  }
+<span class="cstat-no" title="statement not covered" >  return { url: onDemand };</span>
+}
+&nbsp;
+/** Resolve the "after" shot when there is no real preview page to render (#4112): if `review.visual.
+ *  actions_fallback` is enabled AND the workflow_run webhook handler has already stored a fallback-captured
+ *  PNG in R2 for this exact head + route + viewport (fallbackShotR2Key), return its shot URL; otherwise fall
+ *  back to the ordinary loading/failed placeholder. This never fetches or dispatches anything itself — a
+ *  cache miss here just means the fallback hasn't landed yet (or was never enabled), degrading exactly like
+ *  "no preview yet" does everywhere else in this pipeline. */
+async function <span class="fstat-no" title="function not covered" >resolveFallbackAfterShot(</span>
+  env: Env,
+  target: CaptureTarget,
+  path: string,
+  viewportName: "desktop" | "mobile",
+  actionsFallbackEnabled: boolean,
+  placeholder: string | undefined,
+): Promise&lt;{ url?: string | undefined; thumbUrl?: string | undefined; png?: Uint8Array | undefined }&gt; {
+  // #6324: never produces a thumbUrl (the actions_fallback artifact is stored as-is, no display downscale
+  // applied) -- typed here purely so this function's return shape matches capturePage's, since buildCapture
+  // uses both interchangeably for the "after" desktop slot.
+<span class="cstat-no" title="statement not covered" >  if (!actionsFallbackEnabled || !env.REVIEW_AUDIT || !target.headSha) <span class="cstat-no" title="statement not covered" >return { url: placeholder };</span></span>
+  const key = <span class="cstat-no" title="statement not covered" >await fallbackShotR2Key(target.headSha, path, viewportName);</span>
+  const cached = <span class="cstat-no" title="statement not covered" >await env.REVIEW_AUDIT.get(key).<span class="fstat-no" title="function not covered" >catch(() =&gt; <span class="cstat-no" title="statement not covered" >n</span>ull)</span>;</span>
+<span class="cstat-no" title="statement not covered" >  if (!cached) <span class="cstat-no" title="statement not covered" >return { url: placeholder };</span></span>
+<span class="cstat-no" title="statement not covered" >  return { url: resolveShotUrl(env, key) || placeholder };</span>
+}
+&nbsp;
+/** Upload a computed diff-overlay PNG to the same store `capturePage` uses, returning its shot URL — or
+ *  undefined when there's no diff image (unchanged/new/removed/no-diff-provider), storage is unavailable, or
+ *  the upload fails. Mirrors capturePage's own key/URL scheme so the diff shares its caching story. */
+async function <span class="fstat-no" title="function not covered" >uploadDiffImage(</span>
+  env: Env,
+  target: CaptureTarget,
+  path: string,
+  viewportName: "desktop" | "mobile",
+  diff: VisualDiffOutcome | null,
+  theme?: ShotTheme | undefined,
+): Promise&lt;string | undefined&gt; {
+<span class="cstat-no" title="statement not covered" >  if (!diff?.diffImagePng) <span class="cstat-no" title="statement not covered" >return undefined;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (!env.REVIEW_AUDIT || (!env.PUBLIC_API_ORIGIN &amp;&amp; !env.REVIEW_AUDIT_S3_PUBLIC_URL)) <span class="cstat-no" title="statement not covered" >return undefined;</span></span>
+  const fingerprint = <span class="cstat-no" title="statement not covered" >await sha256Hex(`${target.headSha ?? target.prNumber}:diff:${viewportName}:${path}${theme ? `:${theme}` : ""}`);</span>
+  const key = <span class="cstat-no" title="statement not covered" >`${NAMESPACE}/shots/${fingerprint.slice(0, 40)}-diff.png`;</span>
+<span class="cstat-no" title="statement not covered" >  await env.REVIEW_AUDIT.put(key, diff.diffImagePng, { httpMetadata: { contentType: "image/png" } }).<span class="fstat-no" title="function not covered" >catch(() =&gt; <span class="cstat-no" title="statement not covered" >u</span>ndefined)</span>;</span>
+<span class="cstat-no" title="statement not covered" >  return resolveShotUrl(env, key);</span>
+}
+&nbsp;
+// How long each frame shows when the assembled GIF plays back (#3612) — a quick "evidence clip" pace: the
+// full MAX_SCROLL_STEPS (6, see shot.ts) loop takes ~3s, long enough to read, short enough to stay a glance.
+const GIF_FRAME_DELAY_MS = <span class="cstat-no" title="statement not covered" >500;</span>
+&nbsp;
+/**
+ * Capture a scroll-through sequence for `page` and assemble it into a GIF (#3612), or undefined when there's
+ * no page, the render fails/auth-walls, storage is unavailable, or this build can't assemble GIFs at all
+ * (isScrollGifAvailable — hosted mode; see scroll-gif.ts). Caches on the same fingerprint scheme as
+ * `capturePage`/`uploadDiffImage` — a scroll capture is the most expensive thing this pipeline does (up to 6
+ * extra renders plus a full encode), so a re-review of the same head must never redo it.
+ */
+async function <span class="fstat-no" title="function not covered" >captureScrollGif(</span>
+  env: Env,
+  target: CaptureTarget,
+  page: string,
+  slot: "before" | "after",
+  viewportName: "desktop" | "mobile",
+  viewport: Viewport,
+  theme?: ShotTheme | undefined,
+  // #4109: see capturePage's own themeStorageKey param — same fallback, same "only with theme" guard.
+  themeStorageKey?: string | undefined,
+): Promise&lt;string | undefined&gt; {
+<span class="cstat-no" title="statement not covered" >  if (!page) <span class="cstat-no" title="statement not covered" >return undefined;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (!env.REVIEW_AUDIT || (!env.PUBLIC_API_ORIGIN &amp;&amp; !env.REVIEW_AUDIT_S3_PUBLIC_URL)) <span class="cstat-no" title="statement not covered" >return undefined;</span></span>
+  const fingerprint = <span class="cstat-no" title="statement not covered" >await sha256Hex(</span>
+    `${target.headSha ?? target.prNumber}:scrollgif:${slot}:${viewportName}:${page}${theme ? `:${theme}` : ""}${theme &amp;&amp; themeStorageKey ? `:${themeStorageKey}` : ""}`,
+  );
+  const key = <span class="cstat-no" title="statement not covered" >`${NAMESPACE}/shots/${fingerprint.slice(0, 40)}.gif`;</span>
+  const url = <span class="cstat-no" title="statement not covered" >resolveShotUrl(env, key);</span>
+  const cached = <span class="cstat-no" title="statement not covered" >await env.REVIEW_AUDIT.get(key).<span class="fstat-no" title="function not covered" >catch(() =&gt; <span class="cstat-no" title="statement not covered" >n</span>ull)</span>;</span>
+<span class="cstat-no" title="statement not covered" >  if (cached) <span class="cstat-no" title="statement not covered" >return url;</span></span>
+  const { frames, authWalled } = <span class="cstat-no" title="statement not covered" >await captureScrollFrames(env, page, viewport, theme ? { theme, ...(themeStorageKey ? { themeStorageKey } : {}) } : {}).<span class="fstat-no" title="function not covered" >catch(() =&gt; (<span class="cstat-no" title="statement not covered" >{</span> frames: [] as Uint8Array[], authWalled: false }))</span>;</span>
+<span class="cstat-no" title="statement not covered" >  if (authWalled || frames.length === 0) <span class="cstat-no" title="statement not covered" >return undefined;</span></span>
+  const gifBytes = <span class="cstat-no" title="statement not covered" >await encodeScrollGif(</span>
+    frames.<span class="fstat-no" title="function not covered" >map((p</span>ng) =&gt; (<span class="cstat-no" title="statement not covered" >{ png }))</span>,
+    GIF_FRAME_DELAY_MS,
+  );
+<span class="cstat-no" title="statement not covered" >  if (!gifBytes) <span class="cstat-no" title="statement not covered" >return undefined;</span></span>
+<span class="cstat-no" title="statement not covered" >  await env.REVIEW_AUDIT.put(key, gifBytes, { httpMetadata: { contentType: "image/gif" } }).<span class="fstat-no" title="function not covered" >catch(() =&gt; <span class="cstat-no" title="statement not covered" >u</span>ndefined)</span>;</span>
+<span class="cstat-no" title="statement not covered" >  return url;</span>
+}
+&nbsp;
+/** One `review.visual.interactions[]` entry, as resolved by the caller from the manifest. */
+export type VisualInteractionInput = {
+  selector: string;
+  action: InteractionAction;
+  /** The drag destination selector — required when `action` is `"drag"`, ignored otherwise. */
+  dragTo?: string | null | undefined;
+  path?: string | null | undefined;
+  label?: string | null | undefined;
+};
+&nbsp;
+/** Capture `interaction` for `page` and assemble it into a GIF, or undefined when there's no page, the
+ *  selector never matches / the render fails/auth-walls, storage is unavailable, or this build can't
+ *  assemble GIFs at all (isScrollGifAvailable — reused here; the encode step is frame-source-agnostic, see
+ *  scroll-gif.ts). Same fingerprint-cache scheme as `captureScrollGif`, with the selector+action folded into
+ *  the key so two different interactions on the same page never collide.
+ */
+async function <span class="fstat-no" title="function not covered" >captureInteractionGif(</span>
+  env: Env,
+  target: CaptureTarget,
+  page: string,
+  slot: "before" | "after",
+  interaction: VisualInteractionInput,
+  theme?: ShotTheme | undefined,
+  themeStorageKey?: string | undefined,
+): Promise&lt;string | undefined&gt; {
+<span class="cstat-no" title="statement not covered" >  if (!page) <span class="cstat-no" title="statement not covered" >return undefined;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (!env.REVIEW_AUDIT || (!env.PUBLIC_API_ORIGIN &amp;&amp; !env.REVIEW_AUDIT_S3_PUBLIC_URL)) <span class="cstat-no" title="statement not covered" >return undefined;</span></span>
+  // JSON.stringify an array (not bare `:`-joined interpolation, unlike captureScrollGif's fingerprint above,
+  // which has no arbitrary-text fields) -- selector/dragTo are maintainer-authored free text that can itself
+  // contain ":", so a bare-delimiter join can collide (`{selector:"x:drag", dragTo:"y"}` and
+  // `{selector:"x", dragTo:"drag:y"}` would otherwise both produce "...x:drag:drag:y..."). JSON's own string
+  // quoting makes each array element self-delimiting, so two distinct field tuples can never hash identically.
+  const fingerprint = <span class="cstat-no" title="statement not covered" >await sha256Hex(</span>
+    JSON.stringify([
+      target.headSha ?? target.prNumber,
+      "interactiongif",
+      slot,
+      interaction.selector,
+      interaction.action,
+      interaction.action === "drag" ? (interaction.dragTo ?? null) : null,
+      page,
+      theme ?? null,
+      theme &amp;&amp; themeStorageKey ? themeStorageKey : null,
+    ]),
+  );
+  const key = <span class="cstat-no" title="statement not covered" >`${NAMESPACE}/shots/${fingerprint.slice(0, 40)}.gif`;</span>
+  const url = <span class="cstat-no" title="statement not covered" >resolveShotUrl(env, key);</span>
+  const cached = <span class="cstat-no" title="statement not covered" >await env.REVIEW_AUDIT.get(key).<span class="fstat-no" title="function not covered" >catch(() =&gt; <span class="cstat-no" title="statement not covered" >n</span>ull)</span>;</span>
+<span class="cstat-no" title="statement not covered" >  if (cached) <span class="cstat-no" title="statement not covered" >return url;</span></span>
+  const { frames, authWalled } = <span class="cstat-no" title="statement not covered" >await captureInteractionFrames(</span>
+    env,
+    page,
+    interaction.selector,
+    interaction.action,
+    DESKTOP_VIEWPORT,
+    theme ? { theme, ...(themeStorageKey ? { themeStorageKey } : {}) } : {},
+    interaction.dragTo ?? undefined,
+  ).<span class="fstat-no" title="function not covered" >catch(() =&gt; (<span class="cstat-no" title="statement not covered" >{</span> frames: [] as Uint8Array[], authWalled: false }))</span>;
+<span class="cstat-no" title="statement not covered" >  if (authWalled || frames.length === 0) <span class="cstat-no" title="statement not covered" >return undefined;</span></span>
+  const gifBytes = <span class="cstat-no" title="statement not covered" >await encodeScrollGif(</span>
+    frames.<span class="fstat-no" title="function not covered" >map((p</span>ng) =&gt; (<span class="cstat-no" title="statement not covered" >{ png }))</span>,
+    GIF_FRAME_DELAY_MS,
+  );
+<span class="cstat-no" title="statement not covered" >  if (!gifBytes) <span class="cstat-no" title="statement not covered" >return undefined;</span></span>
+<span class="cstat-no" title="statement not covered" >  await env.REVIEW_AUDIT.put(key, gifBytes, { httpMetadata: { contentType: "image/gif" } }).<span class="fstat-no" title="function not covered" >catch(() =&gt; <span class="cstat-no" title="statement not covered" >u</span>ndefined)</span>;</span>
+<span class="cstat-no" title="statement not covered" >  return url;</span>
+}
+&nbsp;
+/** One `review.visual.interactions[]` entry's captured result (#interaction-gif-capture) — before/after GIF
+ *  URLs for a specific hover/click interaction. Rendered as its own "Interaction preview" row, one per
+ *  configured interaction (never multiplied by viewport/theme, unlike `CaptureRoute`). `selector`/`label`
+ *  round-trip the input config so the comment can show a human-readable target without re-reading config. */
+export interface CaptureInteractionRoute {
+  selector: string;
+  label?: string | undefined;
+  beforeGifUrl?: string | undefined;
+  afterGifUrl?: string | undefined;
+}
+&nbsp;
+// Bounds how many configured interactions actually get captured per PR — mirrors MAX_ROUTES's wall-clock
+// reasoning (each interaction is at least as expensive as a scroll-GIF capture: a full render plus 3+ extra
+// frames per side). parseVisualInteractions (packages/loopover-engine) already caps the CONFIG list itself
+// at 5; this is a second, independent bound on what actually executes, so a future config-cap change can't
+// silently blow the capture budget without a matching review here.
+const MAX_INTERACTIONS = <span class="cstat-no" title="statement not covered" >3;</span>
+&nbsp;
+/** Per-repo `review.visual` config, as resolved by the caller from the manifest (#3609 / #3610 / #3678 /
+ *  #3612 / #4109). Absent ⇒ byte-identical to today (GitHub-native discovery, automatic route inference,
+ *  single default-theme capture, built-in route cap, no scroll-GIF, no localStorage theme forcing). */
+export type VisualCaptureConfig = {
+  /** `review.visual.production_url` (#3611 follow-up): overrides `env.PUBLIC_SITE_ORIGIN` (a single GLOBAL
+   *  value with no per-repo awareness) as the "before" base for THIS repo. ALWAYS wins when set, mirroring
+   *  `preview.urlTemplate`'s precedence over discovery. null/undefined ⇒ falls back to `env.PUBLIC_SITE_ORIGIN`,
+   *  byte-identical to today. */
+  productionUrl?: string | null | undefined;
+  preview?: VisualPreviewInput | null | undefined;
+  routes?: VisualRoutesInput | null | undefined;
+  themes?: readonly ShotTheme[] | null | undefined;
+  gif?: boolean | null | undefined;
+  /** #4109: the localStorage key `emulateMediaFeatures`-driven captures fall back to for a target whose
+   *  theming reads an explicit stored preference instead of `prefers-color-scheme` — see shot.ts's
+   *  `CaptureShotOptions.theme` doc for the verified finding this fixes. null/undefined (default) ⇒ no
+   *  localStorage write, byte-identical to today. Only takes effect when `themes` is also configured. */
+  themeStorageKey?: string | null | undefined;
+  /** `review.visual.actions_fallback` (#4112): dispatch the GitHub-Actions build-and-serve fallback when NO
+   *  preview at all was found for this PR. false/absent (default) ⇒ byte-identical to today. */
+  actionsFallback?: boolean | null | undefined;
+  /** `review.visual.interactions`: specific elements to interact with (hover/click) and capture as animated
+   *  evidence, for behavior a static screenshot can't show that isn't scroll-linked. Empty/absent (default)
+   *  ⇒ byte-identical to today, no interaction capture. Capped at MAX_INTERACTIONS regardless of how many
+   *  are configured. */
+  interactions?: readonly VisualInteractionInput[] | null | undefined;
+  /** `review.visual.autoDetectInteractions` (#auto-interaction-detection): capture a hover-interaction GIF
+   *  for any CSS selector this PR's OWN diff newly adds a `:hover`/`:focus-visible` rule for — no maintainer
+   *  selector-authoring needed, unlike `interactions` above (the two compose, deduped against each other).
+   *  false/absent (default) ⇒ byte-identical to today. Requires `changedCssFiles` (below) to be passed too;
+   *  without it there is nothing to detect against regardless of this flag. */
+  autoDetectInteractions?: boolean | null | undefined;
+};
+&nbsp;
+/**
+ * Build the before/after capture for a PR: resolve the preview URL, derive routes from the changed UI files,
+ * render desktop + mobile before/after for each route, and return the route URL set (for the visual-preview
+ * collapsible). Fully fail-safe — a missing preview / failed render degrades to placeholders or dashes; this
+ * NEVER throws (the caller also wraps it in try/catch so a capture failure can't sink a review).
+ */
+export async function <span class="fstat-no" title="function not covered" >buildCapture(</span>
+  env: Env,
+  token: string,
+  target: CaptureTarget,
+  visualFiles: string[],
+  rateLimitAdmissionKey?: GitHubRateLimitAdmissionKey | undefined,
+  visualConfig?: VisualCaptureConfig | null | undefined,
+  // #auto-interaction-detection: the SAME changed-file set visualFiles is derived from, but carrying each
+  // file's diff patch text too (visualFiles alone is bare paths) -- only ever read when
+  // visualConfig.autoDetectInteractions is true. Absent/undefined (every pre-existing call site) ⇒
+  // byte-identical to today, no auto-detection attempted regardless of the config flag.
+  changedCssFiles?: readonly ChangedCssFile[] | undefined,
+): Promise&lt;CaptureResult&gt; {
+  const repo = <span class="cstat-no" title="statement not covered" >parseRepo(target.repoFullName);</span>
+  const apiVersion = <span class="cstat-no" title="statement not covered" >"2022-11-28";</span>
+  // before = production. review.visual.production_url (#3611 follow-up) ALWAYS wins when set -- PUBLIC_SITE_ORIGIN
+  // is a single GLOBAL env var (e.g. https://loopover.ai) with no per-repo awareness, correct for at
+  // most one repo on a multi-repo self-host instance; every other repo needs its own override here.
+  const prodBase = <span class="cstat-no" title="statement not covered" >visualConfig?.productionUrl ? visualConfig.productionUrl : (env.PUBLIC_SITE_ORIGIN ?? "");</span>
+&nbsp;
+  // after = the PR's preview deploy. An explicit review.visual.preview.url_template (#3609) ALWAYS wins —
+  // a maintainer-configured template is a stronger signal than inference, and is the only option for a
+  // provider (e.g. Cloudflare Workers Builds' non-production branch builds) that never surfaces a
+  // GitHub-visible deployment at all. Otherwise, prefer the URL carried on the target (a deployment_status
+  // webhook set it — no extra API call); otherwise look it up from Deployments, then commit checks, then
+  // the cloudflare-bot PR comment. The lookups also tell us when the latest deploy FAILED (vs is still
+  // building) so we can show a terminal "deploy failed" card instead of a spinner.
+  let previewBase = <span class="cstat-no" title="statement not covered" >"";</span>
+  let previewFailed = <span class="cstat-no" title="statement not covered" >target.previewFailed === true;</span>
+  let previewPending = <span class="cstat-no" title="statement not covered" >false;</span>
+  // Hoisted above the discovery block below (was previously computed after it) so the eternal-"loading"-
+  // placeholder fix's `buildState === "absent"` branch can consult it -- seeing this whole file top to
+  // bottom, its own later use (guarding the actions_fallback dispatch) is unchanged.
+  const actionsFallbackEnabled = <span class="cstat-no" title="statement not covered" >visualConfig?.actionsFallback === true;</span>
+  const urlTemplate = <span class="cstat-no" title="statement not covered" >visualConfig?.preview?.urlTemplate;</span>
+<span class="cstat-no" title="statement not covered" >  if (urlTemplate) {</span>
+<span class="cstat-no" title="statement not covered" >    previewBase = resolvePreviewUrlTemplate(urlTemplate, { number: target.prNumber, headSha: target.headSha });</span>
+  } else {
+<span class="cstat-no" title="statement not covered" >    previewBase = typeof target.previewUrl === "string" ? target.previewUrl : "";</span>
+<span class="cstat-no" title="statement not covered" >    if (!previewBase &amp;&amp; !previewFailed) {</span>
+<span class="cstat-no" title="statement not covered" >      try {</span>
+        const status = <span class="cstat-no" title="statement not covered" >await getLatestDeploymentStatus({ token, repo, sha: target.headSha, ref: target.headRef, apiVersion, rateLimitAdmissionKey });</span>
+<span class="cstat-no" title="statement not covered" >        previewBase = status.url ?? "";</span>
+<span class="cstat-no" title="statement not covered" >        previewFailed = status.failed;</span>
+      } catch {
+<span class="cstat-no" title="statement not covered" >        previewBase = "";</span>
+      }
+<span class="cstat-no" title="statement not covered" >      if (!previewBase &amp;&amp; !previewFailed &amp;&amp; target.previewFromChecks &amp;&amp; target.headSha) {</span>
+<span class="cstat-no" title="statement not covered" >        previewBase = (await findPreviewUrlFromChecks({ token, repo, sha: target.headSha, apiVersion, rateLimitAdmissionKey })) ?? "";</span>
+<span class="cstat-no" title="statement not covered" >        if (!previewBase &amp;&amp; target.prNumber) {</span>
+<span class="cstat-no" title="statement not covered" >          previewBase = (await findPreviewUrlFromPrComments({ token, repo, prNumber: target.prNumber, apiVersion, rateLimitAdmissionKey })) ?? "";</span>
+        }
+<span class="cstat-no" title="statement not covered" >        if (!previewBase &amp;&amp; target.headSha) {</span>
+          const buildState = <span class="cstat-no" title="statement not covered" >await getPreviewBuildState({ token, repo, sha: target.headSha, apiVersion, rateLimitAdmissionKey });</span>
+<span class="cstat-no" title="statement not covered" >          if (buildState === "failed") {</span>
+<span class="cstat-no" title="statement not covered" >            previewFailed = true;</span>
+          } else <span class="cstat-no" title="statement not covered" >if (buildState === "building" || buildState === "succeeded") {</span>
+            // #6323: bound how many times ANY trigger treats this head as worth another attempt, not just
+            // the dedicated self-poll job chain -- see preview-poll-budget.ts's own doc comment for the bug
+            // this fixes. Past the budget, give up honestly (the FAILED placeholder card, "review manually")
+            // rather than an eternally-spinning "loading" placeholder that never resolves.
+            const attempts = <span class="cstat-no" title="statement not covered" >await previewPollAttemptCount(env, target.headSha);</span>
+<span class="cstat-no" title="statement not covered" >            if (attempts &gt;= MAX_PREVIEW_POLL_ATTEMPTS) {</span>
+<span class="cstat-no" title="statement not covered" >              previewFailed = true;</span>
+            } else {
+<span class="cstat-no" title="statement not covered" >              await recordPreviewPollAttempt(env, target.headSha);</span>
+<span class="cstat-no" title="statement not covered" >              previewPending = true;</span>
+            }
+          } else <span class="cstat-no" title="statement not covered" >if (buildState === "absent" &amp;&amp; !actionsFallbackEnabled) {</span>
+            // Eternal-"loading"-placeholder fix: 'absent' means no Workers-Builds-named check-run was found
+            // AT ALL, not "still building" -- previously this fell through as a silent no-op, leaving
+            // previewPending/previewFailed both false, so the caller's afterPlaceholder always resolved to
+            // the animated "Rendering preview…" spinner and NOTHING ever re-evaluated it to a terminal
+            // state (this state was never fed into the recapture-poll mechanism at all). Confirmed live on a
+            // repo whose UI has no preview-deploy CI configured: every PR's "after" cell spun forever. 'absent'
+            // is genuinely ambiguous on its own (the check-run may just not have started yet), so apply the
+            // SAME poll-budget-then-give-up treatment as 'building' above rather than assuming either
+            // extreme. Skipped when actions_fallback is enabled for this repo: that feature's OWN dispatch
+            // below already treats "found nothing" as its trigger condition, and marking previewPending here
+            // first would starve it of the `!previewPending` gate it needs to ever fire.
+            const attempts = <span class="cstat-no" title="statement not covered" >await previewPollAttemptCount(env, target.headSha);</span>
+<span class="cstat-no" title="statement not covered" >            if (attempts &gt;= MAX_PREVIEW_POLL_ATTEMPTS) {</span>
+<span class="cstat-no" title="statement not covered" >              previewFailed = true;</span>
+            } else {
+<span class="cstat-no" title="statement not covered" >              await recordPreviewPollAttempt(env, target.headSha);</span>
+<span class="cstat-no" title="statement not covered" >              previewPending = true;</span>
+            }
+          }
+        }
+      }
+    }
+  }
+&nbsp;
+  // Fallback (#4112): the discovery chain above found NOTHING at all for this repo (no preview URL, not
+  // failed, and no real build already in flight) -- if review.visual.actions_fallback is enabled
+  // (actionsFallbackEnabled, hoisted above), dispatch .github/workflows/visual-capture-fallback.yml against
+  // the repo's own default branch and mark previewPending so the EXISTING recapture-poll mechanism
+  // (processors.ts) retries this same buildCapture call later, by which point the workflow_run webhook
+  // handler (running independently) has stored the fallback's captured PNGs in R2 for
+  // resolveFallbackAfterShot below to find. Requires headSha + a resolved default branch to pin the dispatch
+  // to a trusted ref; either missing ⇒ no dispatch (fail-safe).
+  const routes = <span class="cstat-no" title="statement not covered" >resolveVisualRoutes(visualFiles, visualConfig?.routes);</span>
+<span class="cstat-no" title="statement not covered" >  if (!previewBase &amp;&amp; !previewFailed &amp;&amp; !previewPending &amp;&amp; actionsFallbackEnabled &amp;&amp; target.headSha &amp;&amp; target.defaultBranchRef) {</span>
+    // Never re-dispatch onto an already in-flight run (#4112 review fix): the workflow's own `concurrency:
+    // cancel-in-progress: true` group would CANCEL that run the instant a second dispatch for the same head
+    // SHA lands, so a recapture-poll retry (every 90s -- see PREVIEW_POLL_SECONDS in processors.ts) firing
+    // well within the workflow's 15-minute timeout could cancel-and-restart it on every poll and never
+    // complete. isFallbackDispatchInFlight checks a PERSISTED R2 marker rather than querying GitHub's runs
+    // API live, so there's no eventual-consistency gap right after a dispatch just succeeded -- see its own
+    // doc comment for the full rationale. markFallbackDispatched writes that marker on a successful dispatch;
+    // the webhook handler (processors.ts) clears it once the run settles.
+    const alreadyInFlight = <span class="cstat-no" title="statement not covered" >await isFallbackDispatchInFlight(env, target.headSha);</span>
+    let dispatched = <span class="cstat-no" title="statement not covered" >alreadyInFlight;</span>
+<span class="cstat-no" title="statement not covered" >    if (!dispatched) {</span>
+<span class="cstat-no" title="statement not covered" >      dispatched = await dispatchVisualCaptureFallback({</span>
+        token,
+        repo,
+        ref: target.defaultBranchRef,
+        prNumber: target.prNumber,
+        headSha: target.headSha,
+        routes,
+        rateLimitAdmissionKey,
+      });
+<span class="cstat-no" title="statement not covered" >      if (dispatched) <span class="cstat-no" title="statement not covered" >await markFallbackDispatched(env, target.headSha);</span></span>
+    }
+<span class="cstat-no" title="statement not covered" >    if (dispatched) <span class="cstat-no" title="statement not covered" >previewPending = true;</span></span>
+  }
+&nbsp;
+  // With no real "after" shot, the cell shows a placeholder (same aspect ratio as a real shot): a spinner
+  // while the preview is still building, or a static "deploy failed" card once it won't come.
+  const shotBase = <span class="cstat-no" title="statement not covered" >env.PUBLIC_API_ORIGIN;</span>
+  const loadingPlaceholder = <span class="cstat-no" title="statement not covered" >shotBase ? `${shotBase}/${NAMESPACE}/shot?placeholder=loading` : undefined;</span>
+  const failedPlaceholder = <span class="cstat-no" title="statement not covered" >shotBase ? `${shotBase}/${NAMESPACE}/shot?placeholder=failed` : undefined;</span>
+  const afterPlaceholder = <span class="cstat-no" title="statement not covered" >previewFailed ? failedPlaceholder : loadingPlaceholder;</span>
+&nbsp;
+  // #3674: resolved ONCE per call, not per route/viewport — false in every hosted build (see pixel-diff.ts),
+  // so capturePage never pays the extra cached-bytes-read cost unless self-host's real diff module is active.
+  const diffAvailable = <span class="cstat-no" title="statement not covered" >isVisualDiffAvailable()</span>;
+  // #3612: gated on BOTH the opt-in config AND isScrollGifAvailable — hosted mode can never assemble a GIF
+  // (see scroll-gif.ts), so this must short-circuit before capturing a single scroll frame there, not just
+  // before encoding one. Desktop-viewport only in this first cut: a scroll-through GIF is already the
+  // heaviest capture mode (up to 6 extra renders per side), and doubling it for mobile is a narrower-scope
+  // call deferred to a follow-up rather than shipped speculatively (matches #3674's hosted-diff deferral).
+  const gifWanted = <span class="cstat-no" title="statement not covered" >visualConfig?.gif === true &amp;&amp; isScrollGifAvailable()</span>;
+  // #3678: an explicit, non-empty theme list captures the SAME routes once per theme, each tagged on its
+  // CaptureRoute entry. [undefined] (the default, absent config) renders the single un-emulated default —
+  // capturePage/captureShot already treat an undefined theme as "no emulation call at all", so this one
+  // iteration is byte-identical to every pre-#3678 call.
+  const themes: readonly (ShotTheme | undefined)[] = <span class="cstat-no" title="statement not covered" >visualConfig?.themes &amp;&amp; visualConfig.themes.length &gt; 0 ? visualConfig.themes : [undefined];</span>
+  // #4109: the localStorage fallback only ever matters alongside a configured theme — resolved once, threaded
+  // through every capturePage/captureScrollGif call below, each of which independently no-ops it when its own
+  // `theme` iteration is undefined (the untagged default pass).
+  const themeStorageKey = <span class="cstat-no" title="statement not covered" >visualConfig?.themeStorageKey ? visualConfig.themeStorageKey : undefined;</span>
+  const captureRoutes: CaptureRoute[] = <span class="cstat-no" title="statement not covered" >[];</span>
+<span class="cstat-no" title="statement not covered" >  for (const theme of themes) {</span>
+<span class="cstat-no" title="statement not covered" >    for (const path of routes) {</span>
+      const beforePage = <span class="cstat-no" title="statement not covered" >prodBase ? joinUrl(prodBase, path) : "";</span>
+      const afterPage = <span class="cstat-no" title="statement not covered" >previewBase ? joinUrl(previewBase, path) : "";</span>
+      // Render desktop + mobile for each slot in parallel (4 PNGs/route) to bound wall-clock.
+      const [beforeShot, beforeMobileShot, afterShot, afterMobileShot] = <span class="cstat-no" title="statement not covered" >await Promise.all([</span>
+        capturePage(env, target, beforePage, "before", "desktop", DESKTOP_VIEWPORT, diffAvailable, theme, themeStorageKey),
+        capturePage(env, target, beforePage, "before", "mobile", MOBILE_VIEWPORT, diffAvailable, theme, themeStorageKey),
+        afterPage
+          ? capturePage(env, target, afterPage, "after", "desktop", DESKTOP_VIEWPORT, diffAvailable, theme, themeStorageKey)
+          : resolveFallbackAfterShot(env, target, path, "desktop", actionsFallbackEnabled, afterPlaceholder),
+        afterPage
+          ? capturePage(env, target, afterPage, "after", "mobile", MOBILE_VIEWPORT, diffAvailable, theme, themeStorageKey)
+          : resolveFallbackAfterShot(env, target, path, "mobile", actionsFallbackEnabled, afterPlaceholder),
+      ]);
+      // A diff needs BOTH sides' real bytes — a placeholder/dash slot (no preview yet, auth-walled, render
+      // failure) has no `png`, so compareCapturedScreenshots degrades to null exactly like a missing shot does.
+      const [desktopDiff, mobileDiff] = <span class="cstat-no" title="statement not covered" >diffAvailable</span>
+        ? await Promise.all([
+            compareCapturedScreenshots(beforeShot.png, afterShot.png),
+            compareCapturedScreenshots(beforeMobileShot.png, afterMobileShot.png),
+          ])
+        : [null, null];
+      const [diffUrl, diffUrlMobile] = <span class="cstat-no" title="statement not covered" >await Promise.all([</span>
+        uploadDiffImage(env, target, path, "desktop", desktopDiff, theme),
+        uploadDiffImage(env, target, path, "mobile", mobileDiff, theme),
+      ]);
+      // #fairness-analytics follow-up: when there's no live preview page, fall back to the SAME
+      // loading/failed placeholder the screenshot slot uses (afterPlaceholder) instead of leaving this
+      // undefined -- otherwise buildScrollPreviewCollapsible's cell() renders a bare "—", indistinguishable
+      // from "GIF capture isn't enabled for this repo at all". actions_fallback never produces a GIF (only
+      // static PNGs — see visual-capture-fallback.yml), so there's no cached fallback artifact to look up
+      // here the way resolveFallbackAfterShot does for the screenshot slot.
+      const [beforeGifUrl, afterGifUrl] = <span class="cstat-no" title="statement not covered" >gifWanted</span>
+        ? await Promise.all([
+            captureScrollGif(env, target, beforePage, "before", "desktop", DESKTOP_VIEWPORT, theme, themeStorageKey),
+            afterPage
+              ? captureScrollGif(env, target, afterPage, "after", "desktop", DESKTOP_VIEWPORT, theme, themeStorageKey)
+              : Promise.resolve&lt;string | undefined&gt;(afterPlaceholder),
+          ])
+        : [undefined, undefined];
+<span class="cstat-no" title="statement not covered" >      captureRoutes.push({</span>
+        path,
+        ...(theme ? { theme } : {}),
+        beforeUrl: beforeShot.url,
+        beforeUrlMobile: beforeMobileShot.url,
+        afterUrl: afterShot.url,
+        afterUrlMobile: afterMobileShot.url,
+        ...(beforeShot.thumbUrl ? { beforeThumbUrl: beforeShot.thumbUrl } : {}),
+        ...(afterShot.thumbUrl ? { afterThumbUrl: afterShot.thumbUrl } : {}),
+        ...(beforeMobileShot.thumbUrl ? { beforeThumbUrlMobile: beforeMobileShot.thumbUrl } : {}),
+        ...(afterMobileShot.thumbUrl ? { afterThumbUrlMobile: afterMobileShot.thumbUrl } : {}),
+        ...(diffUrl ? { diffUrl } : {}),
+        ...(diffUrlMobile ? { diffUrlMobile } : {}),
+        ...(beforeGifUrl ? { beforeGifUrl } : {}),
+        ...(afterGifUrl ? { afterGifUrl } : {}),
+      });
+    }
+  }
+&nbsp;
+  // Interaction capture (#interaction-gif-capture): NOT multiplied by theme/route the way captureRoutes is
+  // above -- a hover/click interaction is captured once per configured entry, against its OWN `path` (not
+  // every route this PR touches), mirroring the contributor-facing animated-evidence contract's "one row per
+  // interaction target" shape. Gated on isScrollGifAvailable() (reused: the encode step is frame-source-
+  // agnostic, see scroll-gif.ts) since there is no point capturing frames this build can never assemble into
+  // a GIF -- self-host only, same as the scroll-GIF path above.
+  const manualInteractions = <span class="cstat-no" title="statement not covered" >visualConfig?.interactions ?? [];</span>
+  // #auto-interaction-detection: a maintainer-configured selector always wins on overlap -- an explicit
+  // entry may carry a label/path/action the detector could never infer, so a hand-authored duplicate is
+  // dropped from the auto-detected set rather than the other way around. Both selector sets are compared
+  // case-insensitively, matching detectAutoHoverInteractions' own dedup.
+  const manualSelectors = <span class="cstat-no" title="statement not covered" >new Set(manualInteractions.<span class="fstat-no" title="function not covered" >map((i</span>nteraction) =&gt; <span class="cstat-no" title="statement not covered" >interaction.selector.toLowerCase())</span>);</span>
+  const autoDetectedInteractions: VisualInteractionInput[] =
+<span class="cstat-no" title="statement not covered" >    visualConfig?.autoDetectInteractions &amp;&amp; changedCssFiles</span>
+      ? detectAutoHoverInteractions(changedCssFiles)
+          .<span class="fstat-no" title="function not covered" >filter((s</span>elector) =&gt; <span class="cstat-no" title="statement not covered" >!manualSelectors.has(selector.toLowerCase()))</span>
+          .<span class="fstat-no" title="function not covered" >map((s</span>elector) =&gt; (<span class="cstat-no" title="statement not covered" >{</span>
+            selector,
+            action: "hover" as const,
+            // captureRoutes[0] is unreachable-undefined by construction here, not a reachable false case:
+            // `themes` above is always at least `[undefined]` and `routes` (resolveVisualRoutes -&gt;
+            // mapFilesToRoutes) always falls back to DEFAULT_ROUTES when nothing else resolves, so the
+            // routes x themes double loop above always pushes at least one entry -- noUncheckedIndexedAccess
+            // still requires the optional chaining at the type level.
+            /* v8 ignore next */
+            path: captureRoutes[0]?.path ?? null,
+          }))
+      : [];
+  const interactionsConfigured = <span class="cstat-no" title="statement not covered" >[...manualInteractions, ...autoDetectedInteractions].slice(0, MAX_INTERACTIONS);</span>
+  const interactionRoutes: CaptureInteractionRoute[] = <span class="cstat-no" title="statement not covered" >[];</span>
+  // Interactions aren't multiplied per-theme (see comment above) -- when review.visual.themes configures more
+  // than one, the first configured theme is what interaction GIFs render in; themes[0] is `undefined` by
+  // default (no theme config), matching every other un-emulated default capture in this file.
+  const interactionTheme = <span class="cstat-no" title="statement not covered" >themes[0];</span>
+<span class="cstat-no" title="statement not covered" >  if (interactionsConfigured.length &gt; 0 &amp;&amp; isScrollGifAvailable()) {</span>
+<span class="cstat-no" title="statement not covered" >    for (const interaction of interactionsConfigured) {</span>
+      const interactionPath = <span class="cstat-no" title="statement not covered" >interaction.path ?? "/";</span>
+      const afterPage = <span class="cstat-no" title="statement not covered" >previewBase ? joinUrl(previewBase, interactionPath) : "";</span>
+      // SECURITY (#interaction-gif-capture): click/drag are real, state-mutating browser actions -- a genuine
+      // click event, or a real mouse-down/move/up drag sequence -- unlike hover, which can never trigger a
+      // click handler, form submit, or same-origin mutating request. Running click/drag against `prodBase`
+      // (the repo's PRODUCTION origin, see this function's own "before = production" comment above) would
+      // fire that real action against the LIVE SITE on every qualifying commit of every PR that touches a
+      // visual path, for as long as a maintainer has one configured -- the existing isSafeHttpUrl/
+      // isAllowedUrl SSRF guard only validates a URL is safe to NAVIGATE to, it has no concept of "this
+      // specific action is safe to perform" once there. hover never mutates state, so it's the only action
+      // still captured against production (real before/after comparison value); click/drag are preview-only.
+      const beforePage = <span class="cstat-no" title="statement not covered" >interaction.action === "hover" &amp;&amp; prodBase ? joinUrl(prodBase, interactionPath) : "";</span>
+      // beforePage is passed unconditionally (relying on captureInteractionGif's own `!page` guard) rather
+      // than ternary-gated here -- mirrors captureScrollGif's call above (line 767), which does the same for
+      // its own "before" side.
+      const [beforeGifUrl, afterGifUrl] = <span class="cstat-no" title="statement not covered" >await Promise.all([</span>
+        captureInteractionGif(env, target, beforePage, "before", interaction, interactionTheme, themeStorageKey),
+        afterPage ? captureInteractionGif(env, target, afterPage, "after", interaction, interactionTheme, themeStorageKey) : Promise.resolve&lt;string | undefined&gt;(undefined),
+      ]);
+<span class="cstat-no" title="statement not covered" >      if (beforeGifUrl || afterGifUrl) {</span>
+<span class="cstat-no" title="statement not covered" >        interactionRoutes.push({</span>
+          selector: interaction.selector,
+          ...(interaction.label ? { label: interaction.label } : {}),
+          ...(beforeGifUrl ? { beforeGifUrl } : {}),
+          ...(afterGifUrl ? { afterGifUrl } : {}),
+        });
+      }
+    }
+  }
+&nbsp;
+<span class="cstat-no" title="statement not covered" >  return { routes: captureRoutes, interactions: interactionRoutes, previewPending };</span>
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../../sorter.js"></script>
+        <script src="../../../block-navigation.js"></script>
+    </body>
+</html>
+    

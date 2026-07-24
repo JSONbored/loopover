@@ -1,0 +1,664 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/review/planner.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/review</a> planner.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/55</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/75</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/8</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/48</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a>
+<a name='L185'></a><a href='#L185'>185</a>
+<a name='L186'></a><a href='#L186'>186</a>
+<a name='L187'></a><a href='#L187'>187</a>
+<a name='L188'></a><a href='#L188'>188</a>
+<a name='L189'></a><a href='#L189'>189</a>
+<a name='L190'></a><a href='#L190'>190</a>
+<a name='L191'></a><a href='#L191'>191</a>
+<a name='L192'></a><a href='#L192'>192</a>
+<a name='L193'></a><a href='#L193'>193</a>
+<a name='L194'></a><a href='#L194'>194</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Convergence (#issue-coding-plan) — the `@loopover plan` command: on a maintainer's request, generate a
+// concise, actionable implementation plan from an ISSUE's text and post it as an issue comment so a contributor
+// (or their agent) has a concrete starting point.
+//
+// SAFETY CONTRACT:
+//   • disabled (fleet default OFF, and no repo `settings.plannerMode: enabled` override, #issue-coding-plan-config)
+//     → the handler (maybeProcessPlanCommand, queue/processors.ts) short-circuits BEFORE classifying the request,
+//     and the worker is byte-identical to today (`@loopover plan` falls through to the existing mention path →
+//     help card).
+//   • enabled → only a MAINTAINER can trigger it; the model sees only the (already-public) issue title + body;
+//     shared AI budget accounting runs before the configured reviewer (self-host Codex/Claude Code/etc, or the
+//     legacy Workers-AI pair); the output is public-safe-sanitized before posting; any model/error degrades to
+//     a no-plan no-op.
+&nbsp;
+import { type AiReviewActualUsage, BEST_REVIEW_MODELS, clampNumber, coerceAiText, coerceAiUsage, estimateNeurons, isRateLimitError, RELIABLE_FALLBACK_MODELS, utcDayStartIso } from "../services/ai-review";
+import { recordAiUsageEvent, sumAiEstimatedNeuronsSince } from "../db/repositories";
+import { sanitizePublicComment } from "../github/commands";
+import { AGENT_COMMAND_COMMENT_MARKER } from "../github/comments";
+import { loopoverFooter, type LoopOverFooterEnv } from "../github/footer";
+import type { GitHubWebhookPayload } from "../types";
+&nbsp;
+/** True when the issue-planning command is enabled FLEET-WIDE (the global default). A repo can still override
+ *  this in either direction via `.loopover.yml settings.plannerMode` -- see `resolvePlannerEnabled`
+ *  (settings/planner-mode.ts), the per-repo resolver half of this pair (mirrors
+ *  isDuplicateWinnerEnabledGlobally/resolveDuplicateWinnerEnabled's split, settings/duplicate-winner-mode.ts).
+ *  Truthy follows the codebase convention (`/^(1|true|yes|on)$/i`, same as isSelfTuneEnabled). */
+export function <span class="fstat-no" title="function not covered" >isPlannerEnabled(e</span>nv: {
+  LOOPOVER_REVIEW_PLANNER?: string | undefined;
+}): boolean {
+<span class="cstat-no" title="statement not covered" >  return /^(1|true|yes|on)$/i.test((env.LOOPOVER_REVIEW_PLANNER ?? "").trim());</span>
+}
+&nbsp;
+/** Recognize a bare `@loopover plan` mention (the rest of the line is ignored). Returns false for any other
+ *  body so the handler never intercepts an unrelated comment. PURE. */
+export function <span class="fstat-no" title="function not covered" >isPlanCommand(b</span>ody: string | null | undefined): boolean {
+<span class="cstat-no" title="statement not covered" >  if (!body) <span class="cstat-no" title="statement not covered" >return false;</span></span>
+<span class="cstat-no" title="statement not covered" >  return /(?:^|\s)@loopover\s+plan\b/i.test(body);</span>
+}
+&nbsp;
+/** The validated request for a `@loopover plan` command, or a skip reason. PURE so every guard (wrong action,
+ *  bot author, missing repo/issue/installation, a PR rather than an issue) is exhaustively unit-tested without the
+ *  webhook harness; the processor then carries a single `ok` branch. (#issue-coding-plan) */
+export type PlanCommandRequest =
+  | { ok: true; repoFullName: string; installationId: number; actor: string; issue: { number: number; title?: string | null | undefined; body?: string | null | undefined } }
+  | { ok: false; reason: string; repoFullName: string | null; actor: string | null; targetKey: string | null };
+&nbsp;
+export function <span class="fstat-no" title="function not covered" >classifyPlanCommandRequest(p</span>ayload: GitHubWebhookPayload, installationId: number | null): PlanCommandRequest {
+  const comment = <span class="cstat-no" title="statement not covered" >payload.comment;</span>
+  const repoFullName = <span class="cstat-no" title="statement not covered" >payload.repository?.full_name ?? null;</span>
+  const issue = <span class="cstat-no" title="statement not covered" >payload.issue ?? null;</span>
+  const actor = <span class="cstat-no" title="statement not covered" >payload.sender?.login ?? comment?.user?.login ?? null;</span>
+  const targetKey = <span class="cstat-no" title="statement not covered" >repoFullName &amp;&amp; issue ? `${repoFullName}#${issue.number}` : repoFullName;</span>
+<span class="cstat-no" title="statement not covered" >  if (payload.action !== "created" || comment?.user?.type === "Bot" || payload.sender?.type === "Bot" || /\[bot\]$/i.test(actor ?? "")) {</span>
+<span class="cstat-no" title="statement not covered" >    return { ok: false, reason: "unsupported_comment_action_or_bot", repoFullName, actor, targetKey };</span>
+  }
+<span class="cstat-no" title="statement not covered" >  if (!repoFullName || !issue || issue.pull_request || !installationId || !actor) {</span>
+<span class="cstat-no" title="statement not covered" >    return { ok: false, reason: "missing_repo_issue_installation_or_actor", repoFullName, actor, targetKey };</span>
+  }
+<span class="cstat-no" title="statement not covered" >  return { ok: true, repoFullName, installationId, actor, issue: { number: issue.number, title: issue.title, body: issue.body } };</span>
+}
+&nbsp;
+const PLANNER_SYSTEM_PROMPT = <span class="cstat-no" title="statement not covered" >[</span>
+  "You are a senior open-source maintainer assistant. Given a single GitHub issue, produce a CONCISE, actionable",
+  "implementation plan a contributor can follow. Output GitHub-flavored markdown with these sections, in order:",
+  "a one-line **Summary**; **Proposed approach** (2-4 bullets); **Steps** (an ordered checklist of concrete edits);",
+  "**Files likely involved** (best-effort from the description, may be empty); **Tests to add**; and",
+  "**Risks / open questions**. Be specific and practical; prefer the smallest correct change. Never invent file",
+  "paths you are not reasonably confident about. Do NOT include secrets, credentials, tokens, or any private data.",
+  "If the issue is too vague to plan, say so plainly and list the clarifying questions a maintainer should answer.",
+].join(" ");
+&nbsp;
+// Bound the issue text fed to the model so a giant issue body can't blow the prompt, and bound the plan we post.
+const MAX_ISSUE_CHARS = <span class="cstat-no" title="statement not covered" >6_000;</span>
+const MAX_PLAN_CHARS = <span class="cstat-no" title="statement not covered" >8_000;</span>
+const PLANNER_MAX_TOKENS = <span class="cstat-no" title="statement not covered" >1_200;</span>
+const PLANNER_MODEL_COUNT = <span class="cstat-no" title="statement not covered" >4;</span>
+&nbsp;
+function <span class="fstat-no" title="function not covered" >plannerDailyBudget(e</span>nv: Env): number {
+  const raw = <span class="cstat-no" title="statement not covered" >Number(env.AI_DAILY_NEURON_BUDGET);</span>
+<span class="cstat-no" title="statement not covered" >  return clampNumber(env.AI_DAILY_NEURON_BUDGET &amp;&amp; Number.isFinite(raw) ? raw : 10_000_000, 0, 10_000_000);</span>
+}
+&nbsp;
+async function <span class="fstat-no" title="function not covered" >recordPlannerUsage(</span>
+  env: Env,
+  args: {
+    actor?: string | null | undefined;
+    repoFullName?: string | null | undefined;
+    issueNumber?: number | null | undefined;
+    status: string;
+    estimatedNeurons: number;
+    detail: string;
+    usage?: AiReviewActualUsage | undefined;
+  },
+): Promise&lt;void&gt; {
+<span class="cstat-no" title="statement not covered" >  await recordAiUsageEvent(env, {</span>
+    feature: "issue_plan",
+    actor: args.actor ?? null,
+    route: "github_app.issue_plan",
+    model: [BEST_REVIEW_MODELS[0], RELIABLE_FALLBACK_MODELS[0]].join("+"),
+    status: args.status,
+    estimatedNeurons: args.estimatedNeurons,
+    provider: args.usage?.provider,
+    effort: args.usage?.effort,
+    inputTokens: args.usage?.inputTokens,
+    outputTokens: args.usage?.outputTokens,
+    totalTokens: args.usage?.totalTokens,
+    costUsd: args.usage?.costUsd,
+    detail: args.detail,
+    metadata: { repoFullName: args.repoFullName ?? null, issueNumber: args.issueNumber ?? null },
+  });
+}
+&nbsp;
+type PlannerModelResult = { text: string | null; usage?: AiReviewActualUsage | undefined };
+&nbsp;
+/** One reviewer text completion for the planner (whichever provider `env.AI` resolves to — self-host Codex/
+ *  Claude Code/etc, or the legacy Workers-AI pair): primary model, one reliable fallback, a single retry each.
+ *  Fail-safe — any error or empty output returns null. Mirrors runWorkersOpinion's routing (AI Gateway when set). */
+async function <span class="fstat-no" title="function not covered" >runPlannerModel(e</span>nv: Env, system: string, user: string): Promise&lt;PlannerModelResult&gt; {
+  const ai = <span class="cstat-no" title="statement not covered" >env.AI as unknown as { run?: (model: string, options: Record&lt;string, unknown&gt;, extra?: unknown) =&gt; Promise&lt;unknown&gt; } | undefined;</span>
+<span class="cstat-no" title="statement not covered" >  if (!ai || typeof ai.run !== "function") <span class="cstat-no" title="statement not covered" >return { text: null };</span></span>
+  const gatewayId = <span class="cstat-no" title="statement not covered" >env.AI_GATEWAY_ID?.trim();</span>
+  const extra = <span class="cstat-no" title="statement not covered" >gatewayId ? { gateway: { id: gatewayId } } : undefined;</span>
+  const models = <span class="cstat-no" title="statement not covered" >[BEST_REVIEW_MODELS[0], RELIABLE_FALLBACK_MODELS[0]];</span>
+<span class="cstat-no" title="statement not covered" >  for (const [modelIndex, model] of models.entries()) {</span>
+<span class="cstat-no" title="statement not covered" >    for (let attempt = <span class="cstat-no" title="statement not covered" >0; a</span>ttempt &lt; 2; attempt += 1) {</span>
+<span class="cstat-no" title="statement not covered" >      try {</span>
+        // #5046: this loop has no logging of its own -- the provider's own error log is the ONLY visibility
+        // into a failure here, so the truly last attempt must stay Sentry-visible (finalAttempt unset/true);
+        // every earlier attempt is about to be retried and can log quietly.
+        const result = <span class="cstat-no" title="statement not covered" >await ai.run(model, { max_tokens: PLANNER_MAX_TOKENS, temperature: 0.2, messages: [{ role: "system", content: system }, { role: "user", content: user }], finalAttempt: attempt === 1 &amp;&amp; modelIndex === models.length - 1 }, extra);</span>
+        const text = <span class="cstat-no" title="statement not covered" >coerceAiText(result).trim();</span>
+<span class="cstat-no" title="statement not covered" >        if (text) <span class="cstat-no" title="statement not covered" >return { text, usage: coerceAiUsage(result) };</span></span>
+      } catch (error) {
+        // #5385-sentry (GITTENSORY-K/8): a 429 will not have cleared by the next attempt a few hundred ms
+        // later, so retrying THIS model burns the remaining budget for zero additional chance of success --
+        // move straight to the fallback model instead (same guard as runWorkersOpinion in ai-review.ts).
+<span class="cstat-no" title="statement not covered" >        if (isRateLimitError(error)) <span class="cstat-no" title="statement not covered" >break;</span></span>
+      }
+    }
+  }
+<span class="cstat-no" title="statement not covered" >  return { text: null };</span>
+}
+&nbsp;
+/** Generate an implementation plan (markdown) from an issue's title + body via the configured reviewer. Returns
+ *  null when AI is unavailable or returns nothing (the caller then posts no plan). The returned text is bounded;
+ *  the caller still sanitizes it before posting. */
+export async function <span class="fstat-no" title="function not covered" >generateIssuePlan(</span>
+  env: Env,
+  issue: { title?: string | null | undefined; body?: string | null | undefined },
+  accounting: { actor?: string | null | undefined; repoFullName?: string | null | undefined; issueNumber?: number | null | undefined } = <span class="branch-0 cbranch-no" title="branch not covered" >{},</span>
+): Promise&lt;string | null&gt; {
+  const <span class="cstat-no" title="statement not covered" >title = (issue.title ?? "").trim();</span>
+  const <span class="cstat-no" title="statement not covered" >body = (issue.body ?? "").trim().slice(0, MAX_ISSUE_CHARS);</span>
+<span class="cstat-no" title="statement not covered" >  if (!title &amp;&amp; !body) <span class="cstat-no" title="statement not covered" >return null; // nothing to plan from</span></span>
+  const user = <span class="cstat-no" title="statement not covered" >`Issue title: ${title || "(none)"}\n\nIssue description:\n${body || "(no description provided)"}`;</span>
+  const estimatedNeurons = <span class="cstat-no" title="statement not covered" >estimateNeurons(PLANNER_SYSTEM_PROMPT.length + user.length, PLANNER_MAX_TOKENS, PLANNER_MODEL_COUNT);</span>
+  const remainingBudget = <span class="cstat-no" title="statement not covered" >Math.max(0, plannerDailyBudget(env) - (await sumAiEstimatedNeuronsSince(env, utcDayStartIso())));</span>
+<span class="cstat-no" title="statement not covered" >  if (estimatedNeurons &gt; remainingBudget) {</span>
+<span class="cstat-no" title="statement not covered" >    await recordPlannerUsage(env, { ...accounting, status: "quota_exceeded", estimatedNeurons: 0, detail: `estimated ${estimatedNeurons} neurons exceeds remaining ${remainingBudget}` });</span>
+<span class="cstat-no" title="statement not covered" >    return null;</span>
+  }
+  const { text: plan, usage } = <span class="cstat-no" title="statement not covered" >await runPlannerModel(env, PLANNER_SYSTEM_PROMPT, user);</span>
+<span class="cstat-no" title="statement not covered" >  await recordPlannerUsage(env, { ...accounting, status: plan ? "ok" : "no_output", estimatedNeurons: plan ? estimatedNeurons : 0, detail: plan ? "issue plan generated" : "no usable output", usage });</span>
+<span class="cstat-no" title="statement not covered" >  if (!plan) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+<span class="cstat-no" title="statement not covered" >  return plan.slice(0, MAX_PLAN_CHARS);</span>
+}
+&nbsp;
+/** Render the generated plan into a public-safe issue comment. Sanitized at the boundary so the posted body can
+ *  never carry private terms even if the model emitted them. */
+export function <span class="fstat-no" title="function not covered" >buildIssuePlanComment(</span>
+  plan: string,
+  args: { actor: string; repoFullName: string; issueNumber: number; env: LoopOverFooterEnv },
+): string {
+<span class="cstat-no" title="statement not covered" >  return sanitizePublicComment(</span>
+    [
+      AGENT_COMMAND_COMMENT_MARKER,
+      "",
+      "&gt; [!NOTE]",
+      `&gt; **LoopOver implementation plan** — requested by @${args.actor}`,
+      "&gt; AI-generated from the issue text. Treat it as a starting point and verify against the codebase before implementing.",
+      "",
+      "| Signal | State |",
+      "| --- | --- |",
+      "| Command | `@loopover plan` |",
+      `| Scope | ${args.repoFullName}#${args.issueNumber} |`,
+      "",
+      plan,
+      "",
+      "---",
+      loopoverFooter(args.env),
+    ].join("\n"),
+  );
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    

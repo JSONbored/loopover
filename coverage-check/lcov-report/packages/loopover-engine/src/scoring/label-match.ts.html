@@ -1,0 +1,544 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for packages/loopover-engine/src/scoring/label-match.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../../../prettify.css" />
+    <link rel="stylesheet" href="../../../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../../../index.html">All files</a> / <a href="index.html">packages/loopover-engine/src/scoring</a> label-match.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/61</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/34</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/8</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/58</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import { hasUnsafeWildcardCount } from "../signals/change-guardrail.js";
+&nbsp;
+export function <span class="fstat-no" title="function not covered" >labelMatchesPattern(l</span>abel: string, pattern: string): boolean {
+<span class="cstat-no" title="statement not covered" >  return labelPatternToRegExp(pattern.toLowerCase()).test(label.toLowerCase());</span>
+}
+&nbsp;
+/** Canonical "meta / suspicious configured-label" keyword matcher (#7251). A configured label multiplier key
+ *  whose keyword matches at a real boundary (`status:ready`, `reward/x`, or bare `bot`) — but NOT mid-word
+ *  (`bottleneck`, `scoreboard`, `riskier`) — is treated as a meta label rather than a genuine work label. Single
+ *  source of truth so engine.ts's `suspiciousConfiguredLabels` audit and reward-risk.ts's `bestFitLabels`
+ *  exclusion can't drift apart the way they already had. */
+export function <span class="fstat-no" title="function not covered" >isSuspiciousConfiguredLabel(l</span>abel: string): boolean {
+<span class="cstat-no" title="statement not covered" >  return /^(status|state|source|bot|codex|loopover|reward|score|miner|verified|risk)([:/-]|$)/i.test(label);</span>
+}
+&nbsp;
+// Compiled fnmatch→RegExp matchers are memoized by pattern. The same small,
+// config-derived set of label keys is matched on every scored PR/issue, so the
+// per-call recompile inside the nested label loops in engine.ts is pure waste.
+// Keys come from a repo's registryConfig.labelMultipliers, sourced from the externally-fetched gittensor
+// registry (registry/sync.ts + registry/normalize.ts, not a value this repo's own maintainer directly controls
+// via .loopover.yml) — so the pattern SET is small per repo, but individual pattern CONTENT is untrusted, not
+// literally attacker-supplied-per-request the way GitHub PR content is. The wildcard-count cap below (#2456)
+// bounds a single pattern's compile cost; this cache is additionally bounded to a fixed max entry count and
+// evicted LRU, so a long-running isolate that observes many distinct registry snapshots over its life still
+// can't grow the cache unboundedly. The compiled RegExp carries only the "i" flag (no global/sticky `lastIndex`
+// state), so sharing one instance across calls is safe and byte-identical to recompiling on every call.
+export const LABEL_PATTERN_REGEXP_CACHE_MAX_ENTRIES = <span class="cstat-no" title="statement not covered" >256;</span>
+const labelPatternRegExpCache = <span class="cstat-no" title="statement not covered" >new Map&lt;string, RegExp&gt;();</span>
+&nbsp;
+// A RegExp that never matches any input — mirrors change-guardrail.ts's identical NEVER_MATCHES fallback for an
+// over-complex pattern, so a pathological registry entry degrades to "this label multiplier never applies"
+// instead of hanging the scoring path that evaluates it.
+const LABEL_PATTERN_NEVER_MATCHES = <span class="cstat-no" title="statement not covered" >/^(?!)$/;</span>
+&nbsp;
+// Upstream resolves label multipliers by matching each configured key as a Python `fnmatch` GLOB, not a
+// literal string: `fnmatch(label.lower(), pattern.lower())` in
+// gittensor/validator/oss_contributions/label_resolution.py, so a repo can configure `type:*`, `kind/*`, or
+// `priority:?` and have it match `type:bug-fix`, `kind/bug`, `priority:1` (#1244-class scoring parity). The
+// preview previously did exact equality, so it silently scored every wildcard-configured trusted label at the
+// neutral default — under-/over-estimating the score for any repo using glob keys. Translate one fnmatch
+// pattern to an anchored, case-insensitive RegExp. fnmatch semantics differ from the path-glob in
+// change-guardrail.ts (there `*` stops at `/` and `?` is literal): labels are flat strings, so `*` matches any
+// run, `?` any single character, and `[seq]`/`[!seq]` a character class. Literal keys are unaffected — for a
+// pattern with no glob metacharacter the RegExp is an exact match, so existing configs score identically.
+function <span class="fstat-no" title="function not covered" >labelPatternToRegExp(p</span>attern: string): RegExp {
+  const cached = <span class="cstat-no" title="statement not covered" >labelPatternRegExpCache.get(pattern);</span>
+<span class="cstat-no" title="statement not covered" >  if (cached !== undefined) {</span>
+    // Refresh recency on hit so the cache behaves as an LRU: the most-recently-matched patterns
+    // survive eviction, not just the most-recently-inserted ones.
+<span class="cstat-no" title="statement not covered" >    labelPatternRegExpCache.delete(pattern);</span>
+<span class="cstat-no" title="statement not covered" >    labelPatternRegExpCache.set(pattern, cached);</span>
+<span class="cstat-no" title="statement not covered" >    return cached;</span>
+  }
+  // Reuses change-guardrail.ts's wildcard-GROUP counting (a `*` here matches the same "any run of chars"
+  // semantics as that glob compiler's `*`, so the same catastrophic-backtracking risk and the same empirically-
+  // safe threshold apply) — an over-complex registry-sourced label_multipliers key degrades to a safe never-match
+  // instead of hanging RegExp.test() on an adversarial near-miss label (#2456). Reachable via the public
+  // score-preview API, the MCP tool, and the per-PR label-audit signal, so one bad registry entry could otherwise
+  // hang scoring for every PR on that repo.
+<span class="cstat-no" title="statement not covered" >  if (hasUnsafeWildcardCount(pattern)) {</span>
+<span class="cstat-no" title="statement not covered" >    setLabelPatternRegExpCacheEntry(pattern, LABEL_PATTERN_NEVER_MATCHES);</span>
+<span class="cstat-no" title="statement not covered" >    return LABEL_PATTERN_NEVER_MATCHES;</span>
+  }
+  let regex = <span class="cstat-no" title="statement not covered" >"";</span>
+  let i = <span class="cstat-no" title="statement not covered" >0;</span>
+<span class="cstat-no" title="statement not covered" >  while (i &lt; pattern.length) {</span>
+    const char = <span class="cstat-no" title="statement not covered" >pattern.charAt(i);</span>
+<span class="cstat-no" title="statement not covered" >    i += 1;</span>
+<span class="cstat-no" title="statement not covered" >    if (char === "*") {</span>
+<span class="cstat-no" title="statement not covered" >      regex += ".*";</span>
+    } else <span class="cstat-no" title="statement not covered" >if (char === "?") {</span>
+<span class="cstat-no" title="statement not covered" >      regex += ".";</span>
+    } else <span class="cstat-no" title="statement not covered" >if (char === "[") {</span>
+      const close = <span class="cstat-no" title="statement not covered" >pattern.indexOf("]", i);</span>
+<span class="cstat-no" title="statement not covered" >      if (close === -1) {</span>
+        // No closing bracket: fnmatch treats the `[` as a literal character.
+<span class="cstat-no" title="statement not covered" >        regex += "\\[";</span>
+      } else {
+        const rawBody = <span class="cstat-no" title="statement not covered" >pattern.slice(i, close);</span>
+<span class="cstat-no" title="statement not covered" >        if (rawBody === "" || rawBody === "!") {</span>
+          // Empty classes and bare `[!]` stay literal in Python fnmatch instead of compiling as classes.
+<span class="cstat-no" title="statement not covered" >          regex += `\\[${escapeRegExpLiteral(rawBody)}\\]`;</span>
+        } else <span class="cstat-no" title="statement not covered" >if (hasDescendingCharacterRange(rawBody)) {</span>
+          // Python fnmatch treats invalid ranges like `[z-a]` as a never-match pattern; RegExp throws.
+<span class="cstat-no" title="statement not covered" >          regex += "(?!)";</span>
+        } else {
+          let body = <span class="cstat-no" title="statement not covered" >rawBody.replace(/\\/g, "\\\\");</span>
+          // `[!seq]` is fnmatch's negated class; RegExp spells negation as `[^seq]`.
+<span class="cstat-no" title="statement not covered" >          if (body.startsWith("!")) <span class="cstat-no" title="statement not covered" >body = `^${body.slice(1)}`;</span></span>
+          else <span class="cstat-no" title="statement not covered" >if (body.startsWith("^")) <span class="cstat-no" title="statement not covered" >body = `\\${body}`;</span></span>
+<span class="cstat-no" title="statement not covered" >          regex += `[${body}]`;</span>
+        }
+<span class="cstat-no" title="statement not covered" >        i = close + 1;</span>
+      }
+    } else <span class="cstat-no" title="statement not covered" >if (/[.+^${}()|\]\\]/.test(char)) {</span>
+<span class="cstat-no" title="statement not covered" >      regex += `\\${char}`;</span>
+    } else {
+<span class="cstat-no" title="statement not covered" >      regex += char;</span>
+    }
+  }
+  const compiled = <span class="cstat-no" title="statement not covered" >new RegExp(`^${regex}$`, "i");</span>
+<span class="cstat-no" title="statement not covered" >  setLabelPatternRegExpCacheEntry(pattern, compiled);</span>
+<span class="cstat-no" title="statement not covered" >  return compiled;</span>
+}
+&nbsp;
+// Inserts a new (never-before-cached) entry, evicting the least-recently-used entry first if the
+// cache is already at its bound. Callers must only use this for keys not already present — refreshing
+// an existing key's recency on a cache hit is handled inline above via delete+set.
+function <span class="fstat-no" title="function not covered" >setLabelPatternRegExpCacheEntry(p</span>attern: string, compiled: RegExp): void {
+<span class="cstat-no" title="statement not covered" >  if (labelPatternRegExpCache.size &gt;= LABEL_PATTERN_REGEXP_CACHE_MAX_ENTRIES) {</span>
+    // Map iteration order is insertion order, so the first key is always the least-recently-used
+    // one (recency is refreshed via delete+set on every hit/insert). The map is non-empty here
+    // because size &gt;= LABEL_PATTERN_REGEXP_CACHE_MAX_ENTRIES (a positive constant), so the loop body
+    // always runs exactly once.
+<span class="cstat-no" title="statement not covered" >    for (const oldestPattern of labelPatternRegExpCache.keys()) {</span>
+<span class="cstat-no" title="statement not covered" >      labelPatternRegExpCache.delete(oldestPattern);</span>
+<span class="cstat-no" title="statement not covered" >      break;</span>
+    }
+  }
+<span class="cstat-no" title="statement not covered" >  labelPatternRegExpCache.set(pattern, compiled);</span>
+}
+&nbsp;
+export function <span class="fstat-no" title="function not covered" >clearLabelPatternRegExpCacheForTest(): void {</span>
+<span class="cstat-no" title="statement not covered" >  labelPatternRegExpCache.clear();</span>
+}
+&nbsp;
+export function <span class="fstat-no" title="function not covered" >labelPatternRegExpCacheKeysForTest(): string[] {</span>
+<span class="cstat-no" title="statement not covered" >  return [...labelPatternRegExpCache.keys()];</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >escapeRegExpLiteral(v</span>alue: string): string {
+<span class="cstat-no" title="statement not covered" >  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&amp;");</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >hasDescendingCharacterRange(b</span>ody: string): boolean {
+  const start = <span class="cstat-no" title="statement not covered" >body.startsWith("!") ? 1 : 0;</span>
+  // Walk the class left-to-right, consuming each `X-Y` range as a unit so a range endpoint can't be
+  // misread as the start of a spurious second range. Only a genuinely inverted range like `[z-a]` — the
+  // case JS `RegExp` actually throws on — must degrade the class to never-match; a literal `-` that
+  // follows a completed range (as in `[a-z-9]`, a valid class) must NOT be suppressed. The prior scan
+  // flagged any `-` whose left neighbor outranked its right neighbor, so it wrongly killed `[a-z-9]`.
+  let i = <span class="cstat-no" title="statement not covered" >start;</span>
+<span class="cstat-no" title="statement not covered" >  while (i &lt; body.length) {</span>
+<span class="cstat-no" title="statement not covered" >    if (i + 2 &lt; body.length &amp;&amp; body.charAt(i + 1) === "-") {</span>
+<span class="cstat-no" title="statement not covered" >      if (body.charCodeAt(i) &gt; body.charCodeAt(i + 2)) <span class="cstat-no" title="statement not covered" >return true;</span></span>
+<span class="cstat-no" title="statement not covered" >      i += 3;</span>
+    } else {
+<span class="cstat-no" title="statement not covered" >      i += 1;</span>
+    }
+  }
+<span class="cstat-no" title="statement not covered" >  return false;</span>
+}
+&nbsp;
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../../../sorter.js"></script>
+        <script src="../../../../block-navigation.js"></script>
+    </body>
+</html>
+    

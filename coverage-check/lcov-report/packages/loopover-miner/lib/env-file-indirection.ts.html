@@ -1,0 +1,226 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for packages/loopover-miner/lib/env-file-indirection.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../../prettify.css" />
+    <link rel="stylesheet" href="../../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../../index.html">All files</a> / <a href="index.html">packages/loopover-miner/lib</a> env-file-indirection.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/16</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/20</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/4</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/9</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Resolve `&lt;NAME&gt;_FILE` env vars (Docker/Swarm/K8s secret mounts) into `&lt;NAME&gt;` at miner startup (#5178).
+// Ports src/selfhost/load-file-secrets.ts's pattern into the miner package -- the miner is a separate
+// deployable (its own process/container per DEPLOYMENT.md's fleet mode), so it never runs through ORB's own
+// server-startup resolver. Both modules agree on failure handling: an unreadable/missing `&lt;NAME&gt;_FILE`
+// THROWS. The ORB analogue logs a `selfhost_secret_file_unreadable` line first and then throws the same
+// way -- it converged onto this fail-fast behavior in #6284, so the divergence this comment used to
+// describe no longer exists (pinned by test/unit/env-file-indirection-parity.test.ts). A broken secret
+// mount therefore fails a container fast and loud, never silently proceeding with an unset/empty
+// credential the next real GitHub call would then fail on anyway, with a far less specific error.
+import { readFileSync } from "node:fs";
+&nbsp;
+// Docker Compose's OWN reserved `_FILE`-suffixed environment variables -- never loopover's secret-file
+// convention, so they must never be dereferenced below (mirrors src/selfhost/load-file-secrets.ts's own
+// exclusion and rationale: `COMPOSE_FILE` is a colon-delimited list of compose file paths, never a single
+// readable file itself, and `COMPOSE_ENV_FILE` points at an operator's own .env file, not a secret).
+const COMPOSE_RESERVED_FILE_VARS = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >new Set(["COMPOSE_FILE", "COMPOSE_ENV_FILE"]);</span></span>
+&nbsp;
+/**
+ * Scan `env` for `&lt;NAME&gt;_FILE` vars and resolve each into `&lt;NAME&gt;` in place, reading the referenced file's
+ * contents (trimmed). An explicit `&lt;NAME&gt;` value always wins over `&lt;NAME&gt;_FILE` (mirrors the ORB analogue's
+ * precedence rule exactly) -- a `_FILE` var is only consulted when its plain counterpart is unset. Throws a
+ * clear, actionable error identifying the offending `&lt;NAME&gt;_FILE` var and its file path when the file is
+ * missing or unreadable -- this never silently leaves a credential empty/undefined. Never logs or returns any
+ * resolved secret value itself; only the (non-secret) var name and file path ever appear in a thrown message.
+ *
+ * `env` and `readFile` are injectable purely for testability -- every real caller uses the defaults
+ * (`process.env`, `node:fs`'s `readFileSync`), so this is byte-identical to a hardcoded version at runtime.
+ */
+export function <span class="fstat-no" title="function not covered" ><span class="fstat-no" title="function not covered" >loadMinerFileSecrets(</span></span>
+  env: Record&lt;string, string | undefined&gt; = <span class="branch-0 cbranch-no" title="branch not covered" ><span class="branch-0 cbranch-no" title="branch not covered" >process.env,</span></span>
+<span class="fstat-no" title="function not covered" ><span class="branch-0 cbranch-no" title="branch not covered" >  readFile: (path: string) =&gt; string = <span class="fstat-no" title="function not covered" ><span class="branch-0 cbranch-no" title="branch not covered" >(p</span></span>ath) =&gt; <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >readFileSync(path, "utf8"),</span></span></span></span>
+): void {
+<span class="cstat-no" title="statement not covered" >  for (const key of Object.keys(env)) {</span>
+<span class="cstat-no" title="statement not covered" >    if (!key.endsWith("_FILE") || !env[key] || COMPOSE_RESERVED_FILE_VARS.has(key)) <span class="cstat-no" title="statement not covered" >continue;</span></span>
+    const target = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >key.slice(0, -"_FILE".length);</span></span>
+<span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >    if (env[target]) <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >continue; </span></span>// an explicit &lt;NAME&gt; value always wins over &lt;NAME&gt;_FILE</span></span>
+<span class="cstat-no" title="statement not covered" >    try {</span>
+<span class="cstat-no" title="statement not covered" >      env[target] = readFile(env[key]).trim();</span>
+    } catch (error) {
+<span class="cstat-no" title="statement not covered" >      throw new Error(</span>
+        `Failed to read secret file for ${key} (${env[key]}): ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../../sorter.js"></script>
+        <script src="../../../block-navigation.js"></script>
+    </body>
+</html>
+    

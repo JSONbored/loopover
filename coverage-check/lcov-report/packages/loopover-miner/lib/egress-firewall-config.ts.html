@@ -1,0 +1,388 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for packages/loopover-miner/lib/egress-firewall-config.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../../prettify.css" />
+    <link rel="stylesheet" href="../../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../../index.html">All files</a> / <a href="index.html">packages/loopover-miner/lib</a> egress-firewall-config.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/20</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/6</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/10</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/19</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Renders a resolved egress allowlist (egress-allowlist.ts) into the two config artifacts #7857's real
+// enforcement needs: dnsmasq config text, and an iptables/ipset ruleset. Pure text generation, no IO -- the
+// thin shell entrypoint (egress-firewall-entrypoint.sh) writes this output to disk and applies it.
+//
+// MECHANISM: dnsmasq is this container's ONLY permitted DNS resolver, configured with one `ipset=/host/set`
+// directive per allowed hostname -- dnsmasq's own well-established feature where resolving a matched domain for
+// ANY caller also adds the resolved IP to the named ipset automatically, in-band with the real lookup (no
+// separate polling/refresh needed to track IP rotation on CDN-backed hosts like registry.npmjs.org). iptables
+// then: (1) defaults OUTPUT to DROP, (2) allows loopback (dnsmasq itself, local IPC), (3) allows outbound DNS
+// (port 53) ONLY to the upstream resolvers dnsmasq itself is configured to forward to -- forcing every domain
+// lookup through the controlled resolver, since a subprocess trying to query a DIFFERENT DNS server directly
+// is blocked before dnsmasq ever gets a chance to populate the ipset for it, and (4) allows outbound traffic to
+// any IP already in the ipset, on standard ports. This is the well-established, standard Linux pattern for
+// domain-based (not just IP-based) firewall allowlisting -- not a novel design.
+//
+// Every hostname is re-validated against the RFC 1123 shape (same regex ams-policy-spec.ts's own parser already
+// enforces on `extraHosts`) immediately before it reaches this shell-adjacent text -- defense in depth: this
+// module's own correctness must not depend on every future caller re-verifying its inputs were pre-sanitized
+// upstream.
+import type { EgressAllowlistEntry } from "./egress-allowlist.js";
+&nbsp;
+export const EGRESS_IPSET_NAME = <span class="cstat-no" title="statement not covered" >"loopover_egress_allow";</span>
+export const EGRESS_ALLOWED_TCP_PORTS = <span class="cstat-no" title="statement not covered" >[80, 443, 22] as const;</span>
+&nbsp;
+// Same shape as ams-policy-spec.ts's own HOSTNAME_RE (kept independent rather than imported -- that file lives
+// in @loopover/engine and validates operator input at parse time; this one is the last line of defense right
+// before generating shell-adjacent config text, and must keep working even if that upstream check ever changes).
+const HOSTNAME_RE = <span class="cstat-no" title="statement not covered" >/^(?=.{1,253}$)(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)*[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/;</span>
+&nbsp;
+export class InvalidEgressHostError extends Error {
+<span class="fstat-no" title="function not covered" >  constructor(h</span>ost: string) {
+<span class="cstat-no" title="statement not covered" >    super(`Refusing to generate egress-firewall config for an invalid hostname: ${JSON.stringify(host)}`);</span>
+<span class="cstat-no" title="statement not covered" >    this.name = "InvalidEgressHostError";</span>
+  }
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >assertValidHosts(e</span>ntries: readonly EgressAllowlistEntry[]): void {
+<span class="cstat-no" title="statement not covered" >  for (const entry of entries) {</span>
+<span class="cstat-no" title="statement not covered" >    if (!HOSTNAME_RE.test(entry.host)) <span class="cstat-no" title="statement not covered" >throw new InvalidEgressHostError(entry.host);</span></span>
+  }
+}
+&nbsp;
+/** The `LOOPOVER_MINER_DISABLE_EGRESS_FIREWALL` no-op ruleset (#7857's documented escape hatch): applies no
+ *  restriction at all, for an operator who hit a real snag and needs to get unblocked before fixing their
+ *  `networkAllowlist` properly and removing the override. */
+export function <span class="fstat-no" title="function not covered" >renderDisabledRuleset(): string {</span>
+<span class="cstat-no" title="statement not covered" >  return ["#!/bin/sh", "# Generated by egress-firewall-config.ts -- do not edit by hand.", "# LOOPOVER_MINER_DISABLE_EGRESS_FIREWALL is set -- no network-egress restriction applied.", "exit 0", ""].join("\n");</span>
+}
+&nbsp;
+/** Render dnsmasq config: one `ipset=/host/setname` directive per allowed hostname, plus `server=` lines for
+ *  the upstream resolvers it forwards real lookups to. Deliberately does NOT set `no-resolv`/read
+ *  `/etc/resolv.conf` -- the upstream servers are pinned explicitly so the iptables ruleset below can allow
+ *  dnsmasq's own outbound DNS to those EXACT, known destinations rather than an open-ended "wherever
+ *  /etc/resolv.conf happens to point." */
+export function <span class="fstat-no" title="function not covered" >renderDnsmasqConfig(e</span>ntries: readonly EgressAllowlistEntry[], upstreamResolvers: readonly string[] = <span class="branch-0 cbranch-no" title="branch not covered" >["1.1.1.1", "8.8.8.8"]): string {</span>
+<span class="cstat-no" title="statement not covered" >  assertValidHosts(entries);</span>
+  const lines = <span class="cstat-no" title="statement not covered" >[</span>
+    "# Generated by egress-firewall-config.ts -- do not edit by hand.",
+    "port=53",
+    "bind-interfaces",
+    "listen-address=127.0.0.1",
+    "no-resolv",
+    ...upstreamResolvers.<span class="fstat-no" title="function not covered" >map((s</span>erver) =&gt; <span class="cstat-no" title="statement not covered" >`server=${server}`)</span>,
+    ...entries.<span class="fstat-no" title="function not covered" >map((e</span>ntry) =&gt; <span class="cstat-no" title="statement not covered" >`ipset=/${entry.host}/${EGRESS_IPSET_NAME}`)</span>,
+  ];
+<span class="cstat-no" title="statement not covered" >  return `${lines.join("\n")}\n`;</span>
+}
+&nbsp;
+/** Render the iptables/ipset ruleset as a plain shell script body (a sequence of `ipset`/`iptables` invocations,
+ *  not a single ip(6)tables-restore blob, so the entrypoint can surface exactly which command failed). Deny-by-
+ *  default OUTPUT; the RETURN value is meant to be written to a file and `source`d (or piped to `sh`) by the
+ *  entrypoint as root, before dropping to the `node` user. */
+export function <span class="fstat-no" title="function not covered" >renderIptablesRuleset(e</span>ntries: readonly EgressAllowlistEntry[], upstreamResolvers: readonly string[] = <span class="branch-0 cbranch-no" title="branch not covered" >["1.1.1.1", "8.8.8.8"]): string {</span>
+<span class="cstat-no" title="statement not covered" >  assertValidHosts(entries);</span>
+  const lines = <span class="cstat-no" title="statement not covered" >[</span>
+    "#!/bin/sh",
+    "# Generated by egress-firewall-config.ts -- do not edit by hand.",
+    "set -eu",
+    "",
+    `ipset create ${EGRESS_IPSET_NAME} hash:ip -exist`,
+    "",
+    "iptables -F OUTPUT",
+    "iptables -P OUTPUT DROP",
+    "",
+    "# Loopback: dnsmasq itself, local IPC.",
+    "iptables -A OUTPUT -o lo -j ACCEPT",
+    "",
+    "# DNS to the exact upstream resolvers dnsmasq forwards to, and nowhere else -- forces every lookup",
+    "# through dnsmasq, which is the only thing that ever adds an IP to the allow ipset.",
+    ...upstreamResolvers.<span class="fstat-no" title="function not covered" >flatMap((s</span>erver) =&gt; <span class="cstat-no" title="statement not covered" >[</span>
+      `iptables -A OUTPUT -p udp -d ${server} --dport 53 -j ACCEPT`,
+      `iptables -A OUTPUT -p tcp -d ${server} --dport 53 -j ACCEPT`,
+    ]),
+    "",
+    "# Egress to anything dnsmasq has already resolved for an allowed hostname, on standard ports.",
+    ...EGRESS_ALLOWED_TCP_PORTS.<span class="fstat-no" title="function not covered" >map((p</span>ort) =&gt; <span class="cstat-no" title="statement not covered" >`iptables -A OUTPUT -m set --match-set ${EGRESS_IPSET_NAME} dst -p tcp --dport ${port} -j ACCEPT`)</span>,
+    "",
+    `# Allowed hosts (${entries.length}): ${entries.<span class="fstat-no" title="function not covered" >map((e</span>ntry) =&gt; <span class="cstat-no" title="statement not covered" >`${entry.host} [${entry.reason}]`)</span>.join(", ") || "(none -- OS registries and target-repo-git-remote hosts are always present, so this should never be empty)"}`,
+  ];
+<span class="cstat-no" title="statement not covered" >  return `${lines.join("\n")}\n`;</span>
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../../sorter.js"></script>
+        <script src="../../../block-navigation.js"></script>
+    </body>
+</html>
+    

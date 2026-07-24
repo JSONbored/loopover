@@ -1,0 +1,1354 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/review/rag-index.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/review</a> rag-index.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/183</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/112</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/23</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/157</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a>
+<a name='L185'></a><a href='#L185'>185</a>
+<a name='L186'></a><a href='#L186'>186</a>
+<a name='L187'></a><a href='#L187'>187</a>
+<a name='L188'></a><a href='#L188'>188</a>
+<a name='L189'></a><a href='#L189'>189</a>
+<a name='L190'></a><a href='#L190'>190</a>
+<a name='L191'></a><a href='#L191'>191</a>
+<a name='L192'></a><a href='#L192'>192</a>
+<a name='L193'></a><a href='#L193'>193</a>
+<a name='L194'></a><a href='#L194'>194</a>
+<a name='L195'></a><a href='#L195'>195</a>
+<a name='L196'></a><a href='#L196'>196</a>
+<a name='L197'></a><a href='#L197'>197</a>
+<a name='L198'></a><a href='#L198'>198</a>
+<a name='L199'></a><a href='#L199'>199</a>
+<a name='L200'></a><a href='#L200'>200</a>
+<a name='L201'></a><a href='#L201'>201</a>
+<a name='L202'></a><a href='#L202'>202</a>
+<a name='L203'></a><a href='#L203'>203</a>
+<a name='L204'></a><a href='#L204'>204</a>
+<a name='L205'></a><a href='#L205'>205</a>
+<a name='L206'></a><a href='#L206'>206</a>
+<a name='L207'></a><a href='#L207'>207</a>
+<a name='L208'></a><a href='#L208'>208</a>
+<a name='L209'></a><a href='#L209'>209</a>
+<a name='L210'></a><a href='#L210'>210</a>
+<a name='L211'></a><a href='#L211'>211</a>
+<a name='L212'></a><a href='#L212'>212</a>
+<a name='L213'></a><a href='#L213'>213</a>
+<a name='L214'></a><a href='#L214'>214</a>
+<a name='L215'></a><a href='#L215'>215</a>
+<a name='L216'></a><a href='#L216'>216</a>
+<a name='L217'></a><a href='#L217'>217</a>
+<a name='L218'></a><a href='#L218'>218</a>
+<a name='L219'></a><a href='#L219'>219</a>
+<a name='L220'></a><a href='#L220'>220</a>
+<a name='L221'></a><a href='#L221'>221</a>
+<a name='L222'></a><a href='#L222'>222</a>
+<a name='L223'></a><a href='#L223'>223</a>
+<a name='L224'></a><a href='#L224'>224</a>
+<a name='L225'></a><a href='#L225'>225</a>
+<a name='L226'></a><a href='#L226'>226</a>
+<a name='L227'></a><a href='#L227'>227</a>
+<a name='L228'></a><a href='#L228'>228</a>
+<a name='L229'></a><a href='#L229'>229</a>
+<a name='L230'></a><a href='#L230'>230</a>
+<a name='L231'></a><a href='#L231'>231</a>
+<a name='L232'></a><a href='#L232'>232</a>
+<a name='L233'></a><a href='#L233'>233</a>
+<a name='L234'></a><a href='#L234'>234</a>
+<a name='L235'></a><a href='#L235'>235</a>
+<a name='L236'></a><a href='#L236'>236</a>
+<a name='L237'></a><a href='#L237'>237</a>
+<a name='L238'></a><a href='#L238'>238</a>
+<a name='L239'></a><a href='#L239'>239</a>
+<a name='L240'></a><a href='#L240'>240</a>
+<a name='L241'></a><a href='#L241'>241</a>
+<a name='L242'></a><a href='#L242'>242</a>
+<a name='L243'></a><a href='#L243'>243</a>
+<a name='L244'></a><a href='#L244'>244</a>
+<a name='L245'></a><a href='#L245'>245</a>
+<a name='L246'></a><a href='#L246'>246</a>
+<a name='L247'></a><a href='#L247'>247</a>
+<a name='L248'></a><a href='#L248'>248</a>
+<a name='L249'></a><a href='#L249'>249</a>
+<a name='L250'></a><a href='#L250'>250</a>
+<a name='L251'></a><a href='#L251'>251</a>
+<a name='L252'></a><a href='#L252'>252</a>
+<a name='L253'></a><a href='#L253'>253</a>
+<a name='L254'></a><a href='#L254'>254</a>
+<a name='L255'></a><a href='#L255'>255</a>
+<a name='L256'></a><a href='#L256'>256</a>
+<a name='L257'></a><a href='#L257'>257</a>
+<a name='L258'></a><a href='#L258'>258</a>
+<a name='L259'></a><a href='#L259'>259</a>
+<a name='L260'></a><a href='#L260'>260</a>
+<a name='L261'></a><a href='#L261'>261</a>
+<a name='L262'></a><a href='#L262'>262</a>
+<a name='L263'></a><a href='#L263'>263</a>
+<a name='L264'></a><a href='#L264'>264</a>
+<a name='L265'></a><a href='#L265'>265</a>
+<a name='L266'></a><a href='#L266'>266</a>
+<a name='L267'></a><a href='#L267'>267</a>
+<a name='L268'></a><a href='#L268'>268</a>
+<a name='L269'></a><a href='#L269'>269</a>
+<a name='L270'></a><a href='#L270'>270</a>
+<a name='L271'></a><a href='#L271'>271</a>
+<a name='L272'></a><a href='#L272'>272</a>
+<a name='L273'></a><a href='#L273'>273</a>
+<a name='L274'></a><a href='#L274'>274</a>
+<a name='L275'></a><a href='#L275'>275</a>
+<a name='L276'></a><a href='#L276'>276</a>
+<a name='L277'></a><a href='#L277'>277</a>
+<a name='L278'></a><a href='#L278'>278</a>
+<a name='L279'></a><a href='#L279'>279</a>
+<a name='L280'></a><a href='#L280'>280</a>
+<a name='L281'></a><a href='#L281'>281</a>
+<a name='L282'></a><a href='#L282'>282</a>
+<a name='L283'></a><a href='#L283'>283</a>
+<a name='L284'></a><a href='#L284'>284</a>
+<a name='L285'></a><a href='#L285'>285</a>
+<a name='L286'></a><a href='#L286'>286</a>
+<a name='L287'></a><a href='#L287'>287</a>
+<a name='L288'></a><a href='#L288'>288</a>
+<a name='L289'></a><a href='#L289'>289</a>
+<a name='L290'></a><a href='#L290'>290</a>
+<a name='L291'></a><a href='#L291'>291</a>
+<a name='L292'></a><a href='#L292'>292</a>
+<a name='L293'></a><a href='#L293'>293</a>
+<a name='L294'></a><a href='#L294'>294</a>
+<a name='L295'></a><a href='#L295'>295</a>
+<a name='L296'></a><a href='#L296'>296</a>
+<a name='L297'></a><a href='#L297'>297</a>
+<a name='L298'></a><a href='#L298'>298</a>
+<a name='L299'></a><a href='#L299'>299</a>
+<a name='L300'></a><a href='#L300'>300</a>
+<a name='L301'></a><a href='#L301'>301</a>
+<a name='L302'></a><a href='#L302'>302</a>
+<a name='L303'></a><a href='#L303'>303</a>
+<a name='L304'></a><a href='#L304'>304</a>
+<a name='L305'></a><a href='#L305'>305</a>
+<a name='L306'></a><a href='#L306'>306</a>
+<a name='L307'></a><a href='#L307'>307</a>
+<a name='L308'></a><a href='#L308'>308</a>
+<a name='L309'></a><a href='#L309'>309</a>
+<a name='L310'></a><a href='#L310'>310</a>
+<a name='L311'></a><a href='#L311'>311</a>
+<a name='L312'></a><a href='#L312'>312</a>
+<a name='L313'></a><a href='#L313'>313</a>
+<a name='L314'></a><a href='#L314'>314</a>
+<a name='L315'></a><a href='#L315'>315</a>
+<a name='L316'></a><a href='#L316'>316</a>
+<a name='L317'></a><a href='#L317'>317</a>
+<a name='L318'></a><a href='#L318'>318</a>
+<a name='L319'></a><a href='#L319'>319</a>
+<a name='L320'></a><a href='#L320'>320</a>
+<a name='L321'></a><a href='#L321'>321</a>
+<a name='L322'></a><a href='#L322'>322</a>
+<a name='L323'></a><a href='#L323'>323</a>
+<a name='L324'></a><a href='#L324'>324</a>
+<a name='L325'></a><a href='#L325'>325</a>
+<a name='L326'></a><a href='#L326'>326</a>
+<a name='L327'></a><a href='#L327'>327</a>
+<a name='L328'></a><a href='#L328'>328</a>
+<a name='L329'></a><a href='#L329'>329</a>
+<a name='L330'></a><a href='#L330'>330</a>
+<a name='L331'></a><a href='#L331'>331</a>
+<a name='L332'></a><a href='#L332'>332</a>
+<a name='L333'></a><a href='#L333'>333</a>
+<a name='L334'></a><a href='#L334'>334</a>
+<a name='L335'></a><a href='#L335'>335</a>
+<a name='L336'></a><a href='#L336'>336</a>
+<a name='L337'></a><a href='#L337'>337</a>
+<a name='L338'></a><a href='#L338'>338</a>
+<a name='L339'></a><a href='#L339'>339</a>
+<a name='L340'></a><a href='#L340'>340</a>
+<a name='L341'></a><a href='#L341'>341</a>
+<a name='L342'></a><a href='#L342'>342</a>
+<a name='L343'></a><a href='#L343'>343</a>
+<a name='L344'></a><a href='#L344'>344</a>
+<a name='L345'></a><a href='#L345'>345</a>
+<a name='L346'></a><a href='#L346'>346</a>
+<a name='L347'></a><a href='#L347'>347</a>
+<a name='L348'></a><a href='#L348'>348</a>
+<a name='L349'></a><a href='#L349'>349</a>
+<a name='L350'></a><a href='#L350'>350</a>
+<a name='L351'></a><a href='#L351'>351</a>
+<a name='L352'></a><a href='#L352'>352</a>
+<a name='L353'></a><a href='#L353'>353</a>
+<a name='L354'></a><a href='#L354'>354</a>
+<a name='L355'></a><a href='#L355'>355</a>
+<a name='L356'></a><a href='#L356'>356</a>
+<a name='L357'></a><a href='#L357'>357</a>
+<a name='L358'></a><a href='#L358'>358</a>
+<a name='L359'></a><a href='#L359'>359</a>
+<a name='L360'></a><a href='#L360'>360</a>
+<a name='L361'></a><a href='#L361'>361</a>
+<a name='L362'></a><a href='#L362'>362</a>
+<a name='L363'></a><a href='#L363'>363</a>
+<a name='L364'></a><a href='#L364'>364</a>
+<a name='L365'></a><a href='#L365'>365</a>
+<a name='L366'></a><a href='#L366'>366</a>
+<a name='L367'></a><a href='#L367'>367</a>
+<a name='L368'></a><a href='#L368'>368</a>
+<a name='L369'></a><a href='#L369'>369</a>
+<a name='L370'></a><a href='#L370'>370</a>
+<a name='L371'></a><a href='#L371'>371</a>
+<a name='L372'></a><a href='#L372'>372</a>
+<a name='L373'></a><a href='#L373'>373</a>
+<a name='L374'></a><a href='#L374'>374</a>
+<a name='L375'></a><a href='#L375'>375</a>
+<a name='L376'></a><a href='#L376'>376</a>
+<a name='L377'></a><a href='#L377'>377</a>
+<a name='L378'></a><a href='#L378'>378</a>
+<a name='L379'></a><a href='#L379'>379</a>
+<a name='L380'></a><a href='#L380'>380</a>
+<a name='L381'></a><a href='#L381'>381</a>
+<a name='L382'></a><a href='#L382'>382</a>
+<a name='L383'></a><a href='#L383'>383</a>
+<a name='L384'></a><a href='#L384'>384</a>
+<a name='L385'></a><a href='#L385'>385</a>
+<a name='L386'></a><a href='#L386'>386</a>
+<a name='L387'></a><a href='#L387'>387</a>
+<a name='L388'></a><a href='#L388'>388</a>
+<a name='L389'></a><a href='#L389'>389</a>
+<a name='L390'></a><a href='#L390'>390</a>
+<a name='L391'></a><a href='#L391'>391</a>
+<a name='L392'></a><a href='#L392'>392</a>
+<a name='L393'></a><a href='#L393'>393</a>
+<a name='L394'></a><a href='#L394'>394</a>
+<a name='L395'></a><a href='#L395'>395</a>
+<a name='L396'></a><a href='#L396'>396</a>
+<a name='L397'></a><a href='#L397'>397</a>
+<a name='L398'></a><a href='#L398'>398</a>
+<a name='L399'></a><a href='#L399'>399</a>
+<a name='L400'></a><a href='#L400'>400</a>
+<a name='L401'></a><a href='#L401'>401</a>
+<a name='L402'></a><a href='#L402'>402</a>
+<a name='L403'></a><a href='#L403'>403</a>
+<a name='L404'></a><a href='#L404'>404</a>
+<a name='L405'></a><a href='#L405'>405</a>
+<a name='L406'></a><a href='#L406'>406</a>
+<a name='L407'></a><a href='#L407'>407</a>
+<a name='L408'></a><a href='#L408'>408</a>
+<a name='L409'></a><a href='#L409'>409</a>
+<a name='L410'></a><a href='#L410'>410</a>
+<a name='L411'></a><a href='#L411'>411</a>
+<a name='L412'></a><a href='#L412'>412</a>
+<a name='L413'></a><a href='#L413'>413</a>
+<a name='L414'></a><a href='#L414'>414</a>
+<a name='L415'></a><a href='#L415'>415</a>
+<a name='L416'></a><a href='#L416'>416</a>
+<a name='L417'></a><a href='#L417'>417</a>
+<a name='L418'></a><a href='#L418'>418</a>
+<a name='L419'></a><a href='#L419'>419</a>
+<a name='L420'></a><a href='#L420'>420</a>
+<a name='L421'></a><a href='#L421'>421</a>
+<a name='L422'></a><a href='#L422'>422</a>
+<a name='L423'></a><a href='#L423'>423</a>
+<a name='L424'></a><a href='#L424'>424</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Convergence (RAG / codebase index — Layer C, flag LOOPOVER_REVIEW_RAG): the INDEX-POPULATION driver. This is
+// the population half (rag-wire.ts wires RETRIEVAL only):
+// it fetches a repo's CODE tree, chunks + embeds it, and upserts vectors+text into the `loopover-review-rag`
+// Vectorize index + the `repo_chunks` table (migration 0051) — so retrieval has a warm index to read from instead
+// of always seeing a cold namespace and returning "".
+//
+// It reuses the fail-safe primitives in `./rag` verbatim (chunkFile / embedTexts / upsertChunks /
+// deleteChunksForPaths / countRepoChunks / isIndexablePath / MAX_CHUNKS_PER_REPO / ragNamespace) — NO chunking or
+// embedding logic is reimplemented here. The only new I/O is fetching the repo's git tree + file contents, which
+// reuses the installation-token + raw-Contents-API pattern grounding-wire already established
+// (`makeGithubFileFetcher`); the tree fetch is the one new GitHub call.
+//
+// HARD GUARANTEES (mirroring rag.ts):
+//   1. FAIL-SAFE — every step is caught + logged; this module NEVER throws into the queue/caller. A missing
+//      Vectorize/AI binding, a GitHub error, an oversized repo, or a partial batch degrades to "indexed less /
+//      nothing" rather than failing the job. `upsertChunks` itself already no-ops to 0 when infra is absent.
+//   2. FREE-TIER — `isIndexablePath` filters the tree to CODE (not the content/data corpus), source is
+//      prioritized ahead of docs, manifest/config files (package.json, tsconfig*.json, wrangler.*,
+//      pnpm-workspace.yaml, go.mod, Cargo.toml, pyproject.toml, ...) are prioritized ahead of THAT
+//      (manifestPriority — on a repo over the cap they'd otherwise tie every other source file and lose
+//      the alphabetical tiebreaker), and a hard MAX_CHUNKS_PER_REPO cap bounds stored vectors per repo
+//      (the same cap retrieval assumes). We stop fetching once the cap is reached.
+//
+// GATING — the caller (processors.ts) only DISPATCHES indexing when `isRagEnabled(env)` is true, and the cron
+// only ENQUEUES the fan-out under the same flag; flag-OFF (the default) this module is never invoked, makes no
+// GitHub call, and does no adapter use — the deploy is byte-identical to today.
+&nbsp;
+import { createInstallationToken } from "../github/app";
+import { githubRateLimitAdmissionKeyForToken, PRODUCT_USER_AGENT, timeoutFetch, type GitHubRateLimitAdmissionKey } from "../github/client";
+import { incr } from "../selfhost/metrics";
+import { isConfigFile, isDependencyManifestFile } from "../signals/path-matchers";
+import { repoParts } from "../utils/json";
+import { createReviewAdapters } from "./adapters";
+import {
+  chunkFile,
+  countRepoChunks,
+  deleteChunksForPaths,
+  filePriority,
+  getStoredChunkMeta,
+  isIndexablePath,
+  MAX_CHUNKS_PER_REPO,
+  MAX_FILE_BYTES,
+  ragNamespace,
+  type RagChunk,
+  upsertChunks,
+} from "./rag";
+&nbsp;
+/** A single indexable entry from the repo git tree (path + size, used by isIndexablePath's size guard, + the
+ *  blob SHA (#4365) — git's own content hash, free on the tree response — used to skip re-embedding a file
+ *  whose content hasn't changed since the last full index). */
+type TreeEntry = { path: string; size?: number | undefined; sha?: string | undefined };
+&nbsp;
+/**
+ * Sort key that puts small, high-value manifest/config files (package.json, tsconfig*.json,
+ * wrangler.jsonc, pnpm-workspace.yaml, go.mod, Cargo.toml, pyproject.toml, requirements*.txt, ...)
+ * AHEAD of filePriority's code/doc split. On a repo whose file count exceeds MAX_CHUNKS_PER_REPO,
+ * `indexRepo`'s per-file loop stops once the cap is hit — with only `filePriority` (code=0, doc=1)
+ * as the sort key, a manifest file ties every other source file at priority 0 and then loses on the
+ * alphabetical tiebreaker, so it can be starved out entirely by volume (verified in prod: loopover's
+ * own package.json never got indexed). These files are already indexable code (JSON/TOML/YAML all
+ * match CODE_EXT_RE in `./rag`) — this only reorders them, it does not change what's included.
+ * Reuses the same "manifest-like filename" classifiers signals/path-matchers.ts already exports for
+ * slop classification (isDependencyManifestFile / isConfigFile) rather than inventing a second
+ * filename vocabulary.
+ */
+function <span class="fstat-no" title="function not covered" >manifestPriority(p</span>ath: string): number {
+<span class="cstat-no" title="statement not covered" >  return isDependencyManifestFile(path) || isConfigFile(path) ? -1 : filePriority(path);</span>
+}
+&nbsp;
+/** Cap on how many chunks we upsert per Vectorize/D1 write batch (bounds the bound-param + neuron cost per call;
+ *  embedTexts itself batches the AI calls at EMBED_BATCH internally). */
+const UPSERT_BATCH = <span class="cstat-no" title="statement not covered" >50;</span>
+&nbsp;
+/** Abort a GitHub read that hangs — a stalled connection on the tree/contents fetch would otherwise pin the whole
+ *  index job (and the queue consumer running it) indefinitely. Aborts land in the existing fail-safe catches. */
+const GITHUB_FETCH_TIMEOUT_MS = <span class="cstat-no" title="statement not covered" >10_000;</span>
+&nbsp;
+/** Resolve the read token once for a repo: installation token (private-repo read) → public token → none.
+ *  Best-effort — a token failure degrades to the next fallback, never throws. (Mirrors makeGithubFileFetcher.)
+ *  `admissionKey` is derived from the FINAL token (#regression-safe-propagation), not computed before the
+ *  public-token fallback is applied -- deriving it early left every call on the fallback path (installation
+ *  token absent or its mint failed) with `admissionKey: undefined` even though the actual token used
+ *  (`GITHUB_PUBLIC_TOKEN`) has a perfectly nameable scope, silently dropping every such call into
+ *  `key_scope="unknown"` on any rate-limited response instead of the real "public" key_scope bucket. */
+async function <span class="fstat-no" title="function not covered" >resolveReadToken(e</span>nv: Env, installationId: number | null | undefined): Promise&lt;{ token: string | undefined; admissionKey?: GitHubRateLimitAdmissionKey | undefined }&gt; {
+  const token = <span class="cstat-no" title="statement not covered" >installationId</span>
+    ? ((await createInstallationToken(env, installationId).<span class="fstat-no" title="function not covered" >catch(() =&gt; <span class="cstat-no" title="statement not covered" >u</span>ndefined)</span>) ?? env.GITHUB_PUBLIC_TOKEN)
+    : env.GITHUB_PUBLIC_TOKEN;
+<span class="cstat-no" title="statement not covered" >  return { token, admissionKey: githubRateLimitAdmissionKeyForToken(env, token, installationId) };</span>
+}
+&nbsp;
+/** Shared GitHub headers for the read calls (raw media type returns file bodies directly). */
+function <span class="fstat-no" title="function not covered" >ghHeaders(t</span>oken: string | undefined, accept: string): Record&lt;string, string&gt; {
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    accept,
+    "user-agent": PRODUCT_USER_AGENT,
+    "x-github-api-version": "2022-11-28",
+    ...(token ? { authorization: `Bearer ${token}` } : {}),
+  };
+}
+&nbsp;
+/**
+ * Fetch the FULL recursive git tree for a repo at `ref` and return only the blob (file) entries. Uses the
+ * Git Trees API (`?recursive=1`) — one call yields the whole tree. Returns [] on any non-OK / error response
+ * (fail-safe: a tree we can't read = nothing to index). `truncated` is honored (GitHub truncates very large
+ * trees) — we index whatever it returned; the MAX_CHUNKS cap is the real bound anyway.
+ */
+async function <span class="fstat-no" title="function not covered" >fetchRepoTree(e</span>nv: Env, repoFullName: string, ref: string, token: string | undefined, admissionKey: GitHubRateLimitAdmissionKey | undefined): Promise&lt;TreeEntry[] | null&gt; {
+<span class="cstat-no" title="statement not covered" >  try {</span>
+    const { owner, name } = <span class="cstat-no" title="statement not covered" >repoParts(repoFullName);</span>
+    const url = <span class="cstat-no" title="statement not covered" >`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/git/trees/${encodeURIComponent(ref)}?recursive=1`;</span>
+    const response = <span class="cstat-no" title="statement not covered" >await timeoutFetch(url, {</span>
+      headers: ghHeaders(token, "application/vnd.github+json"),
+      signal: AbortSignal.timeout(GITHUB_FETCH_TIMEOUT_MS),
+      githubRateLimitAdmission: admissionKey !== undefined,
+      ...(admissionKey ? { githubRateLimitAdmissionKey: admissionKey } : {}),
+    });
+<span class="cstat-no" title="statement not covered" >    if (!response.ok) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+    const body = (<span class="cstat-no" title="statement not covered" >await response.json()) as { tree?: Array&lt;{ path?: string; type?: string; size?: number; sha?: string }&gt; } | null;</span>
+    const entries: TreeEntry[] = <span class="cstat-no" title="statement not covered" >[];</span>
+<span class="cstat-no" title="statement not covered" >    for (const node of body?.tree ?? []) {</span>
+<span class="cstat-no" title="statement not covered" >      if (node.type !== "blob" || typeof node.path !== "string" || node.path.length === 0) <span class="cstat-no" title="statement not covered" >continue;</span></span>
+<span class="cstat-no" title="statement not covered" >      entries.push({</span>
+        path: node.path,
+        ...(typeof node.size === "number" ? { size: node.size } : {}),
+        ...(typeof node.sha === "string" &amp;&amp; node.sha.length &gt; 0 ? { sha: node.sha } : {}),
+      });
+    }
+<span class="cstat-no" title="statement not covered" >    return entries;</span>
+  } catch (error) {
+<span class="cstat-no" title="statement not covered" >    console.error(JSON.stringify({ level: "error", event: "rag_index_tree_error", repo: repoFullName, message: String(error).slice(0, 200) }));</span>
+<span class="cstat-no" title="statement not covered" >    return null;</span>
+  }
+}
+&nbsp;
+/** Read a response body as UTF-8 text, aborting once the byte limit is exceeded. */
+async function <span class="fstat-no" title="function not covered" >readTextCapped(r</span>esponse: Response, maxBytes: number): Promise&lt;string | null&gt; {
+  const contentLength = <span class="cstat-no" title="statement not covered" >Number(response.headers.get("content-length") ?? "");</span>
+<span class="cstat-no" title="statement not covered" >  if (Number.isFinite(contentLength) &amp;&amp; contentLength &gt; maxBytes) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+&nbsp;
+  const reader = <span class="cstat-no" title="statement not covered" >response.body?.getReader();</span>
+<span class="cstat-no" title="statement not covered" >  if (!reader) {</span>
+    const buffer = <span class="cstat-no" title="statement not covered" >await response.arrayBuffer();</span>
+<span class="cstat-no" title="statement not covered" >    return buffer.byteLength &gt; maxBytes ? null : new TextDecoder().decode(buffer);</span>
+  }
+&nbsp;
+  const chunks: Uint8Array[] = <span class="cstat-no" title="statement not covered" >[];</span>
+  let total = <span class="cstat-no" title="statement not covered" >0;</span>
+<span class="cstat-no" title="statement not covered" >  while (true) {</span>
+    const { done, value } = <span class="cstat-no" title="statement not covered" >await reader.read();</span>
+<span class="cstat-no" title="statement not covered" >    if (done) <span class="cstat-no" title="statement not covered" >break;</span></span>
+<span class="cstat-no" title="statement not covered" >    if (!value) <span class="cstat-no" title="statement not covered" >continue;</span></span>
+<span class="cstat-no" title="statement not covered" >    total += value.byteLength;</span>
+<span class="cstat-no" title="statement not covered" >    if (total &gt; maxBytes) {</span>
+<span class="cstat-no" title="statement not covered" >      await reader.cancel().<span class="fstat-no" title="function not covered" >catch(() =&gt; <span class="cstat-no" title="statement not covered" >u</span>ndefined)</span>;</span>
+<span class="cstat-no" title="statement not covered" >      return null;</span>
+    }
+<span class="cstat-no" title="statement not covered" >    chunks.push(value);</span>
+  }
+&nbsp;
+  const body = <span class="cstat-no" title="statement not covered" >new Uint8Array(total);</span>
+  let offset = <span class="cstat-no" title="statement not covered" >0;</span>
+<span class="cstat-no" title="statement not covered" >  for (const chunk of chunks) {</span>
+<span class="cstat-no" title="statement not covered" >    body.set(chunk, offset);</span>
+<span class="cstat-no" title="statement not covered" >    offset += chunk.byteLength;</span>
+  }
+<span class="cstat-no" title="statement not covered" >  return new TextDecoder().decode(body);</span>
+}
+&nbsp;
+/** Fetch a single file's raw text at `ref`. null on any non-OK / oversized / error (fail-safe — skip that file). */
+async function <span class="fstat-no" title="function not covered" >fetchFileText(</span>
+  env: Env,
+  repoFullName: string,
+  path: string,
+  ref: string,
+  token: string | undefined,
+  admissionKey: GitHubRateLimitAdmissionKey | undefined,
+  maxBytes = <span class="branch-0 cbranch-no" title="branch not covered" >MAX_FILE_BYTES,</span>
+): Promise&lt;string | null&gt; {
+<span class="cstat-no" title="statement not covered" >  try {</span>
+    const { owner, name } = <span class="cstat-no" title="statement not covered" >repoParts(repoFullName);</span>
+    const url = <span class="cstat-no" title="statement not covered" >`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/contents/${path</span>
+      .split("/")
+      .map(encodeURIComponent)
+      .join("/")}?ref=${encodeURIComponent(ref)}`;
+    const response = <span class="cstat-no" title="statement not covered" >await timeoutFetch(url, {</span>
+      headers: ghHeaders(token, "application/vnd.github.raw+json"),
+      signal: AbortSignal.timeout(GITHUB_FETCH_TIMEOUT_MS),
+      githubRateLimitAdmission: admissionKey !== undefined,
+      ...(admissionKey ? { githubRateLimitAdmissionKey: admissionKey } : {}),
+    });
+<span class="cstat-no" title="statement not covered" >    if (!response.ok) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+<span class="cstat-no" title="statement not covered" >    return await readTextCapped(response, maxBytes);</span>
+  } catch {
+<span class="cstat-no" title="statement not covered" >    return null;</span>
+  }
+}
+&nbsp;
+/** Resolve the ref to index a repo at: the repo's default branch, falling back to HEAD when unknown. */
+function <span class="fstat-no" title="function not covered" >indexRef(d</span>efaultBranch: string | null | undefined): string {
+  const <span class="cstat-no" title="statement not covered" >branch = (defaultBranch ?? "").trim();</span>
+<span class="cstat-no" title="statement not covered" >  return branch.length &gt; 0 ? branch : "HEAD";</span>
+}
+&nbsp;
+/** Upsert a set of chunks to the index in bounded batches, honoring the per-repo cap. Returns the number
+ *  actually upserted. Each batch is independent: a failed batch (upsertChunks returns 0) doesn't abort the rest.
+ *  `blobSha` (#4365) is threaded straight through to upsertChunks — see its doc comment. */
+async function <span class="fstat-no" title="function not covered" >upsertChunksCapped(e</span>nv: Env, project: string, repo: string, chunks: RagChunk[], alreadyStored: number, blobSha?: string): Promise&lt;number&gt; {
+  const infra = <span class="cstat-no" title="statement not covered" >createReviewAdapters(env);</span>
+  let stored = <span class="cstat-no" title="statement not covered" >alreadyStored;</span>
+  let upserted = <span class="cstat-no" title="statement not covered" >0;</span>
+<span class="cstat-no" title="statement not covered" >  for (let i = <span class="cstat-no" title="statement not covered" >0; i</span> &lt; chunks.length &amp;&amp; stored &lt; MAX_CHUNKS_PER_REPO; i += UPSERT_BATCH) {</span>
+    const remaining = <span class="cstat-no" title="statement not covered" >MAX_CHUNKS_PER_REPO - stored;</span>
+    const batch = <span class="cstat-no" title="statement not covered" >chunks.slice(i, i + Math.min(UPSERT_BATCH, remaining));</span>
+<span class="cstat-no" title="statement not covered" >    if (batch.length === 0) <span class="cstat-no" title="statement not covered" >break;</span></span>
+    const n = <span class="cstat-no" title="statement not covered" >await upsertChunks(infra, project, repo, batch, blobSha);</span>
+<span class="cstat-no" title="statement not covered" >    upserted += n;</span>
+<span class="cstat-no" title="statement not covered" >    stored += n;</span>
+  }
+<span class="cstat-no" title="statement not covered" >  return upserted;</span>
+}
+&nbsp;
+&nbsp;
+/** Return distinct paths currently retained for a repo in the chunk text store. Fail-safe: [] on error.
+ *  Exported for repo-profile.ts (#2999): the architecture/module-map extraction reuses this exact query
+ *  instead of re-deriving its own "what files does this repo have indexed" logic. */
+export async function <span class="fstat-no" title="function not covered" >listStoredChunkPaths(i</span>nfra: ReturnType&lt;typeof createReviewAdapters&gt;, project: string, repo: string): Promise&lt;string[]&gt; {
+<span class="cstat-no" title="statement not covered" >  try {</span>
+    const rows = <span class="cstat-no" title="statement not covered" >await infra.storage</span>
+      .prepare("SELECT DISTINCT path FROM repo_chunks WHERE project=? AND repo=?")
+      .bind(project, repo)
+      .all&lt;{ path: string }&gt;();
+<span class="cstat-no" title="statement not covered" >    return (rows.results ?? []).<span class="fstat-no" title="function not covered" >map((r</span>ow) =&gt; <span class="cstat-no" title="statement not covered" >row.path)</span>.<span class="fstat-no" title="function not covered" >filter((p</span>ath) =&gt; <span class="cstat-no" title="statement not covered" >typeof path === "string" &amp;&amp; path.length &gt; 0)</span>;</span>
+  } catch (error) {
+<span class="cstat-no" title="statement not covered" >    console.error(JSON.stringify({ level: "error", event: "rag_list_paths_error", project, repo, message: String(error).slice(0, 200) }));</span>
+<span class="cstat-no" title="statement not covered" >    return [];</span>
+  }
+}
+&nbsp;
+/**
+ * Prune chunks for paths that are no longer indexable in the current default-branch tree. This is the full-index
+ * counterpart to reindexChangedPaths' delete-first behavior and prevents deleted/renamed files from being retained
+ * indefinitely in repo_chunks/Vectorize.
+ */
+async function <span class="fstat-no" title="function not covered" >pruneMissingPaths(</span>
+  infra: ReturnType&lt;typeof createReviewAdapters&gt;,
+  project: string,
+  repo: string,
+  currentIndexablePaths: Set&lt;string&gt;,
+): Promise&lt;void&gt; {
+  const storedPaths = <span class="cstat-no" title="statement not covered" >await listStoredChunkPaths(infra, project, repo);</span>
+  const stalePaths = <span class="cstat-no" title="statement not covered" >storedPaths.<span class="fstat-no" title="function not covered" >filter((p</span>ath) =&gt; <span class="cstat-no" title="statement not covered" >!currentIndexablePaths.has(path))</span>;</span>
+<span class="cstat-no" title="statement not covered" >  if (stalePaths.length === 0) <span class="cstat-no" title="statement not covered" >return;</span></span>
+<span class="cstat-no" title="statement not covered" >  await deleteChunksForPaths(infra, project, repo, stalePaths);</span>
+}
+&nbsp;
+/** Split `owner/name` into the (project, repo) pair RAG namespaces on (same convention as rag-wire's splitRepo). */
+function <span class="fstat-no" title="function not covered" >splitRepo(r</span>epoFullName: string): [string, string] {
+  const slash = <span class="cstat-no" title="statement not covered" >repoFullName.indexOf("/");</span>
+<span class="cstat-no" title="statement not covered" >  return slash === -1 ? ["", repoFullName] : [repoFullName.slice(0, slash), repoFullName.slice(slash + 1)];</span>
+}
+&nbsp;
+export type IndexRepoResult = { indexed: number; files: number; capped: boolean };
+&nbsp;
+/**
+ * FULL (re)index of a repo's CODE into the RAG index. Fetches the git tree at the default branch, filters to
+ * indexable code/docs (isIndexablePath), prioritizes manifest/config files first, then source over docs
+ * (manifestPriority), fetches each file's content, chunks it (chunkFile), and upserts (embed + Vectorize +
+ * repo_chunks via upsertChunks) up to MAX_CHUNKS_PER_REPO.
+ *
+ * Embedding cache (#4365): a file whose git blob SHA (free on the tree response) matches what we stored the
+ * last time we indexed that path is skipped ENTIRELY — no content fetch, no chunk, no embed call — since its
+ * content provably hasn't changed. This is what keeps the cron fan-out cheap on repeat runs: only genuinely
+ * new/changed files ever reach the embedding model. A changed file's old chunks are deleted before its new
+ * ones are upserted (mirrors reindexChangedPaths), which also prevents stale trailing chunks when a file
+ * shrinks to fewer chunks than it had before.
+ *
+ * Idempotent: chunk ids are stable (namespace|path::idx) so re-running upserts (ON CONFLICT updates) the same
+ * rows rather than duplicating. Fully FAIL-SAFE — any error (no infra, GitHub down, bad file) degrades to
+ * "indexed fewer / nothing"; this NEVER throws.
+ *
+ * @param repo the RepositoryRecord (fullName + installationId + defaultBranch). installationId/defaultBranch are
+ *             read off it so the caller doesn't re-fetch.
+ */
+export async function <span class="fstat-no" title="function not covered" >indexRepo(</span>
+  env: Env,
+  project: string,
+  repo: { fullName: string; installationId?: number | null | undefined; defaultBranch?: string | null | undefined },
+): Promise&lt;IndexRepoResult&gt; {
+  const empty: IndexRepoResult = <span class="cstat-no" title="statement not covered" >{ indexed: 0, files: 0, capped: false };</span>
+<span class="cstat-no" title="statement not covered" >  try {</span>
+    const infra = <span class="cstat-no" title="statement not covered" >createReviewAdapters(env);</span>
+    // No vector index or no AI binding → upsert is a guaranteed no-op; don't spend any GitHub calls.
+<span class="cstat-no" title="statement not covered" >    if (!infra.vector || !infra.inference) <span class="cstat-no" title="statement not covered" >return empty;</span></span>
+    const repoFullName = <span class="cstat-no" title="statement not covered" >repo.fullName;</span>
+    const [, repoName] = <span class="cstat-no" title="statement not covered" >splitRepo(repoFullName);</span>
+    const namespace = <span class="cstat-no" title="statement not covered" >ragNamespace(project, repoName);</span>
+    const { token, admissionKey } = <span class="cstat-no" title="statement not covered" >await resolveReadToken(env, repo.installationId);</span>
+    const ref = <span class="cstat-no" title="statement not covered" >indexRef(repo.defaultBranch);</span>
+&nbsp;
+    // 1. Fetch the tree, filter to indexable code/docs, and prune retained chunks for files that disappeared
+    //    or moved to a non-indexable path. If the tree fetch fails (null), skip pruning to avoid deleting good
+    //    chunks during a transient GitHub/API failure.
+    const rawTree = <span class="cstat-no" title="statement not covered" >await fetchRepoTree(env, repoFullName, ref, token, admissionKey);</span>
+<span class="cstat-no" title="statement not covered" >    if (rawTree === null) <span class="cstat-no" title="statement not covered" >return empty;</span></span>
+    const tree = <span class="cstat-no" title="statement not covered" >rawTree</span>
+      .<span class="fstat-no" title="function not covered" >filter((e</span>ntry) =&gt; <span class="cstat-no" title="statement not covered" >isIndexablePath(entry.path, entry.size))</span>
+      .<span class="fstat-no" title="function not covered" >sort((a</span>, b) =&gt; <span class="cstat-no" title="statement not covered" >manifestPriority(a.path) - manifestPriority(b.path) || a.path.localeCompare(b.path))</span>;
+<span class="cstat-no" title="statement not covered" >    await pruneMissingPaths(infra, project, repoName, new Set(tree.<span class="fstat-no" title="function not covered" >map((e</span>ntry) =&gt; <span class="cstat-no" title="statement not covered" >entry.path)</span>));</span>
+<span class="cstat-no" title="statement not covered" >    if (tree.length === 0) <span class="cstat-no" title="statement not covered" >return empty;</span></span>
+&nbsp;
+    // 2. Fetch + chunk + upsert, stopping once the per-repo vector cap is reached. `stored` seeds from the
+    //    real post-prune total (not 0) so a run that skips most files still caps correctly against everything
+    //    already retained, not just what THIS run touches.
+    const knownChunks = <span class="cstat-no" title="statement not covered" >await getStoredChunkMeta(infra.storage, project, repoName);</span>
+    let stored = <span class="cstat-no" title="statement not covered" >await countRepoChunks(infra.storage, project, repoName);</span>
+    let upserted = <span class="cstat-no" title="statement not covered" >0;</span>
+    let filesIndexed = <span class="cstat-no" title="statement not covered" >0;</span>
+    let skipped = <span class="cstat-no" title="statement not covered" >0;</span>
+    let capped = <span class="cstat-no" title="statement not covered" >false;</span>
+<span class="cstat-no" title="statement not covered" >    for (const entry of tree) {</span>
+      const known = <span class="cstat-no" title="statement not covered" >knownChunks.get(entry.path);</span>
+<span class="cstat-no" title="statement not covered" >      if (entry.sha &amp;&amp; known?.blobSha &amp;&amp; known.blobSha === entry.sha) {</span>
+<span class="cstat-no" title="statement not covered" >        skipped += 1;</span>
+<span class="cstat-no" title="statement not covered" >        continue; // unchanged since the last full index — skip the fetch/chunk/embed entirely</span>
+      }
+<span class="cstat-no" title="statement not covered" >      if (stored &gt;= MAX_CHUNKS_PER_REPO &amp;&amp; (!known || known.count &lt;= 0)) {</span>
+<span class="cstat-no" title="statement not covered" >        capped = true;</span>
+<span class="cstat-no" title="statement not covered" >        break;</span>
+      }
+      const text = <span class="cstat-no" title="statement not covered" >await fetchFileText(env, repoFullName, entry.path, ref, token, admissionKey);</span>
+<span class="cstat-no" title="statement not covered" >      if (text === null) <span class="cstat-no" title="statement not covered" >continue;</span></span>
+      const chunks = <span class="cstat-no" title="statement not covered" >chunkFile(entry.path, text, namespace);</span>
+<span class="cstat-no" title="statement not covered" >      if (chunks.length === 0) <span class="cstat-no" title="statement not covered" >continue;</span></span>
+<span class="cstat-no" title="statement not covered" >      if (known &amp;&amp; known.count &gt; 0) {</span>
+<span class="cstat-no" title="statement not covered" >        await deleteChunksForPaths(infra, project, repoName, [entry.path]);</span>
+<span class="cstat-no" title="statement not covered" >        stored -= known.count;</span>
+      }
+      const n = <span class="cstat-no" title="statement not covered" >await upsertChunksCapped(env, project, repoName, chunks, stored, entry.sha);</span>
+<span class="cstat-no" title="statement not covered" >      if (n &gt; 0) {</span>
+<span class="cstat-no" title="statement not covered" >        upserted += n;</span>
+<span class="cstat-no" title="statement not covered" >        stored += n;</span>
+<span class="cstat-no" title="statement not covered" >        filesIndexed += 1;</span>
+      }
+    }
+<span class="cstat-no" title="statement not covered" >    console.log(</span>
+      JSON.stringify({ event: "rag_index_repo", project, repo: repoFullName, files: filesIndexed, indexed: upserted, skipped, capped }),
+    );
+<span class="cstat-no" title="statement not covered" >    return { indexed: upserted, files: filesIndexed, capped };</span>
+  } catch (error) {
+    // ERROR level + counter (#3894): previously a no-`level` console.log invisible to Sentry, and this
+    // failure class had no metric at all -- loopover_qdrant_errors_total only fires inside the Qdrant
+    // adapter itself, so an upstream failure here (GitHub tree/contents fetch, chunking) never counted.
+<span class="cstat-no" title="statement not covered" >    console.error(JSON.stringify({ level: "error", event: "rag_index_repo_error", ev: "rag_index_repo_error", repo: repo.fullName, message: String(error).slice(0, 200) }));</span>
+<span class="cstat-no" title="statement not covered" >    incr("loopover_rag_pipeline_errors_total", { op: "index_repo" });</span>
+<span class="cstat-no" title="statement not covered" >    return empty;</span>
+  }
+}
+&nbsp;
+/**
+ * INCREMENTAL re-index of only the CHANGED paths of a repo (push / PR-merge maintenance). For the given paths:
+ * deletes their existing chunks (deleteChunksForPaths — removes both stale vectors + text), then re-fetches +
+ * re-chunks + re-upserts the indexable ones at the default branch. A path that's no longer indexable (deleted
+ * file, or now a content/data path) is simply deleted and not re-added. Fully FAIL-SAFE — NEVER throws.
+ *
+ * @param paths the changed file paths (e.g. from a push or merged-PR file list).
+ */
+export async function <span class="fstat-no" title="function not covered" >reindexChangedPaths(</span>
+  env: Env,
+  project: string,
+  repo: { fullName: string; installationId?: number | null | undefined; defaultBranch?: string | null | undefined },
+  paths: string[],
+): Promise&lt;IndexRepoResult&gt; {
+  const empty: IndexRepoResult = <span class="cstat-no" title="statement not covered" >{ indexed: 0, files: 0, capped: false };</span>
+<span class="cstat-no" title="statement not covered" >  try {</span>
+    const unique = <span class="cstat-no" title="statement not covered" >[...new Set(paths.<span class="fstat-no" title="function not covered" >filter((p</span>ath) =&gt; <span class="cstat-no" title="statement not covered" >typeof path === "string" &amp;&amp; path.length &gt; 0)</span>)];</span>
+<span class="cstat-no" title="statement not covered" >    if (unique.length === 0) <span class="cstat-no" title="statement not covered" >return empty;</span></span>
+    const infra = <span class="cstat-no" title="statement not covered" >createReviewAdapters(env);</span>
+<span class="cstat-no" title="statement not covered" >    if (!infra.vector || !infra.inference) <span class="cstat-no" title="statement not covered" >return empty;</span></span>
+    const repoFullName = <span class="cstat-no" title="statement not covered" >repo.fullName;</span>
+    const [, repoName] = <span class="cstat-no" title="statement not covered" >splitRepo(repoFullName);</span>
+    const namespace = <span class="cstat-no" title="statement not covered" >ragNamespace(project, repoName);</span>
+&nbsp;
+    // 1. Drop the existing chunks for EVERY changed path (deleted/renamed/no-longer-indexable files leave nothing
+    //    stale behind). deleteChunksForPaths is fail-safe + batches the IN-lists internally.
+<span class="cstat-no" title="statement not covered" >    await deleteChunksForPaths(infra, project, repoName, unique);</span>
+&nbsp;
+    // 2. Re-index the ones that are still indexable code/docs at the default branch.
+    const indexable = <span class="cstat-no" title="statement not covered" >unique.<span class="fstat-no" title="function not covered" >filter((p</span>ath) =&gt; <span class="cstat-no" title="statement not covered" >isIndexablePath(path))</span>;</span>
+<span class="cstat-no" title="statement not covered" >    if (indexable.length === 0) <span class="cstat-no" title="statement not covered" >return { indexed: 0, files: 0, capped: false };</span></span>
+    const { token, admissionKey } = <span class="cstat-no" title="statement not covered" >await resolveReadToken(env, repo.installationId);</span>
+    const ref = <span class="cstat-no" title="statement not covered" >indexRef(repo.defaultBranch);</span>
+    let stored = <span class="cstat-no" title="statement not covered" >await countRepoChunks(infra.storage, project, repoName);</span>
+    let upserted = <span class="cstat-no" title="statement not covered" >0;</span>
+    let filesIndexed = <span class="cstat-no" title="statement not covered" >0;</span>
+    let capped = <span class="cstat-no" title="statement not covered" >false;</span>
+<span class="cstat-no" title="statement not covered" >    for (const path of indexable) {</span>
+<span class="cstat-no" title="statement not covered" >      if (stored &gt;= MAX_CHUNKS_PER_REPO) {</span>
+<span class="cstat-no" title="statement not covered" >        capped = true;</span>
+<span class="cstat-no" title="statement not covered" >        break;</span>
+      }
+      const text = <span class="cstat-no" title="statement not covered" >await fetchFileText(env, repoFullName, path, ref, token, admissionKey);</span>
+<span class="cstat-no" title="statement not covered" >      if (text === null) <span class="cstat-no" title="statement not covered" >continue; // file deleted at head, oversized, or unreadable — already removed above, leave it gone</span></span>
+      const chunks = <span class="cstat-no" title="statement not covered" >chunkFile(path, text, namespace);</span>
+<span class="cstat-no" title="statement not covered" >      if (chunks.length === 0) <span class="cstat-no" title="statement not covered" >continue;</span></span>
+      const n = <span class="cstat-no" title="statement not covered" >await upsertChunksCapped(env, project, repoName, chunks, stored);</span>
+<span class="cstat-no" title="statement not covered" >      if (n &gt; 0) {</span>
+<span class="cstat-no" title="statement not covered" >        upserted += n;</span>
+<span class="cstat-no" title="statement not covered" >        stored += n;</span>
+<span class="cstat-no" title="statement not covered" >        filesIndexed += 1;</span>
+      }
+    }
+<span class="cstat-no" title="statement not covered" >    console.log(</span>
+      JSON.stringify({ event: "rag_reindex_paths", project, repo: repoFullName, paths: unique.length, files: filesIndexed, indexed: upserted, capped }),
+    );
+<span class="cstat-no" title="statement not covered" >    return { indexed: upserted, files: filesIndexed, capped };</span>
+  } catch (error) {
+    // ERROR level + counter (#3894): see indexRepo's catch above -- same invisible-to-Sentry, no-metric fix.
+<span class="cstat-no" title="statement not covered" >    console.error(JSON.stringify({ level: "error", event: "rag_reindex_paths_error", ev: "rag_reindex_paths_error", repo: repo.fullName, message: String(error).slice(0, 200) }));</span>
+<span class="cstat-no" title="statement not covered" >    incr("loopover_rag_pipeline_errors_total", { op: "reindex_paths" });</span>
+<span class="cstat-no" title="statement not covered" >    return empty;</span>
+  }
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    

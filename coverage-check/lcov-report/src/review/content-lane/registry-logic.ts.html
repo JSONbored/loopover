@@ -1,0 +1,2944 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/review/content-lane/registry-logic.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../../prettify.css" />
+    <link rel="stylesheet" href="../../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../../index.html">All files</a> / <a href="index.html">src/review/content-lane</a> registry-logic.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/323</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/338</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/53</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/270</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a>
+<a name='L185'></a><a href='#L185'>185</a>
+<a name='L186'></a><a href='#L186'>186</a>
+<a name='L187'></a><a href='#L187'>187</a>
+<a name='L188'></a><a href='#L188'>188</a>
+<a name='L189'></a><a href='#L189'>189</a>
+<a name='L190'></a><a href='#L190'>190</a>
+<a name='L191'></a><a href='#L191'>191</a>
+<a name='L192'></a><a href='#L192'>192</a>
+<a name='L193'></a><a href='#L193'>193</a>
+<a name='L194'></a><a href='#L194'>194</a>
+<a name='L195'></a><a href='#L195'>195</a>
+<a name='L196'></a><a href='#L196'>196</a>
+<a name='L197'></a><a href='#L197'>197</a>
+<a name='L198'></a><a href='#L198'>198</a>
+<a name='L199'></a><a href='#L199'>199</a>
+<a name='L200'></a><a href='#L200'>200</a>
+<a name='L201'></a><a href='#L201'>201</a>
+<a name='L202'></a><a href='#L202'>202</a>
+<a name='L203'></a><a href='#L203'>203</a>
+<a name='L204'></a><a href='#L204'>204</a>
+<a name='L205'></a><a href='#L205'>205</a>
+<a name='L206'></a><a href='#L206'>206</a>
+<a name='L207'></a><a href='#L207'>207</a>
+<a name='L208'></a><a href='#L208'>208</a>
+<a name='L209'></a><a href='#L209'>209</a>
+<a name='L210'></a><a href='#L210'>210</a>
+<a name='L211'></a><a href='#L211'>211</a>
+<a name='L212'></a><a href='#L212'>212</a>
+<a name='L213'></a><a href='#L213'>213</a>
+<a name='L214'></a><a href='#L214'>214</a>
+<a name='L215'></a><a href='#L215'>215</a>
+<a name='L216'></a><a href='#L216'>216</a>
+<a name='L217'></a><a href='#L217'>217</a>
+<a name='L218'></a><a href='#L218'>218</a>
+<a name='L219'></a><a href='#L219'>219</a>
+<a name='L220'></a><a href='#L220'>220</a>
+<a name='L221'></a><a href='#L221'>221</a>
+<a name='L222'></a><a href='#L222'>222</a>
+<a name='L223'></a><a href='#L223'>223</a>
+<a name='L224'></a><a href='#L224'>224</a>
+<a name='L225'></a><a href='#L225'>225</a>
+<a name='L226'></a><a href='#L226'>226</a>
+<a name='L227'></a><a href='#L227'>227</a>
+<a name='L228'></a><a href='#L228'>228</a>
+<a name='L229'></a><a href='#L229'>229</a>
+<a name='L230'></a><a href='#L230'>230</a>
+<a name='L231'></a><a href='#L231'>231</a>
+<a name='L232'></a><a href='#L232'>232</a>
+<a name='L233'></a><a href='#L233'>233</a>
+<a name='L234'></a><a href='#L234'>234</a>
+<a name='L235'></a><a href='#L235'>235</a>
+<a name='L236'></a><a href='#L236'>236</a>
+<a name='L237'></a><a href='#L237'>237</a>
+<a name='L238'></a><a href='#L238'>238</a>
+<a name='L239'></a><a href='#L239'>239</a>
+<a name='L240'></a><a href='#L240'>240</a>
+<a name='L241'></a><a href='#L241'>241</a>
+<a name='L242'></a><a href='#L242'>242</a>
+<a name='L243'></a><a href='#L243'>243</a>
+<a name='L244'></a><a href='#L244'>244</a>
+<a name='L245'></a><a href='#L245'>245</a>
+<a name='L246'></a><a href='#L246'>246</a>
+<a name='L247'></a><a href='#L247'>247</a>
+<a name='L248'></a><a href='#L248'>248</a>
+<a name='L249'></a><a href='#L249'>249</a>
+<a name='L250'></a><a href='#L250'>250</a>
+<a name='L251'></a><a href='#L251'>251</a>
+<a name='L252'></a><a href='#L252'>252</a>
+<a name='L253'></a><a href='#L253'>253</a>
+<a name='L254'></a><a href='#L254'>254</a>
+<a name='L255'></a><a href='#L255'>255</a>
+<a name='L256'></a><a href='#L256'>256</a>
+<a name='L257'></a><a href='#L257'>257</a>
+<a name='L258'></a><a href='#L258'>258</a>
+<a name='L259'></a><a href='#L259'>259</a>
+<a name='L260'></a><a href='#L260'>260</a>
+<a name='L261'></a><a href='#L261'>261</a>
+<a name='L262'></a><a href='#L262'>262</a>
+<a name='L263'></a><a href='#L263'>263</a>
+<a name='L264'></a><a href='#L264'>264</a>
+<a name='L265'></a><a href='#L265'>265</a>
+<a name='L266'></a><a href='#L266'>266</a>
+<a name='L267'></a><a href='#L267'>267</a>
+<a name='L268'></a><a href='#L268'>268</a>
+<a name='L269'></a><a href='#L269'>269</a>
+<a name='L270'></a><a href='#L270'>270</a>
+<a name='L271'></a><a href='#L271'>271</a>
+<a name='L272'></a><a href='#L272'>272</a>
+<a name='L273'></a><a href='#L273'>273</a>
+<a name='L274'></a><a href='#L274'>274</a>
+<a name='L275'></a><a href='#L275'>275</a>
+<a name='L276'></a><a href='#L276'>276</a>
+<a name='L277'></a><a href='#L277'>277</a>
+<a name='L278'></a><a href='#L278'>278</a>
+<a name='L279'></a><a href='#L279'>279</a>
+<a name='L280'></a><a href='#L280'>280</a>
+<a name='L281'></a><a href='#L281'>281</a>
+<a name='L282'></a><a href='#L282'>282</a>
+<a name='L283'></a><a href='#L283'>283</a>
+<a name='L284'></a><a href='#L284'>284</a>
+<a name='L285'></a><a href='#L285'>285</a>
+<a name='L286'></a><a href='#L286'>286</a>
+<a name='L287'></a><a href='#L287'>287</a>
+<a name='L288'></a><a href='#L288'>288</a>
+<a name='L289'></a><a href='#L289'>289</a>
+<a name='L290'></a><a href='#L290'>290</a>
+<a name='L291'></a><a href='#L291'>291</a>
+<a name='L292'></a><a href='#L292'>292</a>
+<a name='L293'></a><a href='#L293'>293</a>
+<a name='L294'></a><a href='#L294'>294</a>
+<a name='L295'></a><a href='#L295'>295</a>
+<a name='L296'></a><a href='#L296'>296</a>
+<a name='L297'></a><a href='#L297'>297</a>
+<a name='L298'></a><a href='#L298'>298</a>
+<a name='L299'></a><a href='#L299'>299</a>
+<a name='L300'></a><a href='#L300'>300</a>
+<a name='L301'></a><a href='#L301'>301</a>
+<a name='L302'></a><a href='#L302'>302</a>
+<a name='L303'></a><a href='#L303'>303</a>
+<a name='L304'></a><a href='#L304'>304</a>
+<a name='L305'></a><a href='#L305'>305</a>
+<a name='L306'></a><a href='#L306'>306</a>
+<a name='L307'></a><a href='#L307'>307</a>
+<a name='L308'></a><a href='#L308'>308</a>
+<a name='L309'></a><a href='#L309'>309</a>
+<a name='L310'></a><a href='#L310'>310</a>
+<a name='L311'></a><a href='#L311'>311</a>
+<a name='L312'></a><a href='#L312'>312</a>
+<a name='L313'></a><a href='#L313'>313</a>
+<a name='L314'></a><a href='#L314'>314</a>
+<a name='L315'></a><a href='#L315'>315</a>
+<a name='L316'></a><a href='#L316'>316</a>
+<a name='L317'></a><a href='#L317'>317</a>
+<a name='L318'></a><a href='#L318'>318</a>
+<a name='L319'></a><a href='#L319'>319</a>
+<a name='L320'></a><a href='#L320'>320</a>
+<a name='L321'></a><a href='#L321'>321</a>
+<a name='L322'></a><a href='#L322'>322</a>
+<a name='L323'></a><a href='#L323'>323</a>
+<a name='L324'></a><a href='#L324'>324</a>
+<a name='L325'></a><a href='#L325'>325</a>
+<a name='L326'></a><a href='#L326'>326</a>
+<a name='L327'></a><a href='#L327'>327</a>
+<a name='L328'></a><a href='#L328'>328</a>
+<a name='L329'></a><a href='#L329'>329</a>
+<a name='L330'></a><a href='#L330'>330</a>
+<a name='L331'></a><a href='#L331'>331</a>
+<a name='L332'></a><a href='#L332'>332</a>
+<a name='L333'></a><a href='#L333'>333</a>
+<a name='L334'></a><a href='#L334'>334</a>
+<a name='L335'></a><a href='#L335'>335</a>
+<a name='L336'></a><a href='#L336'>336</a>
+<a name='L337'></a><a href='#L337'>337</a>
+<a name='L338'></a><a href='#L338'>338</a>
+<a name='L339'></a><a href='#L339'>339</a>
+<a name='L340'></a><a href='#L340'>340</a>
+<a name='L341'></a><a href='#L341'>341</a>
+<a name='L342'></a><a href='#L342'>342</a>
+<a name='L343'></a><a href='#L343'>343</a>
+<a name='L344'></a><a href='#L344'>344</a>
+<a name='L345'></a><a href='#L345'>345</a>
+<a name='L346'></a><a href='#L346'>346</a>
+<a name='L347'></a><a href='#L347'>347</a>
+<a name='L348'></a><a href='#L348'>348</a>
+<a name='L349'></a><a href='#L349'>349</a>
+<a name='L350'></a><a href='#L350'>350</a>
+<a name='L351'></a><a href='#L351'>351</a>
+<a name='L352'></a><a href='#L352'>352</a>
+<a name='L353'></a><a href='#L353'>353</a>
+<a name='L354'></a><a href='#L354'>354</a>
+<a name='L355'></a><a href='#L355'>355</a>
+<a name='L356'></a><a href='#L356'>356</a>
+<a name='L357'></a><a href='#L357'>357</a>
+<a name='L358'></a><a href='#L358'>358</a>
+<a name='L359'></a><a href='#L359'>359</a>
+<a name='L360'></a><a href='#L360'>360</a>
+<a name='L361'></a><a href='#L361'>361</a>
+<a name='L362'></a><a href='#L362'>362</a>
+<a name='L363'></a><a href='#L363'>363</a>
+<a name='L364'></a><a href='#L364'>364</a>
+<a name='L365'></a><a href='#L365'>365</a>
+<a name='L366'></a><a href='#L366'>366</a>
+<a name='L367'></a><a href='#L367'>367</a>
+<a name='L368'></a><a href='#L368'>368</a>
+<a name='L369'></a><a href='#L369'>369</a>
+<a name='L370'></a><a href='#L370'>370</a>
+<a name='L371'></a><a href='#L371'>371</a>
+<a name='L372'></a><a href='#L372'>372</a>
+<a name='L373'></a><a href='#L373'>373</a>
+<a name='L374'></a><a href='#L374'>374</a>
+<a name='L375'></a><a href='#L375'>375</a>
+<a name='L376'></a><a href='#L376'>376</a>
+<a name='L377'></a><a href='#L377'>377</a>
+<a name='L378'></a><a href='#L378'>378</a>
+<a name='L379'></a><a href='#L379'>379</a>
+<a name='L380'></a><a href='#L380'>380</a>
+<a name='L381'></a><a href='#L381'>381</a>
+<a name='L382'></a><a href='#L382'>382</a>
+<a name='L383'></a><a href='#L383'>383</a>
+<a name='L384'></a><a href='#L384'>384</a>
+<a name='L385'></a><a href='#L385'>385</a>
+<a name='L386'></a><a href='#L386'>386</a>
+<a name='L387'></a><a href='#L387'>387</a>
+<a name='L388'></a><a href='#L388'>388</a>
+<a name='L389'></a><a href='#L389'>389</a>
+<a name='L390'></a><a href='#L390'>390</a>
+<a name='L391'></a><a href='#L391'>391</a>
+<a name='L392'></a><a href='#L392'>392</a>
+<a name='L393'></a><a href='#L393'>393</a>
+<a name='L394'></a><a href='#L394'>394</a>
+<a name='L395'></a><a href='#L395'>395</a>
+<a name='L396'></a><a href='#L396'>396</a>
+<a name='L397'></a><a href='#L397'>397</a>
+<a name='L398'></a><a href='#L398'>398</a>
+<a name='L399'></a><a href='#L399'>399</a>
+<a name='L400'></a><a href='#L400'>400</a>
+<a name='L401'></a><a href='#L401'>401</a>
+<a name='L402'></a><a href='#L402'>402</a>
+<a name='L403'></a><a href='#L403'>403</a>
+<a name='L404'></a><a href='#L404'>404</a>
+<a name='L405'></a><a href='#L405'>405</a>
+<a name='L406'></a><a href='#L406'>406</a>
+<a name='L407'></a><a href='#L407'>407</a>
+<a name='L408'></a><a href='#L408'>408</a>
+<a name='L409'></a><a href='#L409'>409</a>
+<a name='L410'></a><a href='#L410'>410</a>
+<a name='L411'></a><a href='#L411'>411</a>
+<a name='L412'></a><a href='#L412'>412</a>
+<a name='L413'></a><a href='#L413'>413</a>
+<a name='L414'></a><a href='#L414'>414</a>
+<a name='L415'></a><a href='#L415'>415</a>
+<a name='L416'></a><a href='#L416'>416</a>
+<a name='L417'></a><a href='#L417'>417</a>
+<a name='L418'></a><a href='#L418'>418</a>
+<a name='L419'></a><a href='#L419'>419</a>
+<a name='L420'></a><a href='#L420'>420</a>
+<a name='L421'></a><a href='#L421'>421</a>
+<a name='L422'></a><a href='#L422'>422</a>
+<a name='L423'></a><a href='#L423'>423</a>
+<a name='L424'></a><a href='#L424'>424</a>
+<a name='L425'></a><a href='#L425'>425</a>
+<a name='L426'></a><a href='#L426'>426</a>
+<a name='L427'></a><a href='#L427'>427</a>
+<a name='L428'></a><a href='#L428'>428</a>
+<a name='L429'></a><a href='#L429'>429</a>
+<a name='L430'></a><a href='#L430'>430</a>
+<a name='L431'></a><a href='#L431'>431</a>
+<a name='L432'></a><a href='#L432'>432</a>
+<a name='L433'></a><a href='#L433'>433</a>
+<a name='L434'></a><a href='#L434'>434</a>
+<a name='L435'></a><a href='#L435'>435</a>
+<a name='L436'></a><a href='#L436'>436</a>
+<a name='L437'></a><a href='#L437'>437</a>
+<a name='L438'></a><a href='#L438'>438</a>
+<a name='L439'></a><a href='#L439'>439</a>
+<a name='L440'></a><a href='#L440'>440</a>
+<a name='L441'></a><a href='#L441'>441</a>
+<a name='L442'></a><a href='#L442'>442</a>
+<a name='L443'></a><a href='#L443'>443</a>
+<a name='L444'></a><a href='#L444'>444</a>
+<a name='L445'></a><a href='#L445'>445</a>
+<a name='L446'></a><a href='#L446'>446</a>
+<a name='L447'></a><a href='#L447'>447</a>
+<a name='L448'></a><a href='#L448'>448</a>
+<a name='L449'></a><a href='#L449'>449</a>
+<a name='L450'></a><a href='#L450'>450</a>
+<a name='L451'></a><a href='#L451'>451</a>
+<a name='L452'></a><a href='#L452'>452</a>
+<a name='L453'></a><a href='#L453'>453</a>
+<a name='L454'></a><a href='#L454'>454</a>
+<a name='L455'></a><a href='#L455'>455</a>
+<a name='L456'></a><a href='#L456'>456</a>
+<a name='L457'></a><a href='#L457'>457</a>
+<a name='L458'></a><a href='#L458'>458</a>
+<a name='L459'></a><a href='#L459'>459</a>
+<a name='L460'></a><a href='#L460'>460</a>
+<a name='L461'></a><a href='#L461'>461</a>
+<a name='L462'></a><a href='#L462'>462</a>
+<a name='L463'></a><a href='#L463'>463</a>
+<a name='L464'></a><a href='#L464'>464</a>
+<a name='L465'></a><a href='#L465'>465</a>
+<a name='L466'></a><a href='#L466'>466</a>
+<a name='L467'></a><a href='#L467'>467</a>
+<a name='L468'></a><a href='#L468'>468</a>
+<a name='L469'></a><a href='#L469'>469</a>
+<a name='L470'></a><a href='#L470'>470</a>
+<a name='L471'></a><a href='#L471'>471</a>
+<a name='L472'></a><a href='#L472'>472</a>
+<a name='L473'></a><a href='#L473'>473</a>
+<a name='L474'></a><a href='#L474'>474</a>
+<a name='L475'></a><a href='#L475'>475</a>
+<a name='L476'></a><a href='#L476'>476</a>
+<a name='L477'></a><a href='#L477'>477</a>
+<a name='L478'></a><a href='#L478'>478</a>
+<a name='L479'></a><a href='#L479'>479</a>
+<a name='L480'></a><a href='#L480'>480</a>
+<a name='L481'></a><a href='#L481'>481</a>
+<a name='L482'></a><a href='#L482'>482</a>
+<a name='L483'></a><a href='#L483'>483</a>
+<a name='L484'></a><a href='#L484'>484</a>
+<a name='L485'></a><a href='#L485'>485</a>
+<a name='L486'></a><a href='#L486'>486</a>
+<a name='L487'></a><a href='#L487'>487</a>
+<a name='L488'></a><a href='#L488'>488</a>
+<a name='L489'></a><a href='#L489'>489</a>
+<a name='L490'></a><a href='#L490'>490</a>
+<a name='L491'></a><a href='#L491'>491</a>
+<a name='L492'></a><a href='#L492'>492</a>
+<a name='L493'></a><a href='#L493'>493</a>
+<a name='L494'></a><a href='#L494'>494</a>
+<a name='L495'></a><a href='#L495'>495</a>
+<a name='L496'></a><a href='#L496'>496</a>
+<a name='L497'></a><a href='#L497'>497</a>
+<a name='L498'></a><a href='#L498'>498</a>
+<a name='L499'></a><a href='#L499'>499</a>
+<a name='L500'></a><a href='#L500'>500</a>
+<a name='L501'></a><a href='#L501'>501</a>
+<a name='L502'></a><a href='#L502'>502</a>
+<a name='L503'></a><a href='#L503'>503</a>
+<a name='L504'></a><a href='#L504'>504</a>
+<a name='L505'></a><a href='#L505'>505</a>
+<a name='L506'></a><a href='#L506'>506</a>
+<a name='L507'></a><a href='#L507'>507</a>
+<a name='L508'></a><a href='#L508'>508</a>
+<a name='L509'></a><a href='#L509'>509</a>
+<a name='L510'></a><a href='#L510'>510</a>
+<a name='L511'></a><a href='#L511'>511</a>
+<a name='L512'></a><a href='#L512'>512</a>
+<a name='L513'></a><a href='#L513'>513</a>
+<a name='L514'></a><a href='#L514'>514</a>
+<a name='L515'></a><a href='#L515'>515</a>
+<a name='L516'></a><a href='#L516'>516</a>
+<a name='L517'></a><a href='#L517'>517</a>
+<a name='L518'></a><a href='#L518'>518</a>
+<a name='L519'></a><a href='#L519'>519</a>
+<a name='L520'></a><a href='#L520'>520</a>
+<a name='L521'></a><a href='#L521'>521</a>
+<a name='L522'></a><a href='#L522'>522</a>
+<a name='L523'></a><a href='#L523'>523</a>
+<a name='L524'></a><a href='#L524'>524</a>
+<a name='L525'></a><a href='#L525'>525</a>
+<a name='L526'></a><a href='#L526'>526</a>
+<a name='L527'></a><a href='#L527'>527</a>
+<a name='L528'></a><a href='#L528'>528</a>
+<a name='L529'></a><a href='#L529'>529</a>
+<a name='L530'></a><a href='#L530'>530</a>
+<a name='L531'></a><a href='#L531'>531</a>
+<a name='L532'></a><a href='#L532'>532</a>
+<a name='L533'></a><a href='#L533'>533</a>
+<a name='L534'></a><a href='#L534'>534</a>
+<a name='L535'></a><a href='#L535'>535</a>
+<a name='L536'></a><a href='#L536'>536</a>
+<a name='L537'></a><a href='#L537'>537</a>
+<a name='L538'></a><a href='#L538'>538</a>
+<a name='L539'></a><a href='#L539'>539</a>
+<a name='L540'></a><a href='#L540'>540</a>
+<a name='L541'></a><a href='#L541'>541</a>
+<a name='L542'></a><a href='#L542'>542</a>
+<a name='L543'></a><a href='#L543'>543</a>
+<a name='L544'></a><a href='#L544'>544</a>
+<a name='L545'></a><a href='#L545'>545</a>
+<a name='L546'></a><a href='#L546'>546</a>
+<a name='L547'></a><a href='#L547'>547</a>
+<a name='L548'></a><a href='#L548'>548</a>
+<a name='L549'></a><a href='#L549'>549</a>
+<a name='L550'></a><a href='#L550'>550</a>
+<a name='L551'></a><a href='#L551'>551</a>
+<a name='L552'></a><a href='#L552'>552</a>
+<a name='L553'></a><a href='#L553'>553</a>
+<a name='L554'></a><a href='#L554'>554</a>
+<a name='L555'></a><a href='#L555'>555</a>
+<a name='L556'></a><a href='#L556'>556</a>
+<a name='L557'></a><a href='#L557'>557</a>
+<a name='L558'></a><a href='#L558'>558</a>
+<a name='L559'></a><a href='#L559'>559</a>
+<a name='L560'></a><a href='#L560'>560</a>
+<a name='L561'></a><a href='#L561'>561</a>
+<a name='L562'></a><a href='#L562'>562</a>
+<a name='L563'></a><a href='#L563'>563</a>
+<a name='L564'></a><a href='#L564'>564</a>
+<a name='L565'></a><a href='#L565'>565</a>
+<a name='L566'></a><a href='#L566'>566</a>
+<a name='L567'></a><a href='#L567'>567</a>
+<a name='L568'></a><a href='#L568'>568</a>
+<a name='L569'></a><a href='#L569'>569</a>
+<a name='L570'></a><a href='#L570'>570</a>
+<a name='L571'></a><a href='#L571'>571</a>
+<a name='L572'></a><a href='#L572'>572</a>
+<a name='L573'></a><a href='#L573'>573</a>
+<a name='L574'></a><a href='#L574'>574</a>
+<a name='L575'></a><a href='#L575'>575</a>
+<a name='L576'></a><a href='#L576'>576</a>
+<a name='L577'></a><a href='#L577'>577</a>
+<a name='L578'></a><a href='#L578'>578</a>
+<a name='L579'></a><a href='#L579'>579</a>
+<a name='L580'></a><a href='#L580'>580</a>
+<a name='L581'></a><a href='#L581'>581</a>
+<a name='L582'></a><a href='#L582'>582</a>
+<a name='L583'></a><a href='#L583'>583</a>
+<a name='L584'></a><a href='#L584'>584</a>
+<a name='L585'></a><a href='#L585'>585</a>
+<a name='L586'></a><a href='#L586'>586</a>
+<a name='L587'></a><a href='#L587'>587</a>
+<a name='L588'></a><a href='#L588'>588</a>
+<a name='L589'></a><a href='#L589'>589</a>
+<a name='L590'></a><a href='#L590'>590</a>
+<a name='L591'></a><a href='#L591'>591</a>
+<a name='L592'></a><a href='#L592'>592</a>
+<a name='L593'></a><a href='#L593'>593</a>
+<a name='L594'></a><a href='#L594'>594</a>
+<a name='L595'></a><a href='#L595'>595</a>
+<a name='L596'></a><a href='#L596'>596</a>
+<a name='L597'></a><a href='#L597'>597</a>
+<a name='L598'></a><a href='#L598'>598</a>
+<a name='L599'></a><a href='#L599'>599</a>
+<a name='L600'></a><a href='#L600'>600</a>
+<a name='L601'></a><a href='#L601'>601</a>
+<a name='L602'></a><a href='#L602'>602</a>
+<a name='L603'></a><a href='#L603'>603</a>
+<a name='L604'></a><a href='#L604'>604</a>
+<a name='L605'></a><a href='#L605'>605</a>
+<a name='L606'></a><a href='#L606'>606</a>
+<a name='L607'></a><a href='#L607'>607</a>
+<a name='L608'></a><a href='#L608'>608</a>
+<a name='L609'></a><a href='#L609'>609</a>
+<a name='L610'></a><a href='#L610'>610</a>
+<a name='L611'></a><a href='#L611'>611</a>
+<a name='L612'></a><a href='#L612'>612</a>
+<a name='L613'></a><a href='#L613'>613</a>
+<a name='L614'></a><a href='#L614'>614</a>
+<a name='L615'></a><a href='#L615'>615</a>
+<a name='L616'></a><a href='#L616'>616</a>
+<a name='L617'></a><a href='#L617'>617</a>
+<a name='L618'></a><a href='#L618'>618</a>
+<a name='L619'></a><a href='#L619'>619</a>
+<a name='L620'></a><a href='#L620'>620</a>
+<a name='L621'></a><a href='#L621'>621</a>
+<a name='L622'></a><a href='#L622'>622</a>
+<a name='L623'></a><a href='#L623'>623</a>
+<a name='L624'></a><a href='#L624'>624</a>
+<a name='L625'></a><a href='#L625'>625</a>
+<a name='L626'></a><a href='#L626'>626</a>
+<a name='L627'></a><a href='#L627'>627</a>
+<a name='L628'></a><a href='#L628'>628</a>
+<a name='L629'></a><a href='#L629'>629</a>
+<a name='L630'></a><a href='#L630'>630</a>
+<a name='L631'></a><a href='#L631'>631</a>
+<a name='L632'></a><a href='#L632'>632</a>
+<a name='L633'></a><a href='#L633'>633</a>
+<a name='L634'></a><a href='#L634'>634</a>
+<a name='L635'></a><a href='#L635'>635</a>
+<a name='L636'></a><a href='#L636'>636</a>
+<a name='L637'></a><a href='#L637'>637</a>
+<a name='L638'></a><a href='#L638'>638</a>
+<a name='L639'></a><a href='#L639'>639</a>
+<a name='L640'></a><a href='#L640'>640</a>
+<a name='L641'></a><a href='#L641'>641</a>
+<a name='L642'></a><a href='#L642'>642</a>
+<a name='L643'></a><a href='#L643'>643</a>
+<a name='L644'></a><a href='#L644'>644</a>
+<a name='L645'></a><a href='#L645'>645</a>
+<a name='L646'></a><a href='#L646'>646</a>
+<a name='L647'></a><a href='#L647'>647</a>
+<a name='L648'></a><a href='#L648'>648</a>
+<a name='L649'></a><a href='#L649'>649</a>
+<a name='L650'></a><a href='#L650'>650</a>
+<a name='L651'></a><a href='#L651'>651</a>
+<a name='L652'></a><a href='#L652'>652</a>
+<a name='L653'></a><a href='#L653'>653</a>
+<a name='L654'></a><a href='#L654'>654</a>
+<a name='L655'></a><a href='#L655'>655</a>
+<a name='L656'></a><a href='#L656'>656</a>
+<a name='L657'></a><a href='#L657'>657</a>
+<a name='L658'></a><a href='#L658'>658</a>
+<a name='L659'></a><a href='#L659'>659</a>
+<a name='L660'></a><a href='#L660'>660</a>
+<a name='L661'></a><a href='#L661'>661</a>
+<a name='L662'></a><a href='#L662'>662</a>
+<a name='L663'></a><a href='#L663'>663</a>
+<a name='L664'></a><a href='#L664'>664</a>
+<a name='L665'></a><a href='#L665'>665</a>
+<a name='L666'></a><a href='#L666'>666</a>
+<a name='L667'></a><a href='#L667'>667</a>
+<a name='L668'></a><a href='#L668'>668</a>
+<a name='L669'></a><a href='#L669'>669</a>
+<a name='L670'></a><a href='#L670'>670</a>
+<a name='L671'></a><a href='#L671'>671</a>
+<a name='L672'></a><a href='#L672'>672</a>
+<a name='L673'></a><a href='#L673'>673</a>
+<a name='L674'></a><a href='#L674'>674</a>
+<a name='L675'></a><a href='#L675'>675</a>
+<a name='L676'></a><a href='#L676'>676</a>
+<a name='L677'></a><a href='#L677'>677</a>
+<a name='L678'></a><a href='#L678'>678</a>
+<a name='L679'></a><a href='#L679'>679</a>
+<a name='L680'></a><a href='#L680'>680</a>
+<a name='L681'></a><a href='#L681'>681</a>
+<a name='L682'></a><a href='#L682'>682</a>
+<a name='L683'></a><a href='#L683'>683</a>
+<a name='L684'></a><a href='#L684'>684</a>
+<a name='L685'></a><a href='#L685'>685</a>
+<a name='L686'></a><a href='#L686'>686</a>
+<a name='L687'></a><a href='#L687'>687</a>
+<a name='L688'></a><a href='#L688'>688</a>
+<a name='L689'></a><a href='#L689'>689</a>
+<a name='L690'></a><a href='#L690'>690</a>
+<a name='L691'></a><a href='#L691'>691</a>
+<a name='L692'></a><a href='#L692'>692</a>
+<a name='L693'></a><a href='#L693'>693</a>
+<a name='L694'></a><a href='#L694'>694</a>
+<a name='L695'></a><a href='#L695'>695</a>
+<a name='L696'></a><a href='#L696'>696</a>
+<a name='L697'></a><a href='#L697'>697</a>
+<a name='L698'></a><a href='#L698'>698</a>
+<a name='L699'></a><a href='#L699'>699</a>
+<a name='L700'></a><a href='#L700'>700</a>
+<a name='L701'></a><a href='#L701'>701</a>
+<a name='L702'></a><a href='#L702'>702</a>
+<a name='L703'></a><a href='#L703'>703</a>
+<a name='L704'></a><a href='#L704'>704</a>
+<a name='L705'></a><a href='#L705'>705</a>
+<a name='L706'></a><a href='#L706'>706</a>
+<a name='L707'></a><a href='#L707'>707</a>
+<a name='L708'></a><a href='#L708'>708</a>
+<a name='L709'></a><a href='#L709'>709</a>
+<a name='L710'></a><a href='#L710'>710</a>
+<a name='L711'></a><a href='#L711'>711</a>
+<a name='L712'></a><a href='#L712'>712</a>
+<a name='L713'></a><a href='#L713'>713</a>
+<a name='L714'></a><a href='#L714'>714</a>
+<a name='L715'></a><a href='#L715'>715</a>
+<a name='L716'></a><a href='#L716'>716</a>
+<a name='L717'></a><a href='#L717'>717</a>
+<a name='L718'></a><a href='#L718'>718</a>
+<a name='L719'></a><a href='#L719'>719</a>
+<a name='L720'></a><a href='#L720'>720</a>
+<a name='L721'></a><a href='#L721'>721</a>
+<a name='L722'></a><a href='#L722'>722</a>
+<a name='L723'></a><a href='#L723'>723</a>
+<a name='L724'></a><a href='#L724'>724</a>
+<a name='L725'></a><a href='#L725'>725</a>
+<a name='L726'></a><a href='#L726'>726</a>
+<a name='L727'></a><a href='#L727'>727</a>
+<a name='L728'></a><a href='#L728'>728</a>
+<a name='L729'></a><a href='#L729'>729</a>
+<a name='L730'></a><a href='#L730'>730</a>
+<a name='L731'></a><a href='#L731'>731</a>
+<a name='L732'></a><a href='#L732'>732</a>
+<a name='L733'></a><a href='#L733'>733</a>
+<a name='L734'></a><a href='#L734'>734</a>
+<a name='L735'></a><a href='#L735'>735</a>
+<a name='L736'></a><a href='#L736'>736</a>
+<a name='L737'></a><a href='#L737'>737</a>
+<a name='L738'></a><a href='#L738'>738</a>
+<a name='L739'></a><a href='#L739'>739</a>
+<a name='L740'></a><a href='#L740'>740</a>
+<a name='L741'></a><a href='#L741'>741</a>
+<a name='L742'></a><a href='#L742'>742</a>
+<a name='L743'></a><a href='#L743'>743</a>
+<a name='L744'></a><a href='#L744'>744</a>
+<a name='L745'></a><a href='#L745'>745</a>
+<a name='L746'></a><a href='#L746'>746</a>
+<a name='L747'></a><a href='#L747'>747</a>
+<a name='L748'></a><a href='#L748'>748</a>
+<a name='L749'></a><a href='#L749'>749</a>
+<a name='L750'></a><a href='#L750'>750</a>
+<a name='L751'></a><a href='#L751'>751</a>
+<a name='L752'></a><a href='#L752'>752</a>
+<a name='L753'></a><a href='#L753'>753</a>
+<a name='L754'></a><a href='#L754'>754</a>
+<a name='L755'></a><a href='#L755'>755</a>
+<a name='L756'></a><a href='#L756'>756</a>
+<a name='L757'></a><a href='#L757'>757</a>
+<a name='L758'></a><a href='#L758'>758</a>
+<a name='L759'></a><a href='#L759'>759</a>
+<a name='L760'></a><a href='#L760'>760</a>
+<a name='L761'></a><a href='#L761'>761</a>
+<a name='L762'></a><a href='#L762'>762</a>
+<a name='L763'></a><a href='#L763'>763</a>
+<a name='L764'></a><a href='#L764'>764</a>
+<a name='L765'></a><a href='#L765'>765</a>
+<a name='L766'></a><a href='#L766'>766</a>
+<a name='L767'></a><a href='#L767'>767</a>
+<a name='L768'></a><a href='#L768'>768</a>
+<a name='L769'></a><a href='#L769'>769</a>
+<a name='L770'></a><a href='#L770'>770</a>
+<a name='L771'></a><a href='#L771'>771</a>
+<a name='L772'></a><a href='#L772'>772</a>
+<a name='L773'></a><a href='#L773'>773</a>
+<a name='L774'></a><a href='#L774'>774</a>
+<a name='L775'></a><a href='#L775'>775</a>
+<a name='L776'></a><a href='#L776'>776</a>
+<a name='L777'></a><a href='#L777'>777</a>
+<a name='L778'></a><a href='#L778'>778</a>
+<a name='L779'></a><a href='#L779'>779</a>
+<a name='L780'></a><a href='#L780'>780</a>
+<a name='L781'></a><a href='#L781'>781</a>
+<a name='L782'></a><a href='#L782'>782</a>
+<a name='L783'></a><a href='#L783'>783</a>
+<a name='L784'></a><a href='#L784'>784</a>
+<a name='L785'></a><a href='#L785'>785</a>
+<a name='L786'></a><a href='#L786'>786</a>
+<a name='L787'></a><a href='#L787'>787</a>
+<a name='L788'></a><a href='#L788'>788</a>
+<a name='L789'></a><a href='#L789'>789</a>
+<a name='L790'></a><a href='#L790'>790</a>
+<a name='L791'></a><a href='#L791'>791</a>
+<a name='L792'></a><a href='#L792'>792</a>
+<a name='L793'></a><a href='#L793'>793</a>
+<a name='L794'></a><a href='#L794'>794</a>
+<a name='L795'></a><a href='#L795'>795</a>
+<a name='L796'></a><a href='#L796'>796</a>
+<a name='L797'></a><a href='#L797'>797</a>
+<a name='L798'></a><a href='#L798'>798</a>
+<a name='L799'></a><a href='#L799'>799</a>
+<a name='L800'></a><a href='#L800'>800</a>
+<a name='L801'></a><a href='#L801'>801</a>
+<a name='L802'></a><a href='#L802'>802</a>
+<a name='L803'></a><a href='#L803'>803</a>
+<a name='L804'></a><a href='#L804'>804</a>
+<a name='L805'></a><a href='#L805'>805</a>
+<a name='L806'></a><a href='#L806'>806</a>
+<a name='L807'></a><a href='#L807'>807</a>
+<a name='L808'></a><a href='#L808'>808</a>
+<a name='L809'></a><a href='#L809'>809</a>
+<a name='L810'></a><a href='#L810'>810</a>
+<a name='L811'></a><a href='#L811'>811</a>
+<a name='L812'></a><a href='#L812'>812</a>
+<a name='L813'></a><a href='#L813'>813</a>
+<a name='L814'></a><a href='#L814'>814</a>
+<a name='L815'></a><a href='#L815'>815</a>
+<a name='L816'></a><a href='#L816'>816</a>
+<a name='L817'></a><a href='#L817'>817</a>
+<a name='L818'></a><a href='#L818'>818</a>
+<a name='L819'></a><a href='#L819'>819</a>
+<a name='L820'></a><a href='#L820'>820</a>
+<a name='L821'></a><a href='#L821'>821</a>
+<a name='L822'></a><a href='#L822'>822</a>
+<a name='L823'></a><a href='#L823'>823</a>
+<a name='L824'></a><a href='#L824'>824</a>
+<a name='L825'></a><a href='#L825'>825</a>
+<a name='L826'></a><a href='#L826'>826</a>
+<a name='L827'></a><a href='#L827'>827</a>
+<a name='L828'></a><a href='#L828'>828</a>
+<a name='L829'></a><a href='#L829'>829</a>
+<a name='L830'></a><a href='#L830'>830</a>
+<a name='L831'></a><a href='#L831'>831</a>
+<a name='L832'></a><a href='#L832'>832</a>
+<a name='L833'></a><a href='#L833'>833</a>
+<a name='L834'></a><a href='#L834'>834</a>
+<a name='L835'></a><a href='#L835'>835</a>
+<a name='L836'></a><a href='#L836'>836</a>
+<a name='L837'></a><a href='#L837'>837</a>
+<a name='L838'></a><a href='#L838'>838</a>
+<a name='L839'></a><a href='#L839'>839</a>
+<a name='L840'></a><a href='#L840'>840</a>
+<a name='L841'></a><a href='#L841'>841</a>
+<a name='L842'></a><a href='#L842'>842</a>
+<a name='L843'></a><a href='#L843'>843</a>
+<a name='L844'></a><a href='#L844'>844</a>
+<a name='L845'></a><a href='#L845'>845</a>
+<a name='L846'></a><a href='#L846'>846</a>
+<a name='L847'></a><a href='#L847'>847</a>
+<a name='L848'></a><a href='#L848'>848</a>
+<a name='L849'></a><a href='#L849'>849</a>
+<a name='L850'></a><a href='#L850'>850</a>
+<a name='L851'></a><a href='#L851'>851</a>
+<a name='L852'></a><a href='#L852'>852</a>
+<a name='L853'></a><a href='#L853'>853</a>
+<a name='L854'></a><a href='#L854'>854</a>
+<a name='L855'></a><a href='#L855'>855</a>
+<a name='L856'></a><a href='#L856'>856</a>
+<a name='L857'></a><a href='#L857'>857</a>
+<a name='L858'></a><a href='#L858'>858</a>
+<a name='L859'></a><a href='#L859'>859</a>
+<a name='L860'></a><a href='#L860'>860</a>
+<a name='L861'></a><a href='#L861'>861</a>
+<a name='L862'></a><a href='#L862'>862</a>
+<a name='L863'></a><a href='#L863'>863</a>
+<a name='L864'></a><a href='#L864'>864</a>
+<a name='L865'></a><a href='#L865'>865</a>
+<a name='L866'></a><a href='#L866'>866</a>
+<a name='L867'></a><a href='#L867'>867</a>
+<a name='L868'></a><a href='#L868'>868</a>
+<a name='L869'></a><a href='#L869'>869</a>
+<a name='L870'></a><a href='#L870'>870</a>
+<a name='L871'></a><a href='#L871'>871</a>
+<a name='L872'></a><a href='#L872'>872</a>
+<a name='L873'></a><a href='#L873'>873</a>
+<a name='L874'></a><a href='#L874'>874</a>
+<a name='L875'></a><a href='#L875'>875</a>
+<a name='L876'></a><a href='#L876'>876</a>
+<a name='L877'></a><a href='#L877'>877</a>
+<a name='L878'></a><a href='#L878'>878</a>
+<a name='L879'></a><a href='#L879'>879</a>
+<a name='L880'></a><a href='#L880'>880</a>
+<a name='L881'></a><a href='#L881'>881</a>
+<a name='L882'></a><a href='#L882'>882</a>
+<a name='L883'></a><a href='#L883'>883</a>
+<a name='L884'></a><a href='#L884'>884</a>
+<a name='L885'></a><a href='#L885'>885</a>
+<a name='L886'></a><a href='#L886'>886</a>
+<a name='L887'></a><a href='#L887'>887</a>
+<a name='L888'></a><a href='#L888'>888</a>
+<a name='L889'></a><a href='#L889'>889</a>
+<a name='L890'></a><a href='#L890'>890</a>
+<a name='L891'></a><a href='#L891'>891</a>
+<a name='L892'></a><a href='#L892'>892</a>
+<a name='L893'></a><a href='#L893'>893</a>
+<a name='L894'></a><a href='#L894'>894</a>
+<a name='L895'></a><a href='#L895'>895</a>
+<a name='L896'></a><a href='#L896'>896</a>
+<a name='L897'></a><a href='#L897'>897</a>
+<a name='L898'></a><a href='#L898'>898</a>
+<a name='L899'></a><a href='#L899'>899</a>
+<a name='L900'></a><a href='#L900'>900</a>
+<a name='L901'></a><a href='#L901'>901</a>
+<a name='L902'></a><a href='#L902'>902</a>
+<a name='L903'></a><a href='#L903'>903</a>
+<a name='L904'></a><a href='#L904'>904</a>
+<a name='L905'></a><a href='#L905'>905</a>
+<a name='L906'></a><a href='#L906'>906</a>
+<a name='L907'></a><a href='#L907'>907</a>
+<a name='L908'></a><a href='#L908'>908</a>
+<a name='L909'></a><a href='#L909'>909</a>
+<a name='L910'></a><a href='#L910'>910</a>
+<a name='L911'></a><a href='#L911'>911</a>
+<a name='L912'></a><a href='#L912'>912</a>
+<a name='L913'></a><a href='#L913'>913</a>
+<a name='L914'></a><a href='#L914'>914</a>
+<a name='L915'></a><a href='#L915'>915</a>
+<a name='L916'></a><a href='#L916'>916</a>
+<a name='L917'></a><a href='#L917'>917</a>
+<a name='L918'></a><a href='#L918'>918</a>
+<a name='L919'></a><a href='#L919'>919</a>
+<a name='L920'></a><a href='#L920'>920</a>
+<a name='L921'></a><a href='#L921'>921</a>
+<a name='L922'></a><a href='#L922'>922</a>
+<a name='L923'></a><a href='#L923'>923</a>
+<a name='L924'></a><a href='#L924'>924</a>
+<a name='L925'></a><a href='#L925'>925</a>
+<a name='L926'></a><a href='#L926'>926</a>
+<a name='L927'></a><a href='#L927'>927</a>
+<a name='L928'></a><a href='#L928'>928</a>
+<a name='L929'></a><a href='#L929'>929</a>
+<a name='L930'></a><a href='#L930'>930</a>
+<a name='L931'></a><a href='#L931'>931</a>
+<a name='L932'></a><a href='#L932'>932</a>
+<a name='L933'></a><a href='#L933'>933</a>
+<a name='L934'></a><a href='#L934'>934</a>
+<a name='L935'></a><a href='#L935'>935</a>
+<a name='L936'></a><a href='#L936'>936</a>
+<a name='L937'></a><a href='#L937'>937</a>
+<a name='L938'></a><a href='#L938'>938</a>
+<a name='L939'></a><a href='#L939'>939</a>
+<a name='L940'></a><a href='#L940'>940</a>
+<a name='L941'></a><a href='#L941'>941</a>
+<a name='L942'></a><a href='#L942'>942</a>
+<a name='L943'></a><a href='#L943'>943</a>
+<a name='L944'></a><a href='#L944'>944</a>
+<a name='L945'></a><a href='#L945'>945</a>
+<a name='L946'></a><a href='#L946'>946</a>
+<a name='L947'></a><a href='#L947'>947</a>
+<a name='L948'></a><a href='#L948'>948</a>
+<a name='L949'></a><a href='#L949'>949</a>
+<a name='L950'></a><a href='#L950'>950</a>
+<a name='L951'></a><a href='#L951'>951</a>
+<a name='L952'></a><a href='#L952'>952</a>
+<a name='L953'></a><a href='#L953'>953</a>
+<a name='L954'></a><a href='#L954'>954</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Metagraphed registry decision logic (content-lane primitive).
+//
+// SELF-CONTAINED NATIVE PORT (reviewbot→loopover convergence). Byte-faithful to reviewbot's
+// src/agents/metagraphed/review-logic.ts (itself a faithful port of the live metagraphed
+// submission-gate). PURE + testable; all I/O (GitHub, registry/taostats API, AI) lives in the
+// caller. The SSRF guard is the shared content-lane safe-url; `Verdict` + `isInternalAutomation
+// Branch` are inlined so the module has no engine imports.
+//
+// This is metagraphed's domain-specific core: candidate/provider shape+safety gates, the netuid
+// GROUNDING signals (the deterministic "is the declared netuid independently corroborated" matcher
+// used with the taostats/registry identity in the live merge gate), registry dedup keys, freshness,
+// functional-surface probing, and PR scope classification.
+import { isSafeEndpointUrl, isSafeHttpUrl } from "./safe-url";
+import { canonicalize } from "../../signals/change-guardrail";
+&nbsp;
+/** The gate's final verdict vocabulary (reviewbot core/types.ts). */
+export type Verdict = "merge" | "close" | "manual" | "comment" | "ignore";
+&nbsp;
+// Noise-bot branch prefixes (renovate/dependabot/github-actions/reviewbot) — inlined from reviewbot
+// core/github.ts isAutomationBranch. codex/ is deliberately NOT here (it is real, human-initiated work).
+const AUTOMATION_BRANCH_PREFIXES = <span class="cstat-no" title="statement not covered" >["renovate/", "dependabot/", "github-actions/", "reviewbot/"];</span>
+/** True if a head ref looks like a noise-bot branch. */
+export function <span class="fstat-no" title="function not covered" >isInternalAutomationBranch(r</span>ef: string | undefined): boolean {
+  const branch = <span class="cstat-no" title="statement not covered" >String(ref ?? "")</span>
+    .trim()
+    .toLowerCase();
+<span class="cstat-no" title="statement not covered" >  return AUTOMATION_BRANCH_PREFIXES.<span class="fstat-no" title="function not covered" >some((p</span>refix) =&gt; <span class="cstat-no" title="statement not covered" >branch.startsWith(prefix))</span>;</span>
+}
+&nbsp;
+/** Generated registry artifacts a valid PR must regenerate — allowed companions of a registry submission. */
+export const ARTIFACT_PATTERN = <span class="cstat-no" title="statement not covered" >/^public\/metagraph\/[a-z0-9/_-]+\.json$/i;</span>
+export const DEFAULT_PUBLIC_API_BASE = <span class="cstat-no" title="statement not covered" >"https://api.metagraph.sh/api/v1";</span>
+&nbsp;
+const REVIEWER_CLOSE_REASONS = <span class="cstat-no" title="statement not covered" >new Set([</span>
+  "malformed-json",
+  "unsafe-url",
+  "unsupported-shape",
+  "secret-or-credential",
+  "observed-state-claim",
+]);
+// Observed-state fields a submission must NEVER assert — health/uptime/latency/status are PROBE-derived
+// only. A candidate carrying any of these is asserting runtime state it can't vouch for → close.
+const OBSERVED_STATE_KEYS = <span class="cstat-no" title="statement not covered" >new Set([</span>
+  "health",
+  "healthy",
+  "uptime",
+  "downtime",
+  "latency",
+  "response_time",
+  "incident",
+  "status",
+  "availability",
+  "sla",
+  "is_up",
+  "online",
+  "degraded",
+  "last_checked",
+]);
+/** Base-layer chain endpoints (wss/ws JSON-RPC). One-shot: probed + dual-AI-verified like any other candidate. */
+export const REVIEWER_BASE_LAYER_KINDS = <span class="cstat-no" title="statement not covered" >new Set(["archive", "subtensor-rpc", "subtensor-wss"]);</span>
+export function <span class="fstat-no" title="function not covered" >isBaseLayerKind(k</span>ind: unknown): boolean {
+<span class="cstat-no" title="statement not covered" >  return REVIEWER_BASE_LAYER_KINDS.has(String(kind));</span>
+}
+const REVIEWER_SAFE_KINDS = <span class="cstat-no" title="statement not covered" >new Set([</span>
+  "website",
+  "source-repo",
+  "subnet-api",
+  "openapi",
+  "sse",
+  "sdk",
+  "example",
+  "dashboard",
+  "repo-registry",
+  "docs",
+  "data-artifact",
+]);
+/** Live verdict vocabulary → core verdict. */
+export type MetaVerdict = "merged" | "closed" | "manual-review";
+export function <span class="fstat-no" title="function not covered" >toCoreVerdict(v</span>: MetaVerdict): Verdict {
+<span class="cstat-no" title="statement not covered" >  return v === "merged" ? "merge" : v === "closed" ? "close" : "manual";</span>
+}
+&nbsp;
+export type CandidateLike = Record&lt;string, unknown&gt; &amp; {
+  netuid?: unknown;
+  kind?: unknown;
+  url?: unknown;
+  source_url?: unknown;
+  source_urls?: unknown;
+  public_safe?: unknown;
+  auth_required?: unknown;
+};
+&nbsp;
+export interface Assessment {
+  verdict: MetaVerdict;
+  summary?: string;
+  candidate: CandidateLike | null;
+  reason?: string;
+}
+&nbsp;
+// #7981: `hotkey`/`coldkey` used to be bare, unqualified alternatives (unlike `wallet`, already scoped to the
+// phrase "wallet path") -- but a Bittensor/Gittensor "hotkey" is the standard PUBLIC miner identifier (an SS58
+// address), not secret material, and appears routinely in ordinary registry content: API paths
+// (`/miners/hotkey/{hotkey}`), field names (`miner_hotkey`), even a note explicitly DENYING any such data ("No
+// wallet/hotkey data" -- the literal trigger for metagraphed #7589/#7591). Because `assessSubnetDocument` scans
+// the WHOLE document, not just the diff, one such mention anywhere in a file permanently blocks every future PR
+// touching it. Scope hot/coldkey the same way `wallet path` already is: require adjacency to something that
+// actually indicates key material (a keystore file path, a private-key/password/mnemonic/seed qualifier)
+// rather than a bare word match.
+const SECRET_LIKE_TEXT_PATTERN =
+<span class="cstat-no" title="statement not covered" >  /\bgh[pousr]_[A-Za-z0-9_]{20,}\b|\bgithub_pat_[A-Za-z0-9_]{20,}\b|BEGIN [A-Z ]*PRIVATE KEY|seed phrase|mnemonic|wallet path|(?:hot|cold)key[ _-]?(?:path|private[ _-]?key|password|mnemonic|seed)|private[ _-]?(?:hot|cold)key/i;</span>
+&nbsp;
+/** Runs on JSON.stringify(candidate). See SECRET_LIKE_TEXT_PATTERN's own comment for the hotkey/coldkey scoping
+ *  fix (#7981) -- every other alternative is unchanged from the original port. */
+export function <span class="fstat-no" title="function not covered" >containsSecretLikeText(v</span>alue: string): boolean {
+<span class="cstat-no" title="statement not covered" >  return SECRET_LIKE_TEXT_PATTERN.test(String(value || ""));</span>
+}
+&nbsp;
+const TRACKING_PARAMS = <span class="cstat-no" title="statement not covered" >new Set([</span>
+  "utm_source",
+  "utm_medium",
+  "utm_campaign",
+  "utm_term",
+  "utm_content",
+  "ref",
+  "ref_src",
+  "fbclid",
+  "gclid",
+  "mc_cid",
+  "mc_eid",
+  "igshid",
+]);
+&nbsp;
+/** Canonicalize a public URL for dedup keying. Strips hash/trailing slash, `www.`, default ports,
+ *  `index.html`, and tracking params, and sorts the query — so trivial variants key the SAME. */
+export function <span class="fstat-no" title="function not covered" >normalizePublicUrl(v</span>alue: unknown): string | null {
+<span class="cstat-no" title="statement not covered" >  if (typeof value !== "string") <span class="cstat-no" title="statement not covered" >return null;</span></span>
+<span class="cstat-no" title="statement not covered" >  try {</span>
+    const url = <span class="cstat-no" title="statement not covered" >new URL(value.trim());</span>
+<span class="cstat-no" title="statement not covered" >    if (!["http:", "https:", "ws:", "wss:"].includes(url.protocol)) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+<span class="cstat-no" title="statement not covered" >    url.hash = "";</span>
+<span class="cstat-no" title="statement not covered" >    url.hostname = url.hostname.replace(/^www\./i, "");</span>
+    const defaultPort = <span class="cstat-no" title="statement not covered" >url.protocol === "https:" || url.protocol === "wss:" ? "443" : "80";</span>
+    /* v8 ignore next -- the WHATWG URL constructor already drops default ports for special schemes (http/https/ws/wss), so url.port is "" here and this guard never fires; kept as defense-in-depth. */
+    if (url.port === defaultPort) url.port = "";
+<span class="cstat-no" title="statement not covered" >    url.pathname = url.pathname.replace(/\/index\.html?$/i, "/");</span>
+<span class="cstat-no" title="statement not covered" >    if (url.pathname !== "/") <span class="cstat-no" title="statement not covered" >url.pathname = url.pathname.replace(/\/+$/, "");</span></span>
+<span class="cstat-no" title="statement not covered" >    for (const key of [...url.searchParams.keys()]) {</span>
+<span class="cstat-no" title="statement not covered" >      if (TRACKING_PARAMS.has(key.toLowerCase())) <span class="cstat-no" title="statement not covered" >url.searchParams.delete(key);</span></span>
+    }
+    const sorted = <span class="cstat-no" title="statement not covered" >[...url.searchParams.entries()].<span class="fstat-no" title="function not covered" >sort(([</span>a], [b]) =&gt; <span class="cstat-no" title="statement not covered" >a.localeCompare(b))</span>;</span>
+<span class="cstat-no" title="statement not covered" >    url.search = "";</span>
+<span class="cstat-no" title="statement not covered" >    for (const [k, v] of sorted) <span class="cstat-no" title="statement not covered" >url.searchParams.append(k, v);</span></span>
+<span class="cstat-no" title="statement not covered" >    return url.toString().toLowerCase();</span>
+  } catch {
+<span class="cstat-no" title="statement not covered" >    return null;</span>
+  }
+}
+&nbsp;
+export interface GroundingSignals {
+  /** The declared netuid appears next to a netuid/subnet/sn keyword in the fetched evidence. */
+  netuidMentioned: boolean;
+  /** The claimed owner (github owner of the source/url, if any) appears in the fetched evidence. */
+  ownerMentioned: boolean;
+  /** The target and source resolve to the same registrable host, or the source body references the
+   *  target host — i.e. the source genuinely backs the target. */
+  hostMatchesClaim: boolean;
+  /** A fetch was redirected cross-origin (bait-and-switch signal). */
+  crossOriginRedirect: boolean;
+  /** Count of positive grounding signals (netuid/owner/host), net of a cross-origin penalty. */
+  strong: number;
+}
+&nbsp;
+const <span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >escapeRe = (s</span>: string): string =&gt; <span class="cstat-no" title="statement not covered" >s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&amp;");</span></span>
+&nbsp;
+/** The deterministic "is the declared netuid independently named" matcher. A netuid/subnet/sn keyword
+ *  followed by up to 3 separator chars then the EXACT number, digit-bounded so "subnet 70" does not
+ *  satisfy netuid 7. The separator class includes space/#/:/=/-/_/| so real-world forms all match. */
+export function <span class="fstat-no" title="function not covered" >netuidGroundingRegex(n</span>etuid: string | number): RegExp {
+<span class="cstat-no" title="statement not covered" >  return new RegExp(`\\b(?:netuid|subnet|sn)[\\s#:=_\\-|]{0,3}${escapeRe(String(netuid))}(?!\\d)`, "i");</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >normHost(v</span>alue: unknown): string | null {
+<span class="cstat-no" title="statement not covered" >  try {</span>
+<span class="cstat-no" title="statement not covered" >    return new URL(String(value)).hostname.replace(/^www\./i, "").toLowerCase();</span>
+  } catch {
+<span class="cstat-no" title="statement not covered" >    return null;</span>
+  }
+}
+&nbsp;
+// Multi-tenant hosting suffixes where each subdomain is a DIFFERENT party — treat as effective public
+// suffixes and keep the tenant label so two unrelated tenants don't falsely satisfy hostMatchesClaim.
+const MULTI_TENANT_SUFFIXES = <span class="cstat-no" title="statement not covered" >[</span>
+  "github.io",
+  "gitlab.io",
+  "pages.dev",
+  "workers.dev",
+  "vercel.app",
+  "netlify.app",
+  "onrender.com",
+  "herokuapp.com",
+  "web.app",
+  "firebaseapp.com",
+  "readthedocs.io",
+  "gitbook.io",
+  // More multi-tenant PaaS hosts where each subdomain is a different party (peers of
+  // herokuapp.com/onrender.com): Azure App Service and Fly.io.
+  "azurewebsites.net",
+  "fly.dev",
+];
+&nbsp;
+/** Heuristic registrable domain (eTLD+1 ≈ last two labels, with known multi-tenant suffixes kept one
+ *  label deeper). */
+export function <span class="fstat-no" title="function not covered" >registrableDomain(v</span>alue: unknown): string | null {
+<span class="cstat-no" title="statement not covered" >  if (typeof value !== "string" || !value) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+  let host = <span class="cstat-no" title="statement not covered" >value;</span>
+<span class="cstat-no" title="statement not covered" >  try {</span>
+<span class="cstat-no" title="statement not covered" >    host = new URL(value).hostname; // a full URL → its host; a bare host string → keep as-is</span>
+  } catch {
+    /* treat value as a bare hostname */
+  }
+<span class="cstat-no" title="statement not covered" >  host = host.replace(/^www\./i, "").toLowerCase();</span>
+<span class="cstat-no" title="statement not covered" >  if (!host) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (!host.includes(".")) <span class="cstat-no" title="statement not covered" >return host;</span></span>
+  const suffix = <span class="cstat-no" title="statement not covered" >MULTI_TENANT_SUFFIXES.<span class="fstat-no" title="function not covered" >find((s</span>) =&gt; <span class="cstat-no" title="statement not covered" >host === s || host.endsWith(`.${s}`))</span>;</span>
+<span class="cstat-no" title="statement not covered" >  if (suffix) {</span>
+<span class="cstat-no" title="statement not covered" >    if (host === suffix) <span class="cstat-no" title="statement not covered" >return host;</span></span>
+    const tenant = <span class="cstat-no" title="statement not covered" >host</span>
+      .slice(0, host.length - suffix.length - 1)
+      .split(".")
+      .pop();
+<span class="cstat-no" title="statement not covered" >    return tenant ? `${tenant}.${suffix}` : suffix;</span>
+  }
+  const parts = <span class="cstat-no" title="statement not covered" >host.split(".");</span>
+<span class="cstat-no" title="statement not covered" >  return parts.length &lt;= 2 ? host : parts.slice(-2).join(".");</span>
+}
+&nbsp;
+/** Owner/repo tokens from known code/model hosts (github/gitlab/bitbucket/huggingface). Only ≥4-char tokens. */
+function <span class="fstat-no" title="function not covered" >ownerTokens(v</span>alue: unknown): string[] {
+<span class="cstat-no" title="statement not covered" >  try {</span>
+    const u = <span class="cstat-no" title="statement not covered" >new URL(String(value));</span>
+    const host = <span class="cstat-no" title="statement not covered" >u.hostname.replace(/^www\./i, "").toLowerCase();</span>
+    const seg = <span class="cstat-no" title="statement not covered" >u.pathname</span>
+      .replace(/^\/+|\/+$/g, "")
+      .split("/")
+      .filter(Boolean)
+      .<span class="fstat-no" title="function not covered" >map((s</span>) =&gt; <span class="cstat-no" title="statement not covered" >s.toLowerCase())</span>;
+    const out: string[] = <span class="cstat-no" title="statement not covered" >[];</span>
+<span class="cstat-no" title="statement not covered" >    if (host === "github.com" || host === "gitlab.com" || host === "bitbucket.org") {</span>
+<span class="cstat-no" title="statement not covered" >      if (seg[0]) <span class="cstat-no" title="statement not covered" >out.push(seg[0]);</span></span>
+<span class="cstat-no" title="statement not covered" >      if (seg[1]) <span class="cstat-no" title="statement not covered" >out.push(seg[1].replace(/\.git$/i, ""));</span></span>
+    } else <span class="cstat-no" title="statement not covered" >if (host === "huggingface.co") {</span>
+      const rest = <span class="cstat-no" title="statement not covered" >["datasets", "models", "spaces"].includes(seg[0] ?? "") ? seg.slice(1) : seg;</span>
+<span class="cstat-no" title="statement not covered" >      if (rest[0]) <span class="cstat-no" title="statement not covered" >out.push(rest[0]);</span></span>
+<span class="cstat-no" title="statement not covered" >      if (rest[1]) <span class="cstat-no" title="statement not covered" >out.push(rest[1]);</span></span>
+    }
+<span class="cstat-no" title="statement not covered" >    return out.<span class="fstat-no" title="function not covered" >filter((t</span>) =&gt; <span class="cstat-no" title="statement not covered" >t.length &gt;= 4)</span>;</span>
+  } catch {
+<span class="cstat-no" title="statement not covered" >    return [];</span>
+  }
+}
+&nbsp;
+type EvidenceLike = { title?: unknown; snippet?: unknown; cross_origin_redirect?: unknown } | null | undefined;
+&nbsp;
+const <span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >evidenceText = (e</span>: EvidenceLike): string =&gt;</span>
+<span class="cstat-no" title="statement not covered" >  [e?.title, e?.snippet]</span>
+    .<span class="fstat-no" title="function not covered" >map((v</span>) =&gt; (<span class="cstat-no" title="statement not covered" >typeof v === "string" ? v : ""))</span>
+    .join("\n")
+    .toLowerCase();
+&nbsp;
+/** Deterministic grounding of a candidate against its fetched evidence — does the evidence actually
+ *  corroborate the declared netuid / owner / host, and was there a cross-DOMAIN redirect? Pure +
+ *  testable; the caller supplies the fetched evidence and uses `strong` to gate a merge. Host
+ *  corroboration must be INDEPENDENT (same registrable domain as the separate source, or referenced by
+ *  the SOURCE body); owner grounding spans github/gitlab/bitbucket/huggingface; netuid match is
+ *  digit-bounded so "subnet 70" does not satisfy netuid 7. */
+export function <span class="fstat-no" title="function not covered" >computeGrounding(</span>
+  candidate: CandidateLike | null | undefined,
+  target: EvidenceLike,
+  source: EvidenceLike,
+): GroundingSignals {
+  const targetText = <span class="cstat-no" title="statement not covered" >evidenceText(target);</span>
+  const sourceText = <span class="cstat-no" title="statement not covered" >evidenceText(source);</span>
+  const allText = <span class="cstat-no" title="statement not covered" >`${targetText}\n${sourceText}`;</span>
+&nbsp;
+  const netuid = <span class="cstat-no" title="statement not covered" >String(candidate?.netuid ?? "").trim();</span>
+  const netuidMentioned = <span class="cstat-no" title="statement not covered" >!!netuid &amp;&amp; netuidGroundingRegex(netuid).test(allText);</span>
+&nbsp;
+  const sourceUrl =
+    (<span class="cstat-no" title="statement not covered" >candidate?.source_url as string) || (candidate?.source_urls as string[] | undefined)?.[0] || "";</span>
+  // A source that is the SAME resource as the url cannot independently corroborate the claim — owner +
+  // host grounding only count when the source is an INDEPENDENT resource (protocol-insensitive sameness).
+  const <span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >stripScheme = (v</span>alue: unknown): string | null =&gt; {</span>
+    const normalized = <span class="cstat-no" title="statement not covered" >normalizePublicUrl(value);</span>
+<span class="cstat-no" title="statement not covered" >    return normalized == null ? null : normalized.replace(/^[a-z]+:/i, "");</span>
+  };
+  const targetKey = <span class="cstat-no" title="statement not covered" >stripScheme(candidate?.url);</span>
+  const sourceKey = <span class="cstat-no" title="statement not covered" >stripScheme(sourceUrl);</span>
+  const independentSource = <span class="cstat-no" title="statement not covered" >!!sourceUrl &amp;&amp; (targetKey == null || sourceKey == null || targetKey !== sourceKey);</span>
+  const tokens = <span class="cstat-no" title="statement not covered" >[...new Set([...ownerTokens(sourceUrl), ...ownerTokens(candidate?.url)])];</span>
+  const ownerMentioned = <span class="cstat-no" title="statement not covered" >independentSource &amp;&amp; tokens.<span class="fstat-no" title="function not covered" >some((t</span>) =&gt; <span class="cstat-no" title="statement not covered" >new RegExp(`\\b${escapeRe(t)}\\b`, "i").test(allText))</span>;</span>
+&nbsp;
+  const targetHost = <span class="cstat-no" title="statement not covered" >normHost(candidate?.url);</span>
+  const sourceHost = <span class="cstat-no" title="statement not covered" >normHost(sourceUrl);</span>
+  const targetApex = <span class="cstat-no" title="statement not covered" >registrableDomain(targetHost);</span>
+  const hostMatchesClaim =
+<span class="cstat-no" title="statement not covered" >    independentSource &amp;&amp;</span>
+    ((targetApex != null &amp;&amp; targetApex === registrableDomain(sourceHost)) ||
+      (!!targetHost &amp;&amp; sourceText.includes(targetHost)));
+&nbsp;
+  const crossOriginRedirect = <span class="cstat-no" title="statement not covered" >target?.cross_origin_redirect === true || source?.cross_origin_redirect === true;</span>
+&nbsp;
+  const positives = <span class="cstat-no" title="statement not covered" >[netuidMentioned, ownerMentioned, hostMatchesClaim].filter(Boolean).length;</span>
+  const strong = <span class="cstat-no" title="statement not covered" >Math.max(0, positives - (crossOriginRedirect ? 1 : 0));</span>
+<span class="cstat-no" title="statement not covered" >  return { netuidMentioned, ownerMentioned, hostMatchesClaim, crossOriginRedirect, strong };</span>
+}
+&nbsp;
+// ── Registry identity tokens (ACCURACY corroboration, NOT ownership gating) ───────────────────
+// metagraphed is a PUBLIC registry — anyone may submit/update a surface. These tokens let a reviewer
+// confirm a surface RELATES to the declared subnet (accuracy); they are NOT an owner/submitter check.
+&nbsp;
+const <span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >normIdent = (v</span>alue: unknown): string =&gt;</span>
+<span class="cstat-no" title="statement not covered" >  String(value ?? "")</span>
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+&nbsp;
+/** Aggregators / social / code hosts whose domain label is NOT a subnet's own identity. */
+const NON_IDENTITY_DOMAIN_LABELS = <span class="cstat-no" title="statement not covered" >new Set([</span>
+  "taomarketcap",
+  "taostats",
+  "subnetradar",
+  "backprop",
+  "taopedia",
+  "wandb",
+  "weightsandbiases",
+  "huggingface",
+  "github",
+  "gitlab",
+  "bitbucket",
+  "discord",
+  "twitter",
+  "medium",
+  "notion",
+  "gitbook",
+  "readthedocs",
+  "youtube",
+  "linktr",
+  "linktree",
+  "telegram",
+  "substack",
+  "vercel",
+  "netlify",
+]);
+&nbsp;
+/** Registrable-domain "main label" of a URL/host (byzantiumai.net → byzantiumai), normalized. */
+function <span class="fstat-no" title="function not covered" >domainLabel(v</span>alue: unknown): string | null {
+  const apex = <span class="cstat-no" title="statement not covered" >registrableDomain(value);</span>
+<span class="cstat-no" title="statement not covered" >  if (!apex) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+  const label = <span class="cstat-no" title="statement not covered" >apex.split(".")[0];</span>
+<span class="cstat-no" title="statement not covered" >  return label ? normIdent(label) : null;</span>
+}
+&nbsp;
+const <span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >usableIdentityToken = (t</span>oken: string): boolean =&gt; <span class="cstat-no" title="statement not covered" >token.length &gt;= 4 &amp;&amp; !NON_IDENTITY_DOMAIN_LABELS.has(token);</span></span>
+&nbsp;
+/** Identity tokens for a subnet derived from its AUTHORITATIVE public-registry record — its NAME and
+ *  the registrable labels + repo orgs of its OFFICIAL website/docs/source-repo/links. Excludes
+ *  slug/native_slug (forgeable) and dashboard_url (third-party aggregators), and drops known
+ *  aggregator/social labels. */
+export function <span class="fstat-no" title="function not covered" >deriveRegistryIdentityTokens(r</span>ecord: Record&lt;string, unknown&gt; | null | undefined): string[] {
+<span class="cstat-no" title="statement not covered" >  if (!record || typeof record !== "object") <span class="cstat-no" title="statement not covered" >return [];</span></span>
+  const out = <span class="cstat-no" title="statement not covered" >new Set&lt;string&gt;();</span>
+<span class="cstat-no" title="statement not covered" >  for (const key of ["name", "native_name"]) {</span>
+    const t = <span class="cstat-no" title="statement not covered" >normIdent((record as Record&lt;string, unknown&gt;)[key]);</span>
+<span class="cstat-no" title="statement not covered" >    if (usableIdentityToken(t)) <span class="cstat-no" title="statement not covered" >out.add(t);</span></span>
+  }
+<span class="cstat-no" title="statement not covered" >  for (const key of ["website_url", "docs_url", "source_repo", "homepage"]) {</span>
+    const url = (<span class="cstat-no" title="statement not covered" >record as Record&lt;string, unknown&gt;)[key];</span>
+    const label = <span class="cstat-no" title="statement not covered" >domainLabel(url);</span>
+<span class="cstat-no" title="statement not covered" >    if (label &amp;&amp; usableIdentityToken(label)) <span class="cstat-no" title="statement not covered" >out.add(label);</span></span>
+<span class="cstat-no" title="statement not covered" >    for (const tok of ownerTokens(url)) {</span>
+      const t = <span class="cstat-no" title="statement not covered" >normIdent(tok);</span>
+<span class="cstat-no" title="statement not covered" >      if (usableIdentityToken(t)) <span class="cstat-no" title="statement not covered" >out.add(t);</span></span>
+    }
+  }
+  const links = (<span class="cstat-no" title="statement not covered" >record as { links?: unknown }).links;</span>
+<span class="cstat-no" title="statement not covered" >  if (Array.isArray(links)) {</span>
+<span class="cstat-no" title="statement not covered" >    for (const l of links) {</span>
+      const url = <span class="cstat-no" title="statement not covered" >typeof l === "string" ? l : (l as { url?: unknown })?.url;</span>
+      const label = <span class="cstat-no" title="statement not covered" >domainLabel(url);</span>
+<span class="cstat-no" title="statement not covered" >      if (label &amp;&amp; usableIdentityToken(label)) <span class="cstat-no" title="statement not covered" >out.add(label);</span></span>
+    }
+  }
+<span class="cstat-no" title="statement not covered" >  return [...out];</span>
+}
+&nbsp;
+/** Does the candidate's OWN surface URL correspond to the subnet's registered identity tokens? Confirms
+ *  the surface PLAUSIBLY BELONGS TO this subnet. Matches on the candidate's url alone (not a borrowable
+ *  source_url). Returns false when there are no identity tokens to match. */
+export function <span class="fstat-no" title="function not covered" >surfaceMatchesRegistryIdentity(c</span>andidateUrl: unknown, identityTokens: string[]): boolean {
+<span class="cstat-no" title="statement not covered" >  if (!identityTokens.length) <span class="cstat-no" title="statement not covered" >return false;</span></span>
+  const want = <span class="cstat-no" title="statement not covered" >new Set(identityTokens);</span>
+  const label = <span class="cstat-no" title="statement not covered" >domainLabel(candidateUrl);</span>
+<span class="cstat-no" title="statement not covered" >  if (label &amp;&amp; usableIdentityToken(label) &amp;&amp; want.has(label)) <span class="cstat-no" title="statement not covered" >return true;</span></span>
+<span class="cstat-no" title="statement not covered" >  for (const tok of ownerTokens(candidateUrl)) {</span>
+    const t = <span class="cstat-no" title="statement not covered" >normIdent(tok);</span>
+<span class="cstat-no" title="statement not covered" >    if (usableIdentityToken(t) &amp;&amp; want.has(t)) <span class="cstat-no" title="statement not covered" >return true;</span></span>
+  }
+<span class="cstat-no" title="statement not covered" >  return false;</span>
+}
+&nbsp;
+/** True when an HTTP body is a NON-EMPTY structured-data response (valid JSON object/array/scalar, or a
+ *  non-blank xml/yaml/csv/event-stream body). Such a body is SUBSTANTIVE even when short — must NOT be
+ *  treated as a "degraded" near-empty fetch (the length-based heuristic is meaningful only for HTML/text). */
+export function <span class="fstat-no" title="function not covered" >isNonEmptyStructuredBody(c</span>ontentType: unknown, body: unknown): boolean {
+  const ct = <span class="cstat-no" title="statement not covered" >typeof contentType === "string" ? contentType : "";</span>
+  const text = <span class="cstat-no" title="statement not covered" >typeof body === "string" ? body.trim() : "";</span>
+<span class="cstat-no" title="statement not covered" >  if (!text) <span class="cstat-no" title="statement not covered" >return false;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (/application\/(?:json|[\w.+-]*\+json)/i.test(ct)) {</span>
+<span class="cstat-no" title="statement not covered" >    try {</span>
+      const v = <span class="cstat-no" title="statement not covered" >JSON.parse(text);</span>
+<span class="cstat-no" title="statement not covered" >      if (v == null) <span class="cstat-no" title="statement not covered" >return false;</span></span>
+<span class="cstat-no" title="statement not covered" >      if (Array.isArray(v)) <span class="cstat-no" title="statement not covered" >return v.length &gt; 0;</span></span>
+<span class="cstat-no" title="statement not covered" >      if (typeof v === "object") <span class="cstat-no" title="statement not covered" >return Object.keys(v).length &gt; 0;</span></span>
+<span class="cstat-no" title="statement not covered" >      return true; // a JSON scalar (number/string/bool) is still a real served value</span>
+    } catch {
+<span class="cstat-no" title="statement not covered" >      return false;</span>
+    }
+  }
+<span class="cstat-no" title="statement not covered" >  return /application\/(?:xml|x-yaml|yaml)|text\/(?:xml|x-yaml|yaml|csv|event-stream)/i.test(ct);</span>
+}
+&nbsp;
+// ── Repository freshness (hardening) ──────────────────────────────────────────────────────────
+/** A source repo untouched for longer than this (days), or archived, is not "live truth" → manual. */
+export const STALE_REPO_DAYS = <span class="cstat-no" title="statement not covered" >365;</span>
+export interface FreshnessSignals {
+  known: boolean;
+  archived: boolean;
+  pushedAt: string | null;
+  ageDays: number | null;
+  stale: boolean;
+  reason: string | null;
+}
+/** Assess a github repo's freshness from its metadata. Pure (now injected for testability). A null
+ *  meta (couldn't read) → known:false, stale:false — an unreadable signal must not block on its own. */
+export function <span class="fstat-no" title="function not covered" >assessFreshness(</span>
+  meta: { archived?: boolean; pushedAt?: string | null } | null | undefined,
+  nowMs: number,
+): FreshnessSignals {
+<span class="cstat-no" title="statement not covered" >  if (!meta) <span class="cstat-no" title="statement not covered" >return { known: false, archived: false, pushedAt: null, ageDays: null, stale: false, reason: null };</span></span>
+  const archived = <span class="cstat-no" title="statement not covered" >meta.archived === true;</span>
+  const pushedAt = <span class="cstat-no" title="statement not covered" >meta.pushedAt ?? null;</span>
+  const pushedMs = <span class="cstat-no" title="statement not covered" >pushedAt ? Date.parse(pushedAt) : NaN;</span>
+  const ageDays = <span class="cstat-no" title="statement not covered" >Number.isFinite(pushedMs) ? Math.floor((nowMs - pushedMs) / 86_400_000) : null;</span>
+  const tooOld = <span class="cstat-no" title="statement not covered" >ageDays != null &amp;&amp; ageDays &gt; STALE_REPO_DAYS;</span>
+  const stale = <span class="cstat-no" title="statement not covered" >archived || tooOld;</span>
+  const reason = <span class="cstat-no" title="statement not covered" >archived ? "archived" : tooOld ? `no commits in ${ageDays} days` : null;</span>
+<span class="cstat-no" title="statement not covered" >  return { known: true, archived, pushedAt, ageDays, stale, reason };</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >fail(r</span>eason: string, summary: string, candidate: CandidateLike | null = <span class="branch-0 cbranch-no" title="branch not covered" >null): Assessment {</span>
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    /* v8 ignore next -- every fail() call site passes a REVIEWER_CLOSE_REASONS member, so the "manual-review" alternative is unreachable; kept so a future non-close reason degrades to manual rather than closing. */
+    verdict: REVIEWER_CLOSE_REASONS.has(reason) ? "closed" : "manual-review",
+    summary,
+    candidate,
+    reason,
+  };
+}
+&nbsp;
+/**
+ * Surface validators: a contribution appends ONE entry to `surfaces[]` of a `registry/subnets/&lt;slug&gt;.json`, whose
+ * `netuid` lives at the file ROOT (not on each entry). These two deterministic validators (per-entry +
+ * whole-document) make loopover the sole adjudicator; no AI (surfaces are structured data). They take the
+ * appended entry / parsed document as arguments; the orchestrator resolves "exactly one appended entry" from a
+ * head-vs-base diff.
+ */
+export function <span class="fstat-no" title="function not covered" >assessSurfaceEntry(</span>
+  entry: unknown,
+  netuid: number,
+  opts: { secretsScan?: boolean; sourceUrlValidation?: boolean } = <span class="branch-0 cbranch-no" title="branch not covered" >{},</span>
+): Assessment {
+  const { secretsScan = <span class="branch-0 cbranch-no" title="branch not covered" >true, s</span>ourceUrlValidation = <span class="branch-0 cbranch-no" title="branch not covered" >true } = <span class="cstat-no" title="statement not covered" >o</span>pts;</span>
+<span class="cstat-no" title="statement not covered" >  if (!entry || typeof entry !== "object") {</span>
+<span class="cstat-no" title="statement not covered" >    return fail("unsupported-shape", "Surface entry must be a JSON object.");</span>
+  }
+  const surface = <span class="cstat-no" title="statement not covered" >entry as CandidateLike;</span>
+<span class="cstat-no" title="statement not covered" >  if (secretsScan &amp;&amp; containsSecretLikeText(JSON.stringify(surface))) {</span>
+<span class="cstat-no" title="statement not covered" >    return fail("secret-or-credential", "Surface entry appears to include secret, wallet, PAT, or private-key material.", surface);</span>
+  }
+  const observedKey = <span class="cstat-no" title="statement not covered" >Object.keys(surface as Record&lt;string, unknown&gt;).<span class="fstat-no" title="function not covered" >find((k</span>) =&gt; <span class="cstat-no" title="statement not covered" >OBSERVED_STATE_KEYS.has(k.toLowerCase()))</span>;</span>
+<span class="cstat-no" title="statement not covered" >  if (observedKey) {</span>
+<span class="cstat-no" title="statement not covered" >    return fail(</span>
+      "observed-state-claim",
+      `Surface entry asserts observed runtime state (\`${observedKey}\`). Health / uptime / latency / status are probe-derived only and can never be part of a submission — remove the field and resubmit.`,
+      surface,
+    );
+  }
+  // netuid is carried by the subnet-document root in the surface model; an entry may omit it, but if it carries one
+  // it must not contradict the root (the document validator already proved the root netuid is an integer).
+<span class="cstat-no" title="statement not covered" >  if (surface.netuid !== undefined &amp;&amp; surface.netuid !== null &amp;&amp; Number(surface.netuid) !== netuid) {</span>
+<span class="cstat-no" title="statement not covered" >    return fail("unsupported-shape", "Surface entry netuid must match the subnet document root.", surface);</span>
+  }
+  const baseLayer = <span class="cstat-no" title="statement not covered" >isBaseLayerKind(surface.kind);</span>
+<span class="cstat-no" title="statement not covered" >  if (!REVIEWER_SAFE_KINDS.has(String(surface.kind)) &amp;&amp; !baseLayer) {</span>
+<span class="cstat-no" title="statement not covered" >    return fail("unsupported-shape", "Surface entry kind is not supported by the reviewer.", surface);</span>
+  }
+<span class="cstat-no" title="statement not covered" >  if (sourceUrlValidation) {</span>
+    const urlSafe = <span class="cstat-no" title="statement not covered" >baseLayer ? isSafeEndpointUrl(String(surface.url ?? "")) : isSafeHttpUrl(String(surface.url ?? ""));</span>
+<span class="cstat-no" title="statement not covered" >    if (!urlSafe) {</span>
+<span class="cstat-no" title="statement not covered" >      return fail(</span>
+        "unsafe-url",
+        baseLayer ? "Surface entry URL must be a public HTTPS or WSS endpoint." : "Surface entry URL must be a public HTTPS URL.",
+        surface,
+      );
+    }
+    const sourceUrl = (<span class="cstat-no" title="statement not covered" >surface.source_url as string) || (surface.source_urls as string[] | undefined)?.[0];</span>
+<span class="cstat-no" title="statement not covered" >    if (!isSafeHttpUrl(String(sourceUrl ?? ""))) {</span>
+<span class="cstat-no" title="statement not covered" >      return fail("unsafe-url", "Surface entry source URL must be a public HTTPS URL.", surface);</span>
+    }
+  }
+<span class="cstat-no" title="statement not covered" >  if (surface.public_safe !== true) {</span>
+<span class="cstat-no" title="statement not covered" >    return {</span>
+      verdict: "closed",
+      summary: "Surface entry is not marked public_safe=true — declined. Resubmit with public_safe=true if the endpoint is genuinely public.",
+      candidate: surface,
+    };
+  }
+<span class="cstat-no" title="statement not covered" >  if (surface.auth_required === true) {</span>
+<span class="cstat-no" title="statement not covered" >    return {</span>
+      verdict: "manual-review",
+      summary:
+        "Authenticated interface — routing to review to confirm the declared auth scheme is documented publicly (verifiable without any secret) before it can be accepted.",
+      candidate: surface,
+    };
+  }
+<span class="cstat-no" title="statement not covered" >  return { verdict: "merged", candidate: surface };</span>
+}
+&nbsp;
+export function <span class="fstat-no" title="function not covered" >assessSubnetDocument(</span>
+  document: unknown,
+  opts: { secretsScan?: boolean; sourceUrlValidation?: boolean; appendedEntry: unknown },
+): Assessment {
+  const { secretsScan = <span class="branch-0 cbranch-no" title="branch not covered" >true, s</span>ourceUrlValidation = <span class="branch-0 cbranch-no" title="branch not covered" >true, a</span>ppendedEntry } = <span class="cstat-no" title="statement not covered" >opts;</span>
+<span class="cstat-no" title="statement not covered" >  if (!document || typeof document !== "object") {</span>
+<span class="cstat-no" title="statement not covered" >    return fail("malformed-json", "Subnet document must be a JSON object.");</span>
+  }
+  const doc = <span class="cstat-no" title="statement not covered" >document as { netuid?: unknown; surfaces?: unknown };</span>
+<span class="cstat-no" title="statement not covered" >  if (!Number.isInteger(Number(doc.netuid))) {</span>
+<span class="cstat-no" title="statement not covered" >    return fail("unsupported-shape", "Subnet document netuid must be an integer.");</span>
+  }
+  const netuid = <span class="cstat-no" title="statement not covered" >Number(doc.netuid); // normalize once; thread the canonical integer to entry + (future) grounding</span>
+<span class="cstat-no" title="statement not covered" >  if (!Array.isArray(doc.surfaces)) {</span>
+<span class="cstat-no" title="statement not covered" >    return fail("unsupported-shape", "Subnet document must carry a surfaces[] array.");</span>
+  }
+  // A per-entry call: the orchestrator resolves every appended entry by diffing head vs base surfaces[], enforces
+  // the spec's maxAppendedEntries cap (and the ≥1-entry requirement) BEFORE calling this per entry, then calls it
+  // once per appended entry. So appendedEntry is null/undefined here only when a specific array element itself is
+  // missing/malformed (a data-shape problem) — it is no longer a "wrong count" sentinel.
+<span class="cstat-no" title="statement not covered" >  if (appendedEntry === null || appendedEntry === undefined) {</span>
+<span class="cstat-no" title="statement not covered" >    return fail("unsupported-shape", "Surface entry to assess is missing — the appended entry could not be resolved.");</span>
+  }
+  // Whole-document secret scan catches material in the envelope (outside the entry); the entry is re-scanned below.
+<span class="cstat-no" title="statement not covered" >  if (secretsScan &amp;&amp; containsSecretLikeText(JSON.stringify(doc))) {</span>
+<span class="cstat-no" title="statement not covered" >    return fail("secret-or-credential", "Subnet document appears to include secret, wallet, PAT, or private-key material.");</span>
+  }
+<span class="cstat-no" title="statement not covered" >  return assessSurfaceEntry(appendedEntry, netuid, { secretsScan, sourceUrlValidation });</span>
+}
+&nbsp;
+export type ProviderLike = Record&lt;string, unknown&gt; &amp; {
+  id?: unknown;
+  name?: unknown;
+  website_url?: unknown;
+  kind?: unknown;
+  authority?: unknown;
+  notes?: unknown;
+};
+&nbsp;
+export interface ProviderAssessment {
+  ok: boolean;
+  provider: ProviderLike | null;
+  reason?: string;
+  summary?: string;
+}
+&nbsp;
+/** Deterministic provider-profile shape/safety gate (one-shot: malformed → close, else → AI fact-check). */
+export function <span class="fstat-no" title="function not covered" >assessProviderDocument(</span>
+  document: unknown,
+  opts: { secretsScan?: boolean; sourceUrlValidation?: boolean } = <span class="branch-0 cbranch-no" title="branch not covered" >{},</span>
+): ProviderAssessment {
+  const { secretsScan = <span class="branch-0 cbranch-no" title="branch not covered" >true, s</span>ourceUrlValidation = <span class="branch-0 cbranch-no" title="branch not covered" >true } = <span class="cstat-no" title="statement not covered" >o</span>pts;</span>
+  const doc = <span class="cstat-no" title="statement not covered" >document as { provider?: unknown } | null;</span>
+<span class="cstat-no" title="statement not covered" >  if (!doc || typeof doc !== "object") {</span>
+<span class="cstat-no" title="statement not covered" >    return { ok: false, provider: null, reason: "malformed-json", summary: "Provider profile JSON could not be read." };</span>
+  }
+  // Scan the WHOLE file (envelope + submission block) for secrets.
+<span class="cstat-no" title="statement not covered" >  if (secretsScan &amp;&amp; containsSecretLikeText(JSON.stringify(doc))) {</span>
+<span class="cstat-no" title="statement not covered" >    return {</span>
+      ok: false,
+      provider: null,
+      reason: "secret-or-credential",
+      summary: "Provider profile appears to include secret, wallet, PAT, or private-key material.",
+    };
+  }
+  // The canonical submission wraps the fields under a `provider` key; a flat top-level object is accepted too.
+  const p = (<span class="cstat-no" title="statement not covered" >doc.provider &amp;&amp; typeof doc.provider === "object" ? doc.provider : doc) as ProviderLike;</span>
+  const id = <span class="cstat-no" title="statement not covered" >typeof p.id === "string" ? p.id.trim() : "";</span>
+  const name = <span class="cstat-no" title="statement not covered" >typeof p.name === "string" ? p.name.trim() : "";</span>
+<span class="cstat-no" title="statement not covered" >  if (!id || !name) {</span>
+<span class="cstat-no" title="statement not covered" >    return { ok: false, provider: p, reason: "unsupported-shape", summary: "Provider profile must include a non-empty id and name." };</span>
+  }
+<span class="cstat-no" title="statement not covered" >  if (sourceUrlValidation &amp;&amp; !isSafeHttpUrl(String(p.website_url ?? ""))) {</span>
+<span class="cstat-no" title="statement not covered" >    return { ok: false, provider: p, reason: "unsafe-url", summary: "Provider website_url must be a public HTTPS URL." };</span>
+  }
+<span class="cstat-no" title="statement not covered" >  return { ok: true, provider: p };</span>
+}
+&nbsp;
+// ── Kind-aware functional probing ──────────────────────────────────────────────────────────────
+// Kinds whose URL must actually SERVE the declared surface (a spec / JSON API / event stream).
+const FUNCTIONAL_KINDS = <span class="cstat-no" title="statement not covered" >new Set(["openapi", "subnet-api", "sse"]);</span>
+export function <span class="fstat-no" title="function not covered" >functionalRequired(k</span>ind: unknown): boolean {
+<span class="cstat-no" title="statement not covered" >  return FUNCTIONAL_KINDS.has(String(kind));</span>
+}
+&nbsp;
+/** Bittensor/subtensor-family chain names accepted for base-layer endpoints. */
+const ALLOWED_CHAIN_SUBSTRINGS = <span class="cstat-no" title="statement not covered" >["bittensor", "subtensor", "finney", "nakamoto"];</span>
+export function <span class="fstat-no" title="function not covered" >isAllowedChain(c</span>hain: unknown): boolean {
+  const c = <span class="cstat-no" title="statement not covered" >String(chain ?? "").toLowerCase();</span>
+<span class="cstat-no" title="statement not covered" >  return !!c &amp;&amp; ALLOWED_CHAIN_SUBSTRINGS.<span class="fstat-no" title="function not covered" >some((n</span>) =&gt; <span class="cstat-no" title="statement not covered" >c.includes(n))</span>;</span>
+}
+&nbsp;
+/**
+ * Best-effort, truncation-tolerant check that a fetched body actually serves the surface its `kind`
+ * claims. openapi → an openapi/swagger schema with paths; subnet-api → a JSON API surface; sse →
+ * a `text/event-stream` content type. Returns `served:true` (n/a) for kinds that don't require a
+ * functional surface.
+ */
+export function <span class="fstat-no" title="function not covered" >probeFunctionalSurface(</span>
+  kind: unknown,
+  contentType: string | null | undefined,
+  body: string,
+): { served: boolean; detail: string } {
+  const k = <span class="cstat-no" title="statement not covered" >String(kind);</span>
+  const ct = <span class="cstat-no" title="statement not covered" >contentType ?? "";</span>
+<span class="cstat-no" title="statement not covered" >  if (k === "openapi") {</span>
+    const looksSpec = <span class="cstat-no" title="statement not covered" >/"(?:openapi|swagger)"\s*:/i.test(body) || /^\s*(?:openapi|swagger)\s*:/im.test(body);</span>
+    const hasPaths = <span class="cstat-no" title="statement not covered" >/"paths"\s*:/i.test(body) || /^\s*paths\s*:/im.test(body);</span>
+<span class="cstat-no" title="statement not covered" >    return looksSpec</span>
+      ? { served: true, detail: hasPaths ? "openapi schema served" : "openapi version key served (paths beyond window)" }
+      : { served: false, detail: "no openapi/swagger version key served" };
+  }
+<span class="cstat-no" title="statement not covered" >  if (k === "subnet-api") {</span>
+    const isJson = <span class="cstat-no" title="statement not covered" >/\bjson\b/i.test(ct) || /^\s*[{[]/.test(body);</span>
+<span class="cstat-no" title="statement not covered" >    return isJson ? { served: true, detail: "json api surface" } : { served: false, detail: `not a json api surface (content-type:${ct || "none"})` };</span>
+  }
+<span class="cstat-no" title="statement not covered" >  if (k === "sse") {</span>
+    const served = <span class="cstat-no" title="statement not covered" >/text\/event-stream/i.test(ct);</span>
+<span class="cstat-no" title="statement not covered" >    return { served, detail: served ? "text/event-stream" : `not an event stream (content-type:${ct || "none"})` };</span>
+  }
+<span class="cstat-no" title="statement not covered" >  return { served: true, detail: "n/a" };</span>
+}
+&nbsp;
+// ── Surface model (generic registry content-lane) ─────────────────────────────────────────────────
+//
+// A community contribution appends entries to an array field of ONE registry "entry file" (e.g.
+// registry/subnets/&lt;slug&gt;.json::surfaces[]), optionally with one flat companion provider file. To stay MODULAR —
+// many maintainers will install loopover over wildly different registries — the engine is parameterized by a
+// RegistryLaneSpec rather than hard-coding metagraphed's paths; metagraphed is just the FIRST spec, and a spec can
+// later be loaded from per-repo .loopover.yml config so a new registry needs config, not a code change.
+&nbsp;
+/** Describes where a registry keeps its community-editable entry files + allowed companions. */
+export interface RegistryLaneSpec {
+  /** The file a contribution edits to add entries, e.g. /^registry\/subnets\/&lt;slug&gt;\.json$/. */
+  entryFilePattern: RegExp;
+  /** Optional flat companion debut-provider file, e.g. /^registry\/providers\/&lt;slug&gt;\.json$/ (flat only). */
+  providerFilePattern?: RegExp;
+  /** Optional generated artifacts a valid PR must regenerate — allowed companions. */
+  artifactPattern?: RegExp;
+  /** The array field on an entry file a contribution appends to (the surface model: "surfaces"). */
+  collectionField: string;
+  /** Max surfaces[] entries a single PR may append in one run. Omitted ⇒ today's strict single-entry-only
+   *  default — safe-by-default backward compat for every spec that doesn't explicitly opt in (including future,
+   *  unknown per-repo registries). Set explicitly to raise the cap; `Infinity` removes it entirely (e.g.
+   *  metagraphed's documented "several surfaces for one subnet in one diff is one merge" anti-farming policy). */
+  maxAppendedEntries?: number;
+  /** Entry field names whose COMBINED values identify "the same entry" for duplicate detection (e.g. `["url"]`).
+   *  Omitted ⇒ duplicate detection is OFF (safe-by-default backward compat — a spec that doesn't opt in gets no
+   *  new close reason). When set, an appended entry whose identity matches an entry already present in the base
+   *  document's `collectionField` array, OR an earlier entry appended in the SAME PR, closes the whole PR. A field
+   *  whose value looks like a URL is compared via `normalizePublicUrl` (so trivial formatting differences don't
+   *  count as different); every other field is compared as a trimmed, case-insensitive string (or a structural
+   *  JSON comparison for a non-string value). Generic — the engine only duck-types the configured field names off
+   *  each entry, it never assumes any domain-specific shape (kind/netuid/etc. are metagraphed's own vocabulary). */
+  duplicateKeyFields?: readonly string[];
+  /** Validates ONE appended surfaces[] entry against the whole document (root shape + the specific entry) and
+   *  returns its Assessment — the registry's own domain-specific semantic check (shape/safety/business rules).
+   *  The orchestrator calls this once per appended entry and aggregates the results; it never validates anything
+   *  itself, so a different registry supplies its own function here without touching the orchestrator. Omitted
+   *  ⇒ the orchestrator returns "manual" for entry submissions to this registry (structural gating — scope,
+   *  entry-count cap, duplicate detection — still applies; there's just no domain-specific check configured yet). */
+  assessAppendedEntry?: (document: unknown, opts: { secretsScan?: boolean; sourceUrlValidation?: boolean; appendedEntry: unknown }) =&gt; Assessment;
+  /** Validates a flat provider-submission document and returns its ProviderAssessment — the registry's own
+   *  domain-specific check, analogous to `assessAppendedEntry` but for the provider-file scope. Omitted ⇒ the
+   *  orchestrator returns "manual" for provider submissions to this registry. */
+  assessProviderEntry?: (document: unknown, opts?: { secretsScan?: boolean; sourceUrlValidation?: boolean }) =&gt; ProviderAssessment;
+  /** Optional (#content-lane-deliverable follow-up): a regex tested against a linked issue's TITLE (not body)
+   *  that, when it matches, marks the issue as requiring an entry/provider-file edit even when
+   *  `checkContentLaneDeliverable`'s own literal-path scan of the issue BODY finds nothing to check against.
+   *  Exists for a KNOWN, confirmed gap: metagraphed's ~120 "MCP execute: verify + wire SN&lt;netuid&gt; (&lt;name&gt;)"
+   *  issues (#7017-#7136) ask a contributor to add missing surfaces to `registry/subnets/&lt;slug&gt;.json`, but their
+   *  bodies write that path with the LITERAL, generic `&lt;slug&gt;` placeholder (a documentation convention, not a
+   *  template variable meant to be filled in), never the real resolved filename — confirmed empirically against
+   *  issue #7060's actual body, which contains zero `registry/subnets/*.json`-shaped tokens at all. Without this
+   *  field, the literal-path-only check returns "not-applicable" for the ENTIRE family, providing no protection
+   *  against exactly the anti-pattern it exists to catch (a merged PR that adds only a test file, zero registry
+   *  changes — confirmed live 2026-07-21, see metagraphed's own contributor-pipeline-gardening skill). Omitted
+   *  ⇒ only the literal-path signal applies (today's behavior for any spec that doesn't opt in). Deliberately a
+   *  TITLE match, not a fuzzy body/slug inference — a specific, known issue-title shape is a safe, zero-
+   *  hallucination signal; guessing a subnet's file name from its display name is not, and a false "missing" on
+   *  a genuinely-delivered PR is the more expensive mistake here. */
+  issueTitleImpliesEntryPattern?: RegExp;
+}
+&nbsp;
+export type RegistryPrScope = "entry-submission" | "provider-submission" | "mixed-files" | "not-direct-submission";
+&nbsp;
+export interface RegistryScopeResult {
+  scope: RegistryPrScope;
+  directFile: string | null;
+  isProvider: boolean;
+  /** For an "entry-submission" scope only: a companion file that is PATH-SHAPED like a provider submission
+   *  (matches spec.providerFilePattern) riding along with the entry in the same PR, set only when exactly one such
+   *  companion is present. This is classification only — a pure, I/O-free path match — and does NOT by itself
+   *  prove the companion is a genuine DEBUT (a brand-new provider, not an edit to one already in the registry);
+   *  the orchestrator independently confirms that once it has fetched content (see runSurfaceReview's base-
+   *  presence check) before treating it as the debut-provider companion flow. An entry file always wins the scope
+   *  classification over a provider file present in the same PR (so "provider-submission scope with a companion
+   *  entry file" cannot occur — the entry file becomes directFile and the provider file becomes this field
+   *  instead). Null when there is no provider companion, when there is more than one (ambiguous — ordinary
+   *  companion-file review still applies), or when the scope isn't entry-submission. */
+  providerCompanionFile: string | null;
+}
+&nbsp;
+/**
+ * Generic surface-model scope classifier: in scope when the PR edits exactly ONE entry file (or, entry-free,
+ * one flat provider file); the spec's provider + artifact files are allowed companions. A registry-looking
+ * submission with too many entry files, OR too many provider files with NO entry file at all, is malformed and
+ * stays in the lane as mixed-files (a hard close — there is no salvageable single submission in the diff at all);
+ * an unrelated PR with no direct registry files remains not-direct-submission.
+ *
+ * DELIBERATE ASYMMETRY: too many provider files ALONGSIDE a single well-formed entry file does NOT hit this early
+ * mixed-files guard, even though it's the same underlying "which provider file is the real companion?" ambiguity
+ * as the entry-free case. That's intentional, not an oversight: with zero entry files there is nothing else in
+ * the diff worth preserving, so a decisive close is correct; with one entry file present, the entry itself may
+ * still be a perfectly legitimate, valid submission — only its companion shape is unclear — so classification
+ * lets it through as "entry-submission", and the orchestrator's own companion-file handling (runSurfaceReview)
+ * routes it to a manual-review HOLD rather than throwing away potentially-good entry content with an outright
+ * close. If a future spec's needs change this trade-off, tighten THIS guard to `entryFiles.length &gt; 1 ||
+ * providerFiles.length &gt; 1` (dropping the `entryFiles.length === 0` qualifier) rather than special-casing it
+ * downstream.
+ */
+export function <span class="fstat-no" title="function not covered" >classifyRegistryPrScope(s</span>pec: RegistryLaneSpec, changedFiles: string[]): RegistryScopeResult {
+  const <span class="cstat-no" title="statement not covered" >files = (changedFiles ?? []).<span class="fstat-no" title="function not covered" >map((f</span>) =&gt; <span class="cstat-no" title="statement not covered" >String(f || "").trim())</span>.filter(Boolean);</span>
+  // globToRegExp compiles the spec patterns against a CANONICALIZED path (lowercased + `./`-stripped + `\`→`/`),
+  // exactly as matchesAny does for guardrails — so match on canonicalize(f), or an uppercase / `./`-prefixed /
+  // `\`-separated changed path silently fails to classify as a registry submission. Keep the ORIGINAL path in the
+  // returned files: directFile/companion flow to case-sensitive content fetches (orchestrator loadFile).
+  const <span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >matchesPattern = (p</span>attern: RegExp | undefined, f: string): boolean =&gt; <span class="cstat-no" title="statement not covered" >pattern?.test(canonicalize(f)) ?? false;</span></span>
+  const entryFiles = <span class="cstat-no" title="statement not covered" >files.<span class="fstat-no" title="function not covered" >filter((f</span>) =&gt; <span class="cstat-no" title="statement not covered" >matchesPattern(spec.entryFilePattern, f))</span>;</span>
+  const providerFiles = <span class="cstat-no" title="statement not covered" >files.<span class="fstat-no" title="function not covered" >filter((f</span>) =&gt; <span class="cstat-no" title="statement not covered" >matchesPattern(spec.providerFilePattern, f))</span>;</span>
+  const tooManyEntryFiles = <span class="cstat-no" title="statement not covered" >entryFiles.length &gt; 1;</span>
+  const tooManyProviderFilesWithNoEntry = <span class="cstat-no" title="statement not covered" >entryFiles.length === 0 &amp;&amp; providerFiles.length &gt; 1;</span>
+<span class="cstat-no" title="statement not covered" >  if (tooManyEntryFiles || tooManyProviderFilesWithNoEntry) {</span>
+<span class="cstat-no" title="statement not covered" >    return { scope: "mixed-files", directFile: null, isProvider: false, providerCompanionFile: null };</span>
+  }
+  const isEntryPr = <span class="cstat-no" title="statement not covered" >entryFiles.length === 1;</span>
+  const isProviderPr = <span class="cstat-no" title="statement not covered" >entryFiles.length === 0 &amp;&amp; providerFiles.length === 1;</span>
+<span class="cstat-no" title="statement not covered" >  if (!isEntryPr &amp;&amp; !isProviderPr) {</span>
+<span class="cstat-no" title="statement not covered" >    return { scope: "not-direct-submission", directFile: null, isProvider: false, providerCompanionFile: null };</span>
+  }
+  const <span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >isAllowed = (f</span>: string): boolean =&gt;</span>
+<span class="cstat-no" title="statement not covered" >    matchesPattern(spec.entryFilePattern, f) || matchesPattern(spec.providerFilePattern, f) || matchesPattern(spec.artifactPattern, f);</span>
+<span class="cstat-no" title="statement not covered" >  if (files.<span class="fstat-no" title="function not covered" >some((f</span>) =&gt; <span class="cstat-no" title="statement not covered" >!isAllowed(f))</span>) {</span>
+<span class="cstat-no" title="statement not covered" >    return { scope: "mixed-files", directFile: null, isProvider: false, providerCompanionFile: null };</span>
+  }
+  // isEntryPr/isProviderPr each guarantee exactly one match (guarded by the early return), so [0] is always
+  // defined; the `?? null` fallbacks below only satisfy noUncheckedIndexedAccess and can never fire.
+<span class="cstat-no" title="statement not covered" >  if (isProviderPr) {</span>
+    /* v8 ignore next */
+    return { scope: "provider-submission", directFile: providerFiles[0] ?? null, isProvider: true, providerCompanionFile: null };
+  }
+  // isEntryPr: a debut-provider companion is exactly one OTHER providerFilePattern match riding along with the
+  // entry file — more than one is an unrecognized shape (ambiguous which is "the" debut provider) and falls back
+  // to the ordinary companion-file-changes review path in the orchestrator, same as before this field existed.
+  const hasSingleProviderCompanion = <span class="cstat-no" title="statement not covered" >providerFiles.length === 1;</span>
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    scope: "entry-submission",
+    /* v8 ignore next */
+    directFile: entryFiles[0] ?? null,
+    isProvider: false,
+    /* v8 ignore next -- hasSingleProviderCompanion guarantees providerFiles[0] is defined; the ?? null only satisfies noUncheckedIndexedAccess. */
+    providerCompanionFile: hasSingleProviderCompanion ? (providerFiles[0] ?? null) : null,
+  };
+}
+&nbsp;
+export function <span class="fstat-no" title="function not covered" >isRegistrySubmissionScope(s</span>cope: RegistryPrScope): boolean {
+<span class="cstat-no" title="statement not covered" >  return scope === "entry-submission" || scope === "provider-submission";</span>
+}
+&nbsp;
+/** Normalizes a single field value for duplicate-identity comparison. A URL-shaped string is canonicalized via
+ *  normalizePublicUrl (so http/https/case/trailing-slash/tracking-param differences don't count as different);
+ *  any other string is trimmed + lowercased; a non-string value falls back to a structural JSON comparison.
+ *  Returns null for a null/undefined value (an absent field contributes nothing to the identity). */
+function <span class="fstat-no" title="function not covered" >normalizeIdentityValue(v</span>alue: unknown): string | null {
+<span class="cstat-no" title="statement not covered" >  if (value === null || value === undefined) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (typeof value === "string") <span class="cstat-no" title="statement not covered" >return normalizePublicUrl(value) ?? value.trim().toLowerCase();</span></span>
+<span class="cstat-no" title="statement not covered" >  return JSON.stringify(value);</span>
+}
+&nbsp;
+/** The duplicate-identity key for `entry` under `fields` (e.g. `["url"]` or `["url", "kind"]`): the normalized
+ *  values of those fields, combined via JSON.stringify. A plain joined string (e.g. space-separated) would be
+ *  AMBIGUOUS — two entries whose field values straddle the join boundary differently could collide onto the same
+ *  string (`["alpha beta", "docs"]` vs `["alpha", "beta docs"]` both joining to "alpha beta docs") and falsely
+ *  read as duplicates; JSON.stringify's quoting/structure makes field boundaries unambiguous regardless of
+ *  content. Returns null when EVERY configured field is absent on this entry — there's nothing to key on, so it
+ *  can never match or be matched. */
+function <span class="fstat-no" title="function not covered" >duplicateIdentityKey(e</span>ntry: unknown, fields: readonly string[]): string | null {
+  const record = <span class="cstat-no" title="statement not covered" >entry as Record&lt;string, unknown&gt; | null;</span>
+  const parts = <span class="cstat-no" title="statement not covered" >fields.<span class="fstat-no" title="function not covered" >map((f</span>ield) =&gt; <span class="cstat-no" title="statement not covered" >normalizeIdentityValue(record?.[field]))</span>;</span>
+<span class="cstat-no" title="statement not covered" >  return parts.<span class="fstat-no" title="function not covered" >every((p</span>art) =&gt; <span class="cstat-no" title="statement not covered" >part === null)</span> ? null : JSON.stringify(parts);</span>
+}
+&nbsp;
+/**
+ * The first entry in `appendedEntries` whose duplicate-identity key (under `spec.duplicateKeyFields`) collides
+ * with an EARLIER appended entry (a same-PR duplicate) or with any entry already in `existingEntries` (a
+ * resubmission of an entry already in the registry) — wrapped in a 1-tuple so a legitimate falsy/null entry value
+ * is never confused with "no duplicate found" (plain `null`). Returns null when the spec has no
+ * `duplicateKeyFields` (the default — duplicate detection is opt-in per spec) or no collision exists. Generic:
+ * works for ANY RegistryLaneSpec by duck-typing the configured field names, not just metagraphed's.
+ */
+export function <span class="fstat-no" title="function not covered" >findDuplicateAppendedEntry(</span>
+  spec: RegistryLaneSpec,
+  appendedEntries: readonly unknown[],
+  existingEntries: readonly unknown[],
+): [unknown] | null {
+  const fields = <span class="cstat-no" title="statement not covered" >spec.duplicateKeyFields;</span>
+<span class="cstat-no" title="statement not covered" >  if (!fields || fields.length === 0) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+  const seen = <span class="cstat-no" title="statement not covered" >new Set&lt;string&gt;();</span>
+<span class="cstat-no" title="statement not covered" >  for (const entry of existingEntries) {</span>
+    const key = <span class="cstat-no" title="statement not covered" >duplicateIdentityKey(entry, fields);</span>
+<span class="cstat-no" title="statement not covered" >    if (key !== null) <span class="cstat-no" title="statement not covered" >seen.add(key);</span></span>
+  }
+<span class="cstat-no" title="statement not covered" >  for (const entry of appendedEntries) {</span>
+    const key = <span class="cstat-no" title="statement not covered" >duplicateIdentityKey(entry, fields);</span>
+<span class="cstat-no" title="statement not covered" >    if (key === null) <span class="cstat-no" title="statement not covered" >continue;</span></span>
+<span class="cstat-no" title="statement not covered" >    if (seen.has(key)) <span class="cstat-no" title="statement not covered" >return [entry];</span></span>
+<span class="cstat-no" title="statement not covered" >    seen.add(key);</span>
+  }
+<span class="cstat-no" title="statement not covered" >  return null;</span>
+}
+&nbsp;
+// ── Linked-issue content-lane deliverable check (generic, config-as-code — #content-lane-deliverable) ────
+//
+// A content-lane repo's contribution issues typically name the specific entry/provider file the PR is meant to
+// touch (e.g. "add the missing surfaces to registry/subnets/foo.json"). A PR whose diff never touches ANY file
+// matching the spec's own patterns can still close that issue via a bare "Closes #N" reference — the classic
+// "test-only PR closes a content issue without ever delivering the content" gap. This check is entirely driven
+// by the CALLER's own already-resolved RegistryLaneSpec (metagraphed's or any other registry's) and the free-
+// form issue text — it hardcodes no registry's own path shape or issue-template wording.
+&nbsp;
+/** Path-like tokens in free-form text: word characters, dots, slashes, hyphens, ending in a dot-extension —
+ *  e.g. "registry/subnets/foo-bar.json" inside an issue body's prose. Generic text scanning, not anchored to
+ *  any one registry's path shape; the caller's own spec.entryFilePattern/providerFilePattern narrows the
+ *  candidates down to ones that actually matter for that registry. */
+const PATH_TOKEN_PATTERN = <span class="cstat-no" title="statement not covered" >/[\w][\w./-]*\.[A-Za-z0-9]+/g;</span>
+export function <span class="fstat-no" title="function not covered" >extractPathTokens(t</span>ext: string): string[] {
+<span class="cstat-no" title="statement not covered" >  return [...new Set(text.match(PATH_TOKEN_PATTERN) ?? [])];</span>
+}
+&nbsp;
+/** `not-applicable`: the issue names no path matching this spec's own patterns AND (when the spec opts into
+ *  `issueTitleImpliesEntryPattern`) the issue's title doesn't match that pattern either — nothing to check (an
+ *  unrelated issue, e.g. a docs or code-fix issue, on the same content-lane repo). `delivered`: the issue names
+ *  such a path (or its title matches the spec's title pattern) AND the PR's changed files touch at least one
+ *  file matching the spec — the common, expected case for a real contribution. `missing`: the issue implies a
+ *  delivery (by either signal) but the PR touches NONE matching — the gap this check exists to catch,
+ *  independent of AI judgment, CI status, or a closing keyword. `mentionedPath` is the literal path found in
+ *  the body when that signal fired, or a description of the spec's expected file when only the title signal
+ *  fired (no literal path was ever found in that case — see checkContentLaneDeliverable). */
+export type ContentLaneDeliverableCheck = { verdict: "not-applicable" } | { verdict: "delivered" } | { verdict: "missing"; mentionedPath: string };
+&nbsp;
+/**
+ * Determine whether a PR's changed files deliver the content-lane file its linked issue implies. PURE — no I/O,
+ * no registry-specific hardcoding; entirely driven by `spec` (the caller's already-resolved RegistryLaneSpec)
+ * and the text inputs. `changedFiles` are matched the SAME way classifyRegistryPrScope matches them
+ * (canonicalized: lowercased + `./`-stripped + `\`→`/`), so an uppercase / `./`-prefixed / `\`-separated
+ * changed path is recognized identically to how the rest of the content lane already treats it.
+ *
+ * Two independent, deterministic signals decide whether the issue implies a delivery, checked in this order:
+ *  1. A literal path in the issue BODY matching the spec (the general case — works for any hand-written issue
+ *     that names the real file).
+ *  2. Failing that, `issueTitle` against the spec's OWN `issueTitleImpliesEntryPattern` (when configured) — a
+ *     narrow, opt-in fallback for a KNOWN issue-title shape whose body only ever contains a generic path
+ *     placeholder, never the real resolved filename (see that field's own doc comment for why this exists as a
+ *     separate, deliberately non-fuzzy signal rather than inferring a slug from the issue's prose).
+ * Neither signal firing ⇒ "not-applicable". `issueTitle` is optional so an existing caller that doesn't pass
+ * one keeps today's literal-path-only behavior verbatim.
+ */
+export function <span class="fstat-no" title="function not covered" >checkContentLaneDeliverable(</span>
+  spec: RegistryLaneSpec,
+  issueText: string,
+  changedFiles: readonly string[],
+  issueTitle?: string,
+): ContentLaneDeliverableCheck {
+  const <span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >matchesSpec = (c</span>andidate: string): boolean =&gt; <span class="cstat-no" title="statement not covered" >spec.entryFilePattern.test(candidate) || (spec.providerFilePattern?.test(candidate) ?? false);</span></span>
+  const mentionedPath = <span class="cstat-no" title="statement not covered" >extractPathTokens(issueText).find(matchesSpec);</span>
+  const titleImplies = <span class="cstat-no" title="statement not covered" >!mentionedPath &amp;&amp; Boolean(issueTitle &amp;&amp; spec.issueTitleImpliesEntryPattern?.test(issueTitle));</span>
+<span class="cstat-no" title="statement not covered" >  if (!mentionedPath &amp;&amp; !titleImplies) <span class="cstat-no" title="statement not covered" >return { verdict: "not-applicable" };</span></span>
+  const delivered = <span class="cstat-no" title="statement not covered" >changedFiles.<span class="fstat-no" title="function not covered" >some((f</span>ile) =&gt; <span class="cstat-no" title="statement not covered" >matchesSpec(canonicalize(file)))</span>;</span>
+<span class="cstat-no" title="statement not covered" >  if (delivered) <span class="cstat-no" title="statement not covered" >return { verdict: "delivered" };</span></span>
+<span class="cstat-no" title="statement not covered" >  return { verdict: "missing", mentionedPath: mentionedPath ?? `a registry entry file matching ${spec.entryFilePattern} (implied by this issue's title)` };</span>
+}
+&nbsp;
+// metagraphed's spec — the first RegistryLaneSpec. surfaces[] live in registry/subnets/&lt;slug&gt;.json; providers
+// are FLAT registry/providers/&lt;slug&gt;.json (the community/ subdir was retired). A PR touching the old
+// registry/candidates/community/* path matches none of these → mixed-files / not-direct (correctly not adopted
+// as a valid submission; metagraphed CI hard-fails it).
+export const SUBNET_ENTRY_PATTERN = <span class="cstat-no" title="statement not covered" >/^registry\/subnets\/[a-z0-9][a-z0-9-]*\.json$/;</span>
+export const FLAT_PROVIDER_PATTERN = <span class="cstat-no" title="statement not covered" >/^registry\/providers\/[a-z0-9][a-z0-9-]*\.json$/;</span>
+export const METAGRAPHED_LANE_SPEC: RegistryLaneSpec = <span class="cstat-no" title="statement not covered" >{</span>
+  entryFilePattern: SUBNET_ENTRY_PATTERN,
+  providerFilePattern: FLAT_PROVIDER_PATTERN,
+  artifactPattern: ARTIFACT_PATTERN,
+  collectionField: "surfaces",
+  // metagraphed's contributor docs deliberately allow appending SEVERAL surfaces[] entries for one subnet in one
+  // PR (the 2026-06 anti-farming fix: splitting one subnet's surfaces into many near-identical PRs is what the
+  // single-entry cap used to force) — no cap here, per entry validated independently by the orchestrator.
+  maxAppendedEntries: Infinity,
+  // Removing the single-entry cap also removed its incidental side effect of rejecting a same-PR duplicate
+  // surfaces[] entry (added.length!==1 used to close it). Opt back into duplicate detection explicitly, keyed on
+  // `url` alone (a subnet's surfaces are distinct interfaces; the same url appearing twice — in one PR or against
+  // an entry already registered — is a resubmission, not a new surface).
+  duplicateKeyFields: ["url"],
+  // metagraphed's own domain-specific semantic validators (netuid/kind/public_safe/auth_required shape+safety
+  // checks) — supplied here, not hardcoded into the orchestrator, so a different registry can supply its own.
+  assessAppendedEntry: assessSubnetDocument,
+  assessProviderEntry: assessProviderDocument,
+  // #content-lane-deliverable follow-up: metagraphed's ~120 "MCP execute: verify + wire SN&lt;netuid&gt; (&lt;name&gt;)
+  // once Phase 1 ships" issues (#7017-#7136, tracked under epic #7013/#7014) ask a contributor to add missing
+  // surfaces to registry/subnets/&lt;slug&gt;.json, but their bodies spell that path with the literal, generic
+  // `&lt;slug&gt;` placeholder — never the real resolved filename — so checkContentLaneDeliverable's own literal-
+  // path scan of the body finds nothing to check against for this entire family (confirmed empirically against
+  // issue #7060's actual body). Matches metagraphed's own contributor-pipeline-gardening skill's documented
+  // title convention for this exact family; deliberately anchored + narrow so it can't accidentally match an
+  // unrelated issue.
+  issueTitleImpliesEntryPattern: /^MCP execute:\s*verify\s*\+\s*wire\s+SN\d+/i,
+};
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../../sorter.js"></script>
+        <script src="../../../block-navigation.js"></script>
+    </body>
+</html>
+    

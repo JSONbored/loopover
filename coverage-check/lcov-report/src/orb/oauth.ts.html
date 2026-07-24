@@ -1,0 +1,487 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/orb/oauth.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/orb</a> oauth.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/50</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/54</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/11</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/38</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// LoopOver Orb central GitHub App (#1255) — the post-install / OAuth landing + maintainer SELF-ENROLLMENT.
+// GitHub redirects here after a maintainer installs/authorizes the Orb App (the App's Callback URL, OAuth-during-
+// install ON) with an OAuth `code` + the `installation_id`. The maintainer can then self-issue their brokered
+// enrollment secret WITHOUT the operator — but ONLY after we prove, server-side, that they are an ADMIN of the
+// account the installation belongs to.
+//
+// SECURITY: the admin-of-installation check is what closes the privilege-escalation hole. `installation_id` is an
+// attacker-controllable query param, so a stolen OAuth code paired with a VICTIM's installation_id must NEVER
+// enroll the victim's install. We require: a valid OAuth code (single-use, GitHub-issued) → the authenticated
+// user → that user is an admin of the install's account (org admin, or the user account owner) → the install is
+// active (not suspended/removed) and not operator-disabled. A verified admin AUTO-REGISTERS the install
+// (registered=1) — zero-touch, no operator step — and installation_id is then bound server-side in the enrollment
+// (read back at token-exchange, never from a request). No request input is echoed into the markup (no injection
+// surface).
+import type { Context } from "hono";
+import { PRODUCT_USER_AGENT, timeoutFetch } from "../github/client";
+import { LOOPOVER_SITE_URL } from "../github/footer";
+import { isOrbBrokerEnabled, issueOrbEnrollment } from "./broker";
+&nbsp;
+type GitHubUser = { login: string; id?: number };
+type GitHubOrgMembership = { role?: string; state?: string; organization?: { id?: number } };
+&nbsp;
+/** Exchange the OAuth code for the maintainer's access token using the ORB App's OAuth credentials. Null when the
+ *  credentials aren't configured or GitHub returns no token. */
+export async function <span class="fstat-no" title="function not covered" >exchangeOrbOAuthCode(e</span>nv: Env, code: string, fetchImpl: typeof fetch = <span class="branch-0 cbranch-no" title="branch not covered" >timeoutFetch): Promise&lt;string | null&gt; {</span>
+<span class="cstat-no" title="statement not covered" >  if (!env.ORB_GITHUB_CLIENT_ID || !env.ORB_GITHUB_CLIENT_SECRET) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+  const res = <span class="cstat-no" title="statement not covered" >await fetchImpl("https://github.com/login/oauth/access_token", {</span>
+    method: "POST",
+    headers: { accept: "application/json", "content-type": "application/json" },
+    body: JSON.stringify({ client_id: env.ORB_GITHUB_CLIENT_ID, client_secret: env.ORB_GITHUB_CLIENT_SECRET, code }),
+  });
+  const body = (<span class="cstat-no" title="statement not covered" >await res.json().<span class="fstat-no" title="function not covered" >catch(() =&gt; (<span class="cstat-no" title="statement not covered" >{</span>}))</span>) as { access_token?: string };</span>
+<span class="cstat-no" title="statement not covered" >  return body.access_token ?? null;</span>
+}
+&nbsp;
+/** Identify the authenticated maintainer (GET /user with their token). Null on any non-OK / loginless response. */
+export async function <span class="fstat-no" title="function not covered" >fetchOrbOAuthUser(t</span>oken: string, fetchImpl: typeof fetch = <span class="branch-0 cbranch-no" title="branch not covered" >timeoutFetch): Promise&lt;GitHubUser | null&gt; {</span>
+  const res = <span class="cstat-no" title="statement not covered" >await fetchImpl("https://api.github.com/user", {</span>
+    headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "user-agent": PRODUCT_USER_AGENT },
+  });
+  const user = (<span class="cstat-no" title="statement not covered" >await res.json().<span class="fstat-no" title="function not covered" >catch(() =&gt; (<span class="cstat-no" title="statement not covered" >{</span>}))</span>) as GitHubUser;</span>
+<span class="cstat-no" title="statement not covered" >  return res.ok &amp;&amp; user.login ? user : null;</span>
+}
+&nbsp;
+/** CRITICAL admin-of-installation check — the gate that closes the privilege-escalation hole. The maintainer must
+ *  be an ADMIN of the account the installation belongs to: for a User install they must BE that account owner;
+ *  for an Org install they must be an ACTIVE org ADMIN (checked against their OWN membership, requires read:org).
+ *  Anything else (member, non-member, unknown account, API error) → false. */
+export async function <span class="fstat-no" title="function not covered" >verifyInstallationAdmin(</span>
+  token: string,
+  userLogin: string,
+  userId: number | null | undefined,
+  accountLogin: string | null,
+  accountType: string | null,
+  accountId: number | null,
+  fetchImpl: typeof fetch = <span class="branch-0 cbranch-no" title="branch not covered" >timeoutFetch,</span>
+): Promise&lt;boolean&gt; {
+<span class="cstat-no" title="statement not covered" >  if (!accountLogin || accountId === null) <span class="cstat-no" title="statement not covered" >return false;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (accountType !== "Organization") {</span>
+<span class="cstat-no" title="statement not covered" >    return userId === accountId &amp;&amp; userLogin.toLowerCase() === accountLogin.toLowerCase();</span>
+  }
+  const res = <span class="cstat-no" title="statement not covered" >await fetchImpl(`https://api.github.com/user/memberships/orgs/${encodeURIComponent(accountLogin)}`, {</span>
+    headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "user-agent": PRODUCT_USER_AGENT },
+  });
+<span class="cstat-no" title="statement not covered" >  if (!res.ok) <span class="cstat-no" title="statement not covered" >return false;</span></span>
+  const body = (<span class="cstat-no" title="statement not covered" >await res.json().<span class="fstat-no" title="function not covered" >catch(() =&gt; (<span class="cstat-no" title="statement not covered" >{</span>}))</span>) as GitHubOrgMembership;</span>
+<span class="cstat-no" title="statement not covered" >  return body.state === "active" &amp;&amp; body.role === "admin" &amp;&amp; body.organization?.id === accountId;</span>
+}
+&nbsp;
+async function <span class="fstat-no" title="function not covered" >handleOrbEnrollment(c</span>: Context&lt;{ Bindings: Env }&gt;, code: string, installationId: number): Promise&lt;Response&gt; {
+  const token = <span class="cstat-no" title="statement not covered" >await exchangeOrbOAuthCode(c.env, code);</span>
+<span class="cstat-no" title="statement not covered" >  if (!token) <span class="cstat-no" title="statement not covered" >return c.html(landingPage(c.env, "Couldn't verify your GitHub identity", "The authorization didn't complete — re-run the install from GitHub and try again."), 400);</span></span>
+  const user = <span class="cstat-no" title="statement not covered" >await fetchOrbOAuthUser(token);</span>
+<span class="cstat-no" title="statement not covered" >  if (!user) <span class="cstat-no" title="statement not covered" >return c.html(landingPage(c.env, "Couldn't verify your GitHub identity", "We couldn't read your GitHub account — try the install again."), 400);</span></span>
+  const install = <span class="cstat-no" title="statement not covered" >await c.env.DB.prepare("SELECT account_login, account_type, account_id, registered, self_enrollment_disabled, suspended_at, removed_at FROM orb_github_installations WHERE installation_id = ?")</span>
+    .bind(installationId)
+    .first&lt;{ account_login: string | null; account_type: string | null; account_id: number | null; registered: number; self_enrollment_disabled: number; suspended_at: string | null; removed_at: string | null }&gt;();
+<span class="cstat-no" title="statement not covered" >  if (!install) <span class="cstat-no" title="statement not covered" >return c.html(landingPage(c.env, "Installation not recognized", "We haven't recorded this installation yet — give it a moment after installing, then retry."), 404);</span></span>
+  // The admin-of-installation check is the authorization gate — it runs BEFORE we reveal or change any state, so a
+  // non-admin learns nothing about the install and can never enroll someone else's. It binds to the immutable
+  // GitHub account id (logins can be renamed/reused), so a stale account_login can never grant access.
+  const isAdmin = <span class="cstat-no" title="statement not covered" >await verifyInstallationAdmin(token, user.login, user.id, install.account_login, install.account_type, install.account_id);</span>
+<span class="cstat-no" title="statement not covered" >  if (!isAdmin) <span class="cstat-no" title="statement not covered" >return c.html(landingPage(c.env, "Admin access required", "You must be an admin of this installation's account to enroll it for self-host."), 403);</span></span>
+<span class="cstat-no" title="statement not covered" >  if (install.removed_at !== null || install.suspended_at !== null) <span class="cstat-no" title="statement not covered" >return c.html(landingPage(c.env, "Installation not active", "This installation is suspended or uninstalled — re-install the Orb App, then retry."), 403);</span></span>
+<span class="cstat-no" title="statement not covered" >  if (install.self_enrollment_disabled === 1) <span class="cstat-no" title="statement not covered" >return c.html(landingPage(c.env, "Installation disabled", "This installation was disabled by the operator — contact the operator to re-enable self-host enrollment."), 403);</span></span>
+  // Zero-touch self-service: a verified admin of an ACTIVE, non-disabled install self-registers it (registered=1).
+  // installation_id stays bound server-side in the enrollment, so brokered tokens remain scoped to this install.
+<span class="cstat-no" title="statement not covered" >  if (install.registered !== 1) {</span>
+<span class="cstat-no" title="statement not covered" >    await c.env.DB.prepare("UPDATE orb_github_installations SET registered = 1, last_event_at = CURRENT_TIMESTAMP WHERE installation_id = ?").bind(installationId).run();</span>
+  }
+  const result = <span class="cstat-no" title="statement not covered" >await issueOrbEnrollment(c.env, installationId, { login: user.login, githubId: user.id ?? null });</span>
+  /* v8 ignore next -- defensive: the existence + admin + active checks above passed and we just set registered=1, so
+     issueOrbEnrollment (which re-checks existence + registered) cannot return an error here; kept to degrade safely. */
+  if ("error" in result) return c.html(landingPage(c.env, "Couldn't issue an enrollment", "Please retry, or contact the operator."), 409);
+<span class="cstat-no" title="statement not covered" >  return c.html(secretPage(result.secret));</span>
+}
+&nbsp;
+export async function <span class="fstat-no" title="function not covered" >handleOrbOAuthCallback(c</span>: Context&lt;{ Bindings: Env }&gt;): Promise&lt;Response&gt; {
+  const code = <span class="cstat-no" title="statement not covered" >c.req.query("code");</span>
+  const installationId = <span class="cstat-no" title="statement not covered" >Number(c.req.query("installation_id"));</span>
+  // Self-enrollment: a maintainer authorized with an OAuth code + an installation_id, and the broker is enabled.
+<span class="cstat-no" title="statement not covered" >  if (code &amp;&amp; Number.isInteger(installationId) &amp;&amp; installationId &gt; 0 &amp;&amp; isOrbBrokerEnabled(c.env)) {</span>
+<span class="cstat-no" title="statement not covered" >    return handleOrbEnrollment(c, code, installationId);</span>
+  }
+  const updated = <span class="cstat-no" title="statement not covered" >c.req.query("setup_action") === "update";</span>
+<span class="cstat-no" title="statement not covered" >  return c.html(</span>
+    updated
+      ? landingPage(c.env, "LoopOver Orb updated", "Your repository selection was updated — the dashboard reflects the change shortly.")
+      : landingPage(c.env, "LoopOver Orb connected", "Your repositories are linked. Their review activity now flows to the global LoopOver dashboard."),
+  );
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >shell(h</span>eading: string, inner: string): string {
+<span class="cstat-no" title="statement not covered" >  return `&lt;!doctype html&gt;&lt;html lang="en"&gt;&lt;head&gt;&lt;meta charset="utf-8"/&gt;&lt;meta name="viewport" content="width=device-width,initial-scale=1"/&gt;&lt;title&gt;${heading}&lt;/title&gt;&lt;style&gt;*{box-sizing:border-box}body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0b0b0d;color:#e7e7ea;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}.card{max-width:34rem;margin:1.5rem;padding:2.75rem;background:#16161a;border:1px solid #2a2a30;border-radius:14px;text-align:center}h1{font-size:1.35rem;font-weight:600;margin:0 0 .7rem}p{font-size:.95rem;line-height:1.6;color:#a8a8b0;margin:0 0 1.6rem}a{display:inline-block;padding:.6rem 1.4rem;background:#1f6feb;color:#fff;text-decoration:none;border-radius:8px;font-size:.9rem}code{background:#0b0b0d;border:1px solid #2a2a30;border-radius:6px;padding:.15rem .4rem;font-size:.85rem}pre{background:#0b0b0d;border:1px solid #2a2a30;border-radius:8px;padding:1rem;overflow:auto;text-align:left;color:#7ee787;font-size:.9rem;user-select:all}&lt;/style&gt;&lt;/head&gt;&lt;body&gt;&lt;div class="card"&gt;&lt;h1&gt;${heading}&lt;/h1&gt;${inner}&lt;/div&gt;&lt;/body&gt;&lt;/html&gt;`;</span>
+}
+&nbsp;
+// The Orb App itself stays a single centrally-hosted hub (broker.ts: loopover holds the App key centrally
+// and mints tokens on demand) -- that part is architecturally fixed. This link is just where the browser lands
+// after OAuth, so it follows the SAME self-hoster-configurable pattern as maintainerControlPanelUrl one
+// file-family over (github/footer.ts): env.PUBLIC_SITE_ORIGIN when set, else the public loopover dashboard
+// (#4615).
+function <span class="fstat-no" title="function not covered" >landingPage(e</span>nv: Env, heading: string, message: string): string {
+  const <span class="cstat-no" title="statement not covered" >dashboardOrigin = (env.PUBLIC_SITE_ORIGIN ?? LOOPOVER_SITE_URL).replace(/\/$/, "");</span>
+<span class="cstat-no" title="statement not covered" >  return shell(heading, `&lt;p&gt;${message}&lt;/p&gt;&lt;a href="${dashboardOrigin}"&gt;Open the dashboard&lt;/a&gt;`);</span>
+}
+&nbsp;
+/** Show the freshly-issued enrollment secret ONCE. The secret is a generated opaque token (no user input), safe
+ *  to embed; it is never logged. */
+function <span class="fstat-no" title="function not covered" >secretPage(s</span>ecret: string): string {
+<span class="cstat-no" title="statement not covered" >  return shell(</span>
+    "Your enrollment secret",
+    `&lt;p&gt;Set this as &lt;code&gt;ORB_ENROLLMENT_SECRET&lt;/code&gt; in your self-host &lt;code&gt;.env&lt;/code&gt;, then restart the container. It is shown &lt;strong&gt;once&lt;/strong&gt; — store it now.&lt;/p&gt;&lt;pre&gt;${secret}&lt;/pre&gt;`,
+  );
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    

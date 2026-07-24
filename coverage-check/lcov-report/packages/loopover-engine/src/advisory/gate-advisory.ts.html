@@ -1,0 +1,2245 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for packages/loopover-engine/src/advisory/gate-advisory.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../../../prettify.css" />
+    <link rel="stylesheet" href="../../../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../../../index.html">All files</a> / <a href="index.html">packages/loopover-engine/src/advisory</a> gate-advisory.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/200</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/225</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/39</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/154</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a>
+<a name='L185'></a><a href='#L185'>185</a>
+<a name='L186'></a><a href='#L186'>186</a>
+<a name='L187'></a><a href='#L187'>187</a>
+<a name='L188'></a><a href='#L188'>188</a>
+<a name='L189'></a><a href='#L189'>189</a>
+<a name='L190'></a><a href='#L190'>190</a>
+<a name='L191'></a><a href='#L191'>191</a>
+<a name='L192'></a><a href='#L192'>192</a>
+<a name='L193'></a><a href='#L193'>193</a>
+<a name='L194'></a><a href='#L194'>194</a>
+<a name='L195'></a><a href='#L195'>195</a>
+<a name='L196'></a><a href='#L196'>196</a>
+<a name='L197'></a><a href='#L197'>197</a>
+<a name='L198'></a><a href='#L198'>198</a>
+<a name='L199'></a><a href='#L199'>199</a>
+<a name='L200'></a><a href='#L200'>200</a>
+<a name='L201'></a><a href='#L201'>201</a>
+<a name='L202'></a><a href='#L202'>202</a>
+<a name='L203'></a><a href='#L203'>203</a>
+<a name='L204'></a><a href='#L204'>204</a>
+<a name='L205'></a><a href='#L205'>205</a>
+<a name='L206'></a><a href='#L206'>206</a>
+<a name='L207'></a><a href='#L207'>207</a>
+<a name='L208'></a><a href='#L208'>208</a>
+<a name='L209'></a><a href='#L209'>209</a>
+<a name='L210'></a><a href='#L210'>210</a>
+<a name='L211'></a><a href='#L211'>211</a>
+<a name='L212'></a><a href='#L212'>212</a>
+<a name='L213'></a><a href='#L213'>213</a>
+<a name='L214'></a><a href='#L214'>214</a>
+<a name='L215'></a><a href='#L215'>215</a>
+<a name='L216'></a><a href='#L216'>216</a>
+<a name='L217'></a><a href='#L217'>217</a>
+<a name='L218'></a><a href='#L218'>218</a>
+<a name='L219'></a><a href='#L219'>219</a>
+<a name='L220'></a><a href='#L220'>220</a>
+<a name='L221'></a><a href='#L221'>221</a>
+<a name='L222'></a><a href='#L222'>222</a>
+<a name='L223'></a><a href='#L223'>223</a>
+<a name='L224'></a><a href='#L224'>224</a>
+<a name='L225'></a><a href='#L225'>225</a>
+<a name='L226'></a><a href='#L226'>226</a>
+<a name='L227'></a><a href='#L227'>227</a>
+<a name='L228'></a><a href='#L228'>228</a>
+<a name='L229'></a><a href='#L229'>229</a>
+<a name='L230'></a><a href='#L230'>230</a>
+<a name='L231'></a><a href='#L231'>231</a>
+<a name='L232'></a><a href='#L232'>232</a>
+<a name='L233'></a><a href='#L233'>233</a>
+<a name='L234'></a><a href='#L234'>234</a>
+<a name='L235'></a><a href='#L235'>235</a>
+<a name='L236'></a><a href='#L236'>236</a>
+<a name='L237'></a><a href='#L237'>237</a>
+<a name='L238'></a><a href='#L238'>238</a>
+<a name='L239'></a><a href='#L239'>239</a>
+<a name='L240'></a><a href='#L240'>240</a>
+<a name='L241'></a><a href='#L241'>241</a>
+<a name='L242'></a><a href='#L242'>242</a>
+<a name='L243'></a><a href='#L243'>243</a>
+<a name='L244'></a><a href='#L244'>244</a>
+<a name='L245'></a><a href='#L245'>245</a>
+<a name='L246'></a><a href='#L246'>246</a>
+<a name='L247'></a><a href='#L247'>247</a>
+<a name='L248'></a><a href='#L248'>248</a>
+<a name='L249'></a><a href='#L249'>249</a>
+<a name='L250'></a><a href='#L250'>250</a>
+<a name='L251'></a><a href='#L251'>251</a>
+<a name='L252'></a><a href='#L252'>252</a>
+<a name='L253'></a><a href='#L253'>253</a>
+<a name='L254'></a><a href='#L254'>254</a>
+<a name='L255'></a><a href='#L255'>255</a>
+<a name='L256'></a><a href='#L256'>256</a>
+<a name='L257'></a><a href='#L257'>257</a>
+<a name='L258'></a><a href='#L258'>258</a>
+<a name='L259'></a><a href='#L259'>259</a>
+<a name='L260'></a><a href='#L260'>260</a>
+<a name='L261'></a><a href='#L261'>261</a>
+<a name='L262'></a><a href='#L262'>262</a>
+<a name='L263'></a><a href='#L263'>263</a>
+<a name='L264'></a><a href='#L264'>264</a>
+<a name='L265'></a><a href='#L265'>265</a>
+<a name='L266'></a><a href='#L266'>266</a>
+<a name='L267'></a><a href='#L267'>267</a>
+<a name='L268'></a><a href='#L268'>268</a>
+<a name='L269'></a><a href='#L269'>269</a>
+<a name='L270'></a><a href='#L270'>270</a>
+<a name='L271'></a><a href='#L271'>271</a>
+<a name='L272'></a><a href='#L272'>272</a>
+<a name='L273'></a><a href='#L273'>273</a>
+<a name='L274'></a><a href='#L274'>274</a>
+<a name='L275'></a><a href='#L275'>275</a>
+<a name='L276'></a><a href='#L276'>276</a>
+<a name='L277'></a><a href='#L277'>277</a>
+<a name='L278'></a><a href='#L278'>278</a>
+<a name='L279'></a><a href='#L279'>279</a>
+<a name='L280'></a><a href='#L280'>280</a>
+<a name='L281'></a><a href='#L281'>281</a>
+<a name='L282'></a><a href='#L282'>282</a>
+<a name='L283'></a><a href='#L283'>283</a>
+<a name='L284'></a><a href='#L284'>284</a>
+<a name='L285'></a><a href='#L285'>285</a>
+<a name='L286'></a><a href='#L286'>286</a>
+<a name='L287'></a><a href='#L287'>287</a>
+<a name='L288'></a><a href='#L288'>288</a>
+<a name='L289'></a><a href='#L289'>289</a>
+<a name='L290'></a><a href='#L290'>290</a>
+<a name='L291'></a><a href='#L291'>291</a>
+<a name='L292'></a><a href='#L292'>292</a>
+<a name='L293'></a><a href='#L293'>293</a>
+<a name='L294'></a><a href='#L294'>294</a>
+<a name='L295'></a><a href='#L295'>295</a>
+<a name='L296'></a><a href='#L296'>296</a>
+<a name='L297'></a><a href='#L297'>297</a>
+<a name='L298'></a><a href='#L298'>298</a>
+<a name='L299'></a><a href='#L299'>299</a>
+<a name='L300'></a><a href='#L300'>300</a>
+<a name='L301'></a><a href='#L301'>301</a>
+<a name='L302'></a><a href='#L302'>302</a>
+<a name='L303'></a><a href='#L303'>303</a>
+<a name='L304'></a><a href='#L304'>304</a>
+<a name='L305'></a><a href='#L305'>305</a>
+<a name='L306'></a><a href='#L306'>306</a>
+<a name='L307'></a><a href='#L307'>307</a>
+<a name='L308'></a><a href='#L308'>308</a>
+<a name='L309'></a><a href='#L309'>309</a>
+<a name='L310'></a><a href='#L310'>310</a>
+<a name='L311'></a><a href='#L311'>311</a>
+<a name='L312'></a><a href='#L312'>312</a>
+<a name='L313'></a><a href='#L313'>313</a>
+<a name='L314'></a><a href='#L314'>314</a>
+<a name='L315'></a><a href='#L315'>315</a>
+<a name='L316'></a><a href='#L316'>316</a>
+<a name='L317'></a><a href='#L317'>317</a>
+<a name='L318'></a><a href='#L318'>318</a>
+<a name='L319'></a><a href='#L319'>319</a>
+<a name='L320'></a><a href='#L320'>320</a>
+<a name='L321'></a><a href='#L321'>321</a>
+<a name='L322'></a><a href='#L322'>322</a>
+<a name='L323'></a><a href='#L323'>323</a>
+<a name='L324'></a><a href='#L324'>324</a>
+<a name='L325'></a><a href='#L325'>325</a>
+<a name='L326'></a><a href='#L326'>326</a>
+<a name='L327'></a><a href='#L327'>327</a>
+<a name='L328'></a><a href='#L328'>328</a>
+<a name='L329'></a><a href='#L329'>329</a>
+<a name='L330'></a><a href='#L330'>330</a>
+<a name='L331'></a><a href='#L331'>331</a>
+<a name='L332'></a><a href='#L332'>332</a>
+<a name='L333'></a><a href='#L333'>333</a>
+<a name='L334'></a><a href='#L334'>334</a>
+<a name='L335'></a><a href='#L335'>335</a>
+<a name='L336'></a><a href='#L336'>336</a>
+<a name='L337'></a><a href='#L337'>337</a>
+<a name='L338'></a><a href='#L338'>338</a>
+<a name='L339'></a><a href='#L339'>339</a>
+<a name='L340'></a><a href='#L340'>340</a>
+<a name='L341'></a><a href='#L341'>341</a>
+<a name='L342'></a><a href='#L342'>342</a>
+<a name='L343'></a><a href='#L343'>343</a>
+<a name='L344'></a><a href='#L344'>344</a>
+<a name='L345'></a><a href='#L345'>345</a>
+<a name='L346'></a><a href='#L346'>346</a>
+<a name='L347'></a><a href='#L347'>347</a>
+<a name='L348'></a><a href='#L348'>348</a>
+<a name='L349'></a><a href='#L349'>349</a>
+<a name='L350'></a><a href='#L350'>350</a>
+<a name='L351'></a><a href='#L351'>351</a>
+<a name='L352'></a><a href='#L352'>352</a>
+<a name='L353'></a><a href='#L353'>353</a>
+<a name='L354'></a><a href='#L354'>354</a>
+<a name='L355'></a><a href='#L355'>355</a>
+<a name='L356'></a><a href='#L356'>356</a>
+<a name='L357'></a><a href='#L357'>357</a>
+<a name='L358'></a><a href='#L358'>358</a>
+<a name='L359'></a><a href='#L359'>359</a>
+<a name='L360'></a><a href='#L360'>360</a>
+<a name='L361'></a><a href='#L361'>361</a>
+<a name='L362'></a><a href='#L362'>362</a>
+<a name='L363'></a><a href='#L363'>363</a>
+<a name='L364'></a><a href='#L364'>364</a>
+<a name='L365'></a><a href='#L365'>365</a>
+<a name='L366'></a><a href='#L366'>366</a>
+<a name='L367'></a><a href='#L367'>367</a>
+<a name='L368'></a><a href='#L368'>368</a>
+<a name='L369'></a><a href='#L369'>369</a>
+<a name='L370'></a><a href='#L370'>370</a>
+<a name='L371'></a><a href='#L371'>371</a>
+<a name='L372'></a><a href='#L372'>372</a>
+<a name='L373'></a><a href='#L373'>373</a>
+<a name='L374'></a><a href='#L374'>374</a>
+<a name='L375'></a><a href='#L375'>375</a>
+<a name='L376'></a><a href='#L376'>376</a>
+<a name='L377'></a><a href='#L377'>377</a>
+<a name='L378'></a><a href='#L378'>378</a>
+<a name='L379'></a><a href='#L379'>379</a>
+<a name='L380'></a><a href='#L380'>380</a>
+<a name='L381'></a><a href='#L381'>381</a>
+<a name='L382'></a><a href='#L382'>382</a>
+<a name='L383'></a><a href='#L383'>383</a>
+<a name='L384'></a><a href='#L384'>384</a>
+<a name='L385'></a><a href='#L385'>385</a>
+<a name='L386'></a><a href='#L386'>386</a>
+<a name='L387'></a><a href='#L387'>387</a>
+<a name='L388'></a><a href='#L388'>388</a>
+<a name='L389'></a><a href='#L389'>389</a>
+<a name='L390'></a><a href='#L390'>390</a>
+<a name='L391'></a><a href='#L391'>391</a>
+<a name='L392'></a><a href='#L392'>392</a>
+<a name='L393'></a><a href='#L393'>393</a>
+<a name='L394'></a><a href='#L394'>394</a>
+<a name='L395'></a><a href='#L395'>395</a>
+<a name='L396'></a><a href='#L396'>396</a>
+<a name='L397'></a><a href='#L397'>397</a>
+<a name='L398'></a><a href='#L398'>398</a>
+<a name='L399'></a><a href='#L399'>399</a>
+<a name='L400'></a><a href='#L400'>400</a>
+<a name='L401'></a><a href='#L401'>401</a>
+<a name='L402'></a><a href='#L402'>402</a>
+<a name='L403'></a><a href='#L403'>403</a>
+<a name='L404'></a><a href='#L404'>404</a>
+<a name='L405'></a><a href='#L405'>405</a>
+<a name='L406'></a><a href='#L406'>406</a>
+<a name='L407'></a><a href='#L407'>407</a>
+<a name='L408'></a><a href='#L408'>408</a>
+<a name='L409'></a><a href='#L409'>409</a>
+<a name='L410'></a><a href='#L410'>410</a>
+<a name='L411'></a><a href='#L411'>411</a>
+<a name='L412'></a><a href='#L412'>412</a>
+<a name='L413'></a><a href='#L413'>413</a>
+<a name='L414'></a><a href='#L414'>414</a>
+<a name='L415'></a><a href='#L415'>415</a>
+<a name='L416'></a><a href='#L416'>416</a>
+<a name='L417'></a><a href='#L417'>417</a>
+<a name='L418'></a><a href='#L418'>418</a>
+<a name='L419'></a><a href='#L419'>419</a>
+<a name='L420'></a><a href='#L420'>420</a>
+<a name='L421'></a><a href='#L421'>421</a>
+<a name='L422'></a><a href='#L422'>422</a>
+<a name='L423'></a><a href='#L423'>423</a>
+<a name='L424'></a><a href='#L424'>424</a>
+<a name='L425'></a><a href='#L425'>425</a>
+<a name='L426'></a><a href='#L426'>426</a>
+<a name='L427'></a><a href='#L427'>427</a>
+<a name='L428'></a><a href='#L428'>428</a>
+<a name='L429'></a><a href='#L429'>429</a>
+<a name='L430'></a><a href='#L430'>430</a>
+<a name='L431'></a><a href='#L431'>431</a>
+<a name='L432'></a><a href='#L432'>432</a>
+<a name='L433'></a><a href='#L433'>433</a>
+<a name='L434'></a><a href='#L434'>434</a>
+<a name='L435'></a><a href='#L435'>435</a>
+<a name='L436'></a><a href='#L436'>436</a>
+<a name='L437'></a><a href='#L437'>437</a>
+<a name='L438'></a><a href='#L438'>438</a>
+<a name='L439'></a><a href='#L439'>439</a>
+<a name='L440'></a><a href='#L440'>440</a>
+<a name='L441'></a><a href='#L441'>441</a>
+<a name='L442'></a><a href='#L442'>442</a>
+<a name='L443'></a><a href='#L443'>443</a>
+<a name='L444'></a><a href='#L444'>444</a>
+<a name='L445'></a><a href='#L445'>445</a>
+<a name='L446'></a><a href='#L446'>446</a>
+<a name='L447'></a><a href='#L447'>447</a>
+<a name='L448'></a><a href='#L448'>448</a>
+<a name='L449'></a><a href='#L449'>449</a>
+<a name='L450'></a><a href='#L450'>450</a>
+<a name='L451'></a><a href='#L451'>451</a>
+<a name='L452'></a><a href='#L452'>452</a>
+<a name='L453'></a><a href='#L453'>453</a>
+<a name='L454'></a><a href='#L454'>454</a>
+<a name='L455'></a><a href='#L455'>455</a>
+<a name='L456'></a><a href='#L456'>456</a>
+<a name='L457'></a><a href='#L457'>457</a>
+<a name='L458'></a><a href='#L458'>458</a>
+<a name='L459'></a><a href='#L459'>459</a>
+<a name='L460'></a><a href='#L460'>460</a>
+<a name='L461'></a><a href='#L461'>461</a>
+<a name='L462'></a><a href='#L462'>462</a>
+<a name='L463'></a><a href='#L463'>463</a>
+<a name='L464'></a><a href='#L464'>464</a>
+<a name='L465'></a><a href='#L465'>465</a>
+<a name='L466'></a><a href='#L466'>466</a>
+<a name='L467'></a><a href='#L467'>467</a>
+<a name='L468'></a><a href='#L468'>468</a>
+<a name='L469'></a><a href='#L469'>469</a>
+<a name='L470'></a><a href='#L470'>470</a>
+<a name='L471'></a><a href='#L471'>471</a>
+<a name='L472'></a><a href='#L472'>472</a>
+<a name='L473'></a><a href='#L473'>473</a>
+<a name='L474'></a><a href='#L474'>474</a>
+<a name='L475'></a><a href='#L475'>475</a>
+<a name='L476'></a><a href='#L476'>476</a>
+<a name='L477'></a><a href='#L477'>477</a>
+<a name='L478'></a><a href='#L478'>478</a>
+<a name='L479'></a><a href='#L479'>479</a>
+<a name='L480'></a><a href='#L480'>480</a>
+<a name='L481'></a><a href='#L481'>481</a>
+<a name='L482'></a><a href='#L482'>482</a>
+<a name='L483'></a><a href='#L483'>483</a>
+<a name='L484'></a><a href='#L484'>484</a>
+<a name='L485'></a><a href='#L485'>485</a>
+<a name='L486'></a><a href='#L486'>486</a>
+<a name='L487'></a><a href='#L487'>487</a>
+<a name='L488'></a><a href='#L488'>488</a>
+<a name='L489'></a><a href='#L489'>489</a>
+<a name='L490'></a><a href='#L490'>490</a>
+<a name='L491'></a><a href='#L491'>491</a>
+<a name='L492'></a><a href='#L492'>492</a>
+<a name='L493'></a><a href='#L493'>493</a>
+<a name='L494'></a><a href='#L494'>494</a>
+<a name='L495'></a><a href='#L495'>495</a>
+<a name='L496'></a><a href='#L496'>496</a>
+<a name='L497'></a><a href='#L497'>497</a>
+<a name='L498'></a><a href='#L498'>498</a>
+<a name='L499'></a><a href='#L499'>499</a>
+<a name='L500'></a><a href='#L500'>500</a>
+<a name='L501'></a><a href='#L501'>501</a>
+<a name='L502'></a><a href='#L502'>502</a>
+<a name='L503'></a><a href='#L503'>503</a>
+<a name='L504'></a><a href='#L504'>504</a>
+<a name='L505'></a><a href='#L505'>505</a>
+<a name='L506'></a><a href='#L506'>506</a>
+<a name='L507'></a><a href='#L507'>507</a>
+<a name='L508'></a><a href='#L508'>508</a>
+<a name='L509'></a><a href='#L509'>509</a>
+<a name='L510'></a><a href='#L510'>510</a>
+<a name='L511'></a><a href='#L511'>511</a>
+<a name='L512'></a><a href='#L512'>512</a>
+<a name='L513'></a><a href='#L513'>513</a>
+<a name='L514'></a><a href='#L514'>514</a>
+<a name='L515'></a><a href='#L515'>515</a>
+<a name='L516'></a><a href='#L516'>516</a>
+<a name='L517'></a><a href='#L517'>517</a>
+<a name='L518'></a><a href='#L518'>518</a>
+<a name='L519'></a><a href='#L519'>519</a>
+<a name='L520'></a><a href='#L520'>520</a>
+<a name='L521'></a><a href='#L521'>521</a>
+<a name='L522'></a><a href='#L522'>522</a>
+<a name='L523'></a><a href='#L523'>523</a>
+<a name='L524'></a><a href='#L524'>524</a>
+<a name='L525'></a><a href='#L525'>525</a>
+<a name='L526'></a><a href='#L526'>526</a>
+<a name='L527'></a><a href='#L527'>527</a>
+<a name='L528'></a><a href='#L528'>528</a>
+<a name='L529'></a><a href='#L529'>529</a>
+<a name='L530'></a><a href='#L530'>530</a>
+<a name='L531'></a><a href='#L531'>531</a>
+<a name='L532'></a><a href='#L532'>532</a>
+<a name='L533'></a><a href='#L533'>533</a>
+<a name='L534'></a><a href='#L534'>534</a>
+<a name='L535'></a><a href='#L535'>535</a>
+<a name='L536'></a><a href='#L536'>536</a>
+<a name='L537'></a><a href='#L537'>537</a>
+<a name='L538'></a><a href='#L538'>538</a>
+<a name='L539'></a><a href='#L539'>539</a>
+<a name='L540'></a><a href='#L540'>540</a>
+<a name='L541'></a><a href='#L541'>541</a>
+<a name='L542'></a><a href='#L542'>542</a>
+<a name='L543'></a><a href='#L543'>543</a>
+<a name='L544'></a><a href='#L544'>544</a>
+<a name='L545'></a><a href='#L545'>545</a>
+<a name='L546'></a><a href='#L546'>546</a>
+<a name='L547'></a><a href='#L547'>547</a>
+<a name='L548'></a><a href='#L548'>548</a>
+<a name='L549'></a><a href='#L549'>549</a>
+<a name='L550'></a><a href='#L550'>550</a>
+<a name='L551'></a><a href='#L551'>551</a>
+<a name='L552'></a><a href='#L552'>552</a>
+<a name='L553'></a><a href='#L553'>553</a>
+<a name='L554'></a><a href='#L554'>554</a>
+<a name='L555'></a><a href='#L555'>555</a>
+<a name='L556'></a><a href='#L556'>556</a>
+<a name='L557'></a><a href='#L557'>557</a>
+<a name='L558'></a><a href='#L558'>558</a>
+<a name='L559'></a><a href='#L559'>559</a>
+<a name='L560'></a><a href='#L560'>560</a>
+<a name='L561'></a><a href='#L561'>561</a>
+<a name='L562'></a><a href='#L562'>562</a>
+<a name='L563'></a><a href='#L563'>563</a>
+<a name='L564'></a><a href='#L564'>564</a>
+<a name='L565'></a><a href='#L565'>565</a>
+<a name='L566'></a><a href='#L566'>566</a>
+<a name='L567'></a><a href='#L567'>567</a>
+<a name='L568'></a><a href='#L568'>568</a>
+<a name='L569'></a><a href='#L569'>569</a>
+<a name='L570'></a><a href='#L570'>570</a>
+<a name='L571'></a><a href='#L571'>571</a>
+<a name='L572'></a><a href='#L572'>572</a>
+<a name='L573'></a><a href='#L573'>573</a>
+<a name='L574'></a><a href='#L574'>574</a>
+<a name='L575'></a><a href='#L575'>575</a>
+<a name='L576'></a><a href='#L576'>576</a>
+<a name='L577'></a><a href='#L577'>577</a>
+<a name='L578'></a><a href='#L578'>578</a>
+<a name='L579'></a><a href='#L579'>579</a>
+<a name='L580'></a><a href='#L580'>580</a>
+<a name='L581'></a><a href='#L581'>581</a>
+<a name='L582'></a><a href='#L582'>582</a>
+<a name='L583'></a><a href='#L583'>583</a>
+<a name='L584'></a><a href='#L584'>584</a>
+<a name='L585'></a><a href='#L585'>585</a>
+<a name='L586'></a><a href='#L586'>586</a>
+<a name='L587'></a><a href='#L587'>587</a>
+<a name='L588'></a><a href='#L588'>588</a>
+<a name='L589'></a><a href='#L589'>589</a>
+<a name='L590'></a><a href='#L590'>590</a>
+<a name='L591'></a><a href='#L591'>591</a>
+<a name='L592'></a><a href='#L592'>592</a>
+<a name='L593'></a><a href='#L593'>593</a>
+<a name='L594'></a><a href='#L594'>594</a>
+<a name='L595'></a><a href='#L595'>595</a>
+<a name='L596'></a><a href='#L596'>596</a>
+<a name='L597'></a><a href='#L597'>597</a>
+<a name='L598'></a><a href='#L598'>598</a>
+<a name='L599'></a><a href='#L599'>599</a>
+<a name='L600'></a><a href='#L600'>600</a>
+<a name='L601'></a><a href='#L601'>601</a>
+<a name='L602'></a><a href='#L602'>602</a>
+<a name='L603'></a><a href='#L603'>603</a>
+<a name='L604'></a><a href='#L604'>604</a>
+<a name='L605'></a><a href='#L605'>605</a>
+<a name='L606'></a><a href='#L606'>606</a>
+<a name='L607'></a><a href='#L607'>607</a>
+<a name='L608'></a><a href='#L608'>608</a>
+<a name='L609'></a><a href='#L609'>609</a>
+<a name='L610'></a><a href='#L610'>610</a>
+<a name='L611'></a><a href='#L611'>611</a>
+<a name='L612'></a><a href='#L612'>612</a>
+<a name='L613'></a><a href='#L613'>613</a>
+<a name='L614'></a><a href='#L614'>614</a>
+<a name='L615'></a><a href='#L615'>615</a>
+<a name='L616'></a><a href='#L616'>616</a>
+<a name='L617'></a><a href='#L617'>617</a>
+<a name='L618'></a><a href='#L618'>618</a>
+<a name='L619'></a><a href='#L619'>619</a>
+<a name='L620'></a><a href='#L620'>620</a>
+<a name='L621'></a><a href='#L621'>621</a>
+<a name='L622'></a><a href='#L622'>622</a>
+<a name='L623'></a><a href='#L623'>623</a>
+<a name='L624'></a><a href='#L624'>624</a>
+<a name='L625'></a><a href='#L625'>625</a>
+<a name='L626'></a><a href='#L626'>626</a>
+<a name='L627'></a><a href='#L627'>627</a>
+<a name='L628'></a><a href='#L628'>628</a>
+<a name='L629'></a><a href='#L629'>629</a>
+<a name='L630'></a><a href='#L630'>630</a>
+<a name='L631'></a><a href='#L631'>631</a>
+<a name='L632'></a><a href='#L632'>632</a>
+<a name='L633'></a><a href='#L633'>633</a>
+<a name='L634'></a><a href='#L634'>634</a>
+<a name='L635'></a><a href='#L635'>635</a>
+<a name='L636'></a><a href='#L636'>636</a>
+<a name='L637'></a><a href='#L637'>637</a>
+<a name='L638'></a><a href='#L638'>638</a>
+<a name='L639'></a><a href='#L639'>639</a>
+<a name='L640'></a><a href='#L640'>640</a>
+<a name='L641'></a><a href='#L641'>641</a>
+<a name='L642'></a><a href='#L642'>642</a>
+<a name='L643'></a><a href='#L643'>643</a>
+<a name='L644'></a><a href='#L644'>644</a>
+<a name='L645'></a><a href='#L645'>645</a>
+<a name='L646'></a><a href='#L646'>646</a>
+<a name='L647'></a><a href='#L647'>647</a>
+<a name='L648'></a><a href='#L648'>648</a>
+<a name='L649'></a><a href='#L649'>649</a>
+<a name='L650'></a><a href='#L650'>650</a>
+<a name='L651'></a><a href='#L651'>651</a>
+<a name='L652'></a><a href='#L652'>652</a>
+<a name='L653'></a><a href='#L653'>653</a>
+<a name='L654'></a><a href='#L654'>654</a>
+<a name='L655'></a><a href='#L655'>655</a>
+<a name='L656'></a><a href='#L656'>656</a>
+<a name='L657'></a><a href='#L657'>657</a>
+<a name='L658'></a><a href='#L658'>658</a>
+<a name='L659'></a><a href='#L659'>659</a>
+<a name='L660'></a><a href='#L660'>660</a>
+<a name='L661'></a><a href='#L661'>661</a>
+<a name='L662'></a><a href='#L662'>662</a>
+<a name='L663'></a><a href='#L663'>663</a>
+<a name='L664'></a><a href='#L664'>664</a>
+<a name='L665'></a><a href='#L665'>665</a>
+<a name='L666'></a><a href='#L666'>666</a>
+<a name='L667'></a><a href='#L667'>667</a>
+<a name='L668'></a><a href='#L668'>668</a>
+<a name='L669'></a><a href='#L669'>669</a>
+<a name='L670'></a><a href='#L670'>670</a>
+<a name='L671'></a><a href='#L671'>671</a>
+<a name='L672'></a><a href='#L672'>672</a>
+<a name='L673'></a><a href='#L673'>673</a>
+<a name='L674'></a><a href='#L674'>674</a>
+<a name='L675'></a><a href='#L675'>675</a>
+<a name='L676'></a><a href='#L676'>676</a>
+<a name='L677'></a><a href='#L677'>677</a>
+<a name='L678'></a><a href='#L678'>678</a>
+<a name='L679'></a><a href='#L679'>679</a>
+<a name='L680'></a><a href='#L680'>680</a>
+<a name='L681'></a><a href='#L681'>681</a>
+<a name='L682'></a><a href='#L682'>682</a>
+<a name='L683'></a><a href='#L683'>683</a>
+<a name='L684'></a><a href='#L684'>684</a>
+<a name='L685'></a><a href='#L685'>685</a>
+<a name='L686'></a><a href='#L686'>686</a>
+<a name='L687'></a><a href='#L687'>687</a>
+<a name='L688'></a><a href='#L688'>688</a>
+<a name='L689'></a><a href='#L689'>689</a>
+<a name='L690'></a><a href='#L690'>690</a>
+<a name='L691'></a><a href='#L691'>691</a>
+<a name='L692'></a><a href='#L692'>692</a>
+<a name='L693'></a><a href='#L693'>693</a>
+<a name='L694'></a><a href='#L694'>694</a>
+<a name='L695'></a><a href='#L695'>695</a>
+<a name='L696'></a><a href='#L696'>696</a>
+<a name='L697'></a><a href='#L697'>697</a>
+<a name='L698'></a><a href='#L698'>698</a>
+<a name='L699'></a><a href='#L699'>699</a>
+<a name='L700'></a><a href='#L700'>700</a>
+<a name='L701'></a><a href='#L701'>701</a>
+<a name='L702'></a><a href='#L702'>702</a>
+<a name='L703'></a><a href='#L703'>703</a>
+<a name='L704'></a><a href='#L704'>704</a>
+<a name='L705'></a><a href='#L705'>705</a>
+<a name='L706'></a><a href='#L706'>706</a>
+<a name='L707'></a><a href='#L707'>707</a>
+<a name='L708'></a><a href='#L708'>708</a>
+<a name='L709'></a><a href='#L709'>709</a>
+<a name='L710'></a><a href='#L710'>710</a>
+<a name='L711'></a><a href='#L711'>711</a>
+<a name='L712'></a><a href='#L712'>712</a>
+<a name='L713'></a><a href='#L713'>713</a>
+<a name='L714'></a><a href='#L714'>714</a>
+<a name='L715'></a><a href='#L715'>715</a>
+<a name='L716'></a><a href='#L716'>716</a>
+<a name='L717'></a><a href='#L717'>717</a>
+<a name='L718'></a><a href='#L718'>718</a>
+<a name='L719'></a><a href='#L719'>719</a>
+<a name='L720'></a><a href='#L720'>720</a>
+<a name='L721'></a><a href='#L721'>721</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Gate-decision advisory logic — ENGINE copy. This is an intentionally-divergent twin of the host
+// src/rules/advisory.ts (#4518; keep-divergent decision recorded for #4881). This slimmed re-implementation uses
+// predicted-gate-types + ../scoring/label-match and deliberately imports none of ../signals/engine, isCodeFile, or
+// isTestPath, so @loopover/engine — and the CLI packages that consume it (packages/loopover-miner,
+// packages/loopover-mcp) — never pull the ~5,800-line signals/engine subsystem into their dependency graph. The
+// core gate-decision functions are kept structurally in lock-step with the host copy by
+// scripts/check-engine-parity.ts (GATE_DECISION_CORE_MARKERS); do NOT converge to a single source until that
+// dependency-graph constraint is solved — see #4881.
+import { randomUUID } from "node:crypto";
+import type {
+  Advisory,
+  AdvisoryConclusion,
+  AdvisoryFinding,
+  AdvisorySeverity,
+  GateRuleMode,
+  IssueRecord,
+  PullRequestRecord,
+  RepositoryRecord,
+} from "../types/predicted-gate-types.js";
+import type { CollisionReport } from "../types/predicted-gate-types.js";
+import { isDuplicateClusterWinnerByClaim } from "../signals/duplicate-winner.js";
+import type { GuardrailPathMatch } from "../signals/change-guardrail.js";
+import { nowIso } from "../utils/json.js";
+import { LOOPOVER_GATE_CHECK_NAME } from "../review/check-names.js";
+import { CLA_CHECK_UNRESOLVED_CODE, CLA_CONSENT_MISSING_CODE } from "../review/cla-check.js";
+import { REVIEW_THREAD_BLOCKER_CODE } from "../review/review-thread-findings.js";
+import { labelMatchesPattern } from "../scoring/label-match.js";
+&nbsp;
+// Kept byte-identical with the GATE_DECISION_TWIN_PAIR copy in src/rules/advisory.ts
+// (checkGateDecisionVersionBump enforces this). The mnemonics/seed-phrases/cohort/miner-|human-originated/
+// bare-raw-trust/bare-rankings terms were ported from sanitizePublicComment's own fix for the same leak class
+// (#7074) -- `raw\s+trust\s+scores?` stays ahead of bare `raw\s+trust` so the compound still matches first.
+const CHECK_RUN_FORBIDDEN_TERMS =
+<span class="cstat-no" title="statement not covered" >  /\b(?:rewards?|payouts?|farming|estimated\s+scores?|raw\s+trust\s+scores?|raw\s+trust|trust\s+scores?|score\s+estimates?|reward\s+estimates?|wallets?|hotkeys?|coldkeys?|mnemonics?|seed\s?phrases?|cohorts?|miner[-_\s]?originated|human[-_\s]?originated|rankings?|reviewability|scoreability|private\s+signals?)\b/gi;</span>
+&nbsp;
+function <span class="fstat-no" title="function not covered" >sanitizeForCheckRun(t</span>ext: string): string {
+<span class="cstat-no" title="statement not covered" >  return text.replace(CHECK_RUN_FORBIDDEN_TERMS, "[context]").replace(/\s+/g, " ").trim();</span>
+}
+&nbsp;
+const DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE = <span class="cstat-no" title="statement not covered" >0.93;</span>
+/** Exported to mirror the src twin (#8224): loopover's LOOSENABLE_KNOBS registry anchors the slop knob's
+ *  shipped value on this constant (divided by 100 onto the corpus's confidence scale). Value unchanged. */
+export const DEFAULT_SLOP_BLOCK_THRESHOLD = <span class="cstat-no" title="statement not covered" >60;</span>
+&nbsp;
+export type GateCheckConclusion = "success" | "failure" | "action_required" | "neutral" | "skipped";
+&nbsp;
+export type GateCheckPolicy = {
+  linkedIssueGateMode?: GateRuleMode | undefined;
+  duplicatePrGateMode?: GateRuleMode | undefined;
+  /** Historical readiness-score mode. Retained for config compatibility, but readiness is informational only:
+   *  a low readiness score may be surfaced as an advisory warning and must never fail the Gate check. */
+  qualityGateMode?: GateRuleMode | undefined;
+  qualityGateMinScore?: number | null | undefined;
+  /** When `block`, a dual-model AI consensus defect (`ai_consensus_defect` finding) becomes a hard
+   *  blocker. Defaults to advisory — AI never blocks unless the maintainer opts in. */
+  aiReviewGateMode?: GateRuleMode | undefined;
+  /** Minimum calibrated confidence (0-1) configured for AI close calibration. AI defect findings still BLOCK the
+   *  gate under `aiReviewGateMode: block` even when below this floor — the floor never turns a real defect into a
+   *  non-blocker on its own. What varies below the floor is {@link aiReviewLowConfidenceDisposition}. `null`/
+   *  undefined ⇒ the 0.93 default. */
+  aiReviewCloseConfidence?: number | null | undefined;
+  /** Disposition for a sub-floor `ai_consensus_defect`/`ai_review_split` finding (#4603) — see the host copy's
+   *  doc comment (`src/rules/advisory.ts` / `src/types.ts`) for the full semantics. `null`/undefined ⇒
+   *  `hold_for_review` (the shipped default). Only `advisory_only` changes what `isConfiguredGateBlocker` returns
+   *  for these codes here; `one_shot`/`hold_for_review` are indistinguishable to this predictor (the
+   *  `hold_for_review` vs `one_shot` difference is a disposition-planner concern this predictor doesn't model). */
+  aiReviewLowConfidenceDisposition?: "one_shot" | "hold_for_review" | "advisory_only" | undefined;
+  readinessScore?: number | null | undefined;
+  /** When `block`, the deterministic slop score becomes a hard blocker once `slopRisk &gt;= slopGateMinScore`
+   *  (default threshold 60, the `high` band). Defaults to off/advisory — slop never blocks unless opted in. */
+  slopGateMode?: GateRuleMode | undefined;
+  slopGateMinScore?: number | null | undefined;
+  slopRisk?: number | null | undefined;
+  /** Master "merge-readiness" composite (#551). When set (advisory/block) it OVERRIDES three sub-gates —
+   *  linked-issue, duplicate, slop — to its mode, so a maintainer flips ONE switch instead of three and the
+   *  review-agent check stays the single required check. Quality/readiness is deliberately NOT part of this
+   *  composite (`buildQualityGateWarning` can only ever produce an advisory warning, never a blocker) — it
+   *  always stays advisory-only regardless of this field's mode. `off` = sub-gates use their own modes. */
+  mergeReadinessGateMode?: GateRuleMode | undefined;
+  /** Focus-manifest policy gate (#555). When `block`, linked-issue/test policy findings become hard blockers.
+   *  Path-based manual-review holds are configured only with `settings.hardGuardrailGlobs`.
+   *  An INDEPENDENT dimension, deliberately NOT folded into the merge-readiness composite so #555 stays focused.
+   *  `off`/`advisory` = the findings stay advisory (never block). Default off. */
+  manifestPolicyGateMode?: GateRuleMode | undefined;
+  /** Self-authored linked-issue gate. When `block`, a `self_authored_linked_issue` finding — raised when
+   *  the PR author also filed the linked issue — becomes a hard blocker. Defaults to `advisory` — the
+   *  finding is surfaced but never blocks unless the maintainer opts in. */
+  selfAuthoredLinkedIssueGateMode?: GateRuleMode | undefined;
+  /** Linked-issue satisfaction gate (#1961/#3906). When `block`, a `linked_issue_scope_mismatch` finding —
+   *  raised when the AI assessment judged (above its confidence floor) that the PR's diff does NOT satisfy
+   *  its primary linked issue's intent — becomes a hard blocker. Defaults to `advisory` — the finding is
+   *  never even produced under `advisory`/`off` (the caller gates the assessment itself on this mode; see
+   *  runLinkedIssueSatisfactionForAdvisory, src/queue/processors.ts on the host side), so this branch only
+   *  matters once a repo has explicitly opted into `block`. */
+  linkedIssueSatisfactionGateMode?: GateRuleMode | undefined;
+  /** Content-lane linked-issue deliverable gate (#content-lane-deliverable). When `block`, a
+   *  `content_lane_deliverable_missing` finding — raised when the PR's linked issue's own text names a
+   *  content-lane path the PR's changed files never touch — becomes a hard blocker. Fully deterministic (a
+   *  text/path match, no AI call), so this finding is exempt from the AI-judgment close-precision breaker.
+   *  Defaults to `off` — the finding is never even produced under `off` (the caller gates the check itself
+   *  on this mode; see runContentLaneDeliverableCheckForAdvisory, src/queue/processors.ts on the host side),
+   *  so this branch only matters once a repo has explicitly opted into `advisory`/`block`. */
+  contentLaneDeliverableGateMode?: GateRuleMode | undefined;
+  /** Backtest-regression gate (#8105): `block` turns a `backtest_regression` finding into a hard blocker.
+   *  Default `advisory` — the finding only exists in block mode (the host resolver pushes it there), so
+   *  this branch is defense-in-depth, mirroring content_lane_deliverable_missing's above. */
+  backtestRegressionGateMode?: GateRuleMode | undefined;
+  /** CLA / license-compatibility gate (#2564). When `block`, a `cla_consent_missing` finding — raised when
+   *  neither configured detection method (a consent phrase in the PR body, or a named CLA-bot check-run
+   *  conclusion) confirms consent — becomes a hard blocker. `off` (default) = no finding at all; `advisory` =
+   *  the finding surfaces but never blocks. Independent of every other gate dimension, like manifestPolicy. */
+  claGateMode?: GateRuleMode | undefined;
+  /** The PR author's merged PR count in THIS repo. RESERVED / currently INERT (#2266) — populated but never
+   *  read by the gate evaluator today. */
+  authorMergedPrCount?: number | undefined;
+  /** The PR author's closed-unmerged PR count in THIS repo. RESERVED / currently INERT (#2266) — populated
+   *  but never read by the gate evaluator today. */
+  authorClosedUnmergedPrCount?: number | undefined;
+  /** The PR author's confirmed-Gittensor status. Carried for context/telemetry only — it no longer
+   *  changes the gate verdict (every author is gated identically; a configured blocker fails the gate
+   *  regardless of confirmed status, which now affects only on-chain scoring). `undefined` = unresolved.
+   *  (#gate-nonconfirmed) */
+  confirmedContributor?: boolean | undefined;
+  /** PR-size HOLD (#gate-size). When set (advisory/block), a PR with &gt;= sizeGateMaxFiles changed files OR
+   *  &gt;= sizeGateMaxLines changed (added+deleted) lines that would OTHERWISE pass is HELD for manual review — a
+   *  neutral gate → "manual" verdict, never auto-merged and never a hard failure. Defaults off; thresholds default
+   *  to 10 files / 1000 lines when sizeGateMaxFiles/sizeGateMaxLines are unset. This is a HOLD (advisory dry-run
+   *  friendly), not a close. */
+  sizeGateMode?: GateRuleMode | undefined;
+  /** PR-size HOLD file-count threshold (#gate-size). `null`/undefined ⇒ the 10-file default. */
+  sizeGateMaxFiles?: number | null | undefined;
+  /** PR-size HOLD changed-line-count threshold (#gate-size). `null`/undefined ⇒ the 1000-line default. */
+  sizeGateMaxLines?: number | null | undefined;
+  /** Lockfile-tamper-risk gate (#2563). When `block`, a `lockfile_tamper_risk` finding (produced by
+   *  review/lockfile-tamper.ts when a changed package-lock.json's resolved/integrity value changed without a
+   *  matching package.json version bump, or points off the npm registry) becomes a hard blocker. Defaults to
+   *  `off` — the finding is never produced when off, and never blocks under `advisory`. */
+  lockfileIntegrityGateMode?: GateRuleMode | undefined;
+  /** Aggregate change size, threaded from the resolved file list (changedLineCount = additions + deletions). */
+  changedFileCount?: number | null | undefined;
+  changedLineCount?: number | null | undefined;
+  /** True when the PR's diff trips a configured hard guardrail path.
+   *  A guardrail hit HOLDS an otherwise-passing gate for manual review (neutral → "manual"), never auto-merged.
+   *  Empty/absent guardrail globs disable this path. (#gate-guardrail) */
+  guardrailHit?: boolean | undefined;
+  /** Matched changed paths/globs for the guardrail hold. Empty when the caller only knows "unknown path set"
+   *  (fail-safe guardrail hit) rather than exact paths. */
+  guardrailMatches?: GuardrailPathMatch[] | undefined;
+  /** Dry-run disposition (#gate-dryrun). When true, the gate ALSO computes the would-be conclusion with every
+   *  `advisory` sub-gate promoted to `block` and exposes it as `displayConclusion` (the rendered merge/close/manual
+   *  verdict), WITHOUT changing the posted, non-enforcing `conclusion`. Lets advisory mode show exactly what it WOULD
+   *  do (close/merge/manual) before the maintainer flips to real enforcement. Default off. */
+  dryRun?: boolean | undefined;
+};
+&nbsp;
+export type GateCheckEvaluation = {
+  enabled: boolean;
+  conclusion: GateCheckConclusion;
+  /** Dry-run only (#gate-dryrun): the would-be conclusion (advisory sub-gates promoted to block) used to render the
+   *  merge/close/manual verdict. Absent ⇒ the renderer falls back to `conclusion`. Never affects what is posted. */
+  displayConclusion?: GateCheckConclusion | undefined;
+  title: string;
+  summary: string;
+  blockers: AdvisoryFinding[];
+  warnings: AdvisoryFinding[];
+};
+&nbsp;
+export function <span class="fstat-no" title="function not covered" >buildPullRequestAdvisory(</span>
+  repo: RepositoryRecord | null,
+  pr: PullRequestRecord | null,
+  context: {
+    otherOpenPullRequests?: PullRequestRecord[];
+    requireLinkedIssue?: boolean;
+    /** Duplicate-winner adjudication (#dup-winner). When true AND this PR is the cluster winner (the lowest
+     *  open sibling number), the `duplicate_pr_risk` finding is suppressed so the winner is not gate-blocked /
+     *  closed as a duplicate. Default/false ⇒ every duplicate sibling keeps the finding (byte-identical). The
+     *  caller sets this to `env.LOOPOVER_DUPLICATE_WINNER === "true"`. */
+    duplicateWinnerEnabled?: boolean;
+    /** Author logins of the linked issues (one entry per resolved issue, may be null when unknown). Used to
+     *  surface a `self_authored_linked_issue` finding when the PR author also opened the linked issue. Absent
+     *  or empty ⇒ the finding is never raised (fail-open: unknown issue authorship stays advisory-only). */
+    linkedIssueAuthorLogins?: (string | null | undefined)[];
+    /** Same-account issue-avoidance countermeasure (#unlinked-issue-guardrail-followup): `pr.linkedIssues` is
+     *  populated by a pure body-text regex that never checks whether the cited issue is actually OPEN, so a
+     *  contributor can satisfy `linkedIssueGateMode: "block"` by citing an already-CLOSED (or fabricated)
+     *  issue number. When the caller has live-verified that NONE of this PR's linked issue numbers resolve to
+     *  a confirmed-open issue, it sets this true and `missing_linked_issue` fires exactly as if nothing were
+     *  linked at all. Absent/false ⇒ byte-identical to today (presence alone still satisfies the requirement)
+     *  — this is fail-open by construction: the caller only ever sets it true after a live check confirms
+     *  every reference is dead, never on ambiguity. */
+    confirmedNoOpenLinkedIssue?: boolean;
+  } = <span class="branch-0 cbranch-no" title="branch not covered" >{},</span>
+): Advisory {
+  const repoFullName = <span class="cstat-no" title="statement not covered" >pr?.repoFullName ?? repo?.fullName ?? "unknown/unknown";</span>
+  const targetKey = <span class="cstat-no" title="statement not covered" >pr ? `${repoFullName}#${pr.number}` : `${repoFullName}#unknown`;</span>
+  const findings: AdvisoryFinding[] = <span class="cstat-no" title="statement not covered" >[];</span>
+<span class="cstat-no" title="statement not covered" >  if (!repo) {</span>
+<span class="cstat-no" title="statement not covered" >    findings.push({</span>
+      code: "repo_not_registered",
+      severity: "warning",
+      title: "Repository registration is unknown",
+      detail: "LoopOver cannot evaluate repo-specific rules until registry data is available.",
+      action: "Refresh the Gittensor registry snapshot.",
+    });
+  } else {
+<span class="cstat-no" title="statement not covered" >    addRepoFindings(repo, findings);</span>
+  }
+<span class="cstat-no" title="statement not covered" >  if (!pr) {</span>
+<span class="cstat-no" title="statement not covered" >    findings.push({</span>
+      code: "pr_not_cached",
+      severity: "warning",
+      title: "Pull request is not cached",
+      detail: "The GitHub webhook or manual fetch has not recorded this pull request yet.",
+      action: "Re-deliver the webhook or wait for the next sync.",
+    });
+  } else {
+<span class="cstat-no" title="statement not covered" >    addPullRequestFindings(repo, pr, findings, context.otherOpenPullRequests ?? [], Boolean(context.requireLinkedIssue), Boolean(context.duplicateWinnerEnabled), context.linkedIssueAuthorLogins ?? [], Boolean(context.confirmedNoOpenLinkedIssue));</span>
+  }
+<span class="cstat-no" title="statement not covered" >  return advisory("pull_request", targetKey, repoFullName, findings, "Pull request advisory generated.", pr?.number, undefined, pr?.headSha ?? undefined);</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >addRepoFindings(r</span>epo: RepositoryRecord, findings: AdvisoryFinding[]): void {
+<span class="cstat-no" title="statement not covered" >  if (!repo.isRegistered) {</span>
+<span class="cstat-no" title="statement not covered" >    findings.push({</span>
+      code: "repo_unregistered",
+      severity: "warning",
+      title: "Repository is not registered in the latest snapshot",
+      detail: "This repository is installed in LoopOver, but the latest registry snapshot does not include it.",
+      action: "Verify repository registration before relying on Gittensor-specific signals.",
+    });
+<span class="cstat-no" title="statement not covered" >    return;</span>
+  }
+<span class="cstat-no" title="statement not covered" >  if (!repo.registryConfig) {</span>
+<span class="cstat-no" title="statement not covered" >    findings.push({</span>
+      code: "repo_config_missing",
+      severity: "warning",
+      title: "Repository config was not parsed",
+      detail: "The repository appears in the registry, but its config was not available in normalized form.",
+    });
+<span class="cstat-no" title="statement not covered" >    return;</span>
+  }
+  const issueShare = <span class="cstat-no" title="statement not covered" >repo.registryConfig.issueDiscoveryShare;</span>
+<span class="cstat-no" title="statement not covered" >  if (issueShare === 0) {</span>
+<span class="cstat-no" title="statement not covered" >    findings.push({</span>
+      code: "issue_discovery_disabled",
+      severity: "info",
+      title: "Issue discovery is disabled for this repo",
+      detail: "The current Gittensor registry config routes this repository away from issue-discovery work.",
+      publicText: "This repo is configured for direct contribution review rather than issue-discovery flow.",
+    });
+  } else <span class="cstat-no" title="statement not covered" >if (issueShare === 1) {</span>
+<span class="cstat-no" title="statement not covered" >    findings.push({</span>
+      code: "direct_pr_pool_disabled",
+      severity: "info",
+      title: "Direct PR scoring is disabled for this repo",
+      detail: "The current Gittensor registry config routes this repository fully toward issue-discovery work.",
+      publicText: "This repo is configured around issue-discovery flow. Maintainers should review PR expectations manually.",
+    });
+  }
+<span class="cstat-no" title="statement not covered" >  if (repo.registryConfig.maintainerCut &gt; 0) {</span>
+<span class="cstat-no" title="statement not covered" >    findings.push({</span>
+      code: "maintainer_cut_enabled",
+      severity: "info",
+      title: "Maintainer allocation is configured",
+      detail: "This repo has a maintainer allocation configured in the registry.",
+    });
+  }
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >addPullRequestFindings(</span>
+  repo: RepositoryRecord | null,
+  pr: PullRequestRecord,
+  findings: AdvisoryFinding[],
+  otherOpenPullRequests: PullRequestRecord[],
+  requireLinkedIssue: boolean,
+  duplicateWinnerEnabled: boolean,
+  linkedIssueAuthorLogins: (string | null | undefined)[],
+  confirmedNoOpenLinkedIssue: boolean,
+): void {
+<span class="cstat-no" title="statement not covered" >  if (pr.state !== "open") {</span>
+<span class="cstat-no" title="statement not covered" >    findings.push({</span>
+      code: "pr_not_open",
+      severity: "info",
+      title: "Pull request is not open",
+      detail: `The pull request state is ${pr.state}.`,
+    });
+  }
+  // A sparse first-ever webhook sync (pr.bodyObservedAt EXPLICITLY null -- see #linked-issue-sparse-first-
+  // upsert) proves nothing about whether an issue is linked; only a genuinely observed body can confirm "none
+  // cited". Strict !== so `undefined` (every caller that predates this field, or that builds a
+  // PullRequestRecord directly rather than reading a DB row -- e.g. this engine's own local/preflight callers,
+  // which always hand in a freshly-read body and never hit the webhook race) stays byte-identical.
+  const noLinkedIssueCited = <span class="cstat-no" title="statement not covered" >pr.linkedIssues.length === 0 &amp;&amp; pr.bodyObservedAt !== null;</span>
+<span class="cstat-no" title="statement not covered" >  if ((noLinkedIssueCited || confirmedNoOpenLinkedIssue) &amp;&amp; requireLinkedIssue) {</span>
+<span class="cstat-no" title="statement not covered" >    findings.push({</span>
+      code: "missing_linked_issue",
+      severity: "warning",
+      title: "No linked issue detected",
+      detail: noLinkedIssueCited
+        ? "No closing reference or linked issue number was found in the PR metadata/body."
+        : "The PR cites an issue number, but it could not be verified as a currently open issue.",
+      action: "If this PR is intended to solve an issue, link it explicitly in the PR body.",
+    });
+  } else {
+    const overlappingPrs = <span class="cstat-no" title="statement not covered" >otherOpenPullRequests.<span class="fstat-no" title="function not covered" >filter((o</span>therPr) =&gt;</span>
+<span class="cstat-no" title="statement not covered" >      otherPr.linkedIssues.<span class="fstat-no" title="function not covered" >some((i</span>ssueNumber) =&gt; <span class="cstat-no" title="statement not covered" >pr.linkedIssues.includes(issueNumber))</span>,</span>
+    );
+    // Duplicate-winner adjudication (#dup-winner): when the flag is ON and this PR is the earliest observed
+    // linked-issue claimant, SKIP the duplicate finding — suppressing it suppresses the gate failure, so the
+    // winner survives while later claimants keep the finding. Sparse legacy rows fail closed instead of
+    // suppressing duplicate evidence with arbitrary PR-number ordering.
+    // Flag-OFF (default) short-circuits ⇒ the finding is pushed exactly as before (byte-identical).
+<span class="cstat-no" title="statement not covered" >    if (overlappingPrs.length &gt; 0 &amp;&amp; !(duplicateWinnerEnabled &amp;&amp; isDuplicateClusterWinnerByClaim(pr, overlappingPrs))) {</span>
+<span class="cstat-no" title="statement not covered" >      findings.push({</span>
+        code: "duplicate_pr_risk",
+        severity: "warning",
+        title: "Linked issue overlaps another open PR",
+        detail: `Other open pull requests reference the same linked issue set: ${overlappingPrs.<span class="fstat-no" title="function not covered" >map((o</span>therPr) =&gt; <span class="cstat-no" title="statement not covered" >`#${otherPr.number}`)</span>.join(", ")}.`,
+        action: "Review the related PRs before spending reviewer time on duplicate work.",
+      });
+    }
+  }
+  // Self-authored linked-issue detection: the PR author also filed the linked issue. Raised when at least
+  // one linked issue's author login is a case-insensitive match for the PR author. Gated by
+  // selfAuthoredLinkedIssueGateMode — advisory by default so this never blocks without maintainer opt-in.
+  // Absent/null issue author logins are treated as unknown and never trigger the finding (fail-open).
+<span class="cstat-no" title="statement not covered" >  if (pr.linkedIssues.length &gt; 0 &amp;&amp; pr.authorLogin) {</span>
+    const prAuthor = <span class="cstat-no" title="statement not covered" >pr.authorLogin.toLowerCase();</span>
+    const selfAuthored = <span class="cstat-no" title="statement not covered" >linkedIssueAuthorLogins.<span class="fstat-no" title="function not covered" >some((l</span>ogin) =&gt; <span class="cstat-no" title="statement not covered" >login != null &amp;&amp; login.toLowerCase() === prAuthor)</span>;</span>
+<span class="cstat-no" title="statement not covered" >    if (selfAuthored) {</span>
+<span class="cstat-no" title="statement not covered" >      findings.push({</span>
+        code: "self_authored_linked_issue",
+        severity: "warning",
+        title: "PR author also opened the linked issue",
+        detail: "The contributor who opened this PR also filed the linked issue. This pattern can indicate artificial issue-discovery work rather than solving an independently discovered problem.",
+        action: "Link an issue that was opened by a different contributor, or provide a rationale for why this self-authored issue represents genuine discovery work.",
+      });
+    }
+  }
+<span class="cstat-no" title="statement not covered" >  if (otherOpenPullRequests.length &gt;= 10) {</span>
+<span class="cstat-no" title="statement not covered" >    findings.push({</span>
+      code: "busy_pr_queue",
+      severity: "info",
+      title: "Review queue is busy",
+      detail: `LoopOver has ${otherOpenPullRequests.length} other open pull requests cached for this repository.`,
+      publicText: "This repo has a busy review queue in the local LoopOver cache.",
+    });
+  }
+  const multiplierPatterns = <span class="cstat-no" title="statement not covered" >Object.keys(repo?.registryConfig?.labelMultipliers ?? {});</span>
+  const matchedLabels = <span class="cstat-no" title="statement not covered" >pr.labels.<span class="fstat-no" title="function not covered" >filter((l</span>abel) =&gt; <span class="cstat-no" title="statement not covered" >multiplierPatterns.<span class="fstat-no" title="function not covered" >some((p</span>attern) =&gt; <span class="cstat-no" title="statement not covered" >labelMatchesPattern(label, pattern))</span>)</span>;</span>
+<span class="cstat-no" title="statement not covered" >  if (matchedLabels.length &gt; 0) {</span>
+<span class="cstat-no" title="statement not covered" >    findings.push({</span>
+      code: "label_context_found",
+      severity: "info",
+      title: "Configured label context found",
+      detail: `Matched configured labels: ${matchedLabels.join(", ")}.`,
+    });
+  }
+<span class="cstat-no" title="statement not covered" >  if (pr.authorAssociation &amp;&amp; ["OWNER", "MEMBER", "COLLABORATOR"].includes(pr.authorAssociation)) {</span>
+<span class="cstat-no" title="statement not covered" >    findings.push({</span>
+      code: "maintainer_authored_pr",
+      severity: "info",
+      title: "PR author has maintainer association",
+      detail: "GitHub marks this PR author as owner, member, or collaborator for the repository.",
+      publicText: "This PR appears to come from a maintainer-associated account.",
+    });
+  }
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >advisory(</span>
+  targetType: Advisory["targetType"],
+  targetKey: string,
+  repoFullName: string,
+  findings: AdvisoryFinding[],
+  fallbackSummary: string,
+  pullNumber?: number,
+  issueNumber?: number,
+  headSha?: string,
+): Advisory {
+  const severity = <span class="cstat-no" title="statement not covered" >highestSeverity(findings);</span>
+  const conclusion = <span class="cstat-no" title="statement not covered" >conclusionForSeverity(severity, findings);</span>
+  const title = <span class="cstat-no" title="statement not covered" >conclusion === "success" ? "LoopOver advisory passed" : "LoopOver advisory available";</span>
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    id: randomUUID(),
+    targetType,
+    targetKey,
+    repoFullName,
+    ...(pullNumber === undefined ? {} : { pullNumber }),
+    ...(issueNumber === undefined ? {} : { issueNumber }),
+    ...(headSha === undefined ? {} : { headSha }),
+    conclusion,
+    severity,
+    title,
+    summary: findings.length &gt; 0 ? `${findings.length} advisory finding${findings.length === 1 ? "" : "s"} generated.` : fallbackSummary,
+    findings,
+    generatedAt: nowIso(),
+  };
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >highestSeverity(f</span>indings: AdvisoryFinding[]): AdvisorySeverity {
+<span class="cstat-no" title="statement not covered" >  if (findings.<span class="fstat-no" title="function not covered" >some((f</span>inding) =&gt; <span class="cstat-no" title="statement not covered" >finding.severity === "critical")</span>) <span class="cstat-no" title="statement not covered" >return "critical";</span></span>
+<span class="cstat-no" title="statement not covered" >  if (findings.<span class="fstat-no" title="function not covered" >some((f</span>inding) =&gt; <span class="cstat-no" title="statement not covered" >finding.severity === "warning")</span>) <span class="cstat-no" title="statement not covered" >return "warning";</span></span>
+<span class="cstat-no" title="statement not covered" >  return "info";</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >conclusionForSeverity(s</span>everity: AdvisorySeverity, findings: AdvisoryFinding[]): AdvisoryConclusion {
+<span class="cstat-no" title="statement not covered" >  if (findings.<span class="fstat-no" title="function not covered" >some((f</span>inding) =&gt; <span class="cstat-no" title="statement not covered" >finding.code === "repo_unregistered" || finding.code === "repo_not_seen")</span>) <span class="cstat-no" title="statement not covered" >return "action_required";</span></span>
+<span class="cstat-no" title="statement not covered" >  if (severity === "warning") <span class="cstat-no" title="statement not covered" >return "neutral";</span></span>
+<span class="cstat-no" title="statement not covered" >  if (severity === "critical") <span class="cstat-no" title="statement not covered" >return "action_required";</span></span>
+<span class="cstat-no" title="statement not covered" >  return "success";</span>
+}
+&nbsp;
+const SIZE_HOLD_DEFAULT_MAX_FILES = <span class="cstat-no" title="statement not covered" >10;</span>
+const SIZE_HOLD_DEFAULT_MAX_LINES = <span class="cstat-no" title="statement not covered" >1000;</span>
+&nbsp;
+/** Oversized-PR manual-review HOLD finding (#gate-size), or null when the size gate is off or the PR is within both
+ *  thresholds. A HOLD (→ neutral gate → "manual" verdict), never a hard blocker, so it is dry-run/advisory friendly. */
+function <span class="fstat-no" title="function not covered" >buildSizeHoldFinding(p</span>olicy: GateCheckPolicy): AdvisoryFinding | null {
+<span class="cstat-no" title="statement not covered" >  if (!policy.sizeGateMode || policy.sizeGateMode === "off") <span class="cstat-no" title="statement not covered" >return null;</span></span>
+  let files = <span class="cstat-no" title="statement not covered" >policy.changedFileCount;</span>
+<span class="cstat-no" title="statement not covered" >  if (files === undefined || files === null) <span class="cstat-no" title="statement not covered" >files = 0;</span></span>
+  let lines = <span class="cstat-no" title="statement not covered" >policy.changedLineCount;</span>
+<span class="cstat-no" title="statement not covered" >  if (lines === undefined || lines === null) <span class="cstat-no" title="statement not covered" >lines = 0;</span></span>
+  let maxFiles = <span class="cstat-no" title="statement not covered" >policy.sizeGateMaxFiles;</span>
+<span class="cstat-no" title="statement not covered" >  if (maxFiles === undefined || maxFiles === null) <span class="cstat-no" title="statement not covered" >maxFiles = SIZE_HOLD_DEFAULT_MAX_FILES;</span></span>
+  let maxLines = <span class="cstat-no" title="statement not covered" >policy.sizeGateMaxLines;</span>
+<span class="cstat-no" title="statement not covered" >  if (maxLines === undefined || maxLines === null) <span class="cstat-no" title="statement not covered" >maxLines = SIZE_HOLD_DEFAULT_MAX_LINES;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (files &lt; maxFiles &amp;&amp; lines &lt; maxLines) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    code: "oversized_pr",
+    severity: "warning",
+    title: "Large change — held for manual review",
+    detail: `This PR changes ${files} file(s) / ${lines} line(s) (hold threshold: ${maxFiles} files or ${maxLines} lines).`,
+    action: "Split this into smaller, focused PRs, or a maintainer reviews and merges it manually.",
+  };
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >buildGuardrailHoldFinding(m</span>atches: GuardrailPathMatch[] = <span class="branch-0 cbranch-no" title="branch not covered" >[]): AdvisoryFinding {</span>
+  const detail =
+<span class="cstat-no" title="statement not covered" >    matches.length &gt; 0</span>
+      ? `This PR changes guardrail-protected path(s): ${matches
+          .slice(0, 5)
+          .<span class="fstat-no" title="function not covered" >map((m</span>atch) =&gt; <span class="cstat-no" title="statement not covered" >`\`${match.path}\` (matched \`${match.glob}\`)`)</span>
+          .join(", ")}${matches.length &gt; 5 ? `, and ${matches.length - 5} more` : ""}.`
+      : "This PR changes a guardrail-protected path, or the changed-file list could not be verified while guardrails are configured.";
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    code: "guardrail_hold",
+    severity: "warning",
+    title: "Touches a guarded path — held for manual review",
+    detail,
+    action: "A maintainer must review and merge this change.",
+  };
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >promoteAdvisoryToBlock(p</span>olicy: GateCheckPolicy): GateCheckPolicy {
+  // #disposition-redesign: the dry-run "would-be" verdict must reflect the REAL disposition model — a CLOSE is driven by
+  // the AI reviewer's confidence + genuine hard blockers (secret/CI/banned) ONLY. The advisory signals — missing linked
+  // issue, readiness/quality, slop, duplicates, manifest policy, self-authored issue — are NEVER close drivers, so they
+  // are deliberately NOT promoted here. Only the AI sub-gate is promoted, so an `advisory` AI defect still previews its
+  // would-be close while a missing linked issue or a low readiness score can never render a "close" verdict.
+  const <span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >block = (m</span>ode: GateRuleMode | undefined): GateRuleMode | undefined =&gt; (<span class="cstat-no" title="statement not covered" >mode === "advisory" ? "block" : mode);</span></span>
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    ...policy,
+    dryRun: false,
+    aiReviewGateMode: block(policy.aiReviewGateMode),
+  };
+}
+&nbsp;
+export function <span class="fstat-no" title="function not covered" >evaluateGateCheck(a</span>dvisoryResult: Advisory, policy: GateCheckPolicy = <span class="branch-0 cbranch-no" title="branch not covered" >{}): GateCheckEvaluation {</span>
+  const result = <span class="cstat-no" title="statement not covered" >evaluateGateCheckCore(advisoryResult, policy);</span>
+<span class="cstat-no" title="statement not covered" >  if (!policy.dryRun) <span class="cstat-no" title="statement not covered" >return result;</span></span>
+  const wouldBe = <span class="cstat-no" title="statement not covered" >evaluateGateCheckCore(advisoryResult, promoteAdvisoryToBlock(policy));</span>
+<span class="cstat-no" title="statement not covered" >  return { ...result, displayConclusion: wouldBe.conclusion };</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >evaluateGateCheckCore(a</span>dvisoryResult: Advisory, policy: GateCheckPolicy = <span class="branch-0 cbranch-no" title="branch not covered" >{}): GateCheckEvaluation {</span>
+  const warnings = <span class="cstat-no" title="statement not covered" >advisoryResult.findings.<span class="fstat-no" title="function not covered" >filter((f</span>inding) =&gt; <span class="cstat-no" title="statement not covered" >finding.severity === "warning")</span>;</span>
+  // App/infra state (repo not synced yet, PR not cached): loopover cannot evaluate this PR yet, so the
+  // gate is NEUTRAL (non-blocking) and re-evaluates automatically on the next sync/webhook. Never block a
+  // contributor on the app's OWN state.
+<span class="cstat-no" title="statement not covered" >  if (advisoryResult.findings.<span class="fstat-no" title="function not covered" >some((f</span>inding) =&gt; <span class="cstat-no" title="statement not covered" >isEvaluationBlocker(finding.code, policy))</span>) {</span>
+<span class="cstat-no" title="statement not covered" >    return {</span>
+      enabled: true,
+      conclusion: "neutral",
+      title: `${LOOPOVER_GATE_CHECK_NAME} — not evaluated yet`,
+      summary: "LoopOver has not finished syncing this repo/PR. The gate stays advisory and re-evaluates automatically; no action is needed.",
+      blockers: [],
+      warnings,
+    };
+  }
+  // Merge-readiness composite (#551): when set, escalate enforceable sub-gates to its mode so they roll into one
+  // pass/fail. Readiness/quality stays advisory-only.
+  const effective = <span class="cstat-no" title="statement not covered" >applyMergeReadinessGate(policy);</span>
+  const configuredBlockers = <span class="cstat-no" title="statement not covered" >advisoryResult.findings.<span class="fstat-no" title="function not covered" >filter((f</span>inding) =&gt; <span class="cstat-no" title="statement not covered" >isConfiguredGateBlocker(finding, effective))</span>;</span>
+  const qualityWarning = <span class="cstat-no" title="statement not covered" >buildQualityGateWarning(effective);</span>
+  const slopBlocker = <span class="cstat-no" title="statement not covered" >buildSlopGateBlocker(effective);</span>
+  const blockers = <span class="cstat-no" title="statement not covered" >[...configuredBlockers, ...(slopBlocker ? [slopBlocker] : [])];</span>
+  const gateWarnings = <span class="cstat-no" title="statement not covered" >qualityWarning ? [...warnings, qualityWarning] : warnings;</span>
+  // Non-confirmed contributors are gated NORMALLY (real blockers → failure → one-shot close; clean → success →
+  // merge), the SAME as confirmed contributors: the review + CI + guardrail vet every PR, and confirmed-status
+  // affects only on-chain SCORING, never the merge/close decision. (#gate-nonconfirmed) The old blanket
+  // "never block a non-confirmed contributor" forced every non-confirmed PR with a blocker to a neutral → HELD
+  // state, burying the maintainer in manual review. The old first-time-contributor grace path also softened
+  // blockers; that is intentionally no longer applied because blocker findings must remain closure/rejection
+  // outcomes for normal contributors. Owner/automation close exemptions live in the disposition planner instead.
+<span class="cstat-no" title="statement not covered" >  if (blockers.length === 0) {</span>
+    // Fail-CLOSED AI hold (#ai-fail-closed, #audit-3.5): with NO deterministic blocker, a block-mode AI review
+    // that could not return a usable verdict HOLDS the gate (neutral) for a human rather than passing
+    // automatically — NEVER a failure, so a contributor PR is never auto-CLOSED because a model hiccupped. This
+    // is evaluated AFTER the deterministic blockers above, so a real violation (secret_leak, duplicate,
+    // missing-issue, slop, quality) still blocks: an inconclusive AI can no longer bury a blocked PR in a hold.
+<span class="cstat-no" title="statement not covered" >    if (advisoryResult.findings.<span class="fstat-no" title="function not covered" >some((f</span>inding) =&gt; <span class="cstat-no" title="statement not covered" >finding.code === "ai_review_inconclusive")</span>) {</span>
+<span class="cstat-no" title="statement not covered" >      return {</span>
+        enabled: true,
+        conclusion: "neutral",
+        title: `${LOOPOVER_GATE_CHECK_NAME} — held for human review`,
+        summary: "The AI review could not be completed for this change, so the gate is held for a human reviewer rather than passed automatically. It re-evaluates on the next update.",
+        blockers: [],
+        warnings: gateWarnings,
+      };
+    }
+    // Manual-review HOLD (#gate-size / #gate-guardrail): a PR that would otherwise PASS but is oversized or touches
+    // a guarded path is HELD for a human (neutral → "manual" verdict) rather than auto-approved — never a failure,
+    // so neutral never blocks the merge (dry-run/advisory friendly) and a contributor PR is never auto-closed for size.
+    const sizeHold = <span class="cstat-no" title="statement not covered" >buildSizeHoldFinding(effective);</span>
+    const guardrailHold = <span class="cstat-no" title="statement not covered" >effective.guardrailHit ? buildGuardrailHoldFinding(effective.guardrailMatches) : null;</span>
+    const holds = <span class="cstat-no" title="statement not covered" >[sizeHold, guardrailHold].<span class="fstat-no" title="function not covered" >filter(</span></span>
+      (f): f is AdvisoryFinding =&gt; <span class="cstat-no" title="statement not covered" >f !== null,</span>
+    );
+<span class="cstat-no" title="statement not covered" >    if (holds.length &gt; 0) {</span>
+<span class="cstat-no" title="statement not covered" >      return {</span>
+        enabled: true,
+        conclusion: "neutral",
+        title: `${LOOPOVER_GATE_CHECK_NAME} — held for manual review`,
+        summary: holds.<span class="fstat-no" title="function not covered" >map((h</span>) =&gt; <span class="cstat-no" title="statement not covered" >sanitizeForCheckRun(h.title))</span>.join("; "),
+        blockers: [],
+        warnings: [...gateWarnings, ...holds],
+      };
+    }
+<span class="cstat-no" title="statement not covered" >    return {</span>
+      enabled: true,
+      conclusion: "success",
+      title: `${LOOPOVER_GATE_CHECK_NAME} passed`,
+      summary: "No configured hard blocker was found. Advisory findings, if any, stay advisory.",
+      blockers,
+      warnings: gateWarnings,
+    };
+  }
+  // Name the exact blocker(s) + fix in the title so the contributor sees WHY at a glance.
+  const firstBlocker = <span class="cstat-no" title="statement not covered" >blockers[0];</span>
+  const titleDetail = <span class="cstat-no" title="statement not covered" >blockers.length === 1 &amp;&amp; firstBlocker ? sanitizeForCheckRun(firstBlocker.title) : `${blockers.length} blockers`;</span>
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    enabled: true,
+    conclusion: "failure",
+    title: `${LOOPOVER_GATE_CHECK_NAME}: ${titleDetail}`,
+    summary: blockers
+      .<span class="fstat-no" title="function not covered" >map((f</span>inding) =&gt; <span class="cstat-no" title="statement not covered" >`${sanitizeForCheckRun(finding.title)}${finding.action ? ` — ${sanitizeForCheckRun(finding.action)}` : ""}`)</span>
+      .join("; "),
+    blockers,
+    warnings: [...advisoryResult.findings.<span class="fstat-no" title="function not covered" >filter((f</span>inding) =&gt; <span class="cstat-no" title="statement not covered" >finding.severity === "warning" &amp;&amp; !blockers.includes(finding))</span>, ...(qualityWarning ? [qualityWarning] : [])],
+  };
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >isEvaluationBlocker(c</span>ode: string, policy: GateCheckPolicy): boolean {
+  // pre_merge_check_unresolved: an enforced path-gated pre-merge check whose changed-file set could not be
+  // resolved — loopover cannot evaluate it yet, so the gate is NEUTRAL (held) and re-evaluates on the next
+  // sync, rather than auto-merging past the unverified requirement or hard-closing on a transient miss. (#review-audit)
+<span class="cstat-no" title="statement not covered" >  if (code === "repo_not_registered" || code === "repo_not_seen" || code === "pr_not_cached" || code === "pre_merge_check_unresolved") <span class="cstat-no" title="statement not covered" >return true;</span></span>
+  // cla_check_unresolved (#2564): the CLA-bot check-run's conclusion could not be resolved. Unlike the codes
+  // above (which are never mode-gated), evaluateClaCheck runs for BOTH claGateMode "advisory" and "block" (so
+  // the finding surfaces either way) — only "block" should ever HOLD the gate on an unresolved check-run.
+  // "advisory" mode's whole contract is "surface findings, never affect the verdict"; unconditionally holding
+  // here would violate that for any advisory-mode repo using check-run-only detection (#2564 gate-review
+  // finding). advisory mode still gets the finding in the panel via the normal warnings path below.
+<span class="cstat-no" title="statement not covered" >  if (code === CLA_CHECK_UNRESOLVED_CODE) <span class="cstat-no" title="statement not covered" >return policy.claGateMode === "block";</span></span>
+<span class="cstat-no" title="statement not covered" >  return false;</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >gatePolicyBlocks(m</span>ode: GateRuleMode | undefined, defaultMode: GateRuleMode): boolean {
+<span class="cstat-no" title="statement not covered" >  return gateMode(mode ?? defaultMode) === "block";</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >isConfiguredGateBlocker(f</span>inding: AdvisoryFinding, policy: GateCheckPolicy): boolean {
+  const code = <span class="cstat-no" title="statement not covered" >finding.code;</span>
+  // Missing linked issue defaults to ADVISORY — issues aren't always available, so it only blocks when a
+  // repo explicitly opts in with linkedIssueGateMode: "block". Duplicates still default to blocking.
+<span class="cstat-no" title="statement not covered" >  if (code === "missing_linked_issue") <span class="cstat-no" title="statement not covered" >return gatePolicyBlocks(policy.linkedIssueGateMode, "advisory");</span></span>
+<span class="cstat-no" title="statement not covered" >  if (code === "duplicate_pr_risk") <span class="cstat-no" title="statement not covered" >return gatePolicyBlocks(policy.duplicatePrGateMode, "block");</span></span>
+  // A dual-model AI consensus defect blocks ONLY when the maintainer opted into aiReview: block. It is the
+  // most conservative AI signal (two independent models) but still confirmed-contributor gated by
+  // evaluateGateCheck, and advisory by default.
+  // A consensus defect (both reviewers) OR a SPLIT (one reviewer flagged a blocker the other did not) both block
+  // when aiReviewGateMode is `block`. (#ai-review-split) The close-confidence floor + disposition (#4603, mirrors
+  // the host copy in src/rules/advisory.ts -- this predictor package doesn't thread aiReviewLowConfidenceDisposition
+  // through predicted-gate.ts's own policy-building call yet, same deliberate partial-wiring precedent as
+  // linkedIssueSatisfactionGateMode, so this branch only ever sees the default `hold_for_review` here today) decide
+  // what happens to a SUB-floor finding: `one_shot`/`hold_for_review` both still block here; only `advisory_only`
+  // demotes a sub-floor finding to a non-blocker.
+<span class="cstat-no" title="statement not covered" >  if (code === "ai_consensus_defect" || code === "ai_review_split") {</span>
+<span class="cstat-no" title="statement not covered" >    if (!gatePolicyBlocks(policy.aiReviewGateMode, "advisory")) <span class="cstat-no" title="statement not covered" >return false;</span></span>
+<span class="cstat-no" title="statement not covered" >    if ((policy.aiReviewLowConfidenceDisposition ?? "hold_for_review") === "advisory_only") {</span>
+      const floor = <span class="cstat-no" title="statement not covered" >policy.aiReviewCloseConfidence ?? DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE;</span>
+      const confidence = <span class="cstat-no" title="statement not covered" >finding.confidence ?? 1;</span>
+<span class="cstat-no" title="statement not covered" >      if (confidence &lt; floor) <span class="cstat-no" title="statement not covered" >return false;</span></span>
+    }
+<span class="cstat-no" title="statement not covered" >    return true;</span>
+  }
+<span class="cstat-no" title="statement not covered" >  if (code === REVIEW_THREAD_BLOCKER_CODE) <span class="cstat-no" title="statement not covered" >return true;</span></span>
+  // A leaked-secret finding (`secret_leak`) ALWAYS hard-blocks: a committed credential must be removed and
+  // rotated before merge, with no opt-in. This finding is produced ONLY by the flag-gated safety scan
+  // (LOOPOVER_REVIEW_SAFETY); when the flag is off the finding never exists, so this branch is unreachable and the
+  // gate verdict is byte-identical to today.
+<span class="cstat-no" title="statement not covered" >  if (code === "secret_leak") <span class="cstat-no" title="statement not covered" >return true;</span></span>
+  // A maintainer pre-merge check (#review-pre-merge-checks) marked `enforce: true` produces this DETERMINISTIC
+  // finding when it fails (a required title/description phrase or label is missing). It always blocks: the
+  // per-check `enforce` flag in `.loopover.yml` IS the opt-in (mirroring secret_leak — the finding only exists
+  // when the maintainer configured an enforced check). The advisory variant (`pre_merge_check_failed`) is a plain
+  // warning and is never blocked here. No AI judgment is involved, so this can never cause an AI false-close.
+<span class="cstat-no" title="statement not covered" >  if (code === "pre_merge_check_required") <span class="cstat-no" title="statement not covered" >return true;</span></span>
+  // Focus-manifest missing-tests policy (#555): blocks ONLY when the maintainer opts into manifestPolicy:
+  // block. Path holds are intentionally separate and configured via hardGuardrailGlobs.
+<span class="cstat-no" title="statement not covered" >  if (code === "manifest_missing_tests") {</span>
+<span class="cstat-no" title="statement not covered" >    return gatePolicyBlocks(policy.manifestPolicyGateMode, "off");</span>
+  }
+  // Focus-manifest linked-issue policy (#555, #4618): blocks when EITHER the manifest-policy gate OR the
+  // linked-issue gate is opted into block. resolveEffectiveSettings promotes linkedIssueGateMode to "block"
+  // whenever the yml-only `linkedIssuePolicy: required` knob is set (mirroring the requireLinkedIssue
+  // promotion), so this finding's own escalation must honor that gate too -- not just manifestPolicyGateMode
+  // -- or the promotion would have no actual blocking effect and the config-surface-reduction fix would be a
+  // no-op.
+<span class="cstat-no" title="statement not covered" >  if (code === "manifest_linked_issue_required") {</span>
+<span class="cstat-no" title="statement not covered" >    return gatePolicyBlocks(policy.manifestPolicyGateMode, "off") || gatePolicyBlocks(policy.linkedIssueGateMode, "advisory");</span>
+  }
+  // Self-authored linked-issue gate: blocks only when the maintainer opts in with `block`. Defaults to
+  // advisory — the finding surfaces in the panel without ever closing the PR unless explicitly configured.
+<span class="cstat-no" title="statement not covered" >  if (code === "self_authored_linked_issue") <span class="cstat-no" title="statement not covered" >return gatePolicyBlocks(policy.selfAuthoredLinkedIssueGateMode, "advisory");</span></span>
+  // Linked-issue satisfaction gate (#1961/#3906): blocks only when the maintainer opts in with `block`. The
+  // finding itself is only ever produced when the caller already resolved `block` mode (host side), so this
+  // is a defense-in-depth mirror of that gate, not the primary enforcement point.
+<span class="cstat-no" title="statement not covered" >  if (code === "linked_issue_scope_mismatch") <span class="cstat-no" title="statement not covered" >return gatePolicyBlocks(policy.linkedIssueSatisfactionGateMode, "advisory");</span></span>
+  // Content-lane linked-issue deliverable gate (#content-lane-deliverable): blocks only when the maintainer
+  // opts in with `block`. Fully deterministic (no AI judgment involved), so it is exempt from the
+  // close-precision circuit breaker on the host side.
+<span class="cstat-no" title="statement not covered" >  if (code === "content_lane_deliverable_missing") <span class="cstat-no" title="statement not covered" >return gatePolicyBlocks(policy.contentLaneDeliverableGateMode, "off");</span></span>
+  // Backtest-regression gate (#8105): blocks only under an explicit opt-in; default advisory (the shipped
+  // pre-#8105 behavior). The finding itself only exists in block mode -- see the host-side resolver.
+<span class="cstat-no" title="statement not covered" >  if (code === "backtest_regression") <span class="cstat-no" title="statement not covered" >return gatePolicyBlocks(policy.backtestRegressionGateMode, "advisory");</span></span>
+  // Lockfile-tamper-risk gate (#2563): blocks only when the maintainer opts in with `block`. Defaults to `off`
+  // (the finding is never even produced — see maybeAddLockfileTamperFinding's mode gate in queue/processors.ts),
+  // so this branch only matters once a repo has explicitly turned the scan on.
+<span class="cstat-no" title="statement not covered" >  if (code === "lockfile_tamper_risk") <span class="cstat-no" title="statement not covered" >return gatePolicyBlocks(policy.lockfileIntegrityGateMode, "off");</span></span>
+  // CLA / license-compatibility gate (#2564): blocks only when the maintainer opts into claMode: block.
+  // Defaults to off (evaluateClaCheck never even runs for an off repo, so the finding does not exist).
+<span class="cstat-no" title="statement not covered" >  if (code === CLA_CONSENT_MISSING_CODE) <span class="cstat-no" title="statement not covered" >return gatePolicyBlocks(policy.claGateMode, "off");</span></span>
+<span class="cstat-no" title="statement not covered" >  return false;</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >buildQualityGateWarning(p</span>olicy: GateCheckPolicy): AdvisoryFinding | null {
+<span class="cstat-no" title="statement not covered" >  if (gateMode(policy.qualityGateMode) === "off") <span class="cstat-no" title="statement not covered" >return null;</span></span>
+  const score = <span class="cstat-no" title="statement not covered" >normalizeScore(policy.readinessScore);</span>
+  const minScore = <span class="cstat-no" title="statement not covered" >normalizeScore(policy.qualityGateMinScore);</span>
+<span class="cstat-no" title="statement not covered" >  if (score === null || minScore === null || score &gt;= minScore) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    code: "readiness_score_below_threshold",
+    severity: "warning",
+    title: "Readiness score is below the configured threshold",
+    detail: `The public readiness score is ${score}/100, below the repository threshold of ${minScore}/100.`,
+    action: "Use the readiness panel as advisory maintainer context; the score does not block this PR.",
+  };
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >buildSlopGateBlocker(p</span>olicy: GateCheckPolicy): AdvisoryFinding | null {
+<span class="cstat-no" title="statement not covered" >  if (gateMode(policy.slopGateMode) !== "block") <span class="cstat-no" title="statement not covered" >return null;</span></span>
+  const risk = <span class="cstat-no" title="statement not covered" >normalizeScore(policy.slopRisk);</span>
+<span class="cstat-no" title="statement not covered" >  if (risk === null) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+  const minScore = <span class="cstat-no" title="statement not covered" >normalizeScore(policy.slopGateMinScore) ?? DEFAULT_SLOP_BLOCK_THRESHOLD;</span>
+<span class="cstat-no" title="statement not covered" >  if (risk &lt; minScore) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    code: "slop_risk_above_threshold",
+    severity: "warning",
+    title: "Slop risk is above the configured threshold",
+    detail: `The deterministic slop risk is ${risk}/100, at or above the repository threshold of ${minScore}/100.`,
+    action: "Reduce whitespace-only churn, add test evidence, or describe the change, then re-run the gate.",
+  };
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >gateMode(v</span>alue: GateRuleMode | null | undefined): GateRuleMode {
+<span class="cstat-no" title="statement not covered" >  return value === "off" || value === "block" ? value : "advisory";</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >applyMergeReadinessGate(p</span>olicy: GateCheckPolicy): GateCheckPolicy {
+  const composite = <span class="cstat-no" title="statement not covered" >gateMode(policy.mergeReadinessGateMode ?? "off");</span>
+<span class="cstat-no" title="statement not covered" >  if (composite === "off") <span class="cstat-no" title="statement not covered" >return policy;</span></span>
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    ...policy,
+    linkedIssueGateMode: composite,
+    duplicatePrGateMode: composite,
+    slopGateMode: composite,
+  };
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >normalizeScore(v</span>alue: number | null | undefined): number | null {
+<span class="cstat-no" title="statement not covered" >  if (typeof value !== "number" || !Number.isFinite(value)) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+<span class="cstat-no" title="statement not covered" >  return Math.max(0, Math.min(100, Math.round(value)));</span>
+}
+&nbsp;
+/** @internal Exported for unit tests of advisory severity wiring. */
+export const gateAdvisoryInternals = <span class="cstat-no" title="statement not covered" >{</span>
+  advisory,
+  highestSeverity,
+  conclusionForSeverity,
+  buildSizeHoldFinding,
+  buildGuardrailHoldFinding,
+  promoteAdvisoryToBlock,
+  isConfiguredGateBlocker,
+  buildQualityGateWarning,
+  buildSlopGateBlocker,
+  gateMode,
+  gatePolicyBlocks,
+};
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../../../sorter.js"></script>
+        <script src="../../../../block-navigation.js"></script>
+    </body>
+</html>
+    

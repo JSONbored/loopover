@@ -1,0 +1,301 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/settings/automation-bot-skip.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/settings</a> automation-bot-skip.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/8</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/9</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/4</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/6</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import { isProtectedAutomationAuthor } from "./agent-actions";
+&nbsp;
+export type AutomationBotSkipMode = "inherit" | "off" | "enabled";
+&nbsp;
+/** Truthy convention matches the rest of this codebase (`/^(1|true|yes|on)$/i`, e.g. isReputationEnabled),
+ *  inverted: this flag defaults ON (skip), so only an explicit falsy value ("0"/"false"/"no"/"off") turns it
+ *  off install-wide. Unlike most `LOOPOVER_REVIEW_*` flags (opt-in, default off), eliminating AI/gate spend
+ *  on PRs from known, maintainer-owned automation (release-please's github-actions[bot], Renovate,
+ *  Dependabot) is safe and low-risk enough to be the sensible default -- it should not require every
+ *  self-host operator to discover and separately opt into this. */
+export function <span class="fstat-no" title="function not covered" >isSkipAutomationBotPullRequestsEnabledGlobally(e</span>nv: { LOOPOVER_SKIP_AUTOMATION_BOT_PRS?: string | undefined }): boolean {
+<span class="cstat-no" title="statement not covered" >  return !/^(0|false|no|off)$/i.test((env.LOOPOVER_SKIP_AUTOMATION_BOT_PRS ?? "").trim());</span>
+}
+&nbsp;
+/** Per-repo override resolved against the global default. Mirrors `ModerationGateMode`'s inherit/off/enabled
+ *  shape (settings/moderation-rules.ts) but is symmetric -- "off" and "enabled" both fully override the
+ *  global default in either direction, unlike moderation's global-is-authoritative asymmetry -- because this
+ *  is a narrower, lower-stakes waste-reduction toggle (skip review for known automation), not a fleet-wide
+ *  safety kill-switch, so there's no reason a repo opting IN should still be blocked by a globally-off
+ *  default. */
+export function <span class="fstat-no" title="function not covered" >resolveSkipAutomationBotPullRequests(g</span>lobalDefault: boolean, mode: AutomationBotSkipMode | null | undefined): boolean {
+<span class="cstat-no" title="statement not covered" >  if (mode === "off") <span class="cstat-no" title="statement not covered" >return false;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (mode === "enabled") <span class="cstat-no" title="statement not covered" >return true;</span></span>
+<span class="cstat-no" title="statement not covered" >  return globalDefault;</span>
+}
+&nbsp;
+/**
+ * SECURITY (do not weaken without re-reading this comment): decides whether the review pipeline may treat
+ * the CURRENT webhook event as bot-originated automation and skip full review for it. This is a trust
+ * boundary, not a convenience check -- getting it wrong lets a contributor slip a PR past review entirely.
+ *
+ * Checks the actor who triggered THIS SPECIFIC event (`sender`), never just the PR's original/stored author.
+ * A `pull_request` webhook's `sender` is "whoever performed the action that fired this event" -- for
+ * `opened`, that's whoever opened the PR; for `synchronize`, that's whoever pushed the new commits, which is
+ * NOT necessarily the PR's original author. If this checked only the stored PR author, an actor with write
+ * access to an EXISTING bot-authored PR's branch (a fork with "allow edits by maintainers" enabled, or a
+ * misconfigured branch permission) could push malicious commits onto that branch and inherit the bot's
+ * skip-review treatment for a `synchronize` event `sender` did not actually originate from the bot.
+ *
+ * Requires BOTH `sender` (this event's actor) AND the PR's own recorded author to be in the trusted set --
+ * defense in depth: a legitimate bot-originated event always satisfies both (the bot both opened the PR and
+ * is the one pushing to it), so requiring both closes any path where they could diverge without narrowing
+ * the legitimate case.
+ *
+ * `sender.login`/`sender.type` are GitHub's own attestation of who/what performed the action, delivered in an
+ * HMAC-signed webhook payload verified before this ever runs (see github/webhook.ts) -- neither is spoofable
+ * by a contributor's own request. GitHub also does not permit a regular ("User"-type) account to register a
+ * `[bot]`-suffixed login, and each bot's login (e.g. "renovate[bot]") is tied to a single, globally-unique
+ * GitHub App slug no other party can claim -- so `isProtectedAutomationAuthor`'s exact-match allowlist
+ * (settings/agent-actions.ts) cannot be satisfied by an untrusted contributor's own account, and the
+ * `type === "Bot"` check is still required as defense in depth against a future looser login match.
+ */
+export function <span class="fstat-no" title="function not covered" >isTrustedAutomationBotWebhookActor(</span>
+  sender: { login?: string | null | undefined; type?: string | null | undefined } | null | undefined,
+  prAuthorLogin: string | null | undefined,
+): boolean {
+<span class="cstat-no" title="statement not covered" >  return (</span>
+    sender?.type === "Bot" &amp;&amp;
+    isProtectedAutomationAuthor(sender.login) &amp;&amp;
+    isProtectedAutomationAuthor(prAuthorLogin)
+  );
+}
+&nbsp;
+/**
+ * Re-entry paths have no live webhook `sender`, so stored authorship is only a necessary precondition for the
+ * automation skip. Callers must first perform their own freshness/provenance check (for example, confirming the
+ * live PR head still matches the stored head) before using this result to bypass review. Original PR authorship
+ * alone does not prove that later commits on the branch were still produced by the trusted bot.
+ */
+export function <span class="fstat-no" title="function not covered" >isTrustedAutomationBotAuthor(p</span>rAuthorLogin: string | null | undefined): boolean {
+<span class="cstat-no" title="statement not covered" >  return isProtectedAutomationAuthor(prAuthorLogin);</span>
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    

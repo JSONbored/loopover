@@ -1,0 +1,433 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for packages/loopover-engine/src/review/linked-issue-label-propagation.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../../../prettify.css" />
+    <link rel="stylesheet" href="../../../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../../../index.html">All files</a> / <a href="index.html">packages/loopover-engine/src/review</a> linked-issue-label-propagation.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/47</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/48</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/3</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/46</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import type { LinkedIssueLabelPropagationConfig, LinkedIssueLabelPropagationMapping, LinkedIssueLabelPropagationMode } from "../types/manifest-deps-types.js";
+&nbsp;
+export type { LinkedIssueLabelPropagationConfig, LinkedIssueLabelPropagationMapping, LinkedIssueLabelPropagationMode } from "../types/manifest-deps-types.js";
+&nbsp;
+// Linked-issue label PROPAGATION (#priority-linked-issue-gate). Generic, config-driven mechanism: when a
+// linked/closing issue already carries a configured label, copy a mapped label onto the PR. Built specifically
+// so a maintainer-reward/bonus label (e.g. `gittensor:priority`) can NEVER be inferred from a PR's title,
+// changed files, AI output, or existing PR labels — only ever from a linked issue that ALREADY carries it.
+// Generic beyond that one use case: any self-hoster can map any issue label to any PR label, exclusive
+// (replaces the normal bug/feature type label, like priority does) or additive (applied alongside it).
+//
+// PURE config types + normalizer only — no GitHub/fetch/Env-dependent imports. `focus-manifest.ts`'s YAML
+// parser imports this module directly, and `focus-manifest.ts` is itself pulled into the loopover-ui
+// workspace's isolated typecheck (via `apps/loopover-ui/src/lib/registration-workspace.ts`), which has no
+// visibility into the Worker's ambient `Env` type. The actual GitHub fetch orchestrator
+// (`fetchLinkedIssueLabelsForPropagation`) lives in `linked-issue-label-propagation-fetch.ts` instead, kept
+// out of this file specifically so the UI workspace's typecheck never has to resolve `Env`.
+&nbsp;
+// Fail-SAFE default: propagation OFF, no mappings. A self-hoster must explicitly opt in per repo.
+export const DEFAULT_LINKED_ISSUE_LABEL_PROPAGATION: LinkedIssueLabelPropagationConfig = <span class="cstat-no" title="statement not covered" >{</span>
+  enabled: false,
+  mode: "exclusive_type_label",
+  mappings: [],
+};
+&nbsp;
+// Exported so `focus-manifest.ts`'s sparse-override parser can check whether a raw `mode` value is
+// actually valid before deciding to copy the normalizer's (possibly defaults-filled-on-invalid) result.
+export const VALID_LINKED_ISSUE_LABEL_PROPAGATION_MODES: readonly LinkedIssueLabelPropagationMode[] = <span class="cstat-no" title="statement not covered" >["exclusive_type_label"];</span>
+&nbsp;
+function <span class="fstat-no" title="function not covered" >normalizeMapping(i</span>nput: unknown, index: number, warnings: string[]): LinkedIssueLabelPropagationMapping | null {
+<span class="cstat-no" title="statement not covered" >  if (typeof input !== "object" || input === null || Array.isArray(input)) {</span>
+<span class="cstat-no" title="statement not covered" >    warnings.push(`settings.linkedIssueLabelPropagation.mappings[${index}] must be an object; ignoring it.`);</span>
+<span class="cstat-no" title="statement not covered" >    return null;</span>
+  }
+  const record = <span class="cstat-no" title="statement not covered" >input as Record&lt;string, unknown&gt;;</span>
+  const issueLabel = <span class="cstat-no" title="statement not covered" >typeof record.issueLabel === "string" ? record.issueLabel.trim() : "";</span>
+  const prLabel = <span class="cstat-no" title="statement not covered" >typeof record.prLabel === "string" ? record.prLabel.trim() : "";</span>
+<span class="cstat-no" title="statement not covered" >  if (issueLabel.length === 0 || prLabel.length === 0) {</span>
+<span class="cstat-no" title="statement not covered" >    warnings.push(`settings.linkedIssueLabelPropagation.mappings[${index}] must have non-empty "issueLabel" and "prLabel" strings; ignoring it.`);</span>
+<span class="cstat-no" title="statement not covered" >    return null;</span>
+  }
+  // `removeOtherTypeLabels` picks exclusive (replaces the type label, the gittensor:priority case) vs.
+  // additive (applied alongside it) -- silently coercing a present-but-wrong-shaped value (e.g. a quoted
+  // `"true"` string) to `false` could flip an intended-exclusive mapping to additive without any signal,
+  // so a present, non-boolean value drops the whole entry with a warning instead (omitted is still a
+  // normal, unwarned default of `false`).
+<span class="cstat-no" title="statement not covered" >  if (record.removeOtherTypeLabels !== undefined &amp;&amp; typeof record.removeOtherTypeLabels !== "boolean") {</span>
+<span class="cstat-no" title="statement not covered" >    warnings.push(`settings.linkedIssueLabelPropagation.mappings[${index}].removeOtherTypeLabels must be a boolean; ignoring this mapping.`);</span>
+<span class="cstat-no" title="statement not covered" >    return null;</span>
+  }
+  // Unlike `removeOtherTypeLabels`, a malformed value here can only ever be warned-and-defaulted (never
+  // dropped) -- defaulting to `undefined`/strict is always the SAFE direction (no mapping accidentally
+  // starts trusting maintainer-authored issues), so there is no silent-flip risk that would justify
+  // discarding an otherwise-valid mapping over it.
+  let trustMaintainerAuthoredIssue: boolean | undefined;
+<span class="cstat-no" title="statement not covered" >  if (record.trustMaintainerAuthoredIssue !== undefined) {</span>
+<span class="cstat-no" title="statement not covered" >    if (typeof record.trustMaintainerAuthoredIssue === "boolean") {</span>
+<span class="cstat-no" title="statement not covered" >      trustMaintainerAuthoredIssue = record.trustMaintainerAuthoredIssue;</span>
+    } else {
+<span class="cstat-no" title="statement not covered" >      warnings.push(`settings.linkedIssueLabelPropagation.mappings[${index}].trustMaintainerAuthoredIssue must be a boolean; ignoring it.`);</span>
+    }
+  }
+  // Same parse contract as trustMaintainerAuthoredIssue just above (#priority-reward-maintainer-trust):
+  // malformed is warned-and-defaulted to undefined/strict, never silently coerced, never a reason to drop
+  // an otherwise-valid mapping.
+  let trustMaintainerAuthoredIssueForReward: boolean | undefined;
+<span class="cstat-no" title="statement not covered" >  if (record.trustMaintainerAuthoredIssueForReward !== undefined) {</span>
+<span class="cstat-no" title="statement not covered" >    if (typeof record.trustMaintainerAuthoredIssueForReward === "boolean") {</span>
+<span class="cstat-no" title="statement not covered" >      trustMaintainerAuthoredIssueForReward = record.trustMaintainerAuthoredIssueForReward;</span>
+    } else {
+<span class="cstat-no" title="statement not covered" >      warnings.push(`settings.linkedIssueLabelPropagation.mappings[${index}].trustMaintainerAuthoredIssueForReward must be a boolean; ignoring it.`);</span>
+    }
+  }
+<span class="cstat-no" title="statement not covered" >  return { issueLabel, prLabel, removeOtherTypeLabels: record.removeOtherTypeLabels === true, trustMaintainerAuthoredIssue, trustMaintainerAuthoredIssueForReward };</span>
+}
+&nbsp;
+/** Defaults-fill a per-repo `linkedIssueLabelPropagation` override into an always-complete, safe config —
+ *  mirrors `normalizeCommandAuthorizationPolicy`'s defaults-fill pattern
+ *  (`src/settings/command-authorization.ts`). Malformed mapping entries are dropped with a warning; valid
+ *  entries in the same array are kept (matches `commandAuthorization`'s per-entry `commands` validation). */
+export function <span class="fstat-no" title="function not covered" >normalizeLinkedIssueLabelPropagationConfig(i</span>nput: unknown, warnings: string[]): LinkedIssueLabelPropagationConfig {
+<span class="cstat-no" title="statement not covered" >  if (input === undefined) <span class="cstat-no" title="statement not covered" >return { ...DEFAULT_LINKED_ISSUE_LABEL_PROPAGATION, mappings: [] };</span></span>
+<span class="cstat-no" title="statement not covered" >  if (typeof input !== "object" || input === null || Array.isArray(input)) {</span>
+<span class="cstat-no" title="statement not covered" >    warnings.push("settings.linkedIssueLabelPropagation must be an object; propagation stays disabled.");</span>
+<span class="cstat-no" title="statement not covered" >    return { ...DEFAULT_LINKED_ISSUE_LABEL_PROPAGATION, mappings: [] };</span>
+  }
+  const record = <span class="cstat-no" title="statement not covered" >input as Record&lt;string, unknown&gt;;</span>
+  let enabled = <span class="cstat-no" title="statement not covered" >DEFAULT_LINKED_ISSUE_LABEL_PROPAGATION.enabled;</span>
+<span class="cstat-no" title="statement not covered" >  if (record.enabled !== undefined) {</span>
+<span class="cstat-no" title="statement not covered" >    if (typeof record.enabled === "boolean") {</span>
+<span class="cstat-no" title="statement not covered" >      enabled = record.enabled;</span>
+    } else {
+<span class="cstat-no" title="statement not covered" >      warnings.push(`settings.linkedIssueLabelPropagation.enabled must be a boolean; using the default "${DEFAULT_LINKED_ISSUE_LABEL_PROPAGATION.enabled}".`);</span>
+    }
+  }
+  let mode: LinkedIssueLabelPropagationMode = <span class="cstat-no" title="statement not covered" >DEFAULT_LINKED_ISSUE_LABEL_PROPAGATION.mode;</span>
+<span class="cstat-no" title="statement not covered" >  if (record.mode !== undefined) {</span>
+<span class="cstat-no" title="statement not covered" >    if (typeof record.mode === "string" &amp;&amp; (VALID_LINKED_ISSUE_LABEL_PROPAGATION_MODES as readonly string[]).includes(record.mode)) {</span>
+<span class="cstat-no" title="statement not covered" >      mode = record.mode as LinkedIssueLabelPropagationMode;</span>
+    } else {
+<span class="cstat-no" title="statement not covered" >      warnings.push(`settings.linkedIssueLabelPropagation.mode must be one of ${VALID_LINKED_ISSUE_LABEL_PROPAGATION_MODES.join(", ")}; using the default "${DEFAULT_LINKED_ISSUE_LABEL_PROPAGATION.mode}".`);</span>
+    }
+  }
+  let mappings: LinkedIssueLabelPropagationMapping[] = <span class="cstat-no" title="statement not covered" >[];</span>
+<span class="cstat-no" title="statement not covered" >  if (record.mappings !== undefined) {</span>
+<span class="cstat-no" title="statement not covered" >    if (Array.isArray(record.mappings)) {</span>
+<span class="cstat-no" title="statement not covered" >      mappings = record.mappings.<span class="fstat-no" title="function not covered" >flatMap((e</span>ntry, index) =&gt; {</span>
+        const normalized = <span class="cstat-no" title="statement not covered" >normalizeMapping(entry, index, warnings);</span>
+<span class="cstat-no" title="statement not covered" >        return normalized ? [normalized] : [];</span>
+      });
+    } else {
+<span class="cstat-no" title="statement not covered" >      warnings.push("settings.linkedIssueLabelPropagation.mappings must be an array; using no mappings.");</span>
+    }
+  }
+<span class="cstat-no" title="statement not covered" >  return { enabled, mode, mappings };</span>
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../../../sorter.js"></script>
+        <script src="../../../../block-navigation.js"></script>
+    </body>
+</html>
+    

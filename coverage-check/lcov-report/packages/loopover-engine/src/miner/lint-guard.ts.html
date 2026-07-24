@@ -1,0 +1,478 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for packages/loopover-engine/src/miner/lint-guard.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../../../prettify.css" />
+    <link rel="stylesheet" href="../../../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../../../index.html">All files</a> / <a href="index.html">packages/loopover-engine/src/miner</a> lint-guard.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/38</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/26</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/5</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/32</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Lint-guarded edit wrapper for coding-agent drivers (#4276). This repo has no repo-wide ESLint (or other
+// linter) at the src/packages/* level -- the only ESLint config is apps/loopover-ui/eslint.config.js,
+// wired up solely through `ui:lint`. The gate everything else runs is `typecheck` (`tsc --noEmit`) plus each
+// package/* under `packages/*` having its OWN build-time check: `loopover-engine` runs its own `tsc -p
+// tsconfig.json`; `loopover-miner`/`loopover-mcp` ship plain JS with `node --check` per shipped `.js`
+// file (their non-`.js` files, like hand-written `.d.ts` declarations, are covered by the root typecheck
+// instead, same as `src/`). "Lint-guarded" therefore means: after a coding-agent driver edits files, run the
+// EXISTING check appropriate to each changed file's package -- never introduce a new linter.
+//
+// Implementations here MAY perform real IO (spawn `tsc`/`node`/`npm`), same allowance as `CodingAgentDriver`
+// itself (coding-agent-driver.ts) -- the spawn function is injected (mirrors `SpawnFn` in
+// `src/selfhost/ai.ts`), so this module stays synchronous-IO-free in tests.
+import type { CodingAgentDriverResult } from "./coding-agent-driver.js";
+&nbsp;
+/** Which existing check governs a changed file. `root` covers `src/**` and any non-`.js` file under
+ *  `packages/loopover-miner`/`packages/loopover-mcp` (e.g. a hand-written `.d.ts`), since those are
+ *  type-checked by the root `tsc --noEmit`, not `node --check`. */
+export type LintGuardPackage = "ui" | "engine" | "miner-js" | "mcp-js" | "root";
+&nbsp;
+const MINER_JS_EXTENSION = <span class="cstat-no" title="statement not covered" >/\.(js|mjs|cjs)$/;</span>
+&nbsp;
+/** Classify a changed file path (POSIX or Windows separators) into the package whose existing check governs
+ *  it. Pure path matching -- no filesystem access. */
+export function <span class="fstat-no" title="function not covered" >classifyLintGuardPackage(p</span>ath: string): LintGuardPackage {
+  const normalized = <span class="cstat-no" title="statement not covered" >path.replace(/\\/g, "/").replace(/^\.\//, "");</span>
+<span class="cstat-no" title="statement not covered" >  if (normalized.startsWith("apps/loopover-ui/")) <span class="cstat-no" title="statement not covered" >return "ui";</span></span>
+<span class="cstat-no" title="statement not covered" >  if (normalized.startsWith("packages/loopover-engine/")) <span class="cstat-no" title="statement not covered" >return "engine";</span></span>
+<span class="cstat-no" title="statement not covered" >  if (normalized.startsWith("packages/loopover-miner/") &amp;&amp; MINER_JS_EXTENSION.test(normalized)) <span class="cstat-no" title="statement not covered" >return "miner-js";</span></span>
+<span class="cstat-no" title="statement not covered" >  if (normalized.startsWith("packages/loopover-mcp/") &amp;&amp; MINER_JS_EXTENSION.test(normalized)) <span class="cstat-no" title="statement not covered" >return "mcp-js";</span></span>
+<span class="cstat-no" title="statement not covered" >  return "root";</span>
+}
+&nbsp;
+/** Injected process runner -- real IO lives here, not in `guardChangedFiles`, so tests never spawn a real
+ *  subprocess. `ok` is derived from the exit code by the caller of this function, not by this type. */
+export type LintGuardSpawnFn = (
+  cmd: string,
+  args: readonly string[],
+  opts: { cwd: string },
+) =&gt; Promise&lt;{ code: number | null; output: string }&gt;;
+&nbsp;
+export type LintGuardCheckResult = {
+  package: LintGuardPackage;
+  file: string;
+  command: string;
+  ok: boolean;
+  output: string;
+};
+&nbsp;
+/** Structured result -- never a thrown exception -- so a caller (the self-review loop, #2333) can
+ *  distinguish "the edit doesn't typecheck" (a `checks` entry with `ok: false`) from "the coding agent
+ *  itself failed" (a separate concern entirely, see {@link guardCodingAgentDriverResult}). */
+export type LintGuardResult = {
+  ok: boolean;
+  checks: readonly LintGuardCheckResult[];
+};
+&nbsp;
+export type LintGuardOptions = {
+  spawn: LintGuardSpawnFn;
+  /** Repo root the checks run from. Default: `process.cwd()`. */
+  cwd?: string | undefined;
+};
+&nbsp;
+const PACKAGE_COMMAND: Readonly&lt;Record&lt;Exclude&lt;LintGuardPackage, "miner-js" | "mcp-js"&gt;, readonly string[]&gt;&gt; = <span class="cstat-no" title="statement not covered" >Object.freeze({</span>
+  root: Object.freeze(["npm", "run", "typecheck"]),
+  engine: Object.freeze(["npm", "run", "build", "--workspace", "@loopover/engine"]),
+  ui: Object.freeze(["npm", "run", "ui:typecheck"]),
+});
+&nbsp;
+async function <span class="fstat-no" title="function not covered" >runPackageCheck(</span>
+  pkg: LintGuardPackage,
+  files: readonly string[],
+  spawn: LintGuardSpawnFn,
+  cwd: string,
+): Promise&lt;LintGuardCheckResult[]&gt; {
+<span class="cstat-no" title="statement not covered" >  if (pkg === "miner-js" || pkg === "mcp-js") {</span>
+    // node --check is inherently per-file, unlike the whole-package tsc/ui:lint commands below.
+    const results: LintGuardCheckResult[] = <span class="cstat-no" title="statement not covered" >[];</span>
+<span class="cstat-no" title="statement not covered" >    for (const file of files) {</span>
+      const { code, output } = <span class="cstat-no" title="statement not covered" >await spawn("node", ["--check", file], { cwd });</span>
+<span class="cstat-no" title="statement not covered" >      results.push({ package: pkg, file, command: `node --check ${file}`, ok: code === 0, output });</span>
+    }
+<span class="cstat-no" title="statement not covered" >    return results;</span>
+  }
+  const command = <span class="cstat-no" title="statement not covered" >PACKAGE_COMMAND[pkg];</span>
+  const { code, output } = <span class="cstat-no" title="statement not covered" >await spawn(command[0]!, command.slice(1), { cwd });</span>
+<span class="cstat-no" title="statement not covered" >  return [{ package: pkg, file: files.join(", "), command: command.join(" "), ok: code === 0, output }];</span>
+}
+&nbsp;
+/**
+ * Run the existing check for every package a changed file belongs to. One check per package group, not one
+ * per file (except `node --check`, which is inherently per-file) -- `tsc`/`ui:typecheck` validate a whole
+ * package at once, so re-running them per file would be redundant work, not extra coverage.
+ */
+export async function <span class="fstat-no" title="function not covered" >guardChangedFiles(</span>
+  changedFiles: readonly string[],
+  options: LintGuardOptions,
+): Promise&lt;LintGuardResult&gt; {
+  const cwd = <span class="cstat-no" title="statement not covered" >options.cwd ?? process.cwd();</span>
+  const byPackage = <span class="cstat-no" title="statement not covered" >new Map&lt;LintGuardPackage, string[]&gt;();</span>
+<span class="cstat-no" title="statement not covered" >  for (const file of changedFiles) {</span>
+    const pkg = <span class="cstat-no" title="statement not covered" >classifyLintGuardPackage(file);</span>
+    const list = <span class="cstat-no" title="statement not covered" >byPackage.get(pkg);</span>
+<span class="cstat-no" title="statement not covered" >    if (list) <span class="cstat-no" title="statement not covered" >list.push(file);</span></span>
+    else <span class="cstat-no" title="statement not covered" >byPackage.set(pkg, [file]);</span>
+  }
+&nbsp;
+  const checks: LintGuardCheckResult[] = <span class="cstat-no" title="statement not covered" >[];</span>
+<span class="cstat-no" title="statement not covered" >  for (const [pkg, files] of byPackage) {</span>
+<span class="cstat-no" title="statement not covered" >    checks.push(...(await runPackageCheck(pkg, files, options.spawn, cwd)));</span>
+  }
+&nbsp;
+<span class="cstat-no" title="statement not covered" >  return { ok: checks.<span class="fstat-no" title="function not covered" >every((c</span>heck) =&gt; <span class="cstat-no" title="statement not covered" >check.ok)</span>, checks };</span>
+}
+&nbsp;
+export type LintGuardedDriverResult = CodingAgentDriverResult &amp; { lintGuard: LintGuardResult };
+&nbsp;
+/**
+ * Decorate a `CodingAgentDriver` result with its lint-guard verdict. Skips the guard entirely (an empty,
+ * passing `lintGuard`) when the driver itself failed or reported no changed files -- there is nothing to
+ * check, and running checks against an untouched tree would only produce a misleading unrelated result.
+ */
+export async function <span class="fstat-no" title="function not covered" >guardCodingAgentDriverResult(</span>
+  result: CodingAgentDriverResult,
+  options: LintGuardOptions,
+): Promise&lt;LintGuardedDriverResult&gt; {
+<span class="cstat-no" title="statement not covered" >  if (!result.ok || result.changedFiles.length === 0) {</span>
+<span class="cstat-no" title="statement not covered" >    return { ...result, lintGuard: { ok: true, checks: [] } };</span>
+  }
+  const lintGuard = <span class="cstat-no" title="statement not covered" >await guardChangedFiles(result.changedFiles, options);</span>
+<span class="cstat-no" title="statement not covered" >  return { ...result, ok: result.ok &amp;&amp; lintGuard.ok, lintGuard };</span>
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../../../sorter.js"></script>
+        <script src="../../../../block-navigation.js"></script>
+    </body>
+</html>
+    

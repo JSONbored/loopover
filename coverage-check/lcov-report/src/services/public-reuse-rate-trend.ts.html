@@ -1,0 +1,427 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/services/public-reuse-rate-trend.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/services</a> public-reuse-rate-trend.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/36</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/12</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/9</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/28</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Public "AI-work reuse rate" weekly trend (#4448, part of epic #4445). An honest engineering-competence
+// number, not a cost claim: how often the review engine correctly reused a prior result instead of redoing the
+// same work -- across every AI-touching capability that has a cache to hit or miss (grounding, review-memory,
+// impact-map, repo-culture-profile, ai_review, ai_slop, linked_issue_satisfaction, miner_detection). Deliberately
+// NOT a cost/token-rate metric (out of scope per the parent epic).
+//
+// DELIBERATELY NOT a persisted/cron rollup, mirroring #4447's own public-accuracy-trend.ts design: audit_events
+// is already durable, so a live weekly re-bucketing of the SAME rows can recompute any historical week correctly
+// on every request -- no cron-miss gap risk, and no second copy of the number to keep in sync.
+//
+// PUBLIC-SAFE SCOPE: only events whose target_key maps to LOOPOVER_PUBLIC_STATS_REPOS are included. Most
+// cache keys are either a bare repoFullName or repoFullName#prNumber; anything outside that allowlist is treated
+// as private operational telemetry and deliberately excluded from this unauthenticated payload.
+//
+// NAMING CONVENTION, not a hardcoded capability list: every instrumented capability already follows
+// `github_app.&lt;name&gt;_cache_hit` / `github_app.&lt;name&gt;_cache_miss` (confirmed via a full-repo grep before writing
+// this), so a single LIKE-pattern query picks up all eight today AND any future capability that follows the
+// same convention, with zero code change here. ai_review's three additional REUSE variants (frozen/paused/
+// one-shot) don't fit that exact suffix -- each is a genuine "skipped a redundant AI call" event, so they're
+// folded into "hit" alongside the plain ai_review_cache_hit.
+import { publicStatsProjects, safeAll } from "../review/public-stats";
+import { isoWeekStart } from "./public-quality-metrics";
+&nbsp;
+export const PUBLIC_REUSE_RATE_TREND_WEEKS = <span class="cstat-no" title="statement not covered" >8;</span>
+/** Below this many total attempts (hits+misses) in a week, that week's reuse rate is too noisy to publish. */
+export const MIN_REUSE_RATE_TREND_SAMPLE = <span class="cstat-no" title="statement not covered" >5;</span>
+&nbsp;
+/** ai_review reuse events that don't follow the `_cache_hit` suffix convention but are the SAME "avoided a
+ *  redundant AI call" signal -- each one means the review pass reused a prior state instead of re-running. */
+const AI_REVIEW_REUSE_EVENT_TYPES = <span class="cstat-no" title="statement not covered" >["github_app.ai_review_frozen_reuse", "github_app.ai_review_paused_reuse", "github_app.ai_review_one_shot_reuse"] as const;</span>
+&nbsp;
+export type PublicReuseRateTrendWeek = {
+  /** UTC Monday (YYYY-MM-DD) that starts the bucket. */
+  weekStart: string;
+  hits: number;
+  misses: number;
+  reuseRatePct: number | null;
+};
+&nbsp;
+type DayRow = { day: string; hits: number; misses: number };
+&nbsp;
+const MS_PER_WEEK = <span class="cstat-no" title="statement not covered" >7 * 86_400_000;</span>
+&nbsp;
+function <span class="fstat-no" title="function not covered" >roundPct(v</span>alue: number): number {
+<span class="cstat-no" title="statement not covered" >  return Math.round(value * 1000) / 10;</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >reuseRatePctOf(h</span>its: number, misses: number): number | null {
+  const attempts = <span class="cstat-no" title="statement not covered" >hits + misses;</span>
+<span class="cstat-no" title="statement not covered" >  if (attempts &lt; MIN_REUSE_RATE_TREND_SAMPLE) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+<span class="cstat-no" title="statement not covered" >  return roundPct(hits / attempts);</span>
+}
+&nbsp;
+/** Fold day-granularity rows into `weeks` trailing UTC-Monday buckets ending in the week containing `nowMs`.
+ *  Pure -- mirrors buildPublicAccuracyTrend's own bucketing shape (public-accuracy-trend.ts, #4447). */
+export function <span class="fstat-no" title="function not covered" >buildPublicReuseRateTrend(d</span>ayRows: DayRow[], nowMs: number, weeks: number = <span class="branch-0 cbranch-no" title="branch not covered" >PUBLIC_REUSE_RATE_TREND_WEEKS): PublicReuseRateTrendWeek[] {</span>
+  const currentStartMs = <span class="cstat-no" title="statement not covered" >Date.parse(isoWeekStart(nowMs));</span>
+  const oldestStartMs = <span class="cstat-no" title="statement not covered" >currentStartMs - (weeks - 1) * MS_PER_WEEK;</span>
+  const buckets = <span class="cstat-no" title="statement not covered" >Array.from({ length: weeks <span class="fstat-no" title="function not covered" >}, () =&gt; (<span class="cstat-no" title="statement not covered" >{</span> hits: 0, misses: 0 }))</span>;</span>
+&nbsp;
+<span class="cstat-no" title="statement not covered" >  for (const row of dayRows) {</span>
+    const dayMs = <span class="cstat-no" title="statement not covered" >Date.parse(`${row.day}T00:00:00.000Z`);</span>
+<span class="cstat-no" title="statement not covered" >    if (!Number.isFinite(dayMs)) <span class="cstat-no" title="statement not covered" >continue;</span></span>
+    const weekOffset = <span class="cstat-no" title="statement not covered" >Math.floor((dayMs - oldestStartMs) / MS_PER_WEEK);</span>
+<span class="cstat-no" title="statement not covered" >    if (weekOffset &lt; 0 || weekOffset &gt;= weeks) <span class="cstat-no" title="statement not covered" >continue;</span></span>
+    const bucket = <span class="cstat-no" title="statement not covered" >buckets[weekOffset]!;</span>
+<span class="cstat-no" title="statement not covered" >    bucket.hits += row.hits;</span>
+<span class="cstat-no" title="statement not covered" >    bucket.misses += row.misses;</span>
+  }
+&nbsp;
+<span class="cstat-no" title="statement not covered" >  return buckets.<span class="fstat-no" title="function not covered" >map((b</span>ucket, offset) =&gt; (<span class="cstat-no" title="statement not covered" >{</span></span>
+    weekStart: isoWeekStart(oldestStartMs + offset * MS_PER_WEEK),
+    hits: bucket.hits,
+    misses: bucket.misses,
+    reuseRatePct: reuseRatePctOf(bucket.hits, bucket.misses),
+  }));
+}
+&nbsp;
+/** Day-bucketed hit/miss counts across every `github_app.&lt;name&gt;_cache_hit` / `_cache_miss` event, plus
+ *  ai_review's three non-suffix-conforming reuse variants (see file header). Fail-safe: degrades to [] on any
+ *  query error (safeAll), yielding under-counted weeks rather than throwing the whole public stats payload. */
+async function <span class="fstat-no" title="function not covered" >loadReuseRateDayRows(e</span>nv: Env, projects: string[], sinceIso: string): Promise&lt;DayRow[]&gt; {
+<span class="cstat-no" title="statement not covered" >  if (projects.length === 0) <span class="cstat-no" title="statement not covered" >return [];</span></span>
+  const projectPlaceholders = <span class="cstat-no" title="statement not covered" >projects.<span class="fstat-no" title="function not covered" >map(() =&gt; <span class="cstat-no" title="statement not covered" >"</span>?")</span>.join(", ");</span>
+  const reuseTypePlaceholders = <span class="cstat-no" title="statement not covered" >AI_REVIEW_REUSE_EVENT_TYPES.<span class="fstat-no" title="function not covered" >map(() =&gt; <span class="cstat-no" title="statement not covered" >"</span>?")</span>.join(", ");</span>
+  const rows = <span class="cstat-no" title="statement not covered" >await safeAll&lt;{ day: string; hits: number; misses: number }&gt;(</span>
+    env,
+    `SELECT date(created_at) AS day,
+            SUM(CASE WHEN event_type LIKE 'github_app.%cache_hit' OR event_type IN (${reuseTypePlaceholders}) THEN 1 ELSE 0 END) AS hits,
+            SUM(CASE WHEN event_type LIKE 'github_app.%cache_miss' THEN 1 ELSE 0 END) AS misses
+       FROM audit_events
+      WHERE (event_type LIKE 'github_app.%cache_hit' OR event_type LIKE 'github_app.%cache_miss' OR event_type IN (${reuseTypePlaceholders}))
+        AND LOWER(CASE WHEN instr(target_key, '#') &gt; 0 THEN substr(target_key, 1, instr(target_key, '#') - 1) ELSE target_key END) IN (${projectPlaceholders})
+        AND created_at &gt;= ?
+      GROUP BY day`,
+    ...AI_REVIEW_REUSE_EVENT_TYPES,
+    ...AI_REVIEW_REUSE_EVENT_TYPES,
+    ...projects,
+    sinceIso,
+  );
+  /* v8 ignore next -- SUM(CASE WHEN ... THEN 1 ELSE 0 END) over an existing GROUP BY day always yields a
+   *  defined integer (0 or more), never SQL NULL, so the ?? 0 fallback can't currently be exercised; kept for
+   *  defense against a future query-shape change (mirrors public-accuracy-trend.ts's identical guard). */
+  return rows.map((row) =&gt; ({ day: row.day, hits: row.hits ?? 0, misses: row.misses ?? 0 }));
+}
+&nbsp;
+/** Assemble the public reuse-rate trend from the SAME live audit_events ledger every instrumented capability
+ *  already writes to. */
+export async function <span class="fstat-no" title="function not covered" >loadPublicReuseRateTrend(e</span>nv: Env, nowMs: number = <span class="branch-0 cbranch-no" title="branch not covered" >Date.now()): Promise&lt;PublicReuseRateTrendWeek[]&gt; {</span>
+  const projects = <span class="cstat-no" title="statement not covered" >publicStatsProjects(env);</span>
+  const sinceIso = <span class="cstat-no" title="statement not covered" >new Date(Date.parse(isoWeekStart(nowMs)) - (PUBLIC_REUSE_RATE_TREND_WEEKS - 1) * MS_PER_WEEK).toISOString();</span>
+  const dayRows = <span class="cstat-no" title="statement not covered" >await loadReuseRateDayRows(env, projects, sinceIso);</span>
+<span class="cstat-no" title="statement not covered" >  return buildPublicReuseRateTrend(dayRows, nowMs);</span>
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    

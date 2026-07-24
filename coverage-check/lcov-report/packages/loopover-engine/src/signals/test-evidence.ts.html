@@ -1,0 +1,616 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for packages/loopover-engine/src/signals/test-evidence.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../../../prettify.css" />
+    <link rel="stylesheet" href="../../../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../../../index.html">All files</a> / <a href="index.html">packages/loopover-engine/src/signals</a> test-evidence.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/51</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/52</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/9</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/45</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">export function <span class="fstat-no" title="function not covered" >isTestPath(f</span>ile: string): boolean {
+<span class="cstat-no" title="statement not covered" >  return (</span>
+    /(^|\/)(test|tests|spec|__tests__)\//i.test(file) ||
+    /(^|\/)src\/test\//i.test(file) ||
+    /(^|\/)[^/]+_test\.(go|py|rb|dart)$/i.test(file) || // Dart/Flutter `foo_test.dart` co-located with source
+    /(^|\/)test_[^/]*\.py$/i.test(file) || // pytest's default `test_*.py` prefix convention (the suffix rule above only catches `*_test.py`)
+    /(^|\/)[^/]+_spec\.rb$/i.test(file) ||
+    /\.(test|spec)\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|rs)$/i.test(file) ||
+    /(^|\/)[^/]+\.(cy|e2e)\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/i.test(file) ||
+    // JVM / C# / Swift / PHP `SomethingTest(s)`/`SomethingSpec` class-suffix convention
+    // (JUnit, Kotlin/ScalaTest, Spock, xUnit/NUnit, XCTest, PHPUnit/PHPSpec). Case-sensitive on the
+    // PascalCase suffix so it can't false-positive on words that merely end in
+    // "test"/"spec" (Latest.java, Contest.cs, manifest.scala, Latest.php).
+    /(^|\/)\w*(Tests?|Spec)\.(java|kt|kts|scala|cs|swift|groovy|php)$/.test(file) ||
+    /(^|\/)__snapshots__\//i.test(file)
+  );
+}
+&nbsp;
+// Canonical hand-authored-source extensions — the SOURCE-side sibling of isTestPath's class-suffix rule.
+// The two matchers MUST stay symmetric: isTestPath recognizes java/kt/kts/scala/cs/swift/groovy test files,
+// so this set lists those same languages. Otherwise a C#/Swift/Groovy/Kotlin-script SOURCE change is classified
+// as neither code nor test and silently escapes both the missing-tests gate signals and token scoring.
+const SOURCE_FILE_EXTENSION = <span class="cstat-no" title="statement not covered" >/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|rs|kt|kts|scala|java|cs|swift|groovy|go|sql)$/i;</span>
+&nbsp;
+/** True iff `file` is a hand-authored program-source file: a recognized source extension that is not itself a
+ *  test file. The single source of truth for every `isCodeFile` in the signals layer, so the source/test
+ *  classifiers can never drift (the same way isCodeFile's `isTestFile` wrappers all delegate to isTestPath). */
+export function <span class="fstat-no" title="function not covered" >isSourcePath(f</span>ile: string): boolean {
+<span class="cstat-no" title="statement not covered" >  return SOURCE_FILE_EXTENSION.test(file) &amp;&amp; !isTestPath(file);</span>
+}
+&nbsp;
+// Extensions recognized as code outside isSourcePath's core set (php, native, front-end frameworks, Dart).
+// isSourcePath owns the JVM/.NET/Swift/Groovy/Kotlin-script set symmetric with isTestPath.
+const EXTENDED_SOURCE_EXTENSION = <span class="cstat-no" title="statement not covered" >/\.(php|cpp|cc|c|h|hpp|m|vue|svelte|astro|dart)$/i;</span>
+&nbsp;
+/** cs/swift/groovy/kts plus php, C/C++/Objective-C, vue/svelte/astro, and dart — see isSourcePath for the
+ *  canonical JVM/.NET/Swift/Groovy/Kotlin-script matcher kept symmetric with isTestPath. Generated Dart part
+ *  files (.g.dart/.freezed.dart/.gr.dart) stay non-code (#3724). The single source of truth both the Worker
+ *  (src/signals/path-matchers.ts) and the published @loopover/mcp/loopover-miner CLIs delegate
+ *  to, so the three previously-independent hand-ports can't silently drift from each other again. */
+export function <span class="fstat-no" title="function not covered" >isCodeFile(f</span>ile: string): boolean {
+<span class="cstat-no" title="statement not covered" >  if (isSourcePath(file)) <span class="cstat-no" title="statement not covered" >return true;</span></span>
+<span class="cstat-no" title="statement not covered" >  return EXTENDED_SOURCE_EXTENSION.test(file) &amp;&amp; !isTestPath(file) &amp;&amp; !/\.(g|freezed|gr)\.dart$/i.test(file);</span>
+}
+&nbsp;
+export function <span class="fstat-no" title="function not covered" >hasLocalTestEvidence(i</span>nput: { tests?: string[] | undefined; testFiles?: string[] | undefined }): boolean {
+<span class="cstat-no" title="statement not covered" >  return (input.tests ?? []).length &gt; 0 || (input.testFiles ?? []).<span class="fstat-no" title="function not covered" >some((f</span>ile) =&gt; <span class="cstat-no" title="statement not covered" >isTestPath(file))</span>;</span>
+}
+&nbsp;
+// A body can mention testing without having actually done it ("No tests run", "Tests not run", "Not
+// tested locally", "did not run any tests") -- the affirmative keyword match below would otherwise treat
+// that as passing evidence and let a configured manifest test expectation silently disappear. Rather than
+// enumerate ever more literal phrase templates (which a previous version of this function tried, and which
+// still missed "Not tested" because its test-noun list didn't include the verb form "tested"), detect
+// negation by PROXIMITY: a negation word within a few words of a test/validation stem, in either order,
+// with a shared stem definition so the "is this a test/validation mention at all" question is answered
+// exactly once. The filler between the negation word and the stem may not cross a clause/sentence boundary
+// (a comma, period, exclamation mark, or question mark), so an unrelated "not" earlier in the body (e.g.
+// "This is not a breaking change. Tested with npm run test:ci.") cannot suppress a later, unrelated
+// affirmative note. A colon, semicolon, or dash is deliberately NOT a hard boundary here -- see
+// LABEL_SEPARATOR_GAP below.
+const TEST_STEM = <span class="cstat-no" title="statement not covered" >"(?:test(?:ed|s|ing)?|validat(?:ion|ed)|verif(?:y|ied|ying)|manual check|smoke(?:\\s+tests?)?)";</span>
+const NEGATION_WORD = <span class="cstat-no" title="statement not covered" >"(?:no|not|never|without|skip(?:ped)?|didn't|doesn't|isn't|wasn't|weren't|haven't|hasn't)";</span>
+const NEGATION_CONTINUATION = <span class="cstat-no" title="statement not covered" >"(?:not|never|failed|failing|skipped|incomplete)";</span>
+const SAME_SENTENCE_FILLER_WORD = <span class="cstat-no" title="statement not covered" >"[^\\s.,!?;]+";</span>
+// A label-style status line often glues its separator directly onto the negation word or stem with no
+// surrounding whitespace ("Tests: not run.", "Validation; skipped.", "Tests - not run."). The plain
+// `\s+` gap below would never match across that punctuation, so the negation went undetected and the
+// bare "Tests"/"Validation" keyword fell through to the affirmative check instead (#3304, round 4).
+// Allow ONE label separator (colon, semicolon, or a hyphen/en-dash/em-dash) with any trailing
+// whitespace to stand in for the mandatory whitespace, but only at the junction touching the negation
+// word or stem itself -- every other gap between filler words stays pure whitespace, so a label
+// separator elsewhere in the sentence still cannot let a negation reach across unrelated content (the
+// filler-word bound below already exists for exactly this reason).
+const LABEL_SEPARATOR_GAP = <span class="cstat-no" title="statement not covered" >"(?:\\s+|[:;\\-\\u2013\\u2014]\\s*)";</span>
+&nbsp;
+const NEGATES_BEFORE_TEST_STEM = <span class="cstat-no" title="statement not covered" >new RegExp(`\\b${NEGATION_WORD}\\b${LABEL_SEPARATOR_GAP}(?:${SAME_SENTENCE_FILLER_WORD}\\s+){0,3}${TEST_STEM}\\b`, "i");</span>
+const NEGATES_AFTER_TEST_STEM = <span class="cstat-no" title="statement not covered" >new RegExp(`\\b${TEST_STEM}\\b${LABEL_SEPARATOR_GAP}(?:${SAME_SENTENCE_FILLER_WORD}\\s+){0,2}${NEGATION_CONTINUATION}\\b`, "i");</span>
+// A compound negated adjective with no separating whitespace at all ("untested", "unvalidated", "unverified").
+const NEGATES_TEST_STEM_PREFIX = <span class="cstat-no" title="statement not covered" >/\bun(?:tested|validated|verified)\b/i;</span>
+&nbsp;
+const AFFIRMATIVE_TEST_MENTION = <span class="cstat-no" title="statement not covered" >/\b(test(?:ed|s|ing)?|validation|validated|verified|manual check|smoke|pytest|vitest|npm test|pnpm test|cargo test|go test)\b/i;</span>
+&nbsp;
+// A body can contain BOTH a genuine negated clause ("No tests run locally.") and a separate, later clause
+// with real affirmative evidence ("Validated with npm run test:ci.") -- evaluating the negation checks
+// against the WHOLE body would let the first clause veto the second, discarding real evidence the manifest
+// gate is specifically trying to detect (#3304, round 3). Split on the same clause-boundary punctuation the
+// proximity checks already treat as a hard stop -- colon/semicolon/dash are excluded here on purpose
+// (#3304, round 4): they are typically a label separator glued directly onto the word on either side
+// ("Tests: not run."), and splitting on them would sever the stem from its own negation before the
+// proximity checks ever run, the same way the round-3 bug worked one level up. Require at least one
+// clause to be an affirmative, non-negated mention -- so an earlier honest "no tests" disclosure can no
+// longer suppress later evidence.
+export function <span class="fstat-no" title="function not covered" >hasValidationNote(v</span>alue: string): boolean {
+<span class="cstat-no" title="statement not covered" >  return value</span>
+    .split(/[.,!?]+/)
+    .<span class="fstat-no" title="function not covered" >some(</span>
+      (clause) =&gt;
+<span class="cstat-no" title="statement not covered" >        !NEGATES_TEST_STEM_PREFIX.test(clause) &amp;&amp;</span>
+        !NEGATES_BEFORE_TEST_STEM.test(clause) &amp;&amp;
+        !NEGATES_AFTER_TEST_STEM.test(clause) &amp;&amp;
+        AFFIRMATIVE_TEST_MENTION.test(clause),
+    );
+}
+&nbsp;
+/**
+ * Coarse classification of how much test coverage accompanies a set of changed paths.
+ * Used by slop signals to weight diffs that touch source but include no tests differently
+ * from those with proportionally strong test changes.
+ */
+export type TestCoverageClassification = "strong" | "adequate" | "weak" | "absent";
+&nbsp;
+export function <span class="fstat-no" title="function not covered" >classifyTestCoverage(c</span>hangedPaths: string[]): TestCoverageClassification {
+<span class="cstat-no" title="statement not covered" >  if (changedPaths.length === 0) <span class="cstat-no" title="statement not covered" >return "absent";</span></span>
+  const testCount = <span class="cstat-no" title="statement not covered" >changedPaths.filter(isTestPath).length;</span>
+<span class="cstat-no" title="statement not covered" >  if (testCount === 0) <span class="cstat-no" title="statement not covered" >return "absent";</span></span>
+  const ratio = <span class="cstat-no" title="statement not covered" >testCount / changedPaths.length;</span>
+<span class="cstat-no" title="statement not covered" >  if (ratio &gt;= 0.4) <span class="cstat-no" title="statement not covered" >return "strong";</span></span>
+<span class="cstat-no" title="statement not covered" >  if (ratio &gt;= 0.2) <span class="cstat-no" title="statement not covered" >return "adequate";</span></span>
+<span class="cstat-no" title="statement not covered" >  return "weak";</span>
+}
+&nbsp;
+// #2187 (foundational slice of #1972 — boundary-safe test generation): a small, precise framework list.
+// Consumed by the MCP test-gen tool's enum (src/mcp/server.ts testGenShape) so a caller cannot request a
+// spec for a framework this engine doesn't recognize.
+export const TEST_FRAMEWORKS = <span class="cstat-no" title="statement not covered" >["vitest", "jest", "pytest", "go-test", "rspec", "cargo-test"] as const;</span>
+export type TestFramework = (typeof TEST_FRAMEWORKS)[number];
+&nbsp;
+/** The test-evidence report shape returned identically by the MCP tool, the REST route, and the CLI mirror. */
+export type TestEvidenceReport = {
+  classification: TestCoverageClassification;
+  changedFileCount: number;
+  codeFileCount: number;
+  testFileCount: number;
+  guidance: string[];
+};
+&nbsp;
+/**
+ * PURE: classify a planned change's test evidence from path metadata (plus optional free-text `tests` notes) and
+ * render actionable guidance. Extracted (#6749) so the remote MCP tool, `POST /v1/lint/test-evidence`, and the
+ * local CLI mirror all derive a byte-identical verdict from ONE implementation instead of three drifting copies.
+ */
+export function <span class="fstat-no" title="function not covered" >buildTestEvidenceReport(i</span>nput: {
+  changedPaths: readonly string[];
+  testFiles?: readonly string[] | undefined;
+  tests?: readonly string[] | undefined;
+}): TestEvidenceReport {
+  const allPaths = <span class="cstat-no" title="statement not covered" >[...input.changedPaths, ...(input.testFiles ?? [])];</span>
+  const codeFileCount = <span class="cstat-no" title="statement not covered" >input.changedPaths.filter(isCodeFile).length;</span>
+  let classification = <span class="cstat-no" title="statement not covered" >classifyTestCoverage(allPaths);</span>
+  let testFileCount = <span class="cstat-no" title="statement not covered" >allPaths.filter(isTestPath).length;</span>
+  // Credit free-text `tests` evidence (e.g. "ran `go test ./...` locally, no new file") the same way the
+  // sibling tools loopover_check_slop_risk / loopover_suggest_boundary_tests already do via
+  // hasLocalTestEvidence. Only ever LIFT an otherwise-"absent" verdict -- never make this more lenient than
+  // the path-based signal once real test-file evidence (weak/adequate/strong) already exists.
+  // hasLocalTestEvidence takes mutable arrays, so copy rather than passing the readonly inputs through.
+  const creditedByFreeTextTests =
+<span class="cstat-no" title="statement not covered" >    classification === "absent" &amp;&amp;</span>
+    hasLocalTestEvidence({ tests: input.tests ? [...input.tests] : undefined, testFiles: input.testFiles ? [...input.testFiles] : undefined });
+<span class="cstat-no" title="statement not covered" >  if (creditedByFreeTextTests) {</span>
+<span class="cstat-no" title="statement not covered" >    classification = "adequate";</span>
+<span class="cstat-no" title="statement not covered" >    testFileCount = Math.max(testFileCount, 1);</span>
+  }
+  const guidance: string[] = <span class="cstat-no" title="statement not covered" >[];</span>
+<span class="cstat-no" title="statement not covered" >  if (codeFileCount === 0) {</span>
+<span class="cstat-no" title="statement not covered" >    guidance.push("No hand-authored code files changed, so the missing-test-evidence signal does not apply (e.g. a docs- or config-only change).");</span>
+  } else <span class="cstat-no" title="statement not covered" >if (creditedByFreeTextTests) {</span>
+<span class="cstat-no" title="statement not covered" >    guidance.push("No test file was detected among the changed paths, but the free-text `tests` evidence you supplied is credited as test evidence (the same way check_slop_risk and suggest_boundary_tests treat it).");</span>
+  } else <span class="cstat-no" title="statement not covered" >if (classification === "absent") {</span>
+<span class="cstat-no" title="statement not covered" >    guidance.push("Changed code files carry no test evidence — add or update a test that exercises the change before opening the PR.");</span>
+  } else <span class="cstat-no" title="statement not covered" >if (classification === "strong") {</span>
+<span class="cstat-no" title="statement not covered" >    guidance.push("Test coverage looks strong for this change.");</span>
+  } else {
+<span class="cstat-no" title="statement not covered" >    guidance.push(`Test coverage is ${classification} for this change — adding another focused test would strengthen the evidence.`);</span>
+  }
+<span class="cstat-no" title="statement not covered" >  return { classification, changedFileCount: allPaths.length, codeFileCount, testFileCount, guidance };</span>
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../../../sorter.js"></script>
+        <script src="../../../../block-navigation.js"></script>
+    </body>
+</html>
+    

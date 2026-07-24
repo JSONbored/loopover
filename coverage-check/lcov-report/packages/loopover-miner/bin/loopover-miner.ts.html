@@ -1,0 +1,787 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for packages/loopover-miner/bin/loopover-miner.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../../prettify.css" />
+    <link rel="stylesheet" href="../../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../../index.html">All files</a> / <a href="index.html">packages/loopover-miner/bin</a> loopover-miner.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/95</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/86</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">100% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/0</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/83</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a>
+<a name='L185'></a><a href='#L185'>185</a>
+<a name='L186'></a><a href='#L186'>186</a>
+<a name='L187'></a><a href='#L187'>187</a>
+<a name='L188'></a><a href='#L188'>188</a>
+<a name='L189'></a><a href='#L189'>189</a>
+<a name='L190'></a><a href='#L190'>190</a>
+<a name='L191'></a><a href='#L191'>191</a>
+<a name='L192'></a><a href='#L192'>192</a>
+<a name='L193'></a><a href='#L193'>193</a>
+<a name='L194'></a><a href='#L194'>194</a>
+<a name='L195'></a><a href='#L195'>195</a>
+<a name='L196'></a><a href='#L196'>196</a>
+<a name='L197'></a><a href='#L197'>197</a>
+<a name='L198'></a><a href='#L198'>198</a>
+<a name='L199'></a><a href='#L199'>199</a>
+<a name='L200'></a><a href='#L200'>200</a>
+<a name='L201'></a><a href='#L201'>201</a>
+<a name='L202'></a><a href='#L202'>202</a>
+<a name='L203'></a><a href='#L203'>203</a>
+<a name='L204'></a><a href='#L204'>204</a>
+<a name='L205'></a><a href='#L205'>205</a>
+<a name='L206'></a><a href='#L206'>206</a>
+<a name='L207'></a><a href='#L207'>207</a>
+<a name='L208'></a><a href='#L208'>208</a>
+<a name='L209'></a><a href='#L209'>209</a>
+<a name='L210'></a><a href='#L210'>210</a>
+<a name='L211'></a><a href='#L211'>211</a>
+<a name='L212'></a><a href='#L212'>212</a>
+<a name='L213'></a><a href='#L213'>213</a>
+<a name='L214'></a><a href='#L214'>214</a>
+<a name='L215'></a><a href='#L215'>215</a>
+<a name='L216'></a><a href='#L216'>216</a>
+<a name='L217'></a><a href='#L217'>217</a>
+<a name='L218'></a><a href='#L218'>218</a>
+<a name='L219'></a><a href='#L219'>219</a>
+<a name='L220'></a><a href='#L220'>220</a>
+<a name='L221'></a><a href='#L221'>221</a>
+<a name='L222'></a><a href='#L222'>222</a>
+<a name='L223'></a><a href='#L223'>223</a>
+<a name='L224'></a><a href='#L224'>224</a>
+<a name='L225'></a><a href='#L225'>225</a>
+<a name='L226'></a><a href='#L226'>226</a>
+<a name='L227'></a><a href='#L227'>227</a>
+<a name='L228'></a><a href='#L228'>228</a>
+<a name='L229'></a><a href='#L229'>229</a>
+<a name='L230'></a><a href='#L230'>230</a>
+<a name='L231'></a><a href='#L231'>231</a>
+<a name='L232'></a><a href='#L232'>232</a>
+<a name='L233'></a><a href='#L233'>233</a>
+<a name='L234'></a><a href='#L234'>234</a>
+<a name='L235'></a><a href='#L235'>235</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">#!/usr/bin/env node
+import { runAttempt } from "../lib/attempt-cli.js";
+import { printHelp, printVersion, runCli } from "../lib/cli.js";
+import { configureLogger, extractLogOptions } from "../lib/logger.js";
+import { runDenyCheck } from "../lib/deny-check.js";
+import { runDiscover } from "../lib/discover-cli.js";
+import { runFeasibilityCli } from "../lib/feasibility-cli.js";
+import { runIdeaFeasibilityCli } from "../lib/idea-feasibility-cli.js";
+import { runGovernorCli } from "../lib/governor-ledger-cli.js";
+import { runLedgerCli } from "../lib/event-ledger-cli.js";
+import { runCalibrationCli } from "../lib/calibration-cli.js";
+import { runLoop } from "../lib/loop-cli.js";
+import { runManagePoll } from "../lib/manage-poll.js";
+import { runManageStatus } from "../lib/manage-status.js";
+import { runMetrics } from "../lib/metrics-cli.js";
+import { runPlanCli } from "../lib/plan-store-cli.js";
+import { runClaimCli } from "../lib/claim-ledger-cli.js";
+import { runPurge } from "../lib/purge-cli.js";
+import { runQueueCli } from "../lib/portfolio-queue-cli.js";
+import { runOrbExportCli } from "../lib/orb-export.js";
+import { runTenantCli } from "../lib/tenant-cli.js";
+import { installCliSignalHandlers } from "../lib/process-lifecycle.js";
+import { captureMinerErrorAndFlush, initMinerSentry } from "../lib/sentry.js";
+import { runStateCli } from "../lib/run-state-cli.js";
+import { runInit } from "../lib/laptop-init.js";
+import { createWizardIo, runInteractiveInit } from "../lib/init-wizard.js";
+import { loadMinerFileSecrets } from "../lib/env-file-indirection.js";
+import { runMigrate } from "../lib/migrate-cli.js";
+import { runDoctor, runStatus } from "../lib/status.js";
+import {
+  awaitOpportunisticUpdateCheck,
+  resolveUpgradeCommand,
+  startUpdateCheck,
+} from "../lib/update-check.js";
+import { resolveMinerVersion } from "../lib/version.js";
+&nbsp;
+// Resolve any `&lt;NAME&gt;_FILE` secret-mount vars (GITHUB_TOKEN_FILE, etc.) into their plain counterparts FIRST,
+// before anything else reads process.env -- every subcommand below (and the coding-agent driver construction
+// deeper in the call graph) reads plain env vars, so this single early pass is all that's needed for the whole
+// CLI (#5178). A broken secret mount fails the process fast and loud with a clear message, instead of an
+// uncaught-exception stack trace or a silent empty credential surfacing as a confusing GitHub 401 later.
+// Exits 2, not 1: docs/unattended-scheduling.md's contract only defines 0 (success) and 2 (failure -- "Alert
+// on this"), so an operator alerting strictly on 2 would otherwise miss a broken secret mount entirely.
+<span class="cstat-no" title="statement not covered" >try {</span>
+<span class="cstat-no" title="statement not covered" >  loadMinerFileSecrets();</span>
+} catch (error) {
+<span class="cstat-no" title="statement not covered" >  console.error(error instanceof Error ? error.message : String(error));</span>
+<span class="cstat-no" title="statement not covered" >  process.exit(2);</span>
+}
+&nbsp;
+// Opt-in Sentry (#6011): a complete no-op unless the operator sets LOOPOVER_MINER_SENTRY_DSN themselves. Must
+// run AFTER loadMinerFileSecrets (so a `_FILE`-mounted DSN resolves first) and BEFORE installCliSignalHandlers
+// (so a startup crash is still captured).
+/* v8 ignore start -- process entry point (this bin's top level runs unconditionally, every invocation);
+ * exercised by the real --help/--version subprocess spawn in miner-package-skeleton.test.ts (a different
+ * Node process, invisible to this test run's own coverage instrumentation), not unit-coverable here. The
+ * functions themselves (initMinerSentry, installCliSignalHandlers) are fully unit-tested in isolation
+ * (miner-sentry.test.ts, miner-process-lifecycle.test.ts) -- this is only the top-level wiring that calls
+ * them, mirroring src/server.ts's identical, already-established exemption in codecov.yml. */
+await initMinerSentry(process.env);
+&nbsp;
+// Register signal + crash handlers once, before any command runs, so an interrupted run closes its open ledgers
+// cleanly instead of dying mid-write (#4826). Covers every subcommand below, including the local ones.
+installCliSignalHandlers({ captureError: captureMinerErrorAndFlush });
+/* v8 ignore stop */
+&nbsp;
+// Peel the global logging flags (--quiet/--verbose/--log-level) off the front of argv and configure the
+// process-wide logger once (#4835), so every command below shares one level-aware logger without re-parsing
+// them; the stripped `cliArgs` is what the command dispatch sees.
+const { options: logOptions, rest: cliArgs } = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >extractLogOptions(process.argv.slice(2));</span></span>
+<span class="cstat-no" title="statement not covered" >configureLogger({ ...logOptions, env: process.env });</span>
+&nbsp;
+// `status` and `doctor` are strictly local, offline commands — their contract is to make NO network calls.
+// `init` stays local by default and only makes a network call when the operator explicitly passes
+// `--verify-token`.
+// Dispatch the local commands BEFORE the opportunistic npm-registry update check is even started, so they can
+// never reach that network path (the update check runs for the remaining commands below).
+<span class="cstat-no" title="statement not covered" >if (cliArgs[0] === "init") {</span>
+<span class="cstat-no" title="statement not covered" >  if (cliArgs.includes("--interactive")) {</span>
+    const wizardIo = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >createWizardIo()</span>;</span>
+<span class="cstat-no" title="statement not covered" >    try {</span>
+<span class="cstat-no" title="statement not covered" >      process.exit(await runInteractiveInit(process.env, process.cwd(), wizardIo));</span>
+    } finally {
+<span class="cstat-no" title="statement not covered" >      wizardIo.close();</span>
+    }
+  }
+<span class="cstat-no" title="statement not covered" >  process.exit(await runInit(cliArgs.slice(1)));</span>
+}
+&nbsp;
+<span class="cstat-no" title="statement not covered" >if (cliArgs[0] === "status") {</span>
+<span class="cstat-no" title="statement not covered" >  process.exit(runStatus(cliArgs.slice(1)));</span>
+}
+&nbsp;
+<span class="cstat-no" title="statement not covered" >if (cliArgs[0] === "doctor") {</span>
+<span class="cstat-no" title="statement not covered" >  process.exit(runDoctor(cliArgs.slice(1)));</span>
+}
+&nbsp;
+// `migrate` is strictly local + offline like `status`/`doctor` (it only opens the local SQLite stores), so it is
+// dispatched here too, before the opportunistic npm-registry update check is ever started.
+<span class="cstat-no" title="statement not covered" >if (cliArgs[0] === "migrate") {</span>
+<span class="cstat-no" title="statement not covered" >  process.exit(runMigrate(cliArgs.slice(1)));</span>
+}
+&nbsp;
+// `metrics` is strictly local + offline like `status`/`doctor` (it reads only the local prediction ledger), so it
+// is dispatched here, before the opportunistic npm-registry update check is ever started.
+<span class="cstat-no" title="statement not covered" >if (cliArgs[0] === "metrics") {</span>
+<span class="cstat-no" title="statement not covered" >  process.exit(runMetrics(cliArgs.slice(1)));</span>
+}
+&nbsp;
+<span class="cstat-no" title="statement not covered" >if (cliArgs[0] === "manage" &amp;&amp; cliArgs[1] === "status") {</span>
+<span class="cstat-no" title="statement not covered" >  process.exit(runManageStatus(cliArgs.slice(2)));</span>
+}
+&nbsp;
+<span class="cstat-no" title="statement not covered" >if (cliArgs[0] === "queue") {</span>
+<span class="cstat-no" title="statement not covered" >  process.exit(runQueueCli(cliArgs[1], cliArgs.slice(2)));</span>
+}
+&nbsp;
+<span class="cstat-no" title="statement not covered" >if (cliArgs[0] === "orb" &amp;&amp; cliArgs[1] === "export") {</span>
+<span class="cstat-no" title="statement not covered" >  process.exit(await runOrbExportCli(cliArgs.slice(2)));</span>
+}
+&nbsp;
+// `tenant` (#7275) talks to the hosting control-plane's provisioning API — a deliberate, Bearer-authed admin
+// action that is inert unless LOOPOVER_MINER_CONTROL_PLANE is set. Grouped with `orb export` above (also a
+// network command) rather than the strictly-local commands; it fails loud on any control-plane error.
+<span class="cstat-no" title="statement not covered" >if (cliArgs[0] === "tenant") {</span>
+<span class="cstat-no" title="statement not covered" >  process.exit(await runTenantCli(cliArgs[1], cliArgs.slice(2)));</span>
+}
+&nbsp;
+<span class="cstat-no" title="statement not covered" >if (cliArgs[0] === "claim") {</span>
+<span class="cstat-no" title="statement not covered" >  process.exit(runClaimCli(cliArgs[1], cliArgs.slice(2)));</span>
+}
+&nbsp;
+<span class="cstat-no" title="statement not covered" >if (cliArgs[0] === "ledger") {</span>
+<span class="cstat-no" title="statement not covered" >  process.exit(runLedgerCli(cliArgs[1], cliArgs.slice(2)));</span>
+}
+&nbsp;
+<span class="cstat-no" title="statement not covered" >if (cliArgs[0] === "calibration") {</span>
+<span class="cstat-no" title="statement not covered" >  process.exit(runCalibrationCli(cliArgs.slice(1)));</span>
+}
+&nbsp;
+<span class="cstat-no" title="statement not covered" >if (cliArgs[0] === "plan") {</span>
+<span class="cstat-no" title="statement not covered" >  process.exit(runPlanCli(cliArgs[1], cliArgs.slice(2)));</span>
+}
+&nbsp;
+<span class="cstat-no" title="statement not covered" >if (cliArgs[0] === "governor") {</span>
+<span class="cstat-no" title="statement not covered" >  process.exit(await runGovernorCli(cliArgs[1], cliArgs.slice(2)));</span>
+}
+&nbsp;
+<span class="cstat-no" title="statement not covered" >if (cliArgs[0] === "feasibility") {</span>
+<span class="cstat-no" title="statement not covered" >  process.exit(runFeasibilityCli(cliArgs.slice(1)));</span>
+}
+&nbsp;
+<span class="cstat-no" title="statement not covered" >if (cliArgs[0] === "idea-feasibility") {</span>
+<span class="cstat-no" title="statement not covered" >  process.exit(runIdeaFeasibilityCli(cliArgs.slice(1)));</span>
+}
+&nbsp;
+// `purge` (#5564) is strictly local + offline like `queue`/`claim`/`governor` above -- it only opens the local
+// SQLite stores, so it is dispatched here too, before the opportunistic npm-registry update check ever starts.
+<span class="cstat-no" title="statement not covered" >if (cliArgs[0] === "purge") {</span>
+<span class="cstat-no" title="statement not covered" >  process.exit(runPurge(cliArgs.slice(1)));</span>
+}
+&nbsp;
+const packageName = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >"@loopover/miner";</span></span>
+const packageVersion = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >resolveMinerVersion(process.env);</span></span>
+const upgradeCommand = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >resolveUpgradeCommand(packageName);</span></span>
+&nbsp;
+const updateCheck = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >startUpdateCheck(cliArgs, {</span></span>
+  packageName,
+  packageVersion,
+  upgradeCommand,
+  env: process.env,
+});
+&nbsp;
+<span class="cstat-no" title="statement not covered" >if (</span>
+  cliArgs.length === 0 ||
+  cliArgs.includes("--help") ||
+  cliArgs.includes("-h") ||
+  cliArgs[0] === "help"
+) {
+<span class="cstat-no" title="statement not covered" >  printHelp({ packageName });</span>
+<span class="cstat-no" title="statement not covered" >  await awaitOpportunisticUpdateCheck(updateCheck);</span>
+<span class="cstat-no" title="statement not covered" >  process.exit(0);</span>
+}
+&nbsp;
+<span class="cstat-no" title="statement not covered" >if (</span>
+  cliArgs.includes("--version") ||
+  cliArgs.includes("-v") ||
+  cliArgs[0] === "version"
+) {
+<span class="cstat-no" title="statement not covered" >  printVersion({ packageName, packageVersion });</span>
+<span class="cstat-no" title="statement not covered" >  await awaitOpportunisticUpdateCheck(updateCheck);</span>
+<span class="cstat-no" title="statement not covered" >  process.exit(0);</span>
+}
+&nbsp;
+<span class="cstat-no" title="statement not covered" >if (cliArgs[0] === "hooks" &amp;&amp; cliArgs[1] === "check") {</span>
+  const exitCode = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >runDenyCheck(cliArgs.slice(2));</span></span>
+<span class="cstat-no" title="statement not covered" >  await awaitOpportunisticUpdateCheck(updateCheck);</span>
+<span class="cstat-no" title="statement not covered" >  process.exit(exitCode);</span>
+}
+&nbsp;
+<span class="cstat-no" title="statement not covered" >if (cliArgs[0] === "state") {</span>
+  const exitCode = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >runStateCli(cliArgs[1], cliArgs.slice(2));</span></span>
+<span class="cstat-no" title="statement not covered" >  await awaitOpportunisticUpdateCheck(updateCheck);</span>
+<span class="cstat-no" title="statement not covered" >  process.exit(exitCode);</span>
+}
+&nbsp;
+<span class="cstat-no" title="statement not covered" >if (cliArgs[0] === "manage" &amp;&amp; cliArgs[1] === "poll") {</span>
+  const exitCode = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >await runManagePoll(cliArgs.slice(2));</span></span>
+<span class="cstat-no" title="statement not covered" >  await awaitOpportunisticUpdateCheck(updateCheck);</span>
+<span class="cstat-no" title="statement not covered" >  process.exit(exitCode);</span>
+}
+&nbsp;
+<span class="cstat-no" title="statement not covered" >if (cliArgs[0] === "discover") {</span>
+  const exitCode = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >await runDiscover(cliArgs.slice(1));</span></span>
+<span class="cstat-no" title="statement not covered" >  await awaitOpportunisticUpdateCheck(updateCheck);</span>
+<span class="cstat-no" title="statement not covered" >  process.exit(exitCode);</span>
+}
+&nbsp;
+<span class="cstat-no" title="statement not covered" >if (cliArgs[0] === "attempt") {</span>
+  const exitCode = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >await runAttempt(cliArgs.slice(1));</span></span>
+<span class="cstat-no" title="statement not covered" >  await awaitOpportunisticUpdateCheck(updateCheck);</span>
+<span class="cstat-no" title="statement not covered" >  process.exit(exitCode);</span>
+}
+&nbsp;
+<span class="cstat-no" title="statement not covered" >if (cliArgs[0] === "loop") {</span>
+  const exitCode = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >await runLoop(cliArgs.slice(1));</span></span>
+<span class="cstat-no" title="statement not covered" >  await awaitOpportunisticUpdateCheck(updateCheck);</span>
+<span class="cstat-no" title="statement not covered" >  process.exit(exitCode);</span>
+}
+&nbsp;
+/* v8 ignore next -- bin dispatcher lines are subprocess-only executed (see the packages/loopover-miner/bin note in vitest.config.ts's coverage.include); the awaited runCli fallback, including its #7658 pr-outcomes dispatch, is fully unit-covered in-process via lib/cli.ts + lib/pr-outcomes-cli.ts. */
+const exitCode = await runCli(cliArgs, { packageName });
+<span class="cstat-no" title="statement not covered" >await awaitOpportunisticUpdateCheck(updateCheck);</span>
+<span class="cstat-no" title="statement not covered" >process.exit(exitCode);</span>
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../../sorter.js"></script>
+        <script src="../../../block-navigation.js"></script>
+    </body>
+</html>
+    

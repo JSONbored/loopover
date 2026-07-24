@@ -1,0 +1,1246 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for packages/loopover-engine/src/miner/cli-subprocess-driver.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../../../prettify.css" />
+    <link rel="stylesheet" href="../../../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../../../index.html">All files</a> / <a href="index.html">packages/loopover-engine/src/miner</a> cli-subprocess-driver.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/109</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/118</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/15</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/93</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a>
+<a name='L185'></a><a href='#L185'>185</a>
+<a name='L186'></a><a href='#L186'>186</a>
+<a name='L187'></a><a href='#L187'>187</a>
+<a name='L188'></a><a href='#L188'>188</a>
+<a name='L189'></a><a href='#L189'>189</a>
+<a name='L190'></a><a href='#L190'>190</a>
+<a name='L191'></a><a href='#L191'>191</a>
+<a name='L192'></a><a href='#L192'>192</a>
+<a name='L193'></a><a href='#L193'>193</a>
+<a name='L194'></a><a href='#L194'>194</a>
+<a name='L195'></a><a href='#L195'>195</a>
+<a name='L196'></a><a href='#L196'>196</a>
+<a name='L197'></a><a href='#L197'>197</a>
+<a name='L198'></a><a href='#L198'>198</a>
+<a name='L199'></a><a href='#L199'>199</a>
+<a name='L200'></a><a href='#L200'>200</a>
+<a name='L201'></a><a href='#L201'>201</a>
+<a name='L202'></a><a href='#L202'>202</a>
+<a name='L203'></a><a href='#L203'>203</a>
+<a name='L204'></a><a href='#L204'>204</a>
+<a name='L205'></a><a href='#L205'>205</a>
+<a name='L206'></a><a href='#L206'>206</a>
+<a name='L207'></a><a href='#L207'>207</a>
+<a name='L208'></a><a href='#L208'>208</a>
+<a name='L209'></a><a href='#L209'>209</a>
+<a name='L210'></a><a href='#L210'>210</a>
+<a name='L211'></a><a href='#L211'>211</a>
+<a name='L212'></a><a href='#L212'>212</a>
+<a name='L213'></a><a href='#L213'>213</a>
+<a name='L214'></a><a href='#L214'>214</a>
+<a name='L215'></a><a href='#L215'>215</a>
+<a name='L216'></a><a href='#L216'>216</a>
+<a name='L217'></a><a href='#L217'>217</a>
+<a name='L218'></a><a href='#L218'>218</a>
+<a name='L219'></a><a href='#L219'>219</a>
+<a name='L220'></a><a href='#L220'>220</a>
+<a name='L221'></a><a href='#L221'>221</a>
+<a name='L222'></a><a href='#L222'>222</a>
+<a name='L223'></a><a href='#L223'>223</a>
+<a name='L224'></a><a href='#L224'>224</a>
+<a name='L225'></a><a href='#L225'>225</a>
+<a name='L226'></a><a href='#L226'>226</a>
+<a name='L227'></a><a href='#L227'>227</a>
+<a name='L228'></a><a href='#L228'>228</a>
+<a name='L229'></a><a href='#L229'>229</a>
+<a name='L230'></a><a href='#L230'>230</a>
+<a name='L231'></a><a href='#L231'>231</a>
+<a name='L232'></a><a href='#L232'>232</a>
+<a name='L233'></a><a href='#L233'>233</a>
+<a name='L234'></a><a href='#L234'>234</a>
+<a name='L235'></a><a href='#L235'>235</a>
+<a name='L236'></a><a href='#L236'>236</a>
+<a name='L237'></a><a href='#L237'>237</a>
+<a name='L238'></a><a href='#L238'>238</a>
+<a name='L239'></a><a href='#L239'>239</a>
+<a name='L240'></a><a href='#L240'>240</a>
+<a name='L241'></a><a href='#L241'>241</a>
+<a name='L242'></a><a href='#L242'>242</a>
+<a name='L243'></a><a href='#L243'>243</a>
+<a name='L244'></a><a href='#L244'>244</a>
+<a name='L245'></a><a href='#L245'>245</a>
+<a name='L246'></a><a href='#L246'>246</a>
+<a name='L247'></a><a href='#L247'>247</a>
+<a name='L248'></a><a href='#L248'>248</a>
+<a name='L249'></a><a href='#L249'>249</a>
+<a name='L250'></a><a href='#L250'>250</a>
+<a name='L251'></a><a href='#L251'>251</a>
+<a name='L252'></a><a href='#L252'>252</a>
+<a name='L253'></a><a href='#L253'>253</a>
+<a name='L254'></a><a href='#L254'>254</a>
+<a name='L255'></a><a href='#L255'>255</a>
+<a name='L256'></a><a href='#L256'>256</a>
+<a name='L257'></a><a href='#L257'>257</a>
+<a name='L258'></a><a href='#L258'>258</a>
+<a name='L259'></a><a href='#L259'>259</a>
+<a name='L260'></a><a href='#L260'>260</a>
+<a name='L261'></a><a href='#L261'>261</a>
+<a name='L262'></a><a href='#L262'>262</a>
+<a name='L263'></a><a href='#L263'>263</a>
+<a name='L264'></a><a href='#L264'>264</a>
+<a name='L265'></a><a href='#L265'>265</a>
+<a name='L266'></a><a href='#L266'>266</a>
+<a name='L267'></a><a href='#L267'>267</a>
+<a name='L268'></a><a href='#L268'>268</a>
+<a name='L269'></a><a href='#L269'>269</a>
+<a name='L270'></a><a href='#L270'>270</a>
+<a name='L271'></a><a href='#L271'>271</a>
+<a name='L272'></a><a href='#L272'>272</a>
+<a name='L273'></a><a href='#L273'>273</a>
+<a name='L274'></a><a href='#L274'>274</a>
+<a name='L275'></a><a href='#L275'>275</a>
+<a name='L276'></a><a href='#L276'>276</a>
+<a name='L277'></a><a href='#L277'>277</a>
+<a name='L278'></a><a href='#L278'>278</a>
+<a name='L279'></a><a href='#L279'>279</a>
+<a name='L280'></a><a href='#L280'>280</a>
+<a name='L281'></a><a href='#L281'>281</a>
+<a name='L282'></a><a href='#L282'>282</a>
+<a name='L283'></a><a href='#L283'>283</a>
+<a name='L284'></a><a href='#L284'>284</a>
+<a name='L285'></a><a href='#L285'>285</a>
+<a name='L286'></a><a href='#L286'>286</a>
+<a name='L287'></a><a href='#L287'>287</a>
+<a name='L288'></a><a href='#L288'>288</a>
+<a name='L289'></a><a href='#L289'>289</a>
+<a name='L290'></a><a href='#L290'>290</a>
+<a name='L291'></a><a href='#L291'>291</a>
+<a name='L292'></a><a href='#L292'>292</a>
+<a name='L293'></a><a href='#L293'>293</a>
+<a name='L294'></a><a href='#L294'>294</a>
+<a name='L295'></a><a href='#L295'>295</a>
+<a name='L296'></a><a href='#L296'>296</a>
+<a name='L297'></a><a href='#L297'>297</a>
+<a name='L298'></a><a href='#L298'>298</a>
+<a name='L299'></a><a href='#L299'>299</a>
+<a name='L300'></a><a href='#L300'>300</a>
+<a name='L301'></a><a href='#L301'>301</a>
+<a name='L302'></a><a href='#L302'>302</a>
+<a name='L303'></a><a href='#L303'>303</a>
+<a name='L304'></a><a href='#L304'>304</a>
+<a name='L305'></a><a href='#L305'>305</a>
+<a name='L306'></a><a href='#L306'>306</a>
+<a name='L307'></a><a href='#L307'>307</a>
+<a name='L308'></a><a href='#L308'>308</a>
+<a name='L309'></a><a href='#L309'>309</a>
+<a name='L310'></a><a href='#L310'>310</a>
+<a name='L311'></a><a href='#L311'>311</a>
+<a name='L312'></a><a href='#L312'>312</a>
+<a name='L313'></a><a href='#L313'>313</a>
+<a name='L314'></a><a href='#L314'>314</a>
+<a name='L315'></a><a href='#L315'>315</a>
+<a name='L316'></a><a href='#L316'>316</a>
+<a name='L317'></a><a href='#L317'>317</a>
+<a name='L318'></a><a href='#L318'>318</a>
+<a name='L319'></a><a href='#L319'>319</a>
+<a name='L320'></a><a href='#L320'>320</a>
+<a name='L321'></a><a href='#L321'>321</a>
+<a name='L322'></a><a href='#L322'>322</a>
+<a name='L323'></a><a href='#L323'>323</a>
+<a name='L324'></a><a href='#L324'>324</a>
+<a name='L325'></a><a href='#L325'>325</a>
+<a name='L326'></a><a href='#L326'>326</a>
+<a name='L327'></a><a href='#L327'>327</a>
+<a name='L328'></a><a href='#L328'>328</a>
+<a name='L329'></a><a href='#L329'>329</a>
+<a name='L330'></a><a href='#L330'>330</a>
+<a name='L331'></a><a href='#L331'>331</a>
+<a name='L332'></a><a href='#L332'>332</a>
+<a name='L333'></a><a href='#L333'>333</a>
+<a name='L334'></a><a href='#L334'>334</a>
+<a name='L335'></a><a href='#L335'>335</a>
+<a name='L336'></a><a href='#L336'>336</a>
+<a name='L337'></a><a href='#L337'>337</a>
+<a name='L338'></a><a href='#L338'>338</a>
+<a name='L339'></a><a href='#L339'>339</a>
+<a name='L340'></a><a href='#L340'>340</a>
+<a name='L341'></a><a href='#L341'>341</a>
+<a name='L342'></a><a href='#L342'>342</a>
+<a name='L343'></a><a href='#L343'>343</a>
+<a name='L344'></a><a href='#L344'>344</a>
+<a name='L345'></a><a href='#L345'>345</a>
+<a name='L346'></a><a href='#L346'>346</a>
+<a name='L347'></a><a href='#L347'>347</a>
+<a name='L348'></a><a href='#L348'>348</a>
+<a name='L349'></a><a href='#L349'>349</a>
+<a name='L350'></a><a href='#L350'>350</a>
+<a name='L351'></a><a href='#L351'>351</a>
+<a name='L352'></a><a href='#L352'>352</a>
+<a name='L353'></a><a href='#L353'>353</a>
+<a name='L354'></a><a href='#L354'>354</a>
+<a name='L355'></a><a href='#L355'>355</a>
+<a name='L356'></a><a href='#L356'>356</a>
+<a name='L357'></a><a href='#L357'>357</a>
+<a name='L358'></a><a href='#L358'>358</a>
+<a name='L359'></a><a href='#L359'>359</a>
+<a name='L360'></a><a href='#L360'>360</a>
+<a name='L361'></a><a href='#L361'>361</a>
+<a name='L362'></a><a href='#L362'>362</a>
+<a name='L363'></a><a href='#L363'>363</a>
+<a name='L364'></a><a href='#L364'>364</a>
+<a name='L365'></a><a href='#L365'>365</a>
+<a name='L366'></a><a href='#L366'>366</a>
+<a name='L367'></a><a href='#L367'>367</a>
+<a name='L368'></a><a href='#L368'>368</a>
+<a name='L369'></a><a href='#L369'>369</a>
+<a name='L370'></a><a href='#L370'>370</a>
+<a name='L371'></a><a href='#L371'>371</a>
+<a name='L372'></a><a href='#L372'>372</a>
+<a name='L373'></a><a href='#L373'>373</a>
+<a name='L374'></a><a href='#L374'>374</a>
+<a name='L375'></a><a href='#L375'>375</a>
+<a name='L376'></a><a href='#L376'>376</a>
+<a name='L377'></a><a href='#L377'>377</a>
+<a name='L378'></a><a href='#L378'>378</a>
+<a name='L379'></a><a href='#L379'>379</a>
+<a name='L380'></a><a href='#L380'>380</a>
+<a name='L381'></a><a href='#L381'>381</a>
+<a name='L382'></a><a href='#L382'>382</a>
+<a name='L383'></a><a href='#L383'>383</a>
+<a name='L384'></a><a href='#L384'>384</a>
+<a name='L385'></a><a href='#L385'>385</a>
+<a name='L386'></a><a href='#L386'>386</a>
+<a name='L387'></a><a href='#L387'>387</a>
+<a name='L388'></a><a href='#L388'>388</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import type {
+  CodingAgentDriver,
+  CodingAgentDriverResult,
+  CodingAgentDriverTask,
+} from "./coding-agent-driver.js";
+import { buildAllowlistedEnv, redactSecrets } from "../subprocess-env.js";
+&nbsp;
+// CLI-subprocess CodingAgentDriver (#4266). Implements the CodingAgentDriver seam (#4262) by running the coding
+// agent (`claude`/`codex`) as a subprocess in the attempt's scoped working directory. The spawn primitive is
+// INJECTED (a generalized version of src/selfhost/ai.ts's SpawnFn, redeclared here so loopover-engine stays
+// standalone and doesn't import from src/), so the driver is fully testable without a real child process. Two
+// safety primitives are reused from subprocess-env.ts (#4284) rather than re-implemented: the child gets a STRICT
+// allowlisted env (never the full host env — a coding-agent subprocess is prompt-injectable), and any subprocess
+// output surfaced in an error/transcript is run through `redactSecrets` first. Detecting which files changed is a
+// sibling concern (a git diff over the worktree, #4269), so this driver reports `changedFiles: []` and leaves that
+// to the caller.
+&nbsp;
+/** The spawn primitive a CLI driver depends on — the generalized shape of src/selfhost/ai.ts's `SpawnFn`. Injected
+ *  so the driver never hardcodes `child_process`; a fake resolves this in tests. */
+export type CliSubprocessSpawnFn = (
+  cmd: string,
+  args: readonly string[],
+  opts: {
+    cwd: string;
+    env: Record&lt;string, string | undefined&gt;;
+    timeoutMs: number;
+    // Optional fast-fail deadline, mirrors src/selfhost/ai.ts's SpawnFn (#4994/#5053): a real spawn implementation
+    // starts this timer at process start and clears it the instant any stdout data arrives, so it only fires when
+    // the CLI has produced ZERO stdout by this deadline — a distinct, earlier signal than the full `timeoutMs`.
+    firstOutputTimeoutMs?: number;
+  },
+) =&gt; Promise&lt;{
+  stdout: string;
+  code: number | null;
+  stderr?: string;
+  timedOut?: boolean;
+  // Set alongside `timedOut` only when the kill was the first-output deadline, not the full `timeoutMs` — lets the
+  // driver report a distinct "stalled" error instead of conflating it with a genuine full timeout.
+  stalledNoOutput?: boolean;
+}&gt;;
+&nbsp;
+export type CliSubprocessDriverOptions = {
+  /** The coding-agent CLI to spawn (e.g. "claude" or "codex"). */
+  command: string;
+  /** Injected spawn — a real `child_process` spawn in prod, a fake in tests. */
+  spawn: CliSubprocessSpawnFn;
+  /** Per-run wall-clock budget handed to the spawn. Default: 120000ms. */
+  timeoutMs?: number;
+  /** Optional fast-fail deadline (#4994/#5053): killed early and reported distinctly ("stalled", not a generic
+   *  timeout) if the subprocess produces zero stdout before this elapses. Mirrors src/selfhost/ai.ts's
+   *  `firstOutputTimeoutMs`/`resolveClaudeFirstOutputTimeoutMs` pattern, built after a naive single-timeout design
+   *  caused a real production outage against these same claude/codex binaries. Opt-in and backward compatible:
+   *  omitting it leaves behavior exactly as it was before this option existed. */
+  firstOutputTimeoutMs?: number;
+  /** Parent env to allowlist from. Default: `{}` (a real caller passes `process.env`; the default stays pure). */
+  parentEnv?: Record&lt;string, string | undefined&gt;;
+  /** Extra env overlaid on the allowlisted parent (e.g. an auth value the CLI reads). */
+  env?: Record&lt;string, string | undefined&gt;;
+  /** Known secret values (e.g. an injected auth token) to strip from any surfaced output, on top of the well-known
+   *  token-shape patterns. */
+  knownSecrets?: readonly string[];
+  /** Build the CLI argv from a task. Defaults to `defaultClaudeCliArgs`/`defaultCodexCliArgs` based on
+   *  `command` -- a caller overrides this to point at a different real CLI's own flags. */
+  buildArgs?: (task: CodingAgentDriverTask) =&gt; readonly string[];
+};
+&nbsp;
+const DEFAULT_TIMEOUT_MS = <span class="cstat-no" title="statement not covered" >120_000;</span>
+const MAX_TRANSCRIPT_CHARS = <span class="cstat-no" title="statement not covered" >8000;</span>
+const MAX_ERROR_DETAIL_CHARS = <span class="cstat-no" title="statement not covered" >500;</span>
+&nbsp;
+const CODING_AGENT_ENV_ALLOWLIST = <span class="cstat-no" title="statement not covered" >[</span>
+  "HTTPS_PROXY",
+  "HTTP_PROXY",
+  "LANG",
+  "LC_ALL",
+  "NODE_EXTRA_CA_CERTS",
+  "NO_PROXY",
+  "PATH",
+  "SSL_CERT_DIR",
+  "SSL_CERT_FILE",
+  "TERM",
+  "https_proxy",
+  "http_proxy",
+  "no_proxy",
+] as const;
+&nbsp;
+/** Real, verified `claude -p` non-interactive argv (confirmed against `claude --help` and a live invocation,
+ *  #5135 follow-up -- the previous default argv here used `--max-turns`/`--acceptance-criteria`, neither of
+ *  which is a real `claude` CLI flag, and never passed `-p`/`--print` at all, meaning a spawned `claude`
+ *  process would start an INTERACTIVE session against a subprocess whose stdin is closed).
+ *  - `-p`/`--print` is REQUIRED for non-interactive use; without it `claude` starts an interactive session.
+ *  - `--output-format json` produces a single parseable JSON result on stdout, matching `claudeErrorStatus`'s
+ *    own `JSON.parse(stdout.trim())` assumption (which was already written for this shape, just never
+ *    actually triggered because this flag was never passed).
+ *  - `--permission-mode acceptEdits` alone (the CLI's own edit-permission scope, matching the label the
+ *    Agent-SDK driver's `permissionMode` also uses, #4267) only auto-approves file EDIT tool calls -- it
+ *    does NOT grant `Read` or `Bash`, so a real task (which needs both to explore the repo and run tests)
+ *    got every one of those calls denied in a headless `--print` invocation with no TTY to resolve an
+ *    interactive prompt, silently producing zero real work every time (#6840). `--allowedTools Read Bash`
+ *    grants exactly the two additional tool classes the task actually needs, confirmed via a live
+ *    end-to-end reproduction (zero denials, a real fix + test committed) -- deliberately narrower than
+ *    `--permission-mode bypassPermissions`, which also disables edit-scope confirmation and any other
+ *    safety rail the CLI has, not just the Read/Bash gap this task actually hits.
+ *  There is no turn-budget flag on the real CLI (verified via `claude --help`) and no acceptance-criteria
+ *  flag either -- the coding agent discovers `task.acceptanceCriteriaPath` itself via its own Read tool
+ *  inside the scoped working directory, exactly like the Agent-SDK driver already does (agent-sdk-driver.ts
+ *  never passes it as a distinct option either; only `task.instructions` is forwarded as the prompt there
+ *  too). The wall-clock `timeoutMs` (already implemented) is this provider's only real turn/cost ceiling. */
+export function <span class="fstat-no" title="function not covered" >defaultClaudeCliArgs(t</span>ask: CodingAgentDriverTask): string[] {
+<span class="cstat-no" title="statement not covered" >  return ["--print", "--output-format", "json", "--permission-mode", "acceptEdits", "--allowedTools", "Read", "Bash", "--", task.instructions];</span>
+}
+&nbsp;
+/** Real, verified `codex exec` non-interactive argv (confirmed against `codex exec --help`, #5135
+ *  follow-up). `exec` is a REQUIRED subcommand -- without it `codex` starts an interactive session, the same
+ *  class of bug the missing `-p` had for claude. `--json` emits the JSONL event stream
+ *  `codexErrorFromStdout` already parses line-by-line. `--sandbox workspace-write` is codex's own equivalent
+ *  of claude's `acceptEdits` -- the model may write within the workspace, nothing broader. Same "no
+ *  turn-budget flag" and "no acceptance-criteria flag" gaps as claude apply here too. */
+export function <span class="fstat-no" title="function not covered" >defaultCodexCliArgs(t</span>ask: CodingAgentDriverTask): string[] {
+<span class="cstat-no" title="statement not covered" >  return ["exec", "--json", "--sandbox", "workspace-write", task.instructions];</span>
+}
+&nbsp;
+/** Resolve the default argv builder for a known production command; throws for anything else so an
+ *  unrecognized `command` fails at driver-construction time (never silently invokes a binary with no known
+ *  real argv shape) unless the caller supplies an explicit `options.buildArgs` override. */
+function <span class="fstat-no" title="function not covered" >resolveDefaultBuildArgs(c</span>ommand: string): (task: CodingAgentDriverTask) =&gt; readonly string[] {
+<span class="cstat-no" title="statement not covered" >  if (command === "claude") <span class="cstat-no" title="statement not covered" >return defaultClaudeCliArgs;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (command === "codex") <span class="cstat-no" title="statement not covered" >return defaultCodexCliArgs;</span></span>
+<span class="cstat-no" title="statement not covered" >  throw new Error(`unsupported_cli_subprocess_command:${command}`);</span>
+}
+&nbsp;
+/** Best-effort real dollar-cost AND token-usage extraction from a CLI's own stdout. Mirrors src/selfhost/ai.ts's
+ *  `extractCliUsage`/`COST_KEYS`/`INPUT_TOKEN_KEYS`/`OUTPUT_TOKEN_KEYS`/`TOTAL_TOKEN_KEYS` (redeclared here, not
+ *  imported, per this file's own no-src-import convention) -- ported in full as of #5653 (previously narrowed
+ *  to just cost; tokens were left out at the time, not because the data doesn't exist). Tries the whole trimmed
+ *  stdout as one JSON object first (claude's `--output-format json` shape, empirically confirmed to carry
+ *  `total_cost_usd`, the exact same field name the Agent-SDK's own result message carries), then scans line by
+ *  line (codex's `--json` JSONL stream, "still evolving" per src/selfhost/ai.ts's own comment, so multiple real
+ *  key spellings are tolerated, and usage/token_usage/tokenUsage/usage_metadata sub-objects are all checked, same
+ *  as src/selfhost/ai.ts). A missing/malformed field means "no signal", never an error -- never fabricated. */
+const COST_KEYS = <span class="cstat-no" title="statement not covered" >["total_cost_usd", "totalCostUsd", "cost_usd", "costUsd"] as const;</span>
+const INPUT_TOKEN_KEYS = <span class="cstat-no" title="statement not covered" >["input_tokens", "inputTokens", "prompt_tokens", "promptTokens"] as const;</span>
+const OUTPUT_TOKEN_KEYS = <span class="cstat-no" title="statement not covered" >["output_tokens", "outputTokens", "completion_tokens", "completionTokens"] as const;</span>
+const TOTAL_TOKEN_KEYS = <span class="cstat-no" title="statement not covered" >["total_tokens", "totalTokens"] as const;</span>
+&nbsp;
+type CliUsage = { costUsd?: number; inputTokens?: number; outputTokens?: number; totalTokens?: number };
+&nbsp;
+function <span class="fstat-no" title="function not covered" >finiteNonNegativeNumber(v</span>alue: unknown): number | undefined {
+  const n = <span class="cstat-no" title="statement not covered" >typeof value === "number" ? value : typeof value === "string" &amp;&amp; value.trim() ? Number(value) : NaN;</span>
+<span class="cstat-no" title="statement not covered" >  return Number.isFinite(n) &amp;&amp; n &gt;= 0 ? n : undefined;</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >maxNumber(r</span>ecord: Record&lt;string, unknown&gt;, keys: readonly string[]): number | undefined {
+  let out: number | undefined;
+<span class="cstat-no" title="statement not covered" >  for (const key of keys) {</span>
+    const n = <span class="cstat-no" title="statement not covered" >finiteNonNegativeNumber(record[key]);</span>
+<span class="cstat-no" title="statement not covered" >    if (n !== undefined) <span class="cstat-no" title="statement not covered" >out = Math.max(out ?? 0, n);</span></span>
+  }
+<span class="cstat-no" title="statement not covered" >  return out;</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >asPlainRecord(v</span>alue: unknown): Record&lt;string, unknown&gt; | null {
+<span class="cstat-no" title="statement not covered" >  return value &amp;&amp; typeof value === "object" &amp;&amp; !Array.isArray(value) ? (value as Record&lt;string, unknown&gt;) : null;</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >mergeCliUsage(o</span>ut: CliUsage, record: Record&lt;string, unknown&gt;): void {
+  const nested = <span class="cstat-no" title="statement not covered" >[</span>
+    record,
+    asPlainRecord(record.usage),
+    asPlainRecord(record.token_usage),
+    asPlainRecord(record.tokenUsage),
+    asPlainRecord(record.usage_metadata),
+    asPlainRecord(record.usageMetadata),
+  ].<span class="fstat-no" title="function not covered" >filter((e</span>ntry): entry is Record&lt;string, unknown&gt; =&gt; <span class="cstat-no" title="statement not covered" >Boolean(entry))</span>;
+<span class="cstat-no" title="statement not covered" >  for (const entry of nested) {</span>
+    const costUsd = <span class="cstat-no" title="statement not covered" >maxNumber(entry, COST_KEYS);</span>
+<span class="cstat-no" title="statement not covered" >    if (costUsd !== undefined) <span class="cstat-no" title="statement not covered" >out.costUsd = Math.max(out.costUsd ?? 0, costUsd);</span></span>
+    const inputTokens = <span class="cstat-no" title="statement not covered" >maxNumber(entry, INPUT_TOKEN_KEYS);</span>
+<span class="cstat-no" title="statement not covered" >    if (inputTokens !== undefined) <span class="cstat-no" title="statement not covered" >out.inputTokens = Math.max(out.inputTokens ?? 0, inputTokens);</span></span>
+    const outputTokens = <span class="cstat-no" title="statement not covered" >maxNumber(entry, OUTPUT_TOKEN_KEYS);</span>
+<span class="cstat-no" title="statement not covered" >    if (outputTokens !== undefined) <span class="cstat-no" title="statement not covered" >out.outputTokens = Math.max(out.outputTokens ?? 0, outputTokens);</span></span>
+    const totalTokens = <span class="cstat-no" title="statement not covered" >maxNumber(entry, TOTAL_TOKEN_KEYS);</span>
+<span class="cstat-no" title="statement not covered" >    if (totalTokens !== undefined) <span class="cstat-no" title="statement not covered" >out.totalTokens = Math.max(out.totalTokens ?? 0, totalTokens);</span></span>
+  }
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >extractCliUsage(s</span>tdout: string): CliUsage {
+  const usage: CliUsage = <span class="cstat-no" title="statement not covered" >{};</span>
+  const trimmed = <span class="cstat-no" title="statement not covered" >stdout.trim();</span>
+<span class="cstat-no" title="statement not covered" >  if (!trimmed) <span class="cstat-no" title="statement not covered" >return usage;</span></span>
+  const <span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >tryLine = (t</span>ext: string): void =&gt; {</span>
+<span class="cstat-no" title="statement not covered" >    try {</span>
+      const parsed = <span class="cstat-no" title="statement not covered" >asPlainRecord(JSON.parse(text));</span>
+<span class="cstat-no" title="statement not covered" >      if (parsed) <span class="cstat-no" title="statement not covered" >mergeCliUsage(usage, parsed);</span></span>
+    } catch {
+      /* not JSON -- best-effort only */
+    }
+  };
+<span class="cstat-no" title="statement not covered" >  tryLine(trimmed);</span>
+<span class="cstat-no" title="statement not covered" >  for (const line of trimmed.split(/\r?\n/)) {</span>
+<span class="cstat-no" title="statement not covered" >    if (line.trim()) <span class="cstat-no" title="statement not covered" >tryLine(line);</span></span>
+  }
+<span class="cstat-no" title="statement not covered" >  return usage;</span>
+}
+&nbsp;
+/** Real token count (input + output) from `extractCliUsage`'s CliUsage, when either is present -- prefers an
+ *  explicit `totalTokens` key if the CLI reported one directly (never double-counted against input+output),
+ *  otherwise sums input+output. Undefined (never a fabricated 0) when neither is present. */
+function <span class="fstat-no" title="function not covered" >totalTokensFromUsage(u</span>sage: CliUsage): number | undefined {
+<span class="cstat-no" title="statement not covered" >  if (usage.totalTokens !== undefined) <span class="cstat-no" title="statement not covered" >return usage.totalTokens;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (usage.inputTokens === undefined &amp;&amp; usage.outputTokens === undefined) <span class="cstat-no" title="statement not covered" >return undefined;</span></span>
+<span class="cstat-no" title="statement not covered" >  return (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);</span>
+}
+&nbsp;
+/** Claude Code's `--output-format json` sometimes exits non-zero while still emitting a structured
+ *  `{is_error, api_error_status}` envelope on stdout (e.g. an auth/model error). Ported from
+ *  src/selfhost/ai.ts's `claudeErrorStatus` -- redeclared here rather than imported, per this file's own
+ *  no-src-import convention (see header comment). Returns null on absent/malformed stdout, in which case the
+ *  caller falls back to the generic exit-code error unchanged (#5168). */
+function <span class="fstat-no" title="function not covered" >claudeErrorStatus(s</span>tdout: string): string | null {
+<span class="cstat-no" title="statement not covered" >  try {</span>
+    const parsed = <span class="cstat-no" title="statement not covered" >JSON.parse(stdout.trim()) as Record&lt;string, unknown&gt;;</span>
+<span class="cstat-no" title="statement not covered" >    if (parsed.is_error === true) <span class="cstat-no" title="statement not covered" >return String(parsed.api_error_status ?? parsed.subtype ?? "unknown");</span></span>
+  } catch {
+    /* not a single JSON object -- handled by the caller's generic exit-code fallback */
+  }
+<span class="cstat-no" title="statement not covered" >  return null;</span>
+}
+&nbsp;
+/** Codex's stderr is typically just an uninformative "Reading prompt from stdin..." startup banner; the real
+ *  error (auth failure, unknown model, API error) lands in its JSONL stdout instead. Scans lines in reverse
+ *  (the error object is usually last) and returns the first human-readable detail found, or null. Ported from
+ *  src/selfhost/ai.ts's `codexErrorFromStdout` -- redeclared here (not imported) per this file's own
+ *  no-src-import convention, and returns the RAW detail unredacted; the caller applies this driver's own
+ *  knownSecrets-aware `redactSecrets` at the call site (#5169). */
+function <span class="fstat-no" title="function not covered" >codexErrorFromStdout(s</span>tdout: string): string | null {
+  const lines = <span class="cstat-no" title="statement not covered" >stdout.trim().split(/\r?\n/);</span>
+<span class="cstat-no" title="statement not covered" >  for (let i = <span class="cstat-no" title="statement not covered" >lines.length - 1; i</span> &gt;= 0; i -= 1) {</span>
+    const line = <span class="cstat-no" title="statement not covered" >lines[i];</span>
+<span class="cstat-no" title="statement not covered" >    if (!line?.trim()) <span class="cstat-no" title="statement not covered" >continue;</span></span>
+<span class="cstat-no" title="statement not covered" >    try {</span>
+      const parsed = <span class="cstat-no" title="statement not covered" >JSON.parse(line) as Record&lt;string, unknown&gt;;</span>
+      const errorObj = <span class="cstat-no" title="statement not covered" >parsed.error as Record&lt;string, unknown&gt; | undefined;</span>
+      const detail =
+        (<span class="cstat-no" title="statement not covered" >typeof parsed.error === "string" &amp;&amp; parsed.error) ||</span>
+        (typeof parsed.message === "string" &amp;&amp; parsed.message) ||
+        (typeof parsed.msg === "string" &amp;&amp; parsed.msg) ||
+        (errorObj &amp;&amp; typeof errorObj.message === "string" ? errorObj.message : null) ||
+        null;
+<span class="cstat-no" title="statement not covered" >      if (detail) <span class="cstat-no" title="statement not covered" >return detail;</span></span>
+    } catch {
+      /* not JSON -- skip */
+    }
+  }
+<span class="cstat-no" title="statement not covered" >  return null;</span>
+}
+&nbsp;
+/**
+ * Create a {@link CodingAgentDriver} that runs the coding agent as a CLI subprocess. A non-zero or absent exit
+ * code, or a timeout, yields `ok: false` with a redacted error; exit `0` yields `ok: true`. Any subprocess output
+ * kept as a transcript or folded into an error is redacted first.
+ */
+export function <span class="fstat-no" title="function not covered" >createCliSubprocessCodingAgentDriver(o</span>ptions: CliSubprocessDriverOptions): CodingAgentDriver {
+  const timeoutMs = <span class="cstat-no" title="statement not covered" >options.timeoutMs ?? DEFAULT_TIMEOUT_MS;</span>
+  const buildArgs = <span class="cstat-no" title="statement not covered" >options.buildArgs ?? resolveDefaultBuildArgs(options.command);</span>
+  const knownSecrets = <span class="cstat-no" title="statement not covered" >options.knownSecrets ?? [];</span>
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    async <span class="fstat-no" title="function not covered" >run(t</span>ask: CodingAgentDriverTask): Promise&lt;CodingAgentDriverResult&gt; {
+      const env = <span class="cstat-no" title="statement not covered" >buildAllowlistedEnv(options.parentEnv ?? {}, CODING_AGENT_ENV_ALLOWLIST, options.env ?? {});</span>
+      const spawned = <span class="cstat-no" title="statement not covered" >await options.spawn(options.command, buildArgs(task), {</span>
+        cwd: task.workingDirectory,
+        env,
+        timeoutMs,
+        ...(options.firstOutputTimeoutMs !== undefined
+          ? { firstOutputTimeoutMs: options.firstOutputTimeoutMs }
+          : {}),
+      });
+      const transcript = <span class="cstat-no" title="statement not covered" >redactSecrets(spawned.stdout, knownSecrets).slice(0, MAX_TRANSCRIPT_CHARS);</span>
+&nbsp;
+<span class="cstat-no" title="statement not covered" >      if (spawned.timedOut &amp;&amp; spawned.stalledNoOutput) {</span>
+        // Fast-fail path (#4994/#5053): killed at firstOutputTimeoutMs, well before the full timeoutMs, because
+        // stdout produced no bytes at all. A distinct error (never reusing `${command}_timeout_...`) so this
+        // stall is separately countable in logs/Sentry from a genuine full timeout where the process was at
+        // least emitting output before it was killed.
+<span class="cstat-no" title="statement not covered" >        return {</span>
+          ok: false,
+          changedFiles: [],
+          summary: `${options.command} stalled with no stdout within ${options.firstOutputTimeoutMs}ms`,
+          transcript,
+          error: `${options.command}_stalled_no_output`,
+        };
+      }
+<span class="cstat-no" title="statement not covered" >      if (spawned.timedOut) {</span>
+<span class="cstat-no" title="statement not covered" >        return {</span>
+          ok: false,
+          changedFiles: [],
+          summary: `${options.command} timed out after ${timeoutMs}ms`,
+          transcript,
+          error: `${options.command}_timeout_${timeoutMs}ms`,
+        };
+      }
+<span class="cstat-no" title="statement not covered" >      if (spawned.code !== 0) {</span>
+<span class="cstat-no" title="statement not covered" >        if (options.command === "claude") {</span>
+          const errStatus = <span class="cstat-no" title="statement not covered" >claudeErrorStatus(spawned.stdout);</span>
+<span class="cstat-no" title="statement not covered" >          if (errStatus) {</span>
+<span class="cstat-no" title="statement not covered" >            return {</span>
+              ok: false,
+              changedFiles: [],
+              summary: `${options.command} exited non-zero`,
+              transcript,
+              error: redactSecrets(`claude_code_error_${errStatus}`, knownSecrets),
+            };
+          }
+        }
+<span class="cstat-no" title="statement not covered" >        if (options.command === "codex") {</span>
+          const <span class="cstat-no" title="statement not covered" >stderrTrimmed = (spawned.stderr ?? "").trim();</span>
+          const jsonlDetail = <span class="cstat-no" title="statement not covered" >codexErrorFromStdout(spawned.stdout);</span>
+<span class="cstat-no" title="statement not covered" >          if (!jsonlDetail &amp;&amp; stderrTrimmed === "Reading prompt from stdin...") {</span>
+            // codex's JSONL stream carried no structured detail and stderr is ONLY the stdin-reading banner (no
+            // API/auth error appended) -- auth.json was present at boot-time but is now expired or was deleted.
+            // A distinct, actionable remediation instead of the generic exit-code string (#5169).
+<span class="cstat-no" title="statement not covered" >            return {</span>
+              ok: false,
+              changedFiles: [],
+              summary: `${options.command} exited non-zero`,
+              transcript,
+              error: redactSecrets(
+                "codex_no_auth: auth.json missing or expired -- run `codex auth` to authenticate",
+                knownSecrets,
+              ),
+            };
+          }
+<span class="cstat-no" title="statement not covered" >          if (jsonlDetail) {</span>
+            // Prefer the structured error from codex's JSONL stdout over the uninformative stderr startup
+            // message -- codex reports auth/model/API failures in its JSON stream, not stderr.
+            const detail = <span class="cstat-no" title="statement not covered" >redactSecrets(jsonlDetail, knownSecrets).slice(0, MAX_ERROR_DETAIL_CHARS);</span>
+<span class="cstat-no" title="statement not covered" >            return {</span>
+              ok: false,
+              changedFiles: [],
+              summary: `${options.command} exited non-zero`,
+              transcript,
+              error: `${options.command}_exit_${spawned.code}: ${detail}`,
+            };
+          }
+        }
+        const <span class="cstat-no" title="statement not covered" >stderr = (spawned.stderr ?? "").trim();</span>
+        const detail = <span class="cstat-no" title="statement not covered" >redactSecrets(stderr || `exit ${spawned.code}`, knownSecrets).slice(0, MAX_ERROR_DETAIL_CHARS);</span>
+<span class="cstat-no" title="statement not covered" >        return {</span>
+          ok: false,
+          changedFiles: [],
+          summary: `${options.command} exited non-zero`,
+          transcript,
+          error: `${options.command}_exit_${spawned.code}: ${detail}`,
+        };
+      }
+      // Claude Code's own documented behavior: `--output-format json` "sometimes exits non-zero", implying
+      // it can ALSO exit 0 while still reporting `is_error: true` in its structured JSON envelope (confirmed
+      // empirically: a live `claude -p --output-format json` invocation returns a real `is_error`/`subtype`
+      // field on every result, success or not). claudeErrorStatus was already written to detect exactly this
+      // shape but, before this fix, was only ever checked on the `code !== 0` branch above -- a code-0 error
+      // envelope silently read as `ok: true`. Checked here, not folded into that branch, since it's a
+      // genuinely different condition (exit code 0).
+<span class="cstat-no" title="statement not covered" >      if (options.command === "claude") {</span>
+        const errStatus = <span class="cstat-no" title="statement not covered" >claudeErrorStatus(spawned.stdout);</span>
+<span class="cstat-no" title="statement not covered" >        if (errStatus) {</span>
+<span class="cstat-no" title="statement not covered" >          return {</span>
+            ok: false,
+            changedFiles: [],
+            summary: `${options.command} exited 0 but reported an error envelope`,
+            transcript,
+            error: redactSecrets(`claude_code_error_${errStatus}`, knownSecrets),
+          };
+        }
+      }
+      const usage = <span class="cstat-no" title="statement not covered" >extractCliUsage(spawned.stdout);</span>
+      const tokensUsed = <span class="cstat-no" title="statement not covered" >totalTokensFromUsage(usage);</span>
+<span class="cstat-no" title="statement not covered" >      return {</span>
+        ok: true,
+        changedFiles: [],
+        summary: `${options.command} completed for ${task.attemptId}`,
+        transcript,
+        ...(usage.costUsd !== undefined ? { costUsd: usage.costUsd } : {}),
+        ...(tokensUsed !== undefined ? { tokensUsed } : {}),
+      };
+    },
+  };
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../../../sorter.js"></script>
+        <script src="../../../../block-navigation.js"></script>
+    </body>
+</html>
+    

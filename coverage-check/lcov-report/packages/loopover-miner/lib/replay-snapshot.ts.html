@@ -1,0 +1,1153 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for packages/loopover-miner/lib/replay-snapshot.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../../prettify.css" />
+    <link rel="stylesheet" href="../../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../../index.html">All files</a> / <a href="index.html">packages/loopover-miner/lib</a> replay-snapshot.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/223</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/132</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/62</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/157</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a>
+<a name='L185'></a><a href='#L185'>185</a>
+<a name='L186'></a><a href='#L186'>186</a>
+<a name='L187'></a><a href='#L187'>187</a>
+<a name='L188'></a><a href='#L188'>188</a>
+<a name='L189'></a><a href='#L189'>189</a>
+<a name='L190'></a><a href='#L190'>190</a>
+<a name='L191'></a><a href='#L191'>191</a>
+<a name='L192'></a><a href='#L192'>192</a>
+<a name='L193'></a><a href='#L193'>193</a>
+<a name='L194'></a><a href='#L194'>194</a>
+<a name='L195'></a><a href='#L195'>195</a>
+<a name='L196'></a><a href='#L196'>196</a>
+<a name='L197'></a><a href='#L197'>197</a>
+<a name='L198'></a><a href='#L198'>198</a>
+<a name='L199'></a><a href='#L199'>199</a>
+<a name='L200'></a><a href='#L200'>200</a>
+<a name='L201'></a><a href='#L201'>201</a>
+<a name='L202'></a><a href='#L202'>202</a>
+<a name='L203'></a><a href='#L203'>203</a>
+<a name='L204'></a><a href='#L204'>204</a>
+<a name='L205'></a><a href='#L205'>205</a>
+<a name='L206'></a><a href='#L206'>206</a>
+<a name='L207'></a><a href='#L207'>207</a>
+<a name='L208'></a><a href='#L208'>208</a>
+<a name='L209'></a><a href='#L209'>209</a>
+<a name='L210'></a><a href='#L210'>210</a>
+<a name='L211'></a><a href='#L211'>211</a>
+<a name='L212'></a><a href='#L212'>212</a>
+<a name='L213'></a><a href='#L213'>213</a>
+<a name='L214'></a><a href='#L214'>214</a>
+<a name='L215'></a><a href='#L215'>215</a>
+<a name='L216'></a><a href='#L216'>216</a>
+<a name='L217'></a><a href='#L217'>217</a>
+<a name='L218'></a><a href='#L218'>218</a>
+<a name='L219'></a><a href='#L219'>219</a>
+<a name='L220'></a><a href='#L220'>220</a>
+<a name='L221'></a><a href='#L221'>221</a>
+<a name='L222'></a><a href='#L222'>222</a>
+<a name='L223'></a><a href='#L223'>223</a>
+<a name='L224'></a><a href='#L224'>224</a>
+<a name='L225'></a><a href='#L225'>225</a>
+<a name='L226'></a><a href='#L226'>226</a>
+<a name='L227'></a><a href='#L227'>227</a>
+<a name='L228'></a><a href='#L228'>228</a>
+<a name='L229'></a><a href='#L229'>229</a>
+<a name='L230'></a><a href='#L230'>230</a>
+<a name='L231'></a><a href='#L231'>231</a>
+<a name='L232'></a><a href='#L232'>232</a>
+<a name='L233'></a><a href='#L233'>233</a>
+<a name='L234'></a><a href='#L234'>234</a>
+<a name='L235'></a><a href='#L235'>235</a>
+<a name='L236'></a><a href='#L236'>236</a>
+<a name='L237'></a><a href='#L237'>237</a>
+<a name='L238'></a><a href='#L238'>238</a>
+<a name='L239'></a><a href='#L239'>239</a>
+<a name='L240'></a><a href='#L240'>240</a>
+<a name='L241'></a><a href='#L241'>241</a>
+<a name='L242'></a><a href='#L242'>242</a>
+<a name='L243'></a><a href='#L243'>243</a>
+<a name='L244'></a><a href='#L244'>244</a>
+<a name='L245'></a><a href='#L245'>245</a>
+<a name='L246'></a><a href='#L246'>246</a>
+<a name='L247'></a><a href='#L247'>247</a>
+<a name='L248'></a><a href='#L248'>248</a>
+<a name='L249'></a><a href='#L249'>249</a>
+<a name='L250'></a><a href='#L250'>250</a>
+<a name='L251'></a><a href='#L251'>251</a>
+<a name='L252'></a><a href='#L252'>252</a>
+<a name='L253'></a><a href='#L253'>253</a>
+<a name='L254'></a><a href='#L254'>254</a>
+<a name='L255'></a><a href='#L255'>255</a>
+<a name='L256'></a><a href='#L256'>256</a>
+<a name='L257'></a><a href='#L257'>257</a>
+<a name='L258'></a><a href='#L258'>258</a>
+<a name='L259'></a><a href='#L259'>259</a>
+<a name='L260'></a><a href='#L260'>260</a>
+<a name='L261'></a><a href='#L261'>261</a>
+<a name='L262'></a><a href='#L262'>262</a>
+<a name='L263'></a><a href='#L263'>263</a>
+<a name='L264'></a><a href='#L264'>264</a>
+<a name='L265'></a><a href='#L265'>265</a>
+<a name='L266'></a><a href='#L266'>266</a>
+<a name='L267'></a><a href='#L267'>267</a>
+<a name='L268'></a><a href='#L268'>268</a>
+<a name='L269'></a><a href='#L269'>269</a>
+<a name='L270'></a><a href='#L270'>270</a>
+<a name='L271'></a><a href='#L271'>271</a>
+<a name='L272'></a><a href='#L272'>272</a>
+<a name='L273'></a><a href='#L273'>273</a>
+<a name='L274'></a><a href='#L274'>274</a>
+<a name='L275'></a><a href='#L275'>275</a>
+<a name='L276'></a><a href='#L276'>276</a>
+<a name='L277'></a><a href='#L277'>277</a>
+<a name='L278'></a><a href='#L278'>278</a>
+<a name='L279'></a><a href='#L279'>279</a>
+<a name='L280'></a><a href='#L280'>280</a>
+<a name='L281'></a><a href='#L281'>281</a>
+<a name='L282'></a><a href='#L282'>282</a>
+<a name='L283'></a><a href='#L283'>283</a>
+<a name='L284'></a><a href='#L284'>284</a>
+<a name='L285'></a><a href='#L285'>285</a>
+<a name='L286'></a><a href='#L286'>286</a>
+<a name='L287'></a><a href='#L287'>287</a>
+<a name='L288'></a><a href='#L288'>288</a>
+<a name='L289'></a><a href='#L289'>289</a>
+<a name='L290'></a><a href='#L290'>290</a>
+<a name='L291'></a><a href='#L291'>291</a>
+<a name='L292'></a><a href='#L292'>292</a>
+<a name='L293'></a><a href='#L293'>293</a>
+<a name='L294'></a><a href='#L294'>294</a>
+<a name='L295'></a><a href='#L295'>295</a>
+<a name='L296'></a><a href='#L296'>296</a>
+<a name='L297'></a><a href='#L297'>297</a>
+<a name='L298'></a><a href='#L298'>298</a>
+<a name='L299'></a><a href='#L299'>299</a>
+<a name='L300'></a><a href='#L300'>300</a>
+<a name='L301'></a><a href='#L301'>301</a>
+<a name='L302'></a><a href='#L302'>302</a>
+<a name='L303'></a><a href='#L303'>303</a>
+<a name='L304'></a><a href='#L304'>304</a>
+<a name='L305'></a><a href='#L305'>305</a>
+<a name='L306'></a><a href='#L306'>306</a>
+<a name='L307'></a><a href='#L307'>307</a>
+<a name='L308'></a><a href='#L308'>308</a>
+<a name='L309'></a><a href='#L309'>309</a>
+<a name='L310'></a><a href='#L310'>310</a>
+<a name='L311'></a><a href='#L311'>311</a>
+<a name='L312'></a><a href='#L312'>312</a>
+<a name='L313'></a><a href='#L313'>313</a>
+<a name='L314'></a><a href='#L314'>314</a>
+<a name='L315'></a><a href='#L315'>315</a>
+<a name='L316'></a><a href='#L316'>316</a>
+<a name='L317'></a><a href='#L317'>317</a>
+<a name='L318'></a><a href='#L318'>318</a>
+<a name='L319'></a><a href='#L319'>319</a>
+<a name='L320'></a><a href='#L320'>320</a>
+<a name='L321'></a><a href='#L321'>321</a>
+<a name='L322'></a><a href='#L322'>322</a>
+<a name='L323'></a><a href='#L323'>323</a>
+<a name='L324'></a><a href='#L324'>324</a>
+<a name='L325'></a><a href='#L325'>325</a>
+<a name='L326'></a><a href='#L326'>326</a>
+<a name='L327'></a><a href='#L327'>327</a>
+<a name='L328'></a><a href='#L328'>328</a>
+<a name='L329'></a><a href='#L329'>329</a>
+<a name='L330'></a><a href='#L330'>330</a>
+<a name='L331'></a><a href='#L331'>331</a>
+<a name='L332'></a><a href='#L332'>332</a>
+<a name='L333'></a><a href='#L333'>333</a>
+<a name='L334'></a><a href='#L334'>334</a>
+<a name='L335'></a><a href='#L335'>335</a>
+<a name='L336'></a><a href='#L336'>336</a>
+<a name='L337'></a><a href='#L337'>337</a>
+<a name='L338'></a><a href='#L338'>338</a>
+<a name='L339'></a><a href='#L339'>339</a>
+<a name='L340'></a><a href='#L340'>340</a>
+<a name='L341'></a><a href='#L341'>341</a>
+<a name='L342'></a><a href='#L342'>342</a>
+<a name='L343'></a><a href='#L343'>343</a>
+<a name='L344'></a><a href='#L344'>344</a>
+<a name='L345'></a><a href='#L345'>345</a>
+<a name='L346'></a><a href='#L346'>346</a>
+<a name='L347'></a><a href='#L347'>347</a>
+<a name='L348'></a><a href='#L348'>348</a>
+<a name='L349'></a><a href='#L349'>349</a>
+<a name='L350'></a><a href='#L350'>350</a>
+<a name='L351'></a><a href='#L351'>351</a>
+<a name='L352'></a><a href='#L352'>352</a>
+<a name='L353'></a><a href='#L353'>353</a>
+<a name='L354'></a><a href='#L354'>354</a>
+<a name='L355'></a><a href='#L355'>355</a>
+<a name='L356'></a><a href='#L356'>356</a>
+<a name='L357'></a><a href='#L357'>357</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import { join } from "node:path";
+import { removeWorktree } from "@loopover/engine";
+import type { WorktreeExecFn, WorktreeRemoveResult } from "@loopover/engine";
+import { openLocalStoreAdapter, resolveLocalStoreDbPath, normalizeLocalStoreDbPath } from "./local-store.js";
+import { isValidRepoSegment } from "./repo-clone.js";
+import { REPLAY_SNAPSHOT_PURGE_SPEC, purgeStoreByRepo } from "./store-maintenance.js";
+&nbsp;
+// Freeze/snapshot mechanism for historical replay targets (#3010). Given a repo and a commit SHA T, exports:
+//  (a) the full working tree checked out AT T via a DETACHED git worktree -- the same isolation primitive
+//      worktree-allocator.ts (#4269) uses for attempt isolation, just detached rather than on a new branch,
+//      since a replay target is read-only, never a place to commit -- so it never mutates the caller's own
+//      checkout/branch.
+//  (b) a context bundle: commit history up to and including T (by ANCESTRY, via `git log T` -- walking the DAG
+//      is the tamper-resistant way to bound "up to T", since a commit's committer date is user-controlled and
+//      can't be trusted alone), tags reachable from T (`git tag --merged T`), and the README as it existed at
+//      T (`git ls-tree` + `git show T:&lt;name&gt;`, matched case-insensitively rather than a guessed filename list).
+//
+// REUSE NOTE: this issue's own text frames "the discover and analyze phases... already read git history" as
+// the reuse starting point. Grepped both packages (git log/git tag/commits/tags/releases) before writing this
+// and found no such utility anywhere -- opportunity-fanout.js reads GitHub API issue `updated_at`, not git
+// commit/tag history at all. The one genuinely reusable piece is worktree-allocator.ts's injected-exec
+// convention (WorktreeExecFn) and its removeWorktree -- both reused directly below (import from
+// @loopover/engine), rather than inventing a THIRD "inject the git subprocess" abstraction
+// alongside cli-subprocess-driver.ts's and worktree-allocator.ts's own.
+//
+// FAIL-FAST VALIDATION: ancestry-walking (git log T) already excludes anything NOT reachable from T by
+// construction, but a tag can point at a commit that IS an ancestor of T while the TAG's own creation/tagger
+// date is LATER (e.g. a tag added long after the commit it points to), and commit committer-dates are not
+// strictly monotonic along the DAG in general (rebases, clock skew). So checking every exported commit's date
+// and every exported tag's date against T's own commit date is a genuine, not merely defensive, check.
+//
+// PERSISTENCE: the context bundle is cached in the local store, UNIQUE-keyed on (repo_full_name, commit_sha) --
+// re-exporting the same (repo, T) pair returns the identical cached row rather than re-running git, which is
+// both how "byte-reproducible" holds trivially and avoids redundant work on repeat replay runs. The working-
+// tree export itself is git-content-addressed already (the same commit SHA always checks out identical files).
+&nbsp;
+export type ReplaySnapshotCommit = { sha: string; date: string; subject: string };
+export type ReplaySnapshotTag = { name: string; date: string; targetSha: string };
+export type ReplaySnapshotReadme = { filename: string; content: string };
+&nbsp;
+export type ReplaySnapshot = {
+  repoFullName: string;
+  commitSha: string;
+  worktreePath: string;
+  targetDate: string;
+  commits: ReplaySnapshotCommit[];
+  tags: ReplaySnapshotTag[];
+  readme: ReplaySnapshotReadme | null;
+  exportedAt: string;
+};
+&nbsp;
+export type ReplaySnapshotStore = {
+  dbPath: string;
+  getSnapshot(repoFullName: string, commitSha: string): ReplaySnapshot | null;
+  saveSnapshot(snapshot: Omit&lt;ReplaySnapshot, "exportedAt"&gt;): ReplaySnapshot;
+  /** Delete every cached snapshot row for one repo (#8009); returns the number of rows removed. */
+  purgeByRepo(repoFullName: string): number;
+  close(): void;
+};
+&nbsp;
+const defaultDbFileName = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >"replay-snapshot.sqlite3";</span></span>
+let defaultDb: ReplaySnapshotStore | null = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >null;</span></span>
+&nbsp;
+export function <span class="fstat-no" title="function not covered" ><span class="fstat-no" title="function not covered" >resolveReplaySnapshotDbPath(</span>e</span>nv: Record&lt;string, string | undefined&gt; = <span class="branch-0 cbranch-no" title="branch not covered" ><span class="branch-0 cbranch-no" title="branch not covered" >process.env)</span>: string {</span>
+<span class="cstat-no" title="statement not covered" >  return resolveLocalStoreDbPath(defaultDbFileName, "LOOPOVER_MINER_REPLAY_SNAPSHOT_DB", env);</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" ><span class="fstat-no" title="function not covered" >normalizeDbPath(</span>d</span>bPath: string): string {
+<span class="cstat-no" title="statement not covered" >  return normalizeLocalStoreDbPath(dbPath, resolveReplaySnapshotDbPath(), "invalid_replay_snapshot_db_path");</span>
+}
+&nbsp;
+const FIELD_SEP = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >"\x1f";</span></span>
+const README_NAME_PATTERN = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >/^readme(\.\w+)?$/i;</span></span>
+&nbsp;
+function <span class="fstat-no" title="function not covered" ><span class="fstat-no" title="function not covered" >normalizeRepoFullName(</span>r</span>epoFullName: string): string {
+<span class="cstat-no" title="statement not covered" >  if (typeof repoFullName !== "string") <span class="cstat-no" title="statement not covered" >throw new Error("invalid_repo_full_name");</span></span>
+  const [owner, repo, extra] = <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >repoFullName.trim().split("/");</span></span>
+<span class="cstat-no" title="statement not covered" >  if (!owner || !repo || extra !== undefined) <span class="cstat-no" title="statement not covered" >throw new Error("invalid_repo_full_name");</span></span>
+<span class="cstat-no" title="statement not covered" >  if (!isValidRepoSegment(owner) || !isValidRepoSegment(repo)) <span class="cstat-no" title="statement not covered" >throw new Error("invalid_repo_full_name");</span></span>
+<span class="cstat-no" title="statement not covered" >  return `${owner}/${repo}`;</span>
+}<span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" ></span></span>
+<span class="cstat-no" title="statement not covered" ></span>
+// A commit SHA is joined straight into REPLAY_SNAPSHOT_SUBDIR (and later passed to git as a bare revision),
+// so a value like "../../../tmp/evil" (or one containing a path separator) would escape the intended snapshot
+// directory via path.join (#7796). Constrain it to a single safe path segment -- the same restricted charset
+// repo-clone.ts's isValidRepoSegment guard uses for owner/repo (#5831), plus an explicit "."/".." rejection.
+// A genuine commit SHA is hex and always satisfies this, so no legitimate caller regresses.
+const COMMIT_SHA_PATTERN = <span class="cstat-no" title="statement not covered" >/^[A-Za-z0-9._-]+$/;</span>
+&nbsp;
+function <span class="fstat-no" title="function not covered" >normalizeCommitSha<span class="cstat-no" title="statement not covered" >(c</span>ommitSha: string):</span> string {
+<span class="cstat-no" title="statement not covered" >  if (typeof commitSha !== "string" || !commitSha.trim()) <span class="cstat-no" title="statement not covered" >throw new Error("invalid_commit_sha");</span></span>
+  const t<span class="fstat-no" title="function not covered" >rimmed = <span class="cstat-no" title="statement not covered" >commitSha.</span>trim();</span>
+<span class="cstat-no" title="statement not covered" >  if (trimmed === "." || trimmed === ".." || !COMMIT_SHA_P<span class="cstat-no" title="statement not covered" >ATTERN.test(trimmed)) <span class="cstat-no" title="statement not covered" >throw new Error("invalid_commit_sha");</span></span></span>
+<span class="cstat-no" title="statement not covered" >  return trimmed;<span class="cstat-no" title="statement not covered" ></span></span>
+}<span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" ></span></span>
+<span class="cstat-no" title="statement not covered" ></span>
+/** Worktree exports live under this dir inside the repo, mirroring worktree-allocator.ts's WORKTREE_SUBDIR. */
+export const REPLAY_SNAPSHOT_SUBDIR = <span class="cstat-no" title="statement not covered" >".loopover-replay-snapshots";</span>
+&nbsp;
+/** PURE: the deterministic on-disk lo<span class="cstat-no" title="statement not covered" >cation for a (repo, commit) r</span>eplay export -- same pair -&gt; same path. */
+export function <span class="fstat-no" title="function not covered" >planReplaySnapshotPath(i</span>nput: { repoPath: string; commitSha: string }): string {
+  const commitSha = <span class="cstat-no" title="statement not covered" >normalizeCommitSha(input.commitSha);</span>
+<span class="cstat-no" title="statement not covered" >  return join(in<span class="fstat-no" title="function not covered" >put.repoPath, REPLAY_SN</span>APSHOT_SUBDIR, commitSha);</span>
+}<span class="cstat-no" title="statement not covered" ></span>
+<span class="cstat-no" title="statement not covered" ></span>
+function <span class="fstat-no" title="function not covered" >assertExecResult(r</span>esult: { code: number | null; stdout?: string; stderr?: string }, description: string): string {
+<span class="cstat-no" title="statement not covered" >  if (result.code !== 0) {</span>
+    const<span class="fstat-no" title="function not covered" > <span class="cstat-no" title="statement not covered" >detail = (result</span>.stderr ?? "").trim() || `exit_${result.code}`;</span>
+<span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >    throw new Error(`${description}: ${detail}`);</span></span>
+  }<span class="cstat-no" title="statement not covered" ></span>
+<span class="cstat-no" title="statement not covered" >  re<span class="cstat-no" title="statement not covered" >turn result.stdout ?? "";</span></span>
+}
+<span class="cstat-no" title="statement not covered" ></span>
+/** Detached checkout at commitSha via `git worktree add --detach` -- never creates a branch, never touches the
+ *  caller's own checkout. Idempotent in effect: `git worktree add` itself fails if the path already has a
+ *  worktree, which callers avoid by checking the store cache first (see exportReplaySnapshot). */
+async function <span class="fstat-no" title="function not covered" >addDetachedWorktree(e</span>xec: WorktreeExecFn, repoPath: string, worktreePath: string, commitSha: string): Promise&lt;void&gt; {
+  const result = <span class="cstat-no" title="statement not covered" >await exec("git", ["worktree", "add", "--detach", worktreePath, commitSha], { cwd: repoPath });</span>
+<span class="cstat-no" title="statement not covered" >  assertExecRes<span class="fstat-no" title="function not covered" >ult(result, "git_wor</span>ktree_add_failed");</span>
+}<span class="cstat-no" title="statement not covered" ></span>
+<span class="cstat-no" title="statement not covered" ></span>
+async function <span class="fstat-no" title="function not covered" >readTargetCommitDate(e</span>xec: WorktreeExecFn, repoPath: string, commitSha: string): Promise&lt;string&gt; {
+  const result = <span class="cstat-no" title="statement not covered" >await exec("git", ["log", "-1", "--format=%cI", commitSha], { cwd: repoPath });</span>
+  const stdout <span class="fstat-no" title="function not covered" >= <span class="cstat-no" title="statement not covered" >assertExecResult(re</span>sult, "git_log_target_failed").trim();</span>
+<span class="cstat-no" title="statement not covered" >  if (!stdout) <span class="cstat-no" title="statement not covered" >th<span class="cstat-no" title="statement not covered" >row new Error(`git_log_target_failed: no commit found for ${commitSha}`);</span></span></span>
+<span class="cstat-no" title="statement not covered" >  return stdout;<span class="cstat-no" title="statement not covered" ></span></span>
+}<span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" ></span></span>
+<span class="cstat-no" title="statement not covered" ></span>
+async function <span class="fstat-no" title="function not covered" >readCommitHistory(e</span>xec: WorktreeExecFn, repoPath: string, commitSha: string): Promise&lt;ReplaySnapshotCommit[]&gt; {
+  const result = <span class="cstat-no" title="statement not covered" >await exec("git", ["log", commitSha, `--format=%H${FIELD_SEP}%cI${FIELD_SEP}%s`], { cwd: repoPath });</span>
+  const stdout <span class="fstat-no" title="function not covered" >= <span class="cstat-no" title="statement not covered" >assertExecResult</span>(result, "git_log_history_failed");</span>
+<span class="cstat-no" title="statement not covered" >  return stdout<span class="cstat-no" title="statement not covered" ></span></span>
+    .split("\n")<span class="cstat-no" title="statement not covered" ></span>
+<span class="cstat-no" title="statement not covered" >    .<span class="fstat-no" title="function not covered" >filter((l</span>ine) =&gt; <span class="cstat-no" title="statement not covered" >line.length &gt; 0)</span></span>
+    .<span class="fstat-no" title="function not covered" >map((l</span>ine) =&gt; {
+      const <span class="fstat-no" title="function not covered" >[s</span>ha, date<span class="cstat-no" title="statement not covered" >, subject] = <span class="cstat-no" title="statement not covered" >lin</span>e.split(FIELD_SEP);</span>
+<span class="cstat-no" title="statement not covered" >      ret<span class="fstat-no" title="function not covered" >ur</span>n { sha: sha!, date: date!, subject: subject ?? "" };</span>
+    });<span class="cstat-no" title="statement not covered" ></span>
+}<span class="cstat-no" title="statement not covered" ></span>
+&nbsp;
+// Lightweight tags have no tag object of their own, so `%(creatordate)` falls back to the POINTED-TO commit's
+// date rather than a genuine tag-creation date -- git has no record of when a lightweight tag was actually
+// created at all. That means a lightweight tag added long after T, but pointing at an ancestor of T, would
+// silently pass validateSnapshotFreshness's date check every time (its reported "date" is always &lt;= T's, by
+// construction of --merged). Since this can never be verified, lightweight tags are excluded from the export
+// entirely -- `%(objecttype)` is "tag" only for an annotated tag's own tag object, "commit" for a lightweight
+// tag's direct target, which is how the two are told apart.
+async function <span class="fstat-no" title="function not covered" >readReachableTags(e</span>xec: WorktreeExecFn, repoPath: string, commitSha: string): Promise&lt;ReplaySnapshotTag[]&gt; {
+  const result = <span class="cstat-no" title="statement not covered" >await exec(</span>
+    "git",<span class="fstat-no" title="function not covered" ></span>
+    ["tag", "--me<span class="cstat-no" title="statement not covered" >rged", commitSha, `--format=%(refname:short)${FIELD_SEP}%(creatordate:iso-strict)${FIELD_SEP}%(objectname)${FIELD_SEP}%(objecttype)`],</span>
+    { cwd: repoPath },
+  );
+  const stdout = <span class="cstat-no" title="statement not covered" >assertExecResult(result, "git_tag_merged_failed");</span>
+<span class="cstat-no" title="statement not covered" >  return stdout</span>
+    .split("\n")<span class="cstat-no" title="statement not covered" ></span>
+<span class="cstat-no" title="statement not covered" >    .<span class="fstat-no" title="function not covered" >filter((l</span>ine) =&gt; <span class="cstat-no" title="statement not covered" >line.length &gt; 0)</span></span>
+    .<span class="fstat-no" title="function not covered" >map((l</span>ine) =&gt; {
+      const <span class="fstat-no" title="function not covered" >[n</span>ame, dat<span class="cstat-no" title="statement not covered" >e, targetSha, ob</span>jectType] = <span class="cstat-no" title="statement not covered" >line.split(FIELD_SEP);</span>
+<span class="cstat-no" title="statement not covered" >      ret<span class="fstat-no" title="function not covered" >ur</span>n { name: name!, date: date!, targetSha: targetSha!, objectType };</span>
+    })<span class="cstat-no" title="statement not covered" ></span>
+    .<span class="fstat-no" title="function not covered" >f<span class="cstat-no" title="statement not covered" >ilter((t</span>ag) =&gt; <span class="cstat-no" title="statement not covered" >tag.objectType === "tag")</span></span>
+    .<span class="fstat-no" title="function not covered" >map(({</span> objectType, ...tag }) =&gt; <span class="cstat-no" title="statement not covered" >tag)</span>;
+}<span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" ></span></span>
+<span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" ></span></span>
+/** Finds the repo-root README (any casing/extension) at commitSha and returns its content, or null if none
+ *  exists at that commit. Uses `git ls-tree` to find the real filename rather than guessing a fixed spelling
+ *  list. */
+async function <span class="fstat-no" title="function not covered" >readReadmeAtCommit(e</span>xec: WorktreeExecFn, repoPath: string, commitSha: string): Promise&lt;ReplaySnapshotReadme | null&gt; {
+  const listing = <span class="cstat-no" title="statement not covered" >await exec("git", ["ls-tree", "--name-only", commitSha], { cwd: repoPath });</span>
+  const stdout <span class="fstat-no" title="function not covered" >= <span class="cstat-no" title="statement not covered" >assertExecResult(</span>listing, "git_ls_tree_failed");</span>
+  const filename =<span class="cstat-no" title="statement not covered" > <span class="cstat-no" title="statement not covered" >stdout</span></span>
+    .split("\n")<span class="cstat-no" title="statement not covered" ></span>
+    .<span class="fstat-no" title="function not covered" >map((l</span>ine) =&gt; <span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >line.trim())</span></span>
+    .<span class="fstat-no" title="function not covered" >find((l</span>ine) =&gt; <span class="cstat-no" title="statement not covered" >README_NAME_PATTERN.test(line))</span>;
+<span class="cstat-no" title="statement not covered" >  if (!fi<span class="fstat-no" title="function not covered" >le</span>name) <span class="cstat-no" title="statement not covered" >re<span class="cstat-no" title="statement not covered" >turn null;</span></span></span>
+<span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" ></span></span>
+<span class="cstat-no" title="statement not covered" >  const shown = <span class="cstat-no" title="statement not covered" >a<span class="cstat-no" title="statement not covered" >wait exec("git", ["show", `${commitSha}:${filename}`], { cwd: repoPath });</span></span></span>
+  const content = <span class="cstat-no" title="statement not covered" >assertExecResult(shown, "git_show_readme_failed");</span>
+<span class="cstat-no" title="statement not covered" >  return { filen<span class="cstat-no" title="statement not covered" >ame, content };</span></span>
+}<span class="cstat-no" title="statement not covered" ></span>
+<span class="cstat-no" title="statement not covered" ></span>
+/** PURE: fails fast (throws) if any exported commit or tag carries a date LATER than the target commit's own
+ *  date. Returns nothing on success. */
+export function <span class="fstat-no" title="function not covered" >validateSnapshotFreshness(i</span>nput: { targetDate: string; commits: ReplaySnapshotCommit[]; tags: ReplaySnapshotTag[] }): void {
+  const targetMs = <span class="cstat-no" title="statement not covered" >Date.parse(input.targetDate);</span>
+  const violatio<span class="fstat-no" title="function not covered" >ns: string[] = <span class="cstat-no" title="statement not covered" >[];</span></span>
+<span class="cstat-no" title="statement not covered" >  for (const commit<span class="cstat-no" title="statement not covered" > of input.commits) {</span></span>
+<span class="cstat-no" title="statement not covered" >    if (Date.parse(commit.date)<span class="cstat-no" title="statement not covered" > &gt; </span>targetMs) <span class="cstat-no" title="statement not covered" >violations.push(`commit ${commit.sha} dated ${commit.date} is after target ${input.targetDate}`);</span></span>
+<span class="cstat-no" title="statement not covered" >  }</span>
+<span class="cstat-no" title="statement not covered" >  fo<span class="cstat-no" title="statement not covered" >r (const tag of input.tags) {<span class="cstat-no" title="statement not covered" ></span></span></span>
+<span class="cstat-no" title="statement not covered" >    if (Date.parse(tag.date) &gt; targetMs) <span class="cstat-no" title="statement not covered" >violations.push(`tag ${tag.name} dated ${tag.date} is after target ${input.targetDate}`);</span></span>
+<span class="cstat-no" title="statement not covered" >  }</span>
+<span class="cstat-no" title="statement not covered" >  if<span class="cstat-no" title="statement not covered" > (violations.length &gt; 0) <span class="cstat-no" title="statement not covered" >throw new Er<span class="cstat-no" title="statement not covered" >ror(`replay_snapshot_freshness_violation: ${violations.join("; ")}`);</span></span></span></span>
+}
+<span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" ></span></span>
+type ReplaySnapshotRow = {
+  repo_full_name: string;
+  commit_sha: string;
+  worktree_path: string;
+  target_date: string;
+  commits_json: string;
+  tags_json: string;
+  readme_filename: string | null;
+  readme_content: string | null;
+  exported_at: string;
+};
+&nbsp;
+function <span class="fstat-no" title="function not covered" >rowToSnapshot(r</span>ow: ReplaySnapshotRow): ReplaySnapshot {
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    repoF<span class="fstat-no" title="function not covered" >ullName: row.r</span>epo_full_name,
+<span class="cstat-no" title="statement not covered" >    commitSha: row.commit_sha,</span>
+    worktreePath: row.worktree_path,
+    targetDate: row.target_date,
+    commits: JSON.parse(row.commits_json),
+    tags: JSON.parse(row.tags_json),
+    readme: row.readme_filename ? { filename: row.readme_filename, content: row.readme_content as string } : null,
+    exportedAt: row.exported_at,
+  };
+}
+&nbsp;
+export function <span class="fstat-no" title="function not covered" >openReplaySnapshotStore(d</span>bPath: string = <span class="branch-0 cbranch-no" title="branch not covered" >resolveReplaySnapshotDbPath()): ReplaySnapshotStore {</span>
+  const resolvedPath = <span class="cstat-no" title="statement not covered" >normalizeDbPath(dbPath);</span>
+  // Opened thro<span class="fstat-no" title="function not covered" >ugh the #7175 SqliteDriv</span>er seam (`openLoc<span class="branch-0 cbranch-no" title="branch not covered" >alStoreAdapter`): CRUD goes th</span>rough `driver.query`,
+  // while schema creat<span class="cstat-no" title="statement not covered" >ion still uses the under</span>lying DatabaseSync until that helper is migrated. Public API
+  // stays synchronous so callers need no async cascade in this part-1 slice.
+  const { db, driver } = <span class="cstat-no" title="statement not covered" >openLocalStoreAdapter(resolvedPath);</span>
+<span class="cstat-no" title="statement not covered" >  db.exec(`</span>
+    CREATE TABLE IF NOT E<span class="cstat-no" title="statement not covered" >XISTS replay_snapshots (</span>
+<span class="cstat-no" title="statement not covered" >      id INTEGER PRIMARY KEY AUTOINCREMENT,</span>
+      repo_full_name TEXT NOT NULL,
+      commit_sha TEXT NOT NULL,
+      worktree_path TEXT NOT NULL,
+      target_date TEXT NOT NULL,
+      commits_json TEXT NOT NULL,
+      tags_json TEXT NOT NULL,
+      readme_filename TEXT,
+      readme_content TEXT,
+      exported_at TEXT NOT NULL,
+      UNIQUE (repo_full_name, commit_sha)
+    )
+  `);
+  const getSql = <span class="cstat-no" title="statement not covered" >"SELECT * FROM replay_snapshots WHERE repo_full_name = ? AND commit_sha = ?";</span>
+  const insertSql = <span class="cstat-no" title="statement not covered" >`</span>
+    INSERT INTO r<span class="cstat-no" title="statement not covered" >eplay_snapshots</span>
+      (repo_full_nam<span class="cstat-no" title="statement not covered" >e, commit_sha, worktree_path, target_date, commits_json, tags_json, readme_filename, readme_content, exported_at)</span>
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `;
+&nbsp;
+  function <span class="fstat-no" title="function not covered" >getSnapshot(r</span>epoFullName: string, commitSha: string): ReplaySnapshot | null {
+    const row = <span class="cstat-no" title="statement not covered" >driver.query(getSql, [normalizeRepoFullName(repoFullName), normalizeCommitSha(commitSha)]).rows[0] as</span>
+      | Rep<span class="fstat-no" title="function not covered" >laySnapshotR</span>ow
+      | undefine<span class="cstat-no" title="statement not covered" >d;</span>
+<span class="cstat-no" title="statement not covered" >    return row ? rowToSnapshot(row) : null;</span>
+  }
+<span class="cstat-no" title="statement not covered" ></span>
+  function <span class="fstat-no" title="function not covered" >saveSnapshot(s</span>napshot: Omit&lt;ReplaySnapshot, "exportedAt"&gt;): ReplaySnapshot {
+    const repoFullName = <span class="cstat-no" title="statement not covered" >normalizeRepoFullName(snapshot.repoFullName);</span>
+    const c<span class="fstat-no" title="function not covered" >ommitSha = <span class="cstat-no" title="statement not covered" >no</span>rmalizeCommitSha(snapshot.commitSha);</span>
+<span class="cstat-no" title="statement not covered" >    driver.query(insertSq<span class="cstat-no" title="statement not covered" >l, [</span></span>
+      repoFullName,<span class="cstat-no" title="statement not covered" ></span>
+<span class="cstat-no" title="statement not covered" >      commitSha,</span>
+      snapshot.worktreePath,
+      snapshot.targetDate,
+      JSON.stringify(snapshot.commits),
+      JSON.stringify(snapshot.tags),
+      snapshot.readme?.filename ?? null,
+      snapshot.readme?.content ?? null,
+      new Date().toISOString(),
+    ]);
+    // Non-null: the INSERT above either succeeded (this row now exists) or threw, so getSnapshot here always
+    // finds the row it just wrote.
+<span class="cstat-no" title="statement not covered" >    return getSnapshot(repoFullName, commitSha)!;</span>
+  }
+<span class="cstat-no" title="statement not covered" ></span>
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    dbPath: resolvedPath,
+<span class="cstat-no" title="statement not covered" >    getSnapshot,</span>
+    saveSnapshot,
+    /** Explicit, operator-invoked right-to-be-forgotten purge (#8009) — never runs automatically; this is what
+     *  `loopover-miner purge` invokes. Reuses store-maintenance.js's identifier-guarded purgeStoreByRepo against
+     *  the raw handle (the #7175 driver seam covers this store's own CRUD, not the shared maintenance helpers),
+     *  exactly like the other repo-scoped stores. Removes only DB rows — exported worktrees are transient files
+     *  the snapshot merely references, cleaned up by removeReplaySnapshotWorktree in their own lifecycle. */
+<span class="fstat-no" title="function not covered" >    purgeByRepo(r</span>epoFullName: string): number {
+<span class="cstat-no" title="statement not covered" >      return purgeStoreByRepo(db, REPLAY_SNAPSHOT_PURGE_SPEC, normalizeRepoFullName(repoFullName));</span>
+<span class="fstat-no" title="function not covered" >    },</span>
+<span class="fstat-no" title="function not covered" >    cl<span class="cstat-no" title="statement not covered" >ose() {</span></span>
+<span class="cstat-no" title="statement not covered" >      db.close();</span>
+<span class="fstat-no" title="function not covered" >    },</span>
+  };<span class="cstat-no" title="statement not covered" ></span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >getDefaultReplaySnapshotStore(): ReplaySnapshotStore {</span>
+<span class="cstat-no" title="statement not covered" >  defaultDb ??= openReplaySnapshotStore();</span>
+<span class="cstat-no" title="statement not covered" >  return <span class="fstat-no" title="function not covered" >defaultDb;</span></span>
+}<span class="cstat-no" title="statement not covered" ></span>
+<span class="cstat-no" title="statement not covered" ></span>
+export function <span class="fstat-no" title="function not covered" >closeDefaultReplaySnapshotStore(): void {</span>
+<span class="cstat-no" title="statement not covered" >  if (!defaultDb) <span class="cstat-no" title="statement not covered" >return;</span></span>
+<span class="cstat-no" title="statement not covered" >  defaultDb.clos<span class="fstat-no" title="function not covered" >e();</span></span>
+<span class="cstat-no" title="statement not covered" >  defaultDb = null<span class="cstat-no" title="statement not covered" >;</span></span>
+}<span class="cstat-no" title="statement not covered" ></span>
+<span class="cstat-no" title="statement not covered" ></span>
+/**
+ * Export a frozen, reproducible replay snapshot for (repoFullName, commitSha): a detached working-tree checkout
+ * at that commit plus a context bundle (commit history, reachable tags, README-at-commit). Returns the CACHED
+ * snapshot without touching git again if one already exists for this exact (repo, commit) pair.
+ */
+export async function <span class="fstat-no" title="function not covered" >exportReplaySnapshot(</span>
+  input: { repoPath: string; repoFullName: string; commitSha: string },
+  deps: { exec: Worktr<span class="fstat-no" title="function not covered" >eeExecFn; store?: Rep</span>laySnapshotStore },
+): Promise&lt;ReplaySnapshot&gt; {
+<span class="cstat-no" title="statement not covered" >  if (!input || typeof input !== "object") <span class="cstat-no" title="statement not covered" >throw new Error("invalid_replay_snapshot_input");</span></span>
+  const repoFullName = <span class="cstat-no" title="statement not covered" >normalizeRepoFullName(input.repoFullName);</span>
+<span class="cstat-no" title="statement not covered" >  const commitSha = <span class="cstat-no" title="statement not covered" >normalizeCommitSha(inpu<span class="cstat-no" title="statement not covered" >t.commitSha);</span></span></span>
+<span class="cstat-no" title="statement not covered" >  if (typeof input.repo<span class="cstat-no" title="statement not covered" >Path !== "string" || !input.repoPath.trim(</span>)) <span class="cstat-no" title="statement not covered" >throw new Error("invalid_repo_path");</span></span>
+  const repoPath = <span class="cstat-no" title="statement not covered" >i<span class="cstat-no" title="statement not covered" >nput.repoPath.trim();</span></span>
+<span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" ></span></span>
+<span class="cstat-no" title="statement not covered" >  if (!deps || type<span class="cstat-no" title="statement not covered" >of deps !== "object" |</span>| typeof deps.exec !== "function") <span class="cstat-no" title="statement not covered" >throw new Error("invalid_exec");</span></span>
+  const { exec } = <span class="cstat-no" title="statement not covered" >deps;</span>
+<span class="cstat-no" title="statement not covered" >  const store = <span class="cstat-no" title="statement not covered" >deps.store ?? getDefaultReplaySnapshotStore();<span class="cstat-no" title="statement not covered" ></span></span></span>
+<span class="cstat-no" title="statement not covered" ></span>
+  const cached =<span class="cstat-no" title="statement not covered" > <span class="cstat-no" title="statement not covered" >store.getSnapshot(repoFullName, commitSha);</span></span>
+<span class="cstat-no" title="statement not covered" >  if (cached) <span class="cstat-no" title="statement not covered" >return cached;</span></span>
+<span class="cstat-no" title="statement not covered" ></span>
+<span class="cstat-no" title="statement not covered" >  const worktr<span class="cstat-no" title="statement not covered" >eePath = <span class="cstat-no" title="statement not covered" >planReplaySnapshotPath({ repoPath, commitSha });</span></span></span>
+<span class="cstat-no" title="statement not covered" >  await addDetachedWorktree(exec, repoPath, worktreePath, commitSha);</span>
+<span class="cstat-no" title="statement not covered" ></span>
+<span class="cstat-no" title="statement not covered" >  // Everything below can fail (a bad git read, or a deliberate freshness violation) after the worktree already</span>
+  // exists on disk at the deterministic path above. Left behind, a retry for the same (repo, commit) pair would
+  // hit `git worktree add`'s own "path already exists" refusal instead of the real error, permanently masking
+  // it. Clean up the worktree on any failure here before rethrowing, so a retry starts from a clean slate.
+<span class="cstat-no" title="statement not covered" >  try {</span>
+    const targetDate = <span class="cstat-no" title="statement not covered" >await readTargetCommitDate(exec, repoPath, commitSha);</span>
+<span class="cstat-no" title="statement not covered" >    const commits = <span class="cstat-no" title="statement not covered" >await readCommitHistory(exec, repoPath, commitSha);</span></span>
+    const tags = <span class="cstat-no" title="statement not covered" >await <span class="cstat-no" title="statement not covered" >readReachableTags(exec, repoPath, commitSha);</span></span>
+    const readme = <span class="cstat-no" title="statement not covered" >a<span class="cstat-no" title="statement not covered" >wait readReadmeAtCommit(exec, repoPath, commitSha);</span></span>
+<span class="cstat-no" title="statement not covered" ></span>
+<span class="cstat-no" title="statement not covered" >    validateSnapsho<span class="cstat-no" title="statement not covered" >tFreshness({ targetDate, commits, tags });</span></span>
+&nbsp;
+<span class="cstat-no" title="statement not covered" >    return store.saveSnapshot({ repoFullName, commitSha, worktreePath, targetDate, commits, tags, readme });</span>
+  } catch (error) {
+<span class="cstat-no" title="statement not covered" ><span class="cstat-no" title="statement not covered" >    await removeReplaySnapshotWorktree(exec, repoPath, worktreePath).<span class="fstat-no" title="function not covered" >catch(() =&gt; {</span></span></span>
+      /* best-effort cleanup -- the original error below is the one that matters to the caller */
+<span class="cstat-no" title="statement not covered" >    });<span class="fstat-no" title="function not covered" ></span></span>
+<span class="cstat-no" title="statement not covered" >    throw error;</span>
+  }
+}<span class="cstat-no" title="statement not covered" ></span>
+&nbsp;
+/** Tear down a replay snapshot's working-tree export (the cached context-bundle row is left in place -- it is
+ *  cheap, commit-keyed, and re-usable even after the on-disk tree is removed; only re-adding the worktree would
+ *  require the tree again, which is out of this function's scope). */
+export async function <span class="fstat-no" title="function not covered" >removeReplaySnapshotWorktree(e</span>xec: WorktreeExecFn, repoPath: string, worktreePath: string): Promise&lt;WorktreeRemoveResult&gt; {
+<span class="cstat-no" title="statement not covered" >  return removeWorktree({ exec, repoPath, worktreePath });</span>
+}<span class="fstat-no" title="function not covered" ></span>
+<span class="cstat-no" title="statement not covered" ></span></pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../../sorter.js"></script>
+        <script src="../../../block-navigation.js"></script>
+    </body>
+</html>
+    

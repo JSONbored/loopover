@@ -1,0 +1,577 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/selfhost/pg-dialect.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/selfhost</a> pg-dialect.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/46</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/14</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/15</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/41</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// SQLite → Postgres SQL dialect translation for the self-host Postgres backend (#977). loopover's core and
+// drizzle-orm/d1 emit SQLite-dialect SQL; this translates the bounded set of SQLite-isms the codebase uses
+// (placeholders + a handful of scalar functions + INSERT OR REPLACE/IGNORE + the rowid pseudo-column) so
+// the SAME queries run on Postgres. The timestamp columns are TEXT (ISO strings written by the app), so the
+// datetime/CURRENT_TIMESTAMP translations return TEXT in SQLite's format to preserve the existing
+// text-comparison semantics. Validated against a real Postgres (all 56 migrations + the runtime query paths).
+&nbsp;
+// INSERT OR REPLACE needs an explicit conflict target on Postgres; map the (few) tables that use it to their PK.
+const REPLACE_CONFLICT_KEYS: Record&lt;string, string[]&gt; = <span class="cstat-no" title="statement not covered" >{</span>
+  system_flags: ["key"],
+  tunables_overrides: ["project"],
+  tunables_overrides_shadow: ["project"],
+  orb_export_cursor: ["instance_hash"],
+  orb_signals: ["instance_id", "repo_hash", "pr_hash"],
+};
+&nbsp;
+/** Replace `?` placeholders with `$1,$2,…`, skipping any `?` inside single-quoted string literals. A `?`
+ *  immediately followed by digits is SQLite's *numbered* placeholder (`?1`, `?2`, …, e.g. retention.ts's
+ *  `retentionWhere()` and repositories.ts's `claimRegateFanoutSlot()`) — its index is reused verbatim as
+ *  `$1`/`$2` rather than folded into the anonymous-placeholder counter below, otherwise `?1` corrupts to
+ *  `$1` + a literal trailing `1` (i.e. `$11`), which Postgres reads as bind parameter 11. Per SQLite's own
+ *  rule, a later anonymous `?` gets "one greater than the largest parameter number already assigned", so a
+ *  numbered placeholder also raises the anonymous counter's floor — otherwise a later `?` could collide with
+ *  an earlier `?N` (e.g. `?1` then `?` must yield `$1`, `$2`, not `$1`, `$1`). */
+export function <span class="fstat-no" title="function not covered" >toNumberedPlaceholders(s</span>ql: string): string {
+  let out = <span class="cstat-no" title="statement not covered" >"";</span>
+  let n = <span class="cstat-no" title="statement not covered" >0;</span>
+  let inString = <span class="cstat-no" title="statement not covered" >false;</span>
+<span class="cstat-no" title="statement not covered" >  for (let i = <span class="cstat-no" title="statement not covered" >0; i</span> &lt; sql.length; i++) {</span>
+    const ch = <span class="cstat-no" title="statement not covered" >sql[i] as string;</span>
+<span class="cstat-no" title="statement not covered" >    if (ch === "'") <span class="cstat-no" title="statement not covered" >inString = !inString;</span></span>
+<span class="cstat-no" title="statement not covered" >    if (ch === "?" &amp;&amp; !inString) {</span>
+      const numbered = <span class="cstat-no" title="statement not covered" >/^\d+/.exec(sql.slice(i + 1))?.[0];</span>
+<span class="cstat-no" title="statement not covered" >      if (numbered) {</span>
+<span class="cstat-no" title="statement not covered" >        n = Math.max(n, Number(numbered));</span>
+<span class="cstat-no" title="statement not covered" >        out += `$${numbered}`;</span>
+<span class="cstat-no" title="statement not covered" >        i += numbered.length;</span>
+<span class="cstat-no" title="statement not covered" >        continue;</span>
+      }
+<span class="cstat-no" title="statement not covered" >      n += 1;</span>
+<span class="cstat-no" title="statement not covered" >      out += `$${n}`;</span>
+    } else {
+<span class="cstat-no" title="statement not covered" >      out += ch;</span>
+    }
+  }
+<span class="cstat-no" title="statement not covered" >  return out;</span>
+}
+&nbsp;
+/** Translate the SQLite scalar functions the codebase uses to Postgres equivalents. */
+export function <span class="fstat-no" title="function not covered" >translateFunctions(s</span>ql: string): string {
+<span class="cstat-no" title="statement not covered" >  return (</span>
+    sql
+      // ISO-now (the DEFAULT on TEXT timestamp columns + nowIso parity)
+      .replace(/strftime\(\s*'%Y-%m-%dT%H:%M:%fZ'\s*,\s*'now'\s*\)/gi, `to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`)
+      // week / month buckets (stats)
+      .replace(/strftime\(\s*'%Y-W%W'\s*,\s*([^)]+?)\s*\)/gi, `to_char(($1)::timestamptz, 'YYYY"-W"WW')`)
+      .replace(/strftime\(\s*'%Y-%m'\s*,\s*([^)]+?)\s*\)/gi, `to_char(($1)::timestamptz, 'YYYY-MM')`)
+      // datetime('now', &lt;modifier&gt;) → TEXT in SQLite's 'YYYY-MM-DD HH:MM:SS' format (TEXT columns compared)
+      .replace(/datetime\(\s*'now'\s*,\s*([^)]+?)\s*\)/gi, `to_char(now() + ($1)::interval, 'YYYY-MM-DD HH24:MI:SS')`)
+      .replace(/datetime\(\s*'now'\s*\)/gi, `to_char(now(), 'YYYY-MM-DD HH24:MI:SS')`)
+      // CURRENT_TIMESTAMP → SQLite's TEXT format (the columns are TEXT)
+      .replace(/CURRENT_TIMESTAMP/gi, `to_char(now(), 'YYYY-MM-DD HH24:MI:SS')`)
+      // date(&lt;expr&gt;) → TEXT 'YYYY-MM-DD' like SQLite's date(). Postgres would accept date(&lt;text&gt;) via an
+      // implicit cast, but it returns a `date`-typed value that node-pg parses into a JS Date object — so
+      // every day-bucketed trend read (rule-calibration-trend.ts, public-accuracy-trend.ts, stats.ts, ...)
+      // silently bucketed NOTHING on self-host: the JS-side week matching expects the TEXT day D1 returns
+      // (#8171). `datetime(` cannot match (the regex requires "(" immediately after "date").
+      .replace(/(?&lt;![\w$])date\(\s*([A-Za-z0-9_.]+|\?)\s*\)/gi, `to_char(($1)::timestamptz, 'YYYY-MM-DD')`)
+      // json_extract(col, '$.a.b…') (nested paths) → (col::jsonb #&gt;&gt; '{a,b…}') — the persisted backtest runs
+      // read `$.comparison.verdict`, which the single-level rule below can't see; untranslated it is a hard
+      // "function json_extract does not exist" error swallowed by the fail-safe trend reads (#8171).
+      .replace(<span class="fstat-no" title="function not covered" >/json_extract\(\s*([^,]+?)\s*,\s*'\$\.((?:[A-Za-z0-9_]+\.)+[A-Za-z0-9_]+)'\s*\)/gi, (_</span>m, col, path) =&gt; <span class="cstat-no" title="statement not covered" >`((${col})::jsonb #&gt;&gt; '{${path.split(".").join(",")}}')`)</span>
+      // json_extract(col, '$.key') → (col::jsonb -&gt;&gt; 'key')  (single-level paths)
+      .replace(/json_extract\(\s*([^,]+?)\s*,\s*'\$\.([A-Za-z0-9_]+)'\s*\)/gi, `(($1)::jsonb -&gt;&gt; '$2')`)
+      // instr(haystack, needle) → strpos(haystack, needle): both are 1-based first-occurrence index, 0 if
+      // absent -- a direct semantic match, no formula adjustment needed. Postgres has no `instr` builtin at
+      // all (unlike substr, which is SQL-standard and needs no translation) -- every instr() call reaching
+      // Postgres untranslated fails outright with "function instr(...) does not exist", which the codebase's
+      // fail-safe read paths (e.g. computeContributorGateEval-style try/catch) silently swallow to an empty
+      // result rather than surfacing. Used to parse a `repo#123`-shaped target_id/target_key in several
+      // review/public-stats query builders (e.g. public-stats.ts, contributor-gate-history-backfill.ts).
+      .replace(/instr\(\s*([^,]+?)\s*,\s*([^)]+?)\s*\)/gi, `strpos($1, $2)`)
+  );
+}
+&nbsp;
+/** Quote a bare camelCase `AS` alias so Postgres preserves its case. Unquoted identifiers are case-folded to
+ *  lowercase by Postgres (both at DEFINITION and at SELECT-list ALIAS time) -- SQLite/D1 preserves whatever
+ *  case the query wrote. The codebase's query builders read result rows by camelCase property access
+ *  (`row.targetId`, `row.authorLogin`, ...) expecting the alias verbatim; unquoted on Postgres, `AS targetId`
+ *  comes back as the key `targetid`, so every such field silently reads as `undefined` -- a fail-safe read
+ *  path (try/catch → empty result) swallows this without ever surfacing an error. Only bare (unquoted, no
+ *  leading digit) aliases containing at least one uppercase letter need quoting; an all-lowercase or
+ *  already-quoted alias is left untouched. Scoped to `AS &lt;ident&gt;` specifically (never a plain column/table
+ *  reference elsewhere) since that's the only place this codebase's queries introduce a camelCase name. */
+export function <span class="fstat-no" title="function not covered" >quoteCamelCaseAliases(s</span>ql: string): string {
+<span class="cstat-no" title="statement not covered" >  return sql.replace(<span class="fstat-no" title="function not covered" >/\bAS\s+([a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]*)\b/g, (_</span>full, ident: string) =&gt; <span class="cstat-no" title="statement not covered" >`AS "${ident}"`)</span>;</span>
+}
+&nbsp;
+/** Translate SQLite's `rowid` pseudo-column to Postgres's `ctid` system column. Both give a stable,
+ *  per-row identifier for the lifetime of a single statement/snapshot — exactly how the codebase uses
+ *  it: `DELETE ... WHERE rowid IN (SELECT rowid FROM t WHERE ... LIMIT n)` for bounded batched pruning
+ *  (retention.ts) and `ORDER BY rowid` for insertion-order tie-breaking (orb/relay.ts, tests). `ctid` is
+ *  a *physical* row location that can change across `VACUUM FULL` / row rewrites, so this is only safe
+ *  for the codebase's existing usage — internal bookkeeping resolved within one statement — never for
+ *  durable application-facing row identity. Fixes the self-host Postgres dead-letter where the raw
+ *  `rowid` reached Postgres verbatim ("column \"rowid\" does not exist"). */
+export function <span class="fstat-no" title="function not covered" >translateRowid(s</span>ql: string): string {
+<span class="cstat-no" title="statement not covered" >  return sql.replace(/\browid\b/gi, "ctid");</span>
+}
+&nbsp;
+/** Translate INSERT OR REPLACE / INSERT OR IGNORE to Postgres ON CONFLICT. */
+export function <span class="fstat-no" title="function not covered" >translateInsertOr(s</span>ql: string): string {
+<span class="cstat-no" title="statement not covered" >  if (/^\s*INSERT\s+OR\s+IGNORE\s+INTO/i.test(sql)) {</span>
+<span class="cstat-no" title="statement not covered" >    return `${sql.replace(/^(\s*)INSERT\s+OR\s+IGNORE\s+INTO/i, "$1INSERT INTO")} ON CONFLICT DO NOTHING`;</span>
+  }
+  const m = <span class="cstat-no" title="statement not covered" >/^\s*INSERT\s+OR\s+REPLACE\s+INTO\s+([A-Za-z0-9_]+)\s*\(([^)]+)\)/i.exec(sql);</span>
+<span class="cstat-no" title="statement not covered" >  if (m) {</span>
+    const table = <span class="cstat-no" title="statement not covered" >m[1] as string;</span>
+    const cols = (<span class="cstat-no" title="statement not covered" >m[2] as string).split(",").<span class="fstat-no" title="function not covered" >map((c</span>) =&gt; <span class="cstat-no" title="statement not covered" >c.trim())</span>;</span>
+    const pk = <span class="cstat-no" title="statement not covered" >REPLACE_CONFLICT_KEYS[table];</span>
+<span class="cstat-no" title="statement not covered" >    if (!pk) <span class="cstat-no" title="statement not covered" >throw new Error(`pg_dialect: INSERT OR REPLACE into '${table}' has no known conflict key`);</span></span>
+    const updates = <span class="cstat-no" title="statement not covered" >cols</span>
+      .<span class="fstat-no" title="function not covered" >filter((c</span>) =&gt; <span class="cstat-no" title="statement not covered" >!pk.includes(c))</span>
+      .<span class="fstat-no" title="function not covered" >map((c</span>) =&gt; <span class="cstat-no" title="statement not covered" >`${c}=excluded.${c}`)</span>
+      .join(", ");
+    const base = <span class="cstat-no" title="statement not covered" >sql.replace(/^(\s*)INSERT\s+OR\s+REPLACE\s+INTO/i, "$1INSERT INTO");</span>
+<span class="cstat-no" title="statement not covered" >    return `${base} ON CONFLICT (${pk.join(", ")}) DO UPDATE SET ${updates}`;</span>
+  }
+<span class="cstat-no" title="statement not covered" >  return sql;</span>
+}
+&nbsp;
+/** Strip table qualifiers from an ON CONFLICT target list. drizzle-orm/d1 emits the conflict target as
+ *  `ON CONFLICT ("table"."col")` — valid in SQLite, but Postgres requires an unqualified column list
+ *  (`ON CONFLICT ("col")`) and otherwise fails with a syntax error, breaking every Drizzle upsert
+ *  (e.g. recordWebhookEvent → webhook ingest) on the Postgres backend. Scoped to the conflict-target
+ *  parens so qualified column refs elsewhere (WHERE / SELECT / joins) are left intact. */
+export function <span class="fstat-no" title="function not covered" >stripConflictTargetQualifiers(s</span>ql: string): string {
+  // Capture the keyword + opening paren and the closing paren so the original casing/spacing is preserved
+  // (drizzle emits lowercase `on conflict`); only the inner target list is rewritten.
+<span class="cstat-no" title="statement not covered" >  return sql.replace(</span>
+<span class="fstat-no" title="function not covered" >    /(\bON\s+CONFLICT\s*\()([^)]*)(\))/gi,</span>
+    (_full, open: string, target: string, close: string) =&gt; <span class="cstat-no" title="statement not covered" >`${open}${target.replace(/"[^"]+"\s*\.\s*("[^"]+")/g, "$1")}${close}`,</span>
+  );
+}
+&nbsp;
+/** Translate a runtime query (SQLite → Postgres). */
+export function <span class="fstat-no" title="function not covered" >translateSql(s</span>ql: string): string {
+<span class="cstat-no" title="statement not covered" >  return toNumberedPlaceholders(stripConflictTargetQualifiers(translateRowid(quoteCamelCaseAliases(translateFunctions(translateInsertOr(sql))))));</span>
+}
+&nbsp;
+/** Migrations are applied as whole multi-statement files via exec(), so the statement-anchored
+ *  translateInsertOr() can't reach an `INSERT OR IGNORE` embedded mid-file (e.g. the global_agent_controls
+ *  seed in 0059). Rewrite each such statement to Postgres `INSERT … ON CONFLICT DO NOTHING`. Only IGNORE
+ *  seeds exist in migrations; an INSERT OR REPLACE statement would need a known conflict key, so it is left
+ *  untouched (and would surface as a clear Postgres error) rather than guessed at. */
+export function <span class="fstat-no" title="function not covered" >translateMigrationInserts(s</span>ql: string): string {
+<span class="cstat-no" title="statement not covered" >  return sql.replace(/INSERT\s+OR\s+IGNORE\s+INTO\b([^;]*);/gi, "INSERT INTO$1 ON CONFLICT DO NOTHING;");</span>
+}
+&nbsp;
+/** Translate a DDL statement (migrations). Column types (TEXT/INTEGER/REAL) are PG-native; the SQLite
+ *  default expressions need translating, as does any `INSERT OR IGNORE` seed. No `?` placeholders in DDL. */
+export function <span class="fstat-no" title="function not covered" >translateDdl(s</span>ql: string): string {
+<span class="cstat-no" title="statement not covered" >  return translateFunctions(translateMigrationInserts(sql));</span>
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    

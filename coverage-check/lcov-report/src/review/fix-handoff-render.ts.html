@@ -1,0 +1,493 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/review/fix-handoff-render.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/review</a> fix-handoff-render.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/28</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/32</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/9</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/26</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Fix-handoff block RENDERER (#2175, render slice of #1962 — the config/gate slice lives in
+// src/review/fix-handoff.ts's isFixHandoffEnabled/shouldEmitFixHandoff). Turns a single review finding into a
+// structured, machine-readable "apply this fix" block a CONTRIBUTOR'S OWN local coding agent can consume —
+// content only, no server-side write, no execution. Mirrors formatInlineBody's severity-label composition
+// (inline-comments.ts) and reuses the exact no-cloud-write boundary text every other local-execution artifact
+// carries (local-write-tools.ts's LOCAL_WRITE_BOUNDARY), so the guarantee reads identically everywhere
+// loopover hands a contributor something to run themselves.
+//
+// The caller is responsible for gating emission via shouldEmitFixHandoff (fix-handoff.ts) BEFORE calling into
+// this module — this file is pure rendering, public-safe by construction: it only renders fields the caller
+// already produced through the public-safe filter (InlineFinding.body/suggestion are sanitized upstream by
+// composeInlineFindings before they ever reach here — this module adds no new free text of its own beyond the
+// fixed label/marker strings below).
+//
+// Also renders the AGGREGATE flavor (#5102): buildFixHandoffAggregateBlock combines every finding into ONE
+// block for a single agent run over the whole PR, instead of one run per finding — same rendering contract,
+// still unwired (see that function's doc comment for why).
+import { LOCAL_WRITE_BOUNDARY } from "../mcp/local-write-tools";
+import type { InlineFinding } from "../services/ai-review";
+&nbsp;
+/** A single finding rendered as a structured, LOCAL-execution fix-handoff block. `line` is `0` when the
+ *  finding has no commentable diff line (mirrors the codebase's existing path-only sentinel — see
+ *  `secretLeakFinding`/`scanDiffForSecretsWithLocations` in review/safety.ts, review/secrets-scan.ts) so the
+ *  block still identifies WHERE to look, even path-only. */
+export type FixHandoffBlock = {
+  path: string;
+  line: number;
+  severity: "blocker" | "nit";
+  instruction: string;
+  suggestedChange?: string | undefined;
+  /** The rendered, machine-readable markdown block (fenced + an HTML comment marker a harness can grep for). */
+  body: string;
+  boundary: string;
+};
+&nbsp;
+/** The HTML comment marker prefixing every rendered block, so a contributor's own agent can reliably locate and
+ *  parse fix-handoff blocks in a comment body without depending on markdown structure alone. */
+const FIX_HANDOFF_MARKER = <span class="cstat-no" title="statement not covered" >"&lt;!-- loopover:fix-handoff --&gt;";</span>
+&nbsp;
+/** Public-safe inline-code escaping for a finding path/location. GitHub comments still render markdown inside
+ *  collapsibles, so neutralize delimiters that can break out of the `...` span or table-like contexts before
+ *  composing the location label. */
+function <span class="fstat-no" title="function not covered" >markdownPathCodeText(v</span>alue: string): string {
+<span class="cstat-no" title="statement not covered" >  return value</span>
+    .replace(/\\/g, "\\\\")
+    .replace(/`/g, "\\`")
+    .replace(/\|/g, "\\|")
+    .replace(<span class="fstat-no" title="function not covered" >/[&lt;&gt;]/g, (c</span>har) =&gt; (<span class="cstat-no" title="statement not covered" >char === "&lt;" ? "&amp;lt;" : "&amp;gt;"))</span>;
+}
+&nbsp;
+/** PURE: build a single finding's fix-handoff block. Never throws; a finding whose `line` is not a positive
+ *  integer (0, negative, non-finite — i.e. "no commentable line") still yields a valid PATH-ONLY block rather
+ *  than being dropped, since the finding itself is still actionable context even without a line anchor. */
+export function <span class="fstat-no" title="function not covered" >buildFixHandoffBlock(f</span>inding: InlineFinding): FixHandoffBlock {
+  const hasLine = <span class="cstat-no" title="statement not covered" >Number.isInteger(finding.line) &amp;&amp; finding.line &gt; 0;</span>
+  const line = <span class="cstat-no" title="statement not covered" >hasLine ? finding.line : 0;</span>
+  const safePath = <span class="cstat-no" title="statement not covered" >markdownPathCodeText(finding.path);</span>
+  const location = <span class="cstat-no" title="statement not covered" >hasLine ? `${safePath}:${line}` : `${safePath} (no specific line)`;</span>
+  const label = <span class="cstat-no" title="statement not covered" >finding.severity === "blocker" ? "Blocker" : "Nit";</span>
+  const suggestedChange = <span class="cstat-no" title="statement not covered" >finding.suggestion?.trim() || undefined;</span>
+  // Skip the fenced block when the suggestion itself contains a ``` sequence, which would close the outer fence
+  // early and break the rendered markdown -- matching inline-suggestion-anchor.ts's safeSuggestionBlock guard.
+  const suggestionBlock =
+<span class="cstat-no" title="statement not covered" >    suggestedChange &amp;&amp; !suggestedChange.includes("```") ? `\n\nSuggested change:\n\`\`\`\n${suggestedChange}\n\`\`\`` : "";</span>
+  const body = <span class="cstat-no" title="statement not covered" >[</span>
+    FIX_HANDOFF_MARKER,
+    `**Fix handoff — ${label} at \`${location}\`**`,
+    finding.body,
+    suggestionBlock,
+    `\n_${LOCAL_WRITE_BOUNDARY}_`,
+  ]
+    .<span class="fstat-no" title="function not covered" >filter((p</span>art) =&gt; <span class="cstat-no" title="statement not covered" >part.length &gt; 0)</span>
+    .join("\n");
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    path: finding.path,
+    line,
+    severity: finding.severity,
+    instruction: finding.body,
+    ...(suggestedChange !== undefined ? { suggestedChange } : {}),
+    body,
+    boundary: LOCAL_WRITE_BOUNDARY,
+  };
+}
+&nbsp;
+/** PURE: build a fix-handoff block for every finding in order. Empty in ⇒ empty out — no-op when there is
+ *  nothing to hand off. */
+export function <span class="fstat-no" title="function not covered" >buildFixHandoffBlocks(f</span>indings: InlineFinding[]): FixHandoffBlock[] {
+<span class="cstat-no" title="statement not covered" >  return findings.<span class="fstat-no" title="function not covered" >map((f</span>inding) =&gt; <span class="cstat-no" title="statement not covered" >buildFixHandoffBlock(finding))</span>;</span>
+}
+&nbsp;
+/** A whole PR's findings rendered as ONE fix-handoff block, for a single local-agent run instead of one run per
+ *  finding (#5102). */
+export type FixHandoffAggregateBlock = {
+  findingCount: number;
+  /** The rendered, machine-readable markdown block (fenced items + an HTML comment marker a harness can grep for). */
+  body: string;
+  boundary: string;
+};
+&nbsp;
+/** The HTML comment marker prefixing the rendered aggregate block, distinct from FIX_HANDOFF_MARKER so a
+ *  harness can tell a per-finding block from the aggregate one. */
+const FIX_HANDOFF_AGGREGATE_MARKER = <span class="cstat-no" title="statement not covered" >"&lt;!-- loopover:fix-handoff-aggregate --&gt;";</span>
+&nbsp;
+/** One numbered list item for the aggregate block: same location/label/suggestion composition as
+ *  buildFixHandoffBlock, just indented under a shared numbered list instead of standing alone. */
+function <span class="fstat-no" title="function not covered" >fixHandoffAggregateItem(f</span>inding: InlineFinding, index: number): string {
+  const hasLine = <span class="cstat-no" title="statement not covered" >Number.isInteger(finding.line) &amp;&amp; finding.line &gt; 0;</span>
+  const safePath = <span class="cstat-no" title="statement not covered" >markdownPathCodeText(finding.path);</span>
+  const location = <span class="cstat-no" title="statement not covered" >hasLine ? `${safePath}:${finding.line}` : `${safePath} (no specific line)`;</span>
+  const label = <span class="cstat-no" title="statement not covered" >finding.severity === "blocker" ? "Blocker" : "Nit";</span>
+  const suggestion = <span class="cstat-no" title="statement not covered" >finding.suggestion?.trim();</span>
+  // Same fence-safety guard as buildFixHandoffBlock / safeSuggestionBlock: an embedded ``` would break the block.
+  const suggestionBlock =
+<span class="cstat-no" title="statement not covered" >    suggestion &amp;&amp; !suggestion.includes("```") ? `\n   \`\`\`\n   ${suggestion.replace(/\n/g, "\n   ")}\n   \`\`\`` : "";</span>
+<span class="cstat-no" title="statement not covered" >  return `${index + 1}. **${label} at \`${location}\`** — ${finding.body}${suggestionBlock}`;</span>
+}
+&nbsp;
+/** PURE: combine every current finding into ONE fix-handoff block for a single local-agent run across the
+ *  whole PR (#5102) — the aggregate sibling of buildFixHandoffBlock/buildFixHandoffBlocks, mirroring
+ *  CodeRabbit's split between a per-finding "Prompt for AI Agents" collapsible and an aggregate "Fix all
+ *  issues" prompt (confirmed against live CodeRabbit-reviewed PRs — see #5102). Same boundary-safe,
+ *  content-only contract as the per-finding block: no server-side write, no execution, public-safe by
+ *  construction (every field rendered here was already made public-safe upstream by composeInlineFindings).
+ *  Empty in ⇒ null out — nothing to hand off. Render-only, like buildFixHandoffBlock was before its own
+ *  wiring PR (#4053) — NOT wired into the unified comment here; #5102 leaves per-finding vs aggregate vs
+ *  both as an open placement question for the wiring PR to resolve. */
+export function <span class="fstat-no" title="function not covered" >buildFixHandoffAggregateBlock(f</span>indings: InlineFinding[]): FixHandoffAggregateBlock | null {
+<span class="cstat-no" title="statement not covered" >  if (findings.length === 0) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+  const body = <span class="cstat-no" title="statement not covered" >[</span>
+    FIX_HANDOFF_AGGREGATE_MARKER,
+    `**Fix handoff — ${findings.length} finding${findings.length === 1 ? "" : "s"} across this PR**`,
+    ...findings.<span class="fstat-no" title="function not covered" >map((f</span>inding, index) =&gt; <span class="cstat-no" title="statement not covered" >fixHandoffAggregateItem(finding, index))</span>,
+    `\n_${LOCAL_WRITE_BOUNDARY}_`,
+  ].join("\n");
+<span class="cstat-no" title="statement not covered" >  return { findingCount: findings.length, body, boundary: LOCAL_WRITE_BOUNDARY };</span>
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    

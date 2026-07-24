@@ -1,0 +1,460 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for packages/loopover-engine/src/review/safe-url.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../../../prettify.css" />
+    <link rel="stylesheet" href="../../../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../../../index.html">All files</a> / <a href="index.html">packages/loopover-engine/src/review</a> safe-url.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/70</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/71</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/7</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/50</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// SSRF-safe URL guard (content-lane primitive).
+//
+// SELF-CONTAINED NATIVE PORT (reviewbot→loopover convergence). Ported from reviewbot's
+// core/source-url.ts isSafeHttpUrl + isSafeEndpointUrl (the host/IP guard, including the encoded-IP
+// decoding that a dotted-quad regex misses), hardened so a trailing-dot or `*.localhost` host can't
+// dodge the loopback check. PURE — no imports, no I/O.
+//
+// Rejects non-HTTPS (isSafeHttpUrl), localhost / `*.localhost` / .local / .internal, and private/
+// loopback/link-local IPs in any literal notation (decimal `2130706433`, hex `0x7f000001`, octal,
+// short `127.1`, and the IPv6 forms). isSafeEndpointUrl additionally permits wss: (not plain ws:,
+// #8017) for base-layer chain endpoints.
+&nbsp;
+function <span class="fstat-no" title="function not covered" >parseIpv4Component(p</span>art: string): number | null {
+<span class="cstat-no" title="statement not covered" >  if (/^0x[0-9a-f]+$/i.test(part)) <span class="cstat-no" title="statement not covered" >return parseInt(part, 16);</span></span>
+<span class="cstat-no" title="statement not covered" >  if (/^0[0-7]+$/.test(part)) <span class="cstat-no" title="statement not covered" >return parseInt(part, 8); // leading-zero → octal</span></span>
+<span class="cstat-no" title="statement not covered" >  if (/^(?:0|[1-9]\d*)$/.test(part)) <span class="cstat-no" title="statement not covered" >return parseInt(part, 10);</span></span>
+<span class="cstat-no" title="statement not covered" >  return null;</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >ipv4ToInt(h</span>ost: string): number | null {
+  const parts = <span class="cstat-no" title="statement not covered" >host.split(".");</span>
+<span class="cstat-no" title="statement not covered" >  if (parts.length &lt; 1 || parts.length &gt; 4) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+  const vals: number[] = <span class="cstat-no" title="statement not covered" >[];</span>
+<span class="cstat-no" title="statement not covered" >  for (const part of parts) {</span>
+    const v = <span class="cstat-no" title="statement not covered" >parseIpv4Component(part);</span>
+<span class="cstat-no" title="statement not covered" >    if (v === null || !Number.isFinite(v) || v &lt; 0) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+<span class="cstat-no" title="statement not covered" >    vals.push(v);</span>
+  }
+  const n = <span class="cstat-no" title="statement not covered" >vals.length;</span>
+  // Byte-faithful overflow guards from reviewbot's core/source-url.ts. Unreachable via the public
+  // isSafe*Url entry points: a host reaches here only after `new URL()`, and the WHATWG parser
+  // rejects any all-numeric dotted host whose components overflow (so the &gt;0xff / &gt;lastMax / &gt;2^32
+  // cases never arrive), while a host that survives parsing as a domain has a non-numeric label that
+  // makes parseIpv4Component bail (line 26) before these run. Retained for source parity + defense.
+  /* v8 ignore start -- @preserve unreachable through new URL() host normalization (see note above) */
+  for (let i = 0; i &lt; n - 1; i += 1) if ((vals[i] as number) &gt; 0xff) return null;
+  const lastMax = [0xffffffff, 0xffffff, 0xffff, 0xff][n - 1] as number;
+  if ((vals[n - 1] as number) &gt; lastMax) return null;
+  let result = vals[n - 1] as number;
+  for (let i = 0; i &lt; n - 1; i += 1) result += (vals[i] as number) * 256 ** (3 - i);
+  return result &gt; 0xffffffff ? null : result &gt;&gt;&gt; 0;
+  /* v8 ignore stop */
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >ipv4IsPrivateOrLocal(h</span>ost: string): boolean {
+  const n = <span class="cstat-no" title="statement not covered" >ipv4ToInt(host);</span>
+<span class="cstat-no" title="statement not covered" >  if (n === null) <span class="cstat-no" title="statement not covered" >return false;</span></span>
+  const a = (<span class="cstat-no" title="statement not covered" >n &gt;&gt;&gt; 24) &amp; 0xff;</span>
+  const b = (<span class="cstat-no" title="statement not covered" >n &gt;&gt;&gt; 16) &amp; 0xff;</span>
+<span class="cstat-no" title="statement not covered" >  if (a === 0 || a === 10 || a === 127) <span class="cstat-no" title="statement not covered" >return true; // 0.0.0.0/8, 10/8, loopback</span></span>
+<span class="cstat-no" title="statement not covered" >  if (a === 169 &amp;&amp; b === 254) <span class="cstat-no" title="statement not covered" >return true; // link-local (incl. cloud metadata 169.254.169.254)</span></span>
+<span class="cstat-no" title="statement not covered" >  if (a === 192 &amp;&amp; b === 168) <span class="cstat-no" title="statement not covered" >return true;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (a === 172 &amp;&amp; b &gt;= 16 &amp;&amp; b &lt;= 31) <span class="cstat-no" title="statement not covered" >return true;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (a === 100 &amp;&amp; b &gt;= 64 &amp;&amp; b &lt;= 127) <span class="cstat-no" title="statement not covered" >return true; // 100.64.0.0/10 shared address space (RFC 6598 CGNAT)</span></span>
+<span class="cstat-no" title="statement not covered" >  return false;</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >ipv6IsPrivateOrLocal(h</span>ost: string): boolean {
+  const addr = <span class="cstat-no" title="statement not covered" >host.replace(/^\[|\]$/g, "");</span>
+  // Caller (hostIsPrivateOrLocal) only invokes this when the host contains ":", and bracket
+  // stripping never removes an interior colon — so the no-colon guard's true side is unreachable.
+  /* v8 ignore next -- @preserve true side unreachable: caller guards host.includes(":") */
+  if (!addr.includes(":")) return false;
+<span class="cstat-no" title="statement not covered" >  if (addr === "::1" || addr === "::") <span class="cstat-no" title="statement not covered" >return true;</span></span>
+  // `new URL()` collapses the dotted IPv4-mapped form (::ffff:127.0.0.1) to the hex form
+  // (::ffff:7f00:1), so this dotted-quad regex never matches via the public entry points; the hex
+  // branch below carries the IPv4-mapped case. Retained for source parity.
+  const dotted = <span class="cstat-no" title="statement not covered" >addr.match(/::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);</span>
+  /* v8 ignore next -- @preserve dotted ::ffff:N.N.N.N is normalized to hex by new URL() */
+  if (dotted) return ipv4IsPrivateOrLocal(dotted[1] as string);
+  // Matches both the IPv4-mapped form (::ffff:7f00:1) and the older, `ffff:`-less IPv4-compatible
+  // form (::7f00:1, RFC 4291's deprecated ::/96) that `new URL()` normalizes the same bracket-free
+  // way: a literal `::127.0.0.1` or `::169.254.169.254` host reaches this branch with no "ffff"
+  // marker at all and was previously falling through to the final `return false` unchecked (SSRF
+  // bypass, #7777).
+  const hex = <span class="cstat-no" title="statement not covered" >addr.match(/^::(?:ffff:)?([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);</span>
+<span class="cstat-no" title="statement not covered" >  if (hex) {</span>
+    const hi = <span class="cstat-no" title="statement not covered" >parseInt(hex[1] as string, 16);</span>
+    const lo = <span class="cstat-no" title="statement not covered" >parseInt(hex[2] as string, 16);</span>
+<span class="cstat-no" title="statement not covered" >    return ipv4IsPrivateOrLocal(`${(hi &gt;&gt; 8) &amp; 0xff}.${hi &amp; 0xff}.${(lo &gt;&gt; 8) &amp; 0xff}.${lo &amp; 0xff}`);</span>
+  }
+  const first = <span class="cstat-no" title="statement not covered" >addr.split(":")[0] as string;</span>
+<span class="cstat-no" title="statement not covered" >  if (first.startsWith("fc") || first.startsWith("fd")) <span class="cstat-no" title="statement not covered" >return true; // ULA fc00::/7</span></span>
+<span class="cstat-no" title="statement not covered" >  if (/^fe[89ab]/.test(first)) <span class="cstat-no" title="statement not covered" >return true; // link-local fe80::/10</span></span>
+<span class="cstat-no" title="statement not covered" >  return false;</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >hostIsPrivateOrLocal(h</span>ost: string): boolean {
+  // Normalize once: lower-case, then strip the FQDN root dot(s) the parser keeps on named hosts
+  // (`localhost.`) but not on IP literals — else `localhost.` / `foo.internal.` would read as public.
+  const h = <span class="cstat-no" title="statement not covered" >host.toLowerCase().replace(/\.+$/, "");</span>
+  // localhost + its RFC 6761 `*.localhost` namespace, plus the reserved `.local` (mDNS) / `.internal`.
+<span class="cstat-no" title="statement not covered" >  if (h === "localhost" || h.endsWith(".localhost")) <span class="cstat-no" title="statement not covered" >return true;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (h.endsWith(".local") || h.endsWith(".internal")) <span class="cstat-no" title="statement not covered" >return true;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (h === "0.0.0.0" || h === "::1" || h === "[::1]") <span class="cstat-no" title="statement not covered" >return true;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (h.includes(":")) <span class="cstat-no" title="statement not covered" >return ipv6IsPrivateOrLocal(h);</span></span>
+<span class="cstat-no" title="statement not covered" >  return ipv4IsPrivateOrLocal(h);</span>
+}
+&nbsp;
+/** https + public (non-loopback, non-private) host. */
+export function <span class="fstat-no" title="function not covered" >isSafeHttpUrl(r</span>aw: string): boolean {
+  let url: URL;
+<span class="cstat-no" title="statement not covered" >  try {</span>
+<span class="cstat-no" title="statement not covered" >    url = new URL(raw);</span>
+  } catch {
+<span class="cstat-no" title="statement not covered" >    return false;</span>
+  }
+<span class="cstat-no" title="statement not covered" >  if (url.protocol !== "https:") <span class="cstat-no" title="statement not covered" >return false;</span></span>
+<span class="cstat-no" title="statement not covered" >  return !hostIsPrivateOrLocal(url.hostname);</span>
+}
+&nbsp;
+/** Like isSafeHttpUrl but also permits the secure WebSocket endpoint (`wss:`) — base-layer chain endpoints
+ *  (subtensor RPC/WSS/archive) are probed via JSON-RPC, not HTTP. Same SSRF host/IP guard. Plain `ws:` is
+ *  REJECTED (#8017): it is the plaintext counterpart to `wss:`, the same relationship `http:`/`https:` has —
+ *  and `isSafeHttpUrl` above already rejects `http:` for exactly that reason. */
+export function <span class="fstat-no" title="function not covered" >isSafeEndpointUrl(r</span>aw: string): boolean {
+  let url: URL;
+<span class="cstat-no" title="statement not covered" >  try {</span>
+<span class="cstat-no" title="statement not covered" >    url = new URL(raw);</span>
+  } catch {
+<span class="cstat-no" title="statement not covered" >    return false;</span>
+  }
+<span class="cstat-no" title="statement not covered" >  if (!["https:", "wss:"].includes(url.protocol)) <span class="cstat-no" title="statement not covered" >return false;</span></span>
+<span class="cstat-no" title="statement not covered" >  return !hostIsPrivateOrLocal(url.hostname);</span>
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../../../sorter.js"></script>
+        <script src="../../../../block-navigation.js"></script>
+    </body>
+</html>
+    

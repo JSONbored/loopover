@@ -1,0 +1,1468 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/services/agent-approval-queue.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/services</a> agent-approval-queue.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/107</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/168</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/10</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/99</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a>
+<a name='L185'></a><a href='#L185'>185</a>
+<a name='L186'></a><a href='#L186'>186</a>
+<a name='L187'></a><a href='#L187'>187</a>
+<a name='L188'></a><a href='#L188'>188</a>
+<a name='L189'></a><a href='#L189'>189</a>
+<a name='L190'></a><a href='#L190'>190</a>
+<a name='L191'></a><a href='#L191'>191</a>
+<a name='L192'></a><a href='#L192'>192</a>
+<a name='L193'></a><a href='#L193'>193</a>
+<a name='L194'></a><a href='#L194'>194</a>
+<a name='L195'></a><a href='#L195'>195</a>
+<a name='L196'></a><a href='#L196'>196</a>
+<a name='L197'></a><a href='#L197'>197</a>
+<a name='L198'></a><a href='#L198'>198</a>
+<a name='L199'></a><a href='#L199'>199</a>
+<a name='L200'></a><a href='#L200'>200</a>
+<a name='L201'></a><a href='#L201'>201</a>
+<a name='L202'></a><a href='#L202'>202</a>
+<a name='L203'></a><a href='#L203'>203</a>
+<a name='L204'></a><a href='#L204'>204</a>
+<a name='L205'></a><a href='#L205'>205</a>
+<a name='L206'></a><a href='#L206'>206</a>
+<a name='L207'></a><a href='#L207'>207</a>
+<a name='L208'></a><a href='#L208'>208</a>
+<a name='L209'></a><a href='#L209'>209</a>
+<a name='L210'></a><a href='#L210'>210</a>
+<a name='L211'></a><a href='#L211'>211</a>
+<a name='L212'></a><a href='#L212'>212</a>
+<a name='L213'></a><a href='#L213'>213</a>
+<a name='L214'></a><a href='#L214'>214</a>
+<a name='L215'></a><a href='#L215'>215</a>
+<a name='L216'></a><a href='#L216'>216</a>
+<a name='L217'></a><a href='#L217'>217</a>
+<a name='L218'></a><a href='#L218'>218</a>
+<a name='L219'></a><a href='#L219'>219</a>
+<a name='L220'></a><a href='#L220'>220</a>
+<a name='L221'></a><a href='#L221'>221</a>
+<a name='L222'></a><a href='#L222'>222</a>
+<a name='L223'></a><a href='#L223'>223</a>
+<a name='L224'></a><a href='#L224'>224</a>
+<a name='L225'></a><a href='#L225'>225</a>
+<a name='L226'></a><a href='#L226'>226</a>
+<a name='L227'></a><a href='#L227'>227</a>
+<a name='L228'></a><a href='#L228'>228</a>
+<a name='L229'></a><a href='#L229'>229</a>
+<a name='L230'></a><a href='#L230'>230</a>
+<a name='L231'></a><a href='#L231'>231</a>
+<a name='L232'></a><a href='#L232'>232</a>
+<a name='L233'></a><a href='#L233'>233</a>
+<a name='L234'></a><a href='#L234'>234</a>
+<a name='L235'></a><a href='#L235'>235</a>
+<a name='L236'></a><a href='#L236'>236</a>
+<a name='L237'></a><a href='#L237'>237</a>
+<a name='L238'></a><a href='#L238'>238</a>
+<a name='L239'></a><a href='#L239'>239</a>
+<a name='L240'></a><a href='#L240'>240</a>
+<a name='L241'></a><a href='#L241'>241</a>
+<a name='L242'></a><a href='#L242'>242</a>
+<a name='L243'></a><a href='#L243'>243</a>
+<a name='L244'></a><a href='#L244'>244</a>
+<a name='L245'></a><a href='#L245'>245</a>
+<a name='L246'></a><a href='#L246'>246</a>
+<a name='L247'></a><a href='#L247'>247</a>
+<a name='L248'></a><a href='#L248'>248</a>
+<a name='L249'></a><a href='#L249'>249</a>
+<a name='L250'></a><a href='#L250'>250</a>
+<a name='L251'></a><a href='#L251'>251</a>
+<a name='L252'></a><a href='#L252'>252</a>
+<a name='L253'></a><a href='#L253'>253</a>
+<a name='L254'></a><a href='#L254'>254</a>
+<a name='L255'></a><a href='#L255'>255</a>
+<a name='L256'></a><a href='#L256'>256</a>
+<a name='L257'></a><a href='#L257'>257</a>
+<a name='L258'></a><a href='#L258'>258</a>
+<a name='L259'></a><a href='#L259'>259</a>
+<a name='L260'></a><a href='#L260'>260</a>
+<a name='L261'></a><a href='#L261'>261</a>
+<a name='L262'></a><a href='#L262'>262</a>
+<a name='L263'></a><a href='#L263'>263</a>
+<a name='L264'></a><a href='#L264'>264</a>
+<a name='L265'></a><a href='#L265'>265</a>
+<a name='L266'></a><a href='#L266'>266</a>
+<a name='L267'></a><a href='#L267'>267</a>
+<a name='L268'></a><a href='#L268'>268</a>
+<a name='L269'></a><a href='#L269'>269</a>
+<a name='L270'></a><a href='#L270'>270</a>
+<a name='L271'></a><a href='#L271'>271</a>
+<a name='L272'></a><a href='#L272'>272</a>
+<a name='L273'></a><a href='#L273'>273</a>
+<a name='L274'></a><a href='#L274'>274</a>
+<a name='L275'></a><a href='#L275'>275</a>
+<a name='L276'></a><a href='#L276'>276</a>
+<a name='L277'></a><a href='#L277'>277</a>
+<a name='L278'></a><a href='#L278'>278</a>
+<a name='L279'></a><a href='#L279'>279</a>
+<a name='L280'></a><a href='#L280'>280</a>
+<a name='L281'></a><a href='#L281'>281</a>
+<a name='L282'></a><a href='#L282'>282</a>
+<a name='L283'></a><a href='#L283'>283</a>
+<a name='L284'></a><a href='#L284'>284</a>
+<a name='L285'></a><a href='#L285'>285</a>
+<a name='L286'></a><a href='#L286'>286</a>
+<a name='L287'></a><a href='#L287'>287</a>
+<a name='L288'></a><a href='#L288'>288</a>
+<a name='L289'></a><a href='#L289'>289</a>
+<a name='L290'></a><a href='#L290'>290</a>
+<a name='L291'></a><a href='#L291'>291</a>
+<a name='L292'></a><a href='#L292'>292</a>
+<a name='L293'></a><a href='#L293'>293</a>
+<a name='L294'></a><a href='#L294'>294</a>
+<a name='L295'></a><a href='#L295'>295</a>
+<a name='L296'></a><a href='#L296'>296</a>
+<a name='L297'></a><a href='#L297'>297</a>
+<a name='L298'></a><a href='#L298'>298</a>
+<a name='L299'></a><a href='#L299'>299</a>
+<a name='L300'></a><a href='#L300'>300</a>
+<a name='L301'></a><a href='#L301'>301</a>
+<a name='L302'></a><a href='#L302'>302</a>
+<a name='L303'></a><a href='#L303'>303</a>
+<a name='L304'></a><a href='#L304'>304</a>
+<a name='L305'></a><a href='#L305'>305</a>
+<a name='L306'></a><a href='#L306'>306</a>
+<a name='L307'></a><a href='#L307'>307</a>
+<a name='L308'></a><a href='#L308'>308</a>
+<a name='L309'></a><a href='#L309'>309</a>
+<a name='L310'></a><a href='#L310'>310</a>
+<a name='L311'></a><a href='#L311'>311</a>
+<a name='L312'></a><a href='#L312'>312</a>
+<a name='L313'></a><a href='#L313'>313</a>
+<a name='L314'></a><a href='#L314'>314</a>
+<a name='L315'></a><a href='#L315'>315</a>
+<a name='L316'></a><a href='#L316'>316</a>
+<a name='L317'></a><a href='#L317'>317</a>
+<a name='L318'></a><a href='#L318'>318</a>
+<a name='L319'></a><a href='#L319'>319</a>
+<a name='L320'></a><a href='#L320'>320</a>
+<a name='L321'></a><a href='#L321'>321</a>
+<a name='L322'></a><a href='#L322'>322</a>
+<a name='L323'></a><a href='#L323'>323</a>
+<a name='L324'></a><a href='#L324'>324</a>
+<a name='L325'></a><a href='#L325'>325</a>
+<a name='L326'></a><a href='#L326'>326</a>
+<a name='L327'></a><a href='#L327'>327</a>
+<a name='L328'></a><a href='#L328'>328</a>
+<a name='L329'></a><a href='#L329'>329</a>
+<a name='L330'></a><a href='#L330'>330</a>
+<a name='L331'></a><a href='#L331'>331</a>
+<a name='L332'></a><a href='#L332'>332</a>
+<a name='L333'></a><a href='#L333'>333</a>
+<a name='L334'></a><a href='#L334'>334</a>
+<a name='L335'></a><a href='#L335'>335</a>
+<a name='L336'></a><a href='#L336'>336</a>
+<a name='L337'></a><a href='#L337'>337</a>
+<a name='L338'></a><a href='#L338'>338</a>
+<a name='L339'></a><a href='#L339'>339</a>
+<a name='L340'></a><a href='#L340'>340</a>
+<a name='L341'></a><a href='#L341'>341</a>
+<a name='L342'></a><a href='#L342'>342</a>
+<a name='L343'></a><a href='#L343'>343</a>
+<a name='L344'></a><a href='#L344'>344</a>
+<a name='L345'></a><a href='#L345'>345</a>
+<a name='L346'></a><a href='#L346'>346</a>
+<a name='L347'></a><a href='#L347'>347</a>
+<a name='L348'></a><a href='#L348'>348</a>
+<a name='L349'></a><a href='#L349'>349</a>
+<a name='L350'></a><a href='#L350'>350</a>
+<a name='L351'></a><a href='#L351'>351</a>
+<a name='L352'></a><a href='#L352'>352</a>
+<a name='L353'></a><a href='#L353'>353</a>
+<a name='L354'></a><a href='#L354'>354</a>
+<a name='L355'></a><a href='#L355'>355</a>
+<a name='L356'></a><a href='#L356'>356</a>
+<a name='L357'></a><a href='#L357'>357</a>
+<a name='L358'></a><a href='#L358'>358</a>
+<a name='L359'></a><a href='#L359'>359</a>
+<a name='L360'></a><a href='#L360'>360</a>
+<a name='L361'></a><a href='#L361'>361</a>
+<a name='L362'></a><a href='#L362'>362</a>
+<a name='L363'></a><a href='#L363'>363</a>
+<a name='L364'></a><a href='#L364'>364</a>
+<a name='L365'></a><a href='#L365'>365</a>
+<a name='L366'></a><a href='#L366'>366</a>
+<a name='L367'></a><a href='#L367'>367</a>
+<a name='L368'></a><a href='#L368'>368</a>
+<a name='L369'></a><a href='#L369'>369</a>
+<a name='L370'></a><a href='#L370'>370</a>
+<a name='L371'></a><a href='#L371'>371</a>
+<a name='L372'></a><a href='#L372'>372</a>
+<a name='L373'></a><a href='#L373'>373</a>
+<a name='L374'></a><a href='#L374'>374</a>
+<a name='L375'></a><a href='#L375'>375</a>
+<a name='L376'></a><a href='#L376'>376</a>
+<a name='L377'></a><a href='#L377'>377</a>
+<a name='L378'></a><a href='#L378'>378</a>
+<a name='L379'></a><a href='#L379'>379</a>
+<a name='L380'></a><a href='#L380'>380</a>
+<a name='L381'></a><a href='#L381'>381</a>
+<a name='L382'></a><a href='#L382'>382</a>
+<a name='L383'></a><a href='#L383'>383</a>
+<a name='L384'></a><a href='#L384'>384</a>
+<a name='L385'></a><a href='#L385'>385</a>
+<a name='L386'></a><a href='#L386'>386</a>
+<a name='L387'></a><a href='#L387'>387</a>
+<a name='L388'></a><a href='#L388'>388</a>
+<a name='L389'></a><a href='#L389'>389</a>
+<a name='L390'></a><a href='#L390'>390</a>
+<a name='L391'></a><a href='#L391'>391</a>
+<a name='L392'></a><a href='#L392'>392</a>
+<a name='L393'></a><a href='#L393'>393</a>
+<a name='L394'></a><a href='#L394'>394</a>
+<a name='L395'></a><a href='#L395'>395</a>
+<a name='L396'></a><a href='#L396'>396</a>
+<a name='L397'></a><a href='#L397'>397</a>
+<a name='L398'></a><a href='#L398'>398</a>
+<a name='L399'></a><a href='#L399'>399</a>
+<a name='L400'></a><a href='#L400'>400</a>
+<a name='L401'></a><a href='#L401'>401</a>
+<a name='L402'></a><a href='#L402'>402</a>
+<a name='L403'></a><a href='#L403'>403</a>
+<a name='L404'></a><a href='#L404'>404</a>
+<a name='L405'></a><a href='#L405'>405</a>
+<a name='L406'></a><a href='#L406'>406</a>
+<a name='L407'></a><a href='#L407'>407</a>
+<a name='L408'></a><a href='#L408'>408</a>
+<a name='L409'></a><a href='#L409'>409</a>
+<a name='L410'></a><a href='#L410'>410</a>
+<a name='L411'></a><a href='#L411'>411</a>
+<a name='L412'></a><a href='#L412'>412</a>
+<a name='L413'></a><a href='#L413'>413</a>
+<a name='L414'></a><a href='#L414'>414</a>
+<a name='L415'></a><a href='#L415'>415</a>
+<a name='L416'></a><a href='#L416'>416</a>
+<a name='L417'></a><a href='#L417'>417</a>
+<a name='L418'></a><a href='#L418'>418</a>
+<a name='L419'></a><a href='#L419'>419</a>
+<a name='L420'></a><a href='#L420'>420</a>
+<a name='L421'></a><a href='#L421'>421</a>
+<a name='L422'></a><a href='#L422'>422</a>
+<a name='L423'></a><a href='#L423'>423</a>
+<a name='L424'></a><a href='#L424'>424</a>
+<a name='L425'></a><a href='#L425'>425</a>
+<a name='L426'></a><a href='#L426'>426</a>
+<a name='L427'></a><a href='#L427'>427</a>
+<a name='L428'></a><a href='#L428'>428</a>
+<a name='L429'></a><a href='#L429'>429</a>
+<a name='L430'></a><a href='#L430'>430</a>
+<a name='L431'></a><a href='#L431'>431</a>
+<a name='L432'></a><a href='#L432'>432</a>
+<a name='L433'></a><a href='#L433'>433</a>
+<a name='L434'></a><a href='#L434'>434</a>
+<a name='L435'></a><a href='#L435'>435</a>
+<a name='L436'></a><a href='#L436'>436</a>
+<a name='L437'></a><a href='#L437'>437</a>
+<a name='L438'></a><a href='#L438'>438</a>
+<a name='L439'></a><a href='#L439'>439</a>
+<a name='L440'></a><a href='#L440'>440</a>
+<a name='L441'></a><a href='#L441'>441</a>
+<a name='L442'></a><a href='#L442'>442</a>
+<a name='L443'></a><a href='#L443'>443</a>
+<a name='L444'></a><a href='#L444'>444</a>
+<a name='L445'></a><a href='#L445'>445</a>
+<a name='L446'></a><a href='#L446'>446</a>
+<a name='L447'></a><a href='#L447'>447</a>
+<a name='L448'></a><a href='#L448'>448</a>
+<a name='L449'></a><a href='#L449'>449</a>
+<a name='L450'></a><a href='#L450'>450</a>
+<a name='L451'></a><a href='#L451'>451</a>
+<a name='L452'></a><a href='#L452'>452</a>
+<a name='L453'></a><a href='#L453'>453</a>
+<a name='L454'></a><a href='#L454'>454</a>
+<a name='L455'></a><a href='#L455'>455</a>
+<a name='L456'></a><a href='#L456'>456</a>
+<a name='L457'></a><a href='#L457'>457</a>
+<a name='L458'></a><a href='#L458'>458</a>
+<a name='L459'></a><a href='#L459'>459</a>
+<a name='L460'></a><a href='#L460'>460</a>
+<a name='L461'></a><a href='#L461'>461</a>
+<a name='L462'></a><a href='#L462'>462</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import { claimPendingAgentActionDecision, getInstallation, getPullRequest, getPendingAgentAction, recordAuditEvent, setPendingAgentActionStatus } from "../db/repositories";
+import { resolveRepositorySettings } from "../settings/repository-settings";
+import { createInstallationToken } from "../github/app";
+import { loadLinkedIssueHardRules, resolveLinkedIssueHardRule } from "../review/linked-issue-hard-rules";
+import { executeAgentMaintenanceActions, pendingActionToPlanned } from "./agent-action-executor";
+import { downgradeCloseToHold, downgradeMergeToHold, isProtectedAutomationAuthor, type PlannedAgentAction } from "../settings/agent-actions";
+import { findBlacklistEntry } from "../settings/contributor-blacklist";
+import { isCloseHoldOnly, isHoldOnly, readUntrustworthyRuleCodes } from "../review/outcomes-wire";
+import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestReviewDecision, fetchLivePullRequestState, fetchLiveReviewThreadBlockers, fetchRequiredStatusContexts, mergeRequiredCiContexts } from "../github/backfill";
+import { githubRateLimitAdmissionKeyForToken } from "../github/client";
+import type { AgentPendingActionParams, AgentPendingActionRecord } from "../types";
+&nbsp;
+export type ApprovalDecision = "accept" | "reject";
+&nbsp;
+export type ApprovalDecisionResult = {
+  status: "accepted" | "errored" | "rejected" | "already_decided" | "not_found";
+  action?: AgentPendingActionRecord;
+  // For an accept, the executor outcome of running the staged action (completed / denied / error / dry_run).
+  executionOutcome?: string;
+};
+&nbsp;
+/**
+ * Decide a staged approval-queue action (#779). Accept → run the action through the current executor gates
+ * (the maintainer's accept IS the approval, so only the approval queue gate is bypassed). Reject → cancel.
+ * Either decision marks the row decided (idempotent: a second decision is a no-op) and records an audit event
+ * that feeds the trust loop. Concurrent decisions on the same row are serialized by an atomic pending→decided
+ * claim (#2423-concurrent): two overlapping accept/reject calls (a double-click, a retried request) both read
+ * `status: "pending"` before either write lands, so a plain read-then-write would let BOTH proceed to execute
+ * the action — claimPendingAgentActionDecision's conditional UPDATE ensures only the winner proceeds.
+ */
+export async function <span class="fstat-no" title="function not covered" >decidePendingAgentAction(e</span>nv: Env, input: { id: string; decision: ApprovalDecision; decidedBy: string }): Promise&lt;ApprovalDecisionResult&gt; {
+  const pending = <span class="cstat-no" title="statement not covered" >await getPendingAgentAction(env, input.id);</span>
+<span class="cstat-no" title="statement not covered" >  if (!pending) <span class="cstat-no" title="statement not covered" >return { status: "not_found" };</span></span>
+<span class="cstat-no" title="statement not covered" >  if (pending.status !== "pending") <span class="cstat-no" title="statement not covered" >return { status: "already_decided", action: pending };</span></span>
+  const targetKey = <span class="cstat-no" title="statement not covered" >`${pending.repoFullName}#${pending.pullNumber}`;</span>
+  const baseMetadata = <span class="cstat-no" title="statement not covered" >{ pendingId: pending.id, repoFullName: pending.repoFullName, pullNumber: pending.pullNumber, actionClass: pending.actionClass, autonomyLevel: pending.autonomyLevel };</span>
+&nbsp;
+<span class="cstat-no" title="statement not covered" >  if (input.decision === "reject") {</span>
+<span class="cstat-no" title="statement not covered" >    if (!(await claimPendingAgentActionDecision(env, pending.id, { status: "rejected", decidedBy: input.decidedBy }))) {</span>
+      const current = <span class="cstat-no" title="statement not covered" >await getPendingAgentAction(env, pending.id);</span>
+      /* v8 ignore next -- the row was just read moments ago and this system never deletes pending-action rows; the pending fallback guards a theoretical concurrent-delete only. */
+      return { status: "already_decided", action: current ?? pending };
+    }
+<span class="cstat-no" title="statement not covered" >    await recordAuditEvent(env, { eventType: "agent.pending_action.rejected", actor: input.decidedBy, targetKey, outcome: "completed", detail: `rejected ${pending.actionClass}`, metadata: baseMetadata });</span>
+<span class="cstat-no" title="statement not covered" >    return { status: "rejected", action: { ...pending, status: "rejected", decidedBy: input.decidedBy } };</span>
+  }
+&nbsp;
+  // Claim before any async re-validation or execution so two concurrent accepts cannot both reach the executor.
+<span class="cstat-no" title="statement not covered" >  if (!(await claimPendingAgentActionDecision(env, pending.id, { status: "accepted", decidedBy: input.decidedBy }))) {</span>
+    const current = <span class="cstat-no" title="statement not covered" >await getPendingAgentAction(env, pending.id);</span>
+    /* v8 ignore next -- the row was just read moments ago and this system never deletes pending-action rows; the pending fallback guards a theoretical concurrent-delete only. */
+    return { status: "already_decided", action: current ?? pending };
+  }
+&nbsp;
+  // accept → execute the staged action live, then record the result.
+  const [settings, pr, installation] = <span class="cstat-no" title="statement not covered" >await Promise.all([</span>
+    resolveRepositorySettings(env, pending.repoFullName),
+    getPullRequest(env, pending.repoFullName, pending.pullNumber),
+    getInstallation(env, pending.installationId),
+  ]);
+&nbsp;
+  // Re-validate the staged action against the LIVE head before executing. A staged merge records the reviewed
+  // head (expectedHeadSha); if the contributor force-pushed after staging, the live head has moved and replaying
+  // the action would act on un-reviewed code. Refuse, supersede the sticky row, and record it. This is the
+  // application-level fail-safe; the executor additionally pins the GitHub merge to the reviewed SHA as a backstop.
+  const stagedHead = <span class="cstat-no" title="statement not covered" >pending.params.expectedHeadSha;</span>
+<span class="cstat-no" title="statement not covered" >  if (stagedHead &amp;&amp; pr?.headSha &amp;&amp; stagedHead !== pr.headSha) {</span>
+<span class="cstat-no" title="statement not covered" >    await setPendingAgentActionStatus(env, pending.id, { status: "rejected", decidedBy: input.decidedBy });</span>
+<span class="cstat-no" title="statement not covered" >    await recordAuditEvent(env, {</span>
+      eventType: "agent.pending_action.superseded",
+      actor: input.decidedBy,
+      targetKey,
+      outcome: "denied",
+      detail: `superseded ${pending.actionClass}: staged head ${stagedHead.slice(0, 12)} no longer matches live head ${pr.headSha.slice(0, 12)} (force-push after staging)`,
+      metadata: { ...baseMetadata, stagedHeadSha: stagedHead, liveHeadSha: pr.headSha },
+    });
+<span class="cstat-no" title="statement not covered" >    return { status: "rejected", action: { ...pending, status: "rejected", decidedBy: input.decidedBy }, executionOutcome: "head_moved" };</span>
+  }
+  // An unpinned staged approve, merge, or close (no expectedHeadSha) cannot be safety-verified against a
+  // force-push that happened during the queue wait. For a PINNED merge, GitHub's `sha` param 409s on mismatch --
+  // a real backstop. But that backstop only exists because there's something to compare against; an UNPINNED
+  // merge falls back to performAction's `mergeSha = action.expectedHeadSha ?? ctx.headSha`, which by construction
+  // substitutes whatever head is live right now, so it trivially "matches" and no 409 is possible. The reviews
+  // API's `commit_id` has no server-side staleness rejection at all, pinned or not (#2377). close has no
+  // server-side commit target at all -- its OWN freshness relies entirely on this application-level pin, since
+  // closePullRequest doesn't take a sha the way merge/reviews do. Either way, the check above only fires when a
+  // pin EXISTS and disagrees with the live head; a row staged with no pin at all (e.g. by code predating this
+  // head-pinning fix, or a planning pass that ran against a transiently-null stored head SHA) would otherwise
+  // fall through to the executor's `ctx.headSha` fallback and silently ratify whatever commit is live NOW, under
+  // the authority of a review/merge/close that was never actually performed against it (#2422, #2452).
+  // dismissStaleApproval is exempt: it RETRACTS the bot's existing approval rather than granting a new one at a
+  // specific commit, so it carries no "ratify unreviewed code" risk and is safe to replay unpinned.
+  const isUnpinnedRatifyingAction =
+<span class="cstat-no" title="statement not covered" >    !stagedHead &amp;&amp;</span>
+    ((pending.actionClass === "approve" &amp;&amp; !pending.params.dismissStaleApproval) || pending.actionClass === "merge" || pending.actionClass === "close");
+<span class="cstat-no" title="statement not covered" >  if (isUnpinnedRatifyingAction) {</span>
+<span class="cstat-no" title="statement not covered" >    await setPendingAgentActionStatus(env, pending.id, { status: "rejected", decidedBy: input.decidedBy });</span>
+<span class="cstat-no" title="statement not covered" >    await recordAuditEvent(env, {</span>
+      eventType: "agent.pending_action.superseded",
+      actor: input.decidedBy,
+      targetKey,
+      outcome: "denied",
+      detail: `superseded ${pending.actionClass}: staged with no reviewed-head pin, so freshness cannot be verified — re-stage from a fresh sweep`,
+      metadata: baseMetadata,
+    });
+<span class="cstat-no" title="statement not covered" >    return { status: "rejected", action: { ...pending, status: "rejected", decidedBy: input.decidedBy }, executionOutcome: "unpinned_legacy_action" };</span>
+  }
+&nbsp;
+  // Re-resolve blacklist membership live at accept time (#2452). The head-SHA pin above only catches a
+  // FORCE-PUSH; it says nothing about whether the contributor is STILL blacklisted, and a blacklist close is a
+  // sticky auto_with_approval row with no expiry -- a maintainer can remove the entry (or edit .loopover.yml)
+  // at any point while it sits waiting. `settings` was fetched fresh at the top of this function, so this
+  // mirrors the exact same pure check the planner uses (processors.ts), just re-run against CURRENT effective config.
+<span class="cstat-no" title="statement not covered" >  if (pending.actionClass === "close" &amp;&amp; pending.params.closeKind === "blacklist" &amp;&amp; pr) {</span>
+    const stillBlacklisted = <span class="cstat-no" title="statement not covered" >findBlacklistEntry(pr.authorLogin, settings.contributorBlacklist) !== null;</span>
+<span class="cstat-no" title="statement not covered" >    if (!stillBlacklisted) {</span>
+<span class="cstat-no" title="statement not covered" >      await setPendingAgentActionStatus(env, pending.id, { status: "rejected", decidedBy: input.decidedBy });</span>
+<span class="cstat-no" title="statement not covered" >      await recordAuditEvent(env, {</span>
+        eventType: "agent.pending_action.superseded",
+        actor: input.decidedBy,
+        targetKey,
+        outcome: "denied",
+        detail: "superseded blacklist close: contributor is no longer on the blacklist",
+        metadata: baseMetadata,
+      });
+<span class="cstat-no" title="statement not covered" >      return { status: "rejected", action: { ...pending, status: "rejected", decidedBy: input.decidedBy }, executionOutcome: "no_longer_blacklisted" };</span>
+    }
+  }
+&nbsp;
+  // Re-validate a staged CLOSE tagged "linked-issue-hard-rule" against the CURRENT hard-rule state (flagged by
+  // the gate's own review of #2452, twice). Mirrors the blacklist re-check above: the head-SHA pin only catches
+  // a force-push, not a maintainer relabeling/reassigning the linked issue (or editing hard-rule config) while
+  // the close sits waiting in the queue -- head SHA unchanged, so the pin doesn't catch it. Unlike the merge
+  // re-check below (which supersedes a merge when the rule BECOMES violated), this close was staged BECAUSE the
+  // rule WAS violated, so this supersedes it when the rule is NO LONGER violated -- the close's own justification
+  // evaporated. Also re-derives closeEligible (mirrors the merge re-check's own closeEligible below): the planner
+  // confirmed eligibility at STAGING time, but settings.closeOwnerAuthors is a live toggle that can flip to false
+  // between staging and accept without moving the head SHA, same staleness class as the rule check itself -- an
+  // owner PR staged for close while the setting was true must not still close after it is turned off.
+<span class="cstat-no" title="statement not covered" >  if (pending.actionClass === "close" &amp;&amp; pending.params.closeKind === "linked-issue-hard-rule" &amp;&amp; pr) {</span>
+    const repoOwner = <span class="cstat-no" title="statement not covered" >pending.repoFullName.includes("/") ? pending.repoFullName.slice(0, pending.repoFullName.indexOf("/")) : "";</span>
+    const authorLogin = <span class="cstat-no" title="statement not covered" >pr.authorLogin ?? "";</span>
+    const authorIsOwner = <span class="cstat-no" title="statement not covered" >authorLogin.length &gt; 0 &amp;&amp; authorLogin.toLowerCase() === repoOwner.toLowerCase();</span>
+    const authorIsAutomationBot = <span class="cstat-no" title="statement not covered" >isProtectedAutomationAuthor(pr.authorLogin);</span>
+    const closeEligible = (<span class="cstat-no" title="statement not covered" >!authorIsOwner &amp;&amp; !authorIsAutomationBot) || (authorIsOwner &amp;&amp; settings.closeOwnerAuthors === true);</span>
+    let stillJustified = <span class="cstat-no" title="statement not covered" >closeEligible;</span>
+<span class="cstat-no" title="statement not covered" >    if (closeEligible) {</span>
+      const linkedIssueRulesConfig = <span class="cstat-no" title="statement not covered" >await loadLinkedIssueHardRules(env, pending.repoFullName);</span>
+      // Best-effort mint, same fail-open contract as the merge re-check below (#2126/#2132): a failed mint or a
+      // resolution that can't gather issue facts falls back to resolveLinkedIssueHardRule's own "not violated"
+      // default, which this check then treats as "the close is no longer justified" -- the SAFE direction for an
+      // irreversible close (superseding it re-stages from a fresh sweep instead of risking a wrongful auto-close).
+      const ciToken = <span class="cstat-no" title="statement not covered" >await createInstallationToken(env, pending.installationId).<span class="fstat-no" title="function not covered" >catch(() =&gt; <span class="cstat-no" title="statement not covered" >u</span>ndefined)</span>;</span>
+      const linkedIssueHardRule = <span class="cstat-no" title="statement not covered" >await resolveLinkedIssueHardRule({</span>
+        env,
+        repoFullName: pending.repoFullName,
+        repoOwner,
+        config: linkedIssueRulesConfig,
+        body: pr.body,
+        linkedIssues: pr.linkedIssues,
+        ciToken,
+        prAuthorLogin: pr.authorLogin,
+        installationId: pending.installationId,
+      });
+<span class="cstat-no" title="statement not covered" >      stillJustified = linkedIssueHardRule?.violated === true;</span>
+    }
+<span class="cstat-no" title="statement not covered" >    if (!stillJustified) {</span>
+<span class="cstat-no" title="statement not covered" >      await setPendingAgentActionStatus(env, pending.id, { status: "rejected", decidedBy: input.decidedBy });</span>
+<span class="cstat-no" title="statement not covered" >      await recordAuditEvent(env, {</span>
+        eventType: "agent.pending_action.superseded",
+        actor: input.decidedBy,
+        targetKey,
+        outcome: "denied",
+        detail: closeEligible
+          ? "superseded linked-issue hard-rule close: the linked issue is no longer ineligible"
+          : "superseded linked-issue hard-rule close: the author is no longer close-eligible (owner/automation exemption now applies)",
+        metadata: baseMetadata,
+      });
+<span class="cstat-no" title="statement not covered" >      return {</span>
+        status: "rejected",
+        action: { ...pending, status: "rejected", decidedBy: input.decidedBy },
+        executionOutcome: closeEligible ? "linked_issue_no_longer_violated" : "no_longer_close_eligible",
+      };
+    }
+  }
+&nbsp;
+  // Re-derive live justification for a staged MERGE or non-CI heuristic CLOSE at accept time. auto_with_approval
+  // rows have no expiry, so CI can flip red, the base can go dirty/clean, or a reviewer can request/unrequest
+  // changes while the row just sits waiting for a maintainer — none of which move the head SHA, so the check above
+  // alone would not catch it. Best-effort: a failed live read fails OPEN on that specific check (the executor's own
+  // mutation call independently needs a valid token/state and will fail cleanly if something is actually wrong).
+  // (#2126, #2478)
+  let liveParams: AgentPendingActionParams = <span class="cstat-no" title="statement not covered" >pending.params;</span>
+  // For close, scoped to closeRequiresMergeableState !== false -- i.e. `true` (a base-conflict-justified
+  // heuristic close) OR `undefined` (a LEGACY row staged before this field existed, whose original
+  // justification is unknown). NOT the broader closeRequiresCiState === "not_required" (any non-CI reason).
+  // A slop/blocker-only close (closeRequiresMergeableState === false, always explicit per the field's own doc
+  // comment) has no cheap live re-derivation, so it is intentionally left out of this recheck. But `undefined`
+  // must NOT be treated the same as `false`: a strict `=== true` comparison would silently skip the live
+  // recheck for any pre-existing auto_with_approval close row staged before this field was introduced, even
+  // one that WAS originally conflict-justified -- exactly the safety gap this recheck exists to close. Fail
+  // toward "revalidate" for the unknown case, not "skip" (gate review finding).
+  const isMergeableRecheck = <span class="cstat-no" title="statement not covered" >pending.actionClass === "close" &amp;&amp; pending.params.closeKind === "heuristic" &amp;&amp; pending.params.closeRequiresMergeableState !== false;</span>
+  // Mirrors isMergeableRecheck's LIVE-SIGNAL shape (#review-thread-staleness) but deliberately scoped to
+  // `=== true`, not `!== false`: unlike closeRequiresMergeableState, closeRequiresThreadResolved has NO
+  // pre-existing legacy rows anywhere -- it is introduced in the same change as its only producer, so a
+  // freshly planned heuristic close ALWAYS sets it explicitly (mirroring closeRequiresMergeableState's own
+  // "never omitted" discipline). `undefined` here can therefore only mean "not thread-justified", never an
+  // ambiguous legacy row, so there is no equivalent "fail toward revalidate" case to guard against.
+  const isThreadRecheck = <span class="cstat-no" title="statement not covered" >pending.actionClass === "close" &amp;&amp; pending.params.closeKind === "heuristic" &amp;&amp; pending.params.closeRequiresThreadResolved === true;</span>
+  const shouldRecheckLiveDisposition = <span class="cstat-no" title="statement not covered" >pr?.headSha &amp;&amp; (pending.actionClass === "merge" || isMergeableRecheck || isThreadRecheck);</span>
+  // #dup-winner-staleness: a duplicate-justified heuristic close naming a SPECIFIC winning sibling has its own
+  // cheap live signal (is that PR still open?), independent of the merge/conflict/thread rechecks above -- gated
+  // separately since a row can be duplicate-justified without also being conflict- or thread-justified (and
+  // vice versa), and does not depend on pr?.headSha the way the others do (it checks a SIBLING PR's state).
+  const shouldRecheckLiveDuplicateWinner =
+<span class="cstat-no" title="statement not covered" >    pending.actionClass === "close" &amp;&amp;</span>
+    pending.params.closeKind === "heuristic" &amp;&amp;
+    pending.params.closeRequiresDuplicateStillOpen === true &amp;&amp;
+    pending.params.duplicateWinnerPrNumber !== undefined;
+<span class="cstat-no" title="statement not covered" >  if (shouldRecheckLiveDisposition || shouldRecheckLiveDuplicateWinner) {</span>
+    const token = <span class="cstat-no" title="statement not covered" >await createInstallationToken(env, pending.installationId).<span class="fstat-no" title="function not covered" >catch(() =&gt; <span class="cstat-no" title="statement not covered" >u</span>ndefined)</span>;</span>
+    const admissionKey = <span class="cstat-no" title="statement not covered" >githubRateLimitAdmissionKeyForToken(env, token, pending.installationId);</span>
+    // Promise.allSettled, not Promise.all: each live re-check is independently best-effort (per the comment
+    // above), so ONE transient rejection must fail open on that specific check, not throw the whole accept
+    // out of decidePendingAgentAction. A settled-rejected check is treated the same as "nothing concerning
+    // found" -- exactly what each function's own internal fail-safe catch already resolves to on success.
+    // The CI/mergeable/review calls are no-ops (Promise.resolve(undefined)) when shouldRecheckLiveDisposition is
+    // false (block entered ONLY for a duplicate-only recheck); the thread/duplicate calls are independently
+    // gated on their own specific flags, mirroring the executor's own same-pattern conditional-Promise.all in
+    // agent-action-executor.ts. The branch-protection fetch is nested inside this same ternary (rather than a
+    // standalone variable) because pr is only known-defined when shouldRecheckLiveDisposition is true.
+    const [ciResult, mergeableResult, reviewResult, threadResult, duplicateWinnerResult] = <span class="cstat-no" title="statement not covered" >await Promise.allSettled([</span>
+      shouldRecheckLiveDisposition
+        ? fetchRequiredStatusContexts(env, pending.repoFullName, pr!.baseRef, token, admissionKey)
+            .<span class="fstat-no" title="function not covered" >then((b</span>ranchProtectionContexts) =&gt; <span class="cstat-no" title="statement not covered" >mergeRequiredCiContexts(branchProtectionContexts, settings.expectedCiContexts))</span>
+            .<span class="fstat-no" title="function not covered" >then((r</span>equiredContexts) =&gt; <span class="cstat-no" title="statement not covered" >fetchLiveCiAggregate(env, pending.repoFullName, pr!.headSha, token, requiredContexts, admissionKey, settings.advisoryCheckRuns))</span>
+        : Promise.resolve(undefined),
+      shouldRecheckLiveDisposition ? fetchLivePullRequestMergeState(env, pending.repoFullName, pending.pullNumber, token, admissionKey) : Promise.resolve(undefined),
+      shouldRecheckLiveDisposition ? fetchLivePullRequestReviewDecision(env, pending.repoFullName, pending.pullNumber, token, admissionKey) : Promise.resolve(undefined),
+      isThreadRecheck ? fetchLiveReviewThreadBlockers(env, pending.repoFullName, pending.pullNumber, token, admissionKey) : Promise.resolve(undefined),
+      shouldRecheckLiveDuplicateWinner ? fetchLivePullRequestState(env, pending.repoFullName, pending.params.duplicateWinnerPrNumber!, token, admissionKey) : Promise.resolve(undefined),
+    ]);
+    // A REJECTED promise stays undefined (fail-open — the read itself failed, not a genuine CI signal); a
+    // FULFILLED promise reporting anything other than "passed" (failed, pending, or unverified) is a real,
+    // non-stale-tolerant signal that the staged merge's justification no longer holds (#2126).
+    const ciState = <span class="cstat-no" title="statement not covered" >ciResult.status === "fulfilled" ? ciResult.value?.ciState : undefined;</span>
+    const mergeableState = <span class="cstat-no" title="statement not covered" >mergeableResult.status === "fulfilled" ? mergeableResult.value : undefined;</span>
+    // Tracked separately from reviewDecision's VALUE: a REJECTED promise also resolves reviewDecision to
+    // undefined below, which must not be indistinguishable from "fetched successfully and confirmed not
+    // CHANGES_REQUESTED" -- otherwise a transient read failure silently satisfies the close-staleness check
+    // below instead of failing open on it (gate review finding).
+    const reviewFetchSucceeded = <span class="cstat-no" title="statement not covered" >reviewResult.status === "fulfilled" &amp;&amp; shouldRecheckLiveDisposition;</span>
+    const reviewDecision = <span class="cstat-no" title="statement not covered" >reviewFetchSucceeded ? reviewResult.value : undefined;</span>
+    // Tracked separately from the VALUE for the same reason as reviewFetchSucceeded above: a REJECTED promise
+    // also resolves to undefined, which must not read as "confirmed no threads remain" -- fetchLiveReviewThreadBlockers
+    // itself already fails open to [] on a GraphQL error, so a genuinely FULFILLED empty array is the only
+    // signal that legitimately means "no live blockers left".
+    const threadFetchSucceeded = <span class="cstat-no" title="statement not covered" >threadResult.status === "fulfilled";</span>
+    const liveThreadBlockers = <span class="cstat-no" title="statement not covered" >threadFetchSucceeded ? threadResult.value : undefined;</span>
+    const threadsNowResolved = <span class="cstat-no" title="statement not covered" >isThreadRecheck &amp;&amp; threadFetchSucceeded &amp;&amp; (liveThreadBlockers?.length ?? 0) === 0;</span>
+    // Gated on isMergeableRecheck explicitly (not just "reached the close branch"): a thread- or duplicate-only
+    // close also reaches this branch now, and mergeableState reads "clean" for most never-conflicted PRs by
+    // default -- without this gate, a thread- or duplicate-only close would be wrongly superseded as if it were
+    // conflict-justified merely because mergeability happens to read clean (the SAME over-broad-predicate class
+    // the #2478 gate review already caught once for closeRequiresMergeableState).
+    const mergeableNowCleared = <span class="cstat-no" title="statement not covered" >isMergeableRecheck &amp;&amp; reviewFetchSucceeded &amp;&amp; mergeableState === "clean" &amp;&amp; reviewDecision !== "CHANGES_REQUESTED";</span>
+    // Only a CONFIRMED non-"open" clears a duplicate-justified close -- a rejected/failed fetch (undefined)
+    // fails open exactly like every other live re-check in this function, so a transient GitHub hiccup never
+    // wrongly spares a close that is, in fact, still justified.
+    const duplicateWinnerState = <span class="cstat-no" title="statement not covered" >duplicateWinnerResult.status === "fulfilled" ? duplicateWinnerResult.value : undefined;</span>
+    const staleReason =
+<span class="cstat-no" title="statement not covered" >      pending.actionClass === "merge"</span>
+        ? ciState !== undefined &amp;&amp; ciState !== "passed"
+          ? `live CI is no longer passing (now: ${ciState})`
+          : mergeableState === "dirty"
+            ? "the base branch now conflicts (mergeable_state: dirty)"
+            : reviewDecision === "CHANGES_REQUESTED"
+              ? "a reviewer has since requested changes"
+              : null
+        : // Only reached when closeRequiresMergeableState !== false, closeRequiresThreadResolved === true, or
+          // closeRequiresDuplicateStillOpen === true (see shouldRecheckLiveDisposition/shouldRecheckLiveDuplicateWinner
+          // above), so CI state is irrelevant to this specific close's justification and the only live signals
+          // that matter are whether the conflict cleared, the thread(s) resolved, or the duplicate winner closed --
+          // each gated individually below (mergeableNowCleared / threadsNowResolved / the duplicate check) so a
+          // close justified by only ONE axis is never wrongly cleared by another axis's unrelated live state.
+          // reviewFetchSucceeded is required alongside the value check -- see its own comment above -- so a failed
+          // live-review read fails open instead of masquerading as "confirmed no changes requested".
+          mergeableNowCleared
+          ? "the conflict that justified this close has since cleared"
+          : threadsNowResolved
+            ? "the review thread(s) that justified this close are now all resolved"
+            : shouldRecheckLiveDuplicateWinner &amp;&amp; duplicateWinnerState !== undefined &amp;&amp; duplicateWinnerState !== "open"
+              ? `duplicate-cluster winner #${pending.params.duplicateWinnerPrNumber} is no longer open`
+              : null;
+<span class="cstat-no" title="statement not covered" >    if (staleReason) {</span>
+<span class="cstat-no" title="statement not covered" >      await setPendingAgentActionStatus(env, pending.id, { status: "rejected", decidedBy: input.decidedBy });</span>
+<span class="cstat-no" title="statement not covered" >      await recordAuditEvent(env, {</span>
+        eventType: "agent.pending_action.superseded",
+        actor: input.decidedBy,
+        targetKey,
+        outcome: "denied",
+        detail: `superseded ${pending.actionClass}: ${staleReason} since staging`,
+        metadata: {
+          ...baseMetadata,
+          ciState: ciState ?? null,
+          mergeableState: mergeableState ?? null,
+          reviewDecision: reviewDecision ?? null,
+          liveThreadBlockerCount: liveThreadBlockers?.length ?? null,
+          duplicateWinnerState: duplicateWinnerState ?? null,
+        },
+      });
+<span class="cstat-no" title="statement not covered" >      return { status: "rejected", action: { ...pending, status: "rejected", decidedBy: input.decidedBy }, executionOutcome: "stale_disposition" };</span>
+    }
+    // Re-sync the merge method to the CURRENT repo config, not the staging-time snapshot — the head-SHA pin
+    // above should stay frozen (that's the reviewed commit), but the merge method is a live preference with no
+    // reason to be frozen. (#2131)
+    /* v8 ignore next -- getRepositorySettings always resolves autoMaintain via its own default policy; this
+     *  guard exists only because RepositorySettings' type allows autoMaintain to be undefined. */
+    if (settings.autoMaintain?.mergeMethod) {
+      liveParams = { ...pending.params, mergeMethod: settings.autoMaintain.mergeMethod };
+    }
+  }
+&nbsp;
+  // Re-apply the SAME merge/close precision circuit-breakers the live webhook path applies before executing, so
+  // a breaker engaged AFTER staging (an operator halting a runaway auto-merge, or the auto-tuner tripping on a
+  // precision drop) still holds this sticky pending row instead of executing it unmodified. (#2127)
+  // #7986: the same per-rule track-record read the live webhook path uses -- a staged close backed ONLY by a
+  // now-untrustworthy code must not slip through just because it was accepted from the approval queue instead
+  // of the live path.
+  const [holdOnly, closeHoldOnly, untrustworthyRuleCodes] = <span class="cstat-no" title="statement not covered" >await Promise.all([</span>
+    isHoldOnly(env, pending.repoFullName),
+    isCloseHoldOnly(env, pending.repoFullName),
+    readUntrustworthyRuleCodes(env),
+  ]);
+  let plan: PlannedAgentAction[] = <span class="cstat-no" title="statement not covered" >[pendingActionToPlanned({ actionClass: pending.actionClass, params: liveParams, reason: pending.reason })];</span>
+  const labelSettings = <span class="cstat-no" title="statement not covered" >{</span>
+    manualReviewLabel: settings.manualReviewLabel,
+    readyToMergeLabel: settings.readyToMergeLabel,
+    changesRequestedLabel: settings.changesRequestedLabel,
+    migrationCollisionLabel: settings.migrationCollisionLabel,
+    pendingClosureLabel: settings.pendingClosureLabel,
+  };
+<span class="cstat-no" title="statement not covered" >  if (holdOnly) <span class="cstat-no" title="statement not covered" >plan = downgradeMergeToHold(plan, true, labelSettings);</span></span>
+<span class="cstat-no" title="statement not covered" >  plan = downgradeCloseToHold(plan, closeHoldOnly, labelSettings, untrustworthyRuleCodes);</span>
+&nbsp;
+  // Re-validate a staged MERGE against the CURRENT linked-issue hard-rule state (#2132). The hard rule is
+  // evaluated fresh on every planning pass and takes precedence over merge (see planAgentMaintenanceActions),
+  // but a staged merge only replays the PLAN-TIME snapshot — a maintainer relabeling/reassigning the linked
+  // issue between staging and accept (head SHA unchanged, so the check above doesn't catch it) would otherwise
+  // still merge a now-ineligible PR. Mirrors the planner's own owner/automation exemption (closeEligible) so an
+  // owner's staged merge, which the hard rule never blocks in the first place, is not wrongly denied here.
+  // Gated on the POST-downgrade `plan`, not `pending.actionClass`: the precision-breaker downgrade immediately
+  // above can already have replaced a staged merge with a manual-review label (downgradeMergeToHold) — that
+  // downgraded plan isn't going to merge anything, so a stale linked-issue violation must not reject the whole
+  // row and suppress the hold label; it only matters while a merge is still the thing about to execute.
+<span class="cstat-no" title="statement not covered" >  if (plan.<span class="fstat-no" title="function not covered" >some((a</span>ction) =&gt; <span class="cstat-no" title="statement not covered" >action.actionClass === "merge")</span> &amp;&amp; pr) {</span>
+    const repoOwner = <span class="cstat-no" title="statement not covered" >pending.repoFullName.includes("/") ? pending.repoFullName.slice(0, pending.repoFullName.indexOf("/")) : "";</span>
+    const authorLogin = <span class="cstat-no" title="statement not covered" >pr.authorLogin ?? "";</span>
+    const authorIsOwner = <span class="cstat-no" title="statement not covered" >authorLogin.length &gt; 0 &amp;&amp; authorLogin.toLowerCase() === repoOwner.toLowerCase();</span>
+    const authorIsAutomationBot = <span class="cstat-no" title="statement not covered" >isProtectedAutomationAuthor(pr.authorLogin);</span>
+    const closeEligible = (<span class="cstat-no" title="statement not covered" >!authorIsOwner &amp;&amp; !authorIsAutomationBot) || (authorIsOwner &amp;&amp; settings.closeOwnerAuthors === true);</span>
+<span class="cstat-no" title="statement not covered" >    if (closeEligible) {</span>
+      const linkedIssueRulesConfig = <span class="cstat-no" title="statement not covered" >await loadLinkedIssueHardRules(env, pending.repoFullName);</span>
+      // Best-effort mint, same as the #2126 CI/mergeable/review re-check above: a failed mint here does NOT
+      // silently skip the recheck -- resolveLinkedIssueHardRule falls back to env.GITHUB_PUBLIC_TOKEN when
+      // ciToken is undefined and still attempts the fetch, only returning "not violated" if that ALSO can't
+      // gather issue facts. This is the same shared resolver + same fail-open contract the LIVE planning path
+      // (processors.ts) already relies on for the PRIMARY hard-rule decision; holding this SECONDARY, narrow-
+      // race-window recheck to a stricter fail-closed standard would deny otherwise-legitimate merges on every
+      // transient token-mint hiccup without closing a real gap (the executor mints its OWN token independently
+      // for the actual merge mutation, so a suspended/broken installation still fails there regardless).
+      const ciToken = <span class="cstat-no" title="statement not covered" >await createInstallationToken(env, pending.installationId).<span class="fstat-no" title="function not covered" >catch(() =&gt; <span class="cstat-no" title="statement not covered" >u</span>ndefined)</span>;</span>
+      const linkedIssueHardRule = <span class="cstat-no" title="statement not covered" >await resolveLinkedIssueHardRule({</span>
+        env,
+        repoFullName: pending.repoFullName,
+        repoOwner,
+        config: linkedIssueRulesConfig,
+        body: pr.body,
+        linkedIssues: pr.linkedIssues,
+        ciToken,
+        prAuthorLogin: pr.authorLogin,
+        installationId: pending.installationId,
+      });
+<span class="cstat-no" title="statement not covered" >      if (linkedIssueHardRule?.violated) {</span>
+<span class="cstat-no" title="statement not covered" >        await setPendingAgentActionStatus(env, pending.id, { status: "rejected", decidedBy: input.decidedBy });</span>
+<span class="cstat-no" title="statement not covered" >        await recordAuditEvent(env, {</span>
+          eventType: "agent.pending_action.superseded",
+          actor: input.decidedBy,
+          targetKey,
+          outcome: "denied",
+          detail: `superseded merge: linked-issue hard rule now violated — ${linkedIssueHardRule.reason ?? "ineligible linked issue"}`,
+          metadata: { ...baseMetadata, linkedIssueReason: linkedIssueHardRule.reason },
+        });
+<span class="cstat-no" title="statement not covered" >        return { status: "rejected", action: { ...pending, status: "rejected", decidedBy: input.decidedBy }, executionOutcome: "linked_issue_hard_rule" };</span>
+      }
+    }
+  }
+&nbsp;
+  const executionCiToken = <span class="cstat-no" title="statement not covered" >await createInstallationToken(env, pending.installationId).<span class="fstat-no" title="function not covered" >catch(() =&gt; <span class="cstat-no" title="statement not covered" >u</span>ndefined)</span>;</span>
+  const executionAdmissionKey = <span class="cstat-no" title="statement not covered" >githubRateLimitAdmissionKeyForToken(env, executionCiToken, pending.installationId);</span>
+  const executionRequiredContexts = <span class="cstat-no" title="statement not covered" >await fetchRequiredStatusContexts(env, pending.repoFullName, pr?.baseRef, executionCiToken, executionAdmissionKey)</span>
+    .<span class="fstat-no" title="function not covered" >then((b</span>ranchProtectionContexts) =&gt; <span class="cstat-no" title="statement not covered" >mergeRequiredCiContexts(branchProtectionContexts, settings.expectedCiContexts))</span>
+    .<span class="fstat-no" title="function not covered" >catch(() =&gt; <span class="cstat-no" title="statement not covered" >m</span>ergeRequiredCiContexts(null, settings.expectedCiContexts))</span>;
+&nbsp;
+  const outcomes = <span class="cstat-no" title="statement not covered" >await executeAgentMaintenanceActions(</span>
+    env,
+    {
+      installationId: pending.installationId,
+      repoFullName: pending.repoFullName,
+      pullNumber: pending.pullNumber,
+      headSha: pr?.headSha,
+      autonomy: settings.autonomy,
+      agentPaused: settings.agentPaused,
+      agentDryRun: settings.agentDryRun,
+      installationPermissions: installation ? installation.permissions : null,
+      mergeTrainMode: settings.mergeTrainMode,
+      pullRequestCreatedAt: pr?.createdAt,
+      pullRequestLinkedIssues: pr?.linkedIssues,
+      pullRequestChangedFiles: pr?.changedFiles,
+      // CI-run cancellation on a contributor_cap close (#2462): a contributor_cap close CAN be staged for
+      // approval (close autonomy = auto_with_approval), so the accept-replay path needs this resolved the
+      // same way the live webhook path does (src/queue/processors.ts) for the cancel hook to fire here too.
+      contributorCapCancelCi: settings.contributorCapCancelCi ?? env.CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT === "true",
+      // #selfhost-ci-verification: the executor's OWN final pre-mutation live-CI re-check (step 8 of
+      // executeAgentMaintenanceActions) needs the same effective required contexts this accept-time re-check
+      // (above) evaluated against. Re-fetch so branch-protection changes remain authoritative at accept time.
+      requiredCiContexts: executionRequiredContexts,
+      advisoryCheckRuns: settings.advisoryCheckRuns, // #4372: same exclusion the plan used, for step-8 re-verify
+      // #3472 split-brain: a staged approve/merge can sit queued long enough for a SIBLING pass to publish a
+      // manual-review hold on this same PR/head before the maintainer accepts — the executor's own live guard
+      // (step 7b of executeAgentMaintenanceActions) needs the configured label to check for.
+      manualReviewLabel: settings.manualReviewLabel,
+    },
+    plan,
+  );
+  /* v8 ignore next -- the executor returns one outcome per planned action, so the fallback is defensive. */
+  const execOutcome = outcomes[0]?.outcome ?? "no_outcome";
+  // "error" means performAction threw a real exception (a GitHub-call failure) -- persist "errored" so a
+  // maintainer scanning the queue can see the mutation itself failed, not just that a decision was recorded.
+  // Every OTHER outcome ("completed", "denied", "dry_run", "queued") is a clean result of the executor's own
+  // gates running to a normal conclusion -- "denied" in particular is an intentional policy decision (autonomy no
+  // longer authorizes, dry-run active, a live pre-condition failed cleanly), not a failure, so it correctly stays
+  // "accepted": the maintainer's accept WAS honored, the executor just chose not to act on it (#2423).
+  const finalStatus = <span class="cstat-no" title="statement not covered" >execOutcome === "error" ? "errored" : "accepted";</span>
+<span class="cstat-no" title="statement not covered" >  await setPendingAgentActionStatus(env, pending.id, { status: finalStatus, decidedBy: input.decidedBy });</span>
+<span class="cstat-no" title="statement not covered" >  await recordAuditEvent(env, {</span>
+    eventType: "agent.pending_action.accepted",
+    actor: input.decidedBy,
+    targetKey,
+    // The audit outcome must reflect execOutcome the same way finalStatus's comment above describes it, not
+    // collapse every non-"completed" result into "error": "denied"/"queued" pass through as themselves, and
+    // "dry_run" folds into "completed" (mirroring agent-action-executor.ts's own audit() helper), since
+    // AuditEventRecord's outcome type has no "dry_run" member. Only a real executor failure — "error", or the
+    // defensive "no_outcome" fallback above — should ever surface as "error" here.
+    outcome: execOutcome === "dry_run" ? "completed" : execOutcome === "denied" || execOutcome === "queued" ? execOutcome : execOutcome === "completed" ? "completed" : "error",
+    detail: `accepted ${pending.actionClass} → ${execOutcome}`,
+    metadata: { ...baseMetadata, executionOutcome: execOutcome },
+  });
+<span class="cstat-no" title="statement not covered" >  return { status: finalStatus, action: { ...pending, status: finalStatus, decidedBy: input.decidedBy }, executionOutcome: execOutcome };</span>
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    

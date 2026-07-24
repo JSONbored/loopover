@@ -1,0 +1,958 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/orb/analytics.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/orb</a> analytics.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/102</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/63</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/21</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/78</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a>
+<a name='L185'></a><a href='#L185'>185</a>
+<a name='L186'></a><a href='#L186'>186</a>
+<a name='L187'></a><a href='#L187'>187</a>
+<a name='L188'></a><a href='#L188'>188</a>
+<a name='L189'></a><a href='#L189'>189</a>
+<a name='L190'></a><a href='#L190'>190</a>
+<a name='L191'></a><a href='#L191'>191</a>
+<a name='L192'></a><a href='#L192'>192</a>
+<a name='L193'></a><a href='#L193'>193</a>
+<a name='L194'></a><a href='#L194'>194</a>
+<a name='L195'></a><a href='#L195'>195</a>
+<a name='L196'></a><a href='#L196'>196</a>
+<a name='L197'></a><a href='#L197'>197</a>
+<a name='L198'></a><a href='#L198'>198</a>
+<a name='L199'></a><a href='#L199'>199</a>
+<a name='L200'></a><a href='#L200'>200</a>
+<a name='L201'></a><a href='#L201'>201</a>
+<a name='L202'></a><a href='#L202'>202</a>
+<a name='L203'></a><a href='#L203'>203</a>
+<a name='L204'></a><a href='#L204'>204</a>
+<a name='L205'></a><a href='#L205'>205</a>
+<a name='L206'></a><a href='#L206'>206</a>
+<a name='L207'></a><a href='#L207'>207</a>
+<a name='L208'></a><a href='#L208'>208</a>
+<a name='L209'></a><a href='#L209'>209</a>
+<a name='L210'></a><a href='#L210'>210</a>
+<a name='L211'></a><a href='#L211'>211</a>
+<a name='L212'></a><a href='#L212'>212</a>
+<a name='L213'></a><a href='#L213'>213</a>
+<a name='L214'></a><a href='#L214'>214</a>
+<a name='L215'></a><a href='#L215'>215</a>
+<a name='L216'></a><a href='#L216'>216</a>
+<a name='L217'></a><a href='#L217'>217</a>
+<a name='L218'></a><a href='#L218'>218</a>
+<a name='L219'></a><a href='#L219'>219</a>
+<a name='L220'></a><a href='#L220'>220</a>
+<a name='L221'></a><a href='#L221'>221</a>
+<a name='L222'></a><a href='#L222'>222</a>
+<a name='L223'></a><a href='#L223'>223</a>
+<a name='L224'></a><a href='#L224'>224</a>
+<a name='L225'></a><a href='#L225'>225</a>
+<a name='L226'></a><a href='#L226'>226</a>
+<a name='L227'></a><a href='#L227'>227</a>
+<a name='L228'></a><a href='#L228'>228</a>
+<a name='L229'></a><a href='#L229'>229</a>
+<a name='L230'></a><a href='#L230'>230</a>
+<a name='L231'></a><a href='#L231'>231</a>
+<a name='L232'></a><a href='#L232'>232</a>
+<a name='L233'></a><a href='#L233'>233</a>
+<a name='L234'></a><a href='#L234'>234</a>
+<a name='L235'></a><a href='#L235'>235</a>
+<a name='L236'></a><a href='#L236'>236</a>
+<a name='L237'></a><a href='#L237'>237</a>
+<a name='L238'></a><a href='#L238'>238</a>
+<a name='L239'></a><a href='#L239'>239</a>
+<a name='L240'></a><a href='#L240'>240</a>
+<a name='L241'></a><a href='#L241'>241</a>
+<a name='L242'></a><a href='#L242'>242</a>
+<a name='L243'></a><a href='#L243'>243</a>
+<a name='L244'></a><a href='#L244'>244</a>
+<a name='L245'></a><a href='#L245'>245</a>
+<a name='L246'></a><a href='#L246'>246</a>
+<a name='L247'></a><a href='#L247'>247</a>
+<a name='L248'></a><a href='#L248'>248</a>
+<a name='L249'></a><a href='#L249'>249</a>
+<a name='L250'></a><a href='#L250'>250</a>
+<a name='L251'></a><a href='#L251'>251</a>
+<a name='L252'></a><a href='#L252'>252</a>
+<a name='L253'></a><a href='#L253'>253</a>
+<a name='L254'></a><a href='#L254'>254</a>
+<a name='L255'></a><a href='#L255'>255</a>
+<a name='L256'></a><a href='#L256'>256</a>
+<a name='L257'></a><a href='#L257'>257</a>
+<a name='L258'></a><a href='#L258'>258</a>
+<a name='L259'></a><a href='#L259'>259</a>
+<a name='L260'></a><a href='#L260'>260</a>
+<a name='L261'></a><a href='#L261'>261</a>
+<a name='L262'></a><a href='#L262'>262</a>
+<a name='L263'></a><a href='#L263'>263</a>
+<a name='L264'></a><a href='#L264'>264</a>
+<a name='L265'></a><a href='#L265'>265</a>
+<a name='L266'></a><a href='#L266'>266</a>
+<a name='L267'></a><a href='#L267'>267</a>
+<a name='L268'></a><a href='#L268'>268</a>
+<a name='L269'></a><a href='#L269'>269</a>
+<a name='L270'></a><a href='#L270'>270</a>
+<a name='L271'></a><a href='#L271'>271</a>
+<a name='L272'></a><a href='#L272'>272</a>
+<a name='L273'></a><a href='#L273'>273</a>
+<a name='L274'></a><a href='#L274'>274</a>
+<a name='L275'></a><a href='#L275'>275</a>
+<a name='L276'></a><a href='#L276'>276</a>
+<a name='L277'></a><a href='#L277'>277</a>
+<a name='L278'></a><a href='#L278'>278</a>
+<a name='L279'></a><a href='#L279'>279</a>
+<a name='L280'></a><a href='#L280'>280</a>
+<a name='L281'></a><a href='#L281'>281</a>
+<a name='L282'></a><a href='#L282'>282</a>
+<a name='L283'></a><a href='#L283'>283</a>
+<a name='L284'></a><a href='#L284'>284</a>
+<a name='L285'></a><a href='#L285'>285</a>
+<a name='L286'></a><a href='#L286'>286</a>
+<a name='L287'></a><a href='#L287'>287</a>
+<a name='L288'></a><a href='#L288'>288</a>
+<a name='L289'></a><a href='#L289'>289</a>
+<a name='L290'></a><a href='#L290'>290</a>
+<a name='L291'></a><a href='#L291'>291</a>
+<a name='L292'></a><a href='#L292'>292</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// LoopOver Orb (#1255) — fleet calibration ANALYTICS. Reads the anonymized orb_signals collected from
+// self-hosted instances and derives gate-accuracy metrics across the fleet. Aggregation is median/percentile
+// (never mean) so a single instance contributing fabricated data cannot move the fleet numbers.
+//
+// ANTI-FARMING DETECTION (#2350): gamingPatternFlags below extends the existing outlier check with a more targeted,
+// ONE-SIDED signal for the specific "gaming" pattern the issue describes -- an instance mass-submitting only
+// trivially-safe PRs to inflate its own merge-precision. mergePrecision alone can't distinguish "gamed" from
+// "genuinely excellent" (a careful team also has high precision); combining it with UNUSUALLY HIGH volume and
+// UNUSUALLY LOW reversal-rate, all three simultaneously, is the actual farming signature: lots of easy merges,
+// nothing risky enough to ever get reverted. Detection only — never an automatic action.
+//
+// SCOPE (explicit non-goals, read before extending): this flags a self-hosted INSTANCE, never an individual
+// miner. The fleet pipeline (orb_signals, review_audit's export) carries NO per-actor identity by deliberate,
+// repeatedly-stated design (review_audit has no login column; predicted_gate_calibration_ledger is explicitly
+// documented as never-exported, citing THIS issue as the reason) -- a genuine per-miner detector would require
+// adding a new anonymized per-actor signal to the export pipeline, which is a privacy-sensitive design
+// decision deserving its own focused issue/PR, not a rushed addition here. This module never deanonymizes,
+// never auto-bans, and never touches the live gate — instanceId here is the SAME opaque, HMAC-derived handle
+// already used everywhere else in this pipeline (see selfhost/orb-collector.ts), nothing more identifying.
+//
+// OUT OF SCOPE: "duplicate-claim-election win-rate skew" (isDuplicateClusterWinnerByClaim,
+// src/signals/duplicate-winner.ts) is NOT implemented here. Its outcome is never persisted anywhere in this
+// pipeline — only the LOSING side of a duplicate cluster produces a finding (duplicate_pr_risk), bucketed as
+// gate_reasoncode_bucket="duplicate_risk" on export with no cluster id and no actor linkage. There is no
+// winner marker to measure a win-rate FROM, and a per-instance duplicate_risk rate would measure something
+// different (how often THIS instance's own PRs lose a local collision) than "identities farming wins," so no
+// proxy for it is implemented — a misleading proxy would be worse than none.
+&nbsp;
+// Exported so the federated bundle export (#1970, src/orb/federated-bundle.ts) gates its own published
+// precision on the SAME volume bar the fleet median uses — a bundle must not advertise a precision the fleet
+// would refuse to count.
+export const MIN_DECIDED = <span class="cstat-no" title="statement not covered" >5; // an instance needs at least this many decided PRs to count toward the fleet median</span>
+const OUTLIER_BAND = <span class="cstat-no" title="statement not covered" >0.25; // |instance precision − fleet median| beyond this flags the instance</span>
+const GAMING_VOLUME_MULTIPLIER = <span class="cstat-no" title="statement not covered" >2; // an instance's decided count more than this many times the fleet median</span>
+const GAMING_PRECISION_BAND = <span class="cstat-no" title="statement not covered" >OUTLIER_BAND; // mergePrecision this far ABOVE the fleet median (one-sided)</span>
+const GAMING_REVERSAL_RATIO = <span class="cstat-no" title="statement not covered" >0.5; // reversalRate below this fraction of the fleet median</span>
+&nbsp;
+/** Per-instance confusion-matrix cell as stored. */
+export interface Cell {
+  instance_id: string;
+  verdict: string | null;
+  outcome: string;
+  reversal_flag: string;
+  n: number;
+}
+&nbsp;
+interface CycleTime {
+  instance_id: string;
+  ms: number;
+}
+&nbsp;
+export interface InstanceMetrics {
+  instanceId: string;
+  decided: number;
+  mergePrecision: number | null; // P(merged &amp; not reverted | gate said merge)
+  closePrecision: number | null; // P(closed &amp; not reopened | gate said close)
+  fpRate: number | null; // P(closed or reverted | gate said merge) — gate approved, it was wrong
+  fnRate: number | null; // P(merged or reopened | gate said close) — gate blocked, it was wrong
+  reversalRate: number; // share of decided PRs a human reversed
+}
+&nbsp;
+/** #2350: one self-hosted instance whose combined volume/precision/reversal-rate pattern looks like it is
+ *  gaming the fleet-aggregate accuracy signal (see the module doc comment for the exact signature and its
+ *  scope). Detection only — a human reads this, nothing here takes any action automatically. `instanceId` is
+ *  the same opaque, HMAC-derived handle used throughout this pipeline; nothing more identifying is included. */
+export interface GamingPatternFlag {
+  instanceId: string;
+  decided: number;
+  mergePrecision: number;
+  reversalRate: number;
+  fleetMedianDecided: number;
+  fleetMergePrecision: number;
+  fleetReversalRate: number;
+}
+&nbsp;
+export interface FleetAnalytics {
+  windowDays: number;
+  instanceCount: number; // instances meeting MIN_DECIDED
+  fleet: {
+    mergePrecision: number | null;
+    closePrecision: number | null;
+    fpRate: number | null;
+    reversalRate: number | null;
+    cycleP50Ms: number | null;
+    cycleP95Ms: number | null;
+  };
+  instances: InstanceMetrics[];
+  outliers: Array&lt;{ instanceId: string; metric: string; value: number; fleetMedian: number }&gt;;
+  gamingPatternFlags: GamingPatternFlag[];
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >median(x</span>s: number[]): number | null {
+<span class="cstat-no" title="statement not covered" >  if (xs.length === 0) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+  const s = <span class="cstat-no" title="statement not covered" >[...xs].<span class="fstat-no" title="function not covered" >sort((a</span>, b) =&gt; <span class="cstat-no" title="statement not covered" >a - b)</span>;</span>
+  const mid = <span class="cstat-no" title="statement not covered" >Math.floor(s.length / 2);</span>
+<span class="cstat-no" title="statement not covered" >  return s.length % 2 === 0 ? (s[mid - 1]! + s[mid]!) / 2 : s[mid]!;</span>
+}
+&nbsp;
+export function <span class="fstat-no" title="function not covered" >percentile(s</span>orted: number[], p: number): number | null {
+<span class="cstat-no" title="statement not covered" >  if (sorted.length === 0) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+  // Nearest-rank: the p-th percentile is the value at 1-based rank ceil(p/100 * N), i.e. index
+  // ceil(p/100 * N) - 1. `Math.floor(p/100 * N)` overshot by one rank whenever p/100 * N was an
+  // integer (e.g. P50 of an even-sized set returned the upper-half boundary — at the extreme, the
+  // maximum). Clamp both ends so p=0 and p=100 stay in range.
+  const idx = <span class="cstat-no" title="statement not covered" >Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));</span>
+<span class="cstat-no" title="statement not covered" >  return sorted[idx]!;</span>
+}
+&nbsp;
+/** Fold the confusion-matrix cells for one instance into accuracy metrics (reversals count as the gate
+ *  being wrong: a reverted merge is a false positive; a reopened close is a false negative).
+ *
+ *  Exported for the federated bundle export (#1970, src/orb/federated-bundle.ts): a bundle publishes this
+ *  instance's own precision for #6481 to compare against the peer median computed here, so both sides MUST use
+ *  this one definition — reimplementing it there would silently make the comparison apples-to-oranges. Callers
+ *  must pass a non-empty `cells` (reversalRate divides by the decided total). */
+export function <span class="fstat-no" title="function not covered" >foldInstance(i</span>nstanceId: string, cells: Cell[]): InstanceMetrics {
+  let wouldMerge = <span class="cstat-no" title="statement not covered" >0, m</span>ergeConfirmed = <span class="cstat-no" title="statement not covered" >0, m</span>ergeFalse = <span class="cstat-no" title="statement not covered" >0;</span>
+  let wouldClose = <span class="cstat-no" title="statement not covered" >0, c</span>loseConfirmed = <span class="cstat-no" title="statement not covered" >0, c</span>loseFalse = <span class="cstat-no" title="statement not covered" >0;</span>
+  let reversals = <span class="cstat-no" title="statement not covered" >0, d</span>ecided = <span class="cstat-no" title="statement not covered" >0;</span>
+<span class="cstat-no" title="statement not covered" >  for (const c of cells) {</span>
+<span class="cstat-no" title="statement not covered" >    decided += c.n;</span>
+<span class="cstat-no" title="statement not covered" >    if (c.reversal_flag !== "none") <span class="cstat-no" title="statement not covered" >reversals += c.n;</span></span>
+<span class="cstat-no" title="statement not covered" >    if (c.verdict === "merge") {</span>
+<span class="cstat-no" title="statement not covered" >      wouldMerge += c.n;</span>
+<span class="cstat-no" title="statement not covered" >      if (c.outcome === "merged" &amp;&amp; c.reversal_flag !== "reverted") <span class="cstat-no" title="statement not covered" >mergeConfirmed += c.n;</span></span>
+      else <span class="cstat-no" title="statement not covered" >mergeFalse += c.n;</span>
+    } else <span class="cstat-no" title="statement not covered" >if (c.verdict === "close") {</span>
+<span class="cstat-no" title="statement not covered" >      wouldClose += c.n;</span>
+<span class="cstat-no" title="statement not covered" >      if (c.outcome === "closed" &amp;&amp; c.reversal_flag !== "reopened") <span class="cstat-no" title="statement not covered" >closeConfirmed += c.n;</span></span>
+      else <span class="cstat-no" title="statement not covered" >closeFalse += c.n;</span>
+    }
+  }
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    instanceId,
+    decided,
+    mergePrecision: wouldMerge &gt; 0 ? mergeConfirmed / wouldMerge : null,
+    closePrecision: wouldClose &gt; 0 ? closeConfirmed / wouldClose : null,
+    fpRate: wouldMerge &gt; 0 ? mergeFalse / wouldMerge : null,
+    fnRate: wouldClose &gt; 0 ? closeFalse / wouldClose : null,
+    reversalRate: reversals / decided, // decided ≥ 1 (the instance has at least one cell)
+  };
+}
+&nbsp;
+/** Compute fleet calibration analytics over the collected orb_signals within the window. Fail-safe → empty. */
+export async function <span class="fstat-no" title="function not covered" >computeFleetAnalytics(e</span>nv: Env, opts: { windowDays?: number } = <span class="branch-0 cbranch-no" title="branch not covered" >{}): Promise&lt;FleetAnalytics&gt; {</span>
+  const windowDays = <span class="cstat-no" title="statement not covered" >Number.isFinite(opts.windowDays) &amp;&amp; (opts.windowDays as number) &gt; 0 ? Math.min(opts.windowDays as number, 365) : 90;</span>
+  // Date-only cutoff (like computeGateEval) so it compares correctly whether received_at is ISO ('…T…Z')
+  // or SQLite's CURRENT_TIMESTAMP space format ('YYYY-MM-DD HH:MM:SS').
+  const cutoff = <span class="cstat-no" title="statement not covered" >new Date(Date.now() - windowDays * 86_400_000).toISOString().slice(0, 10);</span>
+&nbsp;
+  let cells: Cell[] = <span class="cstat-no" title="statement not covered" >[];</span>
+  let cycleRows: CycleTime[] = <span class="cstat-no" title="statement not covered" >[];</span>
+  let registered = <span class="cstat-no" title="statement not covered" >new Set&lt;string&gt;();</span>
+<span class="cstat-no" title="statement not covered" >  try {</span>
+    const matrix = <span class="cstat-no" title="statement not covered" >await env.DB</span>
+      .prepare(
+        `SELECT instance_id, gate_verdict AS verdict, outcome, reversal_flag, COUNT(*) AS n
+         FROM orb_signals WHERE received_at &gt;= ?
+         GROUP BY instance_id, gate_verdict, outcome, reversal_flag`,
+      )
+      .bind(cutoff)
+      .all&lt;Cell&gt;();
+<span class="cstat-no" title="statement not covered" >    cells = matrix.results ?? [];</span>
+    const cy = <span class="cstat-no" title="statement not covered" >await env.DB</span>
+      .prepare(
+        `SELECT s.instance_id, s.time_to_close_ms AS ms
+         FROM orb_signals s
+         JOIN orb_instances i ON i.instance_id = s.instance_id AND i.registered = 1
+         WHERE s.received_at &gt;= ? AND s.time_to_close_ms IS NOT NULL
+         ORDER BY s.time_to_close_ms`,
+      )
+      .bind(cutoff)
+      .all&lt;CycleTime&gt;();
+<span class="cstat-no" title="statement not covered" >    cycleRows = cy.results ?? [];</span>
+    // The fleet trust gate: only operator-registered instances count toward the median (open ingest stores
+    // everyone's signals, but a stranger can't move calibration until a human opts them in — #1255).
+    const reg = <span class="cstat-no" title="statement not covered" >await env.DB.prepare(`SELECT instance_id FROM orb_instances WHERE registered = 1`).all&lt;{ instance_id: string }&gt;();</span>
+<span class="cstat-no" title="statement not covered" >    registered = new Set((reg.results ?? []).<span class="fstat-no" title="function not covered" >map((r</span>) =&gt; <span class="cstat-no" title="statement not covered" >r.instance_id)</span>);</span>
+  } catch {
+<span class="cstat-no" title="statement not covered" >    return { windowDays, instanceCount: 0, fleet: { mergePrecision: null, closePrecision: null, fpRate: null, reversalRate: null, cycleP50Ms: null, cycleP95Ms: null }, instances: [], outliers: [], gamingPatternFlags: [] };</span>
+  }
+&nbsp;
+  // Group cells by instance, fold each.
+  const byInstance = <span class="cstat-no" title="statement not covered" >new Map&lt;string, Cell[]&gt;();</span>
+<span class="cstat-no" title="statement not covered" >  for (const c of cells) {</span>
+    const list = <span class="cstat-no" title="statement not covered" >byInstance.get(c.instance_id) ?? [];</span>
+<span class="cstat-no" title="statement not covered" >    list.push(c);</span>
+<span class="cstat-no" title="statement not covered" >    byInstance.set(c.instance_id, list);</span>
+  }
+  const instances = <span class="cstat-no" title="statement not covered" >[...byInstance.entries()].<span class="fstat-no" title="function not covered" >map(([</span>id, cs]) =&gt; <span class="cstat-no" title="statement not covered" >foldInstance(id, cs))</span>.<span class="fstat-no" title="function not covered" >sort((a</span>, b) =&gt; <span class="cstat-no" title="statement not covered" >a.instanceId.localeCompare(b.instanceId))</span>;</span>
+&nbsp;
+  // Fleet = median across REGISTERED instances with enough volume (robust to a single bad contributor and
+  // to unregistered/untrusted senders — registration is the fleet's trust anchor).
+  const eligible = <span class="cstat-no" title="statement not covered" >instances.<span class="fstat-no" title="function not covered" >filter((i</span>) =&gt; <span class="cstat-no" title="statement not covered" >i.decided &gt;= MIN_DECIDED &amp;&amp; registered.has(i.instanceId))</span>;</span>
+  const eligibleIds = <span class="cstat-no" title="statement not covered" >new Set(eligible.<span class="fstat-no" title="function not covered" >map((i</span>) =&gt; <span class="cstat-no" title="statement not covered" >i.instanceId)</span>);</span>
+  const cycle = <span class="cstat-no" title="statement not covered" >cycleRows.<span class="fstat-no" title="function not covered" >filter((r</span>) =&gt; <span class="cstat-no" title="statement not covered" >eligibleIds.has(r.instance_id))</span>.<span class="fstat-no" title="function not covered" >map((r</span>) =&gt; <span class="cstat-no" title="statement not covered" >r.ms)</span>;</span>
+  const <span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >nums = (s</span>el: (i: InstanceMetrics) =&gt; number | null): number[] =&gt; <span class="cstat-no" title="statement not covered" >eligible.map(sel).<span class="fstat-no" title="function not covered" >filter((v</span>): v is number =&gt; <span class="cstat-no" title="statement not covered" >v !== null)</span>;</span></span>
+  const fleetMergeP = <span class="cstat-no" title="statement not covered" >median(<span class="fstat-no" title="function not covered" >nums((i</span>) =&gt; <span class="cstat-no" title="statement not covered" >i.mergePrecision)</span>);</span>
+  const fleetCloseP = <span class="cstat-no" title="statement not covered" >median(<span class="fstat-no" title="function not covered" >nums((i</span>) =&gt; <span class="cstat-no" title="statement not covered" >i.closePrecision)</span>);</span>
+&nbsp;
+  const outliers: FleetAnalytics["outliers"] = <span class="cstat-no" title="statement not covered" >[];</span>
+<span class="cstat-no" title="statement not covered" >  if (fleetMergeP !== null) {</span>
+<span class="cstat-no" title="statement not covered" >    for (const i of eligible) {</span>
+<span class="cstat-no" title="statement not covered" >      if (i.mergePrecision !== null &amp;&amp; Math.abs(i.mergePrecision - fleetMergeP) &gt; OUTLIER_BAND) {</span>
+<span class="cstat-no" title="statement not covered" >        outliers.push({ instanceId: i.instanceId, metric: "mergePrecision", value: i.mergePrecision, fleetMedian: fleetMergeP });</span>
+      }
+    }
+  }
+&nbsp;
+  // #2350: gamingPatternFlags. Gated on fleetMergeP !== null (at least one eligible instance made a comparable
+  // merge verdict) — decided/reversalRate are never null per-instance, so once `eligible` is known non-empty
+  // (implied by fleetMergeP being resolvable), both medians below are guaranteed non-null too.
+  const gamingPatternFlags: FleetAnalytics["gamingPatternFlags"] = <span class="cstat-no" title="statement not covered" >[];</span>
+<span class="cstat-no" title="statement not covered" >  if (fleetMergeP !== null) {</span>
+    const fleetMedianDecided = <span class="cstat-no" title="statement not covered" >median(eligible.<span class="fstat-no" title="function not covered" >map((i</span>) =&gt; <span class="cstat-no" title="statement not covered" >i.decided)</span>)!;</span>
+    const fleetReversalRate = <span class="cstat-no" title="statement not covered" >median(eligible.<span class="fstat-no" title="function not covered" >map((i</span>) =&gt; <span class="cstat-no" title="statement not covered" >i.reversalRate)</span>)!;</span>
+<span class="cstat-no" title="statement not covered" >    for (const i of eligible) {</span>
+      const highVolume = <span class="cstat-no" title="statement not covered" >i.decided &gt; fleetMedianDecided * GAMING_VOLUME_MULTIPLIER;</span>
+      const highPrecision = <span class="cstat-no" title="statement not covered" >i.mergePrecision !== null &amp;&amp; i.mergePrecision - fleetMergeP &gt; GAMING_PRECISION_BAND;</span>
+      const lowReversal = <span class="cstat-no" title="statement not covered" >i.reversalRate &lt; fleetReversalRate * GAMING_REVERSAL_RATIO;</span>
+<span class="cstat-no" title="statement not covered" >      if (highVolume &amp;&amp; highPrecision &amp;&amp; lowReversal) {</span>
+<span class="cstat-no" title="statement not covered" >        gamingPatternFlags.push({</span>
+          instanceId: i.instanceId,
+          decided: i.decided,
+          mergePrecision: i.mergePrecision!,
+          reversalRate: i.reversalRate,
+          fleetMedianDecided,
+          fleetMergePrecision: fleetMergeP,
+          fleetReversalRate,
+        });
+      }
+    }
+  }
+&nbsp;
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    windowDays,
+    instanceCount: eligible.length,
+    fleet: {
+      mergePrecision: fleetMergeP,
+      closePrecision: fleetCloseP,
+      fpRate: median(<span class="fstat-no" title="function not covered" >nums((i</span>) =&gt; <span class="cstat-no" title="statement not covered" >i.fpRate)</span>),
+      reversalRate: median(<span class="fstat-no" title="function not covered" >nums((i</span>) =&gt; <span class="cstat-no" title="statement not covered" >i.reversalRate)</span>),
+      cycleP50Ms: percentile(cycle, 50),
+      cycleP95Ms: percentile(cycle, 95),
+    },
+    instances,
+    outliers,
+    gamingPatternFlags,
+  };
+}
+&nbsp;
+/** #4933: fleet-wide instance READINESS, not gate-calibration quality -- deliberately separate from (and
+ *  named differently on the dashboard than) the "Fleet health" gate-precision card above, which this is
+ *  often confused with despite measuring something unrelated. */
+export interface FleetHealthSummary {
+  healthyCount: number;
+  unhealthyCount: number;
+  // Never reported a health status, or its last report is older than HEALTH_STALE_HOURS -- an
+  // unresponsive instance must read as "don't know," not silently keep counting as its last-known state.
+  unknownCount: number;
+  totalCount: number; // registered instances only, matching computeFleetAnalytics's own trust gate
+}
+&nbsp;
+// A bit over 2x the hourly export cron (server.ts's runOrbExport), so one missed tick doesn't immediately
+// flip an instance to "unknown."
+export const HEALTH_STALE_HOURS = <span class="cstat-no" title="statement not covered" >3;</span>
+&nbsp;
+export async function <span class="fstat-no" title="function not covered" >getFleetHealthSummary(e</span>nv: Env, now: Date = <span class="branch-0 cbranch-no" title="branch not covered" >new Date()): Promise&lt;FleetHealthSummary&gt; {</span>
+  const staleBefore = <span class="cstat-no" title="statement not covered" >new Date(now.getTime() - HEALTH_STALE_HOURS * 60 * 60 * 1000).toISOString();</span>
+<span class="cstat-no" title="statement not covered" >  try {</span>
+    const row = <span class="cstat-no" title="statement not covered" >await env.DB.prepare(</span>
+      `SELECT
+         SUM(CASE WHEN healthy = 1 AND health_reported_at IS NOT NULL AND health_reported_at &gt; ? THEN 1 ELSE 0 END) AS healthy_count,
+         SUM(CASE WHEN healthy = 0 AND health_reported_at IS NOT NULL AND health_reported_at &gt; ? THEN 1 ELSE 0 END) AS unhealthy_count,
+         COUNT(*) AS total_count
+       FROM orb_instances
+       WHERE registered = 1`,
+    )
+      .bind(staleBefore, staleBefore)
+      .first&lt;{ healthy_count: number | null; unhealthy_count: number | null; total_count: number }&gt;();
+    const healthyCount = <span class="cstat-no" title="statement not covered" >Number(row?.healthy_count ?? 0);</span>
+    const unhealthyCount = <span class="cstat-no" title="statement not covered" >Number(row?.unhealthy_count ?? 0);</span>
+    /* v8 ignore next -- COUNT(*) always returns a non-null number for a matched row (unlike the SUM(CASE...)
+     *  cells above, which legitimately return NULL over zero matching rows); the ?? 0 only guards `row` being
+     *  absent entirely, which a scalar aggregate query never produces. */
+    const totalCount = Number(row?.total_count ?? 0);
+<span class="cstat-no" title="statement not covered" >    return { healthyCount, unhealthyCount, unknownCount: totalCount - healthyCount - unhealthyCount, totalCount };</span>
+  } catch {
+<span class="cstat-no" title="statement not covered" >    return { healthyCount: 0, unhealthyCount: 0, unknownCount: 0, totalCount: 0 };</span>
+  }
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    

@@ -1,0 +1,391 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/queue/copycat-detection.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/queue</a> copycat-detection.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/31</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/12</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/12</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/25</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Copycat/plagiarism-detection evidence collection (#1969) -- extracted alongside slop-detection.ts, the
+// duplicate-cluster/AI-slop sibling this mirrors. shouldCollectCopycatEvidence gates on settings the same way
+// shouldCollectSlopEvidence does; runCopycatAssessment fetches a BOUNDED candidate set of earlier open siblings
+// + recently-merged PRs on the same repo, extracts each candidate's added-line content, and hands the whole
+// thing to the pure containment engine (src/signals/copycat.ts).
+&nbsp;
+import { listPullRequestFiles, listRecentMergedPullRequests } from "../db/repositories";
+import { diffFilePriority, extractAddedLines } from "../review/review-diff";
+import { assessCopycat, type CopycatAssessment, type CopycatPriorArtCandidate } from "../signals/copycat";
+import type { PullRequestRecord, RepositorySettings } from "../types";
+&nbsp;
+export function <span class="fstat-no" title="function not covered" >shouldCollectCopycatEvidence(s</span>ettings: Pick&lt;RepositorySettings, "copycatGateMode"&gt;): boolean {
+<span class="cstat-no" title="statement not covered" >  return (settings.copycatGateMode ?? "off") !== "off";</span>
+}
+&nbsp;
+/** Bound on how many prior-art candidates get their full patch content fetched and scored — keeps a single
+ *  gate evaluation's extra DB reads bounded regardless of repo activity, per #1969's own "bounded, fail-safe,
+ *  precision-first" requirement. Open siblings (a live "someone raced my PR" case) are prioritized over
+ *  historical merged PRs; the remainder of the budget goes to recently-merged candidates. */
+export const MAX_COPYCAT_CANDIDATES = <span class="cstat-no" title="statement not covered" >25;</span>
+&nbsp;
+/** Drop generated/lockfile/vendored files from a copycat comparison, reusing review-diff.ts's own
+ *  `diffFilePriority` classification (tier 4 = lockfiles/dist/build/out/coverage/vendor/node_modules) rather
+ *  than inventing a second exclusion list — the same content that AI-review budgeting already treats as
+ *  least-signal is exactly what #1969 asks to drop from the comparison ("reuse review.exclude_paths to drop
+ *  generated/lockfile/boilerplate lines"). */
+function <span class="fstat-no" title="function not covered" >isComparableSourcePath(p</span>ath: string): boolean {
+<span class="cstat-no" title="statement not covered" >  return diffFilePriority(path) !== 4;</span>
+}
+&nbsp;
+/** Extract one PR's comparable added-line content from its already-fetched file records: lockfile/generated/
+ *  vendored files excluded, added lines from every remaining file concatenated in file order. Pure. */
+export function <span class="fstat-no" title="function not covered" >comparableAddedLines(</span>
+  files: readonly { path: string; payload?: Record&lt;string, unknown&gt; | null | undefined }[],
+): string[] {
+  const lines: string[] = <span class="cstat-no" title="statement not covered" >[];</span>
+<span class="cstat-no" title="statement not covered" >  for (const file of files) {</span>
+<span class="cstat-no" title="statement not covered" >    if (!isComparableSourcePath(file.path)) <span class="cstat-no" title="statement not covered" >continue;</span></span>
+    const patch = <span class="cstat-no" title="statement not covered" >typeof file.payload?.patch === "string" ? file.payload.patch : undefined;</span>
+<span class="cstat-no" title="statement not covered" >    lines.push(...extractAddedLines(patch));</span>
+  }
+<span class="cstat-no" title="statement not covered" >  return lines;</span>
+}
+&nbsp;
+/**
+ * Fetch and score this PR's added code against a bounded candidate set of earlier open siblings + recently
+ * merged PRs on the same repo (#1969). `otherOpenPullRequests` is reused as-is (already fetched by the caller
+ * for other gate purposes — no extra query); recently-merged candidates are pre-filtered by changed-file-path
+ * overlap with the current PR (cheap — `RecentMergedPullRequestRecord.changedFiles` is already loaded) BEFORE
+ * their more expensive patch content is fetched at all, so a candidate that could not possibly overlap never
+ * costs an extra `listPullRequestFiles` read.
+ */
+export async function <span class="fstat-no" title="function not covered" >runCopycatAssessment(</span>
+  env: Env,
+  args: {
+    repoFullName: string;
+    pr: { number: number; createdAt?: string | null | undefined };
+    files: Awaited&lt;ReturnType&lt;typeof listPullRequestFiles&gt;&gt;;
+    otherOpenPullRequests: readonly PullRequestRecord[];
+    mode: RepositorySettings["copycatGateMode"];
+    minScore: RepositorySettings["copycatGateMinScore"];
+  },
+): Promise&lt;CopycatAssessment&gt; {
+  // Each phase's candidate list is already bounded by MAX_COPYCAT_CANDIDATES (25) before any fetch starts, so
+  // fetching every candidate's files CONCURRENTLY within a phase (rather than one listPullRequestFiles round-
+  // trip at a time, up to 50 sequential DB reads total across both phases) does not raise the worst-case fan-
+  // out -- it only removes the artificial serialization between independent reads. Promise.all preserves each
+  // phase's original candidate order in its result array regardless of resolution order, so priorArt's
+  // ordering (open siblings first, then merged) is unchanged.
+  const openCandidates = <span class="cstat-no" title="statement not covered" >args.otherOpenPullRequests.slice(0, MAX_COPYCAT_CANDIDATES);</span>
+  const openPriorArt: CopycatPriorArtCandidate[] = <span class="cstat-no" title="statement not covered" >await Promise.all(</span>
+    openCandidates.map(<span class="fstat-no" title="function not covered" >async (s</span>ibling) =&gt; {
+      const files = <span class="cstat-no" title="statement not covered" >await listPullRequestFiles(env, args.repoFullName, sibling.number).<span class="fstat-no" title="function not covered" >catch(() =&gt; <span class="cstat-no" title="statement not covered" >[</span>])</span>;</span>
+<span class="cstat-no" title="statement not covered" >      return { pullNumber: sibling.number, lines: comparableAddedLines(files), submittedAt: sibling.createdAt };</span>
+    }),
+  );
+&nbsp;
+  let mergedPriorArt: CopycatPriorArtCandidate[] = <span class="cstat-no" title="statement not covered" >[];</span>
+  const remainingBudget = <span class="cstat-no" title="statement not covered" >MAX_COPYCAT_CANDIDATES - openPriorArt.length;</span>
+<span class="cstat-no" title="statement not covered" >  if (remainingBudget &gt; 0) {</span>
+    const changedPathSet = <span class="cstat-no" title="statement not covered" >new Set(args.files.<span class="fstat-no" title="function not covered" >map((f</span>ile) =&gt; <span class="cstat-no" title="statement not covered" >file.path)</span>);</span>
+    const recentMerged = <span class="cstat-no" title="statement not covered" >await listRecentMergedPullRequests(env, args.repoFullName).<span class="fstat-no" title="function not covered" >catch(() =&gt; <span class="cstat-no" title="statement not covered" >[</span>])</span>;</span>
+    const overlapping = <span class="cstat-no" title="statement not covered" >recentMerged</span>
+      .<span class="fstat-no" title="function not covered" >filter((c</span>andidate) =&gt; <span class="cstat-no" title="statement not covered" >candidate.changedFiles.<span class="fstat-no" title="function not covered" >some((p</span>ath) =&gt; <span class="cstat-no" title="statement not covered" >changedPathSet.has(path))</span>)</span>
+      .slice(0, remainingBudget);
+<span class="cstat-no" title="statement not covered" >    mergedPriorArt = await Promise.all(</span>
+      overlapping.map(<span class="fstat-no" title="function not covered" >async (c</span>andidate) =&gt; {
+        const files = <span class="cstat-no" title="statement not covered" >await listPullRequestFiles(env, args.repoFullName, candidate.number).<span class="fstat-no" title="function not covered" >catch(() =&gt; <span class="cstat-no" title="statement not covered" >[</span>])</span>;</span>
+<span class="cstat-no" title="statement not covered" >        return { pullNumber: candidate.number, lines: comparableAddedLines(files), submittedAt: candidate.mergedAt };</span>
+      }),
+    );
+  }
+  const priorArt = <span class="cstat-no" title="statement not covered" >[...openPriorArt, ...mergedPriorArt];</span>
+&nbsp;
+<span class="cstat-no" title="statement not covered" >  return assessCopycat({</span>
+    candidateLines: comparableAddedLines(args.files),
+    candidateSubmittedAt: args.pr.createdAt,
+    priorArt,
+    mode: args.mode ?? "off",
+    minScore: args.minScore ?? null,
+  });
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    

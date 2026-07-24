@@ -1,0 +1,454 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for packages/loopover-engine/src/governor/kill-switch.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../../../prettify.css" />
+    <link rel="stylesheet" href="../../../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../../../index.html">All files</a> / <a href="index.html">packages/loopover-engine/src/governor</a> kill-switch.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/20</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/22</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/5</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/15</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Governor kill-switch (#2341): the emergency-halt primitive every write-adjacent governor decision consults
+// FIRST, before any other calculator. Two independent triggers compose into one scope: a GLOBAL env-level
+// switch that halts every repo at once, and a PER-REPO switch (from `.loopover-miner.yml`'s MinerGoalSpec
+// `killSwitch.paused` field) that halts only its own repo's queue while leaving the rest of the fleet running.
+// Mirrors `src/settings/agent-execution.ts`'s `isGlobalAgentPause` truthy-string idiom for the review-stack's
+// own kill-switch (#776) — a parallel mechanism for the miner's own local runtime, not the same one.
+//
+// DETECTOR ONLY — no IO, no persistence. Composing this with the other pure calculators into one fail-closed
+// allow/deny verdict (and recording every CHECK, not just a transition) is the Governor chokepoint's job
+// (#2340), which consults this module first in its "safest wins" precedence.
+&nbsp;
+import type { GovernorLedgerEvent } from "../governor-ledger.js";
+&nbsp;
+/** Truthy-string idiom shared with `isGlobalAgentPause` (`src/settings/agent-execution.ts`) — same accepted
+ *  literal set, so an operator only needs to remember one convention across both kill-switches. */
+const TRUTHY_ENV_VALUE = <span class="cstat-no" title="statement not covered" >/^(1|true|yes|on)$/i;</span>
+&nbsp;
+/** Env var an operator sets to halt ALL miner write activity, across every repo, immediately. */
+export const MINER_KILL_SWITCH_ENV_VAR = <span class="cstat-no" title="statement not covered" >"LOOPOVER_MINER_KILL_SWITCH";</span>
+&nbsp;
+/** Which trigger (if any) is currently halting miner write activity for a given repo. */
+export type MinerKillSwitchScope = "global" | "repo" | "none";
+&nbsp;
+/**
+ * True when the operator's global env-level kill-switch is set. Mirrors `isGlobalAgentPause`'s idiom exactly
+ * (case-insensitive `1`/`true`/`yes`/`on`) — absence or any other value reads as not tripped. This function
+ * does not itself fail closed; the caller composing it into a decision (the Governor chokepoint) is
+ * responsible for that.
+ */
+export function <span class="fstat-no" title="function not covered" >isGlobalMinerKillSwitch(e</span>nv: Record&lt;string, string | undefined&gt;): boolean {
+<span class="cstat-no" title="statement not covered" >  return TRUTHY_ENV_VALUE.test(env[MINER_KILL_SWITCH_ENV_VAR] ?? "");</span>
+}
+&nbsp;
+/**
+ * Resolve which kill-switch scope (if any) is active for a repo. Pure and stateless: identical inputs always
+ * yield the identical scope, so toggling either input off on the next call immediately reflects "resumed" with
+ * no residual state here to corrupt — any queue/attempt state a caller holds is untouched by this resolution.
+ * Precedence: a global halt always reports as `"global"`, regardless of the per-repo flag (never masked); a
+ * per-repo pause alone is sufficient to halt just that repo.
+ */
+export function <span class="fstat-no" title="function not covered" >resolveMinerKillSwitch(i</span>nput: { global: boolean; repoPaused?: boolean | null | undefined }): MinerKillSwitchScope {
+<span class="cstat-no" title="statement not covered" >  if (input.global) <span class="cstat-no" title="statement not covered" >return "global";</span></span>
+<span class="cstat-no" title="statement not covered" >  if (input.repoPaused === true) <span class="cstat-no" title="statement not covered" >return "repo";</span></span>
+<span class="cstat-no" title="statement not covered" >  return "none";</span>
+}
+&nbsp;
+/** True for any active scope (`"global"` or `"repo"`) — false only for `"none"`. */
+export function <span class="fstat-no" title="function not covered" >isMinerKillSwitchActive(s</span>cope: MinerKillSwitchScope): boolean {
+<span class="cstat-no" title="statement not covered" >  return scope !== "none";</span>
+}
+&nbsp;
+/**
+ * Governor-ledger row for a kill-switch STATE TRANSITION (#2341's "state changes are themselves recorded"
+ * deliverable) — call only when the scope actually changed since the previous check, not on every check (every
+ * check's allow/deny for a real write action is the Governor chokepoint's job, #2340, not this primitive's).
+ * Returns `null` when there is no transition, so a caller can unconditionally call this each check and only
+ * append when it returns non-null.
+ */
+export function <span class="fstat-no" title="function not covered" >buildMinerKillSwitchTransitionGovernorLedgerEvent(i</span>nput: {
+  repoFullName?: string | null | undefined;
+  actionClass: string;
+  previousScope: MinerKillSwitchScope;
+  scope: MinerKillSwitchScope;
+}): GovernorLedgerEvent | null {
+<span class="cstat-no" title="statement not covered" >  if (input.previousScope === input.scope) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+  const tripped = <span class="cstat-no" title="statement not covered" >isMinerKillSwitchActive(input.scope);</span>
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    eventType: "kill_switch",
+    repoFullName: input.repoFullName ?? null,
+    actionClass: input.actionClass,
+    decision: tripped ? "tripped" : "resumed",
+    reason: tripped ? `${input.scope}_kill_switch_engaged` : `${input.previousScope}_kill_switch_cleared`,
+    payload: { previousScope: input.previousScope, scope: input.scope },
+  };
+}
+&nbsp;
+/** Same literal set as ORB's hosted `PagerDutySeverity` (`src/services/notify-pagerduty.ts`) — kept as a local
+ *  literal union rather than importing that module, since it lives in the main app, not this shared package. */
+export type MinerKillSwitchPagerDutySeverity = "critical" | "error" | "warning" | "info";
+&nbsp;
+/** Pure PagerDuty alert payload for a kill-switch TRIP (#7666). Never built for a resume — clearing a halt is
+ *  relief, not an incident. */
+export type MinerKillSwitchPagerDutyAlert = {
+  repoFullName: string | null;
+  scope: MinerKillSwitchScope;
+  actionClass: string;
+  summary: string;
+  severity: MinerKillSwitchPagerDutySeverity;
+  dedupKey: string;
+  customDetails: Record&lt;string, unknown&gt;;
+};
+&nbsp;
+/**
+ * Build the PagerDuty alert payload for a kill-switch TRIP transition (#7666) — the paging counterpart to
+ * {@link buildMinerKillSwitchTransitionGovernorLedgerEvent}, sharing its exact "no-op unless the scope actually
+ * changed" gate, but narrower: it additionally returns `null` on a transition INTO `"none"` (a resume), since
+ * paging on "the halt cleared" would be noise, not an incident that needs a human. DETECTOR ONLY — no IO, same
+ * as this whole module: `packages/loopover-miner/lib/governor-kill-switch.ts` performs the actual PagerDuty
+ * Events API v2 call, mirroring how it (not this module) also performs the ledger IO for the sibling ledger-event
+ * builder above. `dedupKey` intentionally omits `actionClass` — a repo/scope kill-switch trip is one incident
+ * regardless of which action class first observed it, so PagerDuty's own dedup_key coalescing collapses repeats
+ * into the same incident instead of opening a new one per action class.
+ */
+export function <span class="fstat-no" title="function not covered" >buildMinerKillSwitchPagerDutyAlert(i</span>nput: {
+  repoFullName?: string | null | undefined;
+  actionClass: string;
+  previousScope: MinerKillSwitchScope;
+  scope: MinerKillSwitchScope;
+}): MinerKillSwitchPagerDutyAlert | null {
+<span class="cstat-no" title="statement not covered" >  if (input.previousScope === input.scope) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (!isMinerKillSwitchActive(input.scope)) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+  const repoFullName = <span class="cstat-no" title="statement not covered" >input.repoFullName ?? null;</span>
+  const target = <span class="cstat-no" title="statement not covered" >repoFullName ?? "global";</span>
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    repoFullName,
+    scope: input.scope,
+    actionClass: input.actionClass,
+    summary: `AMS miner kill-switch tripped (${input.scope}) — ${input.actionClass} halted for ${target}`,
+    severity: "critical",
+    dedupKey: `miner_kill_switch_tripped:${input.scope}:${target}`,
+    customDetails: { scope: input.scope, previousScope: input.previousScope, repoFullName, actionClass: input.actionClass },
+  };
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../../../sorter.js"></script>
+        <script src="../../../../block-navigation.js"></script>
+    </body>
+</html>
+    

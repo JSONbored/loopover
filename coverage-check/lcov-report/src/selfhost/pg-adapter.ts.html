@@ -1,0 +1,634 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/selfhost/pg-adapter.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/selfhost</a> pg-adapter.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/44</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/16</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/18</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/41</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Postgres-backed D1Database for the self-host Postgres backend (#977). Implements the same D1 surface the
+// app + drizzle-orm/d1 use (prepare/bind/all/first/run/raw + batch + exec), translating each SQLite query to
+// Postgres (pg-dialect.ts) and running it via node-postgres. A shared Postgres DB makes multi-instance
+// self-host possible (vs the single-file SQLite default).
+//
+// `PgStatement` implements the shared `SelfHostD1PreparedStatement` contract (backend-contracts.ts, #4010) --
+// the same one d1-adapter.ts's `Statement` implements -- and `createPgAdapter`'s own return value is typed
+// `SelfHostD1Database` before the final `as unknown as D1Database` cast (unavoidable: D1Database is a
+// `declare abstract class`, so only that cast can bridge a plain object to it).
+import type { Pool, PoolClient } from "pg";
+import type { SelfHostD1Database, SelfHostD1PreparedStatement } from "./backend-contracts";
+import { translateDdl, translateSql } from "./pg-dialect";
+&nbsp;
+type Row = Record&lt;string, unknown&gt;;
+type Runner = Pool | PoolClient;
+&nbsp;
+class PgStatement implements SelfHostD1PreparedStatement {
+<span class="fstat-no" title="function not covered" >  constructor(</span>
+    private readonly <span class="cstat-no" title="statement not covered" >pool: Pool,</span>
+    private readonly <span class="cstat-no" title="statement not covered" >sql: string,</span>
+    private readonly <span class="cstat-no" title="statement not covered" >params: unknown[] = <span class="branch-0 cbranch-no" title="branch not covered" >[</span>],</span>
+  ) {}
+&nbsp;
+<span class="fstat-no" title="function not covered" >  bind(.</span>..params: unknown[]): PgStatement {
+<span class="cstat-no" title="statement not covered" >    return new PgStatement(this.pool, this.sql, params);</span>
+  }
+&nbsp;
+  private async <span class="fstat-no" title="function not covered" >exec(r</span>unner: Runner = <span class="branch-0 cbranch-no" title="branch not covered" >this.pool): Promise&lt;{ rows: Row[]; rowCount: number }&gt; {</span>
+    const res = <span class="cstat-no" title="statement not covered" >await runner.query(translateSql(this.sql), this.params as unknown[]);</span>
+<span class="cstat-no" title="statement not covered" >    return { rows: res.rows as Row[], rowCount: res.rowCount ?? 0 };</span>
+  }
+&nbsp;
+  async <span class="fstat-no" title="function not covered" >all&lt;T = unknown&gt;(): Promise&lt;{ results: T[]; success: true; meta: Record&lt;string, unknown&gt; }&gt; {</span>
+    const { rows, rowCount } = <span class="cstat-no" title="statement not covered" >await this.exec();</span>
+<span class="cstat-no" title="statement not covered" >    return { results: rows as T[], success: true, meta: { rows_read: rowCount, changes: rowCount } };</span>
+  }
+&nbsp;
+  async <span class="fstat-no" title="function not covered" >first&lt;T = unknown&gt;(c</span>olName?: string): Promise&lt;T | null&gt; {
+    const { rows } = <span class="cstat-no" title="statement not covered" >await this.exec();</span>
+    const row = <span class="cstat-no" title="statement not covered" >rows[0];</span>
+<span class="cstat-no" title="statement not covered" >    if (!row) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+<span class="cstat-no" title="statement not covered" >    return (colName ? row[colName] : row) as T;</span>
+  }
+&nbsp;
+  async <span class="fstat-no" title="function not covered" >run(): Promise&lt;{ success: true; meta: Record&lt;string, unknown&gt; }&gt; {</span>
+    const { rowCount } = <span class="cstat-no" title="statement not covered" >await this.exec();</span>
+<span class="cstat-no" title="statement not covered" >    return { success: true, meta: { changes: rowCount, last_row_id: 0, rows_written: rowCount } };</span>
+  }
+&nbsp;
+  async <span class="fstat-no" title="function not covered" >raw&lt;T = unknown[]&gt;(): Promise&lt;T[]&gt; {</span>
+    const { rows } = <span class="cstat-no" title="statement not covered" >await this.exec();</span>
+<span class="cstat-no" title="statement not covered" >    return rows.<span class="fstat-no" title="function not covered" >map((r</span>) =&gt; <span class="cstat-no" title="statement not covered" >Object.values(r))</span> as T[];</span>
+  }
+&nbsp;
+  /** Run this statement on a specific client (used by batch's transaction). */
+  async <span class="fstat-no" title="function not covered" >runOn(c</span>lient: PoolClient): Promise&lt;{ results: Row[]; success: true; meta: Record&lt;string, unknown&gt; }&gt; {
+    const { rows, rowCount } = <span class="cstat-no" title="statement not covered" >await this.exec(client);</span>
+<span class="cstat-no" title="statement not covered" >    return { results: rows, success: true, meta: { changes: rowCount } };</span>
+  }
+}
+&nbsp;
+export function <span class="fstat-no" title="function not covered" >createPgAdapter(p</span>ool: Pool): D1Database {
+  const adapter: SelfHostD1Database = <span class="cstat-no" title="statement not covered" >{</span>
+<span class="fstat-no" title="function not covered" >    prepare: (s</span>ql: string) =&gt; <span class="cstat-no" title="statement not covered" >new PgStatement(pool, sql),</span>
+    async <span class="fstat-no" title="function not covered" >batch(s</span>tatements: PgStatement[]) {
+      const client = <span class="cstat-no" title="statement not covered" >await pool.connect();</span>
+<span class="cstat-no" title="statement not covered" >      try {</span>
+<span class="cstat-no" title="statement not covered" >        await client.query("BEGIN");</span>
+        const out: Array&lt;{ results: Row[]; success: true; meta: Record&lt;string, unknown&gt; }&gt; = <span class="cstat-no" title="statement not covered" >[];</span>
+<span class="cstat-no" title="statement not covered" >        for (const st of statements) <span class="cstat-no" title="statement not covered" >out.push(await st.runOn(client));</span></span>
+<span class="cstat-no" title="statement not covered" >        await client.query("COMMIT");</span>
+<span class="cstat-no" title="statement not covered" >        return out;</span>
+      } catch (error) {
+<span class="cstat-no" title="statement not covered" >        try {</span>
+<span class="cstat-no" title="statement not covered" >          await client.query("ROLLBACK");</span>
+        } catch {
+          /* ignore */
+        }
+<span class="cstat-no" title="statement not covered" >        throw error;</span>
+      } finally {
+<span class="cstat-no" title="statement not covered" >        client.release();</span>
+      }
+    },
+    async <span class="fstat-no" title="function not covered" >exec(s</span>ql: string) {
+      // Migrations: no placeholders; translate the DDL functions and run (node-postgres runs the multi-statement
+      // string in one simple query).
+<span class="cstat-no" title="statement not covered" >      await pool.query(translateDdl(sql));</span>
+<span class="cstat-no" title="statement not covered" >      return { count: (sql.match(/;/g) ?? []).length || 1, duration: 0 };</span>
+    },
+    async <span class="fstat-no" title="function not covered" >dump() {</span>
+<span class="cstat-no" title="statement not covered" >      return new ArrayBuffer(0); // unused; present for D1 surface completeness</span>
+    },
+  };
+<span class="cstat-no" title="statement not covered" >  return adapter as unknown as D1Database;</span>
+}
+&nbsp;
+// #2543: github_rate_limit_observations receives one INSERT per outbound GitHub API response and is pruned in
+// daily bulk deletes by the retention job (pruneExpiredRecords) -- an insert-then-bulk-delete pattern that is
+// exactly the shape that causes dead-tuple bloat under Postgres's stock autovacuum settings (scale_factor 0.2,
+// i.e. autovacuum waits for 20% of the table to be dead before vacuuming -- fine for a slowly-growing table,
+// too lax for one that gets emptied in one daily burst). Lowering the scale factor makes autovacuum reclaim
+// space promptly after each day's bulk delete instead of letting dead tuples accumulate across cycles. A
+// storage-parameter ALTER is idempotent (re-applying the same value is a no-op), so this runs unconditionally
+// on every Postgres boot rather than needing its own migration-ledger tracking. SQLite has no autovacuum
+// concept at all, so this must never run there -- callers gate it behind the Postgres backend check, matching
+// PGPOOL_MAX/resolvePostgresPoolMax's own "server.ts wiring, tested logic elsewhere" split (src/selfhost/
+// queue-common.ts), since server.ts itself has no test harness (top-level main(), Codecov-ignored).
+export const GITHUB_RATE_LIMIT_OBSERVATIONS_AUTOVACUUM_SQL =
+<span class="cstat-no" title="statement not covered" >  "ALTER TABLE github_rate_limit_observations SET (autovacuum_vacuum_scale_factor = 0.05, autovacuum_vacuum_threshold = 50)";</span>
+&nbsp;
+/** Apply the autovacuum tuning above via the SAME D1Database.exec() surface runSelfHostMigrations already uses
+ *  for migrations -- so this reuses translateDdl's existing SQL path rather than a second raw-pool query
+ *  mechanism. Must be called AFTER migrations (the table has to exist first); best-effort by design (a
+ *  storage-parameter tweak is an optimization, never a correctness dependency -- a failure here must not stop
+ *  the self-host from booting). */
+export async function <span class="fstat-no" title="function not covered" >tuneGithubRateLimitObservationsAutovacuum(d</span>b: D1Database): Promise&lt;void&gt; {
+<span class="cstat-no" title="statement not covered" >  await db.exec(GITHUB_RATE_LIMIT_OBSERVATIONS_AUTOVACUUM_SQL).<span class="fstat-no" title="function not covered" >catch((e</span>rror: unknown) =&gt; {</span>
+<span class="cstat-no" title="statement not covered" >    console.error(</span>
+      JSON.stringify({
+        level: "warn",
+        event: "selfhost_autovacuum_tune_failed",
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  });
+}
+&nbsp;
+// #selfhost-github-id-overflow: every migrations/*.sql column below stores a raw GitHub-native numeric ID
+// (installation id, account/user id, check-run id, or comment id) as bare `INTEGER` -- correct on SQLite/D1,
+// where INTEGER is only a type-affinity hint and already stores any 64-bit value without truncation, but a
+// real, enforced 4-byte column on Postgres. GitHub's own ids are a single global counter shared across all of
+// GitHub (not scoped per-repo the way issue/PR *numbers* are), and comment ids in particular are already well
+// past 2^31 (~2.1B) as of 2026 -- confirmed live via a `value "…" is out of range for type integer` failure on
+// github_agent_command_answers.request_comment_id/response_comment_id. installation/account/user ids are
+// nowhere near that threshold yet, but are widened here too rather than waiting for their own future incident
+// -- bigint costs nothing extra at this table size. Same idempotent-ALTER, no-migration-ledger shape as
+// GITHUB_RATE_LIMIT_OBSERVATIONS_AUTOVACUUM_SQL above: re-applying to an already-bigint column is a no-op, so
+// this runs unconditionally on every Postgres boot. The original migrations are left untouched (already
+// applied/ledger-tracked everywhere, and correct as written for SQLite/D1) -- this is a purely additive,
+// Postgres-only follow-up, not a rewrite of history. New migrations introducing a GitHub-native id column
+// going forward should declare it BIGINT directly instead of adding another line here.
+export const GITHUB_ID_BIGINT_WIDENING_SQL = <span class="cstat-no" title="statement not covered" >[</span>
+  "ALTER TABLE installations ALTER COLUMN id TYPE bigint",
+  "ALTER TABLE installations ALTER COLUMN account_id TYPE bigint",
+  "ALTER TABLE installations ALTER COLUMN app_id TYPE bigint",
+  "ALTER TABLE repositories ALTER COLUMN installation_id TYPE bigint",
+  "ALTER TABLE advisories ALTER COLUMN check_run_id TYPE bigint",
+  "ALTER TABLE webhook_events ALTER COLUMN installation_id TYPE bigint",
+  "ALTER TABLE installation_health ALTER COLUMN installation_id TYPE bigint",
+  "ALTER TABLE auth_sessions ALTER COLUMN github_user_id TYPE bigint",
+  "ALTER TABLE github_agent_command_answers ALTER COLUMN request_comment_id TYPE bigint",
+  "ALTER TABLE github_agent_command_answers ALTER COLUMN response_comment_id TYPE bigint",
+  "ALTER TABLE agent_pending_actions ALTER COLUMN installation_id TYPE bigint",
+  "ALTER TABLE review_targets ALTER COLUMN installation_id TYPE bigint",
+  "ALTER TABLE orb_webhook_events ALTER COLUMN installation_id TYPE bigint",
+  "ALTER TABLE orb_github_installations ALTER COLUMN installation_id TYPE bigint",
+  "ALTER TABLE orb_github_installations ALTER COLUMN account_id TYPE bigint",
+  "ALTER TABLE orb_pr_outcomes ALTER COLUMN installation_id TYPE bigint",
+  "ALTER TABLE orb_enrollments ALTER COLUMN installation_id TYPE bigint",
+  "ALTER TABLE orb_enrollments ALTER COLUMN maintainer_github_id TYPE bigint",
+  "ALTER TABLE orb_relay_failures ALTER COLUMN installation_id TYPE bigint",
+  "ALTER TABLE orb_relay_pending ALTER COLUMN installation_id TYPE bigint",
+].join(";\n");
+&nbsp;
+/** Apply the bigint widening above via the same D1Database.exec() surface runSelfHostMigrations already uses,
+ *  mirroring tuneGithubRateLimitObservationsAutovacuum's shape exactly. Must run AFTER migrations (every table
+ *  above has to exist by then, so a mid-batch "relation does not exist" is not a realistic failure mode here);
+ *  best-effort by design -- a failure here must not stop the self-host from booting. Postgres's simple-query
+ *  protocol runs this whole multi-statement string as one implicit transaction, so either every ALTER in the
+ *  list commits together or (on any single failure) none do -- fine given each ALTER is independently
+ *  idempotent and this reruns unconditionally on every boot: a failed attempt just retries the whole batch
+ *  next boot instead of leaving a partially-widened, inconsistent state. */
+export async function <span class="fstat-no" title="function not covered" >widenGithubIdColumnsToBigint(d</span>b: D1Database): Promise&lt;void&gt; {
+<span class="cstat-no" title="statement not covered" >  await db.exec(GITHUB_ID_BIGINT_WIDENING_SQL).<span class="fstat-no" title="function not covered" >catch((e</span>rror: unknown) =&gt; {</span>
+<span class="cstat-no" title="statement not covered" >    console.error(</span>
+      JSON.stringify({
+        level: "warn",
+        event: "selfhost_github_id_bigint_widen_failed",
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  });
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    

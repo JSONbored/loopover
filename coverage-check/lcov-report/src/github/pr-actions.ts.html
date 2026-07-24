@@ -1,0 +1,1270 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/github/pr-actions.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/github</a> pr-actions.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/130</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/60</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/32</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/115</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a>
+<a name='L185'></a><a href='#L185'>185</a>
+<a name='L186'></a><a href='#L186'>186</a>
+<a name='L187'></a><a href='#L187'>187</a>
+<a name='L188'></a><a href='#L188'>188</a>
+<a name='L189'></a><a href='#L189'>189</a>
+<a name='L190'></a><a href='#L190'>190</a>
+<a name='L191'></a><a href='#L191'>191</a>
+<a name='L192'></a><a href='#L192'>192</a>
+<a name='L193'></a><a href='#L193'>193</a>
+<a name='L194'></a><a href='#L194'>194</a>
+<a name='L195'></a><a href='#L195'>195</a>
+<a name='L196'></a><a href='#L196'>196</a>
+<a name='L197'></a><a href='#L197'>197</a>
+<a name='L198'></a><a href='#L198'>198</a>
+<a name='L199'></a><a href='#L199'>199</a>
+<a name='L200'></a><a href='#L200'>200</a>
+<a name='L201'></a><a href='#L201'>201</a>
+<a name='L202'></a><a href='#L202'>202</a>
+<a name='L203'></a><a href='#L203'>203</a>
+<a name='L204'></a><a href='#L204'>204</a>
+<a name='L205'></a><a href='#L205'>205</a>
+<a name='L206'></a><a href='#L206'>206</a>
+<a name='L207'></a><a href='#L207'>207</a>
+<a name='L208'></a><a href='#L208'>208</a>
+<a name='L209'></a><a href='#L209'>209</a>
+<a name='L210'></a><a href='#L210'>210</a>
+<a name='L211'></a><a href='#L211'>211</a>
+<a name='L212'></a><a href='#L212'>212</a>
+<a name='L213'></a><a href='#L213'>213</a>
+<a name='L214'></a><a href='#L214'>214</a>
+<a name='L215'></a><a href='#L215'>215</a>
+<a name='L216'></a><a href='#L216'>216</a>
+<a name='L217'></a><a href='#L217'>217</a>
+<a name='L218'></a><a href='#L218'>218</a>
+<a name='L219'></a><a href='#L219'>219</a>
+<a name='L220'></a><a href='#L220'>220</a>
+<a name='L221'></a><a href='#L221'>221</a>
+<a name='L222'></a><a href='#L222'>222</a>
+<a name='L223'></a><a href='#L223'>223</a>
+<a name='L224'></a><a href='#L224'>224</a>
+<a name='L225'></a><a href='#L225'>225</a>
+<a name='L226'></a><a href='#L226'>226</a>
+<a name='L227'></a><a href='#L227'>227</a>
+<a name='L228'></a><a href='#L228'>228</a>
+<a name='L229'></a><a href='#L229'>229</a>
+<a name='L230'></a><a href='#L230'>230</a>
+<a name='L231'></a><a href='#L231'>231</a>
+<a name='L232'></a><a href='#L232'>232</a>
+<a name='L233'></a><a href='#L233'>233</a>
+<a name='L234'></a><a href='#L234'>234</a>
+<a name='L235'></a><a href='#L235'>235</a>
+<a name='L236'></a><a href='#L236'>236</a>
+<a name='L237'></a><a href='#L237'>237</a>
+<a name='L238'></a><a href='#L238'>238</a>
+<a name='L239'></a><a href='#L239'>239</a>
+<a name='L240'></a><a href='#L240'>240</a>
+<a name='L241'></a><a href='#L241'>241</a>
+<a name='L242'></a><a href='#L242'>242</a>
+<a name='L243'></a><a href='#L243'>243</a>
+<a name='L244'></a><a href='#L244'>244</a>
+<a name='L245'></a><a href='#L245'>245</a>
+<a name='L246'></a><a href='#L246'>246</a>
+<a name='L247'></a><a href='#L247'>247</a>
+<a name='L248'></a><a href='#L248'>248</a>
+<a name='L249'></a><a href='#L249'>249</a>
+<a name='L250'></a><a href='#L250'>250</a>
+<a name='L251'></a><a href='#L251'>251</a>
+<a name='L252'></a><a href='#L252'>252</a>
+<a name='L253'></a><a href='#L253'>253</a>
+<a name='L254'></a><a href='#L254'>254</a>
+<a name='L255'></a><a href='#L255'>255</a>
+<a name='L256'></a><a href='#L256'>256</a>
+<a name='L257'></a><a href='#L257'>257</a>
+<a name='L258'></a><a href='#L258'>258</a>
+<a name='L259'></a><a href='#L259'>259</a>
+<a name='L260'></a><a href='#L260'>260</a>
+<a name='L261'></a><a href='#L261'>261</a>
+<a name='L262'></a><a href='#L262'>262</a>
+<a name='L263'></a><a href='#L263'>263</a>
+<a name='L264'></a><a href='#L264'>264</a>
+<a name='L265'></a><a href='#L265'>265</a>
+<a name='L266'></a><a href='#L266'>266</a>
+<a name='L267'></a><a href='#L267'>267</a>
+<a name='L268'></a><a href='#L268'>268</a>
+<a name='L269'></a><a href='#L269'>269</a>
+<a name='L270'></a><a href='#L270'>270</a>
+<a name='L271'></a><a href='#L271'>271</a>
+<a name='L272'></a><a href='#L272'>272</a>
+<a name='L273'></a><a href='#L273'>273</a>
+<a name='L274'></a><a href='#L274'>274</a>
+<a name='L275'></a><a href='#L275'>275</a>
+<a name='L276'></a><a href='#L276'>276</a>
+<a name='L277'></a><a href='#L277'>277</a>
+<a name='L278'></a><a href='#L278'>278</a>
+<a name='L279'></a><a href='#L279'>279</a>
+<a name='L280'></a><a href='#L280'>280</a>
+<a name='L281'></a><a href='#L281'>281</a>
+<a name='L282'></a><a href='#L282'>282</a>
+<a name='L283'></a><a href='#L283'>283</a>
+<a name='L284'></a><a href='#L284'>284</a>
+<a name='L285'></a><a href='#L285'>285</a>
+<a name='L286'></a><a href='#L286'>286</a>
+<a name='L287'></a><a href='#L287'>287</a>
+<a name='L288'></a><a href='#L288'>288</a>
+<a name='L289'></a><a href='#L289'>289</a>
+<a name='L290'></a><a href='#L290'>290</a>
+<a name='L291'></a><a href='#L291'>291</a>
+<a name='L292'></a><a href='#L292'>292</a>
+<a name='L293'></a><a href='#L293'>293</a>
+<a name='L294'></a><a href='#L294'>294</a>
+<a name='L295'></a><a href='#L295'>295</a>
+<a name='L296'></a><a href='#L296'>296</a>
+<a name='L297'></a><a href='#L297'>297</a>
+<a name='L298'></a><a href='#L298'>298</a>
+<a name='L299'></a><a href='#L299'>299</a>
+<a name='L300'></a><a href='#L300'>300</a>
+<a name='L301'></a><a href='#L301'>301</a>
+<a name='L302'></a><a href='#L302'>302</a>
+<a name='L303'></a><a href='#L303'>303</a>
+<a name='L304'></a><a href='#L304'>304</a>
+<a name='L305'></a><a href='#L305'>305</a>
+<a name='L306'></a><a href='#L306'>306</a>
+<a name='L307'></a><a href='#L307'>307</a>
+<a name='L308'></a><a href='#L308'>308</a>
+<a name='L309'></a><a href='#L309'>309</a>
+<a name='L310'></a><a href='#L310'>310</a>
+<a name='L311'></a><a href='#L311'>311</a>
+<a name='L312'></a><a href='#L312'>312</a>
+<a name='L313'></a><a href='#L313'>313</a>
+<a name='L314'></a><a href='#L314'>314</a>
+<a name='L315'></a><a href='#L315'>315</a>
+<a name='L316'></a><a href='#L316'>316</a>
+<a name='L317'></a><a href='#L317'>317</a>
+<a name='L318'></a><a href='#L318'>318</a>
+<a name='L319'></a><a href='#L319'>319</a>
+<a name='L320'></a><a href='#L320'>320</a>
+<a name='L321'></a><a href='#L321'>321</a>
+<a name='L322'></a><a href='#L322'>322</a>
+<a name='L323'></a><a href='#L323'>323</a>
+<a name='L324'></a><a href='#L324'>324</a>
+<a name='L325'></a><a href='#L325'>325</a>
+<a name='L326'></a><a href='#L326'>326</a>
+<a name='L327'></a><a href='#L327'>327</a>
+<a name='L328'></a><a href='#L328'>328</a>
+<a name='L329'></a><a href='#L329'>329</a>
+<a name='L330'></a><a href='#L330'>330</a>
+<a name='L331'></a><a href='#L331'>331</a>
+<a name='L332'></a><a href='#L332'>332</a>
+<a name='L333'></a><a href='#L333'>333</a>
+<a name='L334'></a><a href='#L334'>334</a>
+<a name='L335'></a><a href='#L335'>335</a>
+<a name='L336'></a><a href='#L336'>336</a>
+<a name='L337'></a><a href='#L337'>337</a>
+<a name='L338'></a><a href='#L338'>338</a>
+<a name='L339'></a><a href='#L339'>339</a>
+<a name='L340'></a><a href='#L340'>340</a>
+<a name='L341'></a><a href='#L341'>341</a>
+<a name='L342'></a><a href='#L342'>342</a>
+<a name='L343'></a><a href='#L343'>343</a>
+<a name='L344'></a><a href='#L344'>344</a>
+<a name='L345'></a><a href='#L345'>345</a>
+<a name='L346'></a><a href='#L346'>346</a>
+<a name='L347'></a><a href='#L347'>347</a>
+<a name='L348'></a><a href='#L348'>348</a>
+<a name='L349'></a><a href='#L349'>349</a>
+<a name='L350'></a><a href='#L350'>350</a>
+<a name='L351'></a><a href='#L351'>351</a>
+<a name='L352'></a><a href='#L352'>352</a>
+<a name='L353'></a><a href='#L353'>353</a>
+<a name='L354'></a><a href='#L354'>354</a>
+<a name='L355'></a><a href='#L355'>355</a>
+<a name='L356'></a><a href='#L356'>356</a>
+<a name='L357'></a><a href='#L357'>357</a>
+<a name='L358'></a><a href='#L358'>358</a>
+<a name='L359'></a><a href='#L359'>359</a>
+<a name='L360'></a><a href='#L360'>360</a>
+<a name='L361'></a><a href='#L361'>361</a>
+<a name='L362'></a><a href='#L362'>362</a>
+<a name='L363'></a><a href='#L363'>363</a>
+<a name='L364'></a><a href='#L364'>364</a>
+<a name='L365'></a><a href='#L365'>365</a>
+<a name='L366'></a><a href='#L366'>366</a>
+<a name='L367'></a><a href='#L367'>367</a>
+<a name='L368'></a><a href='#L368'>368</a>
+<a name='L369'></a><a href='#L369'>369</a>
+<a name='L370'></a><a href='#L370'>370</a>
+<a name='L371'></a><a href='#L371'>371</a>
+<a name='L372'></a><a href='#L372'>372</a>
+<a name='L373'></a><a href='#L373'>373</a>
+<a name='L374'></a><a href='#L374'>374</a>
+<a name='L375'></a><a href='#L375'>375</a>
+<a name='L376'></a><a href='#L376'>376</a>
+<a name='L377'></a><a href='#L377'>377</a>
+<a name='L378'></a><a href='#L378'>378</a>
+<a name='L379'></a><a href='#L379'>379</a>
+<a name='L380'></a><a href='#L380'>380</a>
+<a name='L381'></a><a href='#L381'>381</a>
+<a name='L382'></a><a href='#L382'>382</a>
+<a name='L383'></a><a href='#L383'>383</a>
+<a name='L384'></a><a href='#L384'>384</a>
+<a name='L385'></a><a href='#L385'>385</a>
+<a name='L386'></a><a href='#L386'>386</a>
+<a name='L387'></a><a href='#L387'>387</a>
+<a name='L388'></a><a href='#L388'>388</a>
+<a name='L389'></a><a href='#L389'>389</a>
+<a name='L390'></a><a href='#L390'>390</a>
+<a name='L391'></a><a href='#L391'>391</a>
+<a name='L392'></a><a href='#L392'>392</a>
+<a name='L393'></a><a href='#L393'>393</a>
+<a name='L394'></a><a href='#L394'>394</a>
+<a name='L395'></a><a href='#L395'>395</a>
+<a name='L396'></a><a href='#L396'>396</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import { withInstallationTokenRetry } from "./app";
+import { githubRateLimitAdmissionKeyForInstallation, makeInstallationOctokit } from "./client";
+import type { AgentActionMode } from "../settings/agent-execution";
+import type { AutoMergeMethod } from "../types";
+&nbsp;
+const ISSUE_EVENTS_PAGE_SIZE = <span class="cstat-no" title="statement not covered" >100;</span>
+const ISSUE_EVENTS_RECENT_PAGE_LIMIT = <span class="cstat-no" title="statement not covered" >10;</span>
+// Reviews are returned oldest-first with no sort override, so finding the LATEST bot approval means walking
+// every page rather than stopping at the first — a single per_page:100 fetch would only see the bot's
+// earliest reviews on a PR with a long review history and could dismiss (or miss) the wrong one.
+const REVIEW_PAGE_SIZE = <span class="cstat-no" title="statement not covered" >100;</span>
+const REVIEW_PAGE_LIMIT = <span class="cstat-no" title="statement not covered" >10;</span>
+// buildLowQualityCommitMessageFinding only inspects `commitMessages[0]` (the PR's oldest/primary commit,
+// which is what GitHub's commits-list endpoint returns first — oldest-first, no sort override) so a single
+// page is enough to give that signal a correct read regardless of how many commits the PR carries.
+const COMMIT_MESSAGES_PAGE_SIZE = <span class="cstat-no" title="statement not covered" >100;</span>
+&nbsp;
+// The GitHub write primitives the maintainer auto-maintain layer (#778) uses to act on a PR's STATE — never
+// its source. Thin wrappers over the installation-scoped REST API, mirroring labels.ts / comments.ts. Each
+// throws on a non-2xx response; the action executor owns the try/catch + audit so a failed mutation is
+// recorded, not swallowed.
+&nbsp;
+function <span class="fstat-no" title="function not covered" >splitRepo(r</span>epoFullName: string): { owner: string; repo: string } {
+  // Reject any whitespace (leading, trailing, or per-segment like `owner/ repo`) so a padded slug can never
+  // reach a GitHub call — a valid owner/repo name never contains spaces. Mirrors parseRepoFullName in
+  // assignees.ts / labels.ts (#6613).
+  const parts = <span class="cstat-no" title="statement not covered" >repoFullName.split("/");</span>
+<span class="cstat-no" title="statement not covered" >  if (parts.length !== 2 || !parts[0] || !parts[1] || /\s/.test(repoFullName)) {</span>
+<span class="cstat-no" title="statement not covered" >    throw new Error(`Invalid repository full name: ${repoFullName}`);</span>
+  }
+<span class="cstat-no" title="statement not covered" >  return { owner: parts[0], repo: parts[1] };</span>
+}
+&nbsp;
+export type PullRequestReviewEvent = "REQUEST_CHANGES" | "APPROVE" | "COMMENT";
+&nbsp;
+/** Post a pull-request review (request-changes / approve / comment). `body` is required for REQUEST_CHANGES.
+ *  `commitId`, when given, pins the review to that exact commit (GitHub's `commit_id`) instead of defaulting to
+ *  the PR's CURRENT head — so a review staged/reviewed against one commit can never silently land on a
+ *  force-pushed, unreviewed later commit (#2262). */
+export async function <span class="fstat-no" title="function not covered" >createPullRequestReview(</span>
+  env: Env,
+  installationId: number,
+  repoFullName: string,
+  pullNumber: number,
+  event: PullRequestReviewEvent,
+  body: string,
+  commitId?: string,
+): Promise&lt;{ id: number }&gt; {
+  const { owner, repo } = <span class="cstat-no" title="statement not covered" >splitRepo(repoFullName);</span>
+<span class="cstat-no" title="statement not covered" >  return withInstallationTokenRetry(env, installationId, <span class="fstat-no" title="function not covered" >async (t</span>oken) =&gt; {</span>
+    const octokit = <span class="cstat-no" title="statement not covered" >makeInstallationOctokit(env, token, "live", githubRateLimitAdmissionKeyForInstallation(installationId));</span>
+    const response = <span class="cstat-no" title="statement not covered" >await octokit.request("POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews", {</span>
+      owner,
+      repo,
+      pull_number: pullNumber,
+      event,
+      body,
+      ...(commitId ? { commit_id: commitId } : {}),
+    });
+<span class="cstat-no" title="statement not covered" >    return { id: (response.data as { id: number }).id };</span>
+  });
+}
+&nbsp;
+/** Post a quiet, NON-BLOCKING review (`event: "COMMENT"`) carrying line-anchored inline comments — the
+ *  CodeRabbit-style inline code notes (#inline-comments). `commitId` anchors them to the reviewed head SHA so
+ *  GitHub places each on the right diff line. Mirrors {@link createPullRequestReview}; the action `mode` is
+ *  threaded so a dry-run instance suppresses the write. Throws on a non-2xx — the caller
+ *  (`postInlineReviewComments`) owns the fail-safe try/catch + audit. */
+export async function <span class="fstat-no" title="function not covered" >createPullRequestReviewComments(</span>
+  env: Env,
+  installationId: number,
+  repoFullName: string,
+  pullNumber: number,
+  commitId: string,
+  comments: Array&lt;{
+    path: string;
+    line: number;
+    side: "RIGHT" | "LEFT";
+    body: string;
+    start_line?: number;
+    start_side?: "RIGHT" | "LEFT";
+  }&gt;,
+  mode: AgentActionMode,
+): Promise&lt;{ id: number }&gt; {
+  const { owner, repo } = <span class="cstat-no" title="statement not covered" >splitRepo(repoFullName);</span>
+<span class="cstat-no" title="statement not covered" >  return withInstallationTokenRetry(env, installationId, <span class="fstat-no" title="function not covered" >async (t</span>oken) =&gt; {</span>
+    const octokit = <span class="cstat-no" title="statement not covered" >makeInstallationOctokit(env, token, mode, githubRateLimitAdmissionKeyForInstallation(installationId));</span>
+    const response = <span class="cstat-no" title="statement not covered" >await octokit.request("POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews", {</span>
+      owner,
+      repo,
+      pull_number: pullNumber,
+      commit_id: commitId,
+      event: "COMMENT",
+      comments,
+    });
+<span class="cstat-no" title="statement not covered" >    return { id: (response.data as { id: number }).id };</span>
+  });
+}
+&nbsp;
+/** Merge a pull request with the configured method. Pass `sha` to make the merge fail (409) if the head moved
+ *  since we evaluated it — a guard against merging a PR that changed under us. */
+export async function <span class="fstat-no" title="function not covered" >mergePullRequest(</span>
+  env: Env,
+  installationId: number,
+  repoFullName: string,
+  pullNumber: number,
+  options: { mergeMethod: AutoMergeMethod; sha?: string | undefined },
+): Promise&lt;{ merged: boolean; sha: string | null }&gt; {
+  const { owner, repo } = <span class="cstat-no" title="statement not covered" >splitRepo(repoFullName);</span>
+<span class="cstat-no" title="statement not covered" >  return withInstallationTokenRetry(env, installationId, <span class="fstat-no" title="function not covered" >async (t</span>oken) =&gt; {</span>
+    const octokit = <span class="cstat-no" title="statement not covered" >makeInstallationOctokit(env, token, "live", githubRateLimitAdmissionKeyForInstallation(installationId));</span>
+    const response = <span class="cstat-no" title="statement not covered" >await octokit.request("PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge", {</span>
+      owner,
+      repo,
+      pull_number: pullNumber,
+      merge_method: options.mergeMethod,
+      ...(options.sha ? { sha: options.sha } : {}),
+    });
+    const data = <span class="cstat-no" title="statement not covered" >response.data as { merged?: boolean; sha?: string };</span>
+<span class="cstat-no" title="statement not covered" >    return { merged: data.merged ?? true, sha: data.sha ?? null };</span>
+  });
+}
+&nbsp;
+/** Dismiss the bot's own most recent APPROVE review (#2254). GitHub's `reviewDecision` is derived from the
+ *  LATEST review per reviewer, so a stale bot approval left in place after a later commit no longer qualifies
+ *  can still satisfy a "require approving reviews" branch-protection rule and let a human merge un-reviewed
+ *  code directly on GitHub, bypassing this gate entirely. Best-effort: any failure (no bot review found, the
+ *  review already dismissed, a transient API error) returns `dismissed: false` rather than throwing — this is
+ *  a cleanup action, not the primary mutation, and must never crash the maintenance pass it runs alongside. */
+export async function <span class="fstat-no" title="function not covered" >dismissLatestBotApproval(e</span>nv: Env, installationId: number, repoFullName: string, pullNumber: number, message: string): Promise&lt;{ dismissed: boolean }&gt; {
+<span class="cstat-no" title="statement not covered" >  try {</span>
+    const { owner, repo } = <span class="cstat-no" title="statement not covered" >splitRepo(repoFullName);</span>
+<span class="cstat-no" title="statement not covered" >    return await withInstallationTokenRetry(env, installationId, <span class="fstat-no" title="function not covered" >async (t</span>oken) =&gt; {</span>
+      const octokit = <span class="cstat-no" title="statement not covered" >makeInstallationOctokit(env, token, "live", githubRateLimitAdmissionKeyForInstallation(installationId));</span>
+      // Compared case-INSENSITIVELY, like every other bot-login check in this subsystem
+      // (isLoopOverBotComment in comments.ts:104, normalizeGitHubSlug/isBotActor in self-authored.ts). GitHub's
+      // canonical casing for the login need not match however GITHUB_APP_SLUG happens to be configured, and a
+      // case-sensitive === would degrade to a silent no-op: no match, no error, a stale bot approval simply
+      // never dismissed (#6614).
+      const botLogin = <span class="cstat-no" title="statement not covered" >`${env.GITHUB_APP_SLUG}[bot]`.toLowerCase();</span>
+      // Reviews are returned oldest-first; the LAST matching entry across ALL pages is the bot's most recent
+      // APPROVE. Stopping at page 1 would find (or miss) the wrong review on a PR with &gt;100 total reviews.
+      let latestApprovalId: number | undefined;
+<span class="cstat-no" title="statement not covered" >      for (let page = <span class="cstat-no" title="statement not covered" >1; p</span>age &lt;= REVIEW_PAGE_LIMIT; page += 1) {</span>
+        const response = <span class="cstat-no" title="statement not covered" >await octokit.request("GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews", { owner, repo, pull_number: pullNumber, per_page: REVIEW_PAGE_SIZE, page });</span>
+        const batch = <span class="cstat-no" title="statement not covered" >response.data as Array&lt;{ id: number; state?: string; user?: { login?: string | null } | null }&gt;;</span>
+<span class="cstat-no" title="statement not covered" >        for (const review of batch) {</span>
+<span class="cstat-no" title="statement not covered" >          if (review.user?.login?.toLowerCase() === botLogin &amp;&amp; review.state === "APPROVED") <span class="cstat-no" title="statement not covered" >latestApprovalId = review.id;</span></span>
+        }
+<span class="cstat-no" title="statement not covered" >        if (batch.length &lt; REVIEW_PAGE_SIZE) <span class="cstat-no" title="statement not covered" >break;</span></span>
+      }
+<span class="cstat-no" title="statement not covered" >      if (latestApprovalId === undefined) <span class="cstat-no" title="statement not covered" >return { dismissed: false };</span></span>
+<span class="cstat-no" title="statement not covered" >      await octokit.request("PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}/dismissals", {</span>
+        owner,
+        repo,
+        pull_number: pullNumber,
+        review_id: latestApprovalId,
+        message,
+        event: "DISMISS",
+      });
+<span class="cstat-no" title="statement not covered" >      return { dismissed: true };</span>
+    });
+  } catch {
+<span class="cstat-no" title="statement not covered" >    return { dismissed: false };</span>
+  }
+}
+&nbsp;
+/** Rebase a PR onto its base via GitHub's update-branch (merges the current base into the PR head). Keeps a
+ *  BEHIND PR current before reviewing/merging so the review + required CI run against the merged result —
+ *  reviewbot parity. `expectedHeadSha` guards against racing a head that moved since we read it. The PUT
+ *  returns 202 (update queued) on success; a caller treats any throw as best-effort (e.g. 422 when already
+ *  up to date or the branch is dirty/conflicting — those are handled by the gate, not retried here). */
+export async function <span class="fstat-no" title="function not covered" >updatePullRequestBranch(</span>
+  env: Env,
+  installationId: number,
+  repoFullName: string,
+  pullNumber: number,
+  expectedHeadSha?: string | undefined,
+): Promise&lt;void&gt; {
+  const { owner, repo } = <span class="cstat-no" title="statement not covered" >splitRepo(repoFullName);</span>
+<span class="cstat-no" title="statement not covered" >  await withInstallationTokenRetry(env, installationId, <span class="fstat-no" title="function not covered" >async (t</span>oken) =&gt; {</span>
+    const octokit = <span class="cstat-no" title="statement not covered" >makeInstallationOctokit(env, token, "live", githubRateLimitAdmissionKeyForInstallation(installationId));</span>
+<span class="cstat-no" title="statement not covered" >    await octokit.request("PUT /repos/{owner}/{repo}/pulls/{pull_number}/update-branch", {</span>
+      owner,
+      repo,
+      pull_number: pullNumber,
+      ...(expectedHeadSha ? { expected_head_sha: expectedHeadSha } : {}),
+    });
+  });
+}
+&nbsp;
+/** The PR's commit subject+body messages, oldest-first (GitHub's default order for this endpoint, no sort
+ *  override) — feeds the live gate's slop-assessment `low_quality_commit_message` signal
+ *  (`buildLowQualityCommitMessageFinding`, weight 15), which was previously always skipped in production
+ *  because nothing fetched and threaded this through `buildSlopAssessment`. Best-effort: any fetch failure
+ *  (network, auth, rate limit) returns `[]`, degrading to the pre-fix behavior (the signal stays silent)
+ *  rather than failing the whole gate evaluation over a non-essential enrichment call. */
+export async function <span class="fstat-no" title="function not covered" >listPullRequestCommitMessages(e</span>nv: Env, installationId: number, repoFullName: string, pullNumber: number): Promise&lt;string[]&gt; {
+<span class="cstat-no" title="statement not covered" >  try {</span>
+    const { owner, repo } = <span class="cstat-no" title="statement not covered" >splitRepo(repoFullName);</span>
+<span class="cstat-no" title="statement not covered" >    return await withInstallationTokenRetry(env, installationId, <span class="fstat-no" title="function not covered" >async (t</span>oken) =&gt; {</span>
+      const octokit = <span class="cstat-no" title="statement not covered" >makeInstallationOctokit(env, token, "live", githubRateLimitAdmissionKeyForInstallation(installationId));</span>
+      const response = <span class="cstat-no" title="statement not covered" >await octokit.request("GET /repos/{owner}/{repo}/pulls/{pull_number}/commits", {</span>
+        owner,
+        repo,
+        pull_number: pullNumber,
+        per_page: COMMIT_MESSAGES_PAGE_SIZE,
+      });
+      const commits = <span class="cstat-no" title="statement not covered" >response.data as Array&lt;{ commit?: { message?: string | null } | null }&gt;;</span>
+<span class="cstat-no" title="statement not covered" >      return commits.<span class="fstat-no" title="function not covered" >flatMap((e</span>ntry) =&gt; (<span class="cstat-no" title="statement not covered" >entry.commit?.message ? [entry.commit.message] : []))</span>;</span>
+    });
+  } catch {
+<span class="cstat-no" title="statement not covered" >    return [];</span>
+  }
+}
+&nbsp;
+/** Post a plain issue/PR comment (used for the templated close message before closing). */
+export async function <span class="fstat-no" title="function not covered" >createIssueComment(e</span>nv: Env, installationId: number, repoFullName: string, issueNumber: number, body: string): Promise&lt;{ id: number; html_url?: string | undefined }&gt; {
+  const { owner, repo } = <span class="cstat-no" title="statement not covered" >splitRepo(repoFullName);</span>
+<span class="cstat-no" title="statement not covered" >  return withInstallationTokenRetry(env, installationId, <span class="fstat-no" title="function not covered" >async (t</span>oken) =&gt; {</span>
+    const octokit = <span class="cstat-no" title="statement not covered" >makeInstallationOctokit(env, token, "live", githubRateLimitAdmissionKeyForInstallation(installationId));</span>
+    const response = <span class="cstat-no" title="statement not covered" >await octokit.request("POST /repos/{owner}/{repo}/issues/{issue_number}/comments", {</span>
+      owner,
+      repo,
+      issue_number: issueNumber,
+      body,
+    });
+    const data = <span class="cstat-no" title="statement not covered" >response.data as { id: number; html_url?: string };</span>
+<span class="cstat-no" title="statement not covered" >    return { id: data.id, html_url: data.html_url };</span>
+  });
+}
+&nbsp;
+/** Close a pull request (sets state=closed) without merging. */
+export async function <span class="fstat-no" title="function not covered" >closePullRequest(e</span>nv: Env, installationId: number, repoFullName: string, pullNumber: number): Promise&lt;{ state: string }&gt; {
+  const { owner, repo } = <span class="cstat-no" title="statement not covered" >splitRepo(repoFullName);</span>
+<span class="cstat-no" title="statement not covered" >  return withInstallationTokenRetry(env, installationId, <span class="fstat-no" title="function not covered" >async (t</span>oken) =&gt; {</span>
+    const octokit = <span class="cstat-no" title="statement not covered" >makeInstallationOctokit(env, token, "live", githubRateLimitAdmissionKeyForInstallation(installationId));</span>
+    const response = <span class="cstat-no" title="statement not covered" >await octokit.request("PATCH /repos/{owner}/{repo}/pulls/{pull_number}", {</span>
+      owner,
+      repo,
+      pull_number: pullNumber,
+      state: "closed",
+    });
+<span class="cstat-no" title="statement not covered" >    return { state: (response.data as { state: string }).state };</span>
+  });
+}
+&nbsp;
+/** Reopen a pull request (sets state=open). Review-evasion protection (#review-evasion-protection): a
+ *  contributor may reopen a PR they closed THEMSELVES, but not one closed by a maintainer or the App
+ *  (#one-shot-reopen) -- so the enforcement handler reopens the PR as the App (this call) and immediately
+ *  re-closes it (closePullRequest), converting the contributor's own close into an App-authored, terminal
+ *  close the contributor cannot reopen. */
+export async function <span class="fstat-no" title="function not covered" >reopenPullRequest(e</span>nv: Env, installationId: number, repoFullName: string, pullNumber: number): Promise&lt;{ state: string }&gt; {
+  const { owner, repo } = <span class="cstat-no" title="statement not covered" >splitRepo(repoFullName);</span>
+<span class="cstat-no" title="statement not covered" >  return withInstallationTokenRetry(env, installationId, <span class="fstat-no" title="function not covered" >async (t</span>oken) =&gt; {</span>
+    const octokit = <span class="cstat-no" title="statement not covered" >makeInstallationOctokit(env, token, "live", githubRateLimitAdmissionKeyForInstallation(installationId));</span>
+    const response = <span class="cstat-no" title="statement not covered" >await octokit.request("PATCH /repos/{owner}/{repo}/pulls/{pull_number}", {</span>
+      owner,
+      repo,
+      pull_number: pullNumber,
+      state: "open",
+    });
+<span class="cstat-no" title="statement not covered" >    return { state: (response.data as { state: string }).state };</span>
+  });
+}
+&nbsp;
+/** Close a plain issue (sets state=closed). #2270's first issue-side actuation: unlike closePullRequest, this
+ *  hits the generic Issues API (`PATCH /issues/{issue_number}`), not the Pulls API — a plain issue number is not
+ *  a valid `pull_number`, so closePullRequest cannot be reused here. */
+export async function <span class="fstat-no" title="function not covered" >closeIssue(e</span>nv: Env, installationId: number, repoFullName: string, issueNumber: number): Promise&lt;{ state: string }&gt; {
+  const { owner, repo } = <span class="cstat-no" title="statement not covered" >splitRepo(repoFullName);</span>
+<span class="cstat-no" title="statement not covered" >  return withInstallationTokenRetry(env, installationId, <span class="fstat-no" title="function not covered" >async (t</span>oken) =&gt; {</span>
+    const octokit = <span class="cstat-no" title="statement not covered" >makeInstallationOctokit(env, token, "live", githubRateLimitAdmissionKeyForInstallation(installationId));</span>
+    const response = <span class="cstat-no" title="statement not covered" >await octokit.request("PATCH /repos/{owner}/{repo}/issues/{issue_number}", {</span>
+      owner,
+      repo,
+      issue_number: issueNumber,
+      state: "closed",
+    });
+<span class="cstat-no" title="statement not covered" >    return { state: (response.data as { state: string }).state };</span>
+  });
+}
+&nbsp;
+/** The last-closer lookup result. `coveredAllPages` is false when the bounded newest-events window did NOT reach
+ *  back to page 1 (a very long timeline), so a `login: null` may mean "no close found" OR "a close exists beyond
+ *  the inspected window". The reopen guard uses this to fail CLOSED rather than allow a window-evasion bypass.
+ *  `errored` distinguishes a genuine read failure (network/auth/rate-limit — we learned NOTHING) from a bounded
+ *  scan that ran to completion and simply found no match in its window (we learned something, just not enough
+ *  to prove full coverage). Both leave `coveredAllPages: false`, but callers that treat "no match in a bounded
+ *  window" as evidence of timeline-padding (rather than proof of nothing) must NOT extend that trust to a scan
+ *  that never actually ran. */
+export type LastCloserResult = { login: string | null; coveredAllPages: boolean; errored: boolean };
+&nbsp;
+/** Event-agnostic alias for {@link LastCloserResult} — the shape is identical for any single timeline-event-type
+ *  lookup (e.g. "closed" or "reopened"); kept as an alias rather than a rename so existing importers of
+ *  `LastCloserResult` are unaffected. */
+export type LastTimelineActorResult = LastCloserResult;
+&nbsp;
+/** Reopen-prevention (#one-shot-reopen): the login of whoever LAST closed this PR (most recent `closed` event in
+ *  the issue-events timeline), or null if none / on error. Lets the reopen handler distinguish a maintainer/bot
+ *  close (one-shot — a contributor may not reopen) from a contributor self-close (which they MAY reopen).
+ *  `coveredAllPages` reports whether the bounded scan inspected the entire timeline (#audit-2.4). */
+export async function <span class="fstat-no" title="function not covered" >getLastCloserLogin(e</span>nv: Env, installationId: number, repoFullName: string, issueNumber: number): Promise&lt;LastCloserResult&gt; {
+<span class="cstat-no" title="statement not covered" >  return getLastActorForEvent(env, installationId, repoFullName, issueNumber, "closed");</span>
+}
+&nbsp;
+/** Reopen-race guard (#2369): the login of whoever most recently REOPENED this PR (most recent `reopened` event in
+ *  the issue-events timeline), or null if none / on error. Lets `maybeRecloseDisallowedReopen` re-verify — right
+ *  before it re-closes a disallowed reopen — that the reopen it is reacting to is still the CURRENT reason the PR
+ *  is open, rather than blindly undoing a DIFFERENT, later, legitimately-authorized reopen (e.g. a maintainer
+ *  reopening again after the original disallowed reopen). Same pagination/fail-conservative semantics as
+ *  {@link getLastCloserLogin}. */
+export async function <span class="fstat-no" title="function not covered" >getLastReopenerLogin(e</span>nv: Env, installationId: number, repoFullName: string, issueNumber: number): Promise&lt;LastTimelineActorResult&gt; {
+<span class="cstat-no" title="statement not covered" >  return getLastActorForEvent(env, installationId, repoFullName, issueNumber, "reopened");</span>
+}
+&nbsp;
+/** Shared timeline-scan engine behind {@link getLastCloserLogin} and {@link getLastReopenerLogin}: finds the actor
+ *  of the most recent issue-event matching `eventType`, scanning the newest bounded page window rather than the
+ *  oldest prefix (see the pagination comments below — identical for either event type). Factored out so the two
+ *  callers do not duplicate the pagination/fail-conservative logic. */
+async function <span class="fstat-no" title="function not covered" >getLastActorForEvent(e</span>nv: Env, installationId: number, repoFullName: string, issueNumber: number, eventType: string): Promise&lt;LastTimelineActorResult&gt; {
+<span class="cstat-no" title="statement not covered" >  try {</span>
+    const { owner, repo } = <span class="cstat-no" title="statement not covered" >splitRepo(repoFullName);</span>
+    const result = <span class="cstat-no" title="statement not covered" >await withInstallationTokenRetry(env, installationId, <span class="fstat-no" title="function not covered" >async (t</span>oken) =&gt; {</span>
+      const octokit = <span class="cstat-no" title="statement not covered" >makeInstallationOctokit(env, token, "live", githubRateLimitAdmissionKeyForInstallation(installationId));</span>
+      const <span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >requestPage = (p</span>age: number) =&gt;</span>
+<span class="cstat-no" title="statement not covered" >        octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}/events", { owner, repo, issue_number: issueNumber, per_page: ISSUE_EVENTS_PAGE_SIZE, page });</span>
+      const firstResponse = <span class="cstat-no" title="statement not covered" >await requestPage(1);</span>
+      const firstEvents = <span class="cstat-no" title="statement not covered" >firstResponse.data as Array&lt;{ event?: string; actor?: { login?: string | null } | null }&gt;;</span>
+      const lastPage = <span class="cstat-no" title="statement not covered" >issueEventsLastPage(firstResponse.headers.link);</span>
+<span class="cstat-no" title="statement not covered" >      if (lastPage === null) {</span>
+        // No rel="last" in the Link header. A genuine single page has no rel="next" either — return page 1 directly.
+        // But GitHub can paginate WITHOUT emitting rel="last" (only rel="next"); then trusting page 1 alone would let
+        // a later maintainer/bot event hide behind the un-enumerated tail and the reopen guard would fail OPEN. So
+        // follow rel="next" forward, tracking the latest matching event across pages (events are oldest-first → a
+        // later page's event supersedes), bounded by the same page budget. coveredAllPages holds ONLY if we reached
+        // the tail within budget; otherwise report not-covered so the caller fails closed. (#audit-rel-last)
+<span class="cstat-no" title="statement not covered" >        if (!issueEventsHasNextPage(firstResponse.headers.link)) {</span>
+<span class="cstat-no" title="statement not covered" >          return { login: latestActorInPage(firstEvents, eventType) ?? null, coveredAllPages: true };</span>
+        }
+        let latestActor = <span class="cstat-no" title="statement not covered" >latestActorInPage(firstEvents, eventType);</span>
+        let hasNext = <span class="cstat-no" title="statement not covered" >true;</span>
+<span class="cstat-no" title="statement not covered" >        for (let page = <span class="cstat-no" title="statement not covered" >2; h</span>asNext &amp;&amp; page &lt;= ISSUE_EVENTS_RECENT_PAGE_LIMIT + 1; page += 1) {</span>
+          const response = <span class="cstat-no" title="statement not covered" >await requestPage(page);</span>
+          const actor = <span class="cstat-no" title="statement not covered" >latestActorInPage(response.data as Array&lt;{ event?: string; actor?: { login?: string | null } | null }&gt;, eventType);</span>
+<span class="cstat-no" title="statement not covered" >          if (actor !== undefined) <span class="cstat-no" title="statement not covered" >latestActor = actor;</span></span>
+<span class="cstat-no" title="statement not covered" >          hasNext = issueEventsHasNextPage(response.headers.link);</span>
+        }
+        const coveredAllPages = <span class="cstat-no" title="statement not covered" >!hasNext;</span>
+<span class="cstat-no" title="statement not covered" >        return { login: coveredAllPages ? (latestActor ?? null) : null, coveredAllPages };</span>
+      }
+<span class="cstat-no" title="statement not covered" >      if (lastPage &lt;= 1) <span class="cstat-no" title="statement not covered" >return { login: latestActorInPage(firstEvents, eventType) ?? null, coveredAllPages: true };</span></span>
+&nbsp;
+      // GitHub returns issue-events oldest-first. Use the Link header to inspect the newest bounded window instead
+      // of the oldest prefix, so a long self-generated timeline cannot hide a later maintainer/bot event.
+      const firstPageToRead = <span class="cstat-no" title="statement not covered" >Math.max(2, lastPage - ISSUE_EVENTS_RECENT_PAGE_LIMIT + 1);</span>
+      // We inspected the entire timeline only when the window reached page 2 (page 1 is read separately above).
+      const coveredAllPages = <span class="cstat-no" title="statement not covered" >firstPageToRead === 2;</span>
+<span class="cstat-no" title="statement not covered" >      for (let page = <span class="cstat-no" title="statement not covered" >lastPage; p</span>age &gt;= firstPageToRead; page -= 1) {</span>
+        const response = <span class="cstat-no" title="statement not covered" >await requestPage(page);</span>
+        const actor = <span class="cstat-no" title="statement not covered" >latestActorInPage(response.data as Array&lt;{ event?: string; actor?: { login?: string | null } | null }&gt;, eventType);</span>
+<span class="cstat-no" title="statement not covered" >        if (actor !== undefined) <span class="cstat-no" title="statement not covered" >return { login: actor, coveredAllPages };</span></span>
+      }
+<span class="cstat-no" title="statement not covered" >      return { login: coveredAllPages ? (latestActorInPage(firstEvents, eventType) ?? null) : null, coveredAllPages };</span>
+    });
+<span class="cstat-no" title="statement not covered" >    return { ...result, errored: false };</span>
+  } catch {
+    // On error we learned NOTHING — unlike a bounded scan that ran to completion and found no match, this must
+    // not be treated as evidence of anything; report it distinctly so the caller can fail closed. (#2369)
+<span class="cstat-no" title="statement not covered" >    return { login: null, coveredAllPages: false, errored: true };</span>
+  }
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >latestActorInPage(e</span>vents: Array&lt;{ event?: string; actor?: { login?: string | null } | null }&gt;, eventType: string): string | null | undefined {
+<span class="cstat-no" title="statement not covered" >  for (let i = <span class="cstat-no" title="statement not covered" >events.length - 1; i</span> &gt;= 0; i -= 1) {</span>
+    const entry = <span class="cstat-no" title="statement not covered" >events[i];</span>
+<span class="cstat-no" title="statement not covered" >    if (entry?.event === eventType) <span class="cstat-no" title="statement not covered" >return entry.actor?.login ?? null;</span></span>
+  }
+<span class="cstat-no" title="statement not covered" >  return undefined;</span>
+}
+&nbsp;
+// The last page number from the Link header's rel="last", or null when GitHub did not emit rel="last" (no
+// header, a single page, or a paginated response where rel="last" was omitted — the caller follows rel="next"
+// forward in that case rather than assuming a single page). (#audit-rel-last)
+function <span class="fstat-no" title="function not covered" >issueEventsLastPage(l</span>inkHeader: string | undefined): number | null {
+<span class="cstat-no" title="statement not covered" >  if (!linkHeader) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+  const lastLink = <span class="cstat-no" title="statement not covered" >linkHeader.split(",").<span class="fstat-no" title="function not covered" >find((l</span>ink) =&gt; <span class="cstat-no" title="statement not covered" >/rel="last"/.test(link))</span>;</span>
+  const page = <span class="cstat-no" title="statement not covered" >lastLink?.match(/[?&amp;]page=(\d+)/)?.[1];</span>
+<span class="cstat-no" title="statement not covered" >  return page ? Number(page) : null;</span>
+}
+&nbsp;
+// Whether the Link header advertises a rel="next" page (more events exist beyond the one just fetched).
+function <span class="fstat-no" title="function not covered" >issueEventsHasNextPage(l</span>inkHeader: string | undefined): boolean {
+<span class="cstat-no" title="statement not covered" >  return linkHeader !== undefined &amp;&amp; linkHeader.split(",").<span class="fstat-no" title="function not covered" >some((l</span>ink) =&gt; <span class="cstat-no" title="statement not covered" >/rel="next"/.test(link))</span>;</span>
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    

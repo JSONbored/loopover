@@ -1,0 +1,337 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/orb/outcomes.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/orb</a> outcomes.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/17</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/32</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/2</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/14</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// LoopOver Orb central GitHub App (#1255) — terminal PR-outcome capture + the global aggregate.
+//
+// recordOrbPrOutcome runs synchronously from the verified webhook receiver: a `pull_request` `closed` event
+// records whether the PR was merged or closed (no merge) into orb_pr_outcomes, keyed on (repo, pr_number) so a
+// redelivery or reopen→close cycle overwrites the latest terminal state. getOrbGlobalStats sums it across only
+// REGISTERED installations — the das-github-mirror-style "total merged / closed" feeding the homepage counter.
+import type { GitHubWebhookPayload } from "../types";
+&nbsp;
+export async function <span class="fstat-no" title="function not covered" >recordOrbPrOutcome(e</span>nv: Env, eventName: string, payload: GitHubWebhookPayload): Promise&lt;void&gt; {
+<span class="cstat-no" title="statement not covered" >  if (eventName !== "pull_request" || payload.action !== "closed") <span class="cstat-no" title="statement not covered" >return; // only a terminal close carries an outcome</span></span>
+  const pr = <span class="cstat-no" title="statement not covered" >payload.pull_request;</span>
+  const repo = <span class="cstat-no" title="statement not covered" >payload.repository?.full_name;</span>
+<span class="cstat-no" title="statement not covered" >  if (!pr?.number || !repo) <span class="cstat-no" title="statement not covered" >return;</span></span>
+  // merged_at is set iff the PR was merged; a close without it is a plain close (rejected / abandoned).
+  const merged = <span class="cstat-no" title="statement not covered" >Boolean(pr.merged_at);</span>
+  // A PR author closing their OWN unmerged PR is not authoritative ground truth and must not feed the public
+  // homepage counter (mirrors the cloud recordPrOutcome anti-poisoning guard). Merges stay trusted (GitHub enforces
+  // merge permission); a maintainer/bot close is not a self-close. The early-return leaves any prior row untouched.
+  const <span class="cstat-no" title="statement not covered" >senderLogin = (payload.sender?.login ?? "").toLowerCase();</span>
+  const <span class="cstat-no" title="statement not covered" >authorLogin = (pr.user?.login ?? "").toLowerCase();</span>
+  const botWasActor = <span class="cstat-no" title="statement not covered" >payload.sender?.type === "Bot";</span>
+<span class="cstat-no" title="statement not covered" >  if (!merged &amp;&amp; !botWasActor &amp;&amp; senderLogin &amp;&amp; authorLogin &amp;&amp; senderLogin === authorLogin) <span class="cstat-no" title="statement not covered" >return;</span></span>
+  const outcome = <span class="cstat-no" title="statement not covered" >merged ? "merged" : "closed";</span>
+<span class="cstat-no" title="statement not covered" >  await env.DB.prepare(</span>
+    `INSERT INTO orb_pr_outcomes (repository_full_name, pr_number, installation_id, outcome, occurred_at)
+     VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(repository_full_name, pr_number) DO UPDATE SET
+       installation_id = excluded.installation_id, outcome = excluded.outcome, occurred_at = CURRENT_TIMESTAMP`,
+  )
+    .bind(repo, pr.number, payload.installation?.id ?? null, outcome)
+    .run();
+}
+&nbsp;
+export interface OrbGlobalStats {
+  merged: number;
+  closed: number;
+  total: number;
+}
+&nbsp;
+/**
+ * The public global aggregate: merged / closed / total terminal PR outcomes across REGISTERED installations
+ * only (registered = 1) — an install that hasn't been opted in never contributes to the public counter. SUM over
+ * no matching rows is NULL, so each total is nullish-guarded to 0 (fail-safe on an empty/cold table).
+ *
+ * The LEFT JOIN ... WHERE ae.id IS NULL anti-join skips any (repo, pr_number) that already has a
+ * `github_app.pr_public_surface_published` audit event — i.e. a PR the own-ledger disposition query in
+ * public-stats.ts already counted. Without it, a PR reviewed before the self-host cutover (own-ledger) that
+ * also has a terminal outcome recorded here (Orb) gets counted twice. Quantified 2026-07-12: 243 PRs (173
+ * merged + 70 closed), 96% in one repo, inflating the public "PRs reviewed" counter. That event_type's
+ * target_key only ever references the own-ledger's own repos, so this is a no-op for every other registered
+ * installation's outcomes.
+ *
+ * PERFORMANCE (2026-07-12 incident): the first version of this used a correlated `NOT EXISTS` subquery with
+ * `LOWER(ae.target_key) = ...` — wrapping the indexed `target_key` column in a function defeats the index,
+ * forcing a full scan of `audit_events` (100K+ rows) for every one of `orb_pr_outcomes`' rows. That took
+ * `/v1/public/stats` down in production (D1 "exceeded its CPU time limit and was reset", 503s) within minutes
+ * of deploying. The LEFT JOIN below compares `target_key` directly (no function wrapping), so D1 can use the
+ * index for the join — verified live: ~60ms / ~31K rows read, vs. a timeout before. Both sides of the compared
+ * repo#pr key come from real GitHub API `full_name`/`target_key` values (same canonical casing), so no LOWER()
+ * is needed here for correctness — do not reintroduce a function-wrapped comparison on `target_key` without
+ * re-verifying the query plan against production-scale data first.
+ */
+export async function <span class="fstat-no" title="function not covered" >getOrbGlobalStats(e</span>nv: Env, opts: { excludeAccount?: string } = <span class="branch-0 cbranch-no" title="branch not covered" >{}): Promise&lt;OrbGlobalStats&gt; {</span>
+  // excludeAccount de-dups an account already counted by another source. "" = include all.
+  const <span class="cstat-no" title="statement not covered" >exclude = (opts.excludeAccount ?? "").toLowerCase();</span>
+  const row = <span class="cstat-no" title="statement not covered" >await env.DB.prepare(</span>
+    `SELECT
+       SUM(CASE WHEN o.outcome = 'merged' THEN 1 ELSE 0 END) AS merged,
+       SUM(CASE WHEN o.outcome = 'closed' THEN 1 ELSE 0 END) AS closed,
+       COUNT(*) AS total
+     FROM orb_pr_outcomes o
+     JOIN orb_github_installations i ON i.installation_id = o.installation_id AND i.registered = 1
+     LEFT JOIN audit_events ae
+       ON ae.target_key = o.repository_full_name || '#' || o.pr_number
+       AND ae.event_type = 'github_app.pr_public_surface_published'
+     WHERE (? = '' OR LOWER(COALESCE(i.account_login, '')) &lt;&gt; ?)
+       AND ae.id IS NULL`,
+  )
+    .bind(exclude, exclude)
+    .first&lt;{ merged: number | null; closed: number | null; total: number | null }&gt;();
+  /* v8 ignore next -- an aggregate query always returns exactly one row; this guards the nullable .first() type only */
+  if (!row) return { merged: 0, closed: 0, total: 0 };
+<span class="cstat-no" title="statement not covered" >  return { merged: row.merged ?? 0, closed: row.closed ?? 0, total: row.total ?? 0 };</span>
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    

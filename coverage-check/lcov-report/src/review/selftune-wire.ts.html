@@ -1,0 +1,655 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/review/selftune-wire.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/review</a> selftune-wire.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/39</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/12</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/7</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/34</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a>
+<a name='L185'></a><a href='#L185'>185</a>
+<a name='L186'></a><a href='#L186'>186</a>
+<a name='L187'></a><a href='#L187'>187</a>
+<a name='L188'></a><a href='#L188'>188</a>
+<a name='L189'></a><a href='#L189'>189</a>
+<a name='L190'></a><a href='#L190'>190</a>
+<a name='L191'></a><a href='#L191'>191</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Convergence (#self-improve) — wires the ported self-improvement loop (src/review/auto-tune.ts +
+// src/review/auto-apply.ts) into loopover's cron behind the default-OFF `LOOPOVER_REVIEW_SELFTUNE` flag.
+//
+// SAFETY CONTRACT (must hold under every path):
+//   • flag-OFF (default) → the cron enqueues NO selftune job and this module is never reached; ZERO tuning
+//     work, NO override read/written, the worker is byte-identical to today.
+//   • flag-ON → the loop can ONLY EVER TIGHTEN the gate. It computes tuning recommendations from loopover's
+//     OWN outcome data, SHADOW-SOAKS only STRICTLY-TIGHTENING recommendations, and AUTO-PROMOTES a soaked
+//     shadow override to live ONLY after the soak window passes the gate (tightening + evidence + soaked).
+//     Every action is recorded to override_audit. A loosening change is NEVER applied — the ported
+//     `isStrictlyTightening` / `evaluateShadowPromotion` reject it, and the eval mapping below NEVER feeds a
+//     loosening directive into the apply path (closeFalse is held at 0, so the one loosening branch of
+//     `computeTuningRecommendations` is unreachable and carries no payload anyway).
+//
+// EVAL INPUT — ADAPTED TO LOOPOVER'S OWN OUTCOME DATA (NOT reviewbot's review_audit, which does not exist in
+// loopover's migrations — parity.computeGateEval would read an empty table here). The ported auto-tune
+// advisor consumes a GateEvalReport (per-project confusion matrix). We build that report from loopover's
+// NATIVE outcome sources via the SAME aggregation services ops-wire already reuses (no new queries / schema):
+//   • agent_recommendation_outcomes (#543) — the positive/negative resolved split (buildRepoOutcomeCalibration).
+//     Only maintainer-lane outcomes are authoritative enough for live self-tune policy changes; contributor-lane
+//     closures can be self-authored and stay reporting-only. A maintainer-lane NEGATIVE outcome (loopover
+//     recommended "proceed", the human CLOSED) is the gittensory-native analogue of reviewbot's "would-merge
+//     BUT human closed" (mergeFalse) — the dangerous error a TIGHTENING fixes.
+// The mapping is deliberately conservative: it only ever populates the would-MERGE side of the matrix, so the
+// advisor can only ever recommend a TIGHTENING (raise the floor) or a no-op — never a loosening.
+//
+// CONFIG-APPLICATION — WIRED (live read-back, tightening-only):
+//   The ported override model is `confidenceFloor` (a proceed-confidence floor in [0,1]) + `scopeCap`. The live
+//   read-back lives in resolveRepositorySettings → `applySelfTuneOverrideToSettings`, gated by the SAME default-OFF
+//   LOOPOVER_REVIEW_SELFTUNE flag: it translates a promoted `confidenceFloor` into loopover's NATIVE readiness
+//   tunable by RAISING an EXISTING `qualityGateMinScore` to `round(confidenceFloor * 100)` via a `max()`. By
+//   construction this can ONLY tighten — it never CREATES a readiness gate the operator didn't set, and never
+//   LOWERS one — so the always-tightening recommendation (this module only ever populates the would-merge error
+//   side, so the advisor can only raise the floor) reaches the live gate with no risk of loosening it. Flag-OFF
+//   (default) the override is never read and settings are byte-identical. (See applySelfTuneOverrideToSettings.)
+&nbsp;
+import { listRepositories } from "../db/repositories";
+import { isAgentConfigured } from "../settings/autonomy";
+import { resolveRepositorySettings } from "../settings/repository-settings";
+import { buildRepoOutcomeCalibration } from "../services/outcome-calibration";
+import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
+import { errorMessage } from "../utils/json";
+import { computeTuningRecommendations, type GateEvalReport, type GateEvalRow } from "./auto-tune";
+import { buildKnobReliabilityRecs, buildReportOnlyKnobRecs, buildSatisfactionFloorLooseningRecs } from "./loosening-recs";
+import { loadReportOnlyKnobProposals, loadSatisfactionFloorRecState } from "../services/satisfaction-floor-loosening-run";
+import { loadLiveKnobStatuses } from "../services/knob-loosening-run";
+import { runAutoApplyRecommendations, type StorageEnv } from "./auto-apply";
+&nbsp;
+/** True when the self-improvement loop is enabled. Flag-OFF (default) → every export below is a no-op. Truthy
+ *  follows the codebase convention (`/^(1|true|yes|on)$/i`, same as isOpsEnabled / isReputationEnabled). */
+export function <span class="fstat-no" title="function not covered" >isSelfTuneEnabled(e</span>nv: {
+  LOOPOVER_REVIEW_SELFTUNE?: string | undefined;
+}): boolean {
+<span class="cstat-no" title="statement not covered" >  return /^(1|true|yes|on)$/i.test((env.LOOPOVER_REVIEW_SELFTUNE ?? "").trim());</span>
+}
+&nbsp;
+/** The project's base confidence floor the tightening direction is judged against IN THE SOAK. LoopOver has no
+ *  live `confidenceFloor` tunable (the live read-back instead RAISES `qualityGateMinScore` — see
+ *  applySelfTuneOverrideToSettings), so a no-override project starts the soak from an UNSET base — the apply path
+ *  treats "no live floor" as the loosest state, so any positive floor recommendation is strictly tightening (it
+ *  can only HOLD more, never add a bad auto-merge). */
+export const SELFTUNE_BASE_CONFIDENCE_FLOOR = <span class="cstat-no" title="statement not covered" >0;</span>
+&nbsp;
+/**
+ * PURE: build the ported GateEvalReport from loopover's NATIVE recommendation-outcome calibration. The
+ * recommendation NEGATIVE outcomes (loopover said proceed, the human CLOSED) map to the would-merge ERROR
+ * (`mergeFalse`); POSITIVE outcomes map to `mergeConfirmed`. ONLY the would-merge side is populated, so the
+ * advisor can ONLY produce a TIGHTENING (raise the floor) or no recommendation — never a loosening (the
+ * close-side counters stay 0, so `computeTuningRecommendations`' one loosening branch is unreachable).
+ * Unit-testable with no I/O.
+ */
+export function <span class="fstat-no" title="function not covered" >evalRowFromCalibration(p</span>roject: string, positive: number, negative: number): GateEvalRow {
+  const wouldMerge = <span class="cstat-no" title="statement not covered" >positive + negative; // resolved recommendation outcomes graded against the human's call</span>
+  const decided = <span class="cstat-no" title="statement not covered" >wouldMerge;</span>
+  const mergePrecision = <span class="cstat-no" title="statement not covered" >wouldMerge &gt; 0 ? positive / wouldMerge : null;</span>
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    project,
+    wouldMerge,
+    mergeConfirmed: positive,
+    mergeFalse: negative, // the dangerous error: recommended-proceed but the human closed → tighten
+    wouldClose: 0, // NEVER populate the close side — keeps the loop tightening-only (no loosening directive)
+    closeConfirmed: 0,
+    closeFalse: 0, // held at 0 by construction: the only loosening branch of the advisor is unreachable
+    hold: 0,
+    decided,
+    mergePrecision,
+    closePrecision: null,
+    // #2348: recommendation-outcome calibration (agent_recommendation_outcomes) carries no reversal signal at
+    // all — it is not derived from review_audit, so there is nothing for parity.ts's reversal-discount formula
+    // to discount BY. weighted === raw here by construction (no data to distinguish them), mirroring how a
+    // review_audit row with zero reversals also naturally produces weighted === raw.
+    weightedMergeConfirmed: positive,
+    weightedCloseConfirmed: 0,
+    weightedMergePrecision: mergePrecision,
+    weightedClosePrecision: null,
+  };
+}
+&nbsp;
+/** Build the per-project GateEvalReport from loopover's recommendation-outcome calibration for one repo. */
+async function <span class="fstat-no" title="function not covered" >buildEvalRow(e</span>nv: Env, repoFullName: string): Promise&lt;GateEvalRow&gt; {
+  const calibration = <span class="cstat-no" title="statement not covered" >await buildRepoOutcomeCalibration(env, repoFullName, undefined, { maintainerOnly: true });</span>
+<span class="cstat-no" title="statement not covered" >  return evalRowFromCalibration(repoFullName, calibration.recommendations.positive, calibration.recommendations.negative);</span>
+}
+&nbsp;
+/** The installed, agent-configured repos to tune over — SAME scoping the ops scan + regate sweep use (only
+ *  repos that opt into the acting-autonomy surface). Self-tune calibrates the review gate's own confidence
+ *  floor from outcome data, core review-quality machinery unrelated to gittensor-subnet registry membership,
+ *  so this is `isInstalled` (#5016), not `isRegistered`. A repo whose settings blip is skipped, never aborts.
+ *
+ *  Per-repo opt-out (#4104): unlike rag/reputation/grounding, selftune has no `LOOPOVER_REVIEW_REPOS`
+ *  allowlist to fall back to — every agent-configured repo is already IN by default once the global flag is
+ *  on. So this doesn't fit `resolveConvergedFeature`'s env-kill-switch → override → allowlist-default shape;
+ *  there is no allowlist. Instead, deliberately FORCE-OFF-ONLY (mirroring the `safety` feature's asymmetric
+ *  precedent, #2269, just in the opposite direction): an explicit per-repo `.loopover.yml`
+ *  `review.selftune: false` excludes that one repo from the tuning pass even though it's otherwise
+ *  agent-configured. There is no `true` override — forcing a NON-agent-configured repo INTO the tuning pass
+ *  would bypass its owner's separate, broader acting-autonomy consent (`isAgentConfigured`), an unrelated
+ *  safety boundary this config key must not touch. Unset (the default) changes nothing. A manifest-load error
+ *  fails open (repo stays included), matching the existing settings-blip fail-safe below. */
+async function <span class="fstat-no" title="function not covered" >selfTuneRepos(e</span>nv: Env): Promise&lt;string[]&gt; {
+  const <span class="cstat-no" title="statement not covered" >repos = (await listRepositories(env)).<span class="fstat-no" title="function not covered" >filter((r</span>epo) =&gt; <span class="cstat-no" title="statement not covered" >repo.isInstalled)</span>;</span>
+  const configured: string[] = <span class="cstat-no" title="statement not covered" >[];</span>
+<span class="cstat-no" title="statement not covered" >  for (const repo of repos) {</span>
+<span class="cstat-no" title="statement not covered" >    try {</span>
+      // #sweep-requires-installation: a repo with no real GitHub App installation must never be treated as
+      // agent-configured purely because it resolves the operator's global-default autonomy by merely having
+      // a local row -- mirrors fanOutAgentRegateSweepJobs's own guard.
+<span class="cstat-no" title="statement not covered" >      if (typeof repo.installationId !== "number") <span class="cstat-no" title="statement not covered" >continue;</span></span>
+      const settings = <span class="cstat-no" title="statement not covered" >await resolveRepositorySettings(env, repo.fullName);</span>
+<span class="cstat-no" title="statement not covered" >      if (!isAgentConfigured(settings.autonomy)) <span class="cstat-no" title="statement not covered" >continue;</span></span>
+      const manifest = <span class="cstat-no" title="statement not covered" >await loadRepoFocusManifest(env, repo.fullName).<span class="fstat-no" title="function not covered" >catch(() =&gt; <span class="cstat-no" title="statement not covered" >n</span>ull)</span>;</span>
+<span class="cstat-no" title="statement not covered" >      if (manifest?.review.selftune === false) <span class="cstat-no" title="statement not covered" >continue; // explicit per-repo opt-out</span></span>
+<span class="cstat-no" title="statement not covered" >      configured.push(repo.fullName);</span>
+    } catch {
+      /* a settings blip on one repo must not abort the whole tuning pass */
+    }
+  }
+<span class="cstat-no" title="statement not covered" >  return configured;</span>
+}
+&nbsp;
+/**
+ * One self-improvement tick, run on the cron. FAILS SAFE: a per-repo error is logged and the pass continues; a
+ * top-level error is swallowed (tuning must never break the cron). For each agent-configured repo it: (1) builds
+ * the GateEvalReport from loopover's own outcome data; (2) computes tuning recommendations; (3) SHADOW-SOAKS
+ * any strictly-tightening recommendation; (4) PROMOTES a soaked shadow override to live ONLY when the gate
+ * passes (tightening + evidence + soaked) — all via the ported runAutoApplyRecommendations, which records every
+ * action to override_audit and NEVER applies a loosening change.
+ *
+ * Caller MUST gate this on {@link isSelfTuneEnabled}: it is invoked only from the flag-ON cron path, so flag-OFF
+ * this function is never reached and the cron does ZERO new work.
+ */
+export async function <span class="fstat-no" title="function not covered" >runSelfTune(e</span>nv: Env): Promise&lt;void&gt; {
+<span class="cstat-no" title="statement not covered" >  try {</span>
+    const repos = <span class="cstat-no" title="statement not covered" >await selfTuneRepos(env);</span>
+    const nowMs = <span class="cstat-no" title="statement not covered" >Date.now();</span>
+<span class="cstat-no" title="statement not covered" >    for (const repoFullName of repos) {</span>
+<span class="cstat-no" title="statement not covered" >      try {</span>
+        const row = <span class="cstat-no" title="statement not covered" >await buildEvalRow(env, repoFullName);</span>
+        const report: GateEvalReport = <span class="cstat-no" title="statement not covered" >{ rows: [row], hasSignal: row.decided &gt;= 10 };</span>
+        const recs = <span class="cstat-no" title="statement not covered" >computeTuningRecommendations(report);</span>
+        // #8160: surface the backtest-gated loosening loop's state in the same ranked list. Payload-less by
+        // design — runAutoApplyRecommendations below only ever consumes recs carrying a TIGHTENING
+        // overridePayload, so these are report-only here and can never be promoted by the apply path.
+        // Appended once per pass (deployment-global state), on the first repo's iteration.
+<span class="cstat-no" title="statement not covered" >        if (repoFullName === repos[0]) {</span>
+<span class="cstat-no" title="statement not covered" >          recs.push(...buildSatisfactionFloorLooseningRecs(await loadSatisfactionFloorRecState(env, nowMs)));</span>
+          // #8159: report-only registry knobs surface their evidence in the same pass -- payload-less, so
+          // the apply path below ignores them identically.
+<span class="cstat-no" title="statement not covered" >          recs.push(...buildReportOnlyKnobRecs(await loadReportOnlyKnobProposals(env, nowMs)));</span>
+          // #8227: the curve-derived view beside the ladder, one line per live knob with a differing suggestion.
+<span class="cstat-no" title="statement not covered" >          recs.push(...buildKnobReliabilityRecs(await loadLiveKnobStatuses(env)));</span>
+        }
+        // runAutoApplyRecommendations only ever consumes recs that carry a TIGHTENING overridePayload, shadow-
+        // soaks them, and promotes a soaked override only when isStrictlyTightening + evidence + soak pass.
+<span class="cstat-no" title="statement not covered" >        await runAutoApplyRecommendations(env as unknown as StorageEnv, {</span>
+          project: repoFullName,
+          autoTune: true, // this repo opted into the acting-autonomy surface (selfTuneRepos filtered)
+          baseConfidenceFloor: SELFTUNE_BASE_CONFIDENCE_FLOOR,
+          decided: row.decided,
+          recs,
+          nowMs,
+        });
+      } catch (error) {
+<span class="cstat-no" title="statement not covered" >        console.warn(JSON.stringify({ event: "selftune_repo_error", repo: repoFullName, message: errorMessage(error).slice(0, 200) }));</span>
+      }
+    }
+  } catch (error) {
+<span class="cstat-no" title="statement not covered" >    console.warn(JSON.stringify({ event: "selftune_error", message: errorMessage(error).slice(0, 200) }));</span>
+  }
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    

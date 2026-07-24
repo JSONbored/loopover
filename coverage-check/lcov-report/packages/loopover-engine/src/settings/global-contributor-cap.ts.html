@@ -1,0 +1,250 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for packages/loopover-engine/src/settings/global-contributor-cap.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../../../prettify.css" />
+    <link rel="stylesheet" href="../../../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../../../index.html">All files</a> / <a href="index.html">packages/loopover-engine/src/settings</a> global-contributor-cap.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/15</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/11</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/3</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/12</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Install-wide contributor open-item cap (#2562, anti-abuse): a self-hosted install that gates multiple repos
+// shares ONE database, but the per-repo contributorOpenPrCap/contributorOpenIssueCap (repository-settings.ts)
+// only ever counts open items on the SAME repo -- an actor spreading low-volume spam/farming PRs across several
+// gated repos in that install never trips any single repo's cap. This is cross-REPO-within-one-install only (no
+// federation, no cross-instance privacy design): a same-database aggregate against every repo this install
+// already tracks. Deliberately an env var (not a per-repo `.loopover.yml`/DB field like the caps above) --
+// this setting aggregates ACROSS repos, so it cannot be "this repo's" setting; it belongs to the install as a
+// whole, mirroring how global_contributor_blacklist is a tenant-free singleton rather than a per-repo column.
+//
+// #4511 (AMS-readiness follow-up): "unset ⇒ null ⇒ no cap" was the ONLY defense against one identity farming
+// PRs across every gated repo in an install, and it was off unless an operator proactively opted in AND
+// remembered to pre-size it. That's backwards for a fleet-scale actor -- fail-safe means a sane cap exists by
+// default, not that protection is silently absent until someone configures it. So: unset/malformed now falls
+// back to a real default (DEFAULT_GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP) rather than "no cap" -- this IS a behavior
+// change for any install that never set the env var. An operator who genuinely wants no cap sets the env var
+// to the literal string "off" (a load-bearing explicit opt-out, distinct from "unset"), mirroring the
+// explicit-null-means-something idiom used elsewhere in this codebase (e.g. blacklistLabel).
+const GLOBAL_ENV_KEY = <span class="cstat-no" title="statement not covered" >"GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP";</span>
+const GLOBAL_MINER_ENV_KEY = <span class="cstat-no" title="statement not covered" >"GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP_MINER";</span>
+const OFF_SENTINEL = <span class="cstat-no" title="statement not covered" >"off";</span>
+&nbsp;
+/** Default install-wide cap for a non-miner actor when {@link GLOBAL_ENV_KEY} is unset or malformed (#4511). */
+export const DEFAULT_GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP = <span class="cstat-no" title="statement not covered" >20;</span>
+/** Default install-wide cap for a CONFIRMED official Gittensor miner (#4511): higher than the human default
+ *  because a legitimate fleet spread across many repos in one install is expected to run more concurrent open
+ *  items than a single human contributor, without being unlimited. Applies ONLY once the author is verified
+ *  via the same official-miner-detection path the rest of the codebase already trusts for this purpose
+ *  (getCachedOfficialMinerDetection) -- an unverified/unconfirmed actor always gets the human default. */
+export const DEFAULT_GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP_MINER = <span class="cstat-no" title="statement not covered" >50;</span>
+&nbsp;
+function <span class="fstat-no" title="function not covered" >resolveCapEnv(r</span>aw: string | undefined, fallback: number): number | null {
+<span class="cstat-no" title="statement not covered" >  if (typeof raw !== "string" || raw.trim() === "") <span class="cstat-no" title="statement not covered" >return fallback;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (raw.trim().toLowerCase() === OFF_SENTINEL) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+  const parsed = <span class="cstat-no" title="statement not covered" >Number(raw);</span>
+  // A malformed value (fractional/non-positive/non-numeric) falls back to the SAME default an unset env var
+  // would use, not to "no cap" -- a typo in an operator's .env must never silently disable this defense.
+<span class="cstat-no" title="statement not covered" >  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed &lt;= 0) <span class="cstat-no" title="statement not covered" >return fallback;</span></span>
+<span class="cstat-no" title="statement not covered" >  return parsed;</span>
+}
+&nbsp;
+/** Resolve the install-wide open-item cap for an ordinary (non-miner) actor. `null` means explicitly disabled
+ *  (env var set to `"off"`) -- everything else, including unset, resolves to a real number. Never throws.
+ *  Unlike the per-repo cap, this install-wide cap is not clamped to the per-repo live-check budget because the
+ *  install-wide verifier loads and verifies a larger row set. */
+export function <span class="fstat-no" title="function not covered" >resolveGlobalContributorOpenItemCap(e</span>nv: { GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP?: string | undefined }): number | null {
+<span class="cstat-no" title="statement not covered" >  return resolveCapEnv(env[GLOBAL_ENV_KEY], DEFAULT_GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP);</span>
+}
+&nbsp;
+/** Resolve the install-wide open-item cap for a CONFIRMED official Gittensor miner (#4511) -- same shape and
+ *  `"off"` escape hatch as {@link resolveGlobalContributorOpenItemCap}, but with a fleet-appropriate default.
+ *  Callers must only use this once the actor's miner status is independently verified; this function does not
+ *  itself check identity. */
+export function <span class="fstat-no" title="function not covered" >resolveGlobalContributorOpenItemCapForMiner(e</span>nv: { GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP_MINER?: string | undefined }): number | null {
+<span class="cstat-no" title="statement not covered" >  return resolveCapEnv(env[GLOBAL_MINER_ENV_KEY], DEFAULT_GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP_MINER);</span>
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../../../sorter.js"></script>
+        <script src="../../../../block-navigation.js"></script>
+    </body>
+</html>
+    

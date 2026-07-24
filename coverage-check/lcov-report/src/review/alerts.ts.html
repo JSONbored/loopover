@@ -1,0 +1,904 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/review/alerts.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/review</a> alerts.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/81</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/61</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/19</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/67</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a>
+<a name='L185'></a><a href='#L185'>185</a>
+<a name='L186'></a><a href='#L186'>186</a>
+<a name='L187'></a><a href='#L187'>187</a>
+<a name='L188'></a><a href='#L188'>188</a>
+<a name='L189'></a><a href='#L189'>189</a>
+<a name='L190'></a><a href='#L190'>190</a>
+<a name='L191'></a><a href='#L191'>191</a>
+<a name='L192'></a><a href='#L192'>192</a>
+<a name='L193'></a><a href='#L193'>193</a>
+<a name='L194'></a><a href='#L194'>194</a>
+<a name='L195'></a><a href='#L195'>195</a>
+<a name='L196'></a><a href='#L196'>196</a>
+<a name='L197'></a><a href='#L197'>197</a>
+<a name='L198'></a><a href='#L198'>198</a>
+<a name='L199'></a><a href='#L199'>199</a>
+<a name='L200'></a><a href='#L200'>200</a>
+<a name='L201'></a><a href='#L201'>201</a>
+<a name='L202'></a><a href='#L202'>202</a>
+<a name='L203'></a><a href='#L203'>203</a>
+<a name='L204'></a><a href='#L204'>204</a>
+<a name='L205'></a><a href='#L205'>205</a>
+<a name='L206'></a><a href='#L206'>206</a>
+<a name='L207'></a><a href='#L207'>207</a>
+<a name='L208'></a><a href='#L208'>208</a>
+<a name='L209'></a><a href='#L209'>209</a>
+<a name='L210'></a><a href='#L210'>210</a>
+<a name='L211'></a><a href='#L211'>211</a>
+<a name='L212'></a><a href='#L212'>212</a>
+<a name='L213'></a><a href='#L213'>213</a>
+<a name='L214'></a><a href='#L214'>214</a>
+<a name='L215'></a><a href='#L215'>215</a>
+<a name='L216'></a><a href='#L216'>216</a>
+<a name='L217'></a><a href='#L217'>217</a>
+<a name='L218'></a><a href='#L218'>218</a>
+<a name='L219'></a><a href='#L219'>219</a>
+<a name='L220'></a><a href='#L220'>220</a>
+<a name='L221'></a><a href='#L221'>221</a>
+<a name='L222'></a><a href='#L222'>222</a>
+<a name='L223'></a><a href='#L223'>223</a>
+<a name='L224'></a><a href='#L224'>224</a>
+<a name='L225'></a><a href='#L225'>225</a>
+<a name='L226'></a><a href='#L226'>226</a>
+<a name='L227'></a><a href='#L227'>227</a>
+<a name='L228'></a><a href='#L228'>228</a>
+<a name='L229'></a><a href='#L229'>229</a>
+<a name='L230'></a><a href='#L230'>230</a>
+<a name='L231'></a><a href='#L231'>231</a>
+<a name='L232'></a><a href='#L232'>232</a>
+<a name='L233'></a><a href='#L233'>233</a>
+<a name='L234'></a><a href='#L234'>234</a>
+<a name='L235'></a><a href='#L235'>235</a>
+<a name='L236'></a><a href='#L236'>236</a>
+<a name='L237'></a><a href='#L237'>237</a>
+<a name='L238'></a><a href='#L238'>238</a>
+<a name='L239'></a><a href='#L239'>239</a>
+<a name='L240'></a><a href='#L240'>240</a>
+<a name='L241'></a><a href='#L241'>241</a>
+<a name='L242'></a><a href='#L242'>242</a>
+<a name='L243'></a><a href='#L243'>243</a>
+<a name='L244'></a><a href='#L244'>244</a>
+<a name='L245'></a><a href='#L245'>245</a>
+<a name='L246'></a><a href='#L246'>246</a>
+<a name='L247'></a><a href='#L247'>247</a>
+<a name='L248'></a><a href='#L248'>248</a>
+<a name='L249'></a><a href='#L249'>249</a>
+<a name='L250'></a><a href='#L250'>250</a>
+<a name='L251'></a><a href='#L251'>251</a>
+<a name='L252'></a><a href='#L252'>252</a>
+<a name='L253'></a><a href='#L253'>253</a>
+<a name='L254'></a><a href='#L254'>254</a>
+<a name='L255'></a><a href='#L255'>255</a>
+<a name='L256'></a><a href='#L256'>256</a>
+<a name='L257'></a><a href='#L257'>257</a>
+<a name='L258'></a><a href='#L258'>258</a>
+<a name='L259'></a><a href='#L259'>259</a>
+<a name='L260'></a><a href='#L260'>260</a>
+<a name='L261'></a><a href='#L261'>261</a>
+<a name='L262'></a><a href='#L262'>262</a>
+<a name='L263'></a><a href='#L263'>263</a>
+<a name='L264'></a><a href='#L264'>264</a>
+<a name='L265'></a><a href='#L265'>265</a>
+<a name='L266'></a><a href='#L266'>266</a>
+<a name='L267'></a><a href='#L267'>267</a>
+<a name='L268'></a><a href='#L268'>268</a>
+<a name='L269'></a><a href='#L269'>269</a>
+<a name='L270'></a><a href='#L270'>270</a>
+<a name='L271'></a><a href='#L271'>271</a>
+<a name='L272'></a><a href='#L272'>272</a>
+<a name='L273'></a><a href='#L273'>273</a>
+<a name='L274'></a><a href='#L274'>274</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Anomaly alerting (reviewbot→loopover convergence — ADDITIVE, NATIVE port of reviewbot
+// src/core/alerts.ts). On each cron tick, snapshot agent health and push a THROTTLED Discord alert when
+// something drifts — a manual-rate spike, stuck/failed targets, a DLQ spike, calibration drift, disputed
+// closes, or a config invariant violation — so drift is HEARD ABOUT instead of polled for.
+//
+// SELF-CONTAINED: every type + helper this module needs is defined HERE. No imports from reviewbot. The
+// logic is byte-faithful to the reviewbot source; the only deltas are mechanical guards for loopover's
+// stricter tsconfig (noUncheckedIndexedAccess / exactOptionalPropertyTypes), which do not change behavior.
+//
+// STORAGE: loopover has no platform/access adapter — `Env` is a global ambient interface with `DB`. The
+// `storage(env) =&gt; env.DB` helper below mirrors the other native ports (unified-comment-bridge etc.).
+//
+// HEALTH/CALIBRATION INPUTS: computing the D1 health/calibration snapshots is the runtime gate's job
+// (see src/review/ops.ts in this same port batch). `runAnomalyAlerts` takes them as INJECTED deps so this
+// module stays decoupled from the gate runtime — the host wires its own `computeAgentHealth` /
+// `computeCalibration` (or the ported native ones) at call time.
+&nbsp;
+// ── Inlined minimal types (ported from reviewbot src/core/{ops,types}.ts) ────────────────────────
+&nbsp;
+/** A permanently-failed review, with the PR + reason so the alert is actionable (not just a count). */
+export interface FailedTarget {
+  number: number;
+  repo: string;
+  verdict: string | null;
+  lastError: string | null;
+}
+&nbsp;
+/** A bot auto-action a human overrode (revert of a bot-merge / reopen of a bot-close), with the PR. */
+export interface ReversedTarget {
+  number: number;
+  repo: string;
+  status: string;
+  eventType: string;
+}
+&nbsp;
+/** Per-agent health snapshot from review_targets + config invariants. Shared by /status and alerting.
+ *  (Ported shape from reviewbot src/core/ops.ts AgentHealth — every field load-bearing here is kept.) */
+export interface AgentHealth {
+  byStatus: Record&lt;string, number&gt;;
+  byVerdict: Record&lt;string, number&gt;;
+  /** Count of terminal decisions (merged/closed/commented/manual/error) — the manualRate denominator. */
+  terminalCount: number;
+  nonTerminal: number;
+  /** Fraction of terminal decisions punted to a human. */
+  manualRate: number;
+  stuckRetryable: number;
+  /** Permanently-failed (dead-lettered or attempt-exhausted) reviews in the recent window. */
+  failed: number;
+  /** Dead-letter-queue events (event_type='dead_lettered') in the recent window — reviews the queue gave
+   *  up on. A spike means a systemic problem (rate-limit storm, AI-quota exhaustion) dropped a batch. */
+  dlqCount: number;
+  dlqTargets?: FailedTarget[];
+  /** Count of auto-actions a human overrode in the recent window (revert of a bot-merge, reopen of a
+   *  bot-close that the gate did NOT subsequently merge). */
+  reversals: number;
+  /** reversals / (merged + closed) — the ground-truth accuracy signal. 0 when nothing auto-acted. */
+  reversalRate: number;
+  /** The specific recent failed / reversed PRs, for an actionable alert (capped). Absent on hand-built
+   *  health objects (e.g. tests) — render defensively. */
+  failedTargets?: FailedTarget[];
+  reversedTargets?: ReversedTarget[];
+  configIssues: string[];
+  /** Kill-switch state: true when this agent's autonomous writes are frozen. Optional for hand-built objects. */
+  frozen?: boolean;
+  /** Accuracy circuit-breaker: true when auto-merge is disabled for this project. Optional for hand-built objects. */
+  holdOnly?: boolean;
+}
+&nbsp;
+/** Confidence-vs-outcome calibration (ported shape from reviewbot src/core/ops.ts Calibration). */
+export interface Calibration {
+  currentFloor: number;
+  mergedCount: number;
+  revertedCount: number;
+  keptAvgConfidence: number | null;
+  revertedMaxConfidence: number | null;
+  /** A suggested confidenceFloor (only when it would be HIGHER than current); null = no change needed. */
+  recommendedFloor: number | null;
+  note: string;
+  /** Per-reasonCode close distribution + how many of each a human REOPENED and the gate did NOT re-merge. */
+  closesByReason: Array&lt;{ reasonCode: string; closes: number; disputed: number }&gt;;
+  disputedCloseCount: number;
+}
+&nbsp;
+/** The minimal agent-config shape the alerter reads — slug/name for the embed, the discord webhook source,
+ *  and the discordNotify feature flag. (Subset of reviewbot's AgentConfig.) */
+export interface AlertAgentConfig {
+  slug: string;
+  name?: string;
+  features: { discordNotify?: boolean };
+  secrets: { discordWebhook?: string };
+  discordWebhookUrl?: string;
+}
+&nbsp;
+// ── Inlined helpers (byte-faithful from reviewbot src/core/{crypto,util,notify,db}.ts) ───────────
+&nbsp;
+/** Storage seam: loopover's `Env` is a global ambient interface with `DB`. */
+function <span class="fstat-no" title="function not covered" >storage(e</span>nv: Env): D1Database {
+<span class="cstat-no" title="statement not covered" >  return env.DB;</span>
+}
+&nbsp;
+const ALLOWED_DISCORD_HOSTS = <span class="cstat-no" title="statement not covered" >new Set(["discord.com", "discordapp.com", "canary.discord.com", "ptb.discord.com"]);</span>
+&nbsp;
+/** Discord webhook URL validation (reviewbot src/core/notify.ts). */
+function <span class="fstat-no" title="function not covered" >isValidDiscordWebhook(u</span>rl: string): boolean {
+<span class="cstat-no" title="statement not covered" >  try {</span>
+    const parsed = <span class="cstat-no" title="statement not covered" >new URL(url);</span>
+<span class="cstat-no" title="statement not covered" >    return (</span>
+      parsed.protocol === "https:" &amp;&amp;
+      ALLOWED_DISCORD_HOSTS.has(parsed.hostname.toLowerCase()) &amp;&amp;
+      parsed.pathname.startsWith("/api/webhooks/")
+    );
+  } catch {
+<span class="cstat-no" title="statement not covered" >    return false;</span>
+  }
+}
+&nbsp;
+/** Read a per-agent secret/var from the worker env by name (reviewbot src/core/util.ts). */
+function <span class="fstat-no" title="function not covered" >readSecret(e</span>nv: Env, name: string): string {
+  const value = (<span class="cstat-no" title="statement not covered" >env as unknown as Record&lt;string, unknown&gt;)[name];</span>
+<span class="cstat-no" title="statement not covered" >  return typeof value === "string" ? value : "";</span>
+}
+&nbsp;
+/** Prefixed random id (reviewbot src/core/crypto.ts). */
+function <span class="fstat-no" title="function not covered" >newId(p</span>refix: string): string {
+<span class="cstat-no" title="statement not covered" >  return `${prefix}_${crypto.randomUUID().replace(/-/g, "")}`;</span>
+}
+&nbsp;
+const sha256Encoder = <span class="cstat-no" title="statement not covered" >new TextEncoder();</span>
+&nbsp;
+/** SHA-256 hex (reviewbot src/core/crypto.ts). */
+async function <span class="fstat-no" title="function not covered" >sha256Hex(v</span>alue: string): Promise&lt;string&gt; {
+  const bytes = <span class="cstat-no" title="statement not covered" >await crypto.subtle.digest("SHA-256", sha256Encoder.encode(value));</span>
+<span class="cstat-no" title="statement not covered" >  return [...new Uint8Array(bytes)].<span class="fstat-no" title="function not covered" >map((b</span>yte) =&gt; <span class="cstat-no" title="statement not covered" >byte.toString(16).padStart(2, "0"))</span>.join("");</span>
+}
+&nbsp;
+/** Rows affected by a D1 write (reviewbot src/core/db.ts). */
+function <span class="fstat-no" title="function not covered" >runChanges(r</span>esult: unknown): number {
+<span class="cstat-no" title="statement not covered" >  return (result as { meta?: { changes?: number } } | null)?.meta?.changes ?? 0;</span>
+}
+&nbsp;
+// ── Thresholds (byte-faithful from reviewbot src/core/alerts.ts) ─────────────────────────────────
+&nbsp;
+const MANUAL_RATE_THRESHOLD = <span class="cstat-no" title="statement not covered" >0.6;</span>
+const MIN_TERMINAL_FOR_RATE = <span class="cstat-no" title="statement not covered" >10; // don't cry "manual-rate spike" off a handful of decisions</span>
+const STUCK_THRESHOLD = <span class="cstat-no" title="statement not covered" >5;</span>
+// DLQ should be ~0 in normal operation — even a few dropped reviews is a systemic signal (rate-limit/AI-quota
+// storm). Alert low so we hear about it within a cron tick, not days later via manual audit.
+const DLQ_ALERT_THRESHOLD = <span class="cstat-no" title="statement not covered" >3;</span>
+&nbsp;
+const MAX_LISTED = <span class="cstat-no" title="statement not covered" >8; // keep the embed readable; note the remainder</span>
+&nbsp;
+/** A markdown PR link Discord renders in an embed description. */
+function <span class="fstat-no" title="function not covered" >prLink(t</span>: { number: number; repo: string }): string {
+<span class="cstat-no" title="statement not covered" >  return `[#${t.number}](https://github.com/${t.repo}/pull/${t.number})`;</span>
+}
+&nbsp;
+/** ": #a, #b, #c (+N more)" for an anomaly line — empty when no detail (e.g. a hand-built health obj). */
+function <span class="fstat-no" title="function not covered" >listSuffix&lt;T extends { number: number; repo: string }&gt;(i</span>tems: T[] | undefined, render: (t: T) =&gt; string): string {
+<span class="cstat-no" title="statement not covered" >  if (!items?.length) <span class="cstat-no" title="statement not covered" >return "";</span></span>
+  const shown = <span class="cstat-no" title="statement not covered" >items.slice(0, MAX_LISTED).map(render).join(", ");</span>
+  const more = <span class="cstat-no" title="statement not covered" >items.length &gt; MAX_LISTED ? ` (+${items.length - MAX_LISTED} more)` : "";</span>
+<span class="cstat-no" title="statement not covered" >  return `: ${shown}${more}`;</span>
+}
+&nbsp;
+/** Human-readable anomalies in a health snapshot (empty list = healthy). Lines NAME the specific PRs so
+ *  the maintainer can act without going to query D1 — and so testing artifacts (e.g. proof-reopens) are
+ *  identifiable at a glance rather than reading as mystery failures. */
+export function <span class="fstat-no" title="function not covered" >detectAnomalies(h</span>: AgentHealth, calibration?: Calibration): string[] {
+  const out: string[] = <span class="cstat-no" title="statement not covered" >[];</span>
+  // Autonomous circuit-breaker engaged: auto-merge was disabled after merge precision dropped.
+<span class="cstat-no" title="statement not covered" >  if (h.holdOnly) <span class="cstat-no" title="statement not covered" >out.push("auto-merge DISABLED by the accuracy circuit-breaker (merge precision dropped) — would-merges are holding for review; investigate, then clear the holdonly flag.");</span></span>
+<span class="cstat-no" title="statement not covered" >  if (h.configIssues.length &gt; 0) <span class="cstat-no" title="statement not covered" >out.push(`config invariant violation(s): ${h.configIssues.join("; ")}`);</span></span>
+  // CALIBRATION DRIFT: the recommender found a human-reverted auto-merge whose confidence cleared the
+  // current floor — the ground-truth signal that the floor is too low.
+<span class="cstat-no" title="statement not covered" >  if (calibration?.recommendedFloor != null) {</span>
+    const maxRev = <span class="cstat-no" title="statement not covered" >calibration.revertedMaxConfidence != null ? `${Math.round(calibration.revertedMaxConfidence * 100)}%` : "?";</span>
+<span class="cstat-no" title="statement not covered" >    out.push(`calibration drift: ${calibration.revertedCount} auto-merge(s) were human-reverted, the highest at ${maxRev} — above the ${Math.round(calibration.currentFloor * 100)}% floor. Consider raising confidenceFloor to ${calibration.recommendedFloor}.`);</span>
+  }
+  // FALSE-CLOSE signal: bot-closes a human REOPENED and did NOT let the gate re-merge — the human
+  // disagreed with the close. Broken down by reasonCode so a specific over-closing gate is identifiable.
+<span class="cstat-no" title="statement not covered" >  if (calibration &amp;&amp; calibration.disputedCloseCount &gt; 0) {</span>
+    const top = <span class="cstat-no" title="statement not covered" >calibration.closesByReason</span>
+      .<span class="fstat-no" title="function not covered" >filter((r</span>) =&gt; <span class="cstat-no" title="statement not covered" >r.disputed &gt; 0)</span>
+      .<span class="fstat-no" title="function not covered" >sort((a</span>, b) =&gt; <span class="cstat-no" title="statement not covered" >b.disputed - a.disputed)</span>
+      .slice(0, 3)
+      .<span class="fstat-no" title="function not covered" >map((r</span>) =&gt; <span class="cstat-no" title="statement not covered" >`${r.reasonCode} (${r.disputed}/${r.closes})`)</span>
+      .join(", ");
+<span class="cstat-no" title="statement not covered" >    out.push(`disputed closes: ${calibration.disputedCloseCount} bot-close(s) reopened and not re-merged — by reason: ${top}. Review these close-gates for false-closes.`);</span>
+  }
+  // DLQ SPIKE: the queue gave up on reviews (event_type='dead_lettered'). A spike = a systemic storm
+  // (rate-limit / AI-quota exhaustion) silently dropped a batch. NAME the dropped PRs so they can be re-queued.
+<span class="cstat-no" title="statement not covered" >  if ((h.dlqCount ?? 0) &gt;= DLQ_ALERT_THRESHOLD) {</span>
+    const list = <span class="cstat-no" title="statement not covered" >listSuffix(h.<span class="fstat-no" title="function not covered" >dlqTargets, (t</span>) =&gt; <span class="cstat-no" title="statement not covered" >`${prLink(t)}${t.lastError ? ` · ${t.lastError}` : ""}`)</span>;</span>
+<span class="cstat-no" title="statement not covered" >    out.push(`⚠️ ${h.dlqCount} review(s) DEAD-LETTERED in the window — the queue gave up (likely a rate-limit / AI-quota storm). These were dropped and need a re-queue${list}`);</span>
+  }
+<span class="cstat-no" title="statement not covered" >  if (h.failed &gt; 0) {</span>
+    const list = <span class="cstat-no" title="statement not covered" >listSuffix(h.<span class="fstat-no" title="function not covered" >failedTargets, (t</span>) =&gt; <span class="cstat-no" title="statement not covered" >`${prLink(t)} (${t.verdict ?? "no verdict"}${t.lastError ? ` · ${t.lastError}` : ""})`)</span>;</span>
+<span class="cstat-no" title="statement not covered" >    out.push(`${h.failed} review(s) permanently failed — attempt-exhausted/dead-lettered${list}`);</span>
+  }
+<span class="cstat-no" title="statement not covered" >  if (h.terminalCount &gt;= MIN_TERMINAL_FOR_RATE &amp;&amp; h.manualRate &gt;= MANUAL_RATE_THRESHOLD) {</span>
+<span class="cstat-no" title="statement not covered" >    out.push(`manual-rate ${Math.round(h.manualRate * 100)}% over ${h.terminalCount} decisions`);</span>
+  }
+<span class="cstat-no" title="statement not covered" >  if (h.stuckRetryable &gt;= STUCK_THRESHOLD) <span class="cstat-no" title="statement not covered" >out.push(`${h.stuckRetryable} target(s) stuck in error_retryable`);</span></span>
+<span class="cstat-no" title="statement not covered" >  if (h.reversals &gt; 0) {</span>
+    const list = <span class="cstat-no" title="statement not covered" >listSuffix(h.<span class="fstat-no" title="function not covered" >reversedTargets, (t</span>) =&gt; <span class="cstat-no" title="statement not covered" >prLink(t))</span>;</span>
+<span class="cstat-no" title="statement not covered" >    out.push(`${h.reversals} auto-action(s) reverted/reopened by humans in the last 7d (reversal-rate ${Math.round(h.reversalRate * 100)}%)${list}`);</span>
+  }
+<span class="cstat-no" title="statement not covered" >  return out;</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >resolveWebhook(e</span>nv: Env, config: AlertAgentConfig): string {
+<span class="cstat-no" title="statement not covered" >  if (config.secrets.discordWebhook) <span class="cstat-no" title="statement not covered" >return readSecret(env, config.secrets.discordWebhook);</span></span>
+<span class="cstat-no" title="statement not covered" >  return config.discordWebhookUrl ?? "";</span>
+}
+&nbsp;
+/** Injected snapshot computation — the host wires its own (or the native ops port's) health/calibration. */
+export interface AnomalyAlertDeps {
+  computeAgentHealth: (env: Env, config: AlertAgentConfig) =&gt; Promise&lt;AgentHealth&gt;;
+  computeCalibration: (env: Env, config: AlertAgentConfig) =&gt; Promise&lt;Calibration&gt;;
+}
+&nbsp;
+/** Snapshot health and Discord-alert any anomalies, at most once per condition-set per hour. */
+export async function <span class="fstat-no" title="function not covered" >runAnomalyAlerts(e</span>nv: Env, config: AlertAgentConfig, deps: AnomalyAlertDeps): Promise&lt;void&gt; {
+<span class="cstat-no" title="statement not covered" >  if (!config.features.discordNotify) <span class="cstat-no" title="statement not covered" >return;</span></span>
+  const webhookUrl = <span class="cstat-no" title="statement not covered" >resolveWebhook(env, config);</span>
+<span class="cstat-no" title="statement not covered" >  if (!webhookUrl || !isValidDiscordWebhook(webhookUrl)) <span class="cstat-no" title="statement not covered" >return;</span></span>
+&nbsp;
+  // Gate the EXPENSIVE health snapshot behind a per-agent, per-hour claim, so the every-minute cron
+  // computes it ~hourly (matching the alert throttle) instead of 1440×/day. The first tick of the hour
+  // computes + maybe alerts; the other 59 short-circuit here before touching D1.
+  const hourBucket = <span class="cstat-no" title="statement not covered" >new Date().toISOString().slice(0, 13); // YYYY-MM-DDTHH</span>
+  const checkClaim = <span class="cstat-no" title="statement not covered" >await storage(env).prepare(</span>
+    `INSERT INTO notification_deliveries (id, project, target_id, notification_key, status)
+     VALUES (?, ?, '__healthcheck__', ?, 'sent')
+     ON CONFLICT(project, target_id, notification_key) DO NOTHING`,
+  )
+    .bind(newId("hc"), config.slug, await sha256Hex(`healthcheck:${config.slug}:${hourBucket}`))
+    .run();
+<span class="cstat-no" title="statement not covered" >  if (runChanges(checkClaim) === 0) <span class="cstat-no" title="statement not covered" >return; // already snapshotted this agent this hour</span></span>
+&nbsp;
+  // Both behind the same hourly claim: health + calibration (the drift signal).
+  const [health, calibration] = <span class="cstat-no" title="statement not covered" >await Promise.all([deps.computeAgentHealth(env, config), deps.computeCalibration(env, config)]);</span>
+  const anomalies = <span class="cstat-no" title="statement not covered" >detectAnomalies(health, calibration);</span>
+<span class="cstat-no" title="statement not covered" >  if (anomalies.length === 0) <span class="cstat-no" title="statement not covered" >return;</span></span>
+&nbsp;
+  // Throttle: claim a per-(condition-set, hour) key so a repeated condition alerts at most hourly.
+  const key = <span class="cstat-no" title="statement not covered" >await sha256Hex(`anomaly:${anomalies.join("|")}:${hourBucket}`);</span>
+  const claim = <span class="cstat-no" title="statement not covered" >await storage(env).prepare(</span>
+    `INSERT INTO notification_deliveries (id, project, target_id, notification_key, status)
+     VALUES (?, ?, '__anomaly__', ?, 'sent')
+     ON CONFLICT(project, target_id, notification_key) DO NOTHING`,
+  )
+    .bind(newId("anm"), config.slug, key)
+    .run();
+<span class="cstat-no" title="statement not covered" >  if (runChanges(claim) === 0) <span class="cstat-no" title="statement not covered" >return; // already alerted this hour for this condition-set</span></span>
+&nbsp;
+  const body = <span class="cstat-no" title="statement not covered" >{</span>
+    username: config.name ?? config.slug,
+    embeds: [
+      {
+        title: `⚠️ ${config.slug}: health anomaly`,
+        color: 0xbf8700,
+        description: anomalies.<span class="fstat-no" title="function not covered" >map((a</span>) =&gt; <span class="cstat-no" title="statement not covered" >`• ${a}`)</span>.join("\n").slice(0, 1800),
+        footer: { text: `${config.slug} · ${hourBucket}Z` },
+      },
+    ],
+  };
+<span class="cstat-no" title="statement not covered" >  try {</span>
+<span class="cstat-no" title="statement not covered" >    await fetch(webhookUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) });</span>
+  } catch (error) {
+<span class="cstat-no" title="statement not covered" >    console.log(JSON.stringify({ event: "anomaly_alert_error", project: config.slug, message: String(error).slice(0, 200) }));</span>
+  }
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    

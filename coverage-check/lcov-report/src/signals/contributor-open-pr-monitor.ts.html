@@ -1,0 +1,997 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/signals/contributor-open-pr-monitor.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/signals</a> contributor-open-pr-monitor.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/141</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/77</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/32</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/106</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a>
+<a name='L185'></a><a href='#L185'>185</a>
+<a name='L186'></a><a href='#L186'>186</a>
+<a name='L187'></a><a href='#L187'>187</a>
+<a name='L188'></a><a href='#L188'>188</a>
+<a name='L189'></a><a href='#L189'>189</a>
+<a name='L190'></a><a href='#L190'>190</a>
+<a name='L191'></a><a href='#L191'>191</a>
+<a name='L192'></a><a href='#L192'>192</a>
+<a name='L193'></a><a href='#L193'>193</a>
+<a name='L194'></a><a href='#L194'>194</a>
+<a name='L195'></a><a href='#L195'>195</a>
+<a name='L196'></a><a href='#L196'>196</a>
+<a name='L197'></a><a href='#L197'>197</a>
+<a name='L198'></a><a href='#L198'>198</a>
+<a name='L199'></a><a href='#L199'>199</a>
+<a name='L200'></a><a href='#L200'>200</a>
+<a name='L201'></a><a href='#L201'>201</a>
+<a name='L202'></a><a href='#L202'>202</a>
+<a name='L203'></a><a href='#L203'>203</a>
+<a name='L204'></a><a href='#L204'>204</a>
+<a name='L205'></a><a href='#L205'>205</a>
+<a name='L206'></a><a href='#L206'>206</a>
+<a name='L207'></a><a href='#L207'>207</a>
+<a name='L208'></a><a href='#L208'>208</a>
+<a name='L209'></a><a href='#L209'>209</a>
+<a name='L210'></a><a href='#L210'>210</a>
+<a name='L211'></a><a href='#L211'>211</a>
+<a name='L212'></a><a href='#L212'>212</a>
+<a name='L213'></a><a href='#L213'>213</a>
+<a name='L214'></a><a href='#L214'>214</a>
+<a name='L215'></a><a href='#L215'>215</a>
+<a name='L216'></a><a href='#L216'>216</a>
+<a name='L217'></a><a href='#L217'>217</a>
+<a name='L218'></a><a href='#L218'>218</a>
+<a name='L219'></a><a href='#L219'>219</a>
+<a name='L220'></a><a href='#L220'>220</a>
+<a name='L221'></a><a href='#L221'>221</a>
+<a name='L222'></a><a href='#L222'>222</a>
+<a name='L223'></a><a href='#L223'>223</a>
+<a name='L224'></a><a href='#L224'>224</a>
+<a name='L225'></a><a href='#L225'>225</a>
+<a name='L226'></a><a href='#L226'>226</a>
+<a name='L227'></a><a href='#L227'>227</a>
+<a name='L228'></a><a href='#L228'>228</a>
+<a name='L229'></a><a href='#L229'>229</a>
+<a name='L230'></a><a href='#L230'>230</a>
+<a name='L231'></a><a href='#L231'>231</a>
+<a name='L232'></a><a href='#L232'>232</a>
+<a name='L233'></a><a href='#L233'>233</a>
+<a name='L234'></a><a href='#L234'>234</a>
+<a name='L235'></a><a href='#L235'>235</a>
+<a name='L236'></a><a href='#L236'>236</a>
+<a name='L237'></a><a href='#L237'>237</a>
+<a name='L238'></a><a href='#L238'>238</a>
+<a name='L239'></a><a href='#L239'>239</a>
+<a name='L240'></a><a href='#L240'>240</a>
+<a name='L241'></a><a href='#L241'>241</a>
+<a name='L242'></a><a href='#L242'>242</a>
+<a name='L243'></a><a href='#L243'>243</a>
+<a name='L244'></a><a href='#L244'>244</a>
+<a name='L245'></a><a href='#L245'>245</a>
+<a name='L246'></a><a href='#L246'>246</a>
+<a name='L247'></a><a href='#L247'>247</a>
+<a name='L248'></a><a href='#L248'>248</a>
+<a name='L249'></a><a href='#L249'>249</a>
+<a name='L250'></a><a href='#L250'>250</a>
+<a name='L251'></a><a href='#L251'>251</a>
+<a name='L252'></a><a href='#L252'>252</a>
+<a name='L253'></a><a href='#L253'>253</a>
+<a name='L254'></a><a href='#L254'>254</a>
+<a name='L255'></a><a href='#L255'>255</a>
+<a name='L256'></a><a href='#L256'>256</a>
+<a name='L257'></a><a href='#L257'>257</a>
+<a name='L258'></a><a href='#L258'>258</a>
+<a name='L259'></a><a href='#L259'>259</a>
+<a name='L260'></a><a href='#L260'>260</a>
+<a name='L261'></a><a href='#L261'>261</a>
+<a name='L262'></a><a href='#L262'>262</a>
+<a name='L263'></a><a href='#L263'>263</a>
+<a name='L264'></a><a href='#L264'>264</a>
+<a name='L265'></a><a href='#L265'>265</a>
+<a name='L266'></a><a href='#L266'>266</a>
+<a name='L267'></a><a href='#L267'>267</a>
+<a name='L268'></a><a href='#L268'>268</a>
+<a name='L269'></a><a href='#L269'>269</a>
+<a name='L270'></a><a href='#L270'>270</a>
+<a name='L271'></a><a href='#L271'>271</a>
+<a name='L272'></a><a href='#L272'>272</a>
+<a name='L273'></a><a href='#L273'>273</a>
+<a name='L274'></a><a href='#L274'>274</a>
+<a name='L275'></a><a href='#L275'>275</a>
+<a name='L276'></a><a href='#L276'>276</a>
+<a name='L277'></a><a href='#L277'>277</a>
+<a name='L278'></a><a href='#L278'>278</a>
+<a name='L279'></a><a href='#L279'>279</a>
+<a name='L280'></a><a href='#L280'>280</a>
+<a name='L281'></a><a href='#L281'>281</a>
+<a name='L282'></a><a href='#L282'>282</a>
+<a name='L283'></a><a href='#L283'>283</a>
+<a name='L284'></a><a href='#L284'>284</a>
+<a name='L285'></a><a href='#L285'>285</a>
+<a name='L286'></a><a href='#L286'>286</a>
+<a name='L287'></a><a href='#L287'>287</a>
+<a name='L288'></a><a href='#L288'>288</a>
+<a name='L289'></a><a href='#L289'>289</a>
+<a name='L290'></a><a href='#L290'>290</a>
+<a name='L291'></a><a href='#L291'>291</a>
+<a name='L292'></a><a href='#L292'>292</a>
+<a name='L293'></a><a href='#L293'>293</a>
+<a name='L294'></a><a href='#L294'>294</a>
+<a name='L295'></a><a href='#L295'>295</a>
+<a name='L296'></a><a href='#L296'>296</a>
+<a name='L297'></a><a href='#L297'>297</a>
+<a name='L298'></a><a href='#L298'>298</a>
+<a name='L299'></a><a href='#L299'>299</a>
+<a name='L300'></a><a href='#L300'>300</a>
+<a name='L301'></a><a href='#L301'>301</a>
+<a name='L302'></a><a href='#L302'>302</a>
+<a name='L303'></a><a href='#L303'>303</a>
+<a name='L304'></a><a href='#L304'>304</a>
+<a name='L305'></a><a href='#L305'>305</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import { listContributorPullRequests, listPullRequestFiles, listRepositories } from "../db/repositories";
+import { sanitizePublicComment } from "../github/commands";
+import {
+  classifyOpenPullRequest,
+  detectPendingPrScenario,
+  DRAFT_TITLE_PATTERN,
+  loadContributorRepoOpenPrSignals,
+  type ClassifiedOpenPullRequest,
+  type PendingPrScenarioDetection,
+} from "../scoring/pending-pr-scenarios";
+import type { CheckSummaryRecord, PullRequestFileRecord, PullRequestRecord, PullRequestReviewRecord } from "../types";
+import { nowIso } from "../utils/json";
+import { buildRoleContext } from "./engine";
+import { isFailingCheckSummary } from "./check-summary";
+import { isCodeFile } from "./local-branch";
+import { isTestPath } from "./test-evidence";
+&nbsp;
+export type OpenPrWorkClassification =
+  | "approved"
+  | "blocked"
+  | "needs_author"
+  | "failing_checks"
+  | "missing_tests"
+  | "duplicate_prone"
+  | "reviewable"
+  | "should_close_or_withdraw"
+  | "maintainer_lane"
+  | "draft";
+&nbsp;
+export type ContributorOpenPrNextStepPacket = {
+  repoFullName: string;
+  number: number;
+  title: string;
+  classification: OpenPrWorkClassification;
+  summary: string;
+  reasons: string[];
+  nextSteps: string[];
+};
+&nbsp;
+export type ContributorOpenPrMonitor = {
+  login: string;
+  generatedAt: string;
+  openPrCount: number;
+  registeredRepoCount: number;
+  cleanupFirst: boolean;
+  summary: string;
+  guidance: string[];
+  pendingScenarios: Array&lt;{ repoFullName: string; detection: PendingPrScenarioDetection }&gt;;
+  pullRequests: ContributorOpenPrNextStepPacket[];
+};
+&nbsp;
+export async function <span class="fstat-no" title="function not covered" >buildContributorOpenPrMonitor(e</span>nv: Env, login: string): Promise&lt;ContributorOpenPrMonitor&gt; {
+  const [pullRequests, repositories] = <span class="cstat-no" title="statement not covered" >await Promise.all([listContributorPullRequests(env, login), listRepositories(env)]);</span>
+  // #5025: scoped to isInstalled, not isRegistered -- every field this monitor produces (classification,
+  // reasons, next steps) is generic PR-hygiene guidance with no gittensor-specific data (no reward-risk, no
+  // decision-pack fields), so it's available to any self-host operator's installed repos regardless of
+  // gittensor-subnet opt-in, consistent with #5021/#5022/#5024's isRegistered-&gt;isInstalled migration.
+  const registered = <span class="cstat-no" title="statement not covered" >new Set(repositories.<span class="fstat-no" title="function not covered" >filter((r</span>epo) =&gt; <span class="cstat-no" title="statement not covered" >repo.isInstalled)</span>.<span class="fstat-no" title="function not covered" >map((r</span>epo) =&gt; <span class="cstat-no" title="statement not covered" >repo.fullName.toLowerCase())</span>);</span>
+  const openByContributor = <span class="cstat-no" title="statement not covered" >pullRequests.<span class="fstat-no" title="function not covered" >filter(</span></span>
+    (pr) =&gt; <span class="cstat-no" title="statement not covered" >pr.state === "open" &amp;&amp; sameLogin(pr.authorLogin, login) &amp;&amp; registered.has(pr.repoFullName.toLowerCase()),</span>
+  );
+&nbsp;
+  const byRepo = <span class="cstat-no" title="statement not covered" >groupByRepo(openByContributor);</span>
+  const pendingScenarios: ContributorOpenPrMonitor["pendingScenarios"] = <span class="cstat-no" title="statement not covered" >[];</span>
+  const packets: ContributorOpenPrNextStepPacket[] = <span class="cstat-no" title="statement not covered" >[];</span>
+&nbsp;
+<span class="cstat-no" title="statement not covered" >  for (const repoOpen of byRepo.values()) {</span>
+    // The bucket is keyed case-insensitively (see groupByRepo); keep one representative casing for
+    // repo-level context, but use each PR's stored casing for exact DB lookups below.
+    const repoFullName = <span class="cstat-no" title="statement not covered" >repoOpen[0]!.repoFullName;</span>
+    const repo = <span class="cstat-no" title="statement not covered" >repositories.<span class="fstat-no" title="function not covered" >find((e</span>ntry) =&gt; <span class="cstat-no" title="statement not covered" >entry.fullName.toLowerCase() === repoFullName.toLowerCase())</span> ?? null;</span>
+    const roleContext = <span class="cstat-no" title="statement not covered" >buildRoleContext({</span>
+      login,
+      repo,
+      repoFullName,
+      pullRequests,
+      issues: [],
+      profile: null,
+    });
+    const signals = <span class="cstat-no" title="statement not covered" >await loadContributorRepoOpenPrSignals(env, repoFullName, repoOpen);</span>
+    const repoPullRequests = <span class="cstat-no" title="statement not covered" >pullRequests.<span class="fstat-no" title="function not covered" >filter((p</span>r) =&gt; <span class="cstat-no" title="statement not covered" >pr.repoFullName.toLowerCase() === repoFullName.toLowerCase())</span>;</span>
+    const duplicateNumbers = <span class="cstat-no" title="statement not covered" >duplicatePronePullNumbers(repoOpen);</span>
+&nbsp;
+<span class="cstat-no" title="statement not covered" >    for (const pr of repoOpen) {</span>
+      const reviews = <span class="cstat-no" title="statement not covered" >signals.reviewsByPullNumber.get(pr.number) ?? [];</span>
+      const checks = <span class="cstat-no" title="statement not covered" >signals.checksByPullNumber.get(pr.number) ?? [];</span>
+      const files = <span class="cstat-no" title="statement not covered" >await listPullRequestFiles(env, pr.repoFullName, pr.number);</span>
+      const classified = <span class="cstat-no" title="statement not covered" >classifyOpenPullRequest({</span>
+        pr,
+        roleContext,
+        reviews,
+        checks,
+        duplicateProne: duplicateNumbers.has(pr.number),
+        missingTests: missingTestsFromFiles(files),
+      });
+<span class="cstat-no" title="statement not covered" >      packets.push(buildNextStepPacket(classified, reviews, checks, duplicateNumbers.has(pr.number), missingTestsFromFiles(files)));</span>
+    }
+&nbsp;
+    const detection = <span class="cstat-no" title="statement not covered" >detectPendingPrScenario({</span>
+      login,
+      repoFullName,
+      pullRequests: repoPullRequests,
+      roleContext,
+      openPrCount: repoOpen.length,
+      reviewsByPullNumber: signals.reviewsByPullNumber,
+      checksByPullNumber: signals.checksByPullNumber,
+    });
+<span class="cstat-no" title="statement not covered" >    if (detection) <span class="cstat-no" title="statement not covered" >pendingScenarios.push({ repoFullName, detection });</span></span>
+  }
+&nbsp;
+<span class="cstat-no" title="statement not covered" >  packets.<span class="fstat-no" title="function not covered" >sort((l</span>eft, right) =&gt; <span class="cstat-no" title="statement not covered" >priorityRank(left.classification) - priorityRank(right.classification) || left.repoFullName.localeCompare(right.repoFullName) || left.number - right.number)</span>;</span>
+&nbsp;
+  const cleanupFirst = <span class="cstat-no" title="statement not covered" >packets.<span class="fstat-no" title="function not covered" >some((e</span>ntry) =&gt;</span>
+<span class="cstat-no" title="statement not covered" >    ["needs_author", "failing_checks", "duplicate_prone", "should_close_or_withdraw", "blocked"].includes(entry.classification),</span>
+  );
+  const approvedCount = <span class="cstat-no" title="statement not covered" >packets.<span class="fstat-no" title="function not covered" >filter((e</span>ntry) =&gt; <span class="cstat-no" title="statement not covered" >entry.classification === "approved")</span>.length;</span>
+  const summary = <span class="cstat-no" title="statement not covered" >summarizeMonitor(openByContributor.length, approvedCount, cleanupFirst);</span>
+  const guidance = <span class="cstat-no" title="statement not covered" >buildMonitorGuidance(packets, cleanupFirst);</span>
+&nbsp;
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    login,
+    generatedAt: nowIso(),
+    openPrCount: openByContributor.length,
+    registeredRepoCount: registered.size,
+    cleanupFirst,
+    summary: sanitizePublicComment(summary),
+    guidance: guidance.<span class="fstat-no" title="function not covered" >map((l</span>ine) =&gt; <span class="cstat-no" title="statement not covered" >sanitizePublicComment(line))</span>,
+    pendingScenarios,
+    pullRequests: packets,
+  };
+}
+&nbsp;
+export function <span class="fstat-no" title="function not covered" >mapPendingClassToWorkClassification(</span>
+  classified: ClassifiedOpenPullRequest,
+  args: { changeRequestCount: number; checkFailureCount: number; duplicateProne: boolean; missingTests: boolean },
+): OpenPrWorkClassification {
+<span class="cstat-no" title="statement not covered" >  if (classified.classification === "maintainer_lane") <span class="cstat-no" title="statement not covered" >return "maintainer_lane";</span></span>
+<span class="cstat-no" title="statement not covered" >  if (classified.classification === "draft") <span class="cstat-no" title="statement not covered" >return "draft";</span></span>
+<span class="cstat-no" title="statement not covered" >  if (classified.classification === "stale_likely_close") <span class="cstat-no" title="statement not covered" >return "should_close_or_withdraw";</span></span>
+<span class="cstat-no" title="statement not covered" >  if (args.duplicateProne) <span class="cstat-no" title="statement not covered" >return "duplicate_prone";</span></span>
+<span class="cstat-no" title="statement not covered" >  if (args.checkFailureCount &gt; 0) <span class="cstat-no" title="statement not covered" >return "failing_checks";</span></span>
+<span class="cstat-no" title="statement not covered" >  if (args.changeRequestCount &gt; 0) <span class="cstat-no" title="statement not covered" >return "needs_author";</span></span>
+<span class="cstat-no" title="statement not covered" >  if (args.missingTests) <span class="cstat-no" title="statement not covered" >return "missing_tests";</span></span>
+<span class="cstat-no" title="statement not covered" >  if (classified.classification === "merge_ready") <span class="cstat-no" title="statement not covered" >return "approved";</span></span>
+<span class="cstat-no" title="statement not covered" >  if (classified.classification === "blocked") <span class="cstat-no" title="statement not covered" >return "blocked";</span></span>
+<span class="cstat-no" title="statement not covered" >  return "reviewable";</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >buildNextStepPacket(</span>
+  classified: ClassifiedOpenPullRequest,
+  reviews: PullRequestReviewRecord[],
+  checks: CheckSummaryRecord[],
+  duplicateProne: boolean,
+  missingTests: boolean,
+): ContributorOpenPrNextStepPacket {
+  const changeRequestCount = <span class="cstat-no" title="statement not covered" >reviews.<span class="fstat-no" title="function not covered" >filter((r</span>eview) =&gt; <span class="cstat-no" title="statement not covered" >review.state.toUpperCase() === "CHANGES_REQUESTED")</span>.length;</span>
+  const checkFailureCount = <span class="cstat-no" title="statement not covered" >checks.filter(isFailingCheckSummary).length;</span>
+  const classification = <span class="cstat-no" title="statement not covered" >mapPendingClassToWorkClassification(classified, { changeRequestCount, checkFailureCount, duplicateProne, missingTests });</span>
+  const nextSteps = <span class="cstat-no" title="statement not covered" >nextStepsForClassification(classification, classified.repoFullName, classified.number);</span>
+  const summary = <span class="cstat-no" title="statement not covered" >`${classified.repoFullName}#${classified.number}: ${classification.replace(/_/g, " ")} — ${classified.title}`;</span>
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    repoFullName: classified.repoFullName,
+    number: classified.number,
+    title: classified.title,
+    classification,
+    summary: sanitizePublicComment(summary),
+    reasons: classified.reasons.<span class="fstat-no" title="function not covered" >map((r</span>eason) =&gt; <span class="cstat-no" title="statement not covered" >sanitizePublicComment(reason))</span>,
+    nextSteps: nextSteps.<span class="fstat-no" title="function not covered" >map((s</span>tep) =&gt; <span class="cstat-no" title="statement not covered" >sanitizePublicComment(step))</span>,
+  };
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >nextStepsForClassification(c</span>lassification: OpenPrWorkClassification, repoFullName: string, number: number): string[] {
+  const ref = <span class="cstat-no" title="statement not covered" >`${repoFullName}#${number}`;</span>
+<span class="cstat-no" title="statement not covered" >  switch (classification) {</span>
+    case "approved":
+<span class="cstat-no" title="statement not covered" >      return [`Confirm CI is green on ${ref}, then nudge maintainers or wait for merge.`, `Avoid opening new PRs in this repo until ${ref} lands or you close it.`];</span>
+    case "failing_checks":
+<span class="cstat-no" title="statement not covered" >      return [`Fix failing checks on ${ref} before requesting another review.`, `Re-run CI after pushing fixes; do not open parallel PRs for the same fix.`];</span>
+    case "needs_author":
+<span class="cstat-no" title="statement not covered" >      return [`Address review comments on ${ref} and push updates.`, `Reply on the PR thread summarizing what changed.`];</span>
+    case "missing_tests":
+<span class="cstat-no" title="statement not covered" >      return [`Add or update tests on ${ref} if the repo expects test coverage.`, `Note test commands run in the PR description.`];</span>
+    case "duplicate_prone":
+<span class="cstat-no" title="statement not covered" >      return [`Check overlap with other open PRs in ${repoFullName}; close or consolidate duplicates.`, `Comment on ${ref} linking the canonical PR if one exists.`];</span>
+    case "should_close_or_withdraw":
+<span class="cstat-no" title="statement not covered" >      return [`Update ${ref} with a short status comment or close it if no longer needed.`, `Do not open new work until stale queue pressure is reduced.`];</span>
+    case "maintainer_lane":
+<span class="cstat-no" title="statement not covered" >      return [`Treat ${ref} as maintainer/repo-owner work, not normal outside-contributor mining evidence.`, `Focus on repo health, intake quality, or maintainer-cut readiness instead of score chasing.`];</span>
+    case "draft":
+<span class="cstat-no" title="statement not covered" >      return [`Mark ${ref} ready for review when complete, or close the draft.`, `Ensure linked issues and test plan are filled before undrafting.`];</span>
+    case "reviewable":
+<span class="cstat-no" title="statement not covered" >      return [`Polish ${ref} description, link issues, and confirm lane fit before pinging reviewers.`, `Keep only one active PR per narrow topic in ${repoFullName}.`];</span>
+    case "blocked":
+    default:
+<span class="cstat-no" title="statement not covered" >      return [`Resolve blockers on ${ref} (reviews, checks, or missing context) before expanding scope.`, `Run local preflight again after updates.`];</span>
+  }
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >summarizeMonitor(o</span>penCount: number, approvedCount: number, cleanupFirst: boolean): string {
+<span class="cstat-no" title="statement not covered" >  if (openCount === 0) <span class="cstat-no" title="statement not covered" >return "No open pull requests on registered repos in cache.";</span></span>
+<span class="cstat-no" title="statement not covered" >  if (cleanupFirst) {</span>
+<span class="cstat-no" title="statement not covered" >    return `${openCount} open PR(s) across registered repos; clean up existing work before opening more (${approvedCount} look merge-ready).`;</span>
+  }
+<span class="cstat-no" title="statement not covered" >  return `${openCount} open PR(s) across registered repos; ${approvedCount} look merge-ready from cached metadata.`;</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >buildMonitorGuidance(p</span>ackets: ContributorOpenPrNextStepPacket[], cleanupFirst: boolean): string[] {
+  const lines: string[] = <span class="cstat-no" title="statement not covered" >[];</span>
+<span class="cstat-no" title="statement not covered" >  if (cleanupFirst) <span class="cstat-no" title="statement not covered" >lines.push("Prioritize existing open PRs before starting new issues or branches.");</span></span>
+  const failing = <span class="cstat-no" title="statement not covered" >packets.<span class="fstat-no" title="function not covered" >filter((e</span>ntry) =&gt; <span class="cstat-no" title="statement not covered" >entry.classification === "failing_checks")</span>.length;</span>
+  const needsAuthor = <span class="cstat-no" title="statement not covered" >packets.<span class="fstat-no" title="function not covered" >filter((e</span>ntry) =&gt; <span class="cstat-no" title="statement not covered" >entry.classification === "needs_author")</span>.length;</span>
+  const duplicate = <span class="cstat-no" title="statement not covered" >packets.<span class="fstat-no" title="function not covered" >filter((e</span>ntry) =&gt; <span class="cstat-no" title="statement not covered" >entry.classification === "duplicate_prone")</span>.length;</span>
+<span class="cstat-no" title="statement not covered" >  if (failing &gt; 0) <span class="cstat-no" title="statement not covered" >lines.push(`${failing} PR(s) need failing checks addressed first.`);</span></span>
+<span class="cstat-no" title="statement not covered" >  if (needsAuthor &gt; 0) <span class="cstat-no" title="statement not covered" >lines.push(`${needsAuthor} PR(s) need author follow-up on review comments.`);</span></span>
+<span class="cstat-no" title="statement not covered" >  if (duplicate &gt; 0) <span class="cstat-no" title="statement not covered" >lines.push(`${duplicate} PR(s) look duplicate-prone; consolidate before adding more queue load.`);</span></span>
+<span class="cstat-no" title="statement not covered" >  if (packets.<span class="fstat-no" title="function not covered" >some((e</span>ntry) =&gt; <span class="cstat-no" title="statement not covered" >entry.classification === "approved")</span>) {</span>
+<span class="cstat-no" title="statement not covered" >    lines.push("Merge-ready PRs can improve pending-merge score projections after they land.");</span>
+  }
+<span class="cstat-no" title="statement not covered" >  if (lines.length === 0) <span class="cstat-no" title="statement not covered" >lines.push("Queue looks manageable from cached metadata; still run preflight before new PRs.");</span></span>
+<span class="cstat-no" title="statement not covered" >  return lines;</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >groupByRepo(p</span>ullRequests: PullRequestRecord[]): Map&lt;string, PullRequestRecord[]&gt; {
+  const map = <span class="cstat-no" title="statement not covered" >new Map&lt;string, PullRequestRecord[]&gt;();</span>
+<span class="cstat-no" title="statement not covered" >  for (const pr of pullRequests) {</span>
+    // Key case-insensitively (GitHub repo names are case-insensitive), matching the registered-repo and
+    // repo-lookup handling elsewhere in buildContributorOpenPrMonitor — otherwise case-variant repoFullName
+    // values for one repo split into separate groups, under-counting open PRs and missing cross-case duplicates.
+    const key = <span class="cstat-no" title="statement not covered" >pr.repoFullName.toLowerCase();</span>
+    const bucket = <span class="cstat-no" title="statement not covered" >map.get(key) ?? [];</span>
+<span class="cstat-no" title="statement not covered" >    bucket.push(pr);</span>
+<span class="cstat-no" title="statement not covered" >    map.set(key, bucket);</span>
+  }
+<span class="cstat-no" title="statement not covered" >  return map;</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >duplicatePronePullNumbers(o</span>penPullRequests: PullRequestRecord[]): Set&lt;number&gt; {
+  const flagged = <span class="cstat-no" title="statement not covered" >new Set&lt;number&gt;();</span>
+  const byNormalizedTitle = <span class="cstat-no" title="statement not covered" >new Map&lt;string, PullRequestRecord[]&gt;();</span>
+<span class="cstat-no" title="statement not covered" >  for (const pr of openPullRequests) {</span>
+    const key = <span class="cstat-no" title="statement not covered" >normalizeTitle(pr.title);</span>
+    const bucket = <span class="cstat-no" title="statement not covered" >byNormalizedTitle.get(key) ?? [];</span>
+<span class="cstat-no" title="statement not covered" >    bucket.push(pr);</span>
+<span class="cstat-no" title="statement not covered" >    byNormalizedTitle.set(key, bucket);</span>
+  }
+<span class="cstat-no" title="statement not covered" >  for (const bucket of byNormalizedTitle.values()) {</span>
+<span class="cstat-no" title="statement not covered" >    if (bucket.length &lt; 2) <span class="cstat-no" title="statement not covered" >continue;</span></span>
+<span class="cstat-no" title="statement not covered" >    for (const pr of bucket) <span class="cstat-no" title="statement not covered" >flagged.add(pr.number);</span></span>
+  }
+  const wip = <span class="cstat-no" title="statement not covered" >openPullRequests.<span class="fstat-no" title="function not covered" >filter((p</span>r) =&gt; <span class="cstat-no" title="statement not covered" >pr.labels.<span class="fstat-no" title="function not covered" >some((l</span>abel) =&gt; <span class="cstat-no" title="statement not covered" >/^(wip|duplicate)$/i.test(label))</span>)</span>;</span>
+<span class="cstat-no" title="statement not covered" >  for (const pr of wip) <span class="cstat-no" title="statement not covered" >flagged.add(pr.number);</span></span>
+<span class="cstat-no" title="statement not covered" >  return flagged;</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >normalizeTitle(t</span>itle: string): string {
+<span class="cstat-no" title="statement not covered" >  return title</span>
+    .toLowerCase()
+    .replace(DRAFT_TITLE_PATTERN, "")
+    .replace(/^wip:\s*/i, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >missingTestsFromFiles(f</span>iles: PullRequestFileRecord[]): boolean {
+<span class="cstat-no" title="statement not covered" >  if (files.length === 0) <span class="cstat-no" title="statement not covered" >return false;</span></span>
+  // "Code" is genuine source (isCodeFile), not merely "anything that isn't a test": a docs-, lockfile-, or
+  // config-only PR has no code to cover and must not be flagged missing_tests. Mirrors the isCodeFile code-side
+  // used by slop.ts's buildMissingTestEvidenceFinding and the local-branch/local-scorer source predicates.
+  const codeFiles = <span class="cstat-no" title="statement not covered" >files.<span class="fstat-no" title="function not covered" >filter((f</span>ile) =&gt; <span class="cstat-no" title="statement not covered" >file.path &amp;&amp; isCodeFile(file.path))</span>;</span>
+  const testFiles = <span class="cstat-no" title="statement not covered" >files.<span class="fstat-no" title="function not covered" >filter((f</span>ile) =&gt; <span class="cstat-no" title="statement not covered" >file.path &amp;&amp; isTestPath(file.path))</span>;</span>
+<span class="cstat-no" title="statement not covered" >  return codeFiles.length &gt; 0 &amp;&amp; testFiles.length === 0;</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >priorityRank(c</span>lassification: OpenPrWorkClassification): number {
+  const order: OpenPrWorkClassification[] = <span class="cstat-no" title="statement not covered" >[</span>
+    "failing_checks",
+    "needs_author",
+    "duplicate_prone",
+    "missing_tests",
+    "blocked",
+    "should_close_or_withdraw",
+    "draft",
+    "reviewable",
+    "approved",
+    "maintainer_lane",
+  ];
+  const index = <span class="cstat-no" title="statement not covered" >order.indexOf(classification);</span>
+<span class="cstat-no" title="statement not covered" >  return index === -1 ? order.length : index;</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >sameLogin(v</span>alue: string | null | undefined, login: string): boolean {
+<span class="cstat-no" title="statement not covered" >  return Boolean(value &amp;&amp; value.toLowerCase() === login.toLowerCase());</span>
+}
+&nbsp;
+export const __contributorOpenPrMonitorInternals = <span class="cstat-no" title="statement not covered" >{</span>
+  mapPendingClassToWorkClassification,
+  nextStepsForClassification,
+  summarizeMonitor,
+  buildMonitorGuidance,
+  duplicatePronePullNumbers,
+  missingTestsFromFiles,
+  priorityRank,
+  buildNextStepPacket,
+};
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    

@@ -1,0 +1,433 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/review/repo-doc-render.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/review</a> repo-doc-render.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/27</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/22</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/7</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/20</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Repo-doc content rendering (#3000/#3004, part of the repo-doc generation roadmap #2993). Turns a `RepoProfile`
+// (src/review/repo-profile.ts) into the markdown body of a generated AGENTS.md, wrapped in a start/end marker
+// pair (src/review/generated-doc-refresh.ts) so a refresh can recompute just this section and leave anything a
+// maintainer added outside it untouched. Pure and deterministic: no GitHub calls, no AI -- and deliberately no
+// embedded wall-clock timestamp, since that would make the SAME profile render different content on every call
+// and defeat the refresh module's byte-for-byte "did anything actually change" comparison (#3004). The
+// PR-delivery module (src/github/repo-doc-pr.ts) owns everything about HOW the rendered content reaches a repo.
+//
+// FAILS CLOSED WITH THE PROFILE: a `present: false` profile (no RAG index yet) renders nothing (`null`), mirroring
+// #2999's own fail-closed design -- there is no partial or placeholder AGENTS.md, only a real one or none at all.
+import type { RepoProfile, RepoProfileCommands, RepoProfileFileNamingStyle, RepoProfileTestFileConvention } from "./repo-profile";
+import type { GeneratedDocMarkers } from "./generated-doc-refresh";
+&nbsp;
+/** HTML-comment marker pair bracketing the machine-generated section of every AGENTS.md this engine writes.
+ *  Content outside this pair (added by a maintainer before the start marker or after the end marker) is treated
+ *  as permanently manual and is never touched by a refresh (#3004) -- see generated-doc-refresh.ts. */
+export const REPO_DOC_MARKER_START = <span class="cstat-no" title="statement not covered" >"&lt;!-- gittensory-repo-doc:start --&gt;";</span>
+export const REPO_DOC_MARKER_END = <span class="cstat-no" title="statement not covered" >"&lt;!-- gittensory-repo-doc:end --&gt;";</span>
+export const REPO_DOC_MARKERS: GeneratedDocMarkers = <span class="cstat-no" title="statement not covered" >{ start: REPO_DOC_MARKER_START, end: REPO_DOC_MARKER_END };</span>
+&nbsp;
+const MAX_RENDERED_TOP_LEVEL_DIRECTORIES = <span class="cstat-no" title="statement not covered" >12;</span>
+&nbsp;
+const FILE_NAMING_STYLE_LABELS: Record&lt;RepoProfileFileNamingStyle, string&gt; = <span class="cstat-no" title="statement not covered" >{</span>
+  "kebab-case": "kebab-case (`my-file.ts`)",
+  camelCase: "camelCase (`myFile.ts`)",
+  snake_case: "snake_case (`my_file.ts`)",
+  PascalCase: "PascalCase (`MyFile.ts`)",
+  mixed: "mixed -- no single dominant style detected",
+  unknown: "not detected",
+};
+&nbsp;
+const TEST_FILE_CONVENTION_LABELS: Record&lt;RepoProfileTestFileConvention, string&gt; = <span class="cstat-no" title="statement not covered" >{</span>
+  "dot-test-suffix": "`*.test.*` files",
+  "dot-spec-suffix": "`*.spec.*` files",
+  "tests-directory": "a `tests/`/`__tests__/` directory",
+  "none-detected": "not detected",
+};
+&nbsp;
+function <span class="fstat-no" title="function not covered" >renderCommandList(l</span>abel: string, commands: string[], packageManager: RepoProfileCommands["packageManager"]): string {
+<span class="cstat-no" title="statement not covered" >  if (commands.length === 0) <span class="cstat-no" title="statement not covered" >return `- ${label}: none detected`;</span></span>
+  const runner = <span class="cstat-no" title="statement not covered" >packageManager ?? "npm";</span>
+  const items = <span class="cstat-no" title="statement not covered" >commands.<span class="fstat-no" title="function not covered" >map((n</span>ame) =&gt; <span class="cstat-no" title="statement not covered" >`\`${runner} run ${name}\``)</span>.join(", ");</span>
+<span class="cstat-no" title="statement not covered" >  return `- ${label}: ${items}`;</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >renderTopLevelDirectories(p</span>rofile: Extract&lt;RepoProfile, { present: true }&gt;): string {
+  const entries = <span class="cstat-no" title="statement not covered" >profile.architecture.topLevelDirectories.slice(0, MAX_RENDERED_TOP_LEVEL_DIRECTORIES);</span>
+  const lines = <span class="cstat-no" title="statement not covered" >entries.<span class="fstat-no" title="function not covered" >map((e</span>ntry) =&gt; <span class="cstat-no" title="statement not covered" >`- \`${entry.path}\` -- ${entry.fileCount} file${entry.fileCount === 1 ? "" : "s"}`)</span>;</span>
+  const omitted = <span class="cstat-no" title="statement not covered" >profile.architecture.topLevelDirectories.length - entries.length;</span>
+<span class="cstat-no" title="statement not covered" >  if (omitted &gt; 0) <span class="cstat-no" title="statement not covered" >lines.push(`- (${omitted} more, not shown)`);</span></span>
+<span class="cstat-no" title="statement not covered" >  return lines.join("\n");</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >renderCiWorkflowFiles(c</span>iWorkflowFiles: string[]): string {
+<span class="cstat-no" title="statement not covered" >  if (ciWorkflowFiles.length === 0) <span class="cstat-no" title="statement not covered" >return "- none indexed";</span></span>
+<span class="cstat-no" title="statement not covered" >  return ciWorkflowFiles.<span class="fstat-no" title="function not covered" >map((p</span>ath) =&gt; <span class="cstat-no" title="statement not covered" >`- \`${path}\``)</span>.join("\n");</span>
+}
+&nbsp;
+/**
+ * Render the markdown body of a generated AGENTS.md from a repo profile, or `null` when the profile has no data
+ * (`present: false`) -- callers must treat `null` as "do not generate", not as an empty-but-valid document. The
+ * ENTIRE return value is the machine-generated section: it both starts and ends with the marker pair
+ * (`REPO_DOC_MARKERS`), so on a first-run file this IS the whole document, and on a refresh
+ * (src/review/generated-doc-refresh.ts) it is exactly the span that gets recomputed -- anything a maintainer
+ * adds before the start marker or after the end marker in the delivered file is never part of this output and
+ * is therefore never touched.
+ *
+ * `siteUrl` is resolved by the caller from `env.PUBLIC_SITE_ORIGIN ?? LOOPOVER_SITE_URL` (#4613), so a
+ * self-hoster's own domain reaches the attribution link instead of `loopover.ai`. Threading it as a
+ * plain string argument (rather than an `env` slice) keeps this function's purity/determinism contract intact --
+ * the SAME `(profile, siteUrl)` pair always renders the SAME output, which is all the diff-aware refresh in
+ * `generated-doc-refresh.ts` needs for its byte-for-byte comparison.
+ */
+export function <span class="fstat-no" title="function not covered" >renderRepoDocContent(p</span>rofile: RepoProfile, siteUrl: string): string | null {
+<span class="cstat-no" title="statement not covered" >  if (!profile.present) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+  const { architecture, conventions, commands, contributionWorkflow } = <span class="cstat-no" title="statement not covered" >profile;</span>
+<span class="cstat-no" title="statement not covered" >  return `${REPO_DOC_MARKER_START}</span>
+# AGENTS.md
+&nbsp;
+This file is generated by [LoopOver](${siteUrl}) from a profile of this repository's own
+code -- it is not hand-written and not a generic template. Content between the markers above and below this
+line is recomputed on every refresh; add anything you want kept forever outside them instead.
+&nbsp;
+## Architecture
+&nbsp;
+${architecture.indexedFileCount} indexed source file${architecture.indexedFileCount === 1 ? "" : "s"} across ${architecture.topLevelDirectories.length} top-level director${architecture.topLevelDirectories.length === 1 ? "y" : "ies"}:
+&nbsp;
+${renderTopLevelDirectories(profile)}
+&nbsp;
+## Conventions
+&nbsp;
+- File naming: ${FILE_NAMING_STYLE_LABELS[conventions.fileNamingStyle]}
+- Test files: ${TEST_FILE_CONVENTION_LABELS[conventions.testFileConvention]}
+&nbsp;
+## Commands
+&nbsp;
+- Package manager: ${commands.packageManager ?? "not detected"}
+${renderCommandList("Build", commands.buildCommands, commands.packageManager)}
+${renderCommandList("Test", commands.testCommands, commands.packageManager)}
+${renderCommandList("Lint", commands.lintCommands, commands.packageManager)}
+&nbsp;
+## Contribution workflow
+&nbsp;
+- CI publishes a required check: ${contributionWorkflow.gatePublishesCheck ? "yes" : "no"}
+- Linked-issue policy: ${contributionWorkflow.linkedIssuePolicy}
+- Requires a linked issue: ${contributionWorkflow.linkedIssueGateMode === "block" ? "yes" : "no"}
+- CI workflow files:
+&nbsp;
+${renderCiWorkflowFiles(contributionWorkflow.ciWorkflowFiles)}
+&nbsp;
+---
+&nbsp;
+Generated by LoopOver from this repository's own indexed code.
+${REPO_DOC_MARKER_END}
+`;
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    

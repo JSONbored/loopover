@@ -1,0 +1,712 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for packages/loopover-engine/src/miner/attempt-db-fork.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../../../prettify.css" />
+    <link rel="stylesheet" href="../../../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../../../index.html">All files</a> / <a href="index.html">packages/loopover-engine/src/miner</a> attempt-db-fork.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/80</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/34</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/18</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/65</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a>
+<a name='L185'></a><a href='#L185'>185</a>
+<a name='L186'></a><a href='#L186'>186</a>
+<a name='L187'></a><a href='#L187'>187</a>
+<a name='L188'></a><a href='#L188'>188</a>
+<a name='L189'></a><a href='#L189'>189</a>
+<a name='L190'></a><a href='#L190'>190</a>
+<a name='L191'></a><a href='#L191'>191</a>
+<a name='L192'></a><a href='#L192'>192</a>
+<a name='L193'></a><a href='#L193'>193</a>
+<a name='L194'></a><a href='#L194'>194</a>
+<a name='L195'></a><a href='#L195'>195</a>
+<a name='L196'></a><a href='#L196'>196</a>
+<a name='L197'></a><a href='#L197'>197</a>
+<a name='L198'></a><a href='#L198'>198</a>
+<a name='L199'></a><a href='#L199'>199</a>
+<a name='L200'></a><a href='#L200'>200</a>
+<a name='L201'></a><a href='#L201'>201</a>
+<a name='L202'></a><a href='#L202'>202</a>
+<a name='L203'></a><a href='#L203'>203</a>
+<a name='L204'></a><a href='#L204'>204</a>
+<a name='L205'></a><a href='#L205'>205</a>
+<a name='L206'></a><a href='#L206'>206</a>
+<a name='L207'></a><a href='#L207'>207</a>
+<a name='L208'></a><a href='#L208'>208</a>
+<a name='L209'></a><a href='#L209'>209</a>
+<a name='L210'></a><a href='#L210'>210</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Neon branch-per-attempt disposable DB fork for APR execution (#7858, implements #7649's ratified decision).
+// Mirrors worktree-pool.ts's per-attempt code-checkout isolation one level deeper: where that module gives
+// each attempt its own git worktree (a filesystem-level fork), this module gives an attempt its own Neon
+// branch (a storage-level fork) off the OPERATOR's already-provisioned tenant branch -- never off Neon's
+// project-level default branch, and never shared between concurrent attempts.
+//
+// Self-host scope only (see this issue's own scope note): a bare containerized Node.js process connects to a
+// Neon branch over the plain Postgres wire protocol via `connectionString` below -- no Cloudflare Hyperdrive
+// binding is used or required. Hyperdrive is an optional, Workers-runtime-specific connection-pooling layer;
+// Neon branches are independently connectable with any standard Postgres client regardless of whether one
+// exists. The hosted path (control-plane's AmsTenantContainer) has its own separate, still-open blocker before
+// ANY database credential can reach a running hosted container at all (#8202) -- unrelated to this module.
+//
+// Endpoint paths/response shapes below mirror control-plane/src/neon-database-driver.ts's already-reviewed
+// pattern (Neon's public v2 API, https://api-docs.neon.tech/reference, as documented at the time this was
+// written) -- same caveat that file states applies here too: verify against a live account before the first
+// real deploy; the test suite mocks every call, no live Neon credentials are used anywhere in this repo.
+import { createHash } from "node:crypto";
+&nbsp;
+const DEFAULT_API_BASE_URL = <span class="cstat-no" title="statement not covered" >"https://console.neon.tech/api/v2";</span>
+const DEFAULT_TIMEOUT_MS = <span class="cstat-no" title="statement not covered" >10_000;</span>
+const DEFAULT_OPERATION_POLL_INTERVAL_MS = <span class="cstat-no" title="statement not covered" >500;</span>
+const DEFAULT_OPERATION_POLL_TIMEOUT_MS = <span class="cstat-no" title="statement not covered" >30_000;</span>
+&nbsp;
+export type AttemptDbForkConfig = {
+  apiKey: string;
+  projectId: string;
+  /** The operator's own already-provisioned Neon branch ID to fork attempt branches FROM -- never Neon's
+   *  project-level default branch, so an attempt fork always starts from the operator's real, current tenant
+   *  data, not an unrelated/empty baseline. */
+  parentBranchId: string;
+  /** Override for tests only -- production always uses Neon's real API. */
+  apiBaseUrl?: string;
+  /** Override for tests only -- keeps operation-polling tests fast. */
+  operationPollIntervalMs?: number;
+  operationPollTimeoutMs?: number;
+};
+&nbsp;
+export type AttemptDbFork = {
+  branchId: string;
+  connectionString: string;
+};
+&nbsp;
+type NeonOperation = { id: string; status: string };
+type NeonBranch = { id: string; name: string };
+type NeonEndpoint = { host: string };
+type NeonRole = { name: string; password?: string };
+&nbsp;
+// Neon branch names are case-sensitive and length-limited (63 chars) -- mirrors neon-database-driver.ts's own
+// #8026 collision-guard reasoning: only truncate names that actually need it, and suffix a truncated one with
+// a short hash of the untruncated name so two long, prefix-similar attempt ids can never collide on the same
+// branch name.
+const NEON_BRANCH_NAME_MAX_LENGTH = <span class="cstat-no" title="statement not covered" >63;</span>
+const NEON_BRANCH_NAME_COLLISION_SUFFIX_LENGTH = <span class="cstat-no" title="statement not covered" >8;</span>
+&nbsp;
+function <span class="fstat-no" title="function not covered" >sanitizeForBranchName(r</span>aw: string): string {
+<span class="cstat-no" title="statement not covered" >  return raw</span>
+    .toLowerCase()
+    .replaceAll(/[^a-z0-9_-]+/g, "-")
+    .replaceAll(/-{2,}/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >branchNameFor(a</span>ttemptId: string): string {
+  const sanitized = <span class="cstat-no" title="statement not covered" >sanitizeForBranchName(`attempt-${attemptId}`);</span>
+<span class="cstat-no" title="statement not covered" >  if (sanitized.length &lt;= NEON_BRANCH_NAME_MAX_LENGTH) <span class="cstat-no" title="statement not covered" >return sanitized;</span></span>
+  const suffix = <span class="cstat-no" title="statement not covered" >createHash("sha256").update(sanitized).digest("hex").slice(0, NEON_BRANCH_NAME_COLLISION_SUFFIX_LENGTH);</span>
+  const prefixLength = <span class="cstat-no" title="statement not covered" >NEON_BRANCH_NAME_MAX_LENGTH - 1 - suffix.length;</span>
+<span class="cstat-no" title="statement not covered" >  return `${sanitized.slice(0, prefixLength)}-${suffix}`;</span>
+}
+&nbsp;
+/** Every attempt branch's role is named identically to its branch -- one branch, one role, no separate naming
+ *  scheme to keep in sync (same convention as neon-database-driver.ts's tenant-level roleNameFor). */
+function <span class="fstat-no" title="function not covered" >roleNameForBranch(b</span>ranchName: string): string {
+<span class="cstat-no" title="statement not covered" >  return branchName;</span>
+}
+&nbsp;
+class NeonApiError extends Error {
+<span class="fstat-no" title="function not covered" >  constructor(m</span>ethod: string, path: string, status: number, body: string) {
+<span class="cstat-no" title="statement not covered" >    super(`Neon API ${method} ${path} failed (${status}): ${body.slice(0, 500)}`);</span>
+<span class="cstat-no" title="statement not covered" >    this.name = "NeonApiError";</span>
+  }
+}
+&nbsp;
+async function <span class="fstat-no" title="function not covered" >neonFetch&lt;T&gt;(c</span>onfig: AttemptDbForkConfig, method: string, path: string, body?: unknown): Promise&lt;T&gt; {
+  const baseUrl = <span class="cstat-no" title="statement not covered" >config.apiBaseUrl ?? DEFAULT_API_BASE_URL;</span>
+  const response = <span class="cstat-no" title="statement not covered" >await fetch(`${baseUrl}${path}`, {</span>
+    method,
+    headers: {
+      authorization: `Bearer ${config.apiKey}`,
+      "content-type": "application/json",
+      accept: "application/json",
+    },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+  });
+  const text = <span class="cstat-no" title="statement not covered" >await response.text();</span>
+<span class="cstat-no" title="statement not covered" >  if (!response.ok) <span class="cstat-no" title="statement not covered" >throw new NeonApiError(method, path, response.status, text);</span></span>
+<span class="cstat-no" title="statement not covered" >  return (text ? JSON.parse(text) : undefined) as T;</span>
+}
+&nbsp;
+/** Same async-operation-polling contract as neon-database-driver.ts's identical helper: branch/role mutations
+ *  return pending `operations[]` that must reach `"finished"` before the resource is actually usable. */
+async function <span class="fstat-no" title="function not covered" >waitForOperations(c</span>onfig: AttemptDbForkConfig, operations: readonly NeonOperation[]): Promise&lt;void&gt; {
+  const intervalMs = <span class="cstat-no" title="statement not covered" >config.operationPollIntervalMs ?? DEFAULT_OPERATION_POLL_INTERVAL_MS;</span>
+  const timeoutMs = <span class="cstat-no" title="statement not covered" >config.operationPollTimeoutMs ?? DEFAULT_OPERATION_POLL_TIMEOUT_MS;</span>
+  const deadline = <span class="cstat-no" title="statement not covered" >Date.now() + timeoutMs;</span>
+  let pending = <span class="cstat-no" title="statement not covered" >operations.<span class="fstat-no" title="function not covered" >filter((o</span>peration) =&gt; <span class="cstat-no" title="statement not covered" >operation.status !== "finished")</span>;</span>
+<span class="cstat-no" title="statement not covered" >  while (pending.length &gt; 0) {</span>
+<span class="cstat-no" title="statement not covered" >    if (Date.now() &gt;= deadline) {</span>
+<span class="cstat-no" title="statement not covered" >      throw new Error(`Neon operation(s) did not finish within ${timeoutMs}ms: ${pending.<span class="fstat-no" title="function not covered" >map((o</span>peration) =&gt; <span class="cstat-no" title="statement not covered" >operation.id)</span>.join(", ")}`);</span>
+    }
+<span class="cstat-no" title="statement not covered" >    await new <span class="fstat-no" title="function not covered" >Promise((r</span>esolve) =&gt; <span class="cstat-no" title="statement not covered" >setTimeout(resolve, intervalMs))</span>;</span>
+    const refreshed = <span class="cstat-no" title="statement not covered" >await Promise.all(</span>
+      pending.<span class="fstat-no" title="function not covered" >map((o</span>peration) =&gt; <span class="cstat-no" title="statement not covered" >neonFetch&lt;{ operation: NeonOperation }&gt;(config, "GET", `/projects/${config.projectId}/operations/${operation.id}`))</span>,
+    );
+<span class="cstat-no" title="statement not covered" >    for (const { operation } of refreshed) {</span>
+<span class="cstat-no" title="statement not covered" >      if (operation.status === "failed") <span class="cstat-no" title="statement not covered" >throw new Error(`Neon operation ${operation.id} failed`);</span></span>
+    }
+<span class="cstat-no" title="statement not covered" >    pending = refreshed.<span class="fstat-no" title="function not covered" >map(({</span> operation }) =&gt; <span class="cstat-no" title="statement not covered" >operation)</span>.<span class="fstat-no" title="function not covered" >filter((o</span>peration) =&gt; <span class="cstat-no" title="statement not covered" >operation.status !== "finished")</span>;</span>
+  }
+}
+&nbsp;
+async function <span class="fstat-no" title="function not covered" >findBranchByName(c</span>onfig: AttemptDbForkConfig, name: string): Promise&lt;NeonBranch | undefined&gt; {
+  const { branches } = <span class="cstat-no" title="statement not covered" >await neonFetch&lt;{ branches: NeonBranch[] }&gt;(config, "GET", `/projects/${config.projectId}/branches`);</span>
+<span class="cstat-no" title="statement not covered" >  return branches.<span class="fstat-no" title="function not covered" >find((b</span>ranch) =&gt; <span class="cstat-no" title="statement not covered" >branch.name === name)</span>;</span>
+}
+&nbsp;
+/** Create a disposable Neon branch forked off `config.parentBranchId` for exactly one attempt, with its own
+ *  freshly-created role (explicit, not assumed-inherited from the parent -- this repo has no live Neon account
+ *  to verify role-inheritance semantics against, so this mirrors neon-database-driver.ts's own always-explicit
+ *  role-creation pattern rather than relying on unverified copy-on-write assumptions). The database itself
+ *  (and its data) IS inherited from the parent branch via Neon's storage-level branching -- unlike a role,
+ *  Postgres databases are catalog objects that live inside the branched storage itself, so no separate
+ *  database-creation call is made here.
+ *
+ *  Idempotent on `attemptId`: a retried call for the same attempt finds its already-created branch by name
+ *  (via {@link findBranchByName}) instead of creating a duplicate, mirroring provisionNeonDatabase's own
+ *  existing-branch-reuse path. The attempt's own database name is resolved from the PARENT branch's own
+ *  database list (the branch inherits the same database(s) the parent already has), not re-derived from
+ *  attemptId, since it must match whatever database the coding agent's own connection actually expects. */
+export async function <span class="fstat-no" title="function not covered" >createAttemptDbFork(c</span>onfig: AttemptDbForkConfig, attemptId: string): Promise&lt;AttemptDbFork&gt; {
+  const branchName = <span class="cstat-no" title="statement not covered" >branchNameFor(attemptId);</span>
+  const roleName = <span class="cstat-no" title="statement not covered" >roleNameForBranch(branchName);</span>
+&nbsp;
+  const existing = <span class="cstat-no" title="statement not covered" >await findBranchByName(config, branchName);</span>
+<span class="cstat-no" title="statement not covered" >  if (existing) {</span>
+    const { endpoints } = <span class="cstat-no" title="statement not covered" >await neonFetch&lt;{ endpoints: NeonEndpoint[] }&gt;(config, "GET", `/projects/${config.projectId}/branches/${existing.id}/endpoints`);</span>
+    const host = <span class="cstat-no" title="statement not covered" >endpoints[0]?.host;</span>
+<span class="cstat-no" title="statement not covered" >    if (!host) <span class="cstat-no" title="statement not covered" >throw new Error(`Neon attempt branch ${existing.id} has no compute endpoint`);</span></span>
+    const { role } = <span class="cstat-no" title="statement not covered" >await neonFetch&lt;{ role: NeonRole }&gt;(config, "GET", `/projects/${config.projectId}/branches/${existing.id}/roles/${roleName}/reveal_password`);</span>
+<span class="cstat-no" title="statement not covered" >    if (!role.password) <span class="cstat-no" title="statement not covered" >throw new Error(`Neon role ${roleName} on attempt branch ${existing.id} has no revealable password`);</span></span>
+    const databaseName = <span class="cstat-no" title="statement not covered" >await parentDatabaseName(config);</span>
+<span class="cstat-no" title="statement not covered" >    return { branchId: existing.id, connectionString: connectionStringFor(host, databaseName, roleName, role.password) };</span>
+  }
+&nbsp;
+  const databaseName = <span class="cstat-no" title="statement not covered" >await parentDatabaseName(config);</span>
+  const created = <span class="cstat-no" title="statement not covered" >await neonFetch&lt;{ branch: NeonBranch; endpoints: NeonEndpoint[]; operations: NeonOperation[] }&gt;(</span>
+    config,
+    "POST",
+    `/projects/${config.projectId}/branches`,
+    { branch: { name: branchName, parent_id: config.parentBranchId }, endpoints: [{ type: "read_write" }] },
+  );
+<span class="cstat-no" title="statement not covered" >  await waitForOperations(config, created.operations);</span>
+  const host = <span class="cstat-no" title="statement not covered" >created.endpoints[0]?.host;</span>
+<span class="cstat-no" title="statement not covered" >  if (!host) <span class="cstat-no" title="statement not covered" >throw new Error(`Neon attempt branch ${created.branch.id} was created without a compute endpoint`);</span></span>
+&nbsp;
+  const roleCreated = <span class="cstat-no" title="statement not covered" >await neonFetch&lt;{ role: NeonRole; operations: NeonOperation[] }&gt;(</span>
+    config,
+    "POST",
+    `/projects/${config.projectId}/branches/${created.branch.id}/roles`,
+    { role: { name: roleName } },
+  );
+<span class="cstat-no" title="statement not covered" >  await waitForOperations(config, roleCreated.operations);</span>
+<span class="cstat-no" title="statement not covered" >  if (!roleCreated.role.password) <span class="cstat-no" title="statement not covered" >throw new Error(`Neon role ${roleName} was created without a password`);</span></span>
+&nbsp;
+<span class="cstat-no" title="statement not covered" >  return { branchId: created.branch.id, connectionString: connectionStringFor(host, databaseName, roleName, roleCreated.role.password) };</span>
+}
+&nbsp;
+async function <span class="fstat-no" title="function not covered" >parentDatabaseName(c</span>onfig: AttemptDbForkConfig): Promise&lt;string&gt; {
+  const { databases } = <span class="cstat-no" title="statement not covered" >await neonFetch&lt;{ databases: { name: string }[] }&gt;(</span>
+    config,
+    "GET",
+    `/projects/${config.projectId}/branches/${config.parentBranchId}/databases`,
+  );
+  const database = <span class="cstat-no" title="statement not covered" >databases[0];</span>
+<span class="cstat-no" title="statement not covered" >  if (!database) <span class="cstat-no" title="statement not covered" >throw new Error(`Neon parent branch ${config.parentBranchId} has no database to fork`);</span></span>
+<span class="cstat-no" title="statement not covered" >  return database.name;</span>
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >connectionStringFor(h</span>ost: string, database: string, user: string, password: string): string {
+<span class="cstat-no" title="statement not covered" >  return `postgres://${user}:${password}@${host}:5432/${database}`;</span>
+}
+&nbsp;
+/** Discard an attempt's disposable branch. Idempotent: an attempt whose branch was never created (blocked
+ *  before {@link createAttemptDbFork} ran) or already discarded is a safe no-op. Deleting a Neon branch
+ *  cascades to its role/database/endpoint together -- there is nothing else to clean up separately. Never
+ *  merges the branch's data back into the parent; ratified explicitly by #7649 as a hard requirement, not a
+ *  default that happens to be convenient here. */
+export async function <span class="fstat-no" title="function not covered" >discardAttemptDbFork(c</span>onfig: AttemptDbForkConfig, attemptId: string): Promise&lt;void&gt; {
+  const branchName = <span class="cstat-no" title="statement not covered" >branchNameFor(attemptId);</span>
+  const existing = <span class="cstat-no" title="statement not covered" >await findBranchByName(config, branchName);</span>
+<span class="cstat-no" title="statement not covered" >  if (!existing) <span class="cstat-no" title="statement not covered" >return;</span></span>
+&nbsp;
+  // Tolerates a body-less success response (e.g. 204 No Content) -- some APIs return nothing for a DELETE that
+  // completed synchronously, with no operation left to poll.
+  const result = <span class="cstat-no" title="statement not covered" >await neonFetch&lt;{ operations?: NeonOperation[] } | undefined&gt;(config, "DELETE", `/projects/${config.projectId}/branches/${existing.id}`);</span>
+<span class="cstat-no" title="statement not covered" >  await waitForOperations(config, result?.operations ?? []);</span>
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../../../sorter.js"></script>
+        <script src="../../../../block-navigation.js"></script>
+    </body>
+</html>
+    

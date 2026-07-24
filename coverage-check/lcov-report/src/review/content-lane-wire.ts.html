@@ -1,0 +1,1105 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/review/content-lane-wire.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/review</a> content-lane-wire.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/85</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/85</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/13</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/69</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a>
+<a name='L185'></a><a href='#L185'>185</a>
+<a name='L186'></a><a href='#L186'>186</a>
+<a name='L187'></a><a href='#L187'>187</a>
+<a name='L188'></a><a href='#L188'>188</a>
+<a name='L189'></a><a href='#L189'>189</a>
+<a name='L190'></a><a href='#L190'>190</a>
+<a name='L191'></a><a href='#L191'>191</a>
+<a name='L192'></a><a href='#L192'>192</a>
+<a name='L193'></a><a href='#L193'>193</a>
+<a name='L194'></a><a href='#L194'>194</a>
+<a name='L195'></a><a href='#L195'>195</a>
+<a name='L196'></a><a href='#L196'>196</a>
+<a name='L197'></a><a href='#L197'>197</a>
+<a name='L198'></a><a href='#L198'>198</a>
+<a name='L199'></a><a href='#L199'>199</a>
+<a name='L200'></a><a href='#L200'>200</a>
+<a name='L201'></a><a href='#L201'>201</a>
+<a name='L202'></a><a href='#L202'>202</a>
+<a name='L203'></a><a href='#L203'>203</a>
+<a name='L204'></a><a href='#L204'>204</a>
+<a name='L205'></a><a href='#L205'>205</a>
+<a name='L206'></a><a href='#L206'>206</a>
+<a name='L207'></a><a href='#L207'>207</a>
+<a name='L208'></a><a href='#L208'>208</a>
+<a name='L209'></a><a href='#L209'>209</a>
+<a name='L210'></a><a href='#L210'>210</a>
+<a name='L211'></a><a href='#L211'>211</a>
+<a name='L212'></a><a href='#L212'>212</a>
+<a name='L213'></a><a href='#L213'>213</a>
+<a name='L214'></a><a href='#L214'>214</a>
+<a name='L215'></a><a href='#L215'>215</a>
+<a name='L216'></a><a href='#L216'>216</a>
+<a name='L217'></a><a href='#L217'>217</a>
+<a name='L218'></a><a href='#L218'>218</a>
+<a name='L219'></a><a href='#L219'>219</a>
+<a name='L220'></a><a href='#L220'>220</a>
+<a name='L221'></a><a href='#L221'>221</a>
+<a name='L222'></a><a href='#L222'>222</a>
+<a name='L223'></a><a href='#L223'>223</a>
+<a name='L224'></a><a href='#L224'>224</a>
+<a name='L225'></a><a href='#L225'>225</a>
+<a name='L226'></a><a href='#L226'>226</a>
+<a name='L227'></a><a href='#L227'>227</a>
+<a name='L228'></a><a href='#L228'>228</a>
+<a name='L229'></a><a href='#L229'>229</a>
+<a name='L230'></a><a href='#L230'>230</a>
+<a name='L231'></a><a href='#L231'>231</a>
+<a name='L232'></a><a href='#L232'>232</a>
+<a name='L233'></a><a href='#L233'>233</a>
+<a name='L234'></a><a href='#L234'>234</a>
+<a name='L235'></a><a href='#L235'>235</a>
+<a name='L236'></a><a href='#L236'>236</a>
+<a name='L237'></a><a href='#L237'>237</a>
+<a name='L238'></a><a href='#L238'>238</a>
+<a name='L239'></a><a href='#L239'>239</a>
+<a name='L240'></a><a href='#L240'>240</a>
+<a name='L241'></a><a href='#L241'>241</a>
+<a name='L242'></a><a href='#L242'>242</a>
+<a name='L243'></a><a href='#L243'>243</a>
+<a name='L244'></a><a href='#L244'>244</a>
+<a name='L245'></a><a href='#L245'>245</a>
+<a name='L246'></a><a href='#L246'>246</a>
+<a name='L247'></a><a href='#L247'>247</a>
+<a name='L248'></a><a href='#L248'>248</a>
+<a name='L249'></a><a href='#L249'>249</a>
+<a name='L250'></a><a href='#L250'>250</a>
+<a name='L251'></a><a href='#L251'>251</a>
+<a name='L252'></a><a href='#L252'>252</a>
+<a name='L253'></a><a href='#L253'>253</a>
+<a name='L254'></a><a href='#L254'>254</a>
+<a name='L255'></a><a href='#L255'>255</a>
+<a name='L256'></a><a href='#L256'>256</a>
+<a name='L257'></a><a href='#L257'>257</a>
+<a name='L258'></a><a href='#L258'>258</a>
+<a name='L259'></a><a href='#L259'>259</a>
+<a name='L260'></a><a href='#L260'>260</a>
+<a name='L261'></a><a href='#L261'>261</a>
+<a name='L262'></a><a href='#L262'>262</a>
+<a name='L263'></a><a href='#L263'>263</a>
+<a name='L264'></a><a href='#L264'>264</a>
+<a name='L265'></a><a href='#L265'>265</a>
+<a name='L266'></a><a href='#L266'>266</a>
+<a name='L267'></a><a href='#L267'>267</a>
+<a name='L268'></a><a href='#L268'>268</a>
+<a name='L269'></a><a href='#L269'>269</a>
+<a name='L270'></a><a href='#L270'>270</a>
+<a name='L271'></a><a href='#L271'>271</a>
+<a name='L272'></a><a href='#L272'>272</a>
+<a name='L273'></a><a href='#L273'>273</a>
+<a name='L274'></a><a href='#L274'>274</a>
+<a name='L275'></a><a href='#L275'>275</a>
+<a name='L276'></a><a href='#L276'>276</a>
+<a name='L277'></a><a href='#L277'>277</a>
+<a name='L278'></a><a href='#L278'>278</a>
+<a name='L279'></a><a href='#L279'>279</a>
+<a name='L280'></a><a href='#L280'>280</a>
+<a name='L281'></a><a href='#L281'>281</a>
+<a name='L282'></a><a href='#L282'>282</a>
+<a name='L283'></a><a href='#L283'>283</a>
+<a name='L284'></a><a href='#L284'>284</a>
+<a name='L285'></a><a href='#L285'>285</a>
+<a name='L286'></a><a href='#L286'>286</a>
+<a name='L287'></a><a href='#L287'>287</a>
+<a name='L288'></a><a href='#L288'>288</a>
+<a name='L289'></a><a href='#L289'>289</a>
+<a name='L290'></a><a href='#L290'>290</a>
+<a name='L291'></a><a href='#L291'>291</a>
+<a name='L292'></a><a href='#L292'>292</a>
+<a name='L293'></a><a href='#L293'>293</a>
+<a name='L294'></a><a href='#L294'>294</a>
+<a name='L295'></a><a href='#L295'>295</a>
+<a name='L296'></a><a href='#L296'>296</a>
+<a name='L297'></a><a href='#L297'>297</a>
+<a name='L298'></a><a href='#L298'>298</a>
+<a name='L299'></a><a href='#L299'>299</a>
+<a name='L300'></a><a href='#L300'>300</a>
+<a name='L301'></a><a href='#L301'>301</a>
+<a name='L302'></a><a href='#L302'>302</a>
+<a name='L303'></a><a href='#L303'>303</a>
+<a name='L304'></a><a href='#L304'>304</a>
+<a name='L305'></a><a href='#L305'>305</a>
+<a name='L306'></a><a href='#L306'>306</a>
+<a name='L307'></a><a href='#L307'>307</a>
+<a name='L308'></a><a href='#L308'>308</a>
+<a name='L309'></a><a href='#L309'>309</a>
+<a name='L310'></a><a href='#L310'>310</a>
+<a name='L311'></a><a href='#L311'>311</a>
+<a name='L312'></a><a href='#L312'>312</a>
+<a name='L313'></a><a href='#L313'>313</a>
+<a name='L314'></a><a href='#L314'>314</a>
+<a name='L315'></a><a href='#L315'>315</a>
+<a name='L316'></a><a href='#L316'>316</a>
+<a name='L317'></a><a href='#L317'>317</a>
+<a name='L318'></a><a href='#L318'>318</a>
+<a name='L319'></a><a href='#L319'>319</a>
+<a name='L320'></a><a href='#L320'>320</a>
+<a name='L321'></a><a href='#L321'>321</a>
+<a name='L322'></a><a href='#L322'>322</a>
+<a name='L323'></a><a href='#L323'>323</a>
+<a name='L324'></a><a href='#L324'>324</a>
+<a name='L325'></a><a href='#L325'>325</a>
+<a name='L326'></a><a href='#L326'>326</a>
+<a name='L327'></a><a href='#L327'>327</a>
+<a name='L328'></a><a href='#L328'>328</a>
+<a name='L329'></a><a href='#L329'>329</a>
+<a name='L330'></a><a href='#L330'>330</a>
+<a name='L331'></a><a href='#L331'>331</a>
+<a name='L332'></a><a href='#L332'>332</a>
+<a name='L333'></a><a href='#L333'>333</a>
+<a name='L334'></a><a href='#L334'>334</a>
+<a name='L335'></a><a href='#L335'>335</a>
+<a name='L336'></a><a href='#L336'>336</a>
+<a name='L337'></a><a href='#L337'>337</a>
+<a name='L338'></a><a href='#L338'>338</a>
+<a name='L339'></a><a href='#L339'>339</a>
+<a name='L340'></a><a href='#L340'>340</a>
+<a name='L341'></a><a href='#L341'>341</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Content/registry surface-lane HOST ADAPTER (#1255 convergence, spec resolution #2435). `runSurfaceReview` is a
+// pure, AI-FREE, structured-data adjudicator for registry-submission PRs. This file is the thin host wiring that
+// lets its deterministic verdict drive the SAME gate disposition (check-run + auto-action + public comment) the
+// generic gate produces: the flag + per-repo RegistryLaneSpec resolution, the GitHub-backed loadFile, and the
+// verdict → GateCheckEvaluation conversion.
+//
+// FLAG-GATED + DEFAULT-OFF: LOOPOVER_REVIEW_CONTENT_LANE must be truthy, AND `resolveRegistryLaneSpec`
+// (content-lane/spec-resolver.ts) must resolve a spec for this repo — either an explicit per-repo `.loopover.yml`
+// `contentLane:` config, or (today's zero-config default) the repo being in the LOOPOVER_REVIEW_REPOS cutover
+// allowlist, which resolves to METAGRAPHED_LANE_SPEC. When off / unresolved (the default for any repo that hasn't
+// opted in) the caller takes no new branch, runs no fetch, and `gateEvaluation` is byte-identical to today. The
+// verdict NEVER depends on an AI model, so this is independent of the AI-reviewer accuracy work (the surface lane
+// emits none of the AI_JUDGMENT_BLOCKER_CODES).
+//
+// SAFETY (four deliberate guards):
+//  1. A generic HARD (non-AI-judgment, non-warning-only) blocker — e.g. a committed secret detected before this
+//     runs — is PRESERVED: a surface "merge" can never clear a real critical the generic gate already raised
+//     (applySurfaceGate unions them).
+//  2. An unreadable head — or a null base on a file GitHub marks "modified" (whose base MUST exist, so a null
+//     read is a transient blip, not an absent base) — defers to the generic gate rather than auto-closing a good
+//     PR on a spurious "the submission looks empty/invalid" read. (A null base on an ADDED file is the expected
+//     brand-new-entry case and is not deferred.)
+//  3. A generic failure caused SOLELY by AI-judgment blockers (`ai_consensus_defect` / `ai_review_split`) does
+//     NOT override a decisive surface verdict (applySurfaceGate). The surface lane is the sole, AI-free
+//     adjudicator for this structured data — an AI opinion has no standing to veto it, only a real deterministic
+//     blocker does (see guard #1).
+//  4. A generic failure caused SOLELY by a same-linked-issue `duplicate_pr_risk` finding escalated by
+//     `duplicatePrGateMode: "block"` does NOT one-shot-close a decisive surface merge either (applySurfaceGate).
+//     That finding is advisory by nature (severity "warning" — a lead for a human, not proof of a defect): it
+//     downgrades the conclusion to a HOLD (neutral, never auto-merged, never a hard failure) with the finding
+//     still visible in the comment, rather than either silently clearing it (losing the signal) or letting it
+//     alone close a submission whose own structured content is clean. This is scoped to EXACTLY that finding code
+//     (see isDuplicateOnlyFailure / DUPLICATE_ONLY_BLOCKER_CODES) — NOT every warning-severity finding — because
+//     several OTHER findings (missing_linked_issue, self_authored_linked_issue, manifest_linked_issue_required,
+//     manifest_missing_tests) are also severity "warning" but block-mode-escalatable via their OWN independent
+//     maintainer-configured gate, and that explicit opt-in must still close a PR outright (see guard #1 for why a
+//     genuinely critical finding, or one of these other configured gates, still wins outright).
+import { AI_JUDGMENT_BLOCKER_CODES, type GateCheckEvaluation, isAiJudgmentOnlyFailure, isDuplicateOnlyFailure } from "../rules/advisory";
+import { LOOPOVER_GATE_CHECK_NAME } from "./check-names";
+import { isContentLaneEnabled } from "./content-lane/flag";
+import { runSurfaceReview, type SurfaceReviewInput, type SurfaceReviewResult } from "./content-lane/orchestrator";
+import type { RegistryLaneSpec } from "./content-lane/registry-logic";
+import { registeredValidatorIds, resolveRegistryLaneSpec, unregisteredValidatorId } from "./content-lane/spec-resolver";
+import { makeGithubFileFetcher } from "./grounding-wire";
+import { MAX_FETCH_CHARS } from "./review-grounding";
+import type { FocusManifest } from "../signals/focus-manifest";
+import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
+import type { AdvisoryFinding, AdvisorySeverity } from "../types";
+&nbsp;
+// Deterministic surface-lane finding codes. DELIBERATELY NOT in AI_JUDGMENT_BLOCKER_CODES; surface closes are
+// facts, and blocker findings must never be flipped to merge by green CI.
+const SURFACE_REJECT_CODE = <span class="cstat-no" title="statement not covered" >"surface_lane_reject";</span>
+const SURFACE_MANUAL_CODE = <span class="cstat-no" title="statement not covered" >"surface_lane_manual";</span>
+const SURFACE_UNKNOWN_VALIDATOR_CODE = <span class="cstat-no" title="statement not covered" >"surface_lane_unknown_validator_id";</span>
+const SURFACE_TITLE = <span class="cstat-no" title="statement not covered" >"Registry surface review";</span>
+&nbsp;
+// `alreadyPublicSafe` defaults to false: `unregisteredValidatorIdFinding` below also calls this helper with a
+// summary that interpolates an OPERATOR-supplied `.loopover.yml` validatorId string, which -- unlike the fixed,
+// engineer-authored assessment messages `runSurfaceReview` produces (registry-logic.ts) -- is external content
+// this function has no way to vouch for. Only `surfaceVerdictToGate` below, whose `summary` comes solely from
+// that fixed assessment vocabulary, opts in explicitly.
+function <span class="fstat-no" title="function not covered" >surfaceFinding(c</span>ode: string, severity: AdvisorySeverity, summary: string, alreadyPublicSafe = <span class="branch-0 cbranch-no" title="branch not covered" >false): AdvisoryFinding {</span>
+<span class="cstat-no" title="statement not covered" >  return { code, title: SURFACE_TITLE, severity, detail: summary, publicText: summary, alreadyPublicSafe };</span>
+}
+&nbsp;
+/** A diagnostic (non-blocking) finding for a `.loopover.yml` `contentLane.validatorId` that doesn't match any
+ *  code-registered validator — most likely an operator typo. Without this, `buildRegistryLaneSpecFromConfig`
+ *  degrades silently to structural-only gating (a legitimate mode for a registry with no validator yet), which
+ *  makes a typo indistinguishable from a deliberate choice. Surfaced the SAME way a surface verdict is (pushed
+ *  onto `advisory.findings`) so it renders directly in the PR comment an operator is already reading, rather than
+ *  requiring a separate manifest-diagnostics lookup. */
+function <span class="fstat-no" title="function not covered" >unregisteredValidatorIdFinding(b</span>adId: string): AdvisoryFinding {
+  const knownText = <span class="cstat-no" title="statement not covered" >registeredValidatorIds().join(", ");</span>
+  const summary = <span class="cstat-no" title="statement not covered" >`contentLane.validatorId "${badId}" is not a registered validator (known: ${knownText}); falling back to structural-only review with no domain validator.`;</span>
+<span class="cstat-no" title="statement not covered" >  return surfaceFinding(SURFACE_UNKNOWN_VALIDATOR_CODE, "warning", summary);</span>
+}
+&nbsp;
+/** Convert the deterministic surface verdict into a gate evaluation. merge→success, manual→neutral
+ *  (a warning, not auto-closed and not a failing required check), and any decisive non-merge/non-manual verdict (close) → failure with a single
+ *  critical blocker. Returns the finding to splice into the advisory so the public comment renders the reason. */
+export function <span class="fstat-no" title="function not covered" >surfaceVerdictToGate(r</span>esult: SurfaceReviewResult): {
+  evaluation: GateCheckEvaluation;
+  finding: AdvisoryFinding | null;
+} {
+  const summary = <span class="cstat-no" title="statement not covered" >result.summary ?? "Registry surface review.";</span>
+<span class="cstat-no" title="statement not covered" >  if (result.verdict === "merge") {</span>
+<span class="cstat-no" title="statement not covered" >    return { evaluation: { enabled: true, conclusion: "success", title: SURFACE_TITLE, summary, blockers: [], warnings: [] }, finding: null };</span>
+  }
+<span class="cstat-no" title="statement not covered" >  if (result.verdict === "manual") {</span>
+    const finding = <span class="cstat-no" title="statement not covered" >surfaceFinding(SURFACE_MANUAL_CODE, "warning", summary, true);</span>
+<span class="cstat-no" title="statement not covered" >    return { evaluation: { enabled: true, conclusion: "neutral", title: SURFACE_TITLE, summary, blockers: [], warnings: [finding] }, finding };</span>
+  }
+  const finding = <span class="cstat-no" title="statement not covered" >surfaceFinding(SURFACE_REJECT_CODE, "critical", summary, true);</span>
+<span class="cstat-no" title="statement not covered" >  return { evaluation: { enabled: true, conclusion: "failure", title: SURFACE_TITLE, summary, blockers: [finding], warnings: [] }, finding };</span>
+}
+&nbsp;
+/** Merge the surface override onto the generic gate while PRESERVING the generic gate's hard (non-AI-judgment)
+ *  blockers. A surface "merge" must NOT clear a real critical (e.g. a committed secret) the generic gate already
+ *  raised — so when the generic gate carries such blockers, they survive and the conclusion stays a failure.
+ *  `null` surface ⇒ defer (the generic gate is returned unchanged). PURE.
+ *
+ *  EXCEPTION: when the generic gate's ONLY blockers are AI-judgment codes (`ai_consensus_defect` /
+ *  `ai_review_split`, see `isAiJudgmentOnlyFailure`), a decisive surface merge overrides them — the surface lane
+ *  is the sole, AI-free adjudicator for this structured registry data (its own secrets/shape/safety scan already
+ *  runs independently), so an AI opinion alone must never veto a verdict the deterministic lane already reached.
+ *  A real (non-AI) blocker in the mix still falls through to the union below and blocks. The generic gate's
+ *  OTHER (non-blocker) warnings are unrelated to the discarded AI blocker and are preserved onto the surface
+ *  result rather than silently dropped — see `evaluateWithSurfaceLane` for the companion `advisory.findings`
+ *  cleanup that keeps the public comment from re-surfacing the overridden AI defect via a separate path.
+ *
+ *  `opts.aiJudgmentBlockersMode` (#3907): a per-repo `.loopover.yml` `gate.aiJudgmentBlockers` opt-in that
+ *  SKIPS this exception when set to `"gate"` — an AI-judgment-only failure then falls through to the union
+ *  below like any other blocker, letting a confidently-flagged content-correctness defect actually gate the
+ *  merge. Default (`null`/`undefined`/`"advisory"`) preserves this exception exactly as documented above,
+ *  byte-identical to pre-#3907 behavior for every repo that doesn't opt in.
+ *
+ *  A second, analogous exception (guard #4) applies when the generic gate's blockers are ALL duplicate-only
+ *  (a same-linked-issue `duplicate_pr_risk` finding escalated into a blocker by `duplicatePrGateMode: "block"`,
+ *  see `isDuplicateOnlyFailure`): a decisive surface merge downgrades that failure to a HOLD (neutral) rather than
+ *  either overriding it outright (losing the signal a maintainer should still see) or letting it one-shot-close a
+ *  submission whose own structured content is clean. The generic blockers are folded into `warnings` (same shape
+ *  `surfaceVerdictToGate` already uses for its own "manual" verdict) so the concern stays visible in the public
+ *  comment, and the title/summary are rewritten to name the actual hold reason (the blocker's own detail) rather
+ *  than inheriting the surface's clean-merge text, which would otherwise leave the posted check-run silent about
+ *  why it's held. A blocker set that mixes a duplicate-only finding with a genuinely critical one, OR with another
+ *  maintainer-configured block-mode finding (missing_linked_issue, self_authored_linked_issue, etc.), is NOT
+ *  duplicate-only (`isDuplicateOnlyFailure` requires EVERY blocker to be exactly `duplicate_pr_risk`) and still
+ *  falls through to the unconditional union+failure below. */
+export function <span class="fstat-no" title="function not covered" >applySurfaceGate(</span>
+  generic: GateCheckEvaluation | undefined,
+  surface: GateCheckEvaluation | null,
+  opts?: { aiJudgmentBlockersMode?: "gate" | "advisory" | null | undefined },
+): GateCheckEvaluation | undefined {
+<span class="cstat-no" title="statement not covered" >  if (surface === null) <span class="cstat-no" title="statement not covered" >return generic;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (!generic) <span class="cstat-no" title="statement not covered" >return surface; // gate off → surface stands</span></span>
+  // A generic manual-review HOLD is encoded as a non-success conclusion with warning(s), not as a hard blocker.
+  // Preserve it over a surface-lane merge so size/guardrail holds cannot be erased by the content lane (#gate-size).
+<span class="cstat-no" title="statement not covered" >  if (generic.blockers.length === 0 &amp;&amp; generic.conclusion === "success") <span class="cstat-no" title="statement not covered" >return surface; // generic was clean → surface stands</span></span>
+<span class="cstat-no" title="statement not covered" >  if (generic.blockers.length === 0) {</span>
+<span class="cstat-no" title="statement not covered" >    if (surface.conclusion === "success") <span class="cstat-no" title="statement not covered" >return generic;</span></span>
+<span class="cstat-no" title="statement not covered" >    return surface;</span>
+  }
+  // #3907: opt-in escape hatch from guard #3 below. Default (null/undefined/"advisory") preserves today's
+  // behavior byte-identically. "gate" skips the override entirely, so an AI-judgment-only failure falls
+  // through to the unconditional union+failure return at the bottom of this function like any other
+  // blocker — the opted-in repo's own AI reviewer becomes a real, deterministic-gate-blocking signal.
+<span class="cstat-no" title="statement not covered" >  if (opts?.aiJudgmentBlockersMode !== "gate" &amp;&amp; isAiJudgmentOnlyFailure(generic) &amp;&amp; surface.conclusion === "success") {</span>
+<span class="cstat-no" title="statement not covered" >    return { ...surface, warnings: [...generic.warnings, ...surface.warnings] };</span>
+  }
+<span class="cstat-no" title="statement not covered" >  if (isDuplicateOnlyFailure(generic) &amp;&amp; surface.conclusion === "success") {</span>
+    const heldReason = <span class="cstat-no" title="statement not covered" >generic.blockers.<span class="fstat-no" title="function not covered" >map((b</span>locker) =&gt; <span class="cstat-no" title="statement not covered" >blocker.detail || blocker.title)</span>.join(" ");</span>
+<span class="cstat-no" title="statement not covered" >    return {</span>
+      ...surface,
+      conclusion: "neutral",
+      title: `${LOOPOVER_GATE_CHECK_NAME} — held for review`,
+      summary: heldReason,
+      warnings: [...generic.blockers, ...generic.warnings, ...surface.warnings],
+    };
+  }
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    enabled: true,
+    conclusion: "failure",
+    title: surface.title,
+    summary: surface.summary,
+    blockers: [...generic.blockers, ...surface.blockers],
+    warnings: [...generic.warnings, ...surface.warnings],
+  };
+}
+&nbsp;
+/** Run the deterministic surface review for a registry-submission PR against `spec` (the caller's already-resolved
+ *  RegistryLaneSpec — see `resolveRegistryLaneSpec`) and return its gate evaluation, or `null` to defer to the
+ *  generic gate (not a submission, or an unreadable file — see below). Mutates `advisory.findings` so the reason
+ *  renders in the unified public comment. NEVER throws on a fetch blip — the file fetcher is fail-safe.
+ *  `loadFileOverride` is injected by unit tests; production builds a lazy GitHub-Contents-backed loader so a
+ *  non-submission PR (the common case) pays for no fetch at all. `files` carries each changed file's GitHub
+ *  status so a null BASE read can be told apart from an absent base (see the defer guard). */
+export async function <span class="fstat-no" title="function not covered" >runRegistrySurfaceGate(</span>
+  env: Env,
+  spec: RegistryLaneSpec,
+  args: {
+    installationId: number | null | undefined;
+    repoFullName: string;
+    pr: { headSha: string; baseRef: string };
+    advisory: { findings: AdvisoryFinding[] };
+    files: { path: string; status?: string | null | undefined }[];
+  },
+  loadFileOverride?: SurfaceReviewInput["loadFile"],
+): Promise&lt;GateCheckEvaluation | null&gt; {
+  let fetcherPromise: ReturnType&lt;typeof makeGithubFileFetcher&gt; | null = <span class="cstat-no" title="statement not covered" >null;</span>
+  const githubLoad = <span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >async (p</span>ath: string, ref: "head" | "base"): Promise&lt;string | null&gt; =&gt; {</span>
+<span class="cstat-no" title="statement not covered" >    fetcherPromise ??= makeGithubFileFetcher(env, args.repoFullName, args.installationId);</span>
+    const fetcher = <span class="cstat-no" title="statement not covered" >await fetcherPromise;</span>
+    const content = <span class="cstat-no" title="statement not covered" >await fetcher.getFileContent(path, ref === "head" ? args.pr.headSha : args.pr.baseRef, MAX_FETCH_CHARS);</span>
+    // #7481-class fix: unlike AI-review grounding (which tolerates a partial sample), this lane parses the
+    // fetched body as JSON and diffs its surfaces[] array deterministically -- a TRUNCATED body (the fetcher's
+    // maxChars+1-length signal, same convention patchless-secret-scan.ts relies on) is invalid JSON, which
+    // safeParseJson silently swallows into `null`, which reads as "surfaces: null" -- indistinguishable from a
+    // genuinely malformed submission. Without MAX_FETCH_CHARS above, the fetcher's small 24_001-char default
+    // truncated any registry file past that size (a metagraphed subnet manifest routinely exceeds it once it
+    // accumulates enough entries), and this file's own null-only unreadable check below never caught it, since
+    // a truncated fetch returns a non-null (just incomplete) string -- so a fully valid, large surfaces[] append
+    // silently misread as "zero entries appended" and one-shot closed. Converting it to a null return here
+    // routes it through the SAME defer-to-generic-gate guard as a real unreadable fetch, instead of a wrong close.
+<span class="cstat-no" title="statement not covered" >    if (content !== null &amp;&amp; content.length &gt; MAX_FETCH_CHARS) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+<span class="cstat-no" title="statement not covered" >    return content;</span>
+  };
+  const baseLoad = <span class="cstat-no" title="statement not covered" >loadFileOverride ?? githubLoad;</span>
+  const statusByPath = <span class="cstat-no" title="statement not covered" >new Map(args.files.<span class="fstat-no" title="function not covered" >map((f</span>ile) =&gt; <span class="cstat-no" title="statement not covered" >[file.path, file.status ?? null])</span>);</span>
+  let deferUnreadable = <span class="cstat-no" title="statement not covered" >false;</span>
+  const loadFile = <span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >async (p</span>ath: string, ref: "head" | "base"): Promise&lt;string | null&gt; =&gt; {</span>
+    const content = <span class="cstat-no" title="statement not covered" >await baseLoad(path, ref);</span>
+    // An unreadable HEAD — or a null BASE for a file GitHub reports as "modified" (whose base MUST exist, so a
+    // null read is a transient fetch blip, NOT an absent base) — would make a valid submission read as empty/
+    // invalid → a spurious one-shot close. Defer to the generic gate instead. A null base for an ADDED file is
+    // the expected brand-new-entry case and is left to the orchestrator, whose spec-driven entry-count policy
+    // decides the verdict (the resolved spec's own maxAppendedEntries — e.g. METAGRAPHED_LANE_SPEC allows any
+    // number of clean entries).
+<span class="cstat-no" title="statement not covered" >    if (ref === "head" &amp;&amp; content === null) <span class="cstat-no" title="statement not covered" >deferUnreadable = true;</span></span>
+<span class="cstat-no" title="statement not covered" >    if (ref === "base" &amp;&amp; content === null &amp;&amp; statusByPath.get(path) === "modified") <span class="cstat-no" title="statement not covered" >deferUnreadable = true;</span></span>
+<span class="cstat-no" title="statement not covered" >    return content;</span>
+  };
+  const result = <span class="cstat-no" title="statement not covered" >await runSurfaceReview(spec, {</span>
+    changedFiles: args.files.<span class="fstat-no" title="function not covered" >map((f</span>ile) =&gt; <span class="cstat-no" title="statement not covered" >file.path)</span>,
+    loadFile,
+    opts: { secretsScan: true, sourceUrlValidation: true },
+  });
+<span class="cstat-no" title="statement not covered" >  if (result === null) <span class="cstat-no" title="statement not covered" >return null; // not a registry submission → the generic gate applies</span></span>
+<span class="cstat-no" title="statement not covered" >  if (deferUnreadable) <span class="cstat-no" title="statement not covered" >return null; // a fetch blip on a file that must be readable → defer, never auto-close</span></span>
+  const { evaluation, finding } = <span class="cstat-no" title="statement not covered" >surfaceVerdictToGate(result);</span>
+<span class="cstat-no" title="statement not covered" >  if (finding) <span class="cstat-no" title="statement not covered" >args.advisory.findings.push(finding);</span></span>
+<span class="cstat-no" title="statement not covered" >  return evaluation;</span>
+}
+&nbsp;
+/** Resolve the head/base refs the surface loader needs from a (nullable) PR record: head SHA, and base ref
+ *  falling back to the repo default branch then empty. PURE — keeps the nullable-field branches out of the hot
+ *  processor seam so they're unit-tested here. */
+export function <span class="fstat-no" title="function not covered" >resolveSurfaceRefs(</span>
+  pr: { headSha?: string | null | undefined; baseRef?: string | null | undefined },
+  repo: { defaultBranch?: string | null | undefined } | null | undefined,
+): { headSha: string; baseRef: string } {
+<span class="cstat-no" title="statement not covered" >  return { headSha: pr.headSha ?? "", baseRef: pr.baseRef ?? repo?.defaultBranch ?? "" };</span>
+}
+&nbsp;
+/** The processor SEAM in one testable call: when a RegistryLaneSpec resolves for this repo (see
+ *  `resolveRegistryLaneSpec` — an explicit per-repo `.loopover.yml` `contentLane:` config, or the
+ *  LOOPOVER_REVIEW_REPOS allowlist default), run the surface lane against it and merge its verdict onto the
+ *  generic gate (preserving generic hard blockers); otherwise return the generic evaluation unchanged.
+ *  `getChangedFiles` is a thunk so an unresolved repo resolves no files (no extra diff load). The env kill-switch
+ *  is checked BEFORE loading the manifest, so a globally-disabled lane pays no manifest-load I/O either.
+ *
+ *  When `applySurfaceGate`'s AI-judgment override fires (an AI-judgment-only generic failure is overridden by a
+ *  decisive surface merge), the AI-judgment finding(s) are ALSO removed from `args.advisory.findings` — that
+ *  array is a separate, raw feed the unified-comment bridge reads independently via `consensusDefectFromFindings`
+ *  (src/review/unified-comment-bridge.ts) to render the "Code review" reviewer note, bypassing the gate
+ *  evaluation entirely. Without this cleanup, the public comment would still show "Concerns raised — review
+ *  before merging" quoting the overridden AI defect even though the gate the same comment reports is a clean
+ *  merge — a visible, confusing contradiction of the override this function just made.
+ *
+ *  `loadManifestOverride` is injected by unit tests (mirrors `runRegistrySurfaceGate`'s `loadFileOverride`) so
+ *  they never hit the real cached-manifest loader's D1/network I/O; production omits it and gets the real,
+ *  cached `loadRepoFocusManifest`. A manifest-load failure never throws OUT of this function: for an allowlisted
+ *  repo it still degrades to the allowlist-default spec (unaffected, since that path never reads the manifest);
+ *  for a non-allowlisted repo — whose ONLY way to configure a spec is that same manifest — it instead holds the
+ *  gate neutral (unless a real generic hard blocker is already present, which is always preserved) rather than
+ *  silently looking identical to "this repo has no content-lane configured at all".
+ *
+ *  An unregistered `contentLane.validatorId` in the loaded manifest pushes a non-blocking diagnostic finding
+ *  (`unregisteredValidatorIdFinding`) onto `args.advisory.findings` so an operator typo (e.g. "metagraph" instead
+ *  of "metagraphed") is visible in the PR comment instead of silently degrading to structural-only review. */
+export async function <span class="fstat-no" title="function not covered" >evaluateWithSurfaceLane(</span>
+  env: Env,
+  repoFullName: string,
+  gateEnabled: boolean,
+  gateEvaluation: GateCheckEvaluation | undefined,
+  args: {
+    installationId: number | null | undefined;
+    pr: { headSha?: string | null | undefined; baseRef?: string | null | undefined };
+    repo: { defaultBranch?: string | null | undefined } | null | undefined;
+    advisory: { findings: AdvisoryFinding[] };
+    getChangedFiles: () =&gt; Promise&lt;{ path: string; status?: string | null | undefined }[]&gt;;
+  },
+  loadManifestOverride?: (env: Env, repoFullName: string) =&gt; Promise&lt;FocusManifest&gt;,
+): Promise&lt;GateCheckEvaluation | undefined&gt; {
+<span class="cstat-no" title="statement not covered" >  if (!gateEnabled || !isContentLaneEnabled(env)) <span class="cstat-no" title="statement not covered" >return gateEvaluation;</span></span>
+  const loadManifest = <span class="cstat-no" title="statement not covered" >loadManifestOverride ?? loadRepoFocusManifest;</span>
+  // loadRepoFocusManifest itself already degrades a fetch/parse blip to an EMPTY manifest (a legitimate "no
+  // config" signal) internally, so this catch only fires for a rarer failure outside that (e.g. the cache
+  // read/write layer). Track that distinctly from a genuinely-empty manifest: for a repo NOT on the
+  // isConvergenceRepoAllowed cutover list, `contentLane:` in its own `.loopover.yml` is the ONLY way to
+  // resolve a spec (#2435) -- so `manifest` reading as absent here is indistinguishable, downstream, from
+  // "this repo never configured content-lane at all", and would silently skip the registry gate on nothing
+  // more than a transient read failure for exactly the self-hosted-maintainer use case this PR exists to
+  // support. An allowlisted repo is unaffected either way, since its fallback (METAGRAPHED_LANE_SPEC) never
+  // depends on the manifest.
+  let manifest: FocusManifest | undefined;
+  let manifestLoadFailed = <span class="cstat-no" title="statement not covered" >false;</span>
+<span class="cstat-no" title="statement not covered" >  try {</span>
+<span class="cstat-no" title="statement not covered" >    manifest = await loadManifest(env, repoFullName);</span>
+  } catch {
+<span class="cstat-no" title="statement not covered" >    manifestLoadFailed = true;</span>
+  }
+  const badValidatorId = <span class="cstat-no" title="statement not covered" >unregisteredValidatorId(manifest?.contentLane);</span>
+<span class="cstat-no" title="statement not covered" >  if (badValidatorId) <span class="cstat-no" title="statement not covered" >args.advisory.findings.push(unregisteredValidatorIdFinding(badValidatorId));</span></span>
+  const spec = <span class="cstat-no" title="statement not covered" >resolveRegistryLaneSpec(env, manifest, repoFullName);</span>
+<span class="cstat-no" title="statement not covered" >  if (!spec) {</span>
+    // A real hard blocker the generic gate already raised (e.g. a committed secret) must never be cleared by
+    // this path — mirrors applySurfaceGate's own guard #1. Only override when there is nothing to preserve.
+<span class="cstat-no" title="statement not covered" >    if (!manifestLoadFailed || (gateEvaluation &amp;&amp; gateEvaluation.blockers.length &gt; 0)) <span class="cstat-no" title="statement not covered" >return gateEvaluation;</span></span>
+    // We could not read this repo's manifest AND it resolved to no spec — cannot rule out a configured
+    // contentLane block being silently skipped. Hold rather than let this look identical to "not configured".
+<span class="cstat-no" title="statement not covered" >    return {</span>
+      enabled: true,
+      conclusion: "neutral",
+      title: `${LOOPOVER_GATE_CHECK_NAME} — held for human review`,
+      summary: "The repo's .loopover.yml could not be read, so LoopOver cannot confirm whether a registry content-lane is configured for this repo. The gate is held for a human reviewer rather than silently skipping the registry check. It re-evaluates on the next update.",
+      blockers: [],
+      warnings: gateEvaluation?.warnings ?? [],
+    };
+  }
+  const surfaceGate = <span class="cstat-no" title="statement not covered" >await runRegistrySurfaceGate(env, spec, {</span>
+    installationId: args.installationId,
+    repoFullName,
+    pr: resolveSurfaceRefs(args.pr, args.repo),
+    advisory: args.advisory,
+    files: await args.getChangedFiles(),
+  });
+  // #3907: null/undefined manifest.gate is treated the same as an explicit "advisory" — see
+  // applySurfaceGate's own doc comment for what "gate" mode does.
+  const aiJudgmentBlockersMode = <span class="cstat-no" title="statement not covered" >manifest?.gate.aiJudgmentBlockersMode ?? undefined;</span>
+  const result = <span class="cstat-no" title="statement not covered" >applySurfaceGate(gateEvaluation, surfaceGate, { aiJudgmentBlockersMode });</span>
+<span class="cstat-no" title="statement not covered" >  if (</span>
+    aiJudgmentBlockersMode !== "gate" &amp;&amp;
+    gateEvaluation &amp;&amp;
+    surfaceGate?.conclusion === "success" &amp;&amp;
+    isAiJudgmentOnlyFailure(gateEvaluation)
+  ) {
+<span class="cstat-no" title="statement not covered" >    args.advisory.findings = args.advisory.findings.<span class="fstat-no" title="function not covered" >filter((f</span>inding) =&gt; <span class="cstat-no" title="statement not covered" >!AI_JUDGMENT_BLOCKER_CODES.has(finding.code))</span>;</span>
+  }
+<span class="cstat-no" title="statement not covered" >  return result;</span>
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    

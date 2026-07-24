@@ -1,0 +1,343 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/services/threshold-backtest-run.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/services</a> threshold-backtest-run.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/26</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/5</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/7</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/20</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Threshold-backtest orchestration -- the "separate, I/O-touching slice" the pure analysis core
+// (./threshold-backtest.ts) explicitly leaves to its caller, mirroring linked-issue-satisfaction-run.ts's own
+// "pure core vs. I/O orchestration" split. Reads each affected ruleId's history directly via the already-shipped
+// createSignalStore(env) adapter (#7982/#8101/#8104) -- no CLI, no subprocess, no wrangler; this runs inside
+// ORB's own Worker request, which already has env.DB.
+//
+// Hard guarantees (mirrors linked-issue-satisfaction-run.ts's own fail-safe discipline):
+//   • No changed threshold in the diff -&gt; no result, never called for nothing.
+//   • A SignalStore read failure for one ruleId degrades that ruleId to an empty corpus (a real, if uninformative,
+//     backtest result -- null precision/recall, per #8085's own null-when-no-data discipline) rather than
+//     aborting the whole advisory. This never blocks the PR either way -- see the epic's own Boundaries.
+import { buildBacktestCorpus, type BacktestCase, type BacktestComparison } from "@loopover/engine";
+import { createSignalStore } from "../review/signal-tracking-wire";
+import { recordAuditEvent } from "../db/repositories";
+import { backtestChangedThreshold, detectChangedThresholds, type ChangedThreshold } from "./threshold-backtest";
+&nbsp;
+const CORPUS_LOOKBACK_MS = <span class="cstat-no" title="statement not covered" >90 * 24 * 60 * 60 * 1000; // 90 days -- generous enough for a young corpus to matter</span>
+&nbsp;
+export const THRESHOLD_BACKTEST_EVENT_TYPE = <span class="cstat-no" title="statement not covered" >"calibration.threshold_backtest_run";</span>
+&nbsp;
+async function <span class="fstat-no" title="function not covered" >fetchCorpus(e</span>nv: Env, ruleId: string, nowMs: number): Promise&lt;BacktestCase[]&gt; {
+<span class="cstat-no" title="statement not covered" >  try {</span>
+    const { fired, overrides } = <span class="cstat-no" title="statement not covered" >await createSignalStore(env).queryRuleHistory(ruleId, nowMs - CORPUS_LOOKBACK_MS);</span>
+<span class="cstat-no" title="statement not covered" >    return buildBacktestCorpus(ruleId, fired, overrides);</span>
+  } catch {
+    // Fail open to an empty corpus (null precision/recall downstream), never throw -- a read failure for one
+    // ruleId must not abort the whole advisory or, worse, the review pass that triggered it.
+<span class="cstat-no" title="statement not covered" >    return [];</span>
+  }
+}
+&nbsp;
+export type ThresholdBacktestRunResult = {
+  changed: readonly ChangedThreshold[];
+  comparisons: readonly BacktestComparison[];
+};
+&nbsp;
+/**
+ * Detect any known threshold constant changed in `diff` and backtest each affected ruleId against its real
+ * history. Returns `{ changed: [], comparisons: [] }` -- never null, never throws -- when nothing changed, so
+ * the caller can check `comparisons.length` the same way it checks any other optional advisory result.
+ * `diff` must be UNBUDGETED (see detectChangedThresholds's own doc comment) -- pass buildSecretScanDiff's
+ * output, not buildAiReviewDiff's.
+ */
+export async function <span class="fstat-no" title="function not covered" >runThresholdBacktestAdvisory(e</span>nv: Env, diff: string, nowMs: number = <span class="branch-0 cbranch-no" title="branch not covered" >Date.now()): Promise&lt;ThresholdBacktestRunResult&gt; {</span>
+  const changed = <span class="cstat-no" title="statement not covered" >detectChangedThresholds(diff);</span>
+<span class="cstat-no" title="statement not covered" >  if (changed.length === 0) <span class="cstat-no" title="statement not covered" >return { changed: [], comparisons: [] };</span></span>
+&nbsp;
+  const ruleIds = <span class="cstat-no" title="statement not covered" >[...new Set(changed.<span class="fstat-no" title="function not covered" >flatMap((c</span>hange) =&gt; <span class="cstat-no" title="statement not covered" >change.ruleIds)</span>)];</span>
+  const corpusByRuleId = <span class="cstat-no" title="statement not covered" >new Map&lt;string, BacktestCase[]&gt;();</span>
+<span class="cstat-no" title="statement not covered" >  for (const ruleId of ruleIds) <span class="cstat-no" title="statement not covered" >corpusByRuleId.set(ruleId, await fetchCorpus(env, ruleId, nowMs));</span></span>
+&nbsp;
+  const comparisons = <span class="cstat-no" title="statement not covered" >changed.<span class="fstat-no" title="function not covered" >flatMap((c</span>hange) =&gt; <span class="cstat-no" title="statement not covered" >backtestChangedThreshold(change, corpusByRuleId))</span>;</span>
+<span class="cstat-no" title="statement not covered" >  return { changed, comparisons };</span>
+}
+&nbsp;
+/** Persist each comparison for #8140's future track-record tool -- structured data via the shared
+ *  audit_events table (recordAuditEvent, already used by every other write site in this epic), never a raw
+ *  SQL string. Best-effort: `.catch(() =&gt; undefined)` at each call site, matching every other calibration
+ *  write in this epic -- a persistence failure must never affect the review pass that produced the result. */
+export async function <span class="fstat-no" title="function not covered" >persistThresholdBacktestRuns(</span>
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  changed: readonly ChangedThreshold[],
+  comparisons: readonly BacktestComparison[],
+): Promise&lt;void&gt; {
+  const comparisonsByRuleId = <span class="cstat-no" title="statement not covered" >new Map(comparisons.<span class="fstat-no" title="function not covered" >map((c</span>omparison) =&gt; <span class="cstat-no" title="statement not covered" >[comparison.ruleId, comparison])</span>);</span>
+<span class="cstat-no" title="statement not covered" >  for (const change of changed) {</span>
+<span class="cstat-no" title="statement not covered" >    for (const ruleId of change.ruleIds) {</span>
+      const comparison = <span class="cstat-no" title="statement not covered" >comparisonsByRuleId.get(ruleId);</span>
+<span class="cstat-no" title="statement not covered" >      if (!comparison) <span class="cstat-no" title="statement not covered" >continue;</span></span>
+<span class="cstat-no" title="statement not covered" >      await recordAuditEvent(env, {</span>
+        eventType: THRESHOLD_BACKTEST_EVENT_TYPE,
+        actor: "loopover",
+        targetKey: `${repoFullName}#${prNumber}`,
+        // AuditEventRecord.outcome is a fixed enum (success/denied/error/queued/completed) -- it's not where
+        // the backtest verdict goes. "completed" means "this run recorded successfully"; the real verdict
+        // (improved/regressed/unchanged) lives in `detail` and `metadata.comparison.verdict` instead, mirroring
+        // how every other telemetry-shaped audit event in this codebase uses "completed" for "happened, see detail".
+        outcome: "completed",
+        detail: `${change.constantName} threshold backtest for ${ruleId}: ${comparison.verdict}`,
+        metadata: { comparison, constantName: change.constantName },
+      }).<span class="fstat-no" title="function not covered" >catch(() =&gt; <span class="cstat-no" title="statement not covered" >u</span>ndefined)</span>;
+    }
+  }
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    

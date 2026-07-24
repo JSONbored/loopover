@@ -1,0 +1,772 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/review/parity-wire.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/review</a> parity-wire.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/30</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/32</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/8</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/24</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a>
+<a name='L185'></a><a href='#L185'>185</a>
+<a name='L186'></a><a href='#L186'>186</a>
+<a name='L187'></a><a href='#L187'>187</a>
+<a name='L188'></a><a href='#L188'>188</a>
+<a name='L189'></a><a href='#L189'>189</a>
+<a name='L190'></a><a href='#L190'>190</a>
+<a name='L191'></a><a href='#L191'>191</a>
+<a name='L192'></a><a href='#L192'>192</a>
+<a name='L193'></a><a href='#L193'>193</a>
+<a name='L194'></a><a href='#L194'>194</a>
+<a name='L195'></a><a href='#L195'>195</a>
+<a name='L196'></a><a href='#L196'>196</a>
+<a name='L197'></a><a href='#L197'>197</a>
+<a name='L198'></a><a href='#L198'>198</a>
+<a name='L199'></a><a href='#L199'>199</a>
+<a name='L200'></a><a href='#L200'>200</a>
+<a name='L201'></a><a href='#L201'>201</a>
+<a name='L202'></a><a href='#L202'>202</a>
+<a name='L203'></a><a href='#L203'>203</a>
+<a name='L204'></a><a href='#L204'>204</a>
+<a name='L205'></a><a href='#L205'>205</a>
+<a name='L206'></a><a href='#L206'>206</a>
+<a name='L207'></a><a href='#L207'>207</a>
+<a name='L208'></a><a href='#L208'>208</a>
+<a name='L209'></a><a href='#L209'>209</a>
+<a name='L210'></a><a href='#L210'>210</a>
+<a name='L211'></a><a href='#L211'>211</a>
+<a name='L212'></a><a href='#L212'>212</a>
+<a name='L213'></a><a href='#L213'>213</a>
+<a name='L214'></a><a href='#L214'>214</a>
+<a name='L215'></a><a href='#L215'>215</a>
+<a name='L216'></a><a href='#L216'>216</a>
+<a name='L217'></a><a href='#L217'>217</a>
+<a name='L218'></a><a href='#L218'>218</a>
+<a name='L219'></a><a href='#L219'>219</a>
+<a name='L220'></a><a href='#L220'>220</a>
+<a name='L221'></a><a href='#L221'>221</a>
+<a name='L222'></a><a href='#L222'>222</a>
+<a name='L223'></a><a href='#L223'>223</a>
+<a name='L224'></a><a href='#L224'>224</a>
+<a name='L225'></a><a href='#L225'>225</a>
+<a name='L226'></a><a href='#L226'>226</a>
+<a name='L227'></a><a href='#L227'>227</a>
+<a name='L228'></a><a href='#L228'>228</a>
+<a name='L229'></a><a href='#L229'>229</a>
+<a name='L230'></a><a href='#L230'>230</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Convergence prep (#preconv-parity) — the RECORDING + READINESS harness for the shadow-parity audit.
+//
+// PURPOSE: before any per-repo cutover from reviewbot to the gittensory-native review, we must PROVE the
+// gittensory-native gate decision matches reviewbot's on the SAME PR at the SAME COMMIT. The pure comparison
+// LOGIC already lives in src/review/parity.ts (computeGateParity / isParityCutoverReady). This module is the
+// other half: it RECORDS the gittensory-native gate decision into the `review_audit` audit-source table
+// (migration 0049) so the harness has data to read, and exposes the readiness rollup the endpoint serves.
+//
+// SHADOW CONTRACT on the CLOUD WORKER (must hold under every path there):
+//   • flag-OFF (default) → recordNativeGateDecision is an immediate no-op (NO D1 write) and the parity endpoint
+//     404s. The review path is BYTE-IDENTICAL to today: the recorder is the only new statement on the gate
+//     path and it returns before touching D1 when off.
+//   • flag-ON → SHADOW mode: the recorder writes ONE row per finalized gate decision with
+//     source='gittensory-native'. It records ONLY; it NEVER changes what the gate does. The write is
+//     best-effort (a failure is swallowed) so telemetry can never break finalization.
+//
+// SELF-HOSTED INSTANCES ALWAYS RECORD, regardless of the flag (#orb-telemetry-gate-decision-gap). The flag
+// exists to guard write volume/cost on the SHARED Cloudflare D1 for a now-historical pre-cutover comparison
+// use case -- a self-hosted instance's review_audit is its own local SQLite/Postgres, so there is no shared-
+// resource concern, and this is the ONLY writer of gate_decision rows: exportOrbBatch's fleet-telemetry query
+// (src/selfhost/orb-collector.ts) INNER JOINs gate_decision to pr_outcome, so without this row every self-host
+// export silently returns zero events forever, even though pr_outcome rows (written unconditionally) exist.
+//
+// WHAT THIS RECORDS vs WHAT IS DEFERRED: this writes the gittensory-native (SHADOW) side only. The actual
+// cross-system COMPARISON needs reviewbot's authoritative rows (source='reviewbot') in the SAME table — those
+// are written by reviewbot during the deploy-time dual-run shadow step (both systems reviewing the same PRs),
+// NOT here. This module + the endpoint read whatever has been recorded; the live shadow run is a deploy-time
+// cutover step, out of scope for this PR.
+&nbsp;
+import { computeGateParity, isParityCutoverReady, type GateAction, type GateParityRow } from "./parity";
+import type { GateCheckConclusion, GateCheckEvaluation } from "../rules/advisory";
+import { isSelfHostedReviewRuntime } from "../selfhost/review-runtime";
+import { errorMessage, nowIso } from "../utils/json";
+&nbsp;
+// Bounded reason-class codes evaluateGateCheckCore (rules/advisory.ts) attaches to a NEUTRAL evaluation's
+// `warnings`, in the same priority order as its own return branches. Kept here (not re-exported from
+// advisory.ts) because "which of these codes counts as the neutral hold's reason" is a recording/observability
+// concern, not a gate-evaluation one. #terminal-outcome-audit: a neutral conclusion is a real "hold this PR for
+// a human" decision -- these are the finding codes that explain WHY, bounded so a raw finding title/detail
+// (which can embed contributor-controlled or per-repo text) never leaks into a metric or audit reason.
+const NEUTRAL_HOLD_REASON_CODES = <span class="cstat-no" title="statement not covered" >[</span>
+  "ai_review_inconclusive",
+  "oversized_pr",
+  "guardrail_hold",
+  "repo_not_registered",
+  "repo_not_seen",
+  "pr_not_cached",
+  "pre_merge_check_unresolved",
+  "cla_check_unresolved",
+];
+&nbsp;
+/** PURE: the bounded reason-class code for a NEUTRAL gate evaluation, derived from its `warnings` (never from
+ *  a finding's free-text `title`/`detail`). Returns `null` for a non-neutral evaluation, or a neutral one whose
+ *  warnings don't (yet) carry a recognized code -- callers fall back to the bare conclusion string in that case,
+ *  exactly as they already do for `success`/`skipped`. */
+export function <span class="fstat-no" title="function not covered" >neutralHoldReasonCode(g</span>ateEvaluation: Pick&lt;GateCheckEvaluation, "conclusion" | "warnings"&gt;): string | null {
+<span class="cstat-no" title="statement not covered" >  if (gateEvaluation.conclusion !== "neutral") <span class="cstat-no" title="statement not covered" >return null;</span></span>
+<span class="cstat-no" title="statement not covered" >  return NEUTRAL_HOLD_REASON_CODES.<span class="fstat-no" title="function not covered" >find((c</span>ode) =&gt; <span class="cstat-no" title="statement not covered" >gateEvaluation.warnings.<span class="fstat-no" title="function not covered" >some((f</span>inding) =&gt; <span class="cstat-no" title="statement not covered" >finding.code === code)</span>)</span> ?? null;</span>
+}
+&nbsp;
+/** True when the shadow-parity audit is enabled. Flag-OFF (default) → recordNativeGateDecision is a no-op and
+ *  the parity endpoint 404s. Truthy follows the codebase convention (`/^(1|true|yes|on)$/i`, same as
+ *  isOpsEnabled / isSelfTuneEnabled). */
+export function <span class="fstat-no" title="function not covered" >isParityAuditEnabled(e</span>nv: {
+  LOOPOVER_REVIEW_PARITY_AUDIT?: string | undefined;
+}): boolean {
+<span class="cstat-no" title="statement not covered" >  return /^(1|true|yes|on)$/i.test((env.LOOPOVER_REVIEW_PARITY_AUDIT ?? "").trim());</span>
+}
+&nbsp;
+/** The `source` discriminator this writer stamps on every row — the SHADOW side computeGateParity compares
+ *  against the authoritative 'reviewbot' rows. */
+export const LOOPOVER_NATIVE_SOURCE = <span class="cstat-no" title="statement not covered" >"gittensory-native";</span>
+&nbsp;
+/** Cutover-readiness defaults the endpoint applies before computing parity: a 90-day window (the parity
+ *  read's own default) over all recorded sources. The agreement FLOOR (0.98) + MIN sample (30) live in
+ *  parity.ts (PARITY_AGREEMENT_FLOOR / MIN_PARITY_SAMPLE) and isParityCutoverReady enforces them. */
+const PARITY_WINDOW_DAYS = <span class="cstat-no" title="statement not covered" >90;</span>
+&nbsp;
+/**
+ * PURE: map a loopover gate-check conclusion to the parity-comparable {@link GateAction}, or `null` when the
+ * conclusion carries no comparable terminal decision.
+ *
+ * The loopover gate is a CHECK that passes or blocks a merge — it NEVER auto-closes a PR. So the honest,
+ * safe mapping is:
+ *   • 'success'                        → 'merge' — the gate would ALLOW the merge.
+ *   • 'failure' | 'action_required'    → 'hold'  — the gate BLOCKS the merge (holds it for a human); loopover
+ *                                                  does not close, so this is 'hold', not 'close'. This also
+ *                                                  keeps the parity SAFETY metric honest: a shadow 'hold' is
+ *                                                  never the dangerous "shadow merges where authoritative
+ *                                                  wouldn't" direction.
+ *   • 'neutral'                        → 'hold'  — a REAL, deliberate decision (a guardrail/size hold, or an
+ *                                                  AI-inconclusive fail-closed hold): the gate chose
+ *                                                  to hold this PR for a human rather than pass it automatically.
+ *                                                  This is exactly as terminal, from an observability standpoint,
+ *                                                  as a 'failure' hold (#terminal-outcome-audit) -- recording it
+ *                                                  is what lets an operator see "N PRs held for reason X" without
+ *                                                  hand-querying, instead of the hold vanishing silently.
+ *   • 'skipped'                        → null    — genuinely NOT gated yet (not gated / pre-empted, e.g. the repo
+ *                                                  hasn't finished syncing); no decision was made at all, so
+ *                                                  there is nothing meaningful to record or pair.
+ *
+ * (computeGateParity only pairs 'merge' | 'close' | 'hold'; a null here means the row is simply not written.)
+ */
+export function <span class="fstat-no" title="function not covered" >nativeGateActionFromConclusion(c</span>onclusion: GateCheckConclusion): GateAction | null {
+<span class="cstat-no" title="statement not covered" >  switch (conclusion) {</span>
+    case "success":
+<span class="cstat-no" title="statement not covered" >      return "merge";</span>
+    case "failure":
+    case "action_required":
+    case "neutral":
+<span class="cstat-no" title="statement not covered" >      return "hold";</span>
+    default:
+<span class="cstat-no" title="statement not covered" >      return null; // skipped → genuinely not gated yet, no comparable decision</span>
+  }
+}
+&nbsp;
+/** The minimal env shape the recorder needs (the D1/local-DB binding, the flag, and the self-host signal). */
+type ParityRecorderEnv = {
+  DB: D1Database;
+  LOOPOVER_REVIEW_PARITY_AUDIT?: string | undefined;
+  SELFHOST_TRANSIENT_CACHE?: NonNullable&lt;Env["SELFHOST_TRANSIENT_CACHE"]&gt;;
+};
+&nbsp;
+/**
+ * Record one gittensory-native gate decision into `review_audit` (source='gittensory-native').
+ *
+ * On the cloud worker: flag-OFF (default) → returns immediately, NO D1 write (the review path is byte-
+ * identical); flag-ON → SHADOW-records for the pre-cutover parity comparison. On a self-hosted instance, this
+ * ALWAYS records regardless of the flag (see the module header) — it's the instance's own local DB, and
+ * exportOrbBatch's fleet-telemetry export depends on this data existing.
+ *
+ * Writes ONE row keyed `gate:&lt;source&gt;:&lt;project&gt;#&lt;pr&gt;@&lt;sha&gt;` with decision/head_sha/summary. RECORD-ONLY — it
+ * never changes the gate. Best-effort: a write failure is swallowed (telemetry must not break finalization). A
+ * conclusion with no comparable action (neutral/skipped) records nothing.
+ *
+ * Caller passes the FINALIZED gate conclusion + the head_sha it was evaluated on. The caller should also guard
+ * on {@link isParityAuditEnabled} for the cloud-worker byte-identical-when-off contract, but this function
+ * re-checks both the flag and the self-host signal so it is safe to call unconditionally.
+ */
+export async function <span class="fstat-no" title="function not covered" >recordNativeGateDecision(</span>
+  env: ParityRecorderEnv,
+  input: {
+    project: string;
+    pullNumber: number;
+    headSha: string | null | undefined;
+    conclusion: GateCheckConclusion;
+    reasonCode?: string | null | undefined;
+    action?: GateAction | undefined;
+    /** #2352: true when the PR's author is a confirmed official Gittensor miner (processors.ts's
+     *  `confirmedContributor`) at decision time. A coarse, non-identifying category -- NOT a login -- so this
+     *  stays within review_audit's own "no actor-identifying data" design (see migration 0144's own comment).
+     *  Omitted defaults to `false` (not miner-originated), matching every pre-#2352 caller unchanged. */
+    minerAuthored?: boolean | undefined;
+  },
+): Promise&lt;void&gt; {
+  // Self-hosted instances always record (their own local DB; exportOrbBatch needs this data). The cloud
+  // worker keeps the exact flag-gated, byte-identical-when-off contract.
+<span class="cstat-no" title="statement not covered" >  if (!isSelfHostedReviewRuntime(env) &amp;&amp; !isParityAuditEnabled(env)) <span class="cstat-no" title="statement not covered" >return;</span></span>
+  const action = <span class="cstat-no" title="statement not covered" >input.action ?? nativeGateActionFromConclusion(input.conclusion);</span>
+<span class="cstat-no" title="statement not covered" >  if (action === null) <span class="cstat-no" title="statement not covered" >return; // not a comparable decision (neutral/skipped) → nothing to record</span></span>
+<span class="cstat-no" title="statement not covered" >  if (!input.headSha) <span class="cstat-no" title="statement not covered" >return; // parity REQUIRES head_sha to pair a decision to a commit; no sha → not comparable</span></span>
+  const project = <span class="cstat-no" title="statement not covered" >input.project.slice(0, 200);</span>
+  const targetId = <span class="cstat-no" title="statement not covered" >`${project}#${input.pullNumber}`;</span>
+  const summary = <span class="cstat-no" title="statement not covered" >input.reasonCode ? input.reasonCode.slice(0, 200) : null;</span>
+  const minerAuthored = <span class="cstat-no" title="statement not covered" >input.minerAuthored === true ? 1 : 0;</span>
+<span class="cstat-no" title="statement not covered" >  try {</span>
+    // Deterministic id per (source, project, pr, sha): a re-run at the SAME commit REPLACES its prior decision
+    // (the latest finalize wins), while a new commit gets its own row. event_type/source default in the schema
+    // but are written explicitly for clarity.
+<span class="cstat-no" title="statement not covered" >    await env.DB.prepare(</span>
+      `INSERT INTO review_audit (id, project, target_id, event_type, decision, source, head_sha, summary, miner_authored, created_at)
+       VALUES (?, ?, ?, 'gate_decision', ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET decision = excluded.decision, summary = excluded.summary, miner_authored = excluded.miner_authored, created_at = excluded.created_at`,
+    )
+      .bind(`gate:${LOOPOVER_NATIVE_SOURCE}:${targetId}@${input.headSha}`, project, targetId, action, LOOPOVER_NATIVE_SOURCE, input.headSha, summary, minerAuthored, nowIso())
+      .run();
+  } catch (error) {
+    // Telemetry must never break finalization.
+<span class="cstat-no" title="statement not covered" >    console.warn(JSON.stringify({ event: "parity_audit_record_error", project, pr: input.pullNumber, message: errorMessage(error).slice(0, 200) }));</span>
+  }
+}
+&nbsp;
+// ── Readiness rollup the endpoint serves ────────────────────────────────────────────────────────────────────
+&nbsp;
+/** One project's parity row plus the hard cutover-ready verdict (isParityCutoverReady over the floor + min
+ *  sample + zero unsafe disagreements). */
+export interface ParityReadinessRow extends GateParityRow {
+  cutoverReady: boolean;
+}
+&nbsp;
+export interface ParityReadinessReport {
+  /** The authoritative writer (default 'reviewbot') and the shadow writer ('loopover') being compared. */
+  authoritative: string;
+  shadow: string;
+  /** Whether enough paired evidence exists anywhere to read parity meaningfully (&gt;= MIN_PARITY_SAMPLE). */
+  hasSignal: boolean;
+  /** Per-project parity + per-project cutover-ready verdict. */
+  rows: ParityReadinessRow[];
+}
+&nbsp;
+/**
+ * Run computeGateParity over the recorded audit data and annotate each project with isParityCutoverReady.
+ * Pure READ (D1 only via parity.ts, which is itself fail-safe → empty report). This is what the bearer-gated
+ * GET /v1/internal/parity endpoint returns.
+ *
+ * Reads WHATEVER is recorded: with only gittensory-native rows present (no reviewbot dual-run yet) there are
+ * no PAIRS, so rows is empty and hasSignal is false — the honest "not enough evidence to cut over" state. The
+ * report becomes meaningful once reviewbot's authoritative rows land via the deploy-time shadow run.
+ */
+export async function <span class="fstat-no" title="function not covered" >computeParityReadiness(</span>
+  env: Env,
+  opts: { nowMs?: number; days?: number; project?: string } = <span class="branch-0 cbranch-no" title="branch not covered" >{},</span>
+): Promise&lt;ParityReadinessReport&gt; {
+  const report = <span class="cstat-no" title="statement not covered" >await computeGateParity(env, {</span>
+    days: opts.days ?? PARITY_WINDOW_DAYS,
+    nowMs: opts.nowMs ?? Date.now(),
+    // The shadow source MUST match what recordNativeGateDecision stamps ('gittensory-native'); computeGateParity
+    // defaults `shadow` to 'loopover', so pass it explicitly or the self-join would find no shadow rows. The
+    // authoritative side stays the default 'reviewbot' (the deploy-time dual-run writer).
+    shadow: LOOPOVER_NATIVE_SOURCE,
+    ...(opts.project ? { project: opts.project } : {}),
+  });
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    authoritative: report.authoritative,
+    shadow: report.shadow,
+    hasSignal: report.hasSignal,
+    rows: report.rows.<span class="fstat-no" title="function not covered" >map((r</span>ow) =&gt; (<span class="cstat-no" title="statement not covered" >{ ...row, cutoverReady: isParityCutoverReady(row) }))</span>,
+  };
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-24T10:57:22.142Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    

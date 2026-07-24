@@ -298,8 +298,83 @@ function initDefaultSignalTrackingStore(): SignalStore {
 // runDiscover's real-run branch (own try/catch, degrade silently). Deliberately NOT called from the dry-run
 // branch: a dry run previews what a real run would do (including its own noopQueueStore for the portfolio
 // queue) and must not itself contribute real data to a precision report.
+// #8544: bounded candidate-context capture, mirroring the ORB precedent (#8129/#8130). Caps exist so a
+// pathological repo (hundreds of labels, or a label crafted to be enormous) can't grow the local event
+// ledger without limit; `truncated` records THAT clamping happened so a later backtest knows the stored
+// context is partial rather than treating it as the full picture.
+const MAX_CAPTURED_LABELS = 50;
+const MAX_CAPTURED_ASSIGNEES = 25;
+const MAX_CAPTURED_STRING_CHARS = 200;
+
+type CapturedCandidateContext = {
+  labels?: string[];
+  assignees?: string[];
+  owner?: string;
+  truncated?: true;
+};
+
+/** #8544: clamp one string list to `max` entries and each entry to {@link MAX_CAPTURED_STRING_CHARS},
+ *  reporting whether either clamp actually fired. */
+function boundStringList(values: readonly string[], max: number): { values: string[]; truncated: boolean } {
+  const listTruncated = values.length > max;
+  const kept = listTruncated ? values.slice(0, max) : values;
+  let stringTruncated = false;
+  const bounded = kept.map((value) => {
+    if (value.length <= MAX_CAPTURED_STRING_CHARS) return value;
+    stringTruncated = true;
+    return value.slice(0, MAX_CAPTURED_STRING_CHARS);
+  });
+  return { values: bounded, truncated: listTruncated || stringTruncated };
+}
+
+/** #8544: build the bounded `metadata` for one excluded candidate. Absent source fields are OMITTED entirely
+ *  — no nulls and no empty-array placeholders, so "we captured nothing here" stays distinguishable from
+ *  "this candidate genuinely had no labels". Returns undefined when the candidate carries no context at all,
+ *  so pre-#8544 event shapes are reproduced byte-identically rather than gaining an empty object. */
+function buildCandidateContextMetadata(candidate: {
+  labels?: string[] | undefined;
+  assignees?: string[] | undefined;
+  owner?: string | undefined;
+}): CapturedCandidateContext | undefined {
+  const metadata: CapturedCandidateContext = {};
+  let truncated = false;
+
+  if (candidate.labels !== undefined) {
+    const bounded = boundStringList(candidate.labels, MAX_CAPTURED_LABELS);
+    metadata.labels = bounded.values;
+    truncated ||= bounded.truncated;
+  }
+  if (candidate.assignees !== undefined) {
+    const bounded = boundStringList(candidate.assignees, MAX_CAPTURED_ASSIGNEES);
+    metadata.assignees = bounded.values;
+    truncated ||= bounded.truncated;
+  }
+  if (candidate.owner !== undefined) {
+    // Clamped directly rather than through boundStringList: a single value has no list-length arm, and
+    // routing it through the array helper left an unreachable `?? ""` fallback.
+    const clamped = candidate.owner.slice(0, MAX_CAPTURED_STRING_CHARS);
+    if (clamped.length < candidate.owner.length) truncated = true;
+    metadata.owner = clamped;
+  }
+
+  if (Object.keys(metadata).length === 0) return undefined;
+  if (truncated) metadata.truncated = true;
+  return metadata;
+}
+
 async function recordEligibilityExclusionSignals(
-  excluded: ReadonlyArray<{ candidate: { repoFullName: string; issueNumber: number }; reason: string }>,
+  excluded: ReadonlyArray<{
+    candidate: {
+      repoFullName: string;
+      issueNumber: number;
+      // #8544: already present at runtime via EligibilityExclusion<T>'s generic passthrough (see
+      // FilterCandidate) — read straight through, no new computation at the call site.
+      labels?: string[] | undefined;
+      assignees?: string[] | undefined;
+      owner?: string | undefined;
+    };
+    reason: string;
+  }>,
   options: Pick<RunDiscoverOptions, "initSignalTrackingStore" | "nowMs">,
 ): Promise<void> {
   if (excluded.length === 0) return;
@@ -312,12 +387,15 @@ async function recordEligibilityExclusionSignals(
   if (!store) return;
   const occurredAt = new Date(options.nowMs ?? Date.now()).toISOString();
   for (const entry of excluded) {
+    const metadata = buildCandidateContextMetadata(entry.candidate);
     await store
       .recordRuleFired({
         ruleId: entry.reason,
         targetKey: `${entry.candidate.repoFullName}#issue-${entry.candidate.issueNumber}`,
         outcome: "exclude",
         occurredAt,
+        // Spread-or-omit: a candidate with no context keeps the exact pre-#8544 event shape.
+        ...(metadata ? { metadata } : {}),
       })
       .catch(() => undefined);
   }

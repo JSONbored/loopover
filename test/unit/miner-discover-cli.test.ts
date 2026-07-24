@@ -1643,12 +1643,18 @@ describe("runDiscover onResult hook (#6522)", () => {
     });
 
     describe("eligibility-exclusion signal tracking (#7982)", () => {
+      // #8544: `captured` keeps the full event (metadata included); `fired` stays the pre-#8544 projection so
+      // every existing assertion in this block is untouched.
+      const captured: Array<Record<string, unknown>> = [];
       function fakeSignalStore() {
         const fired: Array<{ ruleId: string; targetKey: string; outcome: string }> = [];
+        captured.length = 0;
         return {
           fired,
+          captured,
           store: {
             recordRuleFired: vi.fn(async (event: { ruleId: string; targetKey: string; outcome: string }) => {
+              captured.push({ ...event });
               fired.push({ ruleId: event.ruleId, targetKey: event.targetKey, outcome: event.outcome });
             }),
             recordHumanOverride: vi.fn(async () => undefined),
@@ -1672,6 +1678,82 @@ describe("runDiscover onResult hook (#6522)", () => {
           { ruleId: "exclusion_label", targetKey: "acme/widgets#issue-2", outcome: "exclude" },
           { ruleId: "missing_eligibility_label", targetKey: "acme/widgets#issue-3", outcome: "exclude" },
         ]);
+      });
+
+      // #8544: bounded candidate-context metadata on the same fired events.
+      describe("bounded candidate context (#8544)", () => {
+        const runExcluded = async (issueOverrides: Record<string, unknown>) => {
+          const issues = [fanOutIssue({ issueNumber: 2, ...issueOverrides })];
+          const { opts } = discoverWith(issues, new Map([["acme/widgets", trustworthyProfile]]));
+          const { captured, store } = fakeSignalStore();
+          vi.spyOn(console, "log").mockImplementation(() => undefined);
+          await runDiscover(["acme/widgets", "--json"], { ...opts, initSignalTrackingStore: () => store });
+          return captured[0] as { metadata?: Record<string, unknown> } | undefined;
+        };
+
+        it("captures labels, assignees and owner when all three are present", async () => {
+          const event = await runExcluded({ labels: ["blocked"], assignees: ["octocat"], owner: "acme" });
+          expect(event?.metadata).toEqual({ labels: ["blocked"], assignees: ["octocat"], owner: "acme" });
+          expect(event?.metadata).not.toHaveProperty("truncated");
+        });
+
+        it("omits each field that is absent from the candidate rather than storing null or []", async () => {
+          const event = await runExcluded({ labels: ["blocked"], assignees: undefined, owner: undefined });
+          expect(event?.metadata).toEqual({ labels: ["blocked"] });
+          expect(event?.metadata).not.toHaveProperty("assignees");
+          expect(event?.metadata).not.toHaveProperty("owner");
+        });
+
+        it("keeps an empty array distinguishable from an absent field", async () => {
+          const event = await runExcluded({ labels: ["blocked"], assignees: [] });
+          expect((event?.metadata as { assignees?: string[] })?.assignees).toEqual([]);
+        });
+
+        it("labels exactly at the 50 cap are kept whole with no truncated flag", async () => {
+          const labels = ["blocked", ...Array.from({ length: 49 }, (_, i) => `l${i}`)];
+          const event = await runExcluded({ labels });
+          expect((event?.metadata as { labels: string[] }).labels).toHaveLength(50);
+          expect(event?.metadata).not.toHaveProperty("truncated");
+        });
+
+        it("labels one over the cap are clamped to 50 and flagged truncated", async () => {
+          const labels = ["blocked", ...Array.from({ length: 50 }, (_, i) => `l${i}`)];
+          const event = await runExcluded({ labels });
+          expect((event?.metadata as { labels: string[] }).labels).toHaveLength(50);
+          expect(event?.metadata).toHaveProperty("truncated", true);
+        });
+
+        it("assignees exactly at the 25 cap are kept whole; one over is clamped and flagged", async () => {
+          const atCap = await runExcluded({ labels: ["blocked"], assignees: Array.from({ length: 25 }, (_, i) => `u${i}`) });
+          expect((atCap?.metadata as { assignees: string[] }).assignees).toHaveLength(25);
+          expect(atCap?.metadata).not.toHaveProperty("truncated");
+
+          const overCap = await runExcluded({ labels: ["blocked"], assignees: Array.from({ length: 26 }, (_, i) => `u${i}`) });
+          expect((overCap?.metadata as { assignees: string[] }).assignees).toHaveLength(25);
+          expect(overCap?.metadata).toHaveProperty("truncated", true);
+        });
+
+        it("a string exactly at the 200-char cap is kept whole; one char over is clamped and flagged", async () => {
+          const atCap = await runExcluded({ labels: ["blocked", "x".repeat(200)] });
+          expect((atCap?.metadata as { labels: string[] }).labels[1]).toHaveLength(200);
+          expect(atCap?.metadata).not.toHaveProperty("truncated");
+
+          const overCap = await runExcluded({ labels: ["blocked", "x".repeat(201)] });
+          expect((overCap?.metadata as { labels: string[] }).labels[1]).toHaveLength(200);
+          expect(overCap?.metadata).toHaveProperty("truncated", true);
+        });
+
+        it("omits metadata entirely when the candidate carries no context at all (pre-#8544 event shape)", async () => {
+          const event = await runExcluded({ labels: undefined, assignees: undefined, owner: undefined });
+          expect(event).toBeDefined();
+          expect(event).not.toHaveProperty("metadata");
+        });
+
+        it("clamps an over-long owner string and flags it", async () => {
+          const event = await runExcluded({ labels: ["blocked"], owner: "o".repeat(201) });
+          expect((event?.metadata as { owner: string }).owner).toHaveLength(200);
+          expect(event?.metadata).toHaveProperty("truncated", true);
+        });
       });
 
       it("records nothing when nothing was excluded", async () => {

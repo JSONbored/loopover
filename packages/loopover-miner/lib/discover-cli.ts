@@ -292,6 +292,72 @@ function initDefaultSignalTrackingStore(): SignalStore {
   return createSignalTrackingStore({ appendEvent, readEvents });
 }
 
+// #8544: bounded raw context for eligibility-exclusion backtest replay — mirrors ORB's #8129/#8130 posture.
+// Caps are fixed so a captured exclusion can be re-evaluated under a candidate ContributionProfile without
+// storing whole candidate objects or unbounded label/assignee lists.
+export const ELIGIBILITY_EXCLUSION_METADATA_MAX_LABELS = 50;
+export const ELIGIBILITY_EXCLUSION_METADATA_MAX_ASSIGNEES = 25;
+export const ELIGIBILITY_EXCLUSION_METADATA_MAX_STRING_CHARS = 200;
+
+type EligibilityExclusionCaptureCandidate = {
+  labels?: string[];
+  assignees?: string[];
+  owner?: string;
+};
+
+function truncateEligibilityMetadataString(value: string): { value: string; truncated: boolean } {
+  if (value.length <= ELIGIBILITY_EXCLUSION_METADATA_MAX_STRING_CHARS) {
+    return { value, truncated: false };
+  }
+  return {
+    value: value.slice(0, ELIGIBILITY_EXCLUSION_METADATA_MAX_STRING_CHARS),
+    truncated: true,
+  };
+}
+
+function boundedEligibilityMetadataStrings(
+  items: string[] | undefined,
+  maxCount: number,
+): { values: string[] | undefined; truncated: boolean } {
+  if (items === undefined) return { values: undefined, truncated: false };
+  const strings = items.filter((entry): entry is string => typeof entry === "string");
+  if (strings.length === 0) return { values: undefined, truncated: false };
+  let truncated = strings.length > maxCount;
+  const bounded = strings.slice(0, maxCount);
+  const values: string[] = [];
+  for (const entry of bounded) {
+    const next = truncateEligibilityMetadataString(entry);
+    if (next.truncated) truncated = true;
+    values.push(next.value);
+  }
+  return { values, truncated };
+}
+
+/** Build bounded metadata for an eligibility-exclusion fired event (#8544). Omits absent/empty fields; adds
+ *  `truncated: true` only when an array-length or string-length cap actually clamped input. */
+export function buildEligibilityExclusionMetadata(
+  candidate: EligibilityExclusionCaptureCandidate,
+): Record<string, unknown> | undefined {
+  let truncated = false;
+  const metadata: Record<string, unknown> = {};
+  if (typeof candidate.owner === "string" && candidate.owner) {
+    const owner = truncateEligibilityMetadataString(candidate.owner);
+    if (owner.truncated) truncated = true;
+    metadata.owner = owner.value;
+  }
+  const labels = boundedEligibilityMetadataStrings(candidate.labels, ELIGIBILITY_EXCLUSION_METADATA_MAX_LABELS);
+  if (labels.values !== undefined) metadata.labels = labels.values;
+  if (labels.truncated) truncated = true;
+  const assignees = boundedEligibilityMetadataStrings(
+    candidate.assignees,
+    ELIGIBILITY_EXCLUSION_METADATA_MAX_ASSIGNEES,
+  );
+  if (assignees.values !== undefined) metadata.assignees = assignees.values;
+  if (assignees.truncated) truncated = true;
+  if (truncated) metadata.truncated = true;
+  return Object.keys(metadata).length > 0 ? metadata : undefined;
+}
+
 // #7982: records each real-run eligibility exclusion as a rule-fired signal (ruleId = the exclusion reason,
 // e.g. "missing_eligibility_label"), so it can later be scored for precision. Best-effort: a store-open
 // failure or a single write failure never aborts discovery -- same discipline as the caches/stores in
@@ -299,7 +365,16 @@ function initDefaultSignalTrackingStore(): SignalStore {
 // branch: a dry run previews what a real run would do (including its own noopQueueStore for the portfolio
 // queue) and must not itself contribute real data to a precision report.
 async function recordEligibilityExclusionSignals(
-  excluded: ReadonlyArray<{ candidate: { repoFullName: string; issueNumber: number }; reason: string }>,
+  excluded: ReadonlyArray<{
+    candidate: {
+      repoFullName: string;
+      issueNumber: number;
+      labels?: string[];
+      assignees?: string[];
+      owner?: string;
+    };
+    reason: string;
+  }>,
   options: Pick<RunDiscoverOptions, "initSignalTrackingStore" | "nowMs">,
 ): Promise<void> {
   if (excluded.length === 0) return;
@@ -312,12 +387,14 @@ async function recordEligibilityExclusionSignals(
   if (!store) return;
   const occurredAt = new Date(options.nowMs ?? Date.now()).toISOString();
   for (const entry of excluded) {
+    const metadata = buildEligibilityExclusionMetadata(entry.candidate);
     await store
       .recordRuleFired({
         ruleId: entry.reason,
         targetKey: `${entry.candidate.repoFullName}#issue-${entry.candidate.issueNumber}`,
         outcome: "exclude",
         occurredAt,
+        ...(metadata ? { metadata } : {}),
       })
       .catch(() => undefined);
   }

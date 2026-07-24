@@ -57,9 +57,12 @@ export const SAFE_URL_MARKERS = Object.freeze([
 
 /** `diffFilePriority` is duplicated by FUNCTION, not by file: two byte-identical host copies
  *  (review-diff.ts, review-grounding.ts) and a differently-named engine copy (diff-file-priority.ts) —
- *  none share a filename, so the directory scan never pairs them. The `cartfile\.resolved` marker directly
- *  regression-guards #4605 Finding 1: the engine copy's Carthage-lockfile regex had silently drifted to
- *  `cartfile\.lock`, which is not a real filename (Carthage's lockfile is `Cartfile.resolved`). */
+ *  none share a filename, so the directory scan never pairs them. The `isLockfile(path)` marker
+ *  regression-guards #4605 Finding 1 at its root: that bug was the engine copy's hand-rolled
+ *  Carthage-lockfile regex silently drifting to `cartfile\.lock` (not a real filename — Carthage's is
+ *  `Cartfile.resolved`). Since #8357 every copy delegates lockfile-NAME matching to the canonical
+ *  `isLockfile`/`LOCKFILE_NAMES`, so no copy owns a name list that CAN drift; asserting the delegation is
+ *  present is therefore a strictly stronger guard than asserting one literal name inside a private regex. */
 export const DIFF_FILE_PRIORITY_TWIN_PAIR: NamedTwinPair = Object.freeze({
   area: "diff-file-priority",
   hostRelative: "src/review/review-diff.ts",
@@ -70,7 +73,7 @@ export const DIFF_FILE_PRIORITY_TWIN_PAIR: NamedTwinPair = Object.freeze({
 
 export const DIFF_FILE_PRIORITY_MARKERS = Object.freeze([
   "export function diffFilePriority(path: string): number {",
-  "cartfile\\.resolved",
+  "isLockfile(path)",
 ] as const);
 
 /** `sharesMeaningfulFile` is a near-duplicate helper (the host folds its guard clause into one `if`; the

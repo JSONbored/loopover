@@ -1,4 +1,7 @@
-import { parsePullRequestTargetKey } from "@loopover/engine";
+// Subpath import, not the engine barrel: this file needs exactly ONE tiny parser, and the barrel
+// (dist/index.js re-exporting calibration/advisory/policy modules) measured ~420ms of cold import
+// under vitest — a tax paid by every test file that transitively touches repositories (#test-import-cost).
+import { parsePullRequestTargetKey } from "@loopover/engine/parse-pull-request-target-key";
 import { and, asc, desc, eq, gte, inArray, isNotNull, lt, not, or, sql, type SQL } from "drizzle-orm";
 import { getDb } from "./client";
 import {

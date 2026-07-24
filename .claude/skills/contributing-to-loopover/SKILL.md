@@ -191,6 +191,13 @@ This is where most PRs fail Codecov. The bar is **every changed line AND every c
   it is not wired into CI or the Codecov gate. Before pushing, run the whole suite
   **unsharded** — `npm run test:coverage` — the only faithful local coverage signal (CI shards + merges,
   so a single shard under-reports).
+  - **Touching `packages/loopover-{miner,mcp}`?** Run `npm run build:miner`/`build:mcp` once before
+    scoping to an individual test file. Most miner/mcp tests import `lib/*.js` in-process (resolves
+    straight to the `.ts`, no build needed) — but the shared CLI harnesses and every stdio-transport
+    test (`mcp-cli-*.test.ts`, `mcp-feasibility-gate.test.ts`, etc.) spawn the real compiled
+    `dist/bin/*.js`, and will fail with a confusing `ENOENT`/module-resolve error against a stale or
+    missing `dist/` if you skip this. Re-run the build after editing miner/mcp source, same as you'd
+    re-run any other build before testing its output.
 - **Find the uncovered branch.** In the v8 text report, read the **% Branch** column and the
   **Uncovered Line #s** for your changed file — a line at 100% lines but <100% branch has an un-taken
   `??`/ternary/`&&` side; add that case. Aim for **100% branch on your diff locally** so normal CI

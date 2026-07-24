@@ -13,7 +13,7 @@ import { afterEach, describe, expect, it } from "vitest";
 // real subprocess, where an in-process vi.mock could not reach it anyway. Instead they point the SDK at a local
 // recorder via LOOPOVER_MCP_POSTHOG_HOST and assert what actually leaves the process. Default-off is therefore
 // verified, not documented.
-const bin = join(process.cwd(), "packages/loopover-mcp/bin/loopover-mcp.js");
+const bin = join(process.cwd(), "packages/loopover-mcp/dist/bin/loopover-mcp.js");
 
 type PostHogEvent = { event: string; distinct_id?: string; properties?: Record<string, unknown> };
 

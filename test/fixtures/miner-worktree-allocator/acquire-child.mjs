@@ -2,7 +2,7 @@
 // Cross-process helper for worktree-allocator collision tests (#4298).
 // Opens the shared store, waits for a stdin "go" signal, then calls acquire() so
 // multiple Node processes contend on BEGIN IMMEDIATE against the same dbPath.
-import { openWorktreeAllocator } from "../../../packages/loopover-miner/lib/worktree-allocator.js";
+import { openWorktreeAllocator } from "../../../packages/loopover-miner/dist/lib/worktree-allocator.js";
 
 const [dbPath, worktreeBaseDir, maxConcurrencyStr, attemptId, repoFullName] = process.argv.slice(2);
 if (!dbPath || !worktreeBaseDir || !maxConcurrencyStr || !attemptId || !repoFullName) {

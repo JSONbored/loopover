@@ -10,7 +10,7 @@ import { closeFixtureServer, startFixtureServer } from "./support/mcp-cli-harnes
 // author login and proxies to GET /v1/repos/:owner/:repo/pulls/:number/ai-review-findings — the route (and the
 // loadPrAiReviewFindings it delegates to) stays the single source of truth, so these tests assert the request
 // the tool composes (path + login query param) and its login-resolution fallback chain, not the findings logic.
-const bin = join(process.cwd(), "packages/loopover-mcp/bin/loopover-mcp.js");
+const bin = join(process.cwd(), "packages/loopover-mcp/dist/bin/loopover-mcp.js");
 const FORBIDDEN_PUBLIC_TERMS = /wallet\s*[:=]\s*\S+|hotkey\s*[:=]\s*\S+|coldkey\s*[:=]\s*\S+|raw trust score is|your trust score|reward estimate is|estimated reward/i;
 
 let client: Client;

@@ -544,11 +544,11 @@ jobs:
         run: npm run test:mcp-pack
       # Same "ships .ts only, this build is for the published npm tarball + the pack-check below, not for
       # tests" story as MCP's own "Build MCP" step above. Invokes turbo.json's @loopover/miner#build:tsc
-      # (cache: false -- historically to avoid a cache restore stomping this package's hand-written .js
-      # files while the #7290 migration was still in-flight; now that #7317 closed it out, every bin/lib
-      # file is compiler-owned and that original risk no longer applies, but re-enabling caching here is a
-      # separate change this PR doesn't make) and @loopover/miner#build:verify (real caching win: skips
-      # re-`node --check`-ing all 121 bin/lib files when neither changed) DIRECTLY as their own task names,
+      # (real caching win since the 2026-07-24 dist/ migration -- previously cache: false, historically to
+      # avoid a cache restore stomping this package's hand-written .js files while the #7290 migration was
+      # still in-flight; #7317 closed that out, and the dist/ split removed the original in-place-emit
+      # hazard entirely, so caching was finally enabled) and @loopover/miner#build:verify (real caching
+      # win: skips re-`node --check`-ing all bin/lib files when neither changed) DIRECTLY as their own task names,
       # deliberately NOT via the aggregate `@loopover/miner#build` task (which exists for standalone/local
       # `npm run build` callers) -- that aggregate's own script is `npm run build:tsc && npm run
       # build:verify`, i.e. it re-invokes both of these exact scripts a second time even when turbo already

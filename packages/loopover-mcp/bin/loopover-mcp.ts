@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { closeSync, constants as fsConstants, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { buildFeasibilityVerdict, buildPrTextLint, buildGateDispositions, buildPublicPrBodyDraft } from "@loopover/engine";
@@ -48,10 +48,25 @@ import { redactKnownLocalPaths, redactLocalPath } from "../lib/redact-local-path
 // side by side unaliased would read as the same function (#6238).
 import { recordMcpToolCall as recordLocalMcpToolCall } from "../lib/telemetry.js";
 
+// Path to a file next to this package's own root, computed relative to THIS module's own on-disk
+// location -- which differs by one directory level depending on how this file is currently running:
+// imported in-process (e.g. by the vitest unit tests that exercise the CLI dispatcher + stdio tools
+// directly against bin/loopover-mcp.ts, per the invokedPath check below) resolves relative to the
+// real source bin/, while a real CLI invocation resolves relative to the compiled dist/bin/ (one
+// level deeper, since the 2026-07-24 dist/ migration; see tsconfig.json's outDir comment). A single
+// hardcoded relative depth can only ever be correct for one of those two contexts, so this tries
+// both, preferring whichever the current on-disk layout actually has.
+function resolveOwnPackageSiblingPath(...segments: string[]): URL {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const fromBin = join(here, "..", ...segments);
+  if (existsSync(fromBin)) return pathToFileURL(fromBin);
+  return pathToFileURL(join(here, "..", "..", ...segments));
+}
+
 // Read name/version from this package's own package.json (always present in any install --
 // global, npx, or local -- npm ships it regardless of the "files" allowlist) instead of hand-synced
 // literals, so a release bump never has a second place to forget.
-const ownPackageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+const ownPackageJson = JSON.parse(readFileSync(resolveOwnPackageSiblingPath("package.json"), "utf8"));
 
 const defaultApiUrl = "https://api.loopover.ai";
 const legacyDefaultApiUrls = new Set([
@@ -71,7 +86,7 @@ const decisionPackCacheSchemaVersion = 1;
 const decisionPackCacheMaxEntries = 25;
 const decisionPackCacheMaxBytes = 512 * 1024;
 const cliTextFileMaxBytes = 1024 * 1024;
-const changelogPath = new URL("../CHANGELOG.md", import.meta.url);
+const changelogPath = resolveOwnPackageSiblingPath("CHANGELOG.md");
 const cliArgs = process.argv.slice(2);
 
 // #7764: true only when this file is the process entrypoint (`node .../loopover-mcp.js`, incl. via the npm

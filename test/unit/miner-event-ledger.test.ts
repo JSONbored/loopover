@@ -197,7 +197,7 @@ describe("loopover-miner event ledger (#2290)", () => {
   });
 
   it("is append-only: the module's own source issues no inline UPDATE or DELETE against the ledger (#5564: the sole exception, purgeByRepo, delegates its DELETE to store-maintenance.js's shared helper, never inline SQL here)", () => {
-    const source = readFileSync("packages/loopover-miner/lib/event-ledger.js", "utf8");
+    const source = readFileSync("packages/loopover-miner/dist/lib/event-ledger.js", "utf8");
     expect(source).not.toMatch(/\b(UPDATE|DELETE)\b/i);
     expect(source).toContain("purgeByRepo");
   });

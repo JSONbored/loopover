@@ -25,9 +25,9 @@ const FULL_PACKAGE = [
   "README.md",
   "CHANGELOG.md",
   "LICENSE",
-  "bin/loopover-mcp.js",
-  "lib/cli-error.js",
-  "lib/telemetry.js",
+  "dist/bin/loopover-mcp.js",
+  "dist/lib/cli-error.js",
+  "dist/lib/telemetry.js",
   "scripts/gittensor-score-preview.mjs",
   "scripts/gittensor-score-preview.py",
 ];
@@ -37,7 +37,7 @@ describe("check-mcp-package script", () => {
     const result = runChecker();
     expect(result.status).toBe(0);
     expect(result.out).toMatch(/^MCP package dry-run ok:/);
-    expect(result.out).toContain("bin/loopover-mcp.js");
+    expect(result.out).toContain("dist/bin/loopover-mcp.js");
     expect(result.out).toContain("package.json");
   });
 
@@ -48,7 +48,7 @@ describe("check-mcp-package script", () => {
     });
     expect(result.status).toBe(0);
     expect(result.out).toMatch(/^MCP package dry-run ok:/);
-    expect(result.out).toContain("lib/cli-error.js");
+    expect(result.out).toContain("dist/lib/cli-error.js");
     expect(result.out).toContain("scripts/gittensor-score-preview.mjs");
   });
 
@@ -66,17 +66,17 @@ describe("check-mcp-package script", () => {
 
   it("rejects an unexpected bin that matches the package name prefix", () => {
     const result = runChecker({
-      CHECK_MCP_PACK_TEST_FILES: JSON.stringify(["package.json", "bin/loopover-mcp-backdoor.js"]),
+      CHECK_MCP_PACK_TEST_FILES: JSON.stringify(["package.json", "dist/bin/loopover-mcp-backdoor.js"]),
       CHECK_MCP_PACK_TEST_CONTENT: "console.log('not secret');",
     });
     expect(result.status).toBe(1);
-    expect(result.out).toContain("Unexpected file in MCP package: bin/loopover-mcp-backdoor.js");
+    expect(result.out).toContain("Unexpected file in MCP package: dist/bin/loopover-mcp-backdoor.js");
   });
 
   it("rejects secret-like content", () => {
     const probe = ["PROBE", "_", "SECRET", "=", "value"].join("");
     const result = runChecker({
-      CHECK_MCP_PACK_TEST_FILES: JSON.stringify(["package.json", "bin/loopover-mcp.js"]),
+      CHECK_MCP_PACK_TEST_FILES: JSON.stringify(["package.json", "dist/bin/loopover-mcp.js"]),
       CHECK_MCP_PACK_TEST_CONTENT: probe,
     });
     expect(result.status).toBe(1);

@@ -152,7 +152,7 @@ describe("loopover-miner claim ledger (#2314)", () => {
   });
 
   it("documents that miner_claims is local bookkeeping only, not duplicate adjudication (#3355)", () => {
-    const source = readFileSync("packages/loopover-miner/lib/claim-ledger.js", "utf8");
+    const source = readFileSync("packages/loopover-miner/dist/lib/claim-ledger.js", "utf8");
     expect(source).toContain("LOCAL bookkeeping only");
     expect(source).toContain("does NOT adjudicate contested duplicates");
     expect(source).toContain("isDuplicateClusterWinnerByClaim");

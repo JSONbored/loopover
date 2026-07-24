@@ -23,22 +23,21 @@
     "access": "public"
   },
   "bin": {
-    "loopover-miner": "bin/loopover-miner.js",
-    "loopover-miner-mcp": "bin/loopover-miner-mcp.js",
-    "loopover-miner-hosted": "bin/loopover-miner-hosted.js"
+    "loopover-miner": "dist/bin/loopover-miner.js",
+    "loopover-miner-mcp": "dist/bin/loopover-miner-mcp.js",
+    "loopover-miner-hosted": "dist/bin/loopover-miner-hosted.js"
+  },
+  "exports": {
+    "./package.json": "./package.json",
+    "./lib/claim-ledger.js": "./dist/lib/claim-ledger.js"
   },
   "files": [
-    "bin",
-    "lib",
+    "dist",
     "docs",
     "schema",
     "DEPLOYMENT.md",
     "Dockerfile",
-    "expected-engine.version",
-    "!bin/**/*.ts",
-    "!lib/**/*.ts",
-    "bin/**/*.d.ts",
-    "lib/**/*.d.ts"
+    "expected-engine.version"
   ],
   "scripts": {
     "benchmark": "node scripts/benchmark.mjs",

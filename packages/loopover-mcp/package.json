@@ -26,15 +26,12 @@
     "access": "public"
   },
   "bin": {
-    "loopover-mcp": "bin/loopover-mcp.js"
+    "loopover-mcp": "dist/bin/loopover-mcp.js"
   },
   "files": [
-    "bin",
-    "lib",
+    "dist",
     "scripts",
     "CHANGELOG.md",
-    "!bin/**/*.ts",
-    "!lib/**/*.ts",
     "!scripts/check-syntax.mjs",
     "!scripts/strip-bin-sourcemap.mjs"
   ],

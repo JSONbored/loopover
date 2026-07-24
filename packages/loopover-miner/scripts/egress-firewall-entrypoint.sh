@@ -19,7 +19,7 @@ set -eu
 DNSMASQ_CONF=/etc/dnsmasq.d/loopover-egress.conf
 RULESET_SCRIPT=/tmp/loopover-egress-ruleset.sh
 
-node /app/packages/loopover-miner/lib/generate-egress-firewall-config.js "$DNSMASQ_CONF" "$RULESET_SCRIPT"
+node /app/packages/loopover-miner/dist/lib/generate-egress-firewall-config.js "$DNSMASQ_CONF" "$RULESET_SCRIPT"
 
 # Listens on 127.0.0.1 only (per the generated config's own bind-interfaces + listen-address) -- unreachable
 # from outside this container regardless of what else is on its network. --user/--group are explicit rather

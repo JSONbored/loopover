@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { run } from "./support/mcp-cli-harness";
 
 // #6991: printHelp() listed ~30 real top-level commands but omitted two dispatched ones: `maintain`
-// (packages/loopover-mcp/bin/loopover-mcp.js's maintainCli) and `contributor-profile`
+// (packages/loopover-mcp/dist/bin/loopover-mcp.js's maintainCli) and `contributor-profile`
 // (contributorProfileCli, added by #6737). A user running `loopover-mcp --help` had no way to
 // discover either command exists.
 describe("loopover-mcp --help lists every real top-level command (#6991)", () => {

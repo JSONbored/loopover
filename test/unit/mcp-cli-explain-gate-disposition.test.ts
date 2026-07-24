@@ -14,7 +14,7 @@ import {
 // #6740: CLI stdio mirror of loopover_explain_gate_disposition — fetches predictedGate via the same
 // /v1/local/branch-analysis route as loopover_predict_gate, then runs the shared buildGateDispositions
 // locally so MCP and CLI agree by construction.
-const bin = join(process.cwd(), "packages/loopover-mcp/bin/loopover-mcp.js");
+const bin = join(process.cwd(), "packages/loopover-mcp/dist/bin/loopover-mcp.js");
 const FORBIDDEN_PUBLIC_TERMS =
   /wallet\s*[:=]\s*\S+|hotkey\s*[:=]\s*\S+|coldkey\s*[:=]\s*\S+|raw trust score is|your trust score|reward estimate is|estimated reward/i;
 

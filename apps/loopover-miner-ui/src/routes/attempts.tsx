@@ -1,20 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
 
 import { Badge } from "@loopover/ui-kit/components/badge";
 import { Card, CardContent, CardHeader } from "@loopover/ui-kit/components/card";
-import {
-  Pagination,
-  PaginationContent,
-  PaginationItem,
-  PaginationLink,
-  PaginationNext,
-  PaginationPrevious,
-} from "@loopover/ui-kit/components/pagination";
 import { Skeleton } from "@loopover/ui-kit/components/skeleton";
 import { StateBoundary } from "@loopover/ui-kit/components/state-views";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@loopover/ui-kit/components/table";
 
+import { TablePagination } from "../components/table-pagination";
+import { usePagedRows } from "../lib/paged-rows";
 import {
   fetchAttemptLog,
   type AttemptFeedEntry,
@@ -44,78 +37,8 @@ const DECISION_VARIANT: Record<PrOutcomeDecision, "secondary" | "outline"> = {
   closed: "outline",
 };
 
-/** Rows per page once a count/feed table grows past this; below it the full table renders unpaginated. */
-const PAGE_SIZE = 20;
-
 const dashIfNull = (value: string | number | null): string | number => (value === null ? "—" : value);
 const formatCost = (costUsd: number | null): string => (costUsd === null ? "—" : `$${costUsd.toFixed(4)}`);
-
-function TablePagination({
-  page,
-  pageCount,
-  onPageChange,
-}: {
-  page: number;
-  pageCount: number;
-  onPageChange: (next: number) => void;
-}) {
-  return (
-    <Pagination className="mt-4">
-      <PaginationContent>
-        <PaginationItem>
-          <PaginationPrevious
-            href="#"
-            aria-disabled={page === 0}
-            onClick={(event) => {
-              event.preventDefault();
-              onPageChange(Math.max(0, page - 1));
-            }}
-          />
-        </PaginationItem>
-        {Array.from({ length: pageCount }).map((_, index) => (
-          <PaginationItem key={index}>
-            <PaginationLink
-              href="#"
-              isActive={index === page}
-              onClick={(event) => {
-                event.preventDefault();
-                onPageChange(index);
-              }}
-            >
-              {index + 1}
-            </PaginationLink>
-          </PaginationItem>
-        ))}
-        <PaginationItem>
-          <PaginationNext
-            href="#"
-            aria-disabled={page >= pageCount - 1}
-            onClick={(event) => {
-              event.preventDefault();
-              onPageChange(Math.min(pageCount - 1, page + 1));
-            }}
-          />
-        </PaginationItem>
-      </PaginationContent>
-    </Pagination>
-  );
-}
-
-/** Generic pageable helper: slices a list to PAGE_SIZE-sized pages, rendering the pager only past the first page. */
-function usePagedRows<T>(rows: T[]): {
-  visible: T[];
-  isPaginated: boolean;
-  page: number;
-  pageCount: number;
-  setPage: (n: number) => void;
-} {
-  const [page, setPage] = useState(0);
-  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
-  const isPaginated = rows.length > PAGE_SIZE;
-  const safePage = Math.min(page, pageCount - 1);
-  const visible = isPaginated ? rows.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE) : rows;
-  return { visible, isPaginated, page: safePage, pageCount, setPage };
-}
 
 function CountTable({ counts, keyLabel }: { counts: Record<string, number>; keyLabel: string }) {
   const entries = Object.entries(counts).sort(([, a], [, b]) => b - a);

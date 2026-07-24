@@ -83,6 +83,47 @@ describe("decidePublicSurface", () => {
     expect(decision.actions).toEqual(["comment", "label"]);
   });
 
+  describe("oss_maintainer + not_checked willLabel fallback (#8324)", () => {
+    // shouldApplyPrLabel itself always returns false for oss_maintainer + any non-"confirmed" status (including
+    // "not_checked"), so any willLabel: true below is coming exclusively from decidePublicSurface's own inline
+    // fallback disjunct, not double-satisfied by the imported function.
+    it("labels when autoLabelEnabled and publicSurface is comment_and_label", () => {
+      const decision = decidePublicSurface({
+        settings: settings({ publicAudienceMode: "oss_maintainer", autoLabelEnabled: true, publicSurface: "comment_and_label" }),
+        authorLogin: "miner",
+        minerStatus: "not_checked",
+      });
+      expect(decision.willLabel).toBe(true);
+    });
+
+    it("labels when autoLabelEnabled and publicSurface is label_only", () => {
+      const decision = decidePublicSurface({
+        settings: settings({ publicAudienceMode: "oss_maintainer", autoLabelEnabled: true, publicSurface: "label_only" }),
+        authorLogin: "miner",
+        minerStatus: "not_checked",
+      });
+      expect(decision.willLabel).toBe(true);
+    });
+
+    it("does NOT label when autoLabelEnabled but publicSurface is comment_only (excluded by the disjunct's own publicSurface check)", () => {
+      const decision = decidePublicSurface({
+        settings: settings({ publicAudienceMode: "oss_maintainer", autoLabelEnabled: true, publicSurface: "comment_only" }),
+        authorLogin: "miner",
+        minerStatus: "not_checked",
+      });
+      expect(decision.willLabel).toBe(false);
+    });
+
+    it("does NOT label when autoLabelEnabled is false, regardless of publicSurface", () => {
+      const decision = decidePublicSurface({
+        settings: settings({ publicAudienceMode: "oss_maintainer", autoLabelEnabled: false, publicSurface: "comment_and_label" }),
+        authorLogin: "miner",
+        minerStatus: "not_checked",
+      });
+      expect(decision.willLabel).toBe(false);
+    });
+  });
+
   it("skips disabled surfaces, bots, maintainer authors, non-miners, and unavailable detection", () => {
     expect(decidePublicSurface({ settings: settings({ publicSurface: "off", checkRunMode: "off" }), authorLogin: "miner", minerStatus: "confirmed" }).skipReason).toBe("surface_off");
     expect(decidePublicSurface({ settings: settings(), authorLogin: null, minerStatus: "confirmed" }).skipReason).toBe("missing_author");

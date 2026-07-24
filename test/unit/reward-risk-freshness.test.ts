@@ -4,11 +4,13 @@ import {
   type FreshnessIssue,
 } from "../../packages/loopover-engine/src/opportunity-freshness";
 import {
+  buildContributorFit,
   buildContributorOutcomeHistory,
   buildContributorProfile,
+  buildContributorScoringProfile,
 } from "../../src/signals/engine";
 import { buildRepoRewardRisk, rewardRiskFreshnessInternals } from "../../src/signals/reward-risk";
-import type { IssueRecord, RepositoryRecord, ScoringModelSnapshotRecord } from "../../src/types";
+import type { IssueRecord, PullRequestRecord, RepositoryRecord, ScoringModelSnapshotRecord } from "../../src/types";
 
 function scoringSnapshot(): ScoringModelSnapshotRecord {
   return {
@@ -69,6 +71,22 @@ function toFreshnessIssues(issues: IssueRecord[]): FreshnessIssue[] {
     updatedAt: item.updatedAt ?? null,
     createdAt: item.createdAt ?? null,
   }));
+}
+
+function pr(repoFullName: string, number: number, title: string, overrides: Partial<PullRequestRecord> = {}): PullRequestRecord {
+  return {
+    repoFullName,
+    number,
+    title,
+    state: "open",
+    authorLogin: "dev",
+    authorAssociation: "NONE",
+    labels: [],
+    linkedIssues: [],
+    body: "",
+    updatedAt: new Date().toISOString(),
+    ...overrides,
+  };
 }
 
 describe("reward-risk freshness parity with loopover-engine", () => {
@@ -174,6 +192,11 @@ describe("bestFitLabels keyword anchoring", () => {
     expect(rewardRiskFreshnessInternals.bestFitLabels(null)).toEqual([]);
   });
 
+  it("breaks an equal-multiplier tie by label name", () => {
+    // Two labels with the SAME multiplier force the sort comparator's `|| localeCompare` fallback.
+    expect(pick({ zebra: 1.5, alpha: 1.5 })).toEqual(["alpha"]);
+  });
+
   it("aligns its meta-label exclusion set to engine.ts's canonical suspicious-label matcher (#7251)", () => {
     // Keywords the canonical audit excludes that the old divergent copy MISSED are now excluded here too.
     for (const key of ["state", "bot", "loopover", "reward", "score", "miner"]) {
@@ -182,5 +205,94 @@ describe("bestFitLabels keyword anchoring", () => {
     // `contributor` was wrongly excluded before -- the canonical audit does not treat it as suspicious, so a
     // high-multiplier contributor:* label must now surface as the best fit instead of being silently dropped.
     expect(pick({ "contributor:top-tier": 5, bug: 2 })).toEqual(["contributor:top-tier"]);
+  });
+});
+
+describe("buildRepoRewardRisk — reviewChurnRisk and maintainer-cut readiness branch coverage (#2281)", () => {
+  it("reviewChurnRisk reports high risk when the repo-specific closed-PR rate is high", () => {
+    const profile = buildContributorProfile("dev", { login: "dev", topLanguages: ["TypeScript"], source: "github" }, [], []);
+    const churnRepo = repo("owner/churn");
+    // Two closed + one merged PR => closedPullRequestRate ~0.67 => reviewChurnRisk risk >= 45 => "high".
+    const outcomeHistory = buildContributorOutcomeHistory({
+      login: "dev",
+      profile,
+      repositories: [churnRepo],
+      pullRequests: [
+        pr(churnRepo.fullName, 30, "Closed one", { state: "closed" }),
+        pr(churnRepo.fullName, 31, "Closed two", { state: "closed" }),
+        pr(churnRepo.fullName, 32, "Merged", { state: "merged", mergedAt: "2026-05-20T00:00:00.000Z" }),
+      ],
+      issues: [],
+      repoStats: [],
+    });
+    const fit = buildContributorFit(profile, [churnRepo], [], [], [], []);
+    const scoringProfile = buildContributorScoringProfile({ login: "dev", fit, scoringSnapshot: scoringSnapshot() });
+    const analysis = buildRepoRewardRisk({
+      login: "dev",
+      repo: churnRepo,
+      repoFullName: churnRepo.fullName,
+      profile,
+      outcomeHistory,
+      scoringSnapshot: scoringSnapshot(),
+      scoringProfile,
+      issues: [],
+      pullRequests: [],
+    });
+    expect(analysis.riskBreakdown.reviewChurnRisk).toBe("high");
+  });
+
+  it("reviewChurnRisk reports medium risk for a moderate closed-PR rate", () => {
+    const profile = buildContributorProfile("dev", { login: "dev", topLanguages: ["TypeScript"], source: "github" }, [], []);
+    const churnRepo = repo("owner/churn-mid");
+    // One closed + two merged => closedPullRequestRate ~0.33 => risk in [20, 45) => "medium".
+    const outcomeHistory = buildContributorOutcomeHistory({
+      login: "dev",
+      profile,
+      repositories: [churnRepo],
+      pullRequests: [
+        pr(churnRepo.fullName, 40, "Closed one", { state: "closed" }),
+        pr(churnRepo.fullName, 41, "Merged one", { state: "merged", mergedAt: "2026-05-20T00:00:00.000Z" }),
+        pr(churnRepo.fullName, 42, "Merged two", { state: "merged", mergedAt: "2026-05-21T00:00:00.000Z" }),
+      ],
+      issues: [],
+      repoStats: [],
+    });
+    const fit = buildContributorFit(profile, [churnRepo], [], [], [], []);
+    const scoringProfile = buildContributorScoringProfile({ login: "dev", fit, scoringSnapshot: scoringSnapshot() });
+    const analysis = buildRepoRewardRisk({
+      login: "dev",
+      repo: churnRepo,
+      repoFullName: churnRepo.fullName,
+      profile,
+      outcomeHistory,
+      scoringSnapshot: scoringSnapshot(),
+      scoringProfile,
+      issues: [],
+      pullRequests: [],
+    });
+    expect(analysis.riskBreakdown.reviewChurnRisk).toBe("medium");
+  });
+
+  it("maintainer-cut readiness scores without the low-queue bonus when the owned repo's queue is not low", () => {
+    // Owner === login => maintainer lane; a heavily loaded queue keeps queueHealth.level above "low",
+    // exercising the `level === "low" ? 20 : 0` false branch.
+    const ownedRepo = repo("dev/owned");
+    const busyPrs = Array.from({ length: 14 }, (_, i) => pr(ownedRepo.fullName, i + 1, `Open work ${i}`, { authorLogin: `other${i}` }));
+    const profile = buildContributorProfile("dev", { login: "dev", topLanguages: ["TypeScript"], source: "github" }, [], []);
+    const fit = buildContributorFit(profile, [ownedRepo], [], [], [], []);
+    const scoringProfile = buildContributorScoringProfile({ login: "dev", fit, scoringSnapshot: scoringSnapshot() });
+    const analysis = buildRepoRewardRisk({
+      login: "dev",
+      repo: ownedRepo,
+      repoFullName: ownedRepo.fullName,
+      profile,
+      outcomeHistory: buildContributorOutcomeHistory({ login: "dev", profile, repositories: [ownedRepo], pullRequests: busyPrs, issues: [], repoStats: [] }),
+      scoringSnapshot: scoringSnapshot(),
+      scoringProfile,
+      issues: [],
+      pullRequests: busyPrs,
+    });
+    expect(analysis.roleContext.maintainerLane).toBe(true);
+    expect(analysis.actions.some((a) => a.actionKind === "maintainer_cut_readiness")).toBe(true);
   });
 });

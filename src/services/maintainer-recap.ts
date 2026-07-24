@@ -14,6 +14,11 @@ import { PUBLIC_LOCAL_PATH_SCRUB_PATTERN, PUBLIC_UNSAFE_PATTERN } from "../signa
 import { deliverRecapToDiscord, deliverRecapToSlack } from "./notify-discord";
 import type { GatePrecisionReport } from "./gate-precision";
 import type { DriftRecapSection } from "./maintainer-recap-drift";
+// #8372: these three section builders shipped fully implemented + unit-tested but were never composed into
+// the delivered digest -- the same "built, tested, never called from production" shape as #6636.
+import { buildCalibrationRecapSection } from "./maintainer-recap-calibration";
+import { buildGateOutcomesRecapSection } from "./maintainer-recap-gate-outcomes";
+import { buildPerRepoRecapSection } from "./maintainer-recap-per-repo";
 import { buildRoutingRecapSection } from "./maintainer-recap-routing";
 import { REVIEWER_ROUTING_SHADOW_EVENT_TYPE, type RoutingShadowDecision } from "./reviewer-routing";
 import type { OutcomeCalibration } from "./outcome-calibration";
@@ -167,10 +172,12 @@ function recapSectionLines(items: string[], fallback: string): string[] {
 export function formatMaintainerRecap(report: RecapReport, options: { configDrift?: DriftRecapSection; routingShadow?: { title: string; lines: string[] } } = {}): string {
   const { totals } = report;
   const rate = totals.gateFalsePositiveRate !== null ? `${Math.round(totals.gateFalsePositiveRate * 100)}%` : "n/a";
-  const perRepoLines = report.repos.map(
-    (repo) =>
-      `${redactRecapLine(repo.repoFullName)} — ${repo.reviewed} reviewed, ${repo.merged} merged, ${repo.closed} closed, ${repo.gateFalsePositives} gate false-positive(s), ${repo.gateOverrides} override(s), ${repo.reversals} reversal(s)`,
-  );
+  // #8372: the dedicated builder replaces the inline map that duplicated it -- unlike this file's old copy,
+  // it sorts, caps the list, and emits a "(+N more)" remainder line.
+  const perRepoSection = buildPerRepoRecapSection({ windowDays: report.windowDays, repos: report.repos });
+  const perRepoLines = perRepoSection.lines.map(redactRecapLine);
+  const calibrationSection = buildCalibrationRecapSection({ windowDays: report.windowDays, totals: report.totals });
+  const gateOutcomesSection = buildGateOutcomesRecapSection({ windowDays: report.windowDays, totals: report.totals });
   const lines = [
     "# Maintainer recap",
     "",
@@ -191,6 +198,14 @@ export function formatMaintainerRecap(report: RecapReport, options: { configDrif
     "",
     "## Per-repo",
     ...recapSectionLines(perRepoLines, "_No repositories in this window._"),
+    "",
+    // #8372: unconditional (not behind an options flag) -- both sections read only report.totals/windowDays,
+    // which every RecapReport always carries, so there is nothing for a caller to opt into.
+    `## ${redactRecapLine(calibrationSection.title)}`,
+    ...recapSectionLines(calibrationSection.lines.map(redactRecapLine), "_No calibration lines for this window._"),
+    "",
+    `## ${redactRecapLine(gateOutcomesSection.title)}`,
+    ...recapSectionLines(gateOutcomesSection.lines.map(redactRecapLine), "_No gate-outcome lines for this window._"),
     // #8214: optional config-drift section (maintainer-recap-drift.ts) — appended only when the caller has a
     // sentinel projection to render, so every existing digest stays byte-identical until the sentinel wires in.
     ...(options.configDrift
@@ -257,6 +272,11 @@ export async function runMaintainerRecap(
     report?: RecapReport;
     /** When explicitly false, short-circuits before build/format/delivery. Default: run. */
     enabled?: boolean;
+    /** #8372: forwarded to {@link formatMaintainerRecap} so a caller holding a drift projection can have it
+     *  rendered. Deliberately NOT sourced here -- reading the knob-loosening sentinel state is its own
+     *  data-sourcing concern; this is only the plumbing, so the section stays absent until a caller passes it
+     *  and every existing digest is unaffected. */
+    configDrift?: DriftRecapSection;
   } = {},
 ): Promise<RunMaintainerRecapResult> {
   if (options.enabled === false) return { skipped: true, reason: "disabled" };
@@ -271,7 +291,13 @@ export async function runMaintainerRecap(
   // #8229 stage 1: the routing-shadow section reads the window's recorded decisions straight from the
   // audit trail — fail-safe to an absent section (the recap must never break on a read blip).
   const routingShadow = await loadRoutingRecapSection(env, report.windowDays, options.generatedAt ?? nowIso());
-  const formatted = formatMaintainerRecap(report, routingShadow ? { routingShadow } : {});
+  // Built up key-by-key rather than passed as a conditional-spread literal: exactOptionalPropertyTypes
+  // forbids handing either key an explicit `undefined`, and #8229's routingShadow and #8372's configDrift
+  // are independent — each is present or absent on its own, so a single ternary can't express all four cases.
+  const recapOptions: { routingShadow?: { title: string; lines: string[] }; configDrift?: DriftRecapSection } = {};
+  if (routingShadow) recapOptions.routingShadow = routingShadow;
+  if (options.configDrift) recapOptions.configDrift = options.configDrift;
+  const formatted = formatMaintainerRecap(report, recapOptions);
   const [discord, slack] = await Promise.all([
     deliverRecapToDiscord(env, report, formatted),
     deliverRecapToSlack(env, report, formatted),

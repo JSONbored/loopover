@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildMaintainerRecap, runMaintainerRecap, type MaintainerRecapRepoInput } from "../../src/services/maintainer-recap";
+import { buildDriftRecapSection } from "../../src/services/maintainer-recap-drift";
 import type { OutcomeCalibration } from "../../src/services/outcome-calibration";
 import type { RecapReport } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
@@ -229,8 +230,20 @@ describe("runMaintainerRecap (#2252 end-to-end orchestration)", () => {
     expect(result.skipped).toBe(false);
     if (result.skipped) return;
     expect(result.report.repos).toEqual([]);
-    expect(result.formatted).toContain("_No repositories in this window._");
+    // #8372: the ## Per-repo body is buildPerRepoRecapSection's, which carries its own empty-state line.
+    expect(result.formatted).toContain("No repo activity in the last 7 day(s).");
     expect(result.formatted).toContain("(n/a)");
+  });
+
+  it("forwards a caller-supplied configDrift projection into the delivered digest (#8372 present arm)", async () => {
+    const calls = stubRecapChannelFetch();
+    const configDrift = buildDriftRecapSection({ generatedAt: GEN, sentinelEnabled: false, drifting: [], cleanKnobs: 0 });
+    const result = await runMaintainerRecap(envWithBothWebhooks(), { configDrift });
+    expect(result.skipped).toBe(false);
+    if (result.skipped) return;
+    expect(result.formatted).toContain("## Config drift");
+    // Reaches the actual delivered payload, not just the returned string.
+    expect(calls.some((c) => c.body.includes("## Config drift"))).toBe(true);
   });
 
   it("short-circuits when enabled is false — no build/format/fetch (flag-OFF arm)", async () => {

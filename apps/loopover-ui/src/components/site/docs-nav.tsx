@@ -18,6 +18,7 @@ export const docsNav: DocsGroup[] = [
       { to: "/docs", label: "Overview" },
       { to: "/docs/beta-onboarding", label: "Beta onboarding" },
       { to: "/docs/quickstart", label: "Quickstart" },
+      { to: "/docs/miner-quickstart", label: "Quickstart by lane" },
       { to: "/docs/mcp-clients", label: "MCP client setup" },
     ],
   },
@@ -43,6 +44,7 @@ export const docsNav: DocsGroup[] = [
         title: "Self-hosting: integrations",
         items: [
           { to: "/docs/self-hosting-github-app", label: "GitHub App & Orb" },
+          { to: "/docs/self-hosting-unified-ams-orb", label: "Unified ORB + AMS" },
           { to: "/docs/self-hosting-ai-providers", label: "AI providers" },
           { to: "/docs/self-hosting-rees", label: "REES enrichment" },
           { to: "/docs/self-hosting-rees-analyzers", label: "REES analyzers" },
@@ -63,6 +65,7 @@ export const docsNav: DocsGroup[] = [
         items: [
           { to: "/docs/self-hosting-releases", label: "Releases & images" },
           { to: "/docs/self-hosting-release-checklist", label: "Release checklist" },
+          { to: "/docs/self-hosting-docs-audit", label: "Self-host docs audit" },
           { to: "/docs/self-hosting-security", label: "Security" },
           { to: "/docs/federated-fleet-intelligence", label: "Federated fleet intelligence" },
         ],
@@ -73,6 +76,7 @@ export const docsNav: DocsGroup[] = [
           { to: "/docs/github-app", label: "GitHub App configuration" },
           { to: "/docs/maintainer-workflow", label: "Maintainer workflow" },
           { to: "/docs/maintainer-install-trust", label: "Maintainer install & trust" },
+          { to: "/docs/owner-checklist", label: "Onboarding checklist" },
         ],
       },
       {
@@ -97,6 +101,7 @@ export const docsNav: DocsGroup[] = [
     title: "Core concepts",
     items: [
       { to: "/docs/how-reviews-work", label: "How reviews work" },
+      { to: "/docs/loopover-commands", label: "@loopover commands" },
       { to: "/docs/branch-analysis", label: "Branch analysis" },
       { to: "/docs/scoreability", label: "Scoreability" },
       { to: "/docs/upstream-drift", label: "Upstream drift" },
@@ -109,6 +114,7 @@ export const docsNav: DocsGroup[] = [
     items: [
       { to: "/docs/tuning", label: "Tuning your reviews" },
       { to: "/docs/privacy-security", label: "Privacy & security" },
+      { to: "/docs/ai-summaries", label: "AI summaries policy" },
       { to: "/docs/troubleshooting", label: "Troubleshooting" },
     ],
   },

@@ -36,6 +36,7 @@ import {
   resolveLaptopStateDbPath,
   runInit,
 } from "../../packages/loopover-miner/lib/laptop-init.js";
+import { cleanupResourceCount, resetProcessLifecycleForTesting } from "../../packages/loopover-miner/lib/process-lifecycle.js";
 
 const roots: string[] = [];
 
@@ -81,6 +82,16 @@ describe("loopover-miner laptop init (#2329)", () => {
     const second = initLaptopState(env);
     expect(second.created).toBe(false);
     expect(readFileSync(join(first.stateDir, "marker.txt"), "utf8")).toBe("keep-me");
+  });
+
+  it("opens its store via openLocalStoreDb, registering and unregistering it for crash-safe cleanup within the call (#8319)", () => {
+    resetProcessLifecycleForTesting();
+    expect(cleanupResourceCount()).toBe(0);
+    const root = tempRoot();
+    initLaptopState({ LOOPOVER_MINER_CONFIG_DIR: join(root, "state") });
+    // initLaptopState closes its own handle internally before returning (it exposes no db handle), so a
+    // leftover registration here would mean the register→unregister cycle didn't complete cleanly.
+    expect(cleanupResourceCount()).toBe(0);
   });
 
   it("runInit prints human text (0) and machine JSON with --json", async () => {

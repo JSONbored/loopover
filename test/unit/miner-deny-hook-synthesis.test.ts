@@ -21,6 +21,7 @@ import type { DenyRuleProposal } from "../../packages/loopover-engine/src/miner/
 // #7525: normalizeRepoFullName is defined in the engine and re-exported unchanged by the miner-lib module
 // above; import it from the engine source directly so the guard's src branches are the ones exercised.
 import { normalizeRepoFullName } from "../../packages/loopover-engine/src/miner/deny-hook-synthesis";
+import { cleanupResourceCount, resetProcessLifecycleForTesting } from "../../packages/loopover-miner/lib/process-lifecycle.js";
 
 const tempDirs: string[] = [];
 const stores: Array<{ close(): void }> = [];
@@ -161,6 +162,16 @@ describe("resolveEffectiveDenyRules() (#4522)", () => {
 describe("initDenyHookSynthesisStore() (#4522)", () => {
   it("rejects a blank/whitespace-only db path", () => {
     expect(() => initDenyHookSynthesisStore("   ")).toThrow("invalid_deny_hook_synthesis_db_path");
+  });
+
+  it("registers the store for crash-safe cleanup via openLocalStoreDb, and unregisters it on close (#8319)", () => {
+    resetProcessLifecycleForTesting();
+    expect(cleanupResourceCount()).toBe(0);
+    const store = tempStore();
+    expect(cleanupResourceCount()).toBe(1);
+    stores.splice(stores.indexOf(store), 1);
+    store.close();
+    expect(cleanupResourceCount()).toBe(0);
   });
 
   it("skips the forge-scope migration on a second open of an already-migrated file", () => {

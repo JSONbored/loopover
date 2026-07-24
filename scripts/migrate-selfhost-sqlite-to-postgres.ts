@@ -8,7 +8,7 @@ import { createPgQueue } from "../src/selfhost/pg-queue";
 import { initPgVectorize } from "../src/selfhost/pg-vectorize";
 import { runSelfHostMigrations } from "../src/selfhost/migrate";
 
-interface Options {
+export interface Options {
   sqlitePath: string;
   postgresUrl: string;
   migrationsDir: string;
@@ -52,7 +52,7 @@ Options:
   --batch-size <n>         Rows per INSERT batch. Defaults to 250.`;
 }
 
-function parseArgs(argv: string[]): Options {
+export function parseArgs(argv: string[]): Options {
   const opts: Options = {
     sqlitePath: process.env.DATABASE_PATH ?? "/data/loopover.sqlite",
     postgresUrl: process.env.DATABASE_URL ?? "",
@@ -113,7 +113,7 @@ function parseArgs(argv: string[]): Options {
   return opts;
 }
 
-function quoteIdent(name: string): string {
+export function quoteIdent(name: string): string {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new Error(`Unsupported identifier: ${name}`);
   return `"${name}"`;
 }
@@ -238,7 +238,7 @@ async function resetPgSequences(client: PoolClient, tables: Set<string>): Promis
   }
 }
 
-function valuePlaceholder(index: number, table: string, column: string): string {
+export function valuePlaceholder(index: number, table: string, column: string): string {
   const base = `$${index}`;
   if (table === "_selfhost_vectors" && column === "embedding") return `${base}::vector`;
   if (table === "_selfhost_vectors" && column === "metadata") return `${base}::jsonb`;
@@ -255,7 +255,7 @@ function sqliteCellForPostgres(row: Record<string, unknown>, column: string): un
   return normalizePostgresValue(row[column] ?? null);
 }
 
-function insertSql(table: string, columns: string[], primaryKey: string[], rowCount: number): string {
+export function insertSql(table: string, columns: string[], primaryKey: string[], rowCount: number): string {
   const columnSql = columns.map(quoteIdent).join(", ");
   const valuesSql = Array.from({ length: rowCount }, (_, rowIndex) => {
     const placeholders = columns.map((column, columnIndex) => valuePlaceholder(rowIndex * columns.length + columnIndex + 1, table, column));
@@ -340,7 +340,7 @@ async function countConflictingTargetRowsForSourceKeys(
   return conflicts;
 }
 
-async function copyAll(opts: Options, db: DatabaseSync, client: PoolClient): Promise<{ copied: CopyResult[]; skipped: SkipResult[] }> {
+export async function copyAll(opts: Options, db: DatabaseSync, client: PoolClient): Promise<{ copied: CopyResult[]; skipped: SkipResult[] }> {
   const copied: CopyResult[] = [];
   const skipped: SkipResult[] = [];
   let targetTables = await pgTables(client);

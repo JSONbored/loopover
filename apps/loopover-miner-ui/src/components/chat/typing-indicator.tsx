@@ -16,13 +16,16 @@ export function TypingIndicator({
       <span className="sr-only">{label}</span>
       <span
         aria-hidden="true"
-        className="size-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:-0.3s]"
+        className="size-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:-0.3s] motion-reduce:animate-none"
       />
       <span
         aria-hidden="true"
-        className="size-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:-0.15s]"
+        className="size-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:-0.15s] motion-reduce:animate-none"
       />
-      <span aria-hidden="true" className="size-1.5 animate-bounce rounded-full bg-muted-foreground" />
+      <span
+        aria-hidden="true"
+        className="size-1.5 animate-bounce rounded-full bg-muted-foreground motion-reduce:animate-none"
+      />
     </div>
   );
 }

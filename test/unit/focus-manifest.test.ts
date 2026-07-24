@@ -43,6 +43,7 @@ import {
   maintainerRecapConfigToJson,
   opsConfigToJson,
   publicStatsConfigToJson,
+  fairnessAnalyticsConfigToJson,
   draftFlowConfigToJson,
   upstreamDriftIssuesConfigToJson,
   sweepWatchdogConfigToJson,
@@ -2044,6 +2045,60 @@ describe("parseFocusManifest gate config", () => {
 
     it("publicStatsConfigToJson returns null for an absent config", () => {
       expect(publicStatsConfigToJson(parseFocusManifest(null).publicStats)).toBeNull();
+    });
+  });
+
+  describe("fairnessAnalytics: (#fairness-analytics, internal contributor-trust-profile config-as-code override)", () => {
+    it("defaults to fully disabled/absent when the key is omitted, and does not make the manifest present on its own", () => {
+      const m = parseFocusManifest({});
+      expect(m.fairnessAnalytics).toEqual({ present: false, enabled: false });
+      expect(m.present).toBe(false);
+    });
+
+    it("treats an explicit null the same as an omitted key", () => {
+      expect(parseFocusManifest({ fairnessAnalytics: null }).fairnessAnalytics).toEqual({ present: false, enabled: false });
+    });
+
+    it("warns and falls back to the default when the value is a non-mapping type (string or array)", () => {
+      const asString = parseFocusManifest({ fairnessAnalytics: "nope" as never });
+      expect(asString.fairnessAnalytics.present).toBe(false);
+      expect(asString.warnings.some((w) => /"fairnessAnalytics" must be a mapping/.test(w))).toBe(true);
+      const asArray = parseFocusManifest({ fairnessAnalytics: ["nope"] as never });
+      expect(asArray.fairnessAnalytics.present).toBe(false);
+      expect(asArray.warnings.some((w) => /"fairnessAnalytics" must be a mapping/.test(w))).toBe(true);
+    });
+
+    // Regression (#8366): a manifest whose ONLY recognized content is a populated fairnessAnalytics:
+    // block was incorrectly marked present: false, with a spurious "no recognized focus fields" warning
+    // -- the aggregate emptiness check omitted this block while every sibling was included.
+    it("parses enabled: true, making the manifest present with no spurious empty-manifest warning (#8366)", () => {
+      const m = parseFocusManifest({ fairnessAnalytics: { enabled: true } });
+      expect(m.fairnessAnalytics).toEqual({ present: true, enabled: true });
+      expect(m.present).toBe(true);
+      expect(m.warnings.some((w) => /no recognized focus fields/i.test(w))).toBe(false);
+    });
+
+    it("parses enabled: false explicitly, still marking the manifest present (present is a real override, off)", () => {
+      const m = parseFocusManifest({ fairnessAnalytics: { enabled: false } });
+      expect(m.fairnessAnalytics).toEqual({ present: true, enabled: false });
+      expect(m.present).toBe(true);
+    });
+
+    it("warns and defaults to false when enabled is a non-boolean value", () => {
+      const m = parseFocusManifest({ fairnessAnalytics: { enabled: "yes" as unknown as boolean } });
+      expect(m.fairnessAnalytics.enabled).toBe(false);
+      expect(m.warnings.some((w) => /fairnessAnalytics\.enabled/.test(w))).toBe(true);
+    });
+
+    it("round-trips through fairnessAnalyticsConfigToJson → parseFocusManifest unchanged", () => {
+      const m = parseFocusManifest({ fairnessAnalytics: { enabled: true } });
+      expect(parseFocusManifest({ fairnessAnalytics: fairnessAnalyticsConfigToJson(m.fairnessAnalytics) }).fairnessAnalytics).toEqual(
+        m.fairnessAnalytics,
+      );
+    });
+
+    it("fairnessAnalyticsConfigToJson returns null for an absent config", () => {
+      expect(fairnessAnalyticsConfigToJson(parseFocusManifest(null).fairnessAnalytics)).toBeNull();
     });
   });
 

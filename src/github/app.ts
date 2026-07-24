@@ -437,14 +437,30 @@ export type GitHubRepositoryCollaboratorPermission =
   | "none"
   | string;
 
+// Parse `owner/repo` into its two segments, rejecting any shape that is not exactly two non-empty,
+// whitespace-free segments -- the identical guard every sibling GitHub-write module in this directory keeps
+// its own local copy of (assignees.ts / labels.ts / issues.ts / milestones.ts, per this dir's house
+// convention). "owner/repo/extra" would otherwise silently drop the extra segment and hit a different repo;
+// "owner/ repo" / " owner/repo" would get encodeURIComponent-ed straight into a GitHub URL. Returns null so
+// each caller can map a malformed value to its own established failure contract (return null / error object /
+// throw) rather than sharing one.
+function parseRepoFullNameStrict(repoFullName: string): { owner: string; repo: string } | null {
+  const parts = repoFullName.split("/");
+  const owner = parts[0];
+  const repo = parts[1];
+  if (parts.length !== 2 || !owner || !repo || /\s/.test(repoFullName)) return null;
+  return { owner, repo };
+}
+
 export async function getRepositoryCollaboratorPermission(
   env: Env,
   installationId: number,
   repoFullName: string,
   login: string,
 ): Promise<GitHubRepositoryCollaboratorPermission | null> {
-  const [owner, name] = repoFullName.split("/");
-  if (!owner || !name || !login) return null;
+  const parsed = parseRepoFullNameStrict(repoFullName);
+  if (!parsed || !login) return null;
+  const { owner, repo: name } = parsed;
   const token = await createInstallationToken(env, installationId);
   const response = await timeoutFetch(
     `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/collaborators/${encodeURIComponent(login)}/permission`,
@@ -617,8 +633,9 @@ export async function cancelInFlightWorkflowRunsForHeadSha(
   headSha: string,
   pullNumber: number,
 ): Promise<CancelWorkflowRunsOutcome> {
-  const [owner, repo] = repoFullName.split("/");
-  if (!owner || !repo) return { kind: "error", warning: `Invalid repository full name: ${repoFullName}` };
+  const parsed = parseRepoFullNameStrict(repoFullName);
+  if (!parsed) return { kind: "error", warning: `Invalid repository full name: ${repoFullName}` };
+  const { owner, repo } = parsed;
   const repoPath = `${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
   try {
     const token = await createInstallationToken(env, installationId);
@@ -908,9 +925,9 @@ async function createOrUpdateNamedCheckRun(
   if (!advisory.headSha) return null;
   // Narrow once into a const so the postNewCheckRun closure below sees a string, not string | undefined.
   const headSha = advisory.headSha;
-  const [owner, repo] = repoFullName.split("/");
-  if (!owner || !repo)
-    throw new Error(`Invalid repository full name: ${repoFullName}`);
+  const parsed = parseRepoFullNameStrict(repoFullName);
+  if (!parsed) throw new Error(`Invalid repository full name: ${repoFullName}`);
+  const { owner, repo } = parsed;
 
   return await withInstallationTokenRetry(env, installationId, async (token) => {
     // makeInstallationOctokit injects the shared per-request timeout (a stalled PATCH can never orphan the

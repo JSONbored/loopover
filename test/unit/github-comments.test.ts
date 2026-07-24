@@ -519,3 +519,19 @@ async function generatePrivateKeyPem(): Promise<string> {
   const base64 = Buffer.from(exported as ArrayBuffer).toString("base64").replace(/(.{64})/g, "$1\n");
   return `-----BEGIN PRIVATE KEY-----\n${base64}\n-----END PRIVATE KEY-----`;
 }
+
+describe("createOrUpdateIssueCommentWithMarker repoFullName guard (#8311)", () => {
+  // The existing segment-count guard now also rejects whitespace, matching pr-actions.ts/assignees.ts/
+  // labels.ts (#6613). These malformed shapes reject before any GitHub call (no fetch stub needed) and
+  // collectively exercise all four operands: parts.length !== 2 ("owner/repo/extra"), !owner ("/repo"),
+  // !repo ("owner/"), and the newly-added whitespace check ("owner/ repo", " owner/repo").
+  it("throws for extra-segment and whitespace-padded slugs", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    for (const repoFullName of ["owner/repo/extra", "/repo", "owner/", "owner/ repo", " owner/repo"]) {
+      await expect(
+        createOrUpdatePrIntelligenceComment(env, 123, repoFullName, 12, `${PR_INTELLIGENCE_COMMENT_MARKER}\nbody`),
+      ).rejects.toThrow(`Invalid repository full name: ${repoFullName}`);
+    }
+  });
+});

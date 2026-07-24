@@ -172,7 +172,7 @@ import { buildTestEvidenceReport, classifyTestCoverage, hasLocalTestEvidence, is
 import { applyStepResult, buildPlanDag, nextReadySteps, planProgress, validatePlanDag, type PlanDag } from "../services/plan-dag";
 import { buildFocusManifestValidation } from "../services/focus-manifest-validation";
 import { isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness } from "../settings/agent-execution";
-import { AGENT_ACTION_CLASSES, AUTONOMY_LEVELS, isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
+import { AUTONOMY_LEVELS } from "../settings/autonomy";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { isDuplicateWinnerEnabledGlobally, resolveDuplicateWinnerEnabled } from "../settings/duplicate-winner-mode";
 import { compileFocusManifestPolicy, MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
@@ -3456,8 +3456,10 @@ export class LoopoverMcp {
   }
 
   private async getMaintainerNoise(input: { owner: string; repo: string }): Promise<ToolPayload> {
+    // (#8338) Mirrors GET /v1/repos/:owner/:repo/maintainer-noise: same requireRepoAccess gate as sibling
+    // read-only maintainer reports (and REST requireRepoMaintainer) — not the live-write approval-queue gate.
     const fullName = `${input.owner}/${input.repo}`;
-    await this.requireRepoApprovalQueueAccess(fullName);
+    await this.requireRepoAccess(fullName);
     const report = await loadMaintainerNoiseReport(this.env, fullName);
     return {
       summary: maintainerNoiseSummary(report),
@@ -3466,10 +3468,11 @@ export class LoopoverMcp {
   }
 
   private async getAmsMinerCohort(input: { owner: string; repo: string }): Promise<ToolPayload> {
-    // Mirrors GET /v1/repos/:owner/:repo/ams-miner-cohort: same maintainer gate as getMaintainerNoise
-    // (requireRepoApprovalQueueAccess) and the same buildAmsMinerCohortComparison service the REST route uses.
+    // (#8338) Mirrors GET /v1/repos/:owner/:repo/ams-miner-cohort: same requireRepoAccess gate as
+    // getMaintainerNoise / other read-only maintainer reports, and the same buildAmsMinerCohortComparison
+    // service the REST route uses.
     const fullName = `${input.owner}/${input.repo}`;
-    await this.requireRepoApprovalQueueAccess(fullName);
+    await this.requireRepoAccess(fullName);
     const report = await buildAmsMinerCohortComparison(this.env, fullName);
     // Single summary template (no present-branch) so patch coverage stays complete under the 99% gate; the
     // structured payload still carries `present` for clients that need the empty vs populated distinction.
@@ -3492,12 +3495,13 @@ export class LoopoverMcp {
     };
   }
 
-  // (#7799) MCP surface for GET /v1/repos/:owner/:repo/activation-preview. Assembles the same inputs the REST
+  // (#7799/#8338) MCP surface for GET /v1/repos/:owner/:repo/activation-preview. Same requireRepoAccess gate
+  // as sibling read-only maintainer reports (REST requireRepoMaintainer). Assembles the same inputs the REST
   // route does (getRepository + resolveRepositorySettings + listPullRequests) and defers to the guarded
   // buildMaintainerActivationPreview service. Deterministic and advisory-only -- never runs AI.
   private async getActivationPreview(input: { owner: string; repo: string }): Promise<ToolPayload> {
     const fullName = `${input.owner}/${input.repo}`;
-    await this.requireRepoApprovalQueueAccess(fullName);
+    await this.requireRepoAccess(fullName);
     const [repo, settings, pullRequests] = await Promise.all([
       getRepository(this.env, fullName),
       resolveRepositorySettings(this.env, fullName),

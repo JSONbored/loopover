@@ -696,6 +696,49 @@ describe("advisory rules", () => {
     expect(output.text).not.toMatch(/reward|wallet|hotkey|trust score|payout|farming/i);
   });
 
+  it("discloses how many configured blockers were omitted past the inline cap (#8323)", () => {
+    const blockers = Array.from({ length: 11 }, (_, i) => ({
+      code: `configured_blocker_${i}`,
+      title: `Configured blocker ${i}`,
+      severity: "warning" as const,
+      detail: `detail ${i}`,
+    }));
+    const output = formatGateCheckOutput({
+      enabled: true,
+      conclusion: "failure",
+      title: "LoopOver Orb Review Agent is blocking merge",
+      summary: "A configured merge-blocking issue was found.",
+      blockers,
+      warnings: [],
+    });
+
+    // Only the first 8 blocker lines are inlined, and the overflow (11 - 8 = 3) is disclosed, not silently dropped.
+    expect(output.text.match(/^- Configured blocker/gm)).toHaveLength(8);
+    expect(output.text).toContain("…3 more configured blocker(s) omitted from inline check output.");
+  });
+
+  it("does not add an omission-disclosure line when blockers are at or under the inline cap (#8323)", () => {
+    for (const count of [1, 8]) {
+      const blockers = Array.from({ length: count }, (_, i) => ({
+        code: `configured_blocker_${i}`,
+        title: `Configured blocker ${i}`,
+        severity: "warning" as const,
+        detail: `detail ${i}`,
+      }));
+      const output = formatGateCheckOutput({
+        enabled: true,
+        conclusion: "failure",
+        title: "LoopOver Orb Review Agent is blocking merge",
+        summary: "A configured merge-blocking issue was found.",
+        blockers,
+        warnings: [],
+      });
+
+      expect(output.text.match(/^- Configured blocker/gm), `count ${count}`).toHaveLength(count);
+      expect(output.text, `count ${count}`).not.toContain("omitted from inline check output");
+    }
+  });
+
   it("keeps private reviewability context out of check output", () => {
     const pr: PullRequestRecord = {
       repoFullName: repo.fullName,

@@ -121,11 +121,22 @@ describe("isWebhookDeliveryDuplicate (#2075)", () => {
     expect(await renderMetrics()).toContain('loopover_webhook_dedup_total{backend="redis"} 1');
   });
 
-  it("returns false without incrementing when Redis get throws", async () => {
+  it("returns false without counting a dedup hit, and records an error metric, when Redis get throws (#8363)", async () => {
     const brokenRedis = { async get() { throw new Error("connection refused"); } } as unknown as Redis;
     const cache = createRedisCache(brokenRedis);
     await expect(isWebhookDeliveryDuplicate(cache, "delivery-3")).resolves.toBe(false);
-    expect(await renderMetrics()).not.toContain('loopover_webhook_dedup_total{backend="redis"}');
+    const rendered = await renderMetrics();
+    // Fail-open behavior is unchanged: a cache outage is never counted as a deduplicated delivery.
+    expect(rendered).not.toContain('loopover_webhook_dedup_total{backend="redis"}');
+    // ...but the outage is now observable, matching redis-token-cache / redis-response-cache.
+    expect(rendered).toContain('loopover_redis_webhook_dedup_cache_total{result="error"} 1');
+  });
+
+  it("rememberWebhookDelivery records an error metric when the Redis set throws, and still resolves (#8363)", async () => {
+    const brokenRedis = { async set() { throw new Error("connection refused"); } } as unknown as Redis;
+    const cache = createRedisCache(brokenRedis);
+    await expect(rememberWebhookDelivery(cache, "delivery-5")).resolves.toBeUndefined();
+    expect(await renderMetrics()).toContain('loopover_redis_webhook_dedup_cache_total{result="error"} 1');
   });
 
   it("rememberWebhookDelivery stores the delivery key for later dedup", async () => {

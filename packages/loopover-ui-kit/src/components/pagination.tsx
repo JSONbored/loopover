@@ -52,6 +52,9 @@ const PaginationLink = ({
         variant: isActive ? "outline" : "ghost",
         size,
       }),
+      // An <a> has no native disabled attribute, so a consumer-supplied aria-disabled needs an explicit
+      // visual/interaction cue -- mirrors the aria-disabled: styling sidebar.tsx/calendar.tsx already use.
+      "aria-disabled:pointer-events-none aria-disabled:opacity-50",
       className,
     )}
     {...props}

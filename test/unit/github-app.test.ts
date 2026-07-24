@@ -2855,3 +2855,45 @@ describe("GitHub rate-limit handling (#ratelimit-resilience)", () => {
     expect(calls).toBe(4); // initial + GITHUB_RATE_LIMIT_MAX_RETRIES (3)
   });
 });
+
+describe("repoFullName segment-count + whitespace guard (#8311)", () => {
+  // Each of these malformed shapes must be rejected at every app.ts call site the same way the existing
+  // "invalid" (no-slash) case already is, matching the guard pr-actions.ts/assignees.ts/labels.ts share.
+  // The rejects happen before any GitHub call, so no fetch stub is needed. Inputs collectively exercise all
+  // four operands of the guard: parts.length !== 2 ("owner/repo/extra"), !owner ("/repo"), !repo ("owner/"),
+  // and the whitespace check ("owner/ repo", " owner/repo").
+  const MALFORMED = ["owner/repo/extra", "owner/ repo", " owner/repo", "/repo", "owner/"];
+
+  it("getRepositoryCollaboratorPermission returns null for extra-segment and whitespace-padded slugs", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    for (const repoFullName of MALFORMED) {
+      await expect(
+        getRepositoryCollaboratorPermission(env, 123, repoFullName, "maintainer"),
+      ).resolves.toBeNull();
+    }
+    // A well-formed slug still passes the guard (and only then fails downstream on the un-stubbed fetch).
+    await expect(
+      getRepositoryCollaboratorPermission(env, 123, "JSONbored/gittensory", "maintainer"),
+    ).rejects.toThrow();
+  });
+
+  it("cancelInFlightWorkflowRunsForHeadSha returns an error outcome for extra-segment and whitespace-padded slugs", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    for (const repoFullName of ["owner/repo/extra", "owner/ repo"]) {
+      const outcome = await cancelInFlightWorkflowRunsForHeadSha(env, 123, repoFullName, "abc123", 55);
+      expect(outcome).toEqual({ kind: "error", warning: `Invalid repository full name: ${repoFullName}` });
+    }
+  });
+
+  it("createOrUpdateCheckRun (createOrUpdateNamedCheckRun) throws for extra-segment and whitespace-padded slugs", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    for (const repoFullName of ["owner/repo/extra", "owner/ repo"]) {
+      await expect(
+        createOrUpdateCheckRun(env, 123, repoFullName, gateAdvisory("abc123")),
+      ).rejects.toThrow(`Invalid repository full name: ${repoFullName}`);
+    }
+  });
+});

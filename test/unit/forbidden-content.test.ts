@@ -119,13 +119,16 @@ describe("FORBIDDEN_CONTENT covers the concrete provider-key formats (#7433)", (
     expect(FORBIDDEN_CONTENT.test("MY" + "_TOKEN=" + "x")).toBe(true);
   });
 
-  it("does NOT hard-block the deliberately-excluded weak heuristics (jwt / seed / bittensor key shapes)", () => {
-    // These are intentionally kept out of the packaged-secret hard block (#7433) — an ordinary Bittensor
-    // coldkey/hotkey mention or a mnemonic word is not a leaked credential; a bare JWT is out of scope.
+  it("matches a jwt-shaped value (#8396)", () => {
+    // jwt is in HARD_SECRET_KINDS; packaged tarballs must catch the same shape.
+    expect(FORBIDDEN_CONTENT.test("eyJ" + A(20) + "." + a(20) + "." + a(20))).toBe(true);
+  });
+
+  it("does NOT hard-block the deliberately-excluded weak heuristics (seed / bittensor key shapes)", () => {
+    // These remain out of the packaged-secret hard block — ordinary Bittensor coldkey/hotkey
+    // mentions or a mnemonic word are not leaked credentials.
     expect(FORBIDDEN_CONTENT.test("coldkey: my-wallet-name")).toBe(false);
     expect(FORBIDDEN_CONTENT.test("the recovery mnemonic is stored offline")).toBe(false);
-    // A bare header-dot-payload JWT shape is not matched by the hard-block detector.
-    expect(FORBIDDEN_CONTENT.test("eyJ" + A(20) + "." + a(20) + "." + a(20))).toBe(false);
     expect(FORBIDDEN_CONTENT.global).toBe(false);
   });
 });

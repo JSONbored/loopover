@@ -1034,7 +1034,9 @@ export const upstreamDriftReports = sqliteTable(
     issueUrl: text("issue_url"),
     payloadJson: text("payload_json").notNull().default("{}"),
     generatedAt: text("generated_at").notNull(),
-    updatedAt: text("updated_at").notNull(),
+    // Same $defaultFn house rule as every sibling updatedAt (#8369): an insert that omits the column
+    // must get a real ISO-8601 timestamp, not a schema-level gap waiting for a future writer to trip over.
+    updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
   },
   (table) => ({
     fingerprint: uniqueIndex("upstream_drift_reports_fingerprint_unique").on(table.fingerprint),

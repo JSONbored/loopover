@@ -47,7 +47,7 @@ describe("self-host update + rollback docs (#1823)", () => {
     expect(postUpdateScript).toContain("/ready");
     expect(postUpdateScript).toContain("LOOPOVER_IMAGE");
     expect(postUpdateScript).toContain("LOOPOVER_VERSION");
-    expect(postUpdateScript).toContain("SENTRY_RELEASE");
+    expect(postUpdateScript).toContain("POSTHOG_RELEASE");
     expect(postUpdateScript).not.toContain("env_put");
     expect(postUpdateScript).not.toContain("docker compose down");
   });

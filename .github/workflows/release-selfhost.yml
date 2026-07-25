@@ -50,9 +50,7 @@ jobs:
     # reads only event fields because a job's `environment:` is resolved before any step runs.
     environment: ${{ github.event_name == 'workflow_dispatch' && github.actor == 'github-actions[bot]' && github.ref_type == 'tag' && inputs.create_github_release && contains(inputs.version, '-beta.') && 'release-beta' || 'release' }}
     env:
-      SENTRY_ORG: jsonbored
-      SENTRY_PROJECT: loopover
-      SENTRY_CLI_PACKAGE: "@sentry/cli@3.6.0"
+      POSTHOG_CLI_PACKAGE: "@posthog/cli@0.9.1"
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
@@ -90,7 +88,7 @@ jobs:
           fi
           # #1937: a stable X.Y.Z tag is the only kind that ever moved `latest` or an unmarked GitHub
           # Release; a prerelease tag (X.Y.Z-rc.N / X.Y.Z-beta.N) publishes the SAME image/provenance/SBOM/
-          # Sentry pipeline below, just flagged as prerelease and never pushed under `latest` (see the
+          # PostHog pipeline below, just flagged as prerelease and never pushed under `latest` (see the
           # "Resolve image tags" and "GitHub Release" steps).
           if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-(rc|beta)\.[0-9]+)?$'; then
             echo "expected semver version X.Y.Z, or a prerelease X.Y.Z-rc.N / X.Y.Z-beta.N, got $VERSION" >&2
@@ -118,7 +116,7 @@ jobs:
             echo "prerelease=${PRERELEASE}"
           } >> "$GITHUB_OUTPUT"
 
-      # Release jobs receive publishing/Sentry credentials, so avoid shared dependency caches here.
+      # Release jobs receive publishing/PostHog credentials, so avoid shared dependency caches here.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version-file: .nvmrc
@@ -140,57 +138,39 @@ jobs:
       - name: Validate release source map
         run: node --experimental-strip-types scripts/validate-selfhost-sourcemap.ts
 
-      - name: Detect Sentry release token
-        id: sentry
+      - name: Detect PostHog release token
+        id: posthog
         env:
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          POSTHOG_CLI_API_KEY: ${{ secrets.POSTHOG_CLI_API_KEY }}
         run: |
-          if [ -n "$SENTRY_AUTH_TOKEN" ]; then
+          if [ -n "$POSTHOG_CLI_API_KEY" ]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Require Sentry token for official release
-        if: github.repository == 'JSONbored/loopover' && steps.sentry.outputs.enabled != 'true'
+      - name: Require PostHog token for official release
+        if: github.repository == 'JSONbored/loopover' && steps.posthog.outputs.enabled != 'true'
         run: |
-          echo "::error::Configure SENTRY_AUTH_TOKEN in the release environment before publishing official Orb images."
+          echo "::error::Configure POSTHOG_CLI_API_KEY (a personal API key) in the release environment before publishing official Orb images."
           exit 1
 
-      - name: Upload Sentry source maps
-        if: steps.sentry.outputs.enabled == 'true'
+      - name: Upload PostHog source maps
+        if: steps.posthog.outputs.enabled == 'true'
         env:
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          SENTRY_ORG: ${{ vars.SENTRY_ORG || 'jsonbored' }}
-          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT || 'loopover' }}
-          SENTRY_URL: ${{ vars.SENTRY_URL }}
-          SENTRY_RELEASE: ${{ steps.version.outputs.release }}
-          SENTRY_REPOSITORY: ${{ github.repository }}
-          SENTRY_COMMIT_SHA: ${{ github.sha }}
+          POSTHOG_CLI_API_KEY: ${{ secrets.POSTHOG_CLI_API_KEY }}
+          POSTHOG_CLI_PROJECT_ID: ${{ vars.POSTHOG_CLI_PROJECT_ID }}
+          POSTHOG_CLI_HOST: ${{ vars.POSTHOG_CLI_HOST }}
+          POSTHOG_RELEASE: ${{ steps.version.outputs.release }}
         run: |
           set -euo pipefail
-          test -n "$SENTRY_AUTH_TOKEN"
-          test -n "$SENTRY_ORG"
-          test -n "$SENTRY_PROJECT"
-          if [ -z "${SENTRY_URL:-}" ]; then unset SENTRY_URL; fi
-          npx -y "$SENTRY_CLI_PACKAGE" releases new "$SENTRY_RELEASE"
-          # `sentry-cli releases set-commits --commit` (even without --ignore-missing) can silently leave
-          # the release with ZERO associated commits against a repo connected via the modern GitHub App
-          # integration -- confirmed empirically cutting the first orb-v0.1.0-beta.1 release: the CLI
-          # printed a success table but `GET .../releases/<v>/commits/` stayed `[]`. A direct PUT to the
-          # release resource with an inline `commits` array resolves the same repo/commit against the
-          # SAME integration correctly and immediately, so use that instead of relying on the CLI here --
-          # it's what the later "Validate Sentry release" step's `SENTRY_REQUIRE_COMMITS=true` actually
-          # depends on being correct.
-          curl -sf -X PUT \
-            -H "Authorization: Bearer ${SENTRY_AUTH_TOKEN}" \
-            -H "Content-Type: application/json" \
-            "${SENTRY_URL:-https://sentry.io}/api/0/organizations/${SENTRY_ORG}/releases/$(node -e "process.stdout.write(encodeURIComponent(process.env.SENTRY_RELEASE))")/" \
-            -d "$(node -e "process.stdout.write(JSON.stringify({commits:[{repository: process.env.SENTRY_REPOSITORY, id: process.env.SENTRY_COMMIT_SHA}]}))")" \
-            >/dev/null
-          npx -y "$SENTRY_CLI_PACKAGE" sourcemaps inject dist
+          test -n "$POSTHOG_CLI_API_KEY"
+          test -n "$POSTHOG_CLI_PROJECT_ID"
+          # No separate "create release" step -- PostHog release metadata is a byproduct of the inject/
+          # upload calls below, unlike Sentry's releases/commits/deploys/finalize lifecycle this replaces.
+          npx -y "$POSTHOG_CLI_PACKAGE" sourcemap inject --directory dist --release-version "$POSTHOG_RELEASE"
           node --experimental-strip-types scripts/validate-selfhost-sourcemap.ts
-          npx -y "$SENTRY_CLI_PACKAGE" sourcemaps upload --release="$SENTRY_RELEASE" --validate --wait --strict dist
+          npx -y "$POSTHOG_CLI_PACKAGE" sourcemap upload --directory dist --release-version "$POSTHOG_RELEASE"
 
       - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
@@ -270,50 +250,31 @@ jobs:
           cache-from: type=gha,scope=release-orb
           cache-to: type=gha,mode=max,scope=release-orb
 
-      - name: Finalize Sentry release
-        if: steps.sentry.outputs.enabled == 'true'
+      - name: Validate PostHog release
+        if: steps.posthog.outputs.enabled == 'true'
         env:
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          SENTRY_ORG: ${{ vars.SENTRY_ORG || 'jsonbored' }}
-          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT || 'loopover' }}
-          SENTRY_URL: ${{ vars.SENTRY_URL }}
-          SENTRY_RELEASE: ${{ steps.version.outputs.release }}
+          POSTHOG_CLI_API_KEY: ${{ secrets.POSTHOG_CLI_API_KEY }}
+          POSTHOG_CLI_PROJECT_ID: ${{ vars.POSTHOG_CLI_PROJECT_ID }}
+          POSTHOG_CLI_HOST: ${{ vars.POSTHOG_CLI_HOST }}
+          POSTHOG_RELEASE: ${{ steps.version.outputs.release }}
         run: |
           set -euo pipefail
-          if [ -z "${SENTRY_URL:-}" ]; then unset SENTRY_URL; fi
-          npx -y "$SENTRY_CLI_PACKAGE" releases finalize "$SENTRY_RELEASE"
-
-      - name: Validate Sentry release
-        env:
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          SENTRY_ORG: ${{ vars.SENTRY_ORG || 'jsonbored' }}
-          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT || 'loopover' }}
-          SENTRY_URL: ${{ vars.SENTRY_URL }}
-          SENTRY_RELEASE: ${{ steps.version.outputs.release }}
-          SENTRY_REPOSITORY: ${{ github.repository }}
-          SENTRY_COMMIT_SHA: ${{ github.sha }}
-          SENTRY_REQUIRE_COMMITS: "true"
-          SENTRY_REQUIRE_DEPLOY: "false"
-          SENTRY_REQUIRE_FINALIZED: "true"
-        run: |
-          set -euo pipefail
-          # The CLI's `set-commits` was replaced with a direct PUT above after it silently no-op'd on
-          # orb-v0.1.0-beta.1, but Sentry's release-commits read path can still lag briefly behind a
-          # write. review-enrichment/src/upload-sourcemaps.ts's runReleaseValidation() already
-          # retry-polls this same script for REES's Railway deploy path -- mirror that here instead of
-          # failing the whole release build on a transient read-lag.
+          # PostHog's release-read path can lag briefly behind the upload write above.
+          # review-enrichment/src/upload-sourcemaps.ts's runReleaseValidation() already retry-polls this
+          # same script for REES's own deploy path -- mirror that here instead of failing the whole
+          # release build on a transient read-lag.
           attempts=5
           delay_secs=10
           for attempt in $(seq 1 "$attempts"); do
-            if node review-enrichment/scripts/validate-sentry-release.mjs; then
+            if node review-enrichment/scripts/validate-posthog-release.mjs; then
               exit 0
             fi
             if [ "$attempt" -lt "$attempts" ]; then
-              echo "::warning::Sentry release validation attempt ${attempt}/${attempts} failed; retrying in ${delay_secs}s"
+              echo "::warning::PostHog release validation attempt ${attempt}/${attempts} failed; retrying in ${delay_secs}s"
               sleep "$delay_secs"
             fi
           done
-          echo "::error::Sentry release validation failed after ${attempts} attempts"
+          echo "::error::PostHog release validation failed after ${attempts} attempts"
           exit 1
 
       - name: GitHub Release
@@ -346,7 +307,7 @@ jobs:
 
           Multi-arch (linux/amd64 + linux/arm64). See https://loopover.ai/docs/maintainer-self-hosting for setup.
           Includes the Claude Code / Codex subscription CLIs by default; credentials stay runtime-only.
-          Sentry release id baked into the image: \`${RELEASE_ID}\`.
+          PostHog release id baked into the image: \`${RELEASE_ID}\`.
           EOF
           )"
           # #1937: a prerelease tag never becomes the repo's "Latest release" and is visibly marked as such

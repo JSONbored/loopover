@@ -10,7 +10,7 @@
 #   ./scripts/deploy-selfhost-image.sh ghcr.io/jsonbored/loopover-selfhost:orb-v0.1.0
 #   LOOPOVER_IMAGE=ghcr.io/jsonbored/loopover-selfhost@sha256:... ./scripts/deploy-selfhost-image.sh
 #
-# The image itself carries official release metadata. Set SENTRY_RELEASE only for custom images whose
+# The image itself carries official release metadata. Set POSTHOG_RELEASE only for custom images whose
 # source maps were uploaded under that exact id.
 #
 # Optional Infisical secrets (#5120), see docs:

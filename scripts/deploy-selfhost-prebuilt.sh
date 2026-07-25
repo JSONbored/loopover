@@ -7,9 +7,9 @@
 #   ./scripts/deploy-selfhost-prebuilt.sh
 #
 # Optional knobs:
-#   SENTRY_RELEASE=loopover-selfhost@edge-abc123 ./scripts/deploy-selfhost-prebuilt.sh
+#   POSTHOG_RELEASE=loopover-selfhost@edge-abc123 ./scripts/deploy-selfhost-prebuilt.sh
 #   SELFHOST_COMPOSE_FILES="docker-compose.yml docker-compose.override.yml" ./scripts/deploy-selfhost-prebuilt.sh
-#   SELFHOST_SKIP_SENTRY_UPLOAD=1 ./scripts/deploy-selfhost-prebuilt.sh
+#   SELFHOST_SKIP_POSTHOG_UPLOAD=1 ./scripts/deploy-selfhost-prebuilt.sh
 #   SELFHOST_USE_INFISICAL=1 ./scripts/deploy-selfhost-prebuilt.sh   # opt-in Infisical secrets (#5120), see docs
 set -euo pipefail
 
@@ -19,8 +19,8 @@ SERVICE="${SELFHOST_SERVICE:-loopover}"
 # #8395: same override + default deploy-selfhost-image.sh already uses, so both deploy paths honour one
 # health-check budget.
 HEALTH_TIMEOUT_SECONDS="${SELFHOST_HEALTH_TIMEOUT_SECONDS:-180}"
-SKIP_SENTRY_UPLOAD="${SELFHOST_SKIP_SENTRY_UPLOAD:-0}"
-SENTRY_CLI_PACKAGE="${SENTRY_CLI_PACKAGE:-@sentry/cli@3.6.0}"
+SKIP_POSTHOG_UPLOAD="${SELFHOST_SKIP_POSTHOG_UPLOAD:-0}"
+POSTHOG_CLI_PACKAGE="${POSTHOG_CLI_PACKAGE:-@posthog/cli@0.9.1}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/selfhost-deploy-common.sh
@@ -42,42 +42,41 @@ run_node_build() {
     sh -lc 'npm ci --ignore-scripts && npm --workspace @loopover/engine run build && node --experimental-strip-types scripts/build-selfhost.ts --all && node --experimental-strip-types scripts/validate-selfhost-sourcemap.ts'
 }
 
-run_sentry_upload() {
-  local auth_token org project uid gid
+run_posthog_upload() {
+  local api_key project_id host uid gid
 
-  auth_token="${SENTRY_AUTH_TOKEN:-$(env_get SENTRY_AUTH_TOKEN || true)}"
-  org="${SENTRY_ORG:-$(env_get SENTRY_ORG || true)}"
-  project="${SENTRY_PROJECT:-$(env_get SENTRY_PROJECT || true)}"
+  api_key="${POSTHOG_CLI_API_KEY:-$(env_get POSTHOG_CLI_API_KEY || true)}"
+  project_id="${POSTHOG_CLI_PROJECT_ID:-$(env_get POSTHOG_CLI_PROJECT_ID || true)}"
+  host="${POSTHOG_CLI_HOST:-$(env_get POSTHOG_CLI_HOST || true)}"
 
-  if [ "$SKIP_SENTRY_UPLOAD" = "1" ]; then
-    echo "selfhost deploy: skipping Sentry upload (SELFHOST_SKIP_SENTRY_UPLOAD=1)"
+  if [ "$SKIP_POSTHOG_UPLOAD" = "1" ]; then
+    echo "selfhost deploy: skipping PostHog upload (SELFHOST_SKIP_POSTHOG_UPLOAD=1)"
     return 0
   fi
 
-  if [ -z "$auth_token" ] || [ -z "$org" ] || [ -z "$project" ]; then
-    echo "selfhost deploy: skipping Sentry upload (SENTRY_AUTH_TOKEN, SENTRY_ORG, or SENTRY_PROJECT is missing)"
+  if [ -z "$api_key" ] || [ -z "$project_id" ]; then
+    echo "selfhost deploy: skipping PostHog upload (POSTHOG_CLI_API_KEY or POSTHOG_CLI_PROJECT_ID is missing)"
     return 0
   fi
 
   uid="$(id -u)"
   gid="$(id -g)"
 
-  echo "selfhost deploy: injecting and uploading Sentry source maps for $SENTRY_RELEASE"
+  echo "selfhost deploy: injecting and uploading PostHog source maps for $POSTHOG_RELEASE"
   docker run --rm \
     -e HOME=/tmp \
     -e npm_config_cache=/tmp/.npm \
-    -e SENTRY_LOAD_DOTENV=0 \
-    -e SENTRY_RELEASE \
-    -e SENTRY_AUTH_TOKEN="$auth_token" \
-    -e SENTRY_ORG="$org" \
-    -e SENTRY_PROJECT="$project" \
-    -e SENTRY_CLI_PACKAGE="$SENTRY_CLI_PACKAGE" \
+    -e POSTHOG_RELEASE \
+    -e POSTHOG_CLI_API_KEY="$api_key" \
+    -e POSTHOG_CLI_PROJECT_ID="$project_id" \
+    ${host:+-e POSTHOG_CLI_HOST="$host"} \
+    -e POSTHOG_CLI_PACKAGE="$POSTHOG_CLI_PACKAGE" \
     -e HOST_UID="$uid" \
     -e HOST_GID="$gid" \
     -v "$PWD:/work" \
     -w /work \
     "$NODE_IMAGE" \
-    sh -lc 'apt-get update >/dev/null && apt-get install -y --no-install-recommends ca-certificates git >/dev/null && git config --global --add safe.directory /work && (npx -y "$SENTRY_CLI_PACKAGE" releases new "$SENTRY_RELEASE" >/tmp/loopover-sentry-release-new.log 2>&1 || true) && npx -y "$SENTRY_CLI_PACKAGE" releases set-commits "$SENTRY_RELEASE" --auto && npx -y "$SENTRY_CLI_PACKAGE" sourcemaps inject dist && node --experimental-strip-types scripts/validate-selfhost-sourcemap.ts && npx -y "$SENTRY_CLI_PACKAGE" sourcemaps upload --release="$SENTRY_RELEASE" dist && npx -y "$SENTRY_CLI_PACKAGE" releases finalize "$SENTRY_RELEASE" && chown -R "$HOST_UID:$HOST_GID" dist node_modules package-lock.json'
+    sh -lc 'apt-get update >/dev/null && apt-get install -y --no-install-recommends ca-certificates >/dev/null && npx -y "$POSTHOG_CLI_PACKAGE" sourcemap inject --directory dist --release-version "$POSTHOG_RELEASE" && node --experimental-strip-types scripts/validate-selfhost-sourcemap.ts && npx -y "$POSTHOG_CLI_PACKAGE" sourcemap upload --directory dist --release-version "$POSTHOG_RELEASE" && chown -R "$HOST_UID:$HOST_GID" dist node_modules package-lock.json'
 }
 
 run_init_secrets() {
@@ -99,12 +98,12 @@ services:
     build:
       target: runtime-prebuilt
       args:
-        LOOPOVER_VERSION: "\${SENTRY_RELEASE}"
+        LOOPOVER_VERSION: "\${POSTHOG_RELEASE}"
         INSTALL_AI_CLIS: "\${INSTALL_AI_CLIS:-true}"
         INSTALL_VISUAL_REVIEW: "\${INSTALL_VISUAL_REVIEW:-false}"
     environment:
-      SENTRY_RELEASE: "\${SENTRY_RELEASE}"
-      LOOPOVER_VERSION: "\${SENTRY_RELEASE}"
+      POSTHOG_RELEASE: "\${POSTHOG_RELEASE}"
+      LOOPOVER_VERSION: "\${POSTHOG_RELEASE}"
 YAML
 
   # #7765: capture via a checked assignment so compose_file_args's `exit 1` on a missing compose file
@@ -141,15 +140,15 @@ fi
 # Default to the current checkout on every deploy. Do not reuse a persisted .env value here:
 # that value is written by the previous deploy and would make future updates report stale
 # release/version metadata unless the operator remembered to override it manually.
-SENTRY_RELEASE="${SENTRY_RELEASE:-loopover-selfhost@$(git rev-parse --short=8 HEAD)}"
-export SENTRY_RELEASE
+POSTHOG_RELEASE="${POSTHOG_RELEASE:-loopover-selfhost@$(git rev-parse --short=8 HEAD)}"
+export POSTHOG_RELEASE
 
-env_put SENTRY_RELEASE "$SENTRY_RELEASE"
-env_put LOOPOVER_VERSION "$SENTRY_RELEASE"
+env_put POSTHOG_RELEASE "$POSTHOG_RELEASE"
+env_put LOOPOVER_VERSION "$POSTHOG_RELEASE"
 
 run_node_build
 run_init_secrets
-run_sentry_upload
+run_posthog_upload
 run_compose_deploy
 
-echo "selfhost deploy: complete ($SENTRY_RELEASE)"
+echo "selfhost deploy: complete ($POSTHOG_RELEASE)"

@@ -132,6 +132,18 @@ describe("shouldWaitForOlderSiblings (#selfhost-merge-train)", () => {
       expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW, { thisPrLinkedIssues: [1], thisPrChangedFiles: ["package-lock.json", "dist/bundle.js"] })).toEqual({ wait: false });
     });
 
+    it("does NOT treat a shared non-npm canonical lockfile (poetry.lock/go.sum) as meaningful overlap (#8647)", () => {
+      // The hand-rolled 4-name regex only knew package-lock/yarn/pnpm/Cargo, so these forced a spurious wait;
+      // delegating to the canonical isLockfile covers all 24+ formats.
+      const siblings: MergeTrainSibling[] = [{ number: 105, createdAt: "2026-07-07T10:00:00.000Z", linkedIssues: [99], changedFiles: ["poetry.lock", "backend/go.sum"] }];
+      expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW, { thisPrLinkedIssues: [1], thisPrChangedFiles: ["poetry.lock", "backend/go.sum"] })).toEqual({ wait: false });
+    });
+
+    it("does NOT treat a shared vendored-directory path (vendor/third_party) as meaningful overlap (#8647)", () => {
+      const siblings: MergeTrainSibling[] = [{ number: 105, createdAt: "2026-07-07T10:00:00.000Z", linkedIssues: [99], changedFiles: ["vendor/lib/x.go", "third_party/pkg/y.js"] }];
+      expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW, { thisPrLinkedIssues: [1], thisPrChangedFiles: ["vendor/lib/x.go", "third_party/pkg/y.js"] })).toEqual({ wait: false });
+    });
+
     it("a sibling with no linkedIssues field at all (undefined) can still match via a shared changed file", () => {
       const siblings: MergeTrainSibling[] = [{ number: 105, createdAt: "2026-07-07T10:00:00.000Z", changedFiles: ["src/a.ts"] }];
       expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW, { thisPrLinkedIssues: [1], thisPrChangedFiles: ["src/a.ts"] })).toEqual({ wait: true, blockingPr: 105 });

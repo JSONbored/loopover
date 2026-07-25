@@ -19,6 +19,8 @@
 // acceptable, bounded tradeoff given the 24h staleness cap already prevents an abandoned PR from blocking
 // forever.
 
+import { isLockfile } from "../signals/path-matchers";
+
 /** The subset of a sibling PR's fields this gate actually needs -- kept minimal and independent of
  *  `PullRequestRecord`'s full shape so this module has zero import surface beyond plain data. */
 export type MergeTrainSibling = {
@@ -43,17 +45,19 @@ export const MERGE_TRAIN_MAX_WAIT_MS = 24 * 60 * 60 * 1000;
 
 export type MergeTrainDecision = { wait: true; blockingPr: number } | { wait: false };
 
-/** Low-priority path buckets (lockfiles, generated/build output, dist/ artifacts) that overlapping alone
- *  never counts as real conflict risk -- ported from `review-grounding.ts`'s `diffFilePriority` classification
- *  (bucket 4, "least useful to review") so this module stays dependency-free rather than importing a whole
- *  review-pipeline module for one number. Kept as a small, explicit suffix/name list rather than a generic
- *  "some overlap" check: a shared `package-lock.json` or `dist/bundle.js` touch is routine noise, not the
- *  same-area conflict risk this gate exists to catch. */
-const LOW_SIGNAL_FILENAME_RE = /(?:^|\/)(?:package-lock\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock)$/i;
-const LOW_SIGNAL_DIR_RE = /(?:^|\/)(?:dist|build|coverage|node_modules)\//i;
+/** Low-priority path buckets (lockfiles, generated/build output, vendored third-party trees) that overlapping
+ *  alone never counts as real conflict risk. Lockfile-NAME matching delegates to the canonical `isLockfile`
+ *  helper -- a dependency-free leaf utility in path-matchers.ts, the same delegation `review-diff.ts` and
+ *  `review-grounding.ts` already use -- so this classification never drifts behind the 24+ canonical lockfile
+ *  formats the way the hand-rolled 4-name regex did (a shared `poetry.lock`, `go.sum`, or `npm-shrinkwrap.json`
+ *  was wrongly treated as real overlap; #8647). The directory bucket mirrors the same canonical generated/
+ *  vendored set: build output (`dist`/`build`/`out`/`coverage`) and installed/vendored dependency trees
+ *  (`node_modules` and the `vendor`/`third_party` family). A shared `package-lock.json` or `third_party/x`
+ *  touch is routine noise, not the same-area conflict risk this gate exists to catch. */
+const LOW_SIGNAL_DIR_RE = /(?:^|\/)(?:dist|build|out|coverage|node_modules|vendor|vendored|third_party|third-party|bower_components|jspm_packages)\//i;
 
 function isMeaningfulPath(path: string): boolean {
-  return !LOW_SIGNAL_FILENAME_RE.test(path) && !LOW_SIGNAL_DIR_RE.test(path);
+  return !isLockfile(path) && !LOW_SIGNAL_DIR_RE.test(path);
 }
 
 /** True when `thisPr` and `sibling` overlap enough to carry real conflict/duplicate-effort risk: a shared

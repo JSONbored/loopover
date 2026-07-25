@@ -652,7 +652,7 @@ services:
   # (src/review/enrichment-wire.ts) -- this whole service is optional end to end, same as browserless above.
   # After `docker compose --profile rees up -d`, set in .env: LOOPOVER_REVIEW_ENRICHMENT=true,
   # REES_URL=http://rees:8080, and a freshly generated REES_SHARED_SECRET -- do not reuse a secret from any
-  # other REES instance (e.g. a managed Railway deployment) you also point at (#1667).
+  # other REES instance you also point at (#1667).
   rees:
     build:
       context: review-enrichment
@@ -660,10 +660,10 @@ services:
     <<: *default-logging
     profiles: ["rees"]
     # Deliberately NOT `env_file: .env` like the loopover service above: that would also hand this
-    # analyzer service every unrelated secret in .env, and REES reads the same SENTRY_DSN key name the main
-    # app uses (src/selfhost/sentry.ts) -- blanket-forwarding .env would silently point REES's error reporting
-    # at the main app's Sentry project instead of a dedicated one. Add REES-specific Sentry vars via
-    # docker-compose.override.yml if you want REES error reporting (see review-enrichment/README.md).
+    # analyzer service every unrelated secret in .env, and REES reads the same POSTHOG_API_KEY key name the
+    # main app uses (src/selfhost/posthog.ts) -- blanket-forwarding .env would silently point REES's error
+    # reporting at the main app's PostHog project instead of a dedicated one. Add REES-specific PostHog vars
+    # via docker-compose.override.yml if you want REES error reporting (see review-enrichment/README.md).
     environment:
       PORT: "8080"
       # Soft default, not ":?required" -- compose interpolates every service's env vars for the whole file

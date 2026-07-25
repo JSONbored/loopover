@@ -34,7 +34,7 @@ import {
   shouldStartAnalyzer,
   type AnalyzerPlanItem,
 } from "./scheduler.js";
-import { captureAnalyzerDegradation } from "./sentry.js";
+import { captureAnalyzerDegradationPostHog } from "./posthog.js";
 
 const DEFAULT_ANALYZER_TIMEOUT_MS = 8000;
 const MIN_ANALYZER_TIMEOUT_MS = 1;
@@ -164,7 +164,7 @@ function captureDegradation(
     options: BuildBriefOptions;
   },
 ): void {
-  captureAnalyzerDegradation(error, {
+  captureAnalyzerDegradationPostHog(error, {
     analyzer: input.analyzer,
     requestedAnalyzers: input.requested,
     repoFullName: input.req.repoFullName,

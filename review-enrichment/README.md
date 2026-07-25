@@ -4,7 +4,7 @@ A standalone microservice that produces a structured **review brief** for the lo
 in-network alongside a self-hosted engine via the repo-root `docker-compose --profile rees` service (the simplest
 path, no separate hosting to manage — see the [self-hosting REES docs](https://loopover.ai/docs/self-hosting-rees)),
 or deploy it as its own service on any platform that can run a Dockerfile-based Node service — see
-[Deploy (Railway)](#deploy-railway) below for one example.
+[Deploy standalone](#deploy-standalone) below.
 
 The engine reviews PRs by running a headless `claude --print` subprocess with `Bash`/`WebFetch` disallowed and **no
 repo checkout**, so it cannot run a linter, hit a CVE database, resolve a dependency tree, or query git history. REES
@@ -200,7 +200,7 @@ analyzers should prefer it for shared PR facts instead of reparsing the envelope
 Context caches are request-scoped only. They are for avoiding duplicate work inside one enrichment run, not for
 cross-request TTL storage. Cache metrics are aggregate and public-safe: hit/miss counts, external-call counts by
 category, skipped/capped work counts by category, and elapsed time. Never put request bodies, diffs, prompts,
-comments, tokens, private configs, or raw external payloads into cache categories, metric keys, Sentry tags, or logs.
+comments, tokens, private configs, or raw external payloads into cache categories, metric keys, PostHog tags, or logs.
 
 The engine also sends `budget.timeoutMs` with one second of headroom below `REES_TIMEOUT_MS`, so REES can return a
 partial/degraded brief before the caller aborts the HTTP request. If your REES deployment is still running an older
@@ -217,68 +217,58 @@ curl -XPOST localhost:8080/v1/enrich -H 'authorization: Bearer dev' \
   -H 'content-type: application/json' -d '{"repoFullName":"o/r","prNumber":1}'
 ```
 
-## Deploy (Railway)
+## Deploy standalone
 
 For a self-hosted engine, `docker compose --profile rees up -d` from the repo root (see the
 [self-hosting REES docs](https://loopover.ai/docs/self-hosting-rees)) is the simplest path — no
 separate service to host. If you'd rather run REES on its own outside that compose network, it's a plain
-Dockerfile-based Node service and can go anywhere that builds one; Railway is one option this repo has release
-tooling for (the Sentry/source-map wiring below). Point **Root Directory = `review-enrichment`** at a `railway.json`
-you add there (see Railway's Dockerfile-builder docs) and set `REES_SHARED_SECRET` (same value the engine holds) as a
-service variable — never commit it. The engine reaches the service over Railway **private networking**
-(`<service>.railway.internal`); no public domain is required.
+Dockerfile-based Node service and can go anywhere that builds one — point your platform's Dockerfile builder at
+this directory (**Root Directory = `review-enrichment`**) and set `REES_SHARED_SECRET` (same value the engine
+holds) as a runtime env var — never commit it. Reach the service however your platform does private
+networking, or over a public domain with the shared secret as the only gate.
 
-## Sentry releases and source maps
+## PostHog releases and source maps
 
-REES supports optional Sentry error reporting and source-map upload for Railway deployments. The Docker image builds
-`dist/*.js.map` with embedded `sourcesContent`, then the runtime startup command injects Sentry debug ids, uploads the
-exact post-injection `dist/` files, records a deploy, removes source maps from the running filesystem, and starts
-`dist/server.js`.
+REES supports optional PostHog error reporting and source-map upload for standalone deployments. The Docker
+image builds `dist/*.js.map` with embedded `sourcesContent`, then the runtime startup command injects PostHog
+chunk ids, uploads the exact post-injection `dist/` files, removes source maps from the running filesystem, and
+starts `dist/server.js`.
 
-Set these Railway service variables:
+Set these runtime env vars:
 
-| Variable                       | Purpose                                                                 |
-| ------------------------------ | ----------------------------------------------------------------------- |
-| `SENTRY_DSN`                   | Enables REES error capture. Unset means the SDK is a no-op.             |
-| `SENTRY_AUTH_TOKEN`            | Allows the runtime uploader to create releases and upload source maps.  |
-| `SENTRY_ORG`                   | Sentry organization slug.                                               |
-| `SENTRY_PROJECT`               | Sentry project slug.                                                    |
-| `SENTRY_ENVIRONMENT`           | Optional; defaults to Railway's environment name, then `production`.    |
-| `SENTRY_TRACES_SAMPLE_RATE`    | Optional; defaults to `0`, so errors report without tracing.            |
-| `SENTRY_RELEASE`               | Optional override. Only set it when that exact REES bundle is uploaded. |
-| `SENTRY_URL`                   | Optional Sentry API URL; defaults to `https://sentry.io`.               |
-| `SENTRY_REPOSITORY`            | Optional; defaults to `JSONbored/loopover` for commit association.      |
-| `REES_SENTRY_UPLOAD_STRICT`    | Optional. Set `true` to fail startup if source-map upload fails.        |
-| `REES_SENTRY_VALIDATE_RELEASE` | Optional. Set `false` only to disable post-upload release validation.   |
+| Variable                        | Purpose                                                                     |
+| -------------------------------- | ---------------------------------------------------------------------------- |
+| `POSTHOG_API_KEY`                | Enables REES error capture (a PostHog project token). Unset means a no-op.  |
+| `POSTHOG_HOST`                   | Optional PostHog ingestion host override (EU region).                       |
+| `POSTHOG_ENVIRONMENT`            | Optional; defaults to `production`.                                         |
+| `POSTHOG_RELEASE`                | Optional override. Only set it when that exact REES bundle is uploaded.     |
+| `POSTHOG_COMMIT_SHA`             | Optional; used to derive `POSTHOG_RELEASE` (`loopover-rees@<sha>`) when unset. |
+| `POSTHOG_CLI_API_KEY`            | A PostHog **personal** API key (error-tracking write + organization read scopes) -- allows the runtime uploader to upload source maps. Distinct from `POSTHOG_API_KEY`. |
+| `POSTHOG_CLI_PROJECT_ID`         | The PostHog project's numeric id, required alongside `POSTHOG_CLI_API_KEY`. |
+| `POSTHOG_CLI_HOST`               | Optional posthog-cli host override (EU region).                             |
+| `REES_POSTHOG_UPLOAD_STRICT`     | Optional. Set `true` to fail startup if source-map upload fails.            |
+| `REES_POSTHOG_VALIDATE_RELEASE`  | Optional. Set `false` only to disable post-upload release validation.       |
 
-By default the release id is `loopover-rees@<RAILWAY_GIT_COMMIT_SHA>`, using Railway's Git metadata. The Sentry
-GitHub code mapping should be:
+Do **not** pass `POSTHOG_CLI_API_KEY` as a Docker build arg on any platform that deploys this service from Git --
+build args can leak through image metadata. Keeping the upload at runtime means PostHog sees the same `dist/`
+files that the service executes, without exposing source maps over HTTP.
 
-| Sentry field     | Value               |
-| ---------------- | ------------------- |
-| Stack Trace Root | `/app`              |
-| Source Code Root | `review-enrichment` |
-| Branch           | `main`              |
+After upload, startup validates the release by querying PostHog's `error_tracking/symbol_sets` API: at least one
+symbol set must exist for the release, with no recorded `failure_reason`. PostHog's release model has no
+Sentry-style commits/deploys/finalize lifecycle to check beyond that. If `REES_POSTHOG_UPLOAD_STRICT=true`, a
+failed upload or failed validation stops startup; otherwise it logs a `rees_posthog_sourcemap_upload_failed`
+warning so the problem is visible without blocking startup.
 
-Do **not** pass `SENTRY_AUTH_TOKEN` as a Docker build arg. Railway deploys this service from Git, and Docker build args
-can leak through image metadata. Keeping the upload at runtime means Sentry sees the same `dist/` files that the service
-executes, without exposing source maps over HTTP.
+Analyzer failures are still fail-open: the `/v1/enrich` response marks the analyzer as `degraded` and returns a
+partial brief. When PostHog is enabled, those degradations are captured as `rees_analyzer_degraded` events with
+properties for `analyzer`, requested analyzer list, `repo`, `pullNumber`, head SHA prefix, `release`,
+`environment`, timeout budget, elapsed time, partial/analyzer status, history lookup counts, GitHub endpoint
+category, request id, and trace id. Use those fields to spot a broken analyzer without exposing request bodies,
+diffs, tokens, prompts, comments, or private config.
 
-After upload, startup validates the exact `loopover-rees@<RAILWAY_GIT_COMMIT_SHA>` release through the Sentry API:
-the release must exist, be finalized, include the deployed commit, and include the Railway deploy id/environment. If
-`REES_SENTRY_UPLOAD_STRICT=true`, a failed upload or failed validation stops the Railway deployment; otherwise it logs a
-`rees_sentry_sourcemap_upload_failed` warning so the problem is visible without blocking startup.
+### REES PostHog queries
 
-Analyzer failures are still fail-open: the `/v1/enrich` response marks the analyzer as `degraded` and returns a partial
-brief. When Sentry is enabled, those degradations are captured as `rees_analyzer_degraded` events with tags/context for
-`analyzer`, requested analyzer list, `repo`, `pullNumber`, head SHA prefix, `release`, `environment`, timeout budget,
-elapsed time, partial/analyzer status, history lookup counts, GitHub endpoint category, request id, and trace id. Use
-those fields to spot a broken analyzer without exposing request bodies, diffs, tokens, prompts, comments, or private
-config.
-
-### REES Sentry queries
-
-REES keeps its indexed Sentry tags intentionally small and stable:
+REES keeps its indexed PostHog properties intentionally small and stable:
 
 - `event`
 - `route`
@@ -288,7 +278,7 @@ REES keeps its indexed Sentry tags intentionally small and stable:
 - `analyzer`
 - `release`
 - `environment`
-- `railwayDeploymentId`
+- `deploymentId`
 
 Useful production queries:
 
@@ -297,17 +287,16 @@ Useful production queries:
 - Analyzer failures grouped by analyzer:
   - `event:rees_analyzer_degraded analyzer:history`
   - `event:rees_analyzer_degraded analyzer:dependency repo:JSONbored/loopover`
-- Source-map upload/startup failures on a Railway deploy:
-  - `event:rees_sourcemap_upload_failed railwayDeploymentId:<deploy-id>`
+- Source-map upload/startup failures:
+  - `event:rees_sourcemap_upload_failed`
 - Process-level crashes:
   - `event:rees_uncaught_exception`
   - `event:rees_unhandled_rejection`
 
-If Sentry still shows frames such as `/app/dist/server.js`, check:
+If PostHog still shows frames such as `/app/dist/server.js`, check:
 
-1. The event's `release` is `loopover-rees@<same Railway commit sha>` or your exact `SENTRY_RELEASE` override.
-2. The Sentry release has an artifact bundle uploaded for the REES project.
-3. Railway has `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, and `SENTRY_PROJECT` set on the REES service.
-4. Startup logs include `sentry_release_validation_complete` for the same release id and Railway deployment id.
-5. The Sentry code mapping is `/app` → `review-enrichment` on branch `main`.
-6. `npm --prefix review-enrichment run validate:sourcemaps` passes locally.
+1. The event's `release` is `loopover-rees@<same commit sha>` or your exact `POSTHOG_RELEASE` override.
+2. The PostHog project has a symbol set uploaded for that release.
+3. The deployment has `POSTHOG_CLI_API_KEY` and `POSTHOG_CLI_PROJECT_ID` set.
+4. Startup logs include `rees_posthog_release_validation_complete` for the same release id.
+5. `npm --prefix review-enrichment run validate:sourcemaps` passes locally.

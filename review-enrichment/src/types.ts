@@ -799,7 +799,7 @@ export interface DuplicationDeltaFinding {
 
 export type AnalyzerStatus = "ok" | "degraded" | "skipped" | "capped" | "timeout";
 
-/** Internal, public-safe analyzer diagnostics for Sentry. Never attach request bodies, diffs, tokens, or raw prompts. */
+/** Internal, public-safe analyzer diagnostics for error-tracking capture (PostHog). Never attach request bodies, diffs, tokens, or raw prompts. */
 export interface AnalyzerDiagnostics {
   phase?: string;
   subcall?: string;

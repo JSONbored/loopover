@@ -167,8 +167,8 @@ jobs:
           test -n "$POSTHOG_CLI_API_KEY"
           test -n "$POSTHOG_CLI_PROJECT_ID"
           # posthog-cli treats a PRESENT-but-empty POSTHOG_CLI_HOST as an explicit (invalid) URL, not as
-          # "unset, use the default" -- unset it outright when blank, mirroring the old SENTRY_URL handling
-          # this replaced.
+          # "unset, use the default" -- unset it outright when blank, same guard this pipeline's old
+          # Sentry-org-URL override once needed for the identical reason.
           if [ -z "${POSTHOG_CLI_HOST:-}" ]; then unset POSTHOG_CLI_HOST; fi
           # No separate "create release" step -- PostHog release metadata is a byproduct of the inject/
           # upload calls below, unlike Sentry's releases/commits/deploys/finalize lifecycle this replaces.

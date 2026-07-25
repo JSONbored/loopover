@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DISCOVERY_INDEX_CONTRACT_VERSION, type AiPolicyVerdict, type DiscoveryIndexCandidate, type DiscoveryIndexQuery } from "@loopover/engine";
 import { TtlCache } from "../../../packages/discovery-index/src/cache";
 import { decodeCursor } from "../../../packages/discovery-index/src/cursor";
@@ -18,6 +18,10 @@ interface StubConfig {
   issuesByRepo?: Record<string, GitHubIssue[]>;
   searchResults?: Record<string, GitHubIssue[]>;
   filesByRepo?: Record<string, Record<string, string | null>>;
+  /** Non-empty diagnostics for a direct repo fetch, keyed by repoFullName (mirrors github-client's field). */
+  warningsByRepo?: Record<string, string[]>;
+  /** Non-empty diagnostics for a search fetch, keyed by the exact search query string. */
+  warningsBySearch?: Record<string, string[]>;
 }
 
 function makeStubGitHub(config: StubConfig): { github: GitHubClientLike; calls: StubCall[] } {
@@ -25,11 +29,11 @@ function makeStubGitHub(config: StubConfig): { github: GitHubClientLike; calls: 
   const github: GitHubClientLike = {
     async fetchRepoIssues(repoFullName: string) {
       calls.push({ method: "fetchRepoIssues", args: [repoFullName] });
-      return { issues: config.issuesByRepo?.[repoFullName] ?? [], warnings: [] };
+      return { issues: config.issuesByRepo?.[repoFullName] ?? [], warnings: config.warningsByRepo?.[repoFullName] ?? [] };
     },
     async searchIssues(query: string) {
       calls.push({ method: "searchIssues", args: [query] });
-      return { issues: config.searchResults?.[query] ?? [], warnings: [] };
+      return { issues: config.searchResults?.[query] ?? [], warnings: config.warningsBySearch?.[query] ?? [] };
     },
     async fetchRepoFile(repoFullName: string, path: string) {
       calls.push({ method: "fetchRepoFile", args: [repoFullName, path] });
@@ -56,6 +60,10 @@ function query(overrides: Partial<DiscoveryIndexQuery> = {}): DiscoveryIndexQuer
 describe("discovery-index runDiscoveryQuery (#7164)", () => {
   beforeEach(() => {
     resetMetrics();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("builds candidates from an allowed repo's issues, filtering PRs and invalid entries", async () => {
@@ -277,5 +285,43 @@ describe("discovery-index runDiscoveryQuery (#7164)", () => {
     await runDiscoveryQuery(query({ orgs: ["acme"], searchTerms: ["flaky"] }), makeDeps(github));
     expect(counterValue("discovery_index_cache_lookups_total", { cache: "policy", outcome: "miss" })).toBe(1);
     expect(counterValue("discovery_index_cache_lookups_total", { cache: "policy", outcome: "hit" })).toBe(1);
+  });
+
+  it("surfaces github-client warnings with per-scope attribution at all three fetch call sites (#8658)", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { github } = makeStubGitHub({
+      issuesByRepo: { "acme/one": [{ number: 1, title: "Direct" }] },
+      searchResults: {
+        "org:acme state:open type:issue": [{ number: 2, title: "Org", repository_url: "https://api.github.com/repos/acme/one" }],
+        "flaky state:open type:issue": [{ number: 3, title: "Term", repository_url: "https://api.github.com/repos/acme/one" }],
+      },
+      warningsByRepo: { "acme/one": ["GitHub returned 404/500 for 2 issues"] },
+      warningsBySearch: {
+        "org:acme state:open type:issue": ["non-array issues payload"],
+        "flaky state:open type:issue": ["GitHub returned 500 for search", "rate limited"],
+      },
+      filesByRepo: { "acme/one": { "AI-USAGE.md": ALLOWED_AI_USAGE } },
+    });
+
+    await runDiscoveryQuery(query({ repos: ["acme/one"], orgs: ["acme"], searchTerms: ["flaky"] }), makeDeps(github));
+
+    const surfaced = errorSpy.mock.calls.map(([line]) => JSON.parse(String(line)));
+    // One log line per warning, each carrying the scope identity of the fetch that produced it.
+    expect(surfaced).toEqual([
+      { level: "warn", event: "discovery_index_github_warning", source: "acme/one", warning: "GitHub returned 404/500 for 2 issues" },
+      { level: "warn", event: "discovery_index_github_warning", source: "org:acme state:open type:issue", warning: "non-array issues payload" },
+      { level: "warn", event: "discovery_index_github_warning", source: "flaky state:open type:issue", warning: "GitHub returned 500 for search" },
+      { level: "warn", event: "discovery_index_github_warning", source: "flaky state:open type:issue", warning: "rate limited" },
+    ]);
+  });
+
+  it("logs nothing when github-client returns no warnings", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { github } = makeStubGitHub({
+      issuesByRepo: { "acme/one": [{ number: 1, title: "T" }] },
+      filesByRepo: { "acme/one": { "AI-USAGE.md": ALLOWED_AI_USAGE } },
+    });
+    await runDiscoveryQuery(query({ repos: ["acme/one"] }), makeDeps(github));
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 });

@@ -166,6 +166,10 @@ jobs:
           set -euo pipefail
           test -n "$POSTHOG_CLI_API_KEY"
           test -n "$POSTHOG_CLI_PROJECT_ID"
+          # posthog-cli treats a PRESENT-but-empty POSTHOG_CLI_HOST as an explicit (invalid) URL, not as
+          # "unset, use the default" -- unset it outright when blank, mirroring the old SENTRY_URL handling
+          # this replaced.
+          if [ -z "${POSTHOG_CLI_HOST:-}" ]; then unset POSTHOG_CLI_HOST; fi
           # No separate "create release" step -- PostHog release metadata is a byproduct of the inject/
           # upload calls below, unlike Sentry's releases/commits/deploys/finalize lifecycle this replaces.
           npx -y "$POSTHOG_CLI_PACKAGE" sourcemap inject --directory dist --release-version "$POSTHOG_RELEASE"
@@ -259,6 +263,7 @@ jobs:
           POSTHOG_RELEASE: ${{ steps.version.outputs.release }}
         run: |
           set -euo pipefail
+          if [ -z "${POSTHOG_CLI_HOST:-}" ]; then unset POSTHOG_CLI_HOST; fi
           # PostHog's release-read path can lag briefly behind the upload write above.
           # review-enrichment/src/upload-sourcemaps.ts's runReleaseValidation() already retry-polls this
           # same script for REES's own deploy path -- mirror that here instead of failing the whole

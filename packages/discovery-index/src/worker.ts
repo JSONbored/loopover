@@ -34,26 +34,18 @@ export class DiscoveryIndexContainer extends Container {
   // long enough that normal miner query cadence (cache TTL is 5 minutes, per README.md) doesn't constantly
   // pay a cold-start penalty between requests.
   override sleepAfter = "10m";
-  // Sentry vars (#4934) are forwarded whether or not they're actually configured -- initSentry/
-  // upload-sourcemaps.ts (both running inside the container, not this Worker) already no-op cleanly on an
-  // empty/unset SENTRY_DSN/SENTRY_AUTH_TOKEN; nothing here needs to conditionally omit them. Container.envVars
-  // requires Record<string, string> (no undefined) -- SENTRY_RELEASE/SENTRY_AUTH_TOKEN are optional (env.d.ts),
-  // so they're coerced to "" here, which initSentry's own nonBlank() already treats identically to unset.
-  //
-  // PostHog vars (#8289, parallel-run alongside the Sentry vars above) follow the identical forwarding
-  // discipline: initDiscoveryIndexPostHog/upload-sourcemaps.ts no-op cleanly on an empty/unset POSTHOG_API_KEY/
-  // POSTHOG_CLI_API_KEY, so they're forwarded unconditionally too. POSTHOG_CLI_API_KEY is a PostHog *personal*
-  // API key (error-tracking write + organization read scopes) -- deliberately separate from POSTHOG_API_KEY
-  // (the project token event capture uses), matching PostHog's own documented sourcemap-upload auth model.
+  // PostHog vars (#8289) are forwarded whether or not they're actually configured --
+  // initDiscoveryIndexPostHog/upload-sourcemaps.ts (both running inside the container, not this Worker)
+  // already no-op cleanly on an empty/unset POSTHOG_API_KEY/POSTHOG_CLI_API_KEY, so nothing here needs to
+  // conditionally omit them. Container.envVars requires Record<string, string> (no undefined), so the
+  // optional ones are coerced to "" here, which every no-op guard already treats identically to unset.
+  // POSTHOG_CLI_API_KEY is a PostHog *personal* API key (error-tracking write + organization read scopes) --
+  // deliberately separate from POSTHOG_API_KEY (the project token event capture uses), matching PostHog's own
+  // documented sourcemap-upload auth model. Replaces the Sentry vars this container used to forward (#4934) --
+  // PostHog is a straight replacement here, not a parallel sink (epic #8286's 2026-07-25 strategy correction).
   override envVars = {
     DISCOVERY_INDEX_SHARED_SECRET: env.DISCOVERY_INDEX_SHARED_SECRET,
     DISCOVERY_INDEX_GITHUB_TOKEN: env.DISCOVERY_INDEX_GITHUB_TOKEN,
-    SENTRY_DSN: env.SENTRY_DSN,
-    SENTRY_ENVIRONMENT: env.SENTRY_ENVIRONMENT,
-    SENTRY_RELEASE: env.SENTRY_RELEASE ?? "",
-    SENTRY_AUTH_TOKEN: env.SENTRY_AUTH_TOKEN ?? "",
-    SENTRY_ORG: env.SENTRY_ORG,
-    SENTRY_PROJECT: env.SENTRY_PROJECT,
     POSTHOG_API_KEY: env.POSTHOG_API_KEY ?? "",
     POSTHOG_HOST: env.POSTHOG_HOST ?? "",
     POSTHOG_ENVIRONMENT: env.POSTHOG_ENVIRONMENT ?? "",
@@ -69,12 +61,6 @@ interface WorkerEnv {
   DISCOVERY_INDEX_RATE_LIMITER: DurableObjectNamespace<DiscoveryIndexRateLimiter>;
   DISCOVERY_INDEX_SHARED_SECRET: string;
   DISCOVERY_INDEX_GITHUB_TOKEN: string;
-  SENTRY_DSN: string;
-  SENTRY_ENVIRONMENT: string;
-  SENTRY_RELEASE: string;
-  SENTRY_AUTH_TOKEN: string;
-  SENTRY_ORG: string;
-  SENTRY_PROJECT: string;
   POSTHOG_API_KEY?: string;
   POSTHOG_HOST?: string;
   POSTHOG_ENVIRONMENT?: string;

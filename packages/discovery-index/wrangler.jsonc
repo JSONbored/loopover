@@ -7,39 +7,29 @@
   // Before first deploy, set the real secrets (never commit real values, and never put them in this file):
   //   npx wrangler secret put DISCOVERY_INDEX_SHARED_SECRET
   //   npx wrangler secret put DISCOVERY_INDEX_GITHUB_TOKEN
-  //   npx wrangler secret put SENTRY_AUTH_TOKEN   (only needed for source-map upload; omit to skip it --
-  //                                                 upload-sourcemaps.ts no-ops cleanly when unset)
   //   npx wrangler secret put POSTHOG_CLI_API_KEY   (a PostHog PERSONAL API key, error-tracking write +
   //                                                   organization read scopes -- only needed for source-map
-  //                                                   upload; omit to skip it, mirrors SENTRY_AUTH_TOKEN)
+  //                                                   upload; omit to skip it)
   //
-  // SENTRY_RELEASE is deliberately NOT a static var below -- it should be the actual deploy's git commit
+  // POSTHOG_RELEASE is deliberately NOT a static var below -- it should be the actual deploy's git commit
   // (loopover-discovery-index@<sha>), which changes every release. Set per-deploy:
-  //   npx wrangler deploy --var SENTRY_RELEASE:loopover-discovery-index@$(git rev-parse HEAD)
-  // POSTHOG_RELEASE follows the identical per-deploy pattern once configured.
+  //   npx wrangler deploy --var POSTHOG_RELEASE:loopover-discovery-index@$(git rev-parse HEAD)
   //
   // POSTHOG_API_KEY/POSTHOG_HOST/POSTHOG_CLI_PROJECT_ID/POSTHOG_CLI_HOST are PENDING #7875 (provisioning a
   // real, loopover-owned PostHog project) -- deliberately NOT added below yet. Once #7875 lands, POSTHOG_API_KEY
-  // (a PostHog PROJECT token, write-only like SENTRY_DSN below -- safe to commit) and POSTHOG_CLI_PROJECT_ID
-  // (a plain numeric id, not a secret) become static vars here; POSTHOG_HOST/POSTHOG_CLI_HOST only need setting
-  // for an EU-region project (both default to PostHog's US cloud when unset). Until then, initDiscoveryIndexPostHog
-  // (src/posthog.ts) and the PostHog leg of upload-sourcemaps.ts stay no-ops, exactly like an unset SENTRY_DSN.
+  // (a PostHog PROJECT token, write-only -- safe to commit) and POSTHOG_CLI_PROJECT_ID (a plain numeric id,
+  // not a secret) become static vars here; POSTHOG_HOST/POSTHOG_CLI_HOST only need setting for an EU-region
+  // project (both default to PostHog's US cloud when unset). Until then, initDiscoveryIndexPostHog
+  // (src/posthog.ts) and the PostHog leg of upload-sourcemaps.ts stay complete no-ops.
+  //
+  // #8289 (epic #8286) replaced this surface's error tracking outright: it used to report into the shared
+  // "metagraphed" Sentry project (jsonbored org) other infra/operational pieces flow into -- a genuine
+  // cross-project entanglement, not loopover's own. That Sentry wiring (the SENTRY_DSN/ORG/PROJECT vars this
+  // block used to carry) is now removed entirely, not left running in parallel.
   "name": "loopover-discovery-index",
   "main": "src/worker.ts",
   "compatibility_date": "2026-07-21",
-  "vars": {
-    // Error tracking (#4934) reports into the shared "metagraphed" Sentry project other infra/operational
-    // pieces already flow into (jsonbored org) -- not a new, separate project. SENTRY_DSN is write-only
-    // (submits events, cannot read account data) -- safe to commit, the same way it's commonly embedded in
-    // public client-side bundles; SENTRY_AUTH_TOKEN (full API access, used only for source-map upload) is
-    // the one genuinely sensitive value and stays a wrangler secret, never here. #8289 migrates this surface
-    // to a loopover-owned PostHog project (parallel-run with this Sentry sink until the gated decommission,
-    // #8298) -- see the POSTHOG_* comment above for why those vars aren't here yet.
-    "SENTRY_ORG": "jsonbored",
-    "SENTRY_PROJECT": "metagraphed",
-    "SENTRY_DSN": "https://998bd096e2c9f1d81781ed3a88fed0b9@o4511631313666048.ingest.us.sentry.io/4511749777588224",
-    "SENTRY_ENVIRONMENT": "production"
-  },
+  "vars": {},
   "observability": {
     "enabled": true,
     "logs": {

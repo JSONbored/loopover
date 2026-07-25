@@ -1,22 +1,11 @@
-// Uploads this build's source maps to Sentry AND PostHog at container startup, then deletes them before the
-// real server starts (see the Dockerfile's runtime CMD) -- mirrors review-enrichment/src/upload-sourcemaps.ts
-// (a comparably-sized standalone service with the identical Sentry setup), adapted only by dropping that
-// copy's Railway-specific env vars (RAILWAY_GIT_COMMIT_SHA, RAILWAY_DEPLOYMENT_ID, RAILWAY_ENVIRONMENT_NAME)
-// since discovery-index deploys via a Cloudflare Container (#7167), not Railway.
+// Uploads this build's source maps to PostHog at container startup, then deletes them before the real server
+// starts (see the Dockerfile's runtime CMD). REPLACES the old Sentry-based pipeline entirely (#8289, epic
+// #8286's revised strategy, 2026-07-25 correction on #8286): no more @sentry/cli.
 //
-// PostHog leg (#8289, epic #8286): parallel-run alongside the existing Sentry leg below, not a replacement --
-// Sentry stays wired until the gated decommission (#8298). Both legs run sequentially, Sentry first (the
-// existing, already-proven flow, left completely unmodified) then PostHog second -- if the two CLIs' inject
-// steps ever interact unexpectedly on the same on-disk .js/.map files (Sentry's `debug_id` comment vs
-// PostHog's `chunkId` comment), the untouched, load-bearing Sentry leg is never put at risk by the newer one
-// running first. Currently a no-op in practice: POSTHOG_CLI_API_KEY/POSTHOG_CLI_PROJECT_ID are pending #7875
-// (see wrangler.jsonc's own header comment), so runPostHogSourcemapUpload's missing-config skip fires until
-// that's provisioned.
-//
-// Running this at CONTAINER STARTUP rather than at Docker BUILD time is deliberate: SENTRY_AUTH_TOKEN/
-// POSTHOG_CLI_API_KEY are real secrets, injected the same way DISCOVERY_INDEX_SHARED_SECRET/
-// DISCOVERY_INDEX_GITHUB_TOKEN already are (worker.ts's Container envVars) -- neither is ever a Docker
-// build-time value, so neither risks being baked into a cached image layer.
+// Running this at CONTAINER STARTUP rather than at Docker BUILD time is deliberate: POSTHOG_CLI_API_KEY is a
+// real secret, injected the same way DISCOVERY_INDEX_SHARED_SECRET/DISCOVERY_INDEX_GITHUB_TOKEN already are
+// (worker.ts's Container envVars) -- it is never a Docker build-time value, so it never risks being baked
+// into a cached image layer.
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -25,14 +14,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 import { captureSourcemapUploadPostHogFailure, flushDiscoveryIndexPostHog, initDiscoveryIndexPostHog, resolveDiscoveryIndexPostHogRelease } from "./posthog.js";
-import { captureSourcemapUploadFailure, flushSentry, initSentry, resolveDiscoveryIndexSentryRelease, resolveSentryEnvironment } from "./sentry.js";
 
 const require = createRequire(import.meta.url);
-
-type RunOptions = {
-  allowExistingRelease?: boolean;
-  allowFailure?: boolean;
-};
 
 const distDir = dirname(fileURLToPath(import.meta.url));
 const appDir = resolve(distDir, "..");
@@ -92,38 +75,8 @@ function validateSourceMaps(): void {
   if (!sawServerSource) throw new Error("source maps do not include src/server.ts");
 }
 
-// Resolved via require.resolve, not a hardcoded packages/discovery-index/node_modules/.bin/ path: unlike
-// review-enrichment (a standalone, non-workspace package this file otherwise mirrors), discovery-index is
-// a real npm workspace member, so npm hoists @sentry/cli's binary to the ROOT node_modules/.bin/ by default
-// -- a package-relative path assumption would silently look in the wrong place. Same resolution pattern as
-// the root repo's own scripts/gen-cf-typegen.mjs resolveLocalWranglerBin().
-function sentryCliPath(): string {
-  const override = nonBlank(process.env.SENTRY_CLI_PATH);
-  if (override) return override;
-  const pkgJsonPath = require.resolve("@sentry/cli/package.json");
-  const pkg = JSON.parse(readFileSync(pkgJsonPath, "utf8")) as { bin?: string | Record<string, string> };
-  const binRelativePath = typeof pkg.bin === "string" ? pkg.bin : (pkg.bin?.["sentry-cli"] ?? pkg.bin?.["@sentry/cli"]);
-  if (!binRelativePath) throw new Error("@sentry/cli package.json has no resolvable bin entry");
-  return join(dirname(pkgJsonPath), binRelativePath);
-}
-
-function runSentry(args: string[], options: RunOptions = {}): void {
-  const result = spawnSync(sentryCliPath(), args, { cwd: appDir, env: process.env, encoding: "utf8" });
-  const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
-  if (result.status === 0) {
-    if (output) log("discovery_index_sentry_cli", { command: args.slice(0, 2).join(" "), output: output.slice(0, 300) });
-    return;
-  }
-  if (options.allowExistingRelease && /already exists|version already exists/i.test(output)) return;
-  if (options.allowFailure) {
-    warn("discovery_index_sentry_cli_failed", { command: args.slice(0, 3).join(" "), status: result.status, message: output.slice(0, 300) });
-    return;
-  }
-  throw new Error(`sentry-cli ${args.join(" ")} failed (${result.status}): ${output.slice(0, 500)}`);
-}
-
 function shouldValidateRelease(): boolean {
-  return !/^(0|false|no|off)$/i.test(process.env.DISCOVERY_INDEX_SENTRY_VALIDATE_RELEASE ?? "");
+  return !/^(0|false|no|off)$/i.test(process.env.DISCOVERY_INDEX_POSTHOG_VALIDATE_RELEASE ?? "");
 }
 
 function numericEnv(name: string, fallback: number, max: number): number {
@@ -131,116 +84,8 @@ function numericEnv(name: string, fallback: number, max: number): number {
   return Number.isFinite(raw) && raw >= 0 ? Math.min(Math.floor(raw), max) : fallback;
 }
 
-async function runReleaseValidation(release: string, fields: { sha?: string | undefined; deployName: string; environment: string; strict: boolean }): Promise<void> {
+async function runReleaseValidation(release: string): Promise<void> {
   if (!shouldValidateRelease()) return;
-  const attempts = Math.max(1, numericEnv("DISCOVERY_INDEX_SENTRY_VALIDATE_ATTEMPTS", 5, 20));
-  const retryDelayMs = numericEnv("DISCOVERY_INDEX_SENTRY_VALIDATE_RETRY_DELAY_MS", 1_000, 30_000);
-  let output = "";
-  let status: number | null = null;
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const result = spawnSync(process.execPath, ["scripts/validate-sentry-release.mjs"], {
-      cwd: appDir,
-      env: {
-        ...process.env,
-        SENTRY_RELEASE: release,
-        SENTRY_COMMIT_SHA: fields.sha ?? "",
-        SENTRY_DEPLOY_NAME: fields.deployName,
-        SENTRY_ENVIRONMENT: fields.environment,
-        SENTRY_REQUIRE_COMMITS: fields.strict ? "true" : "false",
-        SENTRY_REQUIRE_DEPLOY: "true",
-        SENTRY_REQUIRE_FINALIZED: "true",
-      },
-      encoding: "utf8",
-    });
-    status = result.status;
-    output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
-    if (result.status === 0) {
-      if (output) log("discovery_index_sentry_release_validation", { output: output.slice(0, 500), attempt });
-      return;
-    }
-    if (attempt < attempts) {
-      warn("discovery_index_sentry_release_validation_retry", { attempt, attempts, retryDelayMs, message: output.slice(0, 500) });
-      if (retryDelayMs > 0) await sleep(retryDelayMs);
-    }
-  }
-  throw new Error(`Sentry release validation failed (${status}): ${output.slice(0, 500)}`);
-}
-
-async function runSentrySourcemapUpload(): Promise<number> {
-  // initSentry's own body already wraps everything error-prone in its own try/catch and always resolves
-  // (never rejects) when called with a real process.env -- this .catch is unreachable through the real
-  // call site above, same "defensive net, no live branch" reasoning as sentry.ts's own sentryTagValue guard.
-  /* v8 ignore next -- @preserve unreachable: initSentry(process.env) never rejects */
-  await initSentry(process.env).catch(() => false);
-  const release = resolveDiscoveryIndexSentryRelease(process.env);
-  const required = {
-    SENTRY_AUTH_TOKEN: nonBlank(process.env.SENTRY_AUTH_TOKEN),
-    SENTRY_ORG: nonBlank(process.env.SENTRY_ORG),
-    SENTRY_PROJECT: nonBlank(process.env.SENTRY_PROJECT),
-    SENTRY_RELEASE: release,
-  };
-  const missing = Object.entries(required)
-    .filter(([, value]) => !value)
-    .map(([key]) => key);
-  if (missing.length > 0) {
-    log("discovery_index_sentry_sourcemap_upload_skipped", { reason: "missing_config", missing });
-    return 0;
-  }
-
-  const strict = /^(1|true|yes|on)$/i.test(process.env.DISCOVERY_INDEX_SENTRY_UPLOAD_STRICT ?? "");
-  try {
-    validateSourceMaps();
-    const projectArgs = ["--org", required.SENTRY_ORG!, "--project", required.SENTRY_PROJECT!];
-    runSentry(["releases", ...projectArgs, "new", release!], { allowExistingRelease: true });
-
-    const sha = nonBlank(process.env.SENTRY_COMMIT_SHA);
-    if (sha) {
-      const repo = nonBlank(process.env.SENTRY_REPOSITORY) ?? "JSONbored/loopover";
-      const previous = nonBlank(process.env.SENTRY_PREVIOUS_COMMIT_SHA);
-      const spec = previous ? `${repo}@${previous}..${sha}` : `${repo}@${sha}`;
-      runSentry(["releases", ...projectArgs, "set-commits", release!, "--commit", spec, "--ignore-missing"], { allowFailure: !strict });
-    }
-
-    runSentry(["sourcemaps", ...projectArgs, "inject", "dist"]);
-    validateSourceMaps();
-    runSentry(["sourcemaps", ...projectArgs, "upload", "--release", release!, "--validate", "--wait", ...(strict ? ["--strict"] : []), "dist"]);
-    const deployName = nonBlank(process.env.SENTRY_DEPLOY_NAME) ?? "cloudflare-container";
-    runSentry(["releases", ...projectArgs, "deploys", "new", "--release", release!, "--env", resolveSentryEnvironment(process.env), "--name", deployName]);
-    runSentry(["releases", ...projectArgs, "finalize", release!]);
-    await runReleaseValidation(release!, { sha, deployName, environment: resolveSentryEnvironment(process.env), strict });
-    log("discovery_index_sentry_sourcemap_upload_complete", { release });
-    return 0;
-  } catch (error) {
-    captureSourcemapUploadFailure(error, {
-      release,
-      deploymentId: nonBlank(process.env.SENTRY_DEPLOY_NAME),
-      strict,
-      sha: nonBlank(process.env.SENTRY_COMMIT_SHA),
-    });
-    await flushSentry();
-    warn("discovery_index_sentry_sourcemap_upload_failed", { release, message: error instanceof Error ? error.message : String(error), strict });
-    return strict ? 1 : 0;
-  }
-}
-
-// Resolved via require.resolve, mirroring sentryCliPath()'s identical reasoning (this is a real npm
-// workspace member, so npm hoists @posthog/cli's binary to the ROOT node_modules/.bin/ by default).
-function postHogCliPath(): string {
-  const override = nonBlank(process.env.POSTHOG_CLI_PATH);
-  if (override) return override;
-  const pkgJsonPath = require.resolve("@posthog/cli/package.json");
-  const pkg = JSON.parse(readFileSync(pkgJsonPath, "utf8")) as { bin?: string | Record<string, string> };
-  const binRelativePath = typeof pkg.bin === "string" ? pkg.bin : (pkg.bin?.["posthog-cli"] ?? pkg.bin?.["@posthog/cli"]);
-  if (!binRelativePath) throw new Error("@posthog/cli package.json has no resolvable bin entry");
-  return join(dirname(pkgJsonPath), binRelativePath);
-}
-
-function shouldValidatePostHogRelease(): boolean {
-  return !/^(0|false|no|off)$/i.test(process.env.DISCOVERY_INDEX_POSTHOG_VALIDATE_RELEASE ?? "");
-}
-
-async function runPostHogReleaseValidation(release: string): Promise<void> {
-  if (!shouldValidatePostHogRelease()) return;
   const attempts = Math.max(1, numericEnv("DISCOVERY_INDEX_POSTHOG_VALIDATE_ATTEMPTS", 5, 20));
   const retryDelayMs = numericEnv("DISCOVERY_INDEX_POSTHOG_VALIDATE_RETRY_DELAY_MS", 1_000, 30_000);
   let output = "";
@@ -265,10 +110,24 @@ async function runPostHogReleaseValidation(release: string): Promise<void> {
   throw new Error(`PostHog release validation failed (${status}): ${output.slice(0, 500)}`);
 }
 
+// Resolved via require.resolve, not a hardcoded packages/discovery-index/node_modules/.bin/ path: unlike
+// review-enrichment (a standalone, non-workspace package), discovery-index is a real npm workspace member,
+// so npm hoists @posthog/cli's binary to the ROOT node_modules/.bin/ by default -- a package-relative path
+// assumption would silently look in the wrong place. Same resolution pattern as the root repo's own
+// scripts/gen-cf-typegen.mjs resolveLocalWranglerBin().
+function postHogCliPath(): string {
+  const override = nonBlank(process.env.POSTHOG_CLI_PATH);
+  if (override) return override;
+  const pkgJsonPath = require.resolve("@posthog/cli/package.json");
+  const pkg = JSON.parse(readFileSync(pkgJsonPath, "utf8")) as { bin?: string | Record<string, string> };
+  const binRelativePath = typeof pkg.bin === "string" ? pkg.bin : (pkg.bin?.["posthog-cli"] ?? pkg.bin?.["@posthog/cli"]);
+  if (!binRelativePath) throw new Error("@posthog/cli package.json has no resolvable bin entry");
+  return join(dirname(pkgJsonPath), binRelativePath);
+}
+
 function runPostHog(args: string[]): void {
   // POSTHOG_CLI_API_KEY/POSTHOG_CLI_PROJECT_ID/POSTHOG_CLI_HOST are read directly from the environment by
-  // posthog-cli itself (its own documented auth convention) -- no equivalent of Sentry CLI's --org/--project
-  // flags needed here.
+  // posthog-cli itself (its own documented auth convention).
   const result = spawnSync(postHogCliPath(), args, { cwd: appDir, env: process.env, encoding: "utf8" });
   const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
   if (result.status === 0) {
@@ -278,8 +137,8 @@ function runPostHog(args: string[]): void {
   throw new Error(`posthog-cli ${args.join(" ")} failed (${result.status}): ${output.slice(0, 500)}`);
 }
 
-async function runPostHogSourcemapUpload(): Promise<number> {
-  /* v8 ignore next -- @preserve unreachable: initDiscoveryIndexPostHog(process.env) never rejects, mirrors initSentry's identical guarantee */
+async function main(): Promise<number> {
+  /* v8 ignore next -- @preserve unreachable: initDiscoveryIndexPostHog(process.env) never rejects */
   await initDiscoveryIndexPostHog(process.env).catch(() => false);
   const release = resolveDiscoveryIndexPostHogRelease(process.env);
   const required = {
@@ -299,31 +158,21 @@ async function runPostHogSourcemapUpload(): Promise<number> {
   try {
     validateSourceMaps();
     // No separate "create release" step -- PostHog release metadata is a byproduct of the inject/upload
-    // calls below (unlike Sentry's explicit releases new/set-commits/deploys/finalize lifecycle). Explicit
-    // --release-version rather than posthog-cli's own git-metadata auto-detection: the Dockerfile's build
-    // stage only copies packages/loopover-engine and packages/discovery-index source, never `.git`, so
-    // auto-detection has nothing to inspect at container-startup time.
+    // calls below. Explicit --release-version rather than posthog-cli's own git-metadata auto-detection: the
+    // Dockerfile's build stage only copies packages/loopover-engine and packages/discovery-index source,
+    // never `.git`, so auto-detection has nothing to inspect at container-startup time.
     runPostHog(["sourcemap", "inject", "--directory", "dist", "--release-version", release!]);
     validateSourceMaps();
     runPostHog(["sourcemap", "upload", "--directory", "dist", "--release-version", release!]);
-    await runPostHogReleaseValidation(release!);
+    await runReleaseValidation(release!);
     log("discovery_index_posthog_sourcemap_upload_complete", { release });
     return 0;
   } catch (error) {
-    captureSourcemapUploadPostHogFailure(error, { release });
+    captureSourcemapUploadPostHogFailure(error, { release, strict, sha: nonBlank(process.env.POSTHOG_COMMIT_SHA) });
     await flushDiscoveryIndexPostHog();
     warn("discovery_index_posthog_sourcemap_upload_failed", { release, message: error instanceof Error ? error.message : String(error), strict });
     return strict ? 1 : 0;
   }
-}
-
-async function main(): Promise<number> {
-  // Sentry first (existing, proven flow, unmodified), PostHog second -- see this file's header comment for
-  // why that order matters. Both legs are independent and non-blocking of each other; a failure in one
-  // doesn't skip the other.
-  const sentryExitCode = await runSentrySourcemapUpload();
-  const postHogExitCode = await runPostHogSourcemapUpload();
-  return Math.max(sentryExitCode, postHogExitCode);
 }
 
 process.exitCode = await main();

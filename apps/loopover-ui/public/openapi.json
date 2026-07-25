@@ -14708,7 +14708,7 @@
       "LoopOverBearer": {
         "type": "http",
         "scheme": "bearer",
-        "description": "Static API/MCP token, GitHub device-flow LoopOver session token, or extension-scoped LoopOver session token where supported. GitHub personal access tokens are not accepted."
+        "description": "Static API/MCP token or GitHub device-flow LoopOver session token where supported. GitHub personal access tokens are not accepted."
       },
       "LoopOverSessionCookie": {
         "type": "apiKey",
@@ -17417,36 +17417,6 @@
         "summary": "End the current session"
       }
     },
-    "/v1/auth/extension/session": {
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Auth request completed"
-          },
-          "201": {
-            "description": "Auth session created"
-          },
-          "400": {
-            "description": "Invalid auth request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "429": {
-            "description": "Rate limited"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Create an extension-scoped session"
-      }
-    },
     "/v1/auth/session": {
       "get": {
         "responses": {
@@ -18281,78 +18251,6 @@
           }
         ],
         "summary": "Manage maintainer digest subscriptions"
-      }
-    },
-    "/v1/extension/pull-context": {
-      "get": {
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "example": "JSONbored"
-            },
-            "required": true,
-            "description": "Repository owner",
-            "name": "owner",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "example": "loopover"
-            },
-            "required": true,
-            "description": "Repository name",
-            "name": "repo",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "example": "120"
-            },
-            "required": true,
-            "description": "Pull request number",
-            "name": "pullNumber",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Browser extension PR context overlay payload",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid pull context query"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Extension-scoped session required"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Pull request context for the browser extension"
       }
     },
     "/v1/internal/jobs/refresh-registry": {

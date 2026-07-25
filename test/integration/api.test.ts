@@ -2468,7 +2468,7 @@ describe("api routes", () => {
     expect(body.metrics.find((metric) => metric.label === "Open PRs cached")?.value).toBe(507);
   });
 
-  it("serves live app dashboards, digest subscriptions, commands, and extension context", async () => {
+  it("serves live app dashboards, digest subscriptions, and commands", async () => {
     const app = createApp();
     const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "oktofeesh1,other", PRODUCT_USAGE_HASH_SALT: "usage-adoption-test-salt" });
     await seedSignalData(env);
@@ -2609,22 +2609,6 @@ describe("api routes", () => {
     expect((await app.request("/v1/app/analytics/mcp-compatibility", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
     expect((await app.request("/v1/app/analytics/weekly-value-report", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
     expect((await app.request("/v1/contributors/new-user/decision-pack", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
-    // A non-maintainer sign-in now mints a strictly self-only CONTRIBUTOR extension scope (#556), not 403.
-    const newUserExtensionSession = await app.request("/v1/auth/extension/session", { method: "POST", headers: unknownHeaders }, unknownEnv);
-    expect(newUserExtensionSession.status).toBe(201);
-    const newUserExtensionBody = (await newUserExtensionSession.json()) as { token: string; scopes: string[] };
-    expect(newUserExtensionBody.scopes).toEqual(["extension:contributor_context"]);
-    const newUserExtBearer = { authorization: `Bearer ${newUserExtensionBody.token}` };
-    // Self-only: the contributor scope can reach its OWN contributor path but not another login's.
-    expect((await app.request("/v1/extension/contributors/new-user/issue-badges?owner=octo&repo=demo", { headers: newUserExtBearer }, unknownEnv)).status).not.toBe(403);
-    expect((await app.request("/v1/extension/contributors/someone-else/issue-badges?owner=octo&repo=demo", { headers: newUserExtBearer }, unknownEnv)).status).toBe(403);
-    // The contributor scope cannot reach the maintainer-only extension pull-context path at all.
-    expect((await app.request("/v1/extension/pull-context?owner=octo&repo=demo&pullNumber=1", { headers: newUserExtBearer }, unknownEnv)).status).toBe(403);
-    // A contributor extension token is confined to its own surface: it cannot reach the control panel
-    // (would expose platform-wide data) and cannot re-mint itself into an unbounded session chain.
-    expect((await app.request("/v1/app/overview", { headers: newUserExtBearer }, unknownEnv)).status).toBe(403);
-    expect((await app.request("/v1/app/roles", { headers: newUserExtBearer }, unknownEnv)).status).toBe(403);
-    expect((await app.request("/v1/auth/extension/session", { method: "POST", headers: newUserExtBearer }, unknownEnv)).status).toBe(403);
 
     const ownerEnv = createTestEnv({ ADMIN_GITHUB_LOGINS: "jsonbored" });
     await upsertInstallation(ownerEnv, {
@@ -2791,23 +2775,6 @@ describe("api routes", () => {
     expect(ownerWeeklyReportMarkdownText).not.toContain("## Operator detail");
     expect(ownerWeeklyReportMarkdownText).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
     expect((await app.request("/v1/app/analytics/weekly-value-report?variant=operator", { headers: ownerHeaders }, ownerEnv)).status).toBe(403);
-    const ownerExtensionSession = await app.request("/v1/auth/extension/session", { method: "POST", headers: ownerHeaders }, ownerEnv);
-    expect(ownerExtensionSession.status).toBe(201);
-    const ownerExtensionSessionBody = (await ownerExtensionSession.json()) as { token: string; login: string; scopes: string[] };
-    expect(ownerExtensionSessionBody).toMatchObject({ login: "repo-owner", scopes: ["extension:pull_context"] });
-    const ownerExtensionMissingPull = await app.request(
-      "/v1/extension/pull-context?owner=repo-owner&repo=owned-repo",
-      { headers: { authorization: `Bearer ${ownerExtensionSessionBody.token}` } },
-      ownerEnv,
-    );
-    expect(ownerExtensionMissingPull.status).toBe(400);
-    const forbiddenVictimExtensionContext = await app.request(
-      "/v1/extension/pull-context?owner=victim-org&repo=secret-repo&pullNumber=42",
-      { headers: { authorization: `Bearer ${ownerExtensionSessionBody.token}` } },
-      ownerEnv,
-    );
-    expect(forbiddenVictimExtensionContext.status).toBe(403);
-    await expect(forbiddenVictimExtensionContext.json()).resolves.toMatchObject({ error: "forbidden_repo" });
     const ownerRepoPreview = await app.request(
       "/v1/app/commands/preview",
       {
@@ -3798,235 +3765,6 @@ describe("api routes", () => {
     );
     expect(agentBlockers.status).toBe(200);
 
-    const staticExtensionSession = await app.request("/v1/auth/extension/session", { method: "POST", headers: apiHeaders(env) }, env);
-    expect(staticExtensionSession.status).toBe(403);
-
-    const extensionSession = await app.request("/v1/auth/extension/session", { method: "POST", headers: cookieHeaders }, env);
-    expect(extensionSession.status).toBe(201);
-    const extensionSessionBody = (await extensionSession.json()) as { token: string; login: string; scopes: string[] };
-    expect(extensionSessionBody).toMatchObject({ login: "oktofeesh1", scopes: ["extension:pull_context"] });
-
-    const remintedExtensionSession = await app.request(
-      "/v1/auth/extension/session",
-      { method: "POST", headers: { authorization: `Bearer ${extensionSessionBody.token}` } },
-      env,
-    );
-    expect(remintedExtensionSession.status).toBe(403);
-
-    const extensionDecisionPack = await app.request(
-      "/v1/contributors/oktofeesh1/decision-pack",
-      { headers: { authorization: `Bearer ${extensionSessionBody.token}` } },
-      env,
-    );
-    expect(extensionDecisionPack.status).toBe(403);
-    await expect(extensionDecisionPack.json()).resolves.toMatchObject({ error: "insufficient_scope" });
-
-    const extensionOverview = await app.request("/v1/app/overview", { headers: { authorization: `Bearer ${extensionSessionBody.token}` } }, env);
-    expect(extensionOverview.status).toBe(403);
-    await expect(extensionOverview.json()).resolves.toMatchObject({ error: "insufficient_scope" });
-
-    const staticExtensionContext = await app.request("/v1/extension/pull-context?owner=entrius&repo=allways-ui&pullNumber=12", { headers: apiHeaders(env) }, env);
-    expect(staticExtensionContext.status).toBe(403);
-    await expect(staticExtensionContext.json()).resolves.toMatchObject({ error: "extension_session_required" });
-    const fullBrowserSessionExtensionContext = await app.request("/v1/extension/pull-context?owner=entrius&repo=allways-ui&pullNumber=12", { headers: cookieHeaders }, env);
-    expect(fullBrowserSessionExtensionContext.status).toBe(403);
-    await expect(fullBrowserSessionExtensionContext.json()).resolves.toMatchObject({ error: "extension_session_required" });
-
-    const fallbackOriginEnv = createTestEnv({ ADMIN_GITHUB_LOGINS: "oktofeesh1" });
-    delete (fallbackOriginEnv as Partial<Env>).PUBLIC_API_ORIGIN;
-    const { token: noIdToken } = await createSessionForGitHubUser(fallbackOriginEnv, { login: "oktofeesh1" });
-    const fallbackOriginExtensionSession = await app.request(
-      "/v1/auth/extension/session",
-      { method: "POST", headers: { cookie: `loopover_session=${noIdToken}` } },
-      fallbackOriginEnv,
-    );
-    expect(fallbackOriginExtensionSession.status).toBe(201);
-    await expect(fallbackOriginExtensionSession.json()).resolves.toMatchObject({ apiOrigin: "http://localhost" });
-
-    const invalidExtensionContext = await app.request("/v1/extension/pull-context?owner=entrius&repo=allways-ui", { headers: { authorization: `Bearer ${extensionSessionBody.token}` } }, env);
-    expect(invalidExtensionContext.status).toBe(400);
-    const invalidZeroExtensionContext = await app.request("/v1/extension/pull-context?owner=entrius&repo=allways-ui&pullNumber=0", { headers: { authorization: `Bearer ${extensionSessionBody.token}` } }, env);
-    expect(invalidZeroExtensionContext.status).toBe(400);
-    const invalidMissingOwnerExtensionContext = await app.request("/v1/extension/pull-context?repo=allways-ui&pullNumber=12", { headers: { authorization: `Bearer ${extensionSessionBody.token}` } }, env);
-    expect(invalidMissingOwnerExtensionContext.status).toBe(400);
-
-    await upsertPullRequestFromGitHub(env, "entrius/allways-ui", {
-      number: 14,
-      title: "Maintainer queue cleanup",
-      state: "open",
-      html_url: "https://github.com/entrius/allways-ui/pull/14",
-      user: { login: "repo-maintainer" },
-      author_association: "OWNER",
-      head: { sha: "owner123", ref: "maintainer-cleanup" },
-      base: { ref: "test" },
-      labels: [{ name: "feature" }],
-      body: "Fixes #8",
-    });
-    await upsertPullRequestFromGitHub(env, "entrius/allways-ui", {
-      number: 15,
-      title: "Closed cleanup attempt",
-      state: "closed",
-      html_url: "https://github.com/entrius/allways-ui/pull/15",
-      user: { login: "outside-contributor" },
-      author_association: "NONE",
-      head: { sha: "closed123", ref: "closed-cleanup" },
-      base: { ref: "test" },
-      labels: [{ name: "feature" }],
-      body: "Fixes #8",
-    });
-    await upsertPullRequestFromGitHub(env, "entrius/allways-ui", {
-      number: 16,
-      title: "Broad unlinked rewrite",
-      state: "open",
-      html_url: "https://github.com/entrius/allways-ui/pull/16",
-      user: { login: "outside-contributor" },
-      author_association: "NONE",
-      head: { sha: "watch123", ref: "broad-rewrite" },
-      base: { ref: "test" },
-      labels: [{ name: "feature" }],
-      body: "Large rewrite without linked issue context.",
-    });
-    await upsertPullRequestFile(env, {
-      repoFullName: "entrius/allways-ui",
-      pullNumber: 16,
-      path: "src/broad-rewrite.ts",
-      additions: 900,
-      deletions: 10,
-      changes: 910,
-      payload: {},
-    });
-    await upsertCheckSummary(env, {
-      id: "entrius/allways-ui#watch123#test",
-      repoFullName: "entrius/allways-ui",
-      pullNumber: 16,
-      headSha: "watch123",
-      name: "test",
-      status: "completed",
-      conclusion: "failure",
-      payload: {},
-    });
-
-    for (const [pullNumber, expectedPacketText] of [
-      [14, "Public status: maintainer follow-up recommended."],
-      [15, "Public status: triage may be needed before review."],
-      [16, "Public status: keep monitoring the public PR context."],
-    ] as const) {
-      const variantContext = await app.request(
-        `/v1/extension/pull-context?owner=entrius&repo=allways-ui&pullNumber=${pullNumber}`,
-        { headers: { authorization: `Bearer ${extensionSessionBody.token}` } },
-        env,
-      );
-      expect(variantContext.status).toBe(200);
-      const variantPayload = (await variantContext.json()) as { actions: Array<{ id: string; markdown?: string }> };
-      expect(variantPayload.actions.find((action) => action.id === "copy_public_safe_packet")?.markdown).toContain(expectedPacketText);
-    }
-
-    const extensionContext = await app.request(
-      "/v1/extension/pull-context?owner=entrius&repo=allways-ui&pullNumber=12",
-      { headers: { authorization: `Bearer ${extensionSessionBody.token}` } },
-      env,
-    );
-    expect(extensionContext.status).toBe(200);
-    const extensionPayload = (await extensionContext.json()) as {
-      repoFullName: string;
-      pullNumber: number;
-      contributor: { login: string; minerStatus: string };
-      privacy: { surface: string; publicPosting: boolean; sourceUpload: boolean; githubMutations: boolean };
-      reviewability: { repoFullName: string; pullNumber: number };
-      actions: Array<{ id: string; markdown?: string; blockers?: Array<{ detail: string }> }>;
-      panels: Array<{ label: string }>;
-      sections: Array<{ id: string; label: string; badge?: string }>;
-    };
-    expect(extensionPayload).toMatchObject({
-      repoFullName: "entrius/allways-ui",
-      pullNumber: 12,
-      contributor: { login: "oktofeesh1", minerStatus: "confirmed" },
-      privacy: { surface: "browser_extension", publicPosting: false, sourceUpload: false, githubMutations: false },
-      reviewability: { repoFullName: "entrius/allways-ui", pullNumber: 12 },
-      actions: expect.arrayContaining([
-        expect.objectContaining({ id: "copy_public_safe_packet", visibility: "public_safe" }),
-        expect.objectContaining({ id: "view_private_blockers", visibility: "private", requiresAuth: true }),
-      ]),
-      panels: expect.arrayContaining([expect.objectContaining({ label: "Reviewability" }), expect.objectContaining({ label: "Boundary" })]),
-      sections: expect.arrayContaining([
-        expect.objectContaining({ id: "miner-context", label: "Miner Context", badge: "confirmed" }),
-        expect.objectContaining({ id: "lane-fit", label: "Lane Fit" }),
-        expect.objectContaining({ id: "duplicate-risk", label: "Duplicate Risk", badge: "check overlap" }),
-        expect.objectContaining({ id: "linked-issue-state", label: "Linked Issue State", badge: "linked" }),
-        expect.objectContaining({ id: "queue-pressure", label: "Queue Pressure" }),
-        expect.objectContaining({ id: "public-safe-actions", label: "Public-Safe Packet Actions" }),
-        expect.objectContaining({ id: "boundary", label: "Boundary", badge: "private" }),
-      ]),
-    });
-    expect(JSON.stringify(extensionPayload)).not.toMatch(/wallet|hotkey|coldkey|raw trust|private ranking|github_pat|ghp_|payout|reward estimate|farming/i);
-
-    const pullContextAudit = await env.DB.prepare(
-      "select actor from audit_events where event_type = ? and route = ? order by created_at desc limit 1",
-    )
-      .bind("extension.pull_context_view", "/v1/extension/pull-context")
-      .first<{ actor: string }>();
-    expect(pullContextAudit?.actor).toBe("oktofeesh1");
-
-    const nonMinerExtensionContext = await app.request(
-      "/v1/extension/pull-context?owner=entrius&repo=allways-ui&pullNumber=13",
-      { headers: { authorization: `Bearer ${extensionSessionBody.token}` } },
-      env,
-    );
-    expect(nonMinerExtensionContext.status).toBe(200);
-    await expect(nonMinerExtensionContext.json()).resolves.toMatchObject({
-      contributor: { login: "other", minerStatus: "not_found" },
-      sections: expect.arrayContaining([expect.objectContaining({ id: "miner-context", badge: "non-miner" })]),
-    });
-
-    const packet = extensionPayload.actions.find((action) => action.id === "copy_public_safe_packet")?.markdown ?? "";
-    expect(packet).toContain("# Public-safe PR packet");
-    expect(packet).not.toMatch(/wallet|hotkey|coldkey|reward estimate|payout|farming|raw trust score|estimated score|score estimate|private reviewability/i);
-    const blockers = extensionPayload.actions.find((action) => action.id === "view_private_blockers")?.blockers ?? [];
-    expect(blockers.length).toBeGreaterThan(0);
-    expect(JSON.stringify(blockers)).not.toMatch(/wallet|hotkey|coldkey|payout|farming|guaranteed payout/i);
-
-    const missingPullContext = await app.request(
-      "/v1/extension/pull-context?owner=entrius&repo=allways-ui&pullNumber=99",
-      { headers: { authorization: `Bearer ${extensionSessionBody.token}` } },
-      env,
-    );
-    expect(missingPullContext.status).toBe(200);
-    await expect(missingPullContext.json()).resolves.toMatchObject({
-      repoFullName: "entrius/allways-ui",
-      pullNumber: 99,
-      contributor: { login: "unknown", minerStatus: "unavailable" },
-      actions: expect.arrayContaining([expect.objectContaining({ id: "copy_public_safe_packet" }), expect.objectContaining({ id: "view_private_blockers" })]),
-      panels: expect.arrayContaining([expect.objectContaining({ label: "Contributor", badge: "unknown" })]),
-      sections: expect.arrayContaining([
-        expect.objectContaining({ id: "miner-context", badge: "unavailable" }),
-        expect.objectContaining({ id: "duplicate-risk", badge: "clear" }),
-        expect.objectContaining({ id: "linked-issue-state", badge: "missing" }),
-      ]),
-    });
-
-    const expiringExtensionSession = await app.request("/v1/auth/extension/session", { method: "POST", headers: cookieHeaders }, env);
-    expect(expiringExtensionSession.status).toBe(201);
-    const expiringExtensionSessionBody = (await expiringExtensionSession.json()) as { token: string };
-    await env.DB.prepare("update auth_sessions set expires_at = ? where token_hash = ?").bind("2020-01-01T00:00:00.000Z", await hashToken(expiringExtensionSessionBody.token)).run();
-    const expiredExtensionContext = await app.request(
-      "/v1/extension/pull-context?owner=entrius&repo=allways-ui&pullNumber=12",
-      { headers: { authorization: `Bearer ${expiringExtensionSessionBody.token}` } },
-      env,
-    );
-    expect(expiredExtensionContext.status).toBe(401);
-    await expect(expiredExtensionContext.json()).resolves.toMatchObject({ error: "unauthorized" });
-
-    const extensionLogout = await app.request("/v1/auth/logout", { method: "POST", headers: { authorization: `Bearer ${extensionSessionBody.token}` } }, env);
-    expect(extensionLogout.status).toBe(200);
-    await expect(extensionLogout.json()).resolves.toMatchObject({ ok: true, revoked: true });
-    const revokedExtensionContext = await app.request(
-      "/v1/extension/pull-context?owner=entrius&repo=allways-ui&pullNumber=12",
-      { headers: { authorization: `Bearer ${extensionSessionBody.token}` } },
-      env,
-    );
-    expect(revokedExtensionContext.status).toBe(401);
-    await expect(revokedExtensionContext.json()).resolves.toMatchObject({ error: "unauthorized" });
-
     await recordProductUsageEvent(env, {
       surface: "mcp",
       eventName: "mcp_tool_called",
@@ -4077,8 +3815,6 @@ describe("api routes", () => {
       expect.arrayContaining([
         expect.objectContaining({ surface: "control_panel", eventName: "command_previewed", outcome: "success" }),
         expect.objectContaining({ surface: "control_panel", eventName: "digest_subscription_stored", outcome: "success" }),
-        expect.objectContaining({ surface: "browser_extension", eventName: "extension_session_created", outcome: "success" }),
-        expect.objectContaining({ surface: "browser_extension", eventName: "pull_context_viewed", outcome: "success" }),
         expect.objectContaining({ surface: "mcp", eventName: "mcp_tool_called", clientVersion: "0.2.1", metadata: expect.objectContaining({ compatibilityStatus: "stale" }) }),
       ]),
     );
@@ -4124,12 +3860,7 @@ describe("api routes", () => {
     if (!dailyRollup) throw new Error("expected daily usage rollup");
     expect(dailyRollup.byRole).toEqual(expect.arrayContaining([expect.objectContaining({ role: "miner", count: expect.any(Number), activeActors: expect.any(Number), activeRepos: expect.any(Number) })]));
     expect(dailyRollup.activationByRole).toEqual(expect.arrayContaining([expect.objectContaining({ role: "miner", doctorPassActors: expect.any(Number), firstUsefulActionActors: expect.any(Number) })]));
-    expect(dailyRollup.activationBySurface).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ surface: "mcp", doctorPassActors: expect.any(Number) }),
-        expect.objectContaining({ surface: "browser_extension", firstUsefulActionActors: expect.any(Number) }),
-      ]),
-    );
+    expect(dailyRollup.activationBySurface).toEqual(expect.arrayContaining([expect.objectContaining({ surface: "mcp", doctorPassActors: expect.any(Number) })]));
     expect(dailyRollup.retention).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ window: "previous_7_days", activeActors: expect.any(Number), retainedActors: expect.any(Number), retentionRate: expect.any(Number), capped: false, byRole: expect.any(Array), bySurface: expect.any(Array) }),
@@ -4267,144 +3998,6 @@ describe("api routes", () => {
     expect(operatorWeeklyReportMarkdownText).toContain("## Operator detail");
     expect(operatorWeeklyReportMarkdownText).toContain("- Product events:");
     expect(operatorWeeklyReportMarkdownText).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
-  });
-
-  it("serves self-only, public-safe contributor extension context: issue-fit, badges, pr-status (#556)", async () => {
-    const app = createApp();
-    const env = createTestEnv();
-    // External profile/snapshot fetches resolve to empty so loadContributorFastContext uses seeded D1 data.
-    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
-      const url = input.toString();
-      if (url.includes("api.github.com/users/")) return Response.json({ login: "contributor-dev", public_repos: 1, followers: 0 });
-      return new Response("not found", { status: 404 });
-    });
-    await persistRegistrySnapshot(
-      asCloudEnv(env),
-      normalizeRegistryPayload(
-        { "octo/demo": { emission_share: 0.02, issue_discovery_share: 0, label_multipliers: {}, trusted_label_pipeline: false } },
-        { kind: "raw-github", url: "fixture://registry" },
-        "2026-06-14T00:00:00.000Z",
-      ),
-    );
-    await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
-    await upsertIssueFromGitHub(env, "octo/demo", { number: 7, title: "Add cursor pagination to the labels endpoint", state: "open", html_url: "https://github.com/octo/demo/issues/7", user: { login: "octo" }, labels: [{ name: "feature" }], body: "Pagination is missing." });
-    // An open, unlinked issue with no PR claiming it -- this surfaces as an actual contributor opportunity
-    // (issue #7 is excluded because PR #12 below links it), so issue-fit returns eligible: true.
-    await upsertIssueFromGitHub(env, "octo/demo", { number: 8, title: "Document the labels endpoint response shape", state: "open", html_url: "https://github.com/octo/demo/issues/8", user: { login: "octo" }, labels: [{ name: "feature" }], body: "The labels endpoint response shape is undocumented." });
-    await upsertPullRequestFromGitHub(env, "octo/demo", { number: 12, title: "Add cursor pagination", state: "open", html_url: "https://github.com/octo/demo/pull/12", user: { login: "contributor-dev" }, labels: [], body: "Fixes #7", head: { sha: "abc123", ref: "feat" }, base: { ref: "main" } });
-    await upsertPullRequestFromGitHub(env, "octo/demo", { number: 13, title: "Someone else's PR", state: "open", html_url: "https://github.com/octo/demo/pull/13", user: { login: "other-dev" }, labels: [], head: { sha: "def456", ref: "x" }, base: { ref: "main" } });
-    // contributor-dev's own PR with NO body -- exercises the body-defaulting path in the pr-status handler.
-    await upsertPullRequestFromGitHub(env, "octo/demo", { number: 14, title: "Tidy labels output", state: "open", html_url: "https://github.com/octo/demo/pull/14", user: { login: "contributor-dev" }, labels: [], head: { sha: "aaa111", ref: "tidy" }, base: { ref: "main" } });
-    // A PR with no author -- exercises the authorLogin-defaulting path of the self-only PR guard (→ 403).
-    await upsertPullRequestFromGitHub(env, "octo/demo", { number: 15, title: "Authorless PR", state: "open", html_url: "https://github.com/octo/demo/pull/15", labels: [], head: { sha: "bbb222", ref: "ghost" }, base: { ref: "main" } });
-    await upsertRepositoryFromGitHub(env, { name: "secret", full_name: "victim-org/secret", private: true, owner: { login: "victim-org" }, default_branch: "main" });
-    await upsertIssueFromGitHub(env, "victim-org/secret", { number: 99, title: "Private roadmap", state: "open", html_url: "https://github.com/victim-org/secret/issues/99", user: { login: "victim-org" }, labels: [{ name: "feature" }], body: "Confidential issue." });
-    await upsertPullRequestFromGitHub(env, "victim-org/secret", { number: 101, title: "Private implementation", state: "open", html_url: "https://github.com/victim-org/secret/pull/101", user: { login: "contributor-dev" }, labels: [], body: "Fixes #99", head: { sha: "ccc333", ref: "private" }, base: { ref: "main" } });
-
-    // A non-maintainer mints a CONTRIBUTOR-scoped extension session.
-    const { token: browserToken } = await createSessionForGitHubUser(env, { login: "contributor-dev", id: 555 });
-    const session = await app.request("/v1/auth/extension/session", { method: "POST", headers: { cookie: `loopover_session=${browserToken}`, "content-type": "application/json" } }, env);
-    expect(session.status).toBe(201);
-    const sessionBody = (await session.json()) as { token: string; scopes: string[] };
-    expect(sessionBody.scopes).toEqual(["extension:contributor_context"]);
-    const bearer = { authorization: `Bearer ${sessionBody.token}` };
-
-    const fit = await app.request("/v1/extension/contributors/contributor-dev/issue-fit?owner=octo&repo=demo&issueNumber=7", { headers: bearer }, env);
-    expect(fit.status).toBe(200);
-    const fitBody = (await fit.json()) as { eligible: boolean; fit?: string };
-    expect(JSON.stringify(fitBody)).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
-    if (fitBody.eligible) expect(["good", "caution", "hold"]).toContain(fitBody.fit);
-
-    // The unlinked, open issue #8 IS a real contributor opportunity → eligible: true with a fit band.
-    const eligibleFit = await app.request("/v1/extension/contributors/contributor-dev/issue-fit?owner=octo&repo=demo&issueNumber=8", { headers: bearer }, env);
-    expect(eligibleFit.status).toBe(200);
-    const eligibleFitBody = (await eligibleFit.json()) as { eligible: boolean; issueNumber: number; fit?: string };
-    expect(eligibleFitBody.eligible).toBe(true);
-    expect(eligibleFitBody.issueNumber).toBe(8);
-    expect(["good", "caution", "hold"]).toContain(eligibleFitBody.fit);
-    expect(JSON.stringify(eligibleFitBody)).not.toMatch(/"(?:score|total|max)":/);
-    expect(JSON.stringify(eligibleFitBody)).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
-
-    const badges = await app.request("/v1/extension/contributors/contributor-dev/issue-badges?owner=octo&repo=demo", { headers: bearer }, env);
-    expect(badges.status).toBe(200);
-    const badgesBody = (await badges.json()) as { badges: unknown[] };
-    expect(Array.isArray(badgesBody.badges)).toBe(true);
-    expect(JSON.stringify(badgesBody)).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
-
-    const privateIssueFit = await app.request("/v1/extension/contributors/contributor-dev/issue-fit?owner=victim-org&repo=secret&issueNumber=99", { headers: bearer }, env);
-    expect(privateIssueFit.status).toBe(403);
-    await expect(privateIssueFit.json()).resolves.toMatchObject({ error: "forbidden_repo" });
-    const privateIssueBadges = await app.request("/v1/extension/contributors/contributor-dev/issue-badges?owner=victim-org&repo=secret", { headers: bearer }, env);
-    expect(privateIssueBadges.status).toBe(403);
-
-    const extensionFindOpportunities = await app.request(
-      "/v1/opportunities/find",
-      {
-        method: "POST",
-        headers: { ...bearer, "content-type": "application/json" },
-        body: JSON.stringify({ searchQuery: "test coverage" }),
-      },
-      env,
-    );
-    expect(extensionFindOpportunities.status).toBe(403);
-    await expect(extensionFindOpportunities.json()).resolves.toMatchObject({ error: "insufficient_scope" });
-
-    const extensionTargetedFind = await app.request(
-      "/v1/opportunities/find",
-      {
-        method: "POST",
-        headers: { ...bearer, "content-type": "application/json" },
-        body: JSON.stringify({ targets: [{ owner: "octo", repo: "demo" }] }),
-      },
-      env,
-    );
-    expect(extensionTargetedFind.status).toBe(403);
-    await expect(extensionTargetedFind.json()).resolves.toMatchObject({ error: "insufficient_scope" });
-    await expect(privateIssueBadges.json()).resolves.toMatchObject({ error: "forbidden_repo" });
-    expect((await app.request("/v1/extension/contributors/contributor-dev/pr-status?owner=victim-org&repo=secret&pullNumber=101", { headers: bearer }, env)).status).toBe(403);
-    expect((await app.request("/v1/extension/contributors/contributor-dev/pr-status?owner=victim-org&repo=secret&pullNumber=999", { headers: bearer }, env)).status).toBe(403);
-
-    const prStatus = await app.request("/v1/extension/contributors/contributor-dev/pr-status?owner=octo&repo=demo&pullNumber=12", { headers: bearer }, env);
-    expect(prStatus.status).toBe(200);
-    const prStatusBody = (await prStatus.json()) as { readinessBand: string; reviewStatus: string };
-    expect(["strong", "developing", "early"]).toContain(prStatusBody.readinessBand);
-    expect(["ready_for_review", "in_progress", "needs_attention"]).toContain(prStatusBody.reviewStatus);
-    // Band-not-number: no raw score/total/max keys leak to the contributor overlay.
-    expect(JSON.stringify(prStatusBody)).not.toMatch(/"(?:score|total|max)":/);
-    expect(JSON.stringify(prStatusBody)).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
-
-    // The contributor's OWN bodyless PR still resolves to a public-safe readiness band (body defaults cleanly).
-    const bodylessPrStatus = await app.request("/v1/extension/contributors/contributor-dev/pr-status?owner=octo&repo=demo&pullNumber=14", { headers: bearer }, env);
-    expect(bodylessPrStatus.status).toBe(200);
-    const bodylessPrStatusBody = (await bodylessPrStatus.json()) as { readinessBand: string };
-    expect(["strong", "developing", "early"]).toContain(bodylessPrStatusBody.readinessBand);
-
-    // Self-only on the PR: a contributor cannot read another author's PR even in their own scope.
-    expect((await app.request("/v1/extension/contributors/contributor-dev/pr-status?owner=octo&repo=demo&pullNumber=13", { headers: bearer }, env)).status).toBe(403);
-    // An authorless PR can never match the requesting contributor → self-only guard returns 403.
-    expect((await app.request("/v1/extension/contributors/contributor-dev/pr-status?owner=octo&repo=demo&pullNumber=15", { headers: bearer }, env)).status).toBe(403);
-    // issue-fit is self-only too: another login's path is rejected before any data is read.
-    expect((await app.request("/v1/extension/contributors/someone-else/issue-fit?owner=octo&repo=demo&issueNumber=8", { headers: bearer }, env)).status).toBe(403);
-    // Missing PR → 404.
-    expect((await app.request("/v1/extension/contributors/contributor-dev/pr-status?owner=octo&repo=demo&pullNumber=999", { headers: bearer }, env)).status).toBe(404);
-    // Validation 400s — exercise every guard operand (missing owner / repo / non-integer / non-positive).
-    expect((await app.request("/v1/extension/contributors/contributor-dev/issue-fit?owner=octo&repo=demo", { headers: bearer }, env)).status).toBe(400);
-    expect((await app.request("/v1/extension/contributors/contributor-dev/issue-fit?repo=demo&issueNumber=7", { headers: bearer }, env)).status).toBe(400);
-    expect((await app.request("/v1/extension/contributors/contributor-dev/issue-fit?owner=octo&issueNumber=7", { headers: bearer }, env)).status).toBe(400);
-    expect((await app.request("/v1/extension/contributors/contributor-dev/issue-fit?owner=octo&repo=demo&issueNumber=abc", { headers: bearer }, env)).status).toBe(400);
-    expect((await app.request("/v1/extension/contributors/contributor-dev/issue-fit?owner=octo&repo=demo&issueNumber=0", { headers: bearer }, env)).status).toBe(400);
-    expect((await app.request("/v1/extension/contributors/contributor-dev/issue-badges?owner=octo", { headers: bearer }, env)).status).toBe(400);
-    expect((await app.request("/v1/extension/contributors/contributor-dev/issue-badges?repo=demo", { headers: bearer }, env)).status).toBe(400);
-    expect((await app.request("/v1/extension/contributors/contributor-dev/pr-status?owner=octo&repo=demo", { headers: bearer }, env)).status).toBe(400);
-    expect((await app.request("/v1/extension/contributors/contributor-dev/pr-status?repo=demo&pullNumber=12", { headers: bearer }, env)).status).toBe(400);
-    expect((await app.request("/v1/extension/contributors/contributor-dev/pr-status?owner=octo&pullNumber=12", { headers: bearer }, env)).status).toBe(400);
-    expect((await app.request("/v1/extension/contributors/contributor-dev/pr-status?owner=octo&repo=demo&pullNumber=abc", { headers: bearer }, env)).status).toBe(400);
-    // Repo not found → 404.
-    expect((await app.request("/v1/extension/contributors/contributor-dev/issue-fit?owner=no&repo=such&issueNumber=1", { headers: bearer }, env)).status).toBe(404);
-    expect((await app.request("/v1/extension/contributors/contributor-dev/issue-badges?owner=no&repo=such", { headers: bearer }, env)).status).toBe(404);
-    // Cross-login self-only: 403 regardless of valid data.
-    expect((await app.request("/v1/extension/contributors/someone-else/pr-status?owner=octo&repo=demo&pullNumber=12", { headers: bearer }, env)).status).toBe(403);
-    vi.unstubAllGlobals();
   });
 
   it("serves bounded private skipped PR audit exports with scoped access and redaction", async () => {

@@ -806,7 +806,7 @@ describe("agent orchestrator", () => {
 
   it("redacts 'private key' from the public-safe card, matching its sibling redaction lists (#8020)", () => {
     // `private keys?` was present in 5 sibling public-redaction vocabularies (miner-dashboard-recommendations.ts:45,
-    // control-panel-roles.ts:297, decision-pack.ts:1438, weekly-value-report.ts:417, extension-contributor-context.ts:31)
+    // control-panel-roles.ts:297, decision-pack.ts:1438, weekly-value-report.ts:417, contributor-readiness-band.ts:30)
     // but missing here, so an App-credential reference leaked through publicSafe.whyNow unredacted.
     const card = buildAgentActionExplanationCard({
       actionType: "choose_next_work",

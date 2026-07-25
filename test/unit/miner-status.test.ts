@@ -303,6 +303,49 @@ describe("loopover-miner status/doctor (#2288)", () => {
     ).toBeNull();
   });
 
+  it("readInstalledEnginePackageVersion's catch-all fallback resolves the monorepo engine from a dist/lib-depth module dir (#8630)", () => {
+    // Regression for #8630: the compiled CLI runs from packages/loopover-miner/dist/lib (one level
+    // deeper than the source lib/), so the catch-all monorepo-sibling lookup must use the
+    // depth-flexible resolveMonorepoSiblingPath — not a single hardcoded ../../ that only lands the
+    // real packages/loopover-engine/package.json from the source context. Simulate that dist/lib depth
+    // and force require.resolve(@loopover/engine) to fail so the fallback is the one under test.
+    const root = tempRoot();
+    const distLib = join(root, "packages", "loopover-miner", "dist", "lib");
+    const engineDir = join(root, "packages", "loopover-engine");
+    mkdirSync(engineDir, { recursive: true });
+    const enginePkg = join(engineDir, "package.json");
+    const unresolvable = () => {
+      throw new Error("Cannot find module '@loopover/engine'");
+    };
+
+    writeFileSync(enginePkg, JSON.stringify({ version: "9.9.9" }));
+    expect(readInstalledEnginePackageVersion(distLib, unresolvable)).toBe("9.9.9");
+
+    // present but versionless -> the `?? null` arm; malformed -> the inner JSON.parse catch.
+    writeFileSync(enginePkg, "{}");
+    expect(readInstalledEnginePackageVersion(distLib, unresolvable)).toBeNull();
+    writeFileSync(enginePkg, "not json");
+    expect(readInstalledEnginePackageVersion(distLib, unresolvable)).toBeNull();
+
+    // no monorepo sibling present at all -> the existsSync-false arm returns null.
+    rmSync(enginePkg);
+    expect(readInstalledEnginePackageVersion(distLib, unresolvable)).toBeNull();
+  });
+
+  it("readExpectedEnginePackageVersion prefers the live monorepo engine over the pin from a dist/lib-depth module dir (#8630)", () => {
+    // Regression for #8630: from the compiled CLI's dist/lib depth the "monorepo engine package.json
+    // when present" branch of the doc contract was dead — the hardcoded ../../ resolved to a
+    // nonexistent path so it always fell through to the static expected-engine.version pin. With the
+    // depth-flexible helper the live monorepo version must win when the file is present.
+    const root = tempRoot();
+    const distLib = join(root, "packages", "loopover-miner", "dist", "lib");
+    const engineDir = join(root, "packages", "loopover-engine");
+    mkdirSync(engineDir, { recursive: true });
+    writeFileSync(join(engineDir, "package.json"), JSON.stringify({ version: "9.9.9" }));
+
+    expect(readExpectedEnginePackageVersion(distLib)).toBe("9.9.9");
+  });
+
   it("reports credential and token availability across configured provider variants without exposing secrets", () => {
     expect(checkGitHubTokenPresent({ GITHUB_TOKEN: "present" }).ok).toBe(true);
     expect(checkCodingAgentCredential({ MINER_CODING_AGENT_PROVIDER: "noop" }).detail).toContain("needs no credential");

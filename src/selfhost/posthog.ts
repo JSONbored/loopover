@@ -42,6 +42,7 @@ type PostHogEventMessage = import("posthog-node").EventMessage;
 let client: PostHogClient | undefined;
 let active = false;
 let posthogEnvironment = "production";
+let activeRelease: string | undefined;
 
 /** No per-user identity is tracked by this sink (operational error events, not user analytics) -- every event
  *  shares one anonymous, constant distinct id, mirroring src/mcp/telemetry.ts's identical MCP_TELEMETRY_DISTINCT_ID
@@ -136,6 +137,7 @@ export async function initPostHog(env: NodeJS.ProcessEnv): Promise<boolean> {
   await loadNodeHasher();
   const { PostHog } = await import("posthog-node");
   posthogEnvironment = processEnvString(env, "POSTHOG_ENVIRONMENT") ?? "production";
+  activeRelease = resolvePostHogRelease(env);
   const host = processEnvString(env, "POSTHOG_HOST") ?? DEFAULT_POSTHOG_HOST;
   client = new PostHog(apiKey, {
     host,
@@ -175,6 +177,7 @@ export function capturePostHogError(error: unknown, context?: Record<string, unk
   const properties = operationalProperties(context);
   properties.server_name = nonBlank((globalThis as unknown as { process?: { env?: Record<string, string | undefined> } }).process?.env?.POSTHOG_SERVER_NAME) ?? hostname();
   properties.environment = posthogEnvironment;
+  if (activeRelease) properties.release = activeRelease;
   client.captureException(namedCaptureError(error, eventName), POSTHOG_DISTINCT_ID, properties);
 }
 
@@ -186,6 +189,7 @@ export function capturePostHogReviewFailure(error: unknown, context?: Record<str
   if (!meetsSeverityThreshold("error", resolvePostHogMinSeverity(contextRepoFullName(context)))) return;
   const properties = operationalProperties(context);
   properties.kind = "review_failure";
+  if (activeRelease) properties.release = activeRelease;
   client.captureException(namedCaptureError(error, eventName), POSTHOG_DISTINCT_ID, properties);
 }
 
@@ -251,6 +255,7 @@ export function forwardStructuredLogToPostHog(line: unknown, fromErrorSink = fal
   properties.severity = loopoverSeverity;
   if (event) properties.event_slug = event;
   if (subEvent) properties.event_sub_slug = subEvent;
+  if (activeRelease) properties.release = activeRelease;
   client.captureException(errorEvent, POSTHOG_DISTINCT_ID, properties);
 }
 
@@ -337,5 +342,6 @@ export function resetPostHogForTest(): void {
   client = undefined;
   active = false;
   posthogEnvironment = "production";
+  activeRelease = undefined;
   resetRedactionScrubForTest();
 }

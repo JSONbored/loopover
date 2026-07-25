@@ -25,6 +25,18 @@ function nonBlank(value: string | undefined): string | undefined {
   return text ? text : undefined;
 }
 
+// posthog-cli's sourcemap inject/upload take --release-name and --release-version as SEPARATE flags, which
+// it combines server-side into the release id "{name}@{version}". Passing our own already-combined
+// POSTHOG_RELEASE (e.g. "loopover-discovery-index@<sha>") as --release-version alone leaves --release-name
+// unset, and the CLI then auto-derives one from git/package.json instead -- silently doubling up into
+// "<auto-derived>@loopover-discovery-index@<sha>", which never matches what runReleaseValidation looks up.
+// Splitting our own convention at its first "@" reproduces exactly the release id we already expect.
+function splitRelease(release: string, defaultName: string): { name: string; version: string } {
+  const at = release.indexOf("@");
+  if (at === -1) return { name: defaultName, version: release };
+  return { name: release.slice(0, at), version: release.slice(at + 1) };
+}
+
 function log(event: string, fields: Record<string, unknown> = {}): void {
   console.log(JSON.stringify({ event, ...fields }));
 }
@@ -161,9 +173,10 @@ async function main(): Promise<number> {
     // calls below. Explicit --release-version rather than posthog-cli's own git-metadata auto-detection: the
     // Dockerfile's build stage only copies packages/loopover-engine and packages/discovery-index source,
     // never `.git`, so auto-detection has nothing to inspect at container-startup time.
-    runPostHog(["sourcemap", "inject", "--directory", "dist", "--release-version", release!]);
+    const { name: releaseName, version: releaseVersion } = splitRelease(release!, "loopover-discovery-index");
+    runPostHog(["sourcemap", "inject", "--directory", "dist", "--release-name", releaseName, "--release-version", releaseVersion]);
     validateSourceMaps();
-    runPostHog(["sourcemap", "upload", "--directory", "dist", "--release-version", release!]);
+    runPostHog(["sourcemap", "upload", "--directory", "dist", "--release-name", releaseName, "--release-version", releaseVersion]);
     await runReleaseValidation(release!);
     log("discovery_index_posthog_sourcemap_upload_complete", { release });
     return 0;

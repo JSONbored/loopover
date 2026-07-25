@@ -222,6 +222,18 @@ describe("capturePostHogError", () => {
       delete process.env.POSTHOG_REPO_MIN_SEVERITY;
     }
   });
+
+  it("attaches the resolved release when POSTHOG_RELEASE is configured", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key", POSTHOG_RELEASE: "loopover-orb@1.2.3" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogError(new Error("boom"));
+    expect(lastCapturedProperties().release).toBe("loopover-orb@1.2.3");
+  });
+
+  it("omits release when neither POSTHOG_RELEASE nor LOOPOVER_VERSION is set", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogError(new Error("boom"));
+    expect(lastCapturedProperties().release).toBeUndefined();
+  });
 });
 
 describe("capturePostHogReviewFailure", () => {
@@ -235,6 +247,12 @@ describe("capturePostHogReviewFailure", () => {
     capturePostHogReviewFailure(new Error("review failed"), { repo: "owner/repo" }, "review_event");
     expect(lastCapturedException().name).toBe("review_event");
     expect(lastCapturedProperties().kind).toBe("review_failure");
+  });
+
+  it("attaches the resolved release when configured", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key", LOOPOVER_VERSION: "9.9.9" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogReviewFailure(new Error("review failed"));
+    expect(lastCapturedProperties().release).toBe("9.9.9");
   });
 
   it("respects POSTHOG_MIN_SEVERITY -- suppressed above error", async () => {
@@ -369,6 +387,12 @@ describe("forwardStructuredLogToPostHog", () => {
     await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
     forwardStructuredLogToPostHog(JSON.stringify({ level: "error", repository: "owner/repo" }));
     expect(lastCapturedException().message).toContain("(owner/repo)");
+  });
+
+  it("attaches the resolved release when configured", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key", POSTHOG_RELEASE: "loopover-orb@1.2.3" } as unknown as NodeJS.ProcessEnv);
+    forwardStructuredLogToPostHog(JSON.stringify({ level: "error", event: "x" }));
+    expect(lastCapturedProperties().release).toBe("loopover-orb@1.2.3");
   });
 });
 

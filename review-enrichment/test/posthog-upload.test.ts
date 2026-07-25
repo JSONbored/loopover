@@ -100,7 +100,7 @@ test("upload-sourcemaps skips the PostHog upload and exits 0 when required confi
   assert.throws(() => readFileSync(logPath, "utf8"));
 });
 
-test("upload-sourcemaps calls posthog-cli inject then upload with an explicit --release-version", async () => {
+test("upload-sourcemaps calls posthog-cli inject then upload with explicit --release-name/--release-version", async () => {
   const { cliPath, logPath } = postHogCliStub();
 
   const result = await runUploadSourcemaps({
@@ -118,9 +118,32 @@ test("upload-sourcemaps calls posthog-cli inject then upload with an explicit --
     .split("\n")
     .map((line) => JSON.parse(line) as string[]);
 
-  assert.deepEqual(calls[0], ["sourcemap", "inject", "--directory", "dist", "--release-version", "loopover-rees@abc123"]);
-  assert.deepEqual(calls[1], ["sourcemap", "upload", "--directory", "dist", "--release-version", "loopover-rees@abc123"]);
+  // Split at the first "@", not a bare --release-version: passing the combined string as --release-version
+  // alone would leave --release-name unset, and posthog-cli auto-derives its own from git/package.json
+  // instead, silently doubling the stored release id (see splitRelease's own comment in the source).
+  assert.deepEqual(calls[0], ["sourcemap", "inject", "--directory", "dist", "--release-name", "loopover-rees", "--release-version", "abc123"]);
+  assert.deepEqual(calls[1], ["sourcemap", "upload", "--directory", "dist", "--release-name", "loopover-rees", "--release-version", "abc123"]);
   assert.match(result.stdout, /rees_posthog_sourcemap_upload_complete/);
+});
+
+test("upload-sourcemaps falls back to a default release-name when POSTHOG_RELEASE has no '@'", async () => {
+  const { cliPath, logPath } = postHogCliStub();
+
+  const result = await runUploadSourcemaps({
+    ...process.env,
+    POSTHOG_CLI_PATH: cliPath,
+    POSTHOG_CLI_API_KEY: "phx_test",
+    POSTHOG_CLI_PROJECT_ID: "42",
+    POSTHOG_RELEASE: "abc123",
+    REES_POSTHOG_VALIDATE_RELEASE: "0",
+  });
+
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const calls = readFileSync(logPath, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as string[]);
+  assert.deepEqual(calls[0], ["sourcemap", "inject", "--directory", "dist", "--release-name", "loopover-rees", "--release-version", "abc123"]);
 });
 
 test("upload-sourcemaps logs posthog-cli's own stdout/stderr when it writes any", async () => {

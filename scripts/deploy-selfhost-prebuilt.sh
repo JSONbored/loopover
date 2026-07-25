@@ -43,7 +43,7 @@ run_node_build() {
 }
 
 run_posthog_upload() {
-  local api_key project_id host uid gid
+  local api_key project_id host uid gid release_name release_version
 
   api_key="${POSTHOG_CLI_API_KEY:-$(env_get POSTHOG_CLI_API_KEY || true)}"
   project_id="${POSTHOG_CLI_PROJECT_ID:-$(env_get POSTHOG_CLI_PROJECT_ID || true)}"
@@ -61,12 +61,19 @@ run_posthog_upload() {
 
   uid="$(id -u)"
   gid="$(id -g)"
+  # posthog-cli's sourcemap inject/upload take --release-name and --release-version as SEPARATE flags,
+  # combined server-side into "{name}@{version}". Passing our already-combined POSTHOG_RELEASE as
+  # --release-version alone leaves --release-name unset, so the CLI auto-derives one from git/package.json
+  # instead -- silently doubling the stored release id and breaking "Validate PostHog release"-style lookups.
+  release_name="${POSTHOG_RELEASE%%@*}"
+  release_version="${POSTHOG_RELEASE#*@}"
 
   echo "selfhost deploy: injecting and uploading PostHog source maps for $POSTHOG_RELEASE"
   docker run --rm \
     -e HOME=/tmp \
     -e npm_config_cache=/tmp/.npm \
-    -e POSTHOG_RELEASE \
+    -e POSTHOG_RELEASE_NAME="$release_name" \
+    -e POSTHOG_RELEASE_VERSION="$release_version" \
     -e POSTHOG_CLI_API_KEY="$api_key" \
     -e POSTHOG_CLI_PROJECT_ID="$project_id" \
     ${host:+-e POSTHOG_CLI_HOST="$host"} \
@@ -76,7 +83,7 @@ run_posthog_upload() {
     -v "$PWD:/work" \
     -w /work \
     "$NODE_IMAGE" \
-    sh -lc 'apt-get update >/dev/null && apt-get install -y --no-install-recommends ca-certificates >/dev/null && npx -y "$POSTHOG_CLI_PACKAGE" sourcemap inject --directory dist --release-version "$POSTHOG_RELEASE" && node --experimental-strip-types scripts/validate-selfhost-sourcemap.ts && npx -y "$POSTHOG_CLI_PACKAGE" sourcemap upload --directory dist --release-version "$POSTHOG_RELEASE" && chown -R "$HOST_UID:$HOST_GID" dist node_modules package-lock.json'
+    sh -lc 'apt-get update >/dev/null && apt-get install -y --no-install-recommends ca-certificates >/dev/null && npx -y "$POSTHOG_CLI_PACKAGE" sourcemap inject --directory dist --release-name "$POSTHOG_RELEASE_NAME" --release-version "$POSTHOG_RELEASE_VERSION" && node --experimental-strip-types scripts/validate-selfhost-sourcemap.ts && npx -y "$POSTHOG_CLI_PACKAGE" sourcemap upload --directory dist --release-name "$POSTHOG_RELEASE_NAME" --release-version "$POSTHOG_RELEASE_VERSION" && chown -R "$HOST_UID:$HOST_GID" dist node_modules package-lock.json'
 }
 
 run_init_secrets() {

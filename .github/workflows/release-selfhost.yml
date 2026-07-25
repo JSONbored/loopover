@@ -161,7 +161,13 @@ jobs:
           POSTHOG_CLI_API_KEY: ${{ secrets.POSTHOG_CLI_API_KEY }}
           POSTHOG_CLI_PROJECT_ID: ${{ secrets.POSTHOG_CLI_PROJECT_ID }}
           POSTHOG_CLI_HOST: ${{ secrets.POSTHOG_CLI_HOST }}
-          POSTHOG_RELEASE: ${{ steps.version.outputs.release }}
+          # Passed as separate --release-name/--release-version flags below rather than one combined
+          # --release-version string: posthog-cli otherwise auto-derives its own release-name from git/
+          # package.json (this repo resolves to "loopover") and prepends it, so an unqualified
+          # --release-version "loopover-orb@$VERSION" silently becomes the stored release
+          # "loopover@loopover-orb@$VERSION" -- never matching what "Validate PostHog release" below looks up.
+          POSTHOG_RELEASE_NAME: loopover-orb
+          POSTHOG_RELEASE_VERSION: ${{ steps.version.outputs.v }}
         run: |
           set -euo pipefail
           test -n "$POSTHOG_CLI_API_KEY"
@@ -172,9 +178,9 @@ jobs:
           if [ -z "${POSTHOG_CLI_HOST:-}" ]; then unset POSTHOG_CLI_HOST; fi
           # No separate "create release" step -- PostHog release metadata is a byproduct of the inject/
           # upload calls below, unlike Sentry's releases/commits/deploys/finalize lifecycle this replaces.
-          npx -y "$POSTHOG_CLI_PACKAGE" sourcemap inject --directory dist --release-version "$POSTHOG_RELEASE"
+          npx -y "$POSTHOG_CLI_PACKAGE" sourcemap inject --directory dist --release-name "$POSTHOG_RELEASE_NAME" --release-version "$POSTHOG_RELEASE_VERSION"
           node --experimental-strip-types scripts/validate-selfhost-sourcemap.ts
-          npx -y "$POSTHOG_CLI_PACKAGE" sourcemap upload --directory dist --release-version "$POSTHOG_RELEASE"
+          npx -y "$POSTHOG_CLI_PACKAGE" sourcemap upload --directory dist --release-name "$POSTHOG_RELEASE_NAME" --release-version "$POSTHOG_RELEASE_VERSION"
 
       - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4

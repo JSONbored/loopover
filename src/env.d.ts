@@ -173,6 +173,20 @@ declare global {
      *  AND this being unset) until both are true. Inject as a wrangler secret. */
     WORKER_SENTRY_DSN?: string;
     WORKER_SENTRY_ENVIRONMENT?: string;
+    /** Cloudflare Worker error tracking (PostHog, #8288) -- the parallel-run PostHog counterpart to
+     *  WORKER_SENTRY_DSN above, both active simultaneously when configured until the gated decommission (#8298).
+     *  Deliberately NAMED DIFFERENTLY from the dual-purpose POSTHOG_API_KEY/POSTHOG_HOST (MCP telemetry
+     *  #6228/#6235 + self-host error tracking #8287) for the SAME cross-wire reason WORKER_SENTRY_DSN is named
+     *  differently from self-host's SENTRY_DSN: self-host's server.ts calls this same exported worker.fetch by
+     *  synthesizing a Worker-shaped env from process.env, so reusing POSTHOG_API_KEY here would silently
+     *  activate Worker-path exception capture inside a self-hoster's own Node process the moment they set
+     *  POSTHOG_API_KEY for #8287 -- an unrelated, unintended cross-wire. Also lets an operator toggle
+     *  Worker-level exception capture independently of MCP tool-call telemetry. Opt-in like every other
+     *  Sentry/PostHog var in this codebase: a complete no-op until BOTH isCloudflareWorkerRuntime() (routes.ts)
+     *  AND this is set. See src/api/worker-posthog.ts. Inject as a wrangler secret. */
+    WORKER_POSTHOG_API_KEY?: string;
+    WORKER_POSTHOG_HOST?: string;
+    WORKER_POSTHOG_ENVIRONMENT?: string;
     /** The central Orb GitHub App's OWN credentials (separate from the loopover review App above). Inject as
      *  wrangler secrets. Used to mint the Orb App JWT → list installations + mint short-lived installation tokens
      *  (the token-broker). CLIENT_ID/SECRET drive the OAuth onboarding flow. */

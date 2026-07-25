@@ -24,6 +24,11 @@ declare global {
      *  (a plain var, see wrangler.jsonc); createTenantProvisioningDriver falls back to the fake otherwise.
      *  Genuinely sensitive: whoever holds it can call every internal admin route in the main app. */
     INTERNAL_JOB_TOKEN?: string;
+    /** The central PostHog project key (#7876) the hosted fleet reports errors to, provisioned by #7875.
+     *  When set, driver-factory.ts threads it into every tenant container (CENTRAL_POSTHOG_KEY_ENV_VAR) so the
+     *  self-host image points its own error tracking at the loopover-owned project. Genuinely sensitive:
+     *  whoever holds it can write events into the fleet's analytics project. */
+    CENTRAL_POSTHOG_KEY?: string;
   }
 }
 

@@ -40,6 +40,11 @@ export type ContainerDriverConfig = {
    *  `product` string `TenantProvisioningRequest` carries; an unconfigured product is a real
    *  misconfiguration, not a silent no-op (see `bindingFor`). */
   bindings: Record<Product, ContainerNamespaceLike>;
+  /** #7876: the central PostHog project key (#7875) the hosted fleet reports errors to. When set, it rides
+   *  into EVERY tenant container as {@link CENTRAL_POSTHOG_KEY_ENV_VAR}, so the self-host image's own error
+   *  tracking (once its Phase-1 init lands) points at the loopover-owned project instead of nothing. A
+   *  control-plane secret, never hardcoded; absent ⇒ no key is injected and tenants behave exactly as before. */
+  centralPosthogKey?: string;
 };
 
 export type ContainerDriver = {
@@ -75,6 +80,12 @@ export const PINNED_VERSION_ENV_VAR = "LOOPOVER_PINNED_VERSION";
  *  actually has custodied -- this driver never sees or needs to know what that is. */
 export const TENANT_SECRET_ENV_VAR = "LOOPOVER_TENANT_SECRET_TOKEN";
 
+/** The env var a tenant's container reads the central PostHog project key from (#7876). Product-agnostic for
+ *  the same reason as {@link PINNED_VERSION_ENV_VAR}/{@link TENANT_SECRET_ENV_VAR}: both the ORB and AMS tenant
+ *  images read the identical name. Unlike those two (per-tenant values), this is a single fleet-wide key from
+ *  {@link ContainerDriverConfig.centralPosthogKey}, so every tenant that starts gets the same value. */
+export const CENTRAL_POSTHOG_KEY_ENV_VAR = "LOOPOVER_CENTRAL_POSTHOG_KEY";
+
 /** Idempotent: an already-provisioned tenant's container is left running as-is, never restarted -- a repeat
  *  create must not interrupt a container mid-work. This is also the ONLY point in a tenant's lifecycle where
  *  `envVars` actually reach the container (confirmed against the real `@cloudflare/containers` SDK: a `start()`
@@ -90,6 +101,7 @@ export async function createTenantContainer(config: ContainerDriverConfig, reque
   const envVars: Record<string, string> = {};
   if (request.tenant.pinnedVersion) envVars[PINNED_VERSION_ENV_VAR] = request.tenant.pinnedVersion;
   if (request.bootstrapSecret) envVars[TENANT_SECRET_ENV_VAR] = request.bootstrapSecret;
+  if (config.centralPosthogKey) envVars[CENTRAL_POSTHOG_KEY_ENV_VAR] = config.centralPosthogKey;
   if (Object.keys(envVars).length > 0) {
     await stub.start({ envVars });
   } else {

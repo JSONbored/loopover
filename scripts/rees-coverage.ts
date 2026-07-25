@@ -3,7 +3,7 @@
 // (not bare `src/**`), and expands the test list in-process so Windows/npm quoting cannot drop the suite.
 import { spawnSync } from "node:child_process";
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath, URL } from "node:url";
 
 /** Normalize c8's SF: paths to forward slashes for Codecov. Swallows only a missing report
@@ -39,8 +39,10 @@ function main() {
   const c8Bin = join(root, "review-enrichment", "node_modules", "c8", "bin", "c8.js");
   const reportDir = join(root, "review-enrichment", "coverage");
   const testRoot = join(root, "review-enrichment", "test");
+  const chdirPreload = join(root, "scripts", "rees-coverage-chdir.cjs");
 
-  const tests = collectTests(testRoot).map((path) => relative(root, path).split("\\").join("/"));
+  // Absolute paths: the test child's cwd is review-enrichment/ (see chdirPreload), not root.
+  const tests = collectTests(testRoot).map((path) => path.split("\\").join("/"));
   if (tests.length === 0) {
     console.error("rees-coverage: no review-enrichment/test/**/*.test.ts files found");
     process.exit(1);
@@ -57,6 +59,8 @@ function main() {
       "--exclude=**/*.d.ts",
       "--all",
       process.execPath,
+      "--require",
+      chdirPreload,
       "--test",
       "--experimental-strip-types",
       ...tests,

@@ -76,6 +76,10 @@ function collectEnvReads(source: string, fileName: string): EnvRead[] {
     if (!ENV_NAME_RE.test(name) || INJECTED_BINDING_NAMES.has(name)) return;
     reads.push({ name });
   };
+  // Locally-declared `const NAME = ["A", "B", ...]` literal-string arrays, so a `for (const x of NAME)` loop
+  // whose body reads `env[x]` can be resolved back to the concrete var names -- src/selfhost/preflight.ts's
+  // CRITICAL_SECRET_VARS loop reads four tokens (GITHUB_WEBHOOK_SECRET etc.) this way and nowhere else (#8652).
+  const literalArrays = collectLiteralStringArrays(sourceFile);
   const visit = (node: ts.Node) => {
     if (ts.isPropertyAccessExpression(node) && isEnvContainer(node.expression)) {
       addRead(node.name.text);
@@ -95,6 +99,8 @@ function collectEnvReads(source: string, fileName: string): EnvRead[] {
         const arg = node.arguments[argIndex];
         if (arg && ts.isStringLiteralLike(arg)) addRead(arg.text);
       }
+    } else if (ts.isForOfStatement(node)) {
+      for (const name of envReadingForOfArrayLiterals(node, literalArrays)) addRead(name);
     }
     ts.forEachChild(node, visit);
   };
@@ -139,6 +145,58 @@ function isEnvNameLiteralArgHelperCall(node: ts.CallExpression): boolean {
   if (!ts.isIdentifier(node.expression)) return false;
   const argIndexes = ENV_NAME_LITERAL_ARG_HELPERS.get(node.expression.text);
   return argIndexes !== undefined && argIndexes.some((argIndex) => node.arguments.length > argIndex && ts.isStringLiteralLike(node.arguments[argIndex]!));
+}
+
+// Collect every locally-declared `const NAME = ["A", "B", ...]` whose initializer is an array of only string
+// literals (unwrapping a trailing `as const`). Used to resolve `for (const x of NAME) { env[x] }` loops back to
+// concrete var names. Generalizes to any such array -- no var name is special-cased.
+function collectLiteralStringArrays(sourceFile: ts.SourceFile): Map<string, string[]> {
+  const arrays = new Map<string, string[]>();
+  const walk = (node: ts.Node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      const init = unwrapEnvExpression(node.initializer);
+      if (ts.isArrayLiteralExpression(init) && init.elements.length > 0 && init.elements.every((element) => ts.isStringLiteralLike(element))) {
+        arrays.set(
+          node.name.text,
+          init.elements.map((element) => (element as ts.StringLiteralLike).text),
+        );
+      }
+    }
+    ts.forEachChild(node, walk);
+  };
+  walk(sourceFile);
+  return arrays;
+}
+
+// If `node` iterates a known literal-string array with a single identifier loop variable whose body reads
+// `env[<loopVar>]`, return that array's literal names; otherwise []. This is the `for (const name of
+// LOCAL_ARRAY) { env[name] }` computed-read pattern the plain element-access branch can't see (the argument is
+// an identifier, not a string literal).
+function envReadingForOfArrayLiterals(node: ts.ForOfStatement, literalArrays: Map<string, string[]>): string[] {
+  const iterable = unwrapEnvExpression(node.expression);
+  if (!ts.isIdentifier(iterable)) return [];
+  const literals = literalArrays.get(iterable.text);
+  if (!literals) return [];
+  if (!ts.isVariableDeclarationList(node.initializer) || node.initializer.declarations.length !== 1) return [];
+  const loopVar = node.initializer.declarations[0]!.name;
+  if (!ts.isIdentifier(loopVar)) return [];
+  return bodyReadsEnvByName(node.statement, loopVar.text) ? literals : [];
+}
+
+// True if `body` reads `env[<loopVar>]` anywhere -- a computed element access whose object is an env container
+// and whose argument is the loop variable identifier.
+function bodyReadsEnvByName(body: ts.Statement, loopVar: string): boolean {
+  let found = false;
+  const walk = (node: ts.Node) => {
+    if (found) return;
+    if (ts.isElementAccessExpression(node) && isEnvContainer(node.expression) && ts.isIdentifier(node.argumentExpression) && node.argumentExpression.text === loopVar) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, walk);
+  };
+  walk(body);
+  return found;
 }
 
 function bindingElementName(element: ts.BindingElement): string | null {

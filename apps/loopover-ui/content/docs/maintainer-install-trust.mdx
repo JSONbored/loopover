@@ -114,27 +114,6 @@ Preview every public output path before enabling it. The same public-safety boun
 
 For the full boundary, keep [Privacy & security](/docs/privacy-security) as the source of truth. For AI-written text, use the [AI summaries policy](/docs/ai-summaries) before posting generated copy.
 
-## Browser extension states
-
-The extension is a maintainer review aid. It should make state and scope obvious instead of implying that a contributor or public viewer can see private packets.
-
-<CodeBlock
-  lang="text"
-  filename="extension-state-map.txt"
-  code={`Signed out
-  -> no repo context, no private packet
-Signed in without repo scope
-  -> prompt for authorized GitHub App installation or browser session
-Authorized maintainer on PR page
-  -> public-safe PR panel + private maintainer blockers
-Unauthorized viewer or stale session
-  -> public-safe state only, no private blockers
-API unavailable or stale data
-  -> degraded state with retry guidance, never guessed scores`}
-/>
-
-UI, frontend, browser-extension, or GitHub-overlay pull requests need maintainer-reviewable screenshots or a short recording that shows the relevant states. A checked template box is not enough evidence.
-
 ## Audit expectations
 
 A healthy installation should leave an audit trail that maintainers can reason about without exposing repository source or contributor secrets.
@@ -142,7 +121,6 @@ A healthy installation should leave an audit trail that maintainers can reason a
 - Installation health shows permissions and webhook readiness.
 - Settings preview shows the exact public copy before posting.
 - Command previews identify the maintainer action that produced them.
-- Extension sessions are scoped to authorized review context.
 - Failures are inspectable through diagnostics instead of silent public output.
 
 ## CI checks are not reviewer approval
@@ -156,7 +134,7 @@ If the repo enables **LoopOver Orb Review Agent**, document which blockers are e
 Maintainers should request changes or close PRs that misuse LoopOver output. The tool is a contribution operating layer, not a guarantee that work deserves merge.
 
 - Reject PRs with no linked issue, no reproduction, or no validation evidence.
-- Reject UI or extension PRs that omit screenshots or recordings of changed flows.
+- Reject UI PRs that omit screenshots or recordings of changed flows.
 - Reject copied snippets that leak private scoring, reward, trust, wallet, or hotkey text.
 - Reject duplicated work when the PR does not explain overlap and maintainer value.
 - Reject generated broad rewrites that are not scoped to the issue acceptance criteria.
@@ -164,4 +142,4 @@ Maintainers should request changes or close PRs that misuse LoopOver output. The
 
 ## Next docs
 
-Continue with [Maintainer workflow](/docs/maintainer-workflow) for daily PR review, [Troubleshooting](/docs/troubleshooting) for install diagnostics, and [Browser extension](/extension) for overlay behavior.
+Continue with [Maintainer workflow](/docs/maintainer-workflow) for daily PR review and [Troubleshooting](/docs/troubleshooting) for install diagnostics.

@@ -66,7 +66,6 @@ const DEFAULT_ITEMS: PaletteItem[] = [
   { label: "Privacy & security", to: "/docs/privacy-security", group: "Docs" },
   { label: "Troubleshooting", to: "/docs/troubleshooting", group: "Docs" },
   { label: "API reference", to: "/api", group: "Reference" },
-  { label: "Browser extension", to: "/extension", group: "Reference" },
   { label: "Changelog", to: "/changelog", group: "Reference" },
   { label: "Roadmap", to: "/roadmap", group: "Reference" },
 ];

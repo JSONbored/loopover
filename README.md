@@ -89,7 +89,6 @@ See [Tuning your reviews](https://loopover.ai/docs/tuning) for the full flag, se
 | Miner package     | [`@loopover/miner`](packages/loopover-miner/README.md) — local foundation CLI for the autonomous miner runtime        |
 | API               | [API browser](https://loopover.ai/api) and [OpenAPI JSON](https://api.loopover.ai/openapi.json)          |
 | GitHub App        | [Setup docs](https://loopover.ai/docs/github-app) — self-hosting is the only currently available path |
-| Browser extension | [Extension page](https://loopover.ai/extension)                                                                       |
 
 ## MCP Install
 

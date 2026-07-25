@@ -308,6 +308,30 @@ describe("runLoopOverLinkedIssueSatisfaction gating + fail-safe", () => {
       .first<{ actor: string | null }>();
     expect(row?.actor).toBeNull();
   });
+
+  it("passes finalAttempt:false on a retried attempt so it logs at warn, not error (#8673)", async () => {
+    // Fail once then succeed: the first (retried) attempt must carry finalAttempt:false so selfhost/ai.ts logs
+    // it quietly (warn) rather than as a Sentry-visible error.
+    let call = 0;
+    const run = vi.fn(async () => {
+      call += 1;
+      if (call === 1) throw new Error("transient");
+      return { response: satisfactionJson({ status: "addressed" }) };
+    });
+    await runLoopOverLinkedIssueSatisfaction(enabledEnv(run), baseInput);
+    expect(((run.mock.calls[0] as unknown[])[1] as { finalAttempt?: boolean }).finalAttempt).toBe(false);
+  });
+
+  it("passes finalAttempt:true only on the truly final attempt (last model, last attempt) (#8673)", async () => {
+    // Every call fails with a non-rate-limit error: 2 models × 3 attempts = 6 calls; only the last stays loud.
+    const run = vi.fn(async () => {
+      throw new Error("always fails");
+    });
+    await runLoopOverLinkedIssueSatisfaction(enabledEnv(run), baseInput);
+    expect(run).toHaveBeenCalledTimes(6);
+    const finalFlags = run.mock.calls.map((c) => ((c as unknown[])[1] as { finalAttempt?: boolean }).finalAttempt);
+    expect(finalFlags).toEqual([false, false, false, false, false, true]);
+  });
 });
 
 describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)", () => {

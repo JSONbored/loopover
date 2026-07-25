@@ -92,6 +92,13 @@ import {
   installStructuredLogForwarding,
 } from "./selfhost/sentry";
 import {
+  capturePostHogError,
+  flushPostHog,
+  initPostHog,
+  installPostHogStructuredLogForwarding,
+  shutdownPostHog,
+} from "./selfhost/posthog";
+import {
   drainOrbRelayWithMonitor,
   registerOrbRelayWithMonitor,
   runOrbExportWithMonitor,
@@ -353,6 +360,17 @@ async function main(): Promise<void> {
     // Central error forwarding (#1468): operational failures are structured JSON logs emitted through stdout and
     // stderr. Wrap both sinks so every level:"error"/"fatal" line surfaces as a Sentry issue WITHOUT per-site wiring.
     installStructuredLogForwarding();
+  }
+  // PostHog error tracking (#8287, epic #8286): opt-in via POSTHOG_API_KEY -- the same var #6235's MCP telemetry
+  // already reads. PARALLEL-RUN: active alongside Sentry above, not instead of it, until the gated decommission
+  // issue (#8298) says otherwise. enableExceptionAutocapture (set inside initPostHog) already installs its own
+  // uncaughtException/unhandledRejection handlers per PostHog's own documented Node.js setup, so -- unlike
+  // Sentry's explicit process.on wiring above, added before that capability existed -- no manual mirror is
+  // needed here for the crash case; only structured-log forwarding needs an explicit install, same as Sentry.
+  const posthogEnabled = await initPostHog(process.env);
+  if (posthogEnabled) {
+    console.log(JSON.stringify({ event: "selfhost_posthog", environment: process.env.POSTHOG_ENVIRONMENT ?? "production" }));
+    installPostHogStructuredLogForwarding();
   }
   if (await initOpenTelemetry(process.env, sentryEnabled ? await buildSentryOpenTelemetryBridge() : undefined))
     console.log(JSON.stringify({ event: "selfhost_otel", traces: openTelemetryTraceExportEnabled(process.env) ? "otlp" : "sentry" }));
@@ -1221,7 +1239,10 @@ async function main(): Promise<void> {
       state: orbRelayRegistrationState,
       register: registerOrbRelayTargetWithRetry,
       ...(relayDrainState ? { drainState: relayDrainState } : {}),
-    }).catch((error) => captureError(error, { kind: "orb_relay_register" }, "orb_relay_register"));
+    }).catch((error) => {
+      captureError(error, { kind: "orb_relay_register" }, "orb_relay_register");
+      capturePostHogError(error, { kind: "orb_relay_register" }, "orb_relay_register");
+    });
   void attemptOrbRelayRegistration();
   setInterval(() => void attemptOrbRelayRegistration(), 60_000);
   // Dashboard-visible counterparts to the streak/no-progress alert gate in isOrbRelayRegistrationAlerting:
@@ -1245,7 +1266,11 @@ async function main(): Promise<void> {
   };
   if (isD1SizeProbeEnabled(d1ProbeEnv)) {
     /* v8 ignore start -- self-host entrypoint timer; probe logic itself is unit-tested in d1-size-probe.test.ts. */
-    const runD1Probe = () => runD1SizeProbe(d1ProbeEnv).catch((error) => captureError(error, { kind: "d1_size_probe" }, "d1_size_probe"));
+    const runD1Probe = () =>
+      runD1SizeProbe(d1ProbeEnv).catch((error) => {
+        captureError(error, { kind: "d1_size_probe" }, "d1_size_probe");
+        capturePostHogError(error, { kind: "d1_size_probe" }, "d1_size_probe");
+      });
     void runD1Probe();
     setInterval(runD1Probe, 900_000);
     /* v8 ignore stop */
@@ -1271,16 +1296,18 @@ async function main(): Promise<void> {
         enqueue: enqueueWebhookByEnv,
       }),
     );
-    void drainRelay().catch((error) =>
-      captureError(error, { kind: "orb_relay_drain" }, "orb_relay_drain"),
-    );
+    void drainRelay().catch((error) => {
+      captureError(error, { kind: "orb_relay_drain" }, "orb_relay_drain");
+      capturePostHogError(error, { kind: "orb_relay_drain" }, "orb_relay_drain");
+    });
     // 30s matches broker-client's request timeout so a slow/degraded broker's in-flight drain has fully
     // timed out (or completed) before the next tick would otherwise pile another request on top of it.
     setInterval(
       () =>
-        void drainRelay().catch((error) =>
-          captureError(error, { kind: "orb_relay_drain" }, "orb_relay_drain"),
-        ),
+        void drainRelay().catch((error) => {
+          captureError(error, { kind: "orb_relay_drain" }, "orb_relay_drain");
+          capturePostHogError(error, { kind: "orb_relay_drain" }, "orb_relay_drain");
+        }),
       30_000,
     );
     /* v8 ignore stop */
@@ -1298,6 +1325,7 @@ async function main(): Promise<void> {
     /* v8 ignore next -- graceful process signal path is not imported in unit tests; shutdown helper is covered. */
     await shutdownOpenTelemetry();
     await flushSentry();
+    await shutdownPostHog();
     process.exit(0);
   };
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
@@ -1306,7 +1334,8 @@ async function main(): Promise<void> {
 
 main().catch((error) => {
   captureError(error, { kind: "boot" }, "boot");
+  capturePostHogError(error, { kind: "boot" }, "boot");
   console.error(error);
   /* v8 ignore next -- boot failure exits the process; shutdown helper is covered independently. */
-  void Promise.all([shutdownOpenTelemetry(), flushSentry()]).finally(() => process.exit(1));
+  void Promise.all([shutdownOpenTelemetry(), flushSentry(), flushPostHog()]).finally(() => process.exit(1));
 });

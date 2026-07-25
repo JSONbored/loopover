@@ -2,19 +2,35 @@
 // env-gated, dynamically-imported selfhost-integration pattern (Redis/Qdrant/embed-provider in server.ts).
 // @sentry/node is NEVER imported at module top level — it loads lazily inside initSentry(), so it never enters
 // the Worker bundle (src/index.ts) and cloudflare:* stubbing stays clean. All helpers are safe to call when off.
-import {
-  PUBLIC_LOCAL_PATH_SCRUB_PATTERN,
-  PUBLIC_UNSAFE_TERMS,
-} from "../signals/redaction";
+//
+// The pure secret/private-text redaction primitives (SECRET_KEY, scrubString, scrubRecord, installation-id
+// hashing, ...) live in ./redaction-scrub (#8287) so the PostHog sink (./posthog.ts) reuses the identical
+// security-critical detection instead of a hand-duplicated second copy. Only this file's own Sentry-event-
+// SHAPE orchestration (scrubEvent walking request/contexts/extra/tags/breadcrumbs) stays here.
 import { hostname } from "node:os";
 import {
   currentOtelTraceIds,
   openTelemetryTraceExportEnabled,
   type OpenTelemetryBridge,
 } from "./otel";
-import { hashedInstallationIdWith } from "./review-tracing";
 import { queueDeadLetterReviveIntervalMs } from "./queue-common";
 import { meetsSeverityThreshold, resolveSeverityThreshold, type LoopoverSeverity } from "../services/severity-threshold";
+import {
+  hashedInstallationContext,
+  installationIdHash,
+  isInstallationIdKey,
+  loadNodeHasher,
+  nonBlank,
+  REDACTED,
+  resetRedactionScrubForTest,
+  scrubQueryString,
+  scrubRecord,
+  scrubString,
+  scrubStringField,
+  scrubUrl,
+  SECRET_KEY,
+  shouldRedactKey,
+} from "./redaction-scrub";
 
 type SentryNs = typeof import("@sentry/node");
 type SentryClient = NonNullable<ReturnType<SentryNs["init"]>>;
@@ -27,40 +43,12 @@ type SentryScope = {
   setContext(name: string, context: Record<string, unknown>): void;
   setTag(key: string, value: string): void;
 };
-type DigestHex = (input: string) => string;
 let Sentry: SentryNs | undefined;
 let sentryClient: SentryClient | undefined;
 let sentryTraceSampleRate: number | undefined;
 let active = false;
 let sentryEnvironment = "production";
-let digestHexSync: DigestHex | undefined;
 
-const SECRET_KEY =
-  /(token|secret|key|password|passwd|authorization|auth|dsn|cookie|bearer|credential|private)/i;
-const PAYLOAD_KEY =
-  /(^|[_-])(body|payload|patch|diff|prompt|rubric|guardrail|headers?|cookies?|title|config|review[-_]?text|review[-_]?content|comment[-_]?text|comment[-_]?body)([_-]|$)|^(body|payload|patch|diff|prompt|rubric|guardrail|headers?|cookies?|title|config|review[-_]?text|review[-_]?content|comment[-_]?text|comment[-_]?body)$/i;
-const SECRET_VALUE = new RegExp(
-  [
-    `${"github" + "_pat_"}[A-Za-z0-9_]+`,
-    String.raw`gh[opsru]_[A-Za-z0-9_]{20,}`,
-    String.raw`sk-[A-Za-z0-9_-]{20,}`,
-    String.raw`xox[baprs]-[A-Za-z0-9-]+`,
-    // LoopOver's own opaque tokens (createOpaqueToken, src/auth/security.ts): gts_ is the default session-token
-    // prefix, orbenr_/orbsec_ are the Orb broker's enrollment id/secret (#1825) — a broker error message can quote
-    // these bare (no "secret"/"token"-named field for the key-based redaction above to catch), so the VALUE itself
-    // must be recognized here too.
-    String.raw`(?:gts|orbenr|orbsec)_[A-Za-z0-9_]{20,}`,
-    String.raw`Bearer\s+[A-Za-z0-9._~+/=-]{12,}`,
-    String.raw`-----BEGIN [^-]+ PRIVATE KEY-----[\s\S]*?-----END [^-]+ PRIVATE KEY-----`,
-  ].join("|"),
-  "gi",
-);
-const JWT_VALUE = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g;
-const QUERY_SECRET_VALUE =
-  /([?&;][^=\s&#;]*(?:token|secret|key|password|passwd|authorization|auth|dsn|cookie|bearer|credential|private)[^=\s&#;]*=)[^&#\s;]+/gi;
-const PRIVATE_TEXT =
-  /\b(raw[-_\s]?score|scoring context|private rubric|gate prompt|review prompt|guardrail paths?|pull request body|pr body|pr title|raw diff)\b/gi;
-const PUBLIC_UNSAFE_SCRUB = new RegExp(String.raw`\b(${PUBLIC_UNSAFE_TERMS})\b`, "gi");
 const ALLOWED_CONTEXTS = new Set([
   "loopover",
   "review",
@@ -71,18 +59,6 @@ const ALLOWED_CONTEXTS = new Set([
   "runtime",
   "os",
 ]);
-const REDACTED = "[redacted]";
-
-function nonBlank(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : undefined;
-}
-
-async function loadNodeHasher(): Promise<void> {
-  const { createHash } = await import("node:crypto");
-  digestHexSync = (input: string): string =>
-    createHash("sha256").update(input).digest("hex");
-}
 
 const SENTRY_MONITORS: Record<SentryMonitorName, { slug: string; config: SentryMonitorConfig | (() => SentryMonitorConfig) }> = {
   "scheduled-loop": {
@@ -253,132 +229,12 @@ export function scrubEvent<T>(event: T): T | null {
   return event;
 }
 
-function shouldRedactKey(key: string): boolean {
-  const compact = key.replace(/[^A-Za-z0-9]/g, "").toLowerCase();
-  return (
-    SECRET_KEY.test(key) ||
-    PAYLOAD_KEY.test(key) ||
-    /(body|payload|patch|diff|prompt|rubric|guardrail|header|cookie|title|config|reviewtext|reviewcontent|prcontent|pullrequest)/.test(compact)
-  );
-}
-
-function isInstallationIdKey(key: string): boolean {
-  return key.replace(/[^A-Za-z0-9]/g, "").toLowerCase() === "installationid";
-}
-
-function installationIdHash(value: unknown): string | undefined {
-  if (!digestHexSync) return undefined;
-  return hashedInstallationIdWith(value, digestHexSync);
-}
-
-function hashedInstallationContext(
-  context: Record<string, unknown>,
-): Record<string, unknown> {
-  const hasInstallationId =
-    "installation_id" in context || "installationId" in context;
-  const hash = installationIdHash(context.installation_id ?? context.installationId);
-  if (!hash && !hasInstallationId) return context;
-  const safe: Record<string, unknown> = { ...context };
-  if (hash) safe.installation_id_hash = hash;
-  delete safe.installation_id;
-  delete safe.installationId;
-  return safe;
-}
-
 function tagHashedInstallation(scope: SentryScope, context: Record<string, unknown>): void {
   const hash = installationIdHash(context.installation_id ?? context.installationId);
   if (hash) scope.setTag("installation_id_hash", hash);
 }
 
 function applyOperationalTags(scope: SentryScope, context: Record<string, unknown>): void { const normalized: Record<string, unknown> = typeof context.repository === "string" && context.repo === undefined ? { ...context, repo: context.repository } : { ...context }; tagHashedInstallation(scope, normalized); for (const key of SENTRY_OPERATIONAL_TAG_KEYS) { const tagValue = normalized[key]; if (typeof tagValue === "string" || typeof tagValue === "number") scope.setTag(key, String(tagValue)); } }
-function scrubString(value: string): string {
-  return value
-    .replace(QUERY_SECRET_VALUE, `$1${REDACTED}`)
-    .replace(SECRET_VALUE, REDACTED)
-    .replace(JWT_VALUE, REDACTED)
-    .replace(PUBLIC_LOCAL_PATH_SCRUB_PATTERN, "<redacted-path>")
-    .replace(PUBLIC_UNSAFE_SCRUB, "private context")
-    .replace(PRIVATE_TEXT, "private context");
-}
-
-function scrubRecord(obj: unknown, depth: number): void {
-  if (!obj || typeof obj !== "object") return;
-  if (Array.isArray(obj)) {
-    for (let i = 0; i < obj.length; i++) {
-      const value = obj[i];
-      if (typeof value === "string") obj[i] = scrubString(value);
-      else if (value && typeof value === "object") {
-        if (depth >= 6) obj[i] = REDACTED;
-        else scrubRecord(value, depth + 1);
-      }
-    }
-    return;
-  }
-  const rec = obj as Record<string, unknown>;
-  for (const key of Object.keys(rec)) {
-    if (isInstallationIdKey(key)) {
-      const hash = installationIdHash(rec[key]);
-      if (hash) rec.installation_id_hash = hash;
-      delete rec[key];
-      continue;
-    }
-    if (shouldRedactKey(key)) {
-      rec[key] = REDACTED;
-      continue;
-    }
-    const value = rec[key];
-    if (typeof value === "string") rec[key] = scrubStringField(key, value);
-    else if (value && typeof value === "object") {
-      if (depth >= 6) rec[key] = REDACTED;
-      else scrubRecord(value, depth + 1);
-    }
-  }
-}
-
-function scrubStringField(key: string, value: string): string {
-  if (isUrlKey(key)) return scrubUrl(value);
-  if (isQueryKey(key)) return scrubQueryString(value);
-  return scrubString(value);
-}
-
-function isUrlKey(key: string): boolean {
-  return key.replace(/[^A-Za-z0-9]/g, "").toLowerCase().endsWith("url");
-}
-
-function isQueryKey(key: string): boolean {
-  const compact = key.replace(/[^A-Za-z0-9]/g, "").toLowerCase();
-  return compact === "query" || compact === "querystring";
-}
-
-function scrubUrl(value: string): string {
-  const scrubbed = scrubString(value);
-  const queryStart = scrubbed.indexOf("?");
-  if (queryStart === -1) return scrubbed;
-  try {
-    const parsed = new URL(scrubbed);
-    parsed.search = scrubQueryString(parsed.search);
-    return parsed.toString();
-  } catch {
-    return `${scrubbed.slice(0, queryStart + 1)}${scrubQueryString(
-      scrubbed.slice(queryStart + 1),
-    )}`;
-  }
-}
-
-function scrubQueryString(value: string): string {
-  const hasQuestionMark = value.startsWith("?");
-  const source = hasQuestionMark ? value.slice(1) : value;
-  const params = new URLSearchParams(source);
-  for (const key of Array.from(new Set(params.keys()))) {
-    const values = params.getAll(key);
-    params.delete(key);
-    for (const entry of values) {
-      params.append(key, shouldRedactKey(key) ? REDACTED : scrubString(entry));
-    }
-  }
-  const scrubbed = params.toString();
-  return hasQuestionMark ? `?${scrubbed}` : scrubbed;
-}
 
 function scrubRequest(request: Record<string, unknown> | undefined): void {
   if (!request) return;
@@ -750,7 +606,7 @@ export function resetSentryForTest(): void {
   sentryTraceSampleRate = undefined;
   active = false;
   sentryEnvironment = "production";
-  digestHexSync = undefined;
+  resetRedactionScrubForTest();
 }
 
 interface StructuredLogConsole {

@@ -59,6 +59,7 @@ import {
   resolveEnrichmentLinkedIssueNumbers,
 } from "../review/enrichment-wire";
 import { captureReviewFailure } from "../selfhost/sentry";
+import { capturePostHogReviewFailure } from "../selfhost/posthog";
 import { isReputationEnabled, shouldSkipAiForReputation } from "../review/reputation-wire";
 import { isConvergenceRepoAllowed } from "../review/cutover-gate";
 import { resolveConvergedFeature } from "../review/feature-activation";
@@ -822,6 +823,20 @@ export async function runAiReviewForAdvisory(
         /* v8 ignore next -- current review runner always supplies diagnostics for completed AI attempts. */
         review_diagnostics: formatReviewDiagnosticsForCapture(result.reviewDiagnostics ?? []),
       }, "ai_review_inconclusive");
+      capturePostHogReviewFailure(new Error("AI review inconclusive — no usable verdict for the PR head"), {
+        kind: "review",
+        reason: "ai_review_inconclusive",
+        installationId: args.installationId,
+        owner: args.repoFullName.split("/")[0],
+        repo: args.repoFullName,
+        pr: args.pr.number,
+        head_sha: args.advisory.headSha,
+        ai_review_mode: args.settings.aiReviewMode,
+        reviewer_count: result.reviewerCount,
+        public_notes: hasPublicReviewAssessment(result.advisoryNotes),
+        /* v8 ignore next -- current review runner always supplies diagnostics for completed AI attempts. */
+        review_diagnostics: formatReviewDiagnosticsForCapture(result.reviewDiagnostics ?? []),
+      }, "ai_review_inconclusive");
     }
     args.advisory.findings.push(...findings);
     const metadataFor = (
@@ -900,6 +915,27 @@ export async function runAiReviewForAdvisory(
       },
       "ai_review_public_summary_missing",
     );
+    capturePostHogReviewFailure(
+      new Error("AI review did not produce public notes for the PR head"),
+      {
+        kind: "review",
+        reason: "ai_review_public_summary_missing",
+        installationId: args.installationId,
+        owner: args.repoFullName.split("/")[0],
+        repo: args.repoFullName,
+        pr: args.pr.number,
+        head_sha: args.advisory.headSha,
+        ai_review_mode: args.settings.aiReviewMode,
+        reviewer_count: result.reviewerCount,
+        /* v8 ignore next -- current review runner always supplies diagnostics for completed AI attempts. */
+        review_diagnostics: formatReviewDiagnosticsForCapture(result.reviewDiagnostics ?? []),
+        configured_reviewers:
+          env.AI_REVIEW_PLAN?.reviewers?.map((reviewer) => reviewer.model) ??
+          null,
+        combine: env.AI_REVIEW_PLAN?.combine ?? null,
+      },
+      "ai_review_public_summary_missing",
+    );
     return {
       notes:
         "AI review is unavailable for this PR head. LoopOver is holding this PR for manual review until the configured AI provider returns a usable public review summary.",
@@ -923,6 +959,13 @@ export async function runAiReviewForAdvisory(
     // Error to report a known condition) -- named to mirror the structured log's own "event" field just above,
     // not the exception's native class, so every unexpected review crash groups under one readable title.
     captureReviewFailure(error, {
+      kind: "review",
+      installationId: args.installationId,
+      repo: args.repoFullName,
+      pr: args.pr.number,
+      head_sha: args.advisory.headSha,
+    }, "ai_review_failed");
+    capturePostHogReviewFailure(error, {
       kind: "review",
       installationId: args.installationId,
       repo: args.repoFullName,

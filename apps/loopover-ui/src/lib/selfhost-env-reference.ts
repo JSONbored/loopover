@@ -430,6 +430,14 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/server.ts",
   },
   {
+    name: "POSTHOG_ENVIRONMENT",
+    firstReference: "src/server.ts",
+  },
+  {
+    name: "POSTHOG_RELEASE",
+    firstReference: "src/selfhost/posthog.ts",
+  },
+  {
     name: "PUBLIC_API_ORIGIN",
     firstReference: "src/selfhost/preflight.ts",
   },
@@ -656,6 +664,8 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `PGPOOL_MAX` | `src/selfhost/queue-common.ts` |",
   "| `PGVECTOR_ENABLED` | `src/server.ts` |",
   "| `PORT` | `src/server.ts` |",
+  "| `POSTHOG_ENVIRONMENT` | `src/server.ts` |",
+  "| `POSTHOG_RELEASE` | `src/selfhost/posthog.ts` |",
   "| `PUBLIC_API_ORIGIN` | `src/selfhost/preflight.ts` |",
   "| `PUBLIC_ORIGIN_ACKNOWLEDGED` | `src/server.ts` |",
   "| `PUBLIC_SITE_ORIGIN` | `src/server.ts` |",

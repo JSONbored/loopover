@@ -48,10 +48,24 @@ import { redactKnownLocalPaths, redactLocalPath } from "../lib/redact-local-path
 // side by side unaliased would read as the same function (#6238).
 import { recordMcpToolCall as recordLocalMcpToolCall } from "../lib/telemetry.js";
 
+// Self-referencing package import (Node's own mechanism for "resolve a file that belongs to my own
+// package, correctly, regardless of my own current location on disk") -- requires the "exports" map
+// in this package's own package.json (the "./x": "./x" entries there are what make this resolvable
+// at all). Robust by construction, not by guessing: whether this file is running as the real source
+// bin/loopover-mcp.ts (imported in-process by tests that exercise the CLI dispatcher + stdio tools
+// directly, per the invokedPath check below) or as the compiled dist/bin/loopover-mcp.js (a real CLI
+// invocation), import.meta.resolve walks up from THIS file's own location through node_modules the
+// same way any external consumer's "@loopover/mcp/..." import would, landing on the one real
+// package.json/CHANGELOG.md either way -- no relative-depth arithmetic, so a future directory move
+// can never silently break this again the way the pre-dist/-migration relative path did.
+function resolveOwnPackageFile(specifier: string): URL {
+  return new URL(import.meta.resolve(specifier));
+}
+
 // Read name/version from this package's own package.json (always present in any install --
 // global, npx, or local -- npm ships it regardless of the "files" allowlist) instead of hand-synced
 // literals, so a release bump never has a second place to forget.
-const ownPackageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+const ownPackageJson = JSON.parse(readFileSync(resolveOwnPackageFile("@loopover/mcp/package.json"), "utf8"));
 
 const defaultApiUrl = "https://api.loopover.ai";
 const legacyDefaultApiUrls = new Set([
@@ -71,7 +85,7 @@ const decisionPackCacheSchemaVersion = 1;
 const decisionPackCacheMaxEntries = 25;
 const decisionPackCacheMaxBytes = 512 * 1024;
 const cliTextFileMaxBytes = 1024 * 1024;
-const changelogPath = new URL("../CHANGELOG.md", import.meta.url);
+const changelogPath = resolveOwnPackageFile("@loopover/mcp/CHANGELOG.md");
 const cliArgs = process.argv.slice(2);
 
 // #7764: true only when this file is the process entrypoint (`node .../loopover-mcp.js`, incl. via the npm
@@ -564,11 +578,30 @@ const feasibilityGateShape = {
  * `releaseClaim`, or `expireClaim` -- it never gains any ability to block, cancel, or override a claim or
  * attempt; real claim-conflict authority stays entirely with #4848's maintainer-only path.
  */
+/** The narrow slice of @loopover/miner's claim-ledger module this file actually calls -- hand-shaped
+ *  rather than imported, so this optional cross-package integration carries no TYPE-level coupling to
+ *  miner's internals either, matching its own already-optional RUNTIME shape (this module may not be
+ *  installed alongside loopover-mcp at all). */
+type ClaimLedgerModule = {
+  resolveClaimLedgerDbPath: () => string;
+  openClaimLedgerReadOnly: (dbPath: string) => {
+    listActiveClaims: (repoFullName: string) => Array<{ issueNumber: number }>;
+    close: () => void;
+  };
+};
+
 async function resolveLedgerClaimStatus(repoFullName: any, issueNumber: any) {
   if (!repoFullName || !issueNumber) return null;
-  let claimLedgerModule;
+  let claimLedgerModule: ClaimLedgerModule;
   try {
-    claimLedgerModule = await import("@loopover/miner/lib/claim-ledger.js");
+    // Specifier built from concatenated parts, not a literal, so tsc never attempts to statically
+    // resolve/typecheck the target module: this optional cross-package import must not create a
+    // BUILD-TIME dependency on @loopover/miner's own dist/ output existing yet (CI builds MCP before
+    // miner in validate-tests) or on @loopover/miner being installed/built at all -- both are real,
+    // already-supported states the try/catch below already handles at runtime. The `as unknown as`
+    // cast onto the hand-shaped type above is the only thing giving this call real types.
+    const specifier = "@loopover/miner" + "/lib/claim-ledger.js";
+    claimLedgerModule = (await import(specifier)) as unknown as ClaimLedgerModule;
   } catch {
     /* v8 ignore next -- loopover-miner genuinely unresolvable (not installed alongside loopover-mcp); not
        reproducible in this monorepo's workspace-hoisted test environment, where the sibling package always

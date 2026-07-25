@@ -109,7 +109,7 @@ describe("checkStoreIntegrity (#4834)", () => {
     // -- the exact gotcha claim-ledger.js's own openClaimLedgerReadOnly already documents and pins. A source-text
     // check (rather than only a live-connection assertion below) means a future edit that reintroduces the wrong
     // casing fails immediately, without needing to reason about SQLite's own error-message wording.
-    const source = readFileSync("packages/loopover-miner/lib/store-maintenance.js", "utf8");
+    const source = readFileSync("packages/loopover-miner/dist/lib/store-maintenance.js", "utf8");
     expect(source).toContain("new DatabaseSync(dbPath, { readOnly: true })");
     expect(source).not.toMatch(/new DatabaseSync\(dbPath,\s*\{\s*readonly:/);
   });

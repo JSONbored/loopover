@@ -19,7 +19,7 @@ function listFiles(dir, extension) {
     .map((entry) => join(dir, entry.name));
 }
 
-const files = [...listFiles("bin", ".js"), ...listFiles("lib", ".js"), ...listFiles("scripts", ".mjs")].sort();
+const files = [...listFiles("dist/bin", ".js"), ...listFiles("dist/lib", ".js"), ...listFiles("scripts", ".mjs")].sort();
 
 const failures = [];
 for (const file of files) {
@@ -38,4 +38,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log(`node --check passed for all ${files.length} files in bin/, lib/, and scripts/.`);
+console.log(`node --check passed for all ${files.length} files in dist/bin/, dist/lib/, and scripts/.`);

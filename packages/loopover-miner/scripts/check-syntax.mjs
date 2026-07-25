@@ -17,7 +17,7 @@ function listJsFiles(dir) {
     .map((entry) => join(dir, entry.name));
 }
 
-const files = [...listJsFiles("bin"), ...listJsFiles("lib")].sort();
+const files = [...listJsFiles("dist/bin"), ...listJsFiles("dist/lib")].sort();
 
 const failures = [];
 for (const file of files) {
@@ -36,4 +36,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log(`node --check passed for all ${files.length} files in bin/ and lib/.`);
+console.log(`node --check passed for all ${files.length} files in dist/bin/ and dist/lib/.`);

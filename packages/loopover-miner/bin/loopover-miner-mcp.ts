@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { readFileSync, realpathSync } from "node:fs";
-import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -52,12 +51,17 @@ import { captureMinerErrorAndFlush, initMinerSentry } from "../lib/sentry.js";
 //     from ORB's hosted, maintainer-authenticated loopover_get_outcome_calibration tool.
 
 // Read the version from this package's own package.json (always shipped) rather than a hand-synced
-// literal, so a release bump never has a second place to forget -- same approach as the mcp harness.
-// Resolve via fileURLToPath(import.meta.url) (a string) rather than `new URL(...)` so the path never
-// materializes as a `URL` object -- the repo-root tsconfig this file is also checked under (its type
-// surface is imported by the MCP unit tests) resolves the global `URL` to a shape whose iterator lacks
-// `[Symbol.dispose]`, which readFileSync's node typings reject; a plain string sidesteps that entirely.
-const packageJsonPath = join(dirname(fileURLToPath(import.meta.url)), "../package.json");
+// literal, so a release bump never has a second place to forget. Self-referencing package import
+// (requires the "exports" map in this package's own package.json) -- robust by construction to
+// however this file is currently running, whether as the real source bin/loopover-miner-mcp.ts
+// (imported in-process by test/unit/miner-mcp-*.test.ts) or the compiled dist/bin/loopover-miner-mcp.js
+// (a real CLI invocation): import.meta.resolve walks up from THIS file's own location through
+// node_modules the same way an external "@loopover/miner/..." import would, landing on the one real
+// package.json either way -- no relative-path arithmetic to break if this file ever moves again.
+// fileURLToPath (a plain string), not `new URL(...)` -- the repo-root tsconfig this file is also
+// checked under (its type surface is imported by the MCP unit tests) resolves the global `URL` to a
+// shape whose iterator lacks `[Symbol.dispose]`, which readFileSync's node typings reject.
+const packageJsonPath = fileURLToPath(import.meta.resolve("@loopover/miner/package.json"));
 const ownPackageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
 
 /** Optional filters accepted by loopover_miner_get_audit_feed (#5158). */

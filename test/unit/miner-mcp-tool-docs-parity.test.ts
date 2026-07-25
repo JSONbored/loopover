@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const MCP_BIN_PATH = join(process.cwd(), "packages/loopover-miner/bin/loopover-miner-mcp.js");
+const MCP_BIN_PATH = join(process.cwd(), "packages/loopover-miner/dist/bin/loopover-miner-mcp.js");
 const README_PATH = join(process.cwd(), "packages/loopover-miner/README.md");
 const CODING_AGENT_DRIVER_DOC_PATH = join(process.cwd(), "packages/loopover-miner/docs/coding-agent-driver.md");
 

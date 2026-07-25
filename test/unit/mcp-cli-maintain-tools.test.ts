@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { closeFixtureServer, run, startFixtureServer } from "./support/mcp-cli-harness";
 
-const bin = join(process.cwd(), "packages/loopover-mcp/bin/loopover-mcp.js");
+const bin = join(process.cwd(), "packages/loopover-mcp/dist/bin/loopover-mcp.js");
 
 // #6152: the maintain CLI's REST surface, exposed as stdio tools. These assert the proxy contract -- that each
 // tool reaches the endpoint its CLI subcommand already calls, with the same method and body -- rather than

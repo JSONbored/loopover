@@ -13,7 +13,7 @@ import {
 } from "./support/mcp-cli-harness";
 
 // #6741: CLI stdio mirror of loopover_draft_pr_body — analyzeCurrentBranch then local buildPublicPrBodyDraft.
-const bin = join(process.cwd(), "packages/loopover-mcp/bin/loopover-mcp.js");
+const bin = join(process.cwd(), "packages/loopover-mcp/dist/bin/loopover-mcp.js");
 const FORBIDDEN_PUBLIC_TERMS =
   /wallet\s*[:=]\s*\S+|hotkey\s*[:=]\s*\S+|coldkey\s*[:=]\s*\S+|raw trust score is|your trust score|reward estimate is|estimated reward/i;
 

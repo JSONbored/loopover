@@ -13,7 +13,7 @@ import { run } from "./support/mcp-cli-harness";
 // asserts the INVARIANT instead: every canonical subcommand a run*Cli really accepts must appear in the spec.
 // The source is parsed rather than imported because bin/loopover-mcp.js is an executable entrypoint that starts
 // a server on import — reading it is how a test can inspect the spec without launching one.
-const SOURCE = readFileSync(join(process.cwd(), "packages/loopover-mcp/bin/loopover-mcp.js"), "utf8");
+const SOURCE = readFileSync(join(process.cwd(), "packages/loopover-mcp/dist/bin/loopover-mcp.js"), "utf8");
 
 /** The declared spec, read out of the committed source. */
 function declaredSpec(): Record<string, string[]> {

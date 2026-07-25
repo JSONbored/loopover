@@ -2,7 +2,7 @@
 // Cross-process helper for claim-ledger concurrent-race tests (#4867).
 // Opens the shared ledger, waits for a stdin "go" signal, then calls claimIssue() so multiple Node
 // processes contend on the same UNIQUE(repo_full_name, issue_number) row via the same dbPath.
-import { openClaimLedger } from "../../../packages/loopover-miner/lib/claim-ledger.js";
+import { openClaimLedger } from "../../../packages/loopover-miner/dist/lib/claim-ledger.js";
 
 const [dbPath, repoFullName, issueNumberStr, note] = process.argv.slice(2);
 if (!dbPath || !repoFullName || !issueNumberStr) {

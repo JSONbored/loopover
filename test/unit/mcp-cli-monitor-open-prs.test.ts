@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 // so run()'s execFileSync would block the event loop and the child's fetch would abort before a response.
 import { closeFixtureServer, openPrMonitorFixture, run, runAsync, runExpectingFailure, startFixtureServer } from "./support/mcp-cli-harness";
 
-const bin = join(process.cwd(), "packages/loopover-mcp/bin/loopover-mcp.js");
+const bin = join(process.cwd(), "packages/loopover-mcp/dist/bin/loopover-mcp.js");
 
 let client: Client;
 let transport: StdioClientTransport;

@@ -11,7 +11,7 @@ import { closeFixtureServer, startFixtureServer } from "./support/mcp-cli-harnes
 // source of truth for the ranking. The bin cannot import from src/, so its zod shape is a hand-mirror of the
 // tool's — these tests pin that mirror: a payload the shape accepts reaches the route, and the fields the real
 // schema requires (nested signals, findings) are enforced here too rather than being waved through.
-const bin = join(process.cwd(), "packages/loopover-mcp/bin/loopover-mcp.js");
+const bin = join(process.cwd(), "packages/loopover-mcp/dist/bin/loopover-mcp.js");
 let client: Client;
 let transport: StdioClientTransport;
 let configDir: string;

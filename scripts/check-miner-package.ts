@@ -6,12 +6,19 @@ import { fileURLToPath } from "node:url";
 import { FORBIDDEN_CONTENT } from "./forbidden-content.js";
 
 const ALLOWED = [
-  /^bin\/loopover-miner\.(js|d\.ts)$/,
-  /^bin\/loopover-miner-mcp\.(js|d\.ts)$/,
-  // Hosted-container entry point (#7182) -- not REQUIRED like bin/loopover-miner.js, matching
+  /^dist\/bin\/loopover-miner\.(js|d\.ts)$/,
+  /^dist\/bin\/loopover-miner-mcp\.(js|d\.ts)$/,
+  // Hosted-container entry point (#7182) -- not REQUIRED like dist/bin/loopover-miner.js, matching
   // loopover-miner-mcp's own treatment above (an additional bin, not the package's primary CLI).
-  /^bin\/loopover-miner-hosted\.(js|d\.ts)$/,
-  /^lib\/[a-z0-9-]+\.(js|d\.ts)$/,
+  /^dist\/bin\/loopover-miner-hosted\.(js|d\.ts)$/,
+  /^dist\/lib\/[a-z0-9-]+\.(js|d\.ts)$/,
+  // tsc itself (declaration: true + outDir "dist" separate from rootDir, confirmed via the real
+  // typescript@5.9.3 binary, not an npm/npx artifact) deterministically emits a package.json into the
+  // output root alongside the .d.ts files -- a module-boundary marker for anyone resolving types/module
+  // kind directly from dist/ without walking up to the real one. Not REQUIRED (an implementation detail
+  // of the declaration emission, not something this package's own functionality depends on), but expected
+  // and allowed rather than flagged as an unexpected file.
+  /^dist\/package\.json$/,
   /^package\.json$/,
   /^README\.md$/,
   /^expected-engine\.version$/,
@@ -22,7 +29,7 @@ const ALLOWED = [
   /^schema\/[a-z0-9.-]+\.json$/,
 ];
 const REQUIRED = [
-  "bin/loopover-miner.js",
+  "dist/bin/loopover-miner.js",
   "package.json",
   // The operational files #4874 shipped — asserted present so they can never silently drop out of the package again.
   "DEPLOYMENT.md",
@@ -64,8 +71,8 @@ export function validateMinerPackFileList(files: readonly PackedFile[], readCont
   for (const required of REQUIRED) {
     if (!paths.includes(required)) throw new Error(`Miner package is missing required file: ${required}`);
   }
-  if (!paths.some((file) => /^lib\/([a-z0-9-]+\/)?[a-z0-9-]+\.js$/.test(file))) {
-    throw new Error("Miner package is missing lib/*.js artifacts");
+  if (!paths.some((file) => /^dist\/lib\/([a-z0-9-]+\/)?[a-z0-9-]+\.js$/.test(file))) {
+    throw new Error("Miner package is missing dist/lib/*.js artifacts");
   }
   if (!paths.some((file) => /^docs\/[a-z0-9-]+\.md$/.test(file))) {
     throw new Error("Miner package is missing docs/*.md operational documentation");

@@ -10,7 +10,7 @@ import { buildTestEvidenceReport } from "../../src/signals/test-evidence";
 // it computes IN-PROCESS from @loopover/engine — no API round-trip — so coverage self-checks work offline.
 // These assert cross-surface parity with the same buildTestEvidenceReport the route + MCP tool call; the
 // builder's own correctness is pinned independently by test-evidence-report.test.ts.
-const bin = join(process.cwd(), "packages/loopover-mcp/bin/loopover-mcp.js");
+const bin = join(process.cwd(), "packages/loopover-mcp/dist/bin/loopover-mcp.js");
 let client: Client;
 let transport: StdioClientTransport;
 let configDir: string;

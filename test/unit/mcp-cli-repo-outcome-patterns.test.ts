@@ -12,7 +12,7 @@ import {
 
 // #6734: CLI stdio mirror of loopover_get_repo_outcome_patterns — thin GET proxy of the public
 // /v1/repos/:owner/:repo/outcome-patterns route (same ownerRepoShape + apiGet pattern as maintainer_noise).
-const bin = join(process.cwd(), "packages/loopover-mcp/bin/loopover-mcp.js");
+const bin = join(process.cwd(), "packages/loopover-mcp/dist/bin/loopover-mcp.js");
 const FORBIDDEN_PUBLIC_TERMS =
   /wallet\s*[:=]\s*\S+|hotkey\s*[:=]\s*\S+|coldkey\s*[:=]\s*\S+|raw trust score is|your trust score|reward estimate is|estimated reward/i;
 

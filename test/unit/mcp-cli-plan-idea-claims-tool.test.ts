@@ -10,7 +10,7 @@ import { buildClaimPlan, buildTaskGraph, validateIdeaSubmission } from "../../sr
 // it computes IN-PROCESS from @loopover/engine — no API round-trip — so claim planning works fully offline.
 // Cross-surface PARITY: the stdio tool must return exactly what the pure handler returns for identical input
 // (the same functions /v1/loop/plan-idea-claims delegates to).
-const bin = join(process.cwd(), "packages/loopover-mcp/bin/loopover-mcp.js");
+const bin = join(process.cwd(), "packages/loopover-mcp/dist/bin/loopover-mcp.js");
 
 let client: Client;
 let transport: StdioClientTransport;

@@ -10,7 +10,7 @@ import { closeFixtureServer, startFixtureServer } from "./support/mcp-cli-harnes
 // recommendedTools but never actually registered on the local stdio server. These tests drive the real
 // stdio server and assert each tool's composed output, plus a zod-rejection failure path per pure tool
 // and an API-failure path for the one HTTP-backed tool (loopover_predict_gate).
-const bin = join(process.cwd(), "packages/loopover-mcp/bin/loopover-mcp.js");
+const bin = join(process.cwd(), "packages/loopover-mcp/dist/bin/loopover-mcp.js");
 
 const PLAN_SCORER_TOOLS = ["loopover_run_local_scorer", "loopover_build_plan", "loopover_plan_status", "loopover_record_step_result", "loopover_predict_gate"];
 

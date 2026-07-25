@@ -9,7 +9,7 @@ import { closeFixtureServer, repoOnboardingPackFixture, runAsync, startFixtureSe
 // through its published export map, which doesn't surface AUTONOMY_LEVELS), so nothing but a test can catch the
 // two drifting apart. The source is parsed rather than imported because bin/loopover-mcp.js is an executable
 // entrypoint that starts a server on import.
-const CLI_SOURCE = readFileSync(join(process.cwd(), "packages/loopover-mcp/bin/loopover-mcp.js"), "utf8");
+const CLI_SOURCE = readFileSync(join(process.cwd(), "packages/loopover-mcp/dist/bin/loopover-mcp.js"), "utf8");
 
 /** The `maintain set-level` levels the committed CLI source really accepts. */
 function declaredLevels(): string[] {

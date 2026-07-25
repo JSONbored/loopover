@@ -9,7 +9,7 @@ import {
   runCrossRepoEvaluation,
   runCrossRepoFullExecution,
   summarizeCrossRepoEvaluation,
-} from "../lib/cross-repo-evaluation.js";
+} from "../dist/lib/cross-repo-evaluation.js";
 
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 

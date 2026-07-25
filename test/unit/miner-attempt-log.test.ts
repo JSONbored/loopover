@@ -261,7 +261,7 @@ describe("loopover-miner attempt log (#4294)", () => {
   });
 
   it("is append-only: the module source issues no UPDATE or DELETE against the ledger", () => {
-    const source = readFileSync("packages/loopover-miner/lib/attempt-log.js", "utf8");
+    const source = readFileSync("packages/loopover-miner/dist/lib/attempt-log.js", "utf8");
     expect(source).not.toMatch(/\b(UPDATE|DELETE)\b/i);
   });
 

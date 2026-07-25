@@ -24,7 +24,7 @@ describe("check-miner-package script", () => {
     const result = runChecker();
     expect(result.status).toBe(0);
     expect(result.out).toMatch(/^Miner package dry-run ok:/);
-    expect(result.out).toContain("bin/loopover-miner.js");
+    expect(result.out).toContain("dist/bin/loopover-miner.js");
     expect(result.out).toContain("package.json");
   });
 
@@ -39,10 +39,10 @@ describe("check-miner-package script", () => {
       const result = runChecker({
         CHECK_MINER_PACK_TEST_FILES: JSON.stringify([
           "package.json",
-          "bin/loopover-miner.js",
-          "lib/secret-helper.js",
-          "lib/secret-helper.d.ts",
-          "lib/private-key-rotation.js",
+          "dist/bin/loopover-miner.js",
+          "dist/lib/secret-helper.js",
+          "dist/lib/secret-helper.d.ts",
+          "dist/lib/private-key-rotation.js",
           "DEPLOYMENT.md",
           "Dockerfile",
           "docs/coding-agent-driver.md",
@@ -52,8 +52,8 @@ describe("check-miner-package script", () => {
       });
       expect(result.status).toBe(0);
       expect(result.out).toMatch(/^Miner package dry-run ok:/);
-      expect(result.out).toContain("lib/secret-helper.js");
-      expect(result.out).toContain("lib/private-key-rotation.js");
+      expect(result.out).toContain("dist/lib/secret-helper.js");
+      expect(result.out).toContain("dist/lib/private-key-rotation.js");
     });
 
     it("still rejects a non-code file whose name suggests it IS a secret (.pem, secrets.json)", () => {
@@ -79,11 +79,11 @@ describe("check-miner-package script", () => {
     const result = runChecker({
       CHECK_MINER_PACK_TEST_FILES: JSON.stringify([
         "package.json",
-        "bin/loopover-miner.js",
+        "dist/bin/loopover-miner.js",
         "README.md",
         "DEPLOYMENT.md",
         "Dockerfile",
-        "lib/cli.js",
+        "dist/lib/cli.js",
         "docs/quickstart.md",
         "schema/miner-goal-spec.schema.json",
       ]),
@@ -103,48 +103,48 @@ describe("check-miner-package script", () => {
     const result = runChecker({
       CHECK_MINER_PACK_TEST_FILES: JSON.stringify([
         "package.json",
-        "bin/loopover-miner.js",
-        "bin/loopover-miner-backdoor.js",
-        "lib/cli.js",
+        "dist/bin/loopover-miner.js",
+        "dist/bin/loopover-miner-backdoor.js",
+        "dist/lib/cli.js",
       ]),
       CHECK_MINER_PACK_TEST_CONTENT: "console.log('not secret');",
     });
     expect(result.status).toBe(1);
-    expect(result.out).toContain("Unexpected file in miner package: bin/loopover-miner-backdoor.js");
+    expect(result.out).toContain("Unexpected file in miner package: dist/bin/loopover-miner-backdoor.js");
   });
 
   it("REGRESSION (#3704 caused main to go red, fixed by flattening lib/ instead of widening this allowlist): rejects a lib module nested one level under a subdirectory", () => {
     const result = runChecker({
       CHECK_MINER_PACK_TEST_FILES: JSON.stringify([
         "package.json",
-        "bin/loopover-miner.js",
-        "lib/cli.js",
-        "lib/calibration/index.js",
+        "dist/bin/loopover-miner.js",
+        "dist/lib/cli.js",
+        "dist/lib/calibration/index.js",
       ]),
     });
     expect(result.status).toBe(1);
-    expect(result.out).toContain("Unexpected file in miner package: lib/calibration/index.js");
+    expect(result.out).toContain("Unexpected file in miner package: dist/lib/calibration/index.js");
   });
 
   it("rejects a file nested two levels deep under lib/", () => {
     const result = runChecker({
       CHECK_MINER_PACK_TEST_FILES: JSON.stringify([
         "package.json",
-        "bin/loopover-miner.js",
-        "lib/cli.js",
-        "lib/calibration/nested/index.js",
+        "dist/bin/loopover-miner.js",
+        "dist/lib/cli.js",
+        "dist/lib/calibration/nested/index.js",
       ]),
     });
     expect(result.status).toBe(1);
-    expect(result.out).toContain("Unexpected file in miner package: lib/calibration/nested/index.js");
+    expect(result.out).toContain("Unexpected file in miner package: dist/lib/calibration/nested/index.js");
   });
 
   it("rejects a package missing the CLI bin", () => {
     const result = runChecker({
-      CHECK_MINER_PACK_TEST_FILES: JSON.stringify(["package.json", "lib/cli.js"]),
+      CHECK_MINER_PACK_TEST_FILES: JSON.stringify(["package.json", "dist/lib/cli.js"]),
     });
     expect(result.status).toBe(1);
-    expect(result.out).toContain("Miner package is missing required file: bin/loopover-miner.js");
+    expect(result.out).toContain("Miner package is missing required file: dist/bin/loopover-miner.js");
   });
 
   it("rejects a package missing lib artifacts", () => {
@@ -152,7 +152,7 @@ describe("check-miner-package script", () => {
       // Every REQUIRED file present so the check reaches (and fails on) the lib-artifacts guard specifically.
       CHECK_MINER_PACK_TEST_FILES: JSON.stringify([
         "package.json",
-        "bin/loopover-miner.js",
+        "dist/bin/loopover-miner.js",
         "DEPLOYMENT.md",
         "Dockerfile",
         "schema/miner-goal-spec.schema.json",
@@ -160,13 +160,13 @@ describe("check-miner-package script", () => {
       CHECK_MINER_PACK_TEST_CONTENT: "{}",
     });
     expect(result.status).toBe(1);
-    expect(result.out).toContain("Miner package is missing lib/*.js artifacts");
+    expect(result.out).toContain("Miner package is missing dist/lib/*.js artifacts");
   });
 
   it("rejects secret-like content", () => {
     const probe = ["PROBE", "_", "SECRET", "=", "value"].join("");
     const result = runChecker({
-      CHECK_MINER_PACK_TEST_FILES: JSON.stringify(["package.json", "bin/loopover-miner.js", "lib/cli.js"]),
+      CHECK_MINER_PACK_TEST_FILES: JSON.stringify(["package.json", "dist/bin/loopover-miner.js", "dist/lib/cli.js"]),
       CHECK_MINER_PACK_TEST_CONTENT: probe,
     });
     expect(result.status).toBe(1);
@@ -178,8 +178,8 @@ describe("check-miner-package script", () => {
     // and the schema — is accepted.
     const FULL_PACKAGE = [
       "package.json",
-      "bin/loopover-miner.js",
-      "lib/cli.js",
+      "dist/bin/loopover-miner.js",
+      "dist/lib/cli.js",
       "DEPLOYMENT.md",
       "Dockerfile",
       "docs/coding-agent-driver.md",

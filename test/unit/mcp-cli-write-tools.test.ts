@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 // #6149: the 8 miner write-tools are PURE local-execution spec builders (loopover never performs the write);
 // each returns a { action, command, boundary } spec the caller runs with its OWN gh/git creds. These tests
 // drive the real local stdio server and assert the composed spec, plus a zod-rejection failure path per tool.
-const bin = join(process.cwd(), "packages/loopover-mcp/bin/loopover-mcp.js");
+const bin = join(process.cwd(), "packages/loopover-mcp/dist/bin/loopover-mcp.js");
 
 let client: Client;
 let transport: StdioClientTransport;

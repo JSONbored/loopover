@@ -169,16 +169,39 @@
       // and whichever shard's Save lands first can make a LATER shard's Restore see a "hit" for content
       // it never actually built on that runner, leaving bin/lib empty while the log claims success
       // (#7705 CI, shard 2 vs. shard 1/3 on the same commit). Declaring the real outputs makes a hit
-      // restore the actual files instead of only the log.
-      "outputs": ["bin/**/*.js", "lib/**/*.js"]
+      // restore the actual files instead of only the log. dist/ prefix since the 2026-07-24 out-of-place
+      // emit migration (was bin/lib in-place; see tsconfig.json's outDir comment). .tsbuildinfo included
+      // so a cache HIT restores it alongside dist/, keeping tsc's own incremental state consistent with
+      // what's on disk -- reproduced locally (not a real CI incident: actions/checkout's default clean:
+      // true already wipes any stale .tsbuildinfo before every job) that a tsc invocation seeing a stale
+      // .tsbuildinfo with an empty/missing dist/ silently no-ops, believing everything is already built.
+      "outputs": ["dist/bin/**/*.js", "dist/lib/**/*.js", ".tsbuildinfo"]
     },
     "@loopover/miner#build:tsc": {
       "dependsOn": ["^build"],
-      "cache": false
+      // Was `cache: false` -- historically to avoid a cache restore stomping this package's hand-written
+      // .js files while the #7290 migration was still in-flight (see ci.yml's "Build miner CLI" comment).
+      // #7317 closed that migration out (every bin/lib file is compiler-owned), and the 2026-07-24 dist/
+      // migration removed the original in-place-emit hazard entirely -- dist/ is a clean build directory
+      // turbo fully owns, with no hand-written file a bad restore could ever clobber. Enabling caching now
+      // (the outputs below mirror @loopover/mcp#build's own #7705-incident-driven declaration: dist/'s
+      // .js -- plus miner-specific .d.ts, since unlike mcp this package has declaration: true -- and the
+      // dist/package.json tsc itself emits for that same setting, see check-miner-package.ts's allowlist
+      // comment) so a cache HIT restores every real file, not just the log.
+      // .tsbuildinfo included so a cache HIT restores it alongside dist/, keeping tsc's own incremental
+      // state consistent with what's on disk (same reasoning as @loopover/mcp#build's own outputs above).
+      "outputs": [
+        "dist/bin/**/*.js",
+        "dist/bin/**/*.d.ts",
+        "dist/lib/**/*.js",
+        "dist/lib/**/*.d.ts",
+        "dist/package.json",
+        ".tsbuildinfo"
+      ]
     },
     "@loopover/miner#build:verify": {
       "dependsOn": ["@loopover/miner#build:tsc"],
-      "inputs": ["bin/**/*.js", "lib/**/*.js"],
+      "inputs": ["dist/bin/**/*.js", "dist/lib/**/*.js"],
       "outputs": []
     },
     "@loopover/miner#build": {

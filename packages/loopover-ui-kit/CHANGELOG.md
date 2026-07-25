@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/JSONbored/loopover/compare/ui-kit-v1.1.2...ui-kit-v1.2.0) (2026-07-25)
+
+
+### Features
+
+* **release:** extend the release-due watcher + tarball pack-check to engine/miner/ui-kit ([#8592](https://github.com/JSONbored/loopover/issues/8592)) ([25e99c2](https://github.com/JSONbored/loopover/commit/25e99c23c591a8fe1583951cf1f9666173d2a61d))
+
 ## [1.1.2](https://github.com/JSONbored/loopover/compare/ui-kit-v1.1.1...ui-kit-v1.1.2) (2026-07-24)
 
 

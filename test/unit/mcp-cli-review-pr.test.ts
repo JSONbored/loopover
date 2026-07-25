@@ -1,42 +1,102 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+
+// TS5097: keep the .ts specifier out of a literal import() position (same indirection as the template).
+const BIN_MODULE = "../../packages/loopover-mcp/bin/loopover-mcp.ts";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import {
   closeFixtureServer,
   createPacketRepo,
   localBranchAnalysisFixture,
   run,
-  runAsync,
   startFixtureServer,
 } from "./support/mcp-cli-harness";
+
+// #8587: review-pr cases run in-process through the bin's exported runCli (the same dispatcher +
+// presentation code the subprocess ran), with stdout captured. The fixture server starts once BEFORE
+// the dynamic import because the bin reads LOOPOVER_API_URL at module load; per-test response
+// overrides mutate `fixtureOptions`, which the harness reads per request. Only the typo-suggestion
+// case still spawns a real subprocess (CLI-level argv error).
+type BinModule = { runCli: (args: string[]) => Promise<number | void> };
+
+const fixtureOptions: NonNullable<Parameters<typeof startFixtureServer>[0]> =
+  {};
+let mod: BinModule;
+let configDir = "";
+
+beforeAll(async () => {
+  configDir = mkdtempSync(join(tmpdir(), "loopover-review-pr-inprocess-"));
+  const apiUrl = await startFixtureServer(fixtureOptions);
+  process.env.LOOPOVER_API_URL = apiUrl;
+  process.env.LOOPOVER_TOKEN = "session-token";
+  process.env.LOOPOVER_API_TIMEOUT_MS = "2000";
+  process.env.LOOPOVER_CONFIG_DIR = configDir;
+  process.env.LOOPOVER_SKIP_NPM_VERSION_CHECK = "1";
+  mod = (await import(BIN_MODULE)) as unknown as BinModule;
+}, 120_000);
+
+afterAll(async () => {
+  await closeFixtureServer();
+  if (configDir) rmSync(configDir, { recursive: true, force: true });
+  delete process.env.LOOPOVER_API_URL;
+  delete process.env.LOOPOVER_TOKEN;
+  delete process.env.LOOPOVER_API_TIMEOUT_MS;
+  delete process.env.LOOPOVER_CONFIG_DIR;
+  delete process.env.LOOPOVER_SKIP_NPM_VERSION_CHECK;
+});
+
+async function captureStdout(
+  fn: () => Promise<number | void>,
+): Promise<string> {
+  const chunks: string[] = [];
+  const spy = vi
+    .spyOn(process.stdout, "write")
+    .mockImplementation((chunk: string | Uint8Array): boolean => {
+      chunks.push(
+        typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"),
+      );
+      return true;
+    });
+  try {
+    await fn();
+  } finally {
+    spy.mockRestore();
+  }
+  return chunks.join("");
+}
 
 describe("loopover-mcp CLI — review-pr", () => {
   let tempDir: string | null = null;
 
-  afterEach(async () => {
-    await closeFixtureServer();
+  afterEach(() => {
     if (tempDir) rmSync(tempDir, { recursive: true, force: true });
     tempDir = null;
+    delete fixtureOptions.localBranchAnalysis;
+    delete fixtureOptions.slopRiskStatus;
+    delete fixtureOptions.prTextLintStatus;
   });
 
   it("composes preflight + slop-risk + pr-text-lint into one passing report", async () => {
-    tempDir = createPacketRepo();
-    const url = await startFixtureServer();
-    const env = {
-      LOOPOVER_API_URL: url,
-      LOOPOVER_TOKEN: "session-token",
-      LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
-    };
+    const repoDir = createPacketRepo();
+    tempDir = repoDir;
 
     const json = JSON.parse(
-      await runAsync(
-        [
+      await captureStdout(() =>
+        mod.runCli([
           "review-pr",
           "--login",
           "JSONbored",
           "--cwd",
-          tempDir,
+          repoDir,
           "--repo",
           "JSONbored/loopover",
           "--commit",
@@ -46,8 +106,7 @@ describe("loopover-mcp CLI — review-pr", () => {
           "--linked-issue",
           "1968",
           "--json",
-        ],
-        env,
+        ]),
       ),
     ) as {
       overallStatus: string;
@@ -74,13 +133,13 @@ describe("loopover-mcp CLI — review-pr", () => {
       /wallet|hotkey|coldkey|reward|trust score/i,
     );
 
-    const plain = await runAsync(
-      [
+    const plain = await captureStdout(() =>
+      mod.runCli([
         "review-pr",
         "--login",
         "JSONbored",
         "--cwd",
-        tempDir,
+        repoDir,
         "--repo",
         "JSONbored/loopover",
         "--commit",
@@ -89,8 +148,7 @@ describe("loopover-mcp CLI — review-pr", () => {
         "Composes preflight + slop-risk + lint-pr-text into one report. Validated with npm test.",
         "--linked-issue",
         "1968",
-      ],
-      env,
+      ]),
     );
     expect(plain).toMatch(/Pre-PR review: pass/);
     expect(plain).toMatch(/- preflight: pass/);
@@ -101,27 +159,21 @@ describe("loopover-mcp CLI — review-pr", () => {
   });
 
   it("flags a warn overall status when the PR body is empty (weak lint verdict)", async () => {
-    tempDir = createPacketRepo();
-    const url = await startFixtureServer();
-    const env = {
-      LOOPOVER_API_URL: url,
-      LOOPOVER_TOKEN: "session-token",
-      LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
-    };
+    const repoDir = createPacketRepo();
+    tempDir = repoDir;
 
     const json = JSON.parse(
-      await runAsync(
-        [
+      await captureStdout(() =>
+        mod.runCli([
           "review-pr",
           "--login",
           "JSONbored",
           "--cwd",
-          tempDir,
+          repoDir,
           "--repo",
           "JSONbored/loopover",
           "--json",
-        ],
-        env,
+        ]),
       ),
     ) as {
       overallStatus: string;
@@ -136,36 +188,30 @@ describe("loopover-mcp CLI — review-pr", () => {
   });
 
   it("maps needs_work preflight to a warning instead of passing (regression)", async () => {
-    tempDir = createPacketRepo();
-    const url = await startFixtureServer({
-      localBranchAnalysis: {
-        ...localBranchAnalysisFixture(),
-        preflight: {
-          status: "needs_work",
-          findings: [
-            {
-              code: "missing_test_evidence",
-              severity: "warning",
-              title: "Missing test evidence",
-            },
-          ],
-        },
+    const repoDir = createPacketRepo();
+    tempDir = repoDir;
+    fixtureOptions.localBranchAnalysis = {
+      ...localBranchAnalysisFixture(),
+      preflight: {
+        status: "needs_work",
+        findings: [
+          {
+            code: "missing_test_evidence",
+            severity: "warning",
+            title: "Missing test evidence",
+          },
+        ],
       },
-    });
-    const env = {
-      LOOPOVER_API_URL: url,
-      LOOPOVER_TOKEN: "session-token",
-      LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
     };
 
     const json = JSON.parse(
-      await runAsync(
-        [
+      await captureStdout(() =>
+        mod.runCli([
           "review-pr",
           "--login",
           "JSONbored",
           "--cwd",
-          tempDir,
+          repoDir,
           "--repo",
           "JSONbored/loopover",
           "--commit",
@@ -175,8 +221,7 @@ describe("loopover-mcp CLI — review-pr", () => {
           "--linked-issue",
           "1968",
           "--json",
-        ],
-        env,
+        ]),
       ),
     ) as {
       overallStatus: string;
@@ -192,36 +237,30 @@ describe("loopover-mcp CLI — review-pr", () => {
   });
 
   it("maps hold preflight to a failing section", async () => {
-    tempDir = createPacketRepo();
-    const url = await startFixtureServer({
-      localBranchAnalysis: {
-        ...localBranchAnalysisFixture(),
-        preflight: {
-          status: "hold",
-          findings: [
-            {
-              code: "lane_hold",
-              severity: "critical",
-              title: "Lane unavailable",
-            },
-          ],
-        },
+    const repoDir = createPacketRepo();
+    tempDir = repoDir;
+    fixtureOptions.localBranchAnalysis = {
+      ...localBranchAnalysisFixture(),
+      preflight: {
+        status: "hold",
+        findings: [
+          {
+            code: "lane_hold",
+            severity: "critical",
+            title: "Lane unavailable",
+          },
+        ],
       },
-    });
-    const env = {
-      LOOPOVER_API_URL: url,
-      LOOPOVER_TOKEN: "session-token",
-      LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
     };
 
     const json = JSON.parse(
-      await runAsync(
-        [
+      await captureStdout(() =>
+        mod.runCli([
           "review-pr",
           "--login",
           "JSONbored",
           "--cwd",
-          tempDir,
+          repoDir,
           "--repo",
           "JSONbored/loopover",
           "--commit",
@@ -231,8 +270,7 @@ describe("loopover-mcp CLI — review-pr", () => {
           "--linked-issue",
           "1968",
           "--json",
-        ],
-        env,
+        ]),
       ),
     ) as {
       overallStatus: string;
@@ -248,24 +286,19 @@ describe("loopover-mcp CLI — review-pr", () => {
   });
 
   it("reads the PR body from --body-file", async () => {
-    tempDir = createPacketRepo();
-    const url = await startFixtureServer();
-    const env = {
-      LOOPOVER_API_URL: url,
-      LOOPOVER_TOKEN: "session-token",
-      LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
-    };
-    const bodyPath = join(tempDir, "pr-body.md");
+    const repoDir = createPacketRepo();
+    tempDir = repoDir;
+    const bodyPath = join(repoDir, "pr-body.md");
     writeFileSync(bodyPath, "Fixes #1968\n\nValidated with npm test.", "utf8");
 
     const json = JSON.parse(
-      await runAsync(
-        [
+      await captureStdout(() =>
+        mod.runCli([
           "review-pr",
           "--login",
           "JSONbored",
           "--cwd",
-          tempDir,
+          repoDir,
           "--repo",
           "JSONbored/loopover",
           "--body-file",
@@ -273,30 +306,25 @@ describe("loopover-mcp CLI — review-pr", () => {
           "--linked-issue",
           "1968",
           "--json",
-        ],
-        env,
+        ]),
       ),
     ) as { prTextLint: { verdict: string } };
     expect(json.prTextLint.verdict).toBe("strong");
   });
 
   it("degrades gracefully when the slop-risk endpoint fails, without losing the other sections", async () => {
-    tempDir = createPacketRepo();
-    const url = await startFixtureServer({ slopRiskStatus: 500 });
-    const env = {
-      LOOPOVER_API_URL: url,
-      LOOPOVER_TOKEN: "session-token",
-      LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
-    };
+    const repoDir = createPacketRepo();
+    tempDir = repoDir;
+    fixtureOptions.slopRiskStatus = 500;
 
     const json = JSON.parse(
-      await runAsync(
-        [
+      await captureStdout(() =>
+        mod.runCli([
           "review-pr",
           "--login",
           "JSONbored",
           "--cwd",
-          tempDir,
+          repoDir,
           "--repo",
           "JSONbored/loopover",
           "--body",
@@ -304,8 +332,7 @@ describe("loopover-mcp CLI — review-pr", () => {
           "--linked-issue",
           "1968",
           "--json",
-        ],
-        env,
+        ]),
       ),
     ) as {
       overallStatus: string;
@@ -323,43 +350,38 @@ describe("loopover-mcp CLI — review-pr", () => {
     // The pr-text-lint section still succeeded even though slop-risk failed.
     expect(json.prTextLint).toMatchObject({ verdict: "strong" });
 
-    const plain = await runAsync(
-      [
+    const plain = await captureStdout(() =>
+      mod.runCli([
         "review-pr",
         "--login",
         "JSONbored",
         "--cwd",
-        tempDir,
+        repoDir,
         "--repo",
         "JSONbored/loopover",
         "--body",
         "Validated with npm test.",
         "--linked-issue",
         "1968",
-      ],
-      env,
+      ]),
     );
     expect(plain).toMatch(/Slop risk: unavailable \(LoopOver API 500/);
     expect(plain).toMatch(/PR text lint: strong/);
   });
 
   it("degrades gracefully when the pr-text-lint endpoint fails, without losing the other sections", async () => {
-    tempDir = createPacketRepo();
-    const url = await startFixtureServer({ prTextLintStatus: 503 });
-    const env = {
-      LOOPOVER_API_URL: url,
-      LOOPOVER_TOKEN: "session-token",
-      LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
-    };
+    const repoDir = createPacketRepo();
+    tempDir = repoDir;
+    fixtureOptions.prTextLintStatus = 503;
 
     const json = JSON.parse(
-      await runAsync(
-        [
+      await captureStdout(() =>
+        mod.runCli([
           "review-pr",
           "--login",
           "JSONbored",
           "--cwd",
-          tempDir,
+          repoDir,
           "--repo",
           "JSONbored/loopover",
           "--body",
@@ -367,8 +389,7 @@ describe("loopover-mcp CLI — review-pr", () => {
           "--linked-issue",
           "1968",
           "--json",
-        ],
-        env,
+        ]),
       ),
     ) as {
       overallStatus: string;
@@ -388,20 +409,20 @@ describe("loopover-mcp CLI — review-pr", () => {
 
   it("requires --login", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
-    await expect(runAsync(["review-pr", "--cwd", tempDir], {})).rejects.toThrow(
+    await expect(mod.runCli(["review-pr", "--cwd", tempDir])).rejects.toThrow(
       /Pass --login/,
     );
   });
 
-  it("prints help", () => {
-    const help = run(["review-pr", "--help"]);
+  it("prints help", async () => {
+    const help = await captureStdout(() => mod.runCli(["review-pr", "--help"]));
     expect(help).toMatch(/Usage: loopover-mcp review-pr/);
     expect(help).toMatch(/loopover_review_pr_before_push/);
     expect(help).toMatch(/preflight \+ slop-risk \+ PR-text-lint/);
   });
 
-  it("prints help for a bare `help` positional too, not a --login error (#6257)", () => {
-    const help = run(["review-pr", "help"]);
+  it("prints help for a bare `help` positional too, not a --login error (#6257)", async () => {
+    const help = await captureStdout(() => mod.runCli(["review-pr", "help"]));
     expect(help).toMatch(/Usage: loopover-mcp review-pr/);
     expect(help).not.toMatch(/Pass --login/);
   });

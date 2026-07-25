@@ -2,27 +2,111 @@ import { type IncomingMessage } from "node:http";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { closeFixtureServer, run, runAsync, startFixtureServer } from "./support/mcp-cli-harness";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { closeFixtureServer, runAsync, startFixtureServer } from "./support/mcp-cli-harness";
 import mcpPackageJson from "../../packages/loopover-mcp/package.json";
+
+// #8587: business-payload cases (status/changelog/telemetry-headers/device-flow login and the seeded
+// profile-list case) call the exported runCli in-process (pattern from
+// mcp-cli-contributor-profile-inprocess.test.ts). Multi-profile scenarios stay real subprocesses: the bin
+// resolves the active profile from argv/config AT MODULE LOAD (bin/loopover-mcp.ts ~lines 365-368), so
+// `--profile` selection and `profile switch` visibility only exist across separate process startups.
+// One fixture server (started before the import, closed in afterAll) serves both transports.
+type BinModule = {
+  runCli: (args: string[]) => Promise<number | void>;
+};
+
+// Only the committed .ts source is imported (never dist); the variable indirection mirrors the template's
+// MODULES array so tsc does not statically flag the .ts specifier (allowImportingTsExtensions is off).
+const BIN_MODULE = "../../packages/loopover-mcp/bin/loopover-mcp.ts";
+
+let mod: BinModule;
+let sharedConfigDir = "";
+let apiUrl = "";
+const capturedRequests: Array<{ url: string | undefined; authorization: string | undefined; headers: IncomingMessage["headers"] }> = [];
+
+async function captureStdout(fn: () => Promise<unknown>): Promise<string> {
+  const chunks: string[] = [];
+  const spy = vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array): boolean => {
+    chunks.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+    return true;
+  });
+  try {
+    await fn();
+  } finally {
+    spy.mockRestore();
+  }
+  return chunks.join("");
+}
+
+function runInProcess(args: string[]): Promise<string> {
+  return captureStdout(() => mod.runCli(args));
+}
 
 describe("loopover-mcp CLI — profiles", () => {
   let tempDir: string | null = null;
 
-  afterEach(async () => {
+  beforeAll(async () => {
+    sharedConfigDir = mkdtempSync(join(tmpdir(), "loopover-profiles-inprocess-"));
+    // Seed the config the in-process module loads at import: the ndjson test's two credential-free profiles
+    // (default + active "beta"); profile list needs only names to enumerate, so the fixture carries no
+    // session token — the streaming format is what that test exercises.
+    writeFileSync(
+      join(sharedConfigDir, "config.json"),
+      JSON.stringify(
+        {
+          apiUrl: "https://api.example.test",
+          activeProfile: "beta",
+          profiles: {
+            default: { session: { login: "default-user", scopes: [] } },
+            beta: { session: { login: "beta-user", scopes: [] } },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+    apiUrl = await startFixtureServer({
+      onApiRequest: (request) => capturedRequests.push({ url: request.url, authorization: request.headers.authorization, headers: request.headers }),
+      // #6792: only the device-flow login test polls these routes; a transient 429 precedes success.
+      deviceFlowStart: { deviceCode: "device-code-1", userCode: "ABCD-1234", verificationUri: "https://github.com/login/device", interval: 0 },
+      deviceFlowPollResponses: [
+        { status: 429, retryAfterSeconds: 1, body: { error: "rate_limited", routeClass: "normal" } },
+        { body: { token: "device-session-token", login: "JSONbored", expiresAt: "2026-06-02T00:00:00.000Z", scopes: ["repo"] } },
+      ],
+    });
+    // The bin reads these at module load, so set them BEFORE the dynamic import...
+    process.env.LOOPOVER_API_URL = apiUrl;
+    process.env.LOOPOVER_CONFIG_DIR = sharedConfigDir;
+    process.env.LOOPOVER_API_TIMEOUT_MS = "2000";
+    process.env.LOOPOVER_SKIP_NPM_VERSION_CHECK = "1";
+    mod = (await import(BIN_MODULE)) as unknown as BinModule;
+    // ...and delete the module-load ones right after import so the kept subprocess tests only see the env
+    // they pass explicitly.
+    delete process.env.LOOPOVER_API_URL;
+    delete process.env.LOOPOVER_CONFIG_DIR;
+  }, 120_000);
+
+  afterAll(async () => {
     await closeFixtureServer();
+    if (sharedConfigDir) rmSync(sharedConfigDir, { recursive: true, force: true });
+    delete process.env.LOOPOVER_API_TIMEOUT_MS;
+    delete process.env.LOOPOVER_SKIP_NPM_VERSION_CHECK;
+  });
+
+  beforeEach(() => {
+    capturedRequests.length = 0;
+  });
+
+  afterEach(() => {
     if (tempDir) rmSync(tempDir, { recursive: true, force: true });
     tempDir = null;
   });
 
   it("stores, switches, and reports named MCP profiles without mixing sessions", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
-    const requests: Array<{ url: string | undefined; authorization: string | undefined }> = [];
-    const url = await startFixtureServer({
-      onApiRequest: (request) => requests.push({ url: request.url, authorization: request.headers.authorization }),
-    });
     const env = {
-      LOOPOVER_API_URL: url,
+      LOOPOVER_API_URL: apiUrl,
       LOOPOVER_CONFIG_DIR: tempDir,
       LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
     };
@@ -48,7 +132,7 @@ describe("loopover-mcp CLI — profiles", () => {
     expect(secondWhoami).toMatchObject({ profile: "okto", login: "oktofeesh1" });
     expect(switched.activeProfile).toBe("jsonbored");
     expect(activeWhoami).toMatchObject({ profile: "jsonbored", login: "JSONbored" });
-    expect(requests).toEqual(
+    expect(capturedRequests).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ url: "/v1/auth/session", authorization: "Bearer session-jsonbored" }),
         expect.objectContaining({ url: "/v1/auth/session", authorization: "Bearer session-okto" }),
@@ -57,29 +141,10 @@ describe("loopover-mcp CLI — profiles", () => {
     expect(JSON.stringify(list)).not.toMatch(/session-jsonbored|session-okto|github-jsonbored|github-okto|loopover-cli-/);
   }, 45_000);
 
-  it("profile list --format ndjson streams one JSON object per profile (and --json stays pretty)", () => {
-    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
-    const configPath = join(tempDir, "config.json");
-    // Two credential-free profiles (default + active "beta"); profile list needs only names to enumerate,
-    // so the fixture carries no session token — the streaming format is what this exercises.
-    writeFileSync(
-      configPath,
-      JSON.stringify(
-        {
-          apiUrl: "https://api.example.test",
-          activeProfile: "beta",
-          profiles: {
-            default: { session: { login: "default-user", scopes: [] } },
-            beta: { session: { login: "beta-user", scopes: [] } },
-          },
-        },
-        null,
-        2,
-      ),
-    );
-    const env = { LOOPOVER_CONFIG_DIR: tempDir, LOOPOVER_SKIP_NPM_VERSION_CHECK: "true" };
-
-    const lines = run(["profile", "list", "--format", "ndjson"], env).trim().split("\n");
+  it("profile list --format ndjson streams one JSON object per profile (and --json stays pretty)", async () => {
+    // The two-profile fixture (default + active "beta") is the config the in-process module loaded at
+    // import — see the beforeAll seed.
+    const lines = (await runInProcess(["profile", "list", "--format", "ndjson"])).trim().split("\n");
     expect(lines).toHaveLength(2);
     const parsed = lines.map((line) => JSON.parse(line) as { name: string; active: boolean });
     expect(parsed.map((p) => p.name).sort()).toEqual(["beta", "default"]);
@@ -88,19 +153,15 @@ describe("loopover-mcp CLI — profiles", () => {
     // Each line is a bare profile object — not the {activeProfile, profiles} wrapper.
     for (const line of lines) expect(line).not.toContain("activeProfile");
     // --json still returns the pretty wrapper object (unchanged behavior).
-    const pretty = JSON.parse(run(["profile", "list", "--json"], env)) as { activeProfile: string; profiles: unknown[] };
+    const pretty = JSON.parse(await runInProcess(["profile", "list", "--json"])) as { activeProfile: string; profiles: unknown[] };
     expect(pretty).toMatchObject({ activeProfile: "beta" });
     expect(pretty.profiles).toHaveLength(2);
   });
 
   it("keeps environment tokens ahead of active profile sessions", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
-    const requests: Array<{ url: string | undefined; authorization: string | undefined }> = [];
-    const url = await startFixtureServer({
-      onApiRequest: (request) => requests.push({ url: request.url, authorization: request.headers.authorization }),
-    });
     const env = {
-      LOOPOVER_API_URL: url,
+      LOOPOVER_API_URL: apiUrl,
       LOOPOVER_CONFIG_DIR: tempDir,
       LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
     };
@@ -112,7 +173,7 @@ describe("loopover-mcp CLI — profiles", () => {
 
     expect(whoami).toMatchObject({ profile: "jsonbored", login: "oktofeesh1" });
     expect(status).toMatchObject({ auth: { login: "oktofeesh1" }, profile: { tokenSource: "environment" } });
-    expect(requests).toEqual(expect.arrayContaining([expect.objectContaining({ url: "/v1/auth/session", authorization: "Bearer session-okto" })]));
+    expect(capturedRequests).toEqual(expect.arrayContaining([expect.objectContaining({ url: "/v1/auth/session", authorization: "Bearer session-okto" })]));
   });
 
   it("removes the default profile without rehydrating its legacy session token", async () => {
@@ -149,12 +210,8 @@ describe("loopover-mcp CLI — profiles", () => {
 
   it("logs out only the selected profile and reports missing profiles safely", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
-    const requests: Array<{ url: string | undefined; authorization: string | undefined }> = [];
-    const url = await startFixtureServer({
-      onApiRequest: (request) => requests.push({ url: request.url, authorization: request.headers.authorization }),
-    });
     const env = {
-      LOOPOVER_API_URL: url,
+      LOOPOVER_API_URL: apiUrl,
       LOOPOVER_CONFIG_DIR: tempDir,
       LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
     };
@@ -178,44 +235,36 @@ describe("loopover-mcp CLI — profiles", () => {
     expect(missingStatus).toMatchObject({ auth: { status: "unauthenticated" }, profile: { name: "missing", configured: false, authenticated: false } });
     expect(doctor.profile).toMatchObject({ name: "missing", configured: false });
     expect(doctor.checks).toEqual(expect.arrayContaining([expect.objectContaining({ name: "auth", status: "fail" })]));
-    expect(requests).toEqual(expect.arrayContaining([expect.objectContaining({ url: "/v1/auth/logout", authorization: "Bearer session-jsonbored" })]));
+    expect(capturedRequests).toEqual(expect.arrayContaining([expect.objectContaining({ url: "/v1/auth/logout", authorization: "Bearer session-jsonbored" })]));
     expect(JSON.stringify({ logout, list, missingStatus, doctor })).not.toMatch(/session-jsonbored|session-okto|github-jsonbored|github-okto|loopover-cli-/);
   }, 45_000);
 
   it("reports package status and prints the packaged changelog", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
-    const url = await startFixtureServer();
-    const status = JSON.parse(
-      await runAsync(["status", "--json"], {
-        LOOPOVER_API_URL: url,
-        LOOPOVER_TOKEN: "session-token",
-        LOOPOVER_CONFIG_DIR: tempDir,
-        LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
-      }),
-    ) as { package: { name: string; version: string; latestStatus: string }; api: { status: string }; auth: { login: string } };
+    process.env.LOOPOVER_TOKEN = "session-token";
+    try {
+      const status = JSON.parse(await runInProcess(["status", "--json"])) as { package: { name: string; version: string; latestStatus: string }; api: { status: string }; auth: { login: string } };
 
-    expect(status.package).toMatchObject({ name: "@loopover/mcp", version: mcpPackageJson.version, latestStatus: "skipped" });
-    expect(status.api.status).toBe("ok");
-    expect(status.auth.login).toBe("JSONbored");
+      expect(status.package).toMatchObject({ name: "@loopover/mcp", version: mcpPackageJson.version, latestStatus: "skipped" });
+      expect(status.api.status).toBe("ok");
+      expect(status.auth.login).toBe("JSONbored");
+    } finally {
+      delete process.env.LOOPOVER_TOKEN;
+    }
 
-    const changelog = JSON.parse(run(["changelog", "--json"])) as { package: { version: string }; changelog: string };
+    const changelog = JSON.parse(await runInProcess(["changelog", "--json"])) as { package: { version: string }; changelog: string };
     expect(changelog.package.version).toBe(mcpPackageJson.version);
     expect(changelog.changelog).toContain("# Changelog");
   });
 
   it("sends redacted MCP package telemetry headers to the API", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
-    const requests: Array<{ url: string | undefined; headers: IncomingMessage["headers"] }> = [];
-    const url = await startFixtureServer({ onApiRequest: (request) => requests.push({ url: request.url, headers: request.headers }) });
+    process.env.LOOPOVER_TOKEN = "session-token";
+    try {
+      await runInProcess(["status", "--json"]);
+    } finally {
+      delete process.env.LOOPOVER_TOKEN;
+    }
 
-    await runAsync(["status", "--json"], {
-      LOOPOVER_API_URL: url,
-      LOOPOVER_TOKEN: "session-token",
-      LOOPOVER_CONFIG_DIR: tempDir,
-      LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
-    });
-
-    const sessionRequest = requests.find((request) => request.url === "/v1/auth/session");
+    const sessionRequest = capturedRequests.find((request) => request.url === "/v1/auth/session");
     expect(sessionRequest?.headers["x-loopover-mcp-package"]).toBe("@loopover/mcp");
     expect(sessionRequest?.headers["x-loopover-mcp-version"]).toBe(mcpPackageJson.version);
     expect(sessionRequest?.headers["x-loopover-mcp-client"]).toBe("loopover-mcp-cli");
@@ -225,26 +274,11 @@ describe("loopover-mcp CLI — profiles", () => {
       client: sessionRequest?.headers["x-loopover-mcp-client"],
     });
     expect(telemetryHeaders).not.toContain("session-token");
-    expect(telemetryHeaders).not.toContain(tempDir);
+    expect(telemetryHeaders).not.toContain(sharedConfigDir);
   });
 
   it("#6792: loginWithDeviceFlow backs off and keeps polling through a transient 429 from our own rate limiter instead of aborting", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
-    const url = await startFixtureServer({
-      deviceFlowStart: { deviceCode: "device-code-1", userCode: "ABCD-1234", verificationUri: "https://github.com/login/device", interval: 0 },
-      deviceFlowPollResponses: [
-        { status: 429, retryAfterSeconds: 1, body: { error: "rate_limited", routeClass: "normal" } },
-        { body: { token: "device-session-token", login: "JSONbored", expiresAt: "2026-06-02T00:00:00.000Z", scopes: ["repo"] } },
-      ],
-    });
-
-    const login = JSON.parse(
-      await runAsync(["login", "--json"], {
-        LOOPOVER_API_URL: url,
-        LOOPOVER_CONFIG_DIR: tempDir,
-        LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
-      }),
-    ) as { status: string; login: string };
+    const login = JSON.parse(await runInProcess(["login", "--json"])) as { status: string; login: string };
 
     expect(login).toMatchObject({ status: "authenticated", login: "JSONbored" });
   }, 20000);

@@ -1,35 +1,90 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { closeFixtureServer, createPacketRepo, run, runAsync, runExpectingFailure, startFixtureServer } from "./support/mcp-cli-harness";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { closeFixtureServer, createPacketRepo, run, runExpectingFailure, startFixtureServer } from "./support/mcp-cli-harness";
 import mcpPackageJson from "../../packages/loopover-mcp/package.json";
+
+// #8587: JSON/plain business-payload cases call the exported runCli in-process (the same dispatcher the
+// spawned bin runs; pattern from mcp-cli-contributor-profile-inprocess.test.ts). Cases that assert process
+// exit behavior itself (toThrow on argv errors, runExpectingFailure envelopes) or startup-resolved state
+// (version banner, LOOPOVER_API_URL / LOOPOVER_CONFIG_DIR provenance — module-load reads in
+// bin/loopover-mcp.ts) stay real subprocesses.
+type BinModule = {
+  runCli: (args: string[]) => Promise<number | void>;
+};
+
+// Only the committed .ts source is imported (never dist); the variable indirection mirrors the template's
+// MODULES array so tsc does not statically flag the .ts specifier (allowImportingTsExtensions is off).
+const BIN_MODULE = "../../packages/loopover-mcp/bin/loopover-mcp.ts";
+
+let mod: BinModule;
+let sharedConfigDir = "";
+
+async function captureStdout(fn: () => Promise<unknown>): Promise<string> {
+  const chunks: string[] = [];
+  const spy = vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array): boolean => {
+    chunks.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+    return true;
+  });
+  try {
+    await fn();
+  } finally {
+    spy.mockRestore();
+  }
+  return chunks.join("");
+}
+
+function runInProcess(args: string[]): Promise<string> {
+  return captureStdout(() => mod.runCli(args));
+}
 
 describe("loopover-mcp CLI — basics", () => {
   let tempDir: string | null = null;
 
-  afterEach(async () => {
+  beforeAll(async () => {
+    sharedConfigDir = mkdtempSync(join(tmpdir(), "loopover-basics-inprocess-"));
+    const apiUrl = await startFixtureServer();
+    // The bin reads these at module load, so set them BEFORE the dynamic import...
+    process.env.LOOPOVER_API_URL = apiUrl;
+    process.env.LOOPOVER_CONFIG_DIR = sharedConfigDir;
+    process.env.LOOPOVER_API_TIMEOUT_MS = "2000";
+    process.env.LOOPOVER_SKIP_NPM_VERSION_CHECK = "1";
+    mod = (await import(BIN_MODULE)) as unknown as BinModule;
+    // ...and delete the module-load ones right after import: the kept subprocess tests below assert DEFAULT
+    // config provenance (apiUrlSource "default"), which an inherited LOOPOVER_API_URL would break.
+    delete process.env.LOOPOVER_API_URL;
+    delete process.env.LOOPOVER_CONFIG_DIR;
+  }, 120_000);
+
+  afterAll(async () => {
     await closeFixtureServer();
+    if (sharedConfigDir) rmSync(sharedConfigDir, { recursive: true, force: true });
+    delete process.env.LOOPOVER_API_TIMEOUT_MS;
+    delete process.env.LOOPOVER_SKIP_NPM_VERSION_CHECK;
+  });
+
+  afterEach(() => {
     if (tempDir) rmSync(tempDir, { recursive: true, force: true });
     tempDir = null;
   });
 
-  it("prints MCP client snippets without mutating client config", () => {
-    const codex = run(["init-client", "--print", "codex"]);
+  it("prints MCP client snippets without mutating client config", async () => {
+    const codex = await runInProcess(["init-client", "--print", "codex"]);
     expect(codex).toContain("[mcp_servers.loopover]");
     expect(codex).toContain('args = ["--stdio"]');
 
-    const claude = JSON.parse(run(["init-client", "--print", "claude", "--json"])) as { snippet: string };
+    const claude = JSON.parse(await runInProcess(["init-client", "--print", "claude", "--json"])) as { snippet: string };
     expect(claude.snippet).toContain('"mcpServers"');
     expect(claude.snippet).toContain('"loopover"');
 
-    const cursor = JSON.parse(run(["init-client", "--print", "cursor", "--json"])) as { snippet: string };
+    const cursor = JSON.parse(await runInProcess(["init-client", "--print", "cursor", "--json"])) as { snippet: string };
     expect(cursor.snippet).toBe(claude.snippet);
 
-    const generic = JSON.parse(run(["init-client", "--print", "mcp", "--json"])) as { snippet: string };
+    const generic = JSON.parse(await runInProcess(["init-client", "--print", "mcp", "--json"])) as { snippet: string };
     expect(generic.snippet).toBe(claude.snippet);
 
-    const vscode = JSON.parse(run(["init-client", "--print", "vscode", "--json"])) as { snippet: string };
+    const vscode = JSON.parse(await runInProcess(["init-client", "--print", "vscode", "--json"])) as { snippet: string };
     // VS Code uses a `servers` map with an explicit transport type, not the `mcpServers` shape.
     expect(vscode.snippet).toContain('"servers"');
     expect(vscode.snippet).toContain('"type": "stdio"');
@@ -37,8 +92,8 @@ describe("loopover-mcp CLI — basics", () => {
     expect(vscode.snippet).not.toContain('"mcpServers"');
   });
 
-  it("prints human-approved agent profile instructions for supported MCP clients", () => {
-    const payload = JSON.parse(run(["init-client", "--print", "codex", "--agent-profile", "miner-planner", "--json"])) as {
+  it("prints human-approved agent profile instructions for supported MCP clients", async () => {
+    const payload = JSON.parse(await runInProcess(["init-client", "--print", "codex", "--agent-profile", "miner-planner", "--json"])) as {
       agentProfile: {
         id: string;
         title: string;
@@ -60,16 +115,16 @@ describe("loopover-mcp CLI — basics", () => {
     expect(payload.notes.join("\n")).toMatch(/human-approved/i);
     expect(JSON.stringify(payload)).not.toMatch(/github_pat_|gh[pousr]_|[A-Z0-9_]*TOKEN=|PRIVATE_KEY=/);
 
-    const plain = run(["init-client", "--print", "claude", "--agent-profile", "repo-owner-intake"]);
+    const plain = await runInProcess(["init-client", "--print", "claude", "--agent-profile", "repo-owner-intake"]);
     expect(plain).toContain('"mcpServers"');
     expect(plain).toContain("LoopOver agent profile: Repo-owner intake");
     expect(plain).toContain("loopover_repo_owner_intake_readiness");
     expect(plain).toMatch(/do not.*publish public output/i);
   });
 
-  it("supports all documented agent profiles without changing MCP server config", () => {
+  it("supports all documented agent profiles without changing MCP server config", async () => {
     for (const profile of ["miner-planner", "maintainer-triage", "repo-owner-intake"]) {
-      const payload = JSON.parse(run(["init-client", "--print", "mcp", "--agent-profile", profile, "--json"])) as {
+      const payload = JSON.parse(await runInProcess(["init-client", "--print", "mcp", "--agent-profile", profile, "--json"])) as {
         args: string[];
         snippet: string;
         agentProfile: { id: string; boundaries: string[]; whenNotToUse: string };
@@ -83,8 +138,8 @@ describe("loopover-mcp CLI — basics", () => {
     }
   });
 
-  it("prints the gate-throttled miner-auto-dev profile with a plan→implement→push driving loop (#781)", () => {
-    const payload = JSON.parse(run(["init-client", "--print", "codex", "--agent-profile", "miner-auto-dev", "--json"])) as {
+  it("prints the gate-throttled miner-auto-dev profile with a plan→implement→push driving loop (#781)", async () => {
+    const payload = JSON.parse(await runInProcess(["init-client", "--print", "codex", "--agent-profile", "miner-auto-dev", "--json"])) as {
       agentProfile: { id: string; title: string; recommendedTools: string[]; drivingLoop: string[]; boundaries: string[]; whenNotToUse: string };
       notes: string[];
     };
@@ -101,7 +156,7 @@ describe("loopover-mcp CLI — basics", () => {
     expect(payload.notes.join("\n")).toMatch(/runs LOCALLY|after the LoopOver gate/i);
     expect(payload.notes.join("\n")).not.toMatch(/keep all GitHub writes human-approved/i);
     // the rendered markdown carries the driving loop too
-    const plain = run(["init-client", "--print", "claude", "--agent-profile", "miner-auto-dev"]);
+    const plain = await runInProcess(["init-client", "--print", "claude", "--agent-profile", "miner-auto-dev"]);
     expect(plain).toContain("LoopOver agent profile: Miner auto-dev");
     expect(plain).toMatch(/Driving loop/);
     expect(JSON.stringify(payload)).not.toMatch(/github_pat_|gh[pousr]_|PRIVATE_KEY=/);
@@ -139,22 +194,20 @@ describe("loopover-mcp CLI — basics", () => {
 
   it("redacts private account-state workspace intelligence from preflight output", async () => {
     tempDir = createPacketRepo();
-    const url = await startFixtureServer();
+    process.env.LOOPOVER_TOKEN = "session-token";
+    try {
+      const jsonOutput = await runInProcess(["preflight", "--login", "JSONbored", "--cwd", tempDir, "--repo", "JSONbored/loopover", "--json"]);
+      const payload = JSON.parse(jsonOutput) as { workspaceIntelligence: { blockers: { accountState: string[] }; rerunWhen: string } };
+      expect(payload.workspaceIntelligence.blockers.accountState).toEqual([]);
+      expect(payload.workspaceIntelligence.rerunWhen).toBe("Rerun after any branch, base, or PR state changes before opening/submitting.");
+      expect(jsonOutput).not.toMatch(/Open PR count|Credibility|account\/queue maturity|projected score/i);
 
-    const env = {
-      LOOPOVER_API_URL: url,
-      LOOPOVER_TOKEN: "session-token",
-      LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
-    };
-    const jsonOutput = await runAsync(["preflight", "--login", "JSONbored", "--cwd", tempDir, "--repo", "JSONbored/loopover", "--json"], env);
-    const payload = JSON.parse(jsonOutput) as { workspaceIntelligence: { blockers: { accountState: string[] }; rerunWhen: string } };
-    expect(payload.workspaceIntelligence.blockers.accountState).toEqual([]);
-    expect(payload.workspaceIntelligence.rerunWhen).toBe("Rerun after any branch, base, or PR state changes before opening/submitting.");
-    expect(jsonOutput).not.toMatch(/Open PR count|Credibility|account\/queue maturity|projected score/i);
-
-    const humanOutput = await runAsync(["preflight", "--login", "JSONbored", "--cwd", tempDir, "--repo", "JSONbored/loopover"], env);
-    expect(humanOutput).not.toContain("Account/queue blockers:");
-    expect(humanOutput).not.toMatch(/Open PR count|Credibility|account\/queue maturity|projected score/i);
+      const humanOutput = await runInProcess(["preflight", "--login", "JSONbored", "--cwd", tempDir, "--repo", "JSONbored/loopover"]);
+      expect(humanOutput).not.toContain("Account/queue blockers:");
+      expect(humanOutput).not.toMatch(/Open PR count|Credibility|account\/queue maturity|projected score/i);
+    } finally {
+      delete process.env.LOOPOVER_TOKEN;
+    }
   });
 
   it("guides unknown commands to --help", () => {
@@ -191,8 +244,8 @@ describe("loopover-mcp CLI — basics", () => {
     expect(() => run(["doctr"])).toThrow(/Did you mean `doctor`\?/);
   });
 
-  it("prints shell completion scripts for bash, zsh, and fish", () => {
-    const bash = run(["completion", "bash"]);
+  it("prints shell completion scripts for bash, zsh, and fish", async () => {
+    const bash = await runInProcess(["completion", "bash"]);
     expect(bash).toContain("_loopover_mcp()");
     expect(bash).toContain("complete -F _loopover_mcp loopover-mcp");
     expect(bash).toContain("analyze-branch");
@@ -201,13 +254,13 @@ describe("loopover-mcp CLI — basics", () => {
     expect(bash).toContain("tools");
     expect(bash).toContain("plan status explain packet");
 
-    const zsh = run(["completion", "zsh"]);
+    const zsh = await runInProcess(["completion", "zsh"]);
     expect(zsh).toContain("#compdef loopover-mcp");
     expect(zsh).toContain("_describe 'command' commands");
     expect(zsh).toContain("commands=(login logout whoami config status changelog completion version tools doctor");
     expect(zsh).toContain("list create switch remove");
 
-    const fish = run(["completion", "fish"]);
+    const fish = await runInProcess(["completion", "fish"]);
     expect(fish).toContain("complete -c loopover-mcp");
     expect(fish).toContain("complete -c loopover-mcp -n __fish_use_subcommand -a config");
     expect(fish).toContain("complete -c loopover-mcp -n __fish_use_subcommand -a completion");
@@ -215,8 +268,8 @@ describe("loopover-mcp CLI — basics", () => {
     expect(fish).toContain("__fish_seen_subcommand_from agent");
   });
 
-  it("prints a PowerShell argument-completer script", () => {
-    const ps = run(["completion", "powershell"]);
+  it("prints a PowerShell argument-completer script", async () => {
+    const ps = await runInProcess(["completion", "powershell"]);
     expect(ps).toContain("Register-ArgumentCompleter -Native -CommandName loopover-mcp");
     expect(ps).toContain("[System.Management.Automation.CompletionResult]::new");
     expect(ps).toContain("$commands = @('login', 'logout'");
@@ -225,8 +278,8 @@ describe("loopover-mcp CLI — basics", () => {
     );
   });
 
-  it("emits completion as machine-readable json", () => {
-    const payload = JSON.parse(run(["completion", "zsh", "--json"])) as { shell: string; script: string };
+  it("emits completion as machine-readable json", async () => {
+    const payload = JSON.parse(await runInProcess(["completion", "zsh", "--json"])) as { shell: string; script: string };
     expect(payload.shell).toBe("zsh");
     expect(payload.script).toContain("#compdef loopover-mcp");
   });
@@ -283,14 +336,20 @@ describe("loopover-mcp CLI — basics", () => {
     }
   });
 
-  it("reports enabled unsupported source upload environment settings via config", () => {
-    const payload = JSON.parse(run(["config", "--json"], { LOOPOVER_UPLOAD_SOURCE: "true" })) as {
-      sourceUpload: { default: boolean; enabled: boolean; source: string; supported: boolean };
-    };
-    expect(payload.sourceUpload).toEqual({ default: false, enabled: true, source: "LOOPOVER_UPLOAD_SOURCE", supported: false });
+  it("reports enabled unsupported source upload environment settings via config", async () => {
+    // LOOPOVER_UPLOAD_SOURCE is read at call time (not module load), so it can vary per in-process call.
+    process.env.LOOPOVER_UPLOAD_SOURCE = "true";
+    try {
+      const payload = JSON.parse(await runInProcess(["config", "--json"])) as {
+        sourceUpload: { default: boolean; enabled: boolean; source: string; supported: boolean };
+      };
+      expect(payload.sourceUpload).toEqual({ default: false, enabled: true, source: "LOOPOVER_UPLOAD_SOURCE", supported: false });
 
-    const out = run(["config"], { LOOPOVER_UPLOAD_SOURCE: "true" });
-    expect(out).toContain("Source upload: enabled via LOOPOVER_UPLOAD_SOURCE (unsupported; unset LOOPOVER_UPLOAD_SOURCE)");
+      const out = await runInProcess(["config"]);
+      expect(out).toContain("Source upload: enabled via LOOPOVER_UPLOAD_SOURCE (unsupported; unset LOOPOVER_UPLOAD_SOURCE)");
+    } finally {
+      delete process.env.LOOPOVER_UPLOAD_SOURCE;
+    }
   });
 
   it("attributes API URL and token to a named profile from the config file", () => {

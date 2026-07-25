@@ -177,7 +177,14 @@ function normalizeCompositeWeights(config: Phase7CalibrationConfig): { historica
   };
   const total = raw.historicalReplay + raw.prOutcome;
   if (total <= 0) {
-    return { historicalReplay: DEFAULT_CONFIG.historicalReplayWeight, prOutcome: DEFAULT_CONFIG.prOutcomeWeight };
+    // #8644: PRESERVE an explicit all-zero weighting instead of silently substituting the defaults. This
+    // branch is reachable ONLY when both weights were explicitly 0 -- `finiteNonNegative` floors any invalid
+    // input to a positive default, which cannot sum to 0 -- so a 0 total is a deliberate "disable composite
+    // weighting" signal from the operator, not a degraded input. Returning {0,0} leaves weightTotal 0
+    // downstream, which the combinedAccuracy guard already renders as a null composite (the same state reached
+    // when no source contributes), matching the "preserve explicit zero" principle the sibling calibration
+    // composers follow -- rather than overriding the operator's intent back to a 50/50 default.
+    return { historicalReplay: 0, prOutcome: 0 };
   }
   return {
     historicalReplay: raw.historicalReplay / total,

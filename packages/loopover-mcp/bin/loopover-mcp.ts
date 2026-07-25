@@ -42,7 +42,7 @@ import { validateIdeaSubmission, buildTaskGraph, buildClaimPlan } from "@loopove
 import { z } from "zod";
 import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadata, probeLocalScorer, referenceScorePreviewExample, resolveScorePreviewCommand, resolveWorkspaceCwd, sanitizeLocalScorerStatus, setupGuidanceForLocalScorer, isTestFile } from "../lib/local-branch.js";
 import { formatTable } from "../lib/format-table.js";
-import { argsWantJson, describeCliError, reportCliFailure } from "../lib/cli-error.js";
+import { argsWantJson, describeCliError, reportCliFailure, waitForStdioFlush } from "../lib/cli-error.js";
 import { redactKnownLocalPaths, redactLocalPath } from "../lib/redact-local-path.js";
 // Aliased: this file's own recordStdioToolTelemetry is the chokepoint that calls it, and the two names sitting
 // side by side unaliased would read as the same function (#6238).
@@ -1673,14 +1673,19 @@ function stdioToolDescription(name: any) {
   return tool.description;
 }
 
-/* v8 ignore next 8 -- the CLI dispatch runs only in the launched process (runAsCliEntrypoint); an in-process
-   unit importer keeps it false and drives runCli/maintainCli directly instead (mcp-cli-plan-issues.test.ts). */
+/* v8 ignore next 11 -- the CLI dispatch runs only in the launched process (runAsCliEntrypoint); an in-process
+   unit importer keeps it false and drives runCli/maintainCli directly instead (mcp-cli-plan-issues.test.ts).
+   waitForStdioFlush itself (#8606, the reason process.exit() is no longer called bare here) is exported and
+   unit-tested directly in mcp-cli-error.test.ts. */
 if (runAsCliEntrypoint && cliArgs[0] !== "--stdio") {
   try {
     const exitCode = await runCli(cliArgs);
+    await waitForStdioFlush([process.stdout, process.stderr]);
     process.exit(typeof exitCode === "number" ? exitCode : 0);
   } catch (error) {
-    process.exit(reportCliFailure(argsWantJson(cliArgs), describeCliError(error), 1));
+    const failureExitCode = reportCliFailure(argsWantJson(cliArgs), describeCliError(error), 1);
+    await waitForStdioFlush([process.stdout, process.stderr]);
+    process.exit(failureExitCode);
   }
 }
 

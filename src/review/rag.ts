@@ -23,6 +23,7 @@
 
 import { errorStack } from "../utils/json";
 import { neutralizePromptInjection } from "./prompt-injection";
+import { isLockfile } from "../signals/path-matchers";
 
 // ── Injected infra interfaces (inlined from reviewbot src/platform/types.ts) ──────────────────────
 // These mirror the platform-adapter shapes so the host can pass its Vectorize/self-host-AI/D1-backed
@@ -152,8 +153,12 @@ export function ragEmbedBatchFromEnv(value: string | undefined): number {
 // ── Filtering: index CODE, not content/data corpora (the primary free-tier cost guard) ───────────
 const SKIP_DIR_RE =
   /(^|\/)(node_modules|dist|build|out|coverage|vendor|\.git|\.next|\.nuxt|\.svelte-kit|\.turbo|\.cache|target|\.gradle|_build|\.venv|venv|__pycache__|\.mypy_cache|\.pytest_cache|\.ruff_cache|\.tox|\.terraform|content|data|fixtures|__snapshots__|__fixtures__|testdata|generated|public)\//i;
-const SKIP_FILE_RE =
-  /(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb|cargo\.lock|poetry\.lock|composer\.lock|go\.sum)$|\.(min\.(js|css)|map|lock|snap)$/i;
+// Lockfile NAMES are matched by the canonical isLockfile()/LOCKFILE_NAMES set (path-matchers.ts) in
+// classifyRepoFile below, mirroring how DOC_EXT_RE already delegates to the canonical DOCS set -- a
+// hand-rolled name list here could (and did, #8649) miss non-.lock-suffixed lockfiles like
+// npm-shrinkwrap.json / packages.lock.json. This regex now only covers the suffix-shaped skips
+// (minified bundles, sourcemaps, the generic `.lock` suffix, snapshots).
+const SKIP_FILE_RE = /\.(min\.(js|css)|map|lock|snap)$/i;
 const BINARY_EXT_RE =
   /\.(png|jpe?g|gif|webp|avif|bmp|tiff?|heic|psd|svg|ico|pdf|zip|gz|tgz|tar|bz2|xz|zst|7z|rar|wasm|woff2?|otf|ttf|eot|mp4|mov|webm|mkv|mp3|wav|flac|ogg|opus|bin|exe|dll|so|dylib|node|class|jar|pyc|sqlite|db|parquet|onnx|gguf|safetensors|pt|pth|ckpt|npy|npz)$/i;
 const CODE_EXT_RE =
@@ -171,7 +176,7 @@ const ALLOW_EXTLESS_RE = /(^|\/)(Dockerfile|Makefile|Justfile|Procfile|go\.mod|g
 /** code | doc | skip. Skips dependency/build/content/data/binary paths — RAG indexes code for code
  *  review, not the (potentially huge) submission/content corpus. */
 export function classifyRepoFile(path: string): RagKind | "skip" {
-  if (SKIP_DIR_RE.test(path) || SKIP_FILE_RE.test(path) || BINARY_EXT_RE.test(path)) return "skip";
+  if (SKIP_DIR_RE.test(path) || SKIP_FILE_RE.test(path) || isLockfile(path) || BINARY_EXT_RE.test(path)) return "skip";
   if (DOC_EXT_RE.test(path)) return "doc";
   if (CODE_EXT_RE.test(path) || ALLOW_EXTLESS_RE.test(path)) return "code";
   return "skip";

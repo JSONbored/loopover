@@ -91,8 +91,8 @@ function collectEnvReads(source: string, fileName: string): EnvRead[] {
     } else if (ts.isCallExpression(node) && isProcessEnvNameHelperCall(node)) {
       addRead((node.arguments[0] as ts.StringLiteralLike).text);
     } else if (ts.isCallExpression(node) && isEnvNameLiteralArgHelperCall(node)) {
-      const argIndex = ENV_NAME_LITERAL_ARG_HELPERS.get((node.expression as ts.Identifier).text)!;
-      addRead((node.arguments[argIndex] as ts.StringLiteralLike).text);
+      const argIndexes = ENV_NAME_LITERAL_ARG_HELPERS.get((node.expression as ts.Identifier).text)!;
+      for (const argIndex of argIndexes) addRead((node.arguments[argIndex] as ts.StringLiteralLike).text);
     }
     ts.forEachChild(node, visit);
   };
@@ -115,12 +115,15 @@ function isStaticEnvHelperCall(node: ts.CallExpression): boolean {
 // isStaticEnvHelperCall above (envString) because these take the var NAME as arg[0], not arg[1] after a
 // container.
 const PROCESS_ENV_NAME_HELPERS = new Set(["parsePositiveIntEnv"]);
-const ENV_NAME_LITERAL_ARG_HELPERS = new Map([
-  ["resolveLocalStoreDbPath", 1],
+const ENV_NAME_LITERAL_ARG_HELPERS = new Map<string, readonly number[]>([
+  ["resolveLocalStoreDbPath", [1]],
   // createCliProvider(command, modelEnvKey, options, env) (packages/loopover-engine/src/miner/driver-factory.ts)
   // reads env[modelEnvKey] -- a computed access AST-invisible without this, since modelEnvKey is a parameter,
   // not a literal at the read site. The literal var name is only visible at the CALL site (arg index 1). (#6994)
-  ["createCliProvider", 1],
+  ["createCliProvider", [1]],
+  // resolveSeverityThreshold(env, repoFullName, "MIN_VAR", "REPO_MIN_VAR", ...) reads BOTH name literals at the
+  // call site (args 2 and 3) -- src/selfhost/posthog.ts:81's POSTHOG_MIN_SEVERITY / POSTHOG_REPO_MIN_SEVERITY.
+  ["resolveSeverityThreshold", [2, 3]],
 ]);
 
 function isProcessEnvNameHelperCall(node: ts.CallExpression): boolean {
@@ -129,8 +132,8 @@ function isProcessEnvNameHelperCall(node: ts.CallExpression): boolean {
 
 function isEnvNameLiteralArgHelperCall(node: ts.CallExpression): boolean {
   if (!ts.isIdentifier(node.expression)) return false;
-  const argIndex = ENV_NAME_LITERAL_ARG_HELPERS.get(node.expression.text);
-  return argIndex !== undefined && node.arguments.length > argIndex && ts.isStringLiteralLike(node.arguments[argIndex]!);
+  const argIndexes = ENV_NAME_LITERAL_ARG_HELPERS.get(node.expression.text);
+  return argIndexes !== undefined && argIndexes.every((index) => node.arguments.length > index && ts.isStringLiteralLike(node.arguments[index]!));
 }
 
 function bindingElementName(element: ts.BindingElement): string | null {
@@ -147,13 +150,26 @@ function unwrapEnvExpression(node: ts.Expression): ts.Expression {
   return node;
 }
 
+// True for `globalThis.process` (through any `as` casts / parens) -- the base of the `globalThis`-cast
+// `process.env` access src/selfhost/posthog.ts:179 uses for POSTHOG_SERVER_NAME. A property-access base, not a
+// bare identifier, so isEnvContainer's identifier branch alone never matched it (the Sentry-era predecessor
+// read the same knob as a plain `env.SENTRY_SERVER_NAME`, which did match).
+function isGlobalThisProcess(rawNode: ts.Expression): boolean {
+  const node = unwrapEnvExpression(rawNode);
+  if (!ts.isPropertyAccessExpression(node) || node.name.text !== "process") return false;
+  const base = unwrapEnvExpression(node.expression);
+  return ts.isIdentifier(base) && base.text === "globalThis";
+}
+
 function isEnvContainer(rawNode: ts.Expression): boolean {
   const node = unwrapEnvExpression(rawNode);
   if (ts.isIdentifier(node)) return node.text === "env";
   return (
     ts.isPropertyAccessExpression(node) &&
     node.name.text === "env" &&
-    ((ts.isIdentifier(node.expression) && (node.expression.text === "process" || node.expression.text === "c")) || isEnvContainer(node.expression))
+    ((ts.isIdentifier(node.expression) && (node.expression.text === "process" || node.expression.text === "c")) ||
+      isGlobalThisProcess(node.expression) ||
+      isEnvContainer(node.expression))
   );
 }
 

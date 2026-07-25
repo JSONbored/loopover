@@ -102,6 +102,37 @@ describe("gen-selfhost-env-reference (#2081)", () => {
     expect(after).toEqual(before);
   });
 
+  it("REGRESSION (#8627): recognizes a globalThis-cast process.env read (POSTHOG_SERVER_NAME shape)", () => {
+    const root = mkdtempSync(join(tmpdir(), "gt-env-reference-globalthis-"));
+    mkdirSync(join(root, "src", "selfhost"), { recursive: true });
+    // src/selfhost/posthog.ts:179 reads the server-name knob through a globalThis cast rather than a bare
+    // `env.` / `process.env.` access. The base of `.env` is a `.process` property access (not an identifier),
+    // so the old isEnvContainer walked past it and the var went unlisted in the generated reference.
+    writeFileSync(
+      join(root, "src", "selfhost", "posthog.ts"),
+      "const name = (globalThis as unknown as { process?: { env?: Record<string, string | undefined> } }).process?.env?.POSTHOG_SERVER_NAME;\n",
+    );
+    expect(collectSelfHostEnvVars({ rootDir: root })).toEqual([
+      { name: "POSTHOG_SERVER_NAME", firstReference: "src/selfhost/posthog.ts" },
+    ]);
+  });
+
+  it("REGRESSION (#8627): collects BOTH literal name args of resolveSeverityThreshold", () => {
+    const root = mkdtempSync(join(tmpdir(), "gt-env-reference-severity-"));
+    mkdirSync(join(root, "src", "selfhost"), { recursive: true });
+    // resolveSeverityThreshold(env, repoFullName, "<MIN>", "<REPO_MIN>", ...defaults) reads two env vars whose
+    // names appear only as literals at the call site (args 2 and 3) -- src/selfhost/posthog.ts:81. A single-index
+    // helper map caught at most one; both must be listed.
+    writeFileSync(
+      join(root, "src", "selfhost", "posthog.ts"),
+      'const t = resolveSeverityThreshold(env, repoFullName, "POSTHOG_MIN_SEVERITY", "POSTHOG_REPO_MIN_SEVERITY");\n',
+    );
+    expect(collectSelfHostEnvVars({ rootDir: root })).toEqual([
+      { name: "POSTHOG_MIN_SEVERITY", firstReference: "src/selfhost/posthog.ts" },
+      { name: "POSTHOG_REPO_MIN_SEVERITY", firstReference: "src/selfhost/posthog.ts" },
+    ]);
+  });
+
   it("scans configured JavaScript roots and rejects file-shaped directories", () => {
     const root = fixtureRoot();
 

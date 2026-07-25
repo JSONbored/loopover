@@ -414,6 +414,14 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/services/notify-pagerduty.ts",
   },
   {
+    name: "PAGERDUTY_MIN_SEVERITY",
+    firstReference: "src/services/notify-pagerduty.ts",
+  },
+  {
+    name: "PAGERDUTY_REPO_MIN_SEVERITY",
+    firstReference: "src/services/notify-pagerduty.ts",
+  },
+  {
     name: "PAGERDUTY_ROUTING_KEY",
     firstReference: "src/services/notify-pagerduty.ts",
   },
@@ -442,8 +450,20 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/selfhost/otel.ts",
   },
   {
+    name: "POSTHOG_MIN_SEVERITY",
+    firstReference: "src/selfhost/posthog.ts",
+  },
+  {
     name: "POSTHOG_RELEASE",
     firstReference: "src/selfhost/otel.ts",
+  },
+  {
+    name: "POSTHOG_REPO_MIN_SEVERITY",
+    firstReference: "src/selfhost/posthog.ts",
+  },
+  {
+    name: "POSTHOG_SERVER_NAME",
+    firstReference: "src/selfhost/posthog.ts",
   },
   {
     name: "PUBLIC_API_ORIGIN",
@@ -648,6 +668,8 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `OTEL_TRACES_SAMPLER` | `src/selfhost/otel.ts` |",
   "| `OTEL_TRACES_SAMPLER_ARG` | `src/selfhost/otel.ts` |",
   "| `PAGERDUTY_COOLDOWN_MINUTES` | `src/services/notify-pagerduty.ts` |",
+  "| `PAGERDUTY_MIN_SEVERITY` | `src/services/notify-pagerduty.ts` |",
+  "| `PAGERDUTY_REPO_MIN_SEVERITY` | `src/services/notify-pagerduty.ts` |",
   "| `PAGERDUTY_ROUTING_KEY` | `src/services/notify-pagerduty.ts` |",
   "| `PGPOOL_MAX` | `src/selfhost/queue-common.ts` |",
   "| `PGVECTOR_ENABLED` | `src/server.ts` |",
@@ -655,7 +677,10 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `POSTHOG_API_KEY` | `src/selfhost/otel.ts` |",
   "| `POSTHOG_ENVIRONMENT` | `src/selfhost/otel.ts` |",
   "| `POSTHOG_HOST` | `src/selfhost/otel.ts` |",
+  "| `POSTHOG_MIN_SEVERITY` | `src/selfhost/posthog.ts` |",
   "| `POSTHOG_RELEASE` | `src/selfhost/otel.ts` |",
+  "| `POSTHOG_REPO_MIN_SEVERITY` | `src/selfhost/posthog.ts` |",
+  "| `POSTHOG_SERVER_NAME` | `src/selfhost/posthog.ts` |",
   "| `PUBLIC_API_ORIGIN` | `src/selfhost/preflight.ts` |",
   "| `PUBLIC_ORIGIN_ACKNOWLEDGED` | `src/server.ts` |",
   "| `PUBLIC_SITE_ORIGIN` | `src/server.ts` |",

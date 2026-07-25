@@ -17,7 +17,8 @@
 //     (vite-discover-api.ts:13-14), so the CLI has none and the route adds none.
 // Re-evaluating the chokepoint here would therefore be a SECOND, competing gate on a path that already has
 // one (or needs none) — exactly what those route comments rule out, and it would gate chat more strictly than
-// the equivalent CLI invocation. So, like chat-governor-actions.js and chat-portfolio-actions.js, we satisfy
+// the equivalent CLI invocation. So, like chat-governor-actions.js (#8640 deleted the orphaned miner-side
+// chat-portfolio-actions.js; portfolio release/requeue now registers from apps/loopover-miner-ui), we satisfy
 // the registry's `governorGatedHandler` brand with an allow-stage evaluateGate. Execution still stays behind
 // the shared LOOPOVER_MINER_CHAT_ACTIONS flag via `dispatchChatAction`, and `evaluateGate` stays injectable.
 

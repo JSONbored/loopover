@@ -397,3 +397,19 @@ describe("formatPortfolioQueueChatResultMessage + MessageList (#6520)", () => {
     expect(result.messages[0]?.content).toMatch(/Couldn't determine a portfolio-queue target/i);
   });
 });
+
+// #8640: the live registration below is the ONLY portfolio release/requeue registration in the repo. The
+// deleted packages/loopover-miner/lib/chat-portfolio-actions.ts was a fully-orphaned duplicate that registered
+// the same handlers under the `portfolio_release` / `portfolio_requeue` UNDERSCORE names. This guard fails the
+// instant that duplicate (or its underscore action names) is reintroduced anywhere the live registration runs.
+describe("portfolio chat-action registration is single-sourced (#8640)", () => {
+  it("registers only the dotted portfolio.release/requeue names, never the deleted duplicate's underscore variant", () => {
+    const registry = isolatedRegistry();
+    registerPortfolioQueueChatActions({ registry: registry as never, evaluateGate: allowGate });
+    const names = registry.names();
+    expect(names).toContain(PORTFOLIO_QUEUE_CHAT_RELEASE_ACTION);
+    expect(names).toContain(PORTFOLIO_QUEUE_CHAT_REQUEUE_ACTION);
+    expect(names).not.toContain("portfolio_release");
+    expect(names).not.toContain("portfolio_requeue");
+  });
+});

@@ -1,8 +1,11 @@
 // Allowlist registry + governor-gated handler contract for chat-issued miner actions (#6519).
 //
-// Shared scaffolding ONLY: this module ships with ZERO registered actions. The three action-family child
-// issues (portfolio release/requeue, governor pause/resume, discover/attempt) register their handlers into
-// this registry -- none are added here, and the default `chatActionRegistry` instance starts empty.
+// Shared scaffolding ONLY: this module ships with ZERO registered actions. The action families register their
+// handlers into this registry -- none are added here, and the default `chatActionRegistry` instance starts
+// empty. Governor pause/resume and discover/attempt register from packages/loopover-miner; portfolio
+// release/requeue registers from apps/loopover-miner-ui (chat-portfolio-queue-actions.ts) under the
+// `portfolio.release` / `portfolio.requeue` names -- #8640 deleted an orphaned duplicate of that family that
+// had lived here in packages/loopover-miner under the divergent `portfolio_release` / `portfolio_requeue` names.
 //
 // The registration contract is the safety boundary. `register` refuses any handler that was not produced by
 // `governorGatedHandler()`, and `governorGatedHandler()` routes every invocation through

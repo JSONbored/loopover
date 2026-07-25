@@ -102,6 +102,58 @@ describe("gen-selfhost-env-reference (#2081)", () => {
     expect(after).toEqual(before);
   });
 
+  it("REGRESSION (#8652): detects env reads inside a for-of over a locally-declared literal-name array", () => {
+    const root = mkdtempSync(join(tmpdir(), "gt-env-reference-forof-"));
+    mkdirSync(join(root, "src", "selfhost"), { recursive: true });
+    // Mirrors src/selfhost/preflight.ts's CRITICAL_SECRET_VARS loop: the var names come from iterating a local
+    // const array of string literals, and `env[name]` is a computed access whose argument is the loop variable,
+    // not a string literal -- invisible to the plain element-access branch.
+    writeFileSync(
+      join(root, "src", "selfhost", "loops.ts"),
+      [
+        'const SECRET_VARS = ["ALPHA_TOKEN", "BETA_TOKEN"] as const;',
+        "for (const name of SECRET_VARS) {",
+        "  const value = nonBlank(env[name]);",
+        "  void value;",
+        "}",
+        // Negative: a literal-name array whose loop never touches env must NOT be surfaced.
+        'const UNUSED_VARS = ["GAMMA_UNUSED"];',
+        "for (const label of UNUSED_VARS) {",
+        "  console.log(label);",
+        "}",
+        // Negative: destructuring loop variable over a known literal array is not a plain `env[name]` read.
+        "for (const [first] of SECRET_VARS) {",
+        "  void first;",
+        "}",
+        // Negative: an assignment-target loop (no `const` declaration list) is ignored.
+        "let reused;",
+        "for (reused of SECRET_VARS) {",
+        "  void reused;",
+        "}",
+        // Negative: iterable is a call expression, not an identifier -> ignored.
+        "for (const other of Object.keys(env)) {",
+        "  void other;",
+        "}",
+        // Negative: iterable identifier is not a collected literal-string array -> ignored.
+        "for (const missing of NOT_DECLARED_HERE) {",
+        "  void env[missing];",
+        "}",
+        // Non-string / empty arrays are never treated as literal-name arrays.
+        "const NUMBERS = [1, 2, 3];",
+        "const EMPTY_ARRAY = [];",
+        "for (const n of NUMBERS) {",
+        "  void n;",
+        "}",
+        "void EMPTY_ARRAY;",
+        "",
+      ].join("\n"),
+    );
+    expect(collectSelfHostEnvVars({ rootDir: root })).toEqual([
+      { name: "ALPHA_TOKEN", firstReference: "src/selfhost/loops.ts" },
+      { name: "BETA_TOKEN", firstReference: "src/selfhost/loops.ts" },
+    ]);
+  });
+
   it("scans configured JavaScript roots and rejects file-shaped directories", () => {
     const root = fixtureRoot();
 

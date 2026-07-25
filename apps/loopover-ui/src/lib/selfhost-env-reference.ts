@@ -246,8 +246,20 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/queue/ai-review-orchestration.ts",
   },
   {
+    name: "GITHUB_WEBHOOK_SECRET",
+    firstReference: "src/selfhost/preflight.ts",
+  },
+  {
     name: "HOME",
     firstReference: "src/selfhost/ai.ts",
+  },
+  {
+    name: "INTERNAL_JOB_TOKEN",
+    firstReference: "src/selfhost/preflight.ts",
+  },
+  {
+    name: "LOOPOVER_API_TOKEN",
+    firstReference: "src/selfhost/preflight.ts",
   },
   {
     name: "LOOPOVER_ENABLE_PAGERDUTY",
@@ -256,6 +268,10 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   {
     name: "LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER",
     firstReference: "src/selfhost/ai.ts",
+  },
+  {
+    name: "LOOPOVER_MCP_TOKEN",
+    firstReference: "src/selfhost/preflight.ts",
   },
   {
     name: "LOOPOVER_REPO_CONFIG_DIR",
@@ -626,9 +642,13 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `GITHUB_INSTALLATION_CONCURRENCY_ENABLED` | `src/selfhost/installation-concurrency-admission.ts` |",
   "| `GITHUB_INSTALLATION_CONCURRENCY_LIMIT` | `src/selfhost/installation-concurrency-admission.ts` |",
   "| `GITHUB_PUBLIC_TOKEN` | `src/queue/ai-review-orchestration.ts` |",
+  "| `GITHUB_WEBHOOK_SECRET` | `src/selfhost/preflight.ts` |",
   "| `HOME` | `src/selfhost/ai.ts` |",
+  "| `INTERNAL_JOB_TOKEN` | `src/selfhost/preflight.ts` |",
+  "| `LOOPOVER_API_TOKEN` | `src/selfhost/preflight.ts` |",
   "| `LOOPOVER_ENABLE_PAGERDUTY` | `src/services/notify-pagerduty.ts` |",
   "| `LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER` | `src/selfhost/ai.ts` |",
+  "| `LOOPOVER_MCP_TOKEN` | `src/selfhost/preflight.ts` |",
   "| `LOOPOVER_REPO_CONFIG_DIR` | `src/server.ts` |",
   "| `LOOPOVER_REVIEW_CONTINUOUS` | `src/queue/processors.ts` |",
   "| `LOOPOVER_VERSION` | `src/selfhost/otel.ts` |",

@@ -91,8 +91,10 @@ function collectEnvReads(source: string, fileName: string): EnvRead[] {
     } else if (ts.isCallExpression(node) && isProcessEnvNameHelperCall(node)) {
       addRead((node.arguments[0] as ts.StringLiteralLike).text);
     } else if (ts.isCallExpression(node) && isEnvNameLiteralArgHelperCall(node)) {
-      const argIndex = ENV_NAME_LITERAL_ARG_HELPERS.get((node.expression as ts.Identifier).text)!;
-      addRead((node.arguments[argIndex] as ts.StringLiteralLike).text);
+      for (const argIndex of ENV_NAME_LITERAL_ARG_HELPERS.get((node.expression as ts.Identifier).text)!) {
+        const arg = node.arguments[argIndex];
+        if (arg && ts.isStringLiteralLike(arg)) addRead(arg.text);
+      }
     }
     ts.forEachChild(node, visit);
   };
@@ -115,12 +117,18 @@ function isStaticEnvHelperCall(node: ts.CallExpression): boolean {
 // isStaticEnvHelperCall above (envString) because these take the var NAME as arg[0], not arg[1] after a
 // container.
 const PROCESS_ENV_NAME_HELPERS = new Set(["parsePositiveIntEnv"]);
-const ENV_NAME_LITERAL_ARG_HELPERS = new Map([
-  ["resolveLocalStoreDbPath", 1],
+const ENV_NAME_LITERAL_ARG_HELPERS = new Map<string, readonly number[]>([
+  ["resolveLocalStoreDbPath", [1]],
   // createCliProvider(command, modelEnvKey, options, env) (packages/loopover-engine/src/miner/driver-factory.ts)
   // reads env[modelEnvKey] -- a computed access AST-invisible without this, since modelEnvKey is a parameter,
   // not a literal at the read site. The literal var name is only visible at the CALL site (arg index 1). (#6994)
-  ["createCliProvider", 1],
+  ["createCliProvider", [1]],
+  // resolveSeverityThreshold(env, repoFullName, globalVarName, repoMapVarName, fallback?) (src/services/
+  // severity-threshold.ts) reads env[globalVarName] and env[repoMapVarName] internally -- computed accesses
+  // AST-invisible at the read site, same as createCliProvider above. Both literal var names are only visible
+  // at the CALL site (arg indexes 2 and 3), e.g. POSTHOG_MIN_SEVERITY/POSTHOG_REPO_MIN_SEVERITY in
+  // src/selfhost/posthog.ts's resolvePostHogMinSeverity. (#8627)
+  ["resolveSeverityThreshold", [2, 3]],
 ]);
 
 function isProcessEnvNameHelperCall(node: ts.CallExpression): boolean {
@@ -129,8 +137,8 @@ function isProcessEnvNameHelperCall(node: ts.CallExpression): boolean {
 
 function isEnvNameLiteralArgHelperCall(node: ts.CallExpression): boolean {
   if (!ts.isIdentifier(node.expression)) return false;
-  const argIndex = ENV_NAME_LITERAL_ARG_HELPERS.get(node.expression.text);
-  return argIndex !== undefined && node.arguments.length > argIndex && ts.isStringLiteralLike(node.arguments[argIndex]!);
+  const argIndexes = ENV_NAME_LITERAL_ARG_HELPERS.get(node.expression.text);
+  return argIndexes !== undefined && argIndexes.some((argIndex) => node.arguments.length > argIndex && ts.isStringLiteralLike(node.arguments[argIndex]!));
 }
 
 function bindingElementName(element: ts.BindingElement): string | null {
@@ -150,11 +158,19 @@ function unwrapEnvExpression(node: ts.Expression): ts.Expression {
 function isEnvContainer(rawNode: ts.Expression): boolean {
   const node = unwrapEnvExpression(rawNode);
   if (ts.isIdentifier(node)) return node.text === "env";
-  return (
-    ts.isPropertyAccessExpression(node) &&
-    node.name.text === "env" &&
-    ((ts.isIdentifier(node.expression) && (node.expression.text === "process" || node.expression.text === "c")) || isEnvContainer(node.expression))
-  );
+  return ts.isPropertyAccessExpression(node) && node.name.text === "env" && (isProcessExpression(node.expression) || isEnvContainer(node.expression));
+}
+
+// The base of a `.env` access: a bare `process`/`c` identifier, or `globalThis.process` reached through a cast --
+// src/selfhost/posthog.ts reads `(globalThis as unknown as {process?: {env?: ...}}).process?.env?.POSTHOG_SERVER_NAME`,
+// where the base of `.env` is a property access on a cast expression rather than an identifier, so the
+// identifier-only check silently dropped POSTHOG_SERVER_NAME from the generated reference (#8627).
+function isProcessExpression(rawNode: ts.Expression): boolean {
+  const node = unwrapEnvExpression(rawNode);
+  if (ts.isIdentifier(node)) return node.text === "process" || node.text === "c";
+  if (!ts.isPropertyAccessExpression(node) || node.name.text !== "process") return false;
+  const base = unwrapEnvExpression(node.expression);
+  return ts.isIdentifier(base) && base.text === "globalThis";
 }
 
 function scriptKindFor(fileName: string): ts.ScriptKind {

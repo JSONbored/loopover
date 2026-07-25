@@ -52,16 +52,25 @@ describe("loopover-miner package skeleton (#2287)", () => {
     expect(miner.scripts["build:verify"]).toBe("node scripts/check-syntax.mjs");
   });
 
-  it("build:verify's syntax check actually covers the CLI bin entry points, not just lib/", () => {
-    // The pre-split build script explicitly node --check'd bin/loopover-miner.js and
-    // bin/loopover-miner-mcp.js by name; the glob-driven replacement must still reach them. Requires a
-    // prior build (dist/bin, dist/lib populated) -- same precondition as every other test in this file
-    // that reads real compiled output, and as the package's own real `npm run build`.
-    const result = spawnSync("node", ["scripts/check-syntax.mjs"], { cwd: minerRoot, encoding: "utf8" });
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("node --check passed for all");
-    expect(result.stdout).toMatch(/passed for all \d+ files in dist\/bin\/ and dist\/lib\//);
-  });
+  it(
+    "build:verify's syntax check actually covers the CLI bin entry points, not just lib/",
+    () => {
+      // The pre-split build script explicitly node --check'd bin/loopover-miner.js and
+      // bin/loopover-miner-mcp.js by name; the glob-driven replacement must still reach them. Requires a
+      // prior build (dist/bin, dist/lib populated) -- same precondition as every other test in this file
+      // that reads real compiled output, and as the package's own real `npm run build`.
+      // Genuinely real subprocess work (node --check over every dist/bin+dist/lib file), no redundancy to
+      // cut -- 5.5s in isolation but can exceed the default 15s testTimeout under the full suite's parallel
+      // load. 60000ms matches the same evidence-based ceiling already used for this repo's other
+      // real-subprocess timeout flakes (agent-sdk-driver.test.ts, miner-attempt-worktree.test.ts,
+      // miner-repo-clone.test.ts, #6869/#6871).
+      const result = spawnSync("node", ["scripts/check-syntax.mjs"], { cwd: minerRoot, encoding: "utf8" });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("node --check passed for all");
+      expect(result.stdout).toMatch(/passed for all \d+ files in dist\/bin\/ and dist\/lib\//);
+    },
+    60000,
+  );
 
   it("starts the CLI bin with a node shebang", () => {
     const bin = readFileSync(join(minerRoot, "dist/bin/loopover-miner.js"), "utf8");

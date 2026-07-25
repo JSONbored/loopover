@@ -430,12 +430,20 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/server.ts",
   },
   {
+    name: "POSTHOG_API_KEY",
+    firstReference: "src/selfhost/otel.ts",
+  },
+  {
     name: "POSTHOG_ENVIRONMENT",
-    firstReference: "src/server.ts",
+    firstReference: "src/selfhost/otel.ts",
+  },
+  {
+    name: "POSTHOG_HOST",
+    firstReference: "src/selfhost/otel.ts",
   },
   {
     name: "POSTHOG_RELEASE",
-    firstReference: "src/selfhost/posthog.ts",
+    firstReference: "src/selfhost/otel.ts",
   },
   {
     name: "PUBLIC_API_ORIGIN",
@@ -524,26 +532,6 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   {
     name: "SELFHOST_SETUP_TOKEN",
     firstReference: "src/selfhost/preflight.ts",
-  },
-  {
-    name: "SENTRY_DSN",
-    firstReference: "src/selfhost/sentry.ts",
-  },
-  {
-    name: "SENTRY_ENVIRONMENT",
-    firstReference: "src/selfhost/otel.ts",
-  },
-  {
-    name: "SENTRY_RELEASE",
-    firstReference: "src/selfhost/otel.ts",
-  },
-  {
-    name: "SENTRY_SERVER_NAME",
-    firstReference: "src/selfhost/sentry.ts",
-  },
-  {
-    name: "SENTRY_TRACES_SAMPLE_RATE",
-    firstReference: "src/selfhost/sentry.ts",
   },
   {
     name: "SETUP_OUTPUT_PATH",
@@ -664,8 +652,10 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `PGPOOL_MAX` | `src/selfhost/queue-common.ts` |",
   "| `PGVECTOR_ENABLED` | `src/server.ts` |",
   "| `PORT` | `src/server.ts` |",
-  "| `POSTHOG_ENVIRONMENT` | `src/server.ts` |",
-  "| `POSTHOG_RELEASE` | `src/selfhost/posthog.ts` |",
+  "| `POSTHOG_API_KEY` | `src/selfhost/otel.ts` |",
+  "| `POSTHOG_ENVIRONMENT` | `src/selfhost/otel.ts` |",
+  "| `POSTHOG_HOST` | `src/selfhost/otel.ts` |",
+  "| `POSTHOG_RELEASE` | `src/selfhost/otel.ts` |",
   "| `PUBLIC_API_ORIGIN` | `src/selfhost/preflight.ts` |",
   "| `PUBLIC_ORIGIN_ACKNOWLEDGED` | `src/server.ts` |",
   "| `PUBLIC_SITE_ORIGIN` | `src/server.ts` |",
@@ -688,11 +678,6 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `SELFHOST_BUNDLE_ALL` | `scripts/build-selfhost.ts` |",
   "| `SELFHOST_SERVICE` | `scripts/smoke-observability-traces.ts` |",
   "| `SELFHOST_SETUP_TOKEN` | `src/selfhost/preflight.ts` |",
-  "| `SENTRY_DSN` | `src/selfhost/sentry.ts` |",
-  "| `SENTRY_ENVIRONMENT` | `src/selfhost/otel.ts` |",
-  "| `SENTRY_RELEASE` | `src/selfhost/otel.ts` |",
-  "| `SENTRY_SERVER_NAME` | `src/selfhost/sentry.ts` |",
-  "| `SENTRY_TRACES_SAMPLE_RATE` | `src/selfhost/sentry.ts` |",
   "| `SETUP_OUTPUT_PATH` | `src/server.ts` |",
   "| `SLACK_WEBHOOK_URL` | `src/services/notify-discord.ts` |",
 ].join("\n");

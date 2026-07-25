@@ -80,7 +80,7 @@ When you change runtime behavior, update the docs page **and** extend the drift 
 
 - **Core stack (default):** loopover + Redis + SQLite on the mounted data volume; `SELFHOST_DEPLOYMENT_MODE=dry-run` in `.env.selfhost.example`.
 - **Optional profiles:** Postgres, REES sidecar, observability (Prometheus, Grafana, OTEL, Tempo, Loki), and backup — each documented on its concern page; none are required for a first healthy instance.
-- **Sentry:** opt-in and off by default — set an operator-owned `SENTRY_DSN` or mount `SENTRY_DSN_FILE`; see [Operations](/docs/self-hosting-operations).
+- **PostHog error tracking:** opt-in and off by default, replaces Sentry — set an operator-owned `POSTHOG_API_KEY`; see [Operations](/docs/self-hosting-operations).
 - **AI / RAG / REES:** off in the starter env until webhook delivery and deterministic review are verified; each has explicit enablement switches.
 - **Operator-owned paths:** `loopover-config/`, `loopover-data`, and secrets via `.env` or `*_FILE` mounts — never baked into images.
 

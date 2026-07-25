@@ -40,7 +40,6 @@ import {
 } from "../settings/moderation-rules";
 import { incr } from "../selfhost/metrics";
 import { shouldWaitForOlderSiblings } from "../review/merge-train";
-import { captureError } from "../selfhost/sentry";
 import { capturePostHogError } from "../selfhost/posthog";
 import { claimContributorCapLock, releaseContributorCapLock } from "../queue/transient-locks";
 
@@ -631,15 +630,14 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
         // LOOPOVER-24 (regressed shape): a 422 "There are no new commits on the base branch." means the head
         // was already up to date when update-branch fired -- the readiness check acted on a stale/cached
         // mergeable_state read. Nothing went wrong and nothing is stuck: the caller falls through to reviewing
-        // the current head exactly as in the conflict case above. Audit-only; never a Sentry page.
+        // the current head exactly as in the conflict case above. Audit-only; never a PostHog page.
       } else {
         // Non-merge action classes have no retry loop -- a single failure here is already this pass's terminal
         // outcome (the planner may re-attempt on the next sweep if the underlying condition clears itself), so
         // it is captured immediately rather than only on eventual exhaustion. Mirrors handleMergeFailure's own
         // terminal-hold capture below and the "a real failure the maintainer must see" convention already used
-        // for review-pass failures (selfhost/sentry.ts's captureReviewFailure, queue/processors.ts). Previously
-        // this class of failure was audit-log-only, invisible without a manual audit_events query.
-        captureError(error, { kind: "agent_action_execution_failed", repo: ctx.repoFullName, pr: ctx.pullNumber, installationId: ctx.installationId, actionClass: action.actionClass }, "agent_action_execution_failed");
+        // for review-pass failures (selfhost/posthog.ts's capturePostHogReviewFailure, queue/processors.ts).
+        // Previously this class of failure was audit-log-only, invisible without a manual audit_events query.
         capturePostHogError(error, { kind: "agent_action_execution_failed", repo: ctx.repoFullName, pr: ctx.pullNumber, installationId: ctx.installationId, actionClass: action.actionClass }, "agent_action_execution_failed");
       }
       // #2265: a permission-looking 403 on a PR-write mutation can mean the LOCAL installations.permissions
@@ -942,7 +940,6 @@ export async function executeIssueMaintenanceActions(env: Env, ctx: IssueActionE
       await audit("error", errorMessage(error));
       // Mirrors executeAgentMaintenanceActions's non-merge capture below -- issue-side label/close has no retry
       // loop either, so a single failure here is already this pass's terminal outcome.
-      captureError(error, { kind: "agent_issue_action_execution_failed", repo: ctx.repoFullName, issue: ctx.issueNumber, installationId: ctx.installationId, actionClass: action.actionClass }, "agent_issue_action_execution_failed");
       capturePostHogError(error, { kind: "agent_issue_action_execution_failed", repo: ctx.repoFullName, issue: ctx.issueNumber, installationId: ctx.installationId, actionClass: action.actionClass }, "agent_issue_action_execution_failed");
     }
   }
@@ -973,13 +970,12 @@ async function handleMergeFailure(env: Env, ctx: AgentActionExecutionContext, er
   if (!terminal) return;
   await markPullRequestMergeBlocked(env, ctx.repoFullName, ctx.pullNumber, headSha, reason);
   // A merge held for a human is the terminal outcome of this whole retry sequence -- exactly the "a real
-  // failure the maintainer must see" case captureReviewFailure already covers for an exhausted AI review pass.
-  // Fires once per hold (not per retry attempt), so a transient failure that resolves within MERGE_RETRY_CAP
-  // never reaches Sentry at all.
+  // failure the maintainer must see" case capturePostHogReviewFailure already covers for an exhausted AI
+  // review pass. Fires once per hold (not per retry attempt), so a transient failure that resolves within
+  // MERGE_RETRY_CAP never reaches PostHog at all.
   // Named "agent_merge_blocked" (not the caught exception's own class, e.g. "HttpError") so every terminal
   // merge hold groups under one readable title regardless of which HTTP status caused it -- the specific
   // status/reason stays in the message and the "review" context object either way.
-  captureError(error, { kind: "agent_merge_blocked", repo: ctx.repoFullName, pr: ctx.pullNumber, installationId: ctx.installationId, reason: reason.slice(0, 280) }, "agent_merge_blocked");
   capturePostHogError(error, { kind: "agent_merge_blocked", repo: ctx.repoFullName, pr: ctx.pullNumber, installationId: ctx.installationId, reason: reason.slice(0, 280) }, "agent_merge_blocked");
   await recordAuditEvent(env, {
     eventType: "agent.action.merge_blocked",

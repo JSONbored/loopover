@@ -1,5 +1,5 @@
-// Shared review-pipeline span wrapper (#1734). Opens ONE OpenTelemetry boundary; Sentry receives the same span via
-// the SentrySpanProcessor bridge when configured, avoiding duplicate direct Sentry spans.
+// Shared review-pipeline span wrapper (#1734). Opens ONE OpenTelemetry boundary, exported over OTLP when
+// configured (see ./otel's resolveOtelTraceEndpoint, including its PostHog-derived default).
 import { withOtelSpan } from "./otel";
 
 export async function withReviewSpan<T>(

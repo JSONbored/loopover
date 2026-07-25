@@ -1,7 +1,7 @@
 // Optional host-CPU-pressure hint for maintenance-job admission (see maintenance-admission.ts). Node-only --
 // `node:os`'s loadavg() has no meaningful signal on Cloudflare Workers -- this module is imported ONLY by the
 // self-host Node queue backends (sqlite-queue.ts / pg-queue.ts), never by src/index.ts's Worker bundle, so a
-// static `node:os` import here is safe (mirrors the existing `hostname` import in selfhost/sentry.ts).
+// static `node:os` import here is safe (mirrors the existing `hostname` import in selfhost/posthog.ts).
 import { cpus, loadavg } from "node:os";
 
 /** The 1-minute load average normalized per logical core, so the SAME threshold means the same thing on a

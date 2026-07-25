@@ -1,21 +1,7 @@
 import type { EnqueueWebhookResult } from "../github/webhook";
 import { ORB_RELAY_REGISTER_UNHEALTHY_FAILURE_STREAK, type OrbRelayRegistrationState } from "../orb/broker-client";
 import { incr } from "./metrics";
-import { withSentryMonitor } from "./sentry";
 import { withPostHogMonitor } from "./posthog";
-
-/** Run both monitor wrappers around one callback: Sentry's structured check-in + PostHog's heartbeat event,
- *  in parallel (#8287) -- neither observes the other's outcome, each independently no-ops when its own sink
- *  is unconfigured. The callback itself only runs ONCE; withPostHogMonitor wraps a thunk that replays whatever
- *  withSentryMonitor already produced/threw, so a failure is captured by both sinks without executing the
- *  underlying work twice. */
-async function withBothMonitors<T>(
-  name: Parameters<typeof withSentryMonitor>[0] & Parameters<typeof withPostHogMonitor>[0],
-  context: Record<string, unknown> | undefined,
-  callback: () => Promise<T>,
-): Promise<T> {
-  return withPostHogMonitor(name, context, () => withSentryMonitor(name, context, callback));
-}
 
 export type OrbRelayEvent = {
   deliveryId: string;
@@ -73,7 +59,7 @@ export async function runScheduledLoopWithMonitor<T>(
   cron: string,
   scheduled: () => T | Promise<T>,
 ): Promise<T> {
-  return withBothMonitors(
+  return withPostHogMonitor(
     "scheduled-loop",
     { jobType: "scheduled-loop", cron },
     () => Promise.resolve(scheduled()),
@@ -84,7 +70,7 @@ export async function runOrbExportWithMonitor(
   exportBatch: () => Promise<number>,
   log: (line: string) => void = console.log,
 ): Promise<void> {
-  await withBothMonitors("orb-export", { jobType: "orb-export" }, async () => {
+  await withPostHogMonitor("orb-export", { jobType: "orb-export" }, async () => {
     const exported = await exportBatch();
     if (exported > 0)
       log(JSON.stringify({ event: "selfhost_orb_export", exported }));
@@ -105,7 +91,7 @@ export async function drainOrbRelayWithMonitor(args: {
   log?: (line: string) => void;
   nowMs?: number;
 }): Promise<void> {
-  await withBothMonitors(
+  await withPostHogMonitor(
     "orb-relay-drain",
     { jobType: "orb-relay-drain", pendingAckCount: args.state.pendingAck.length },
     async () => {
@@ -250,7 +236,7 @@ export function isOrbRelayRegistrationAlerting(args: {
  *  one-shot boot-time call never recovers from a transient broker outage without a process restart. Called on
  *  a timer (state persists across calls), it observes + logs only the calls that actually attempted the
  *  network request (`registered` / `failed`) — `already_registered` / `backoff` / `skipped` are silent no-ops
- *  so a healthy or intentionally-idle container does not spam logs/Sentry every tick. `drainState` is the
+ *  so a healthy or intentionally-idle container does not spam logs/PostHog every tick. `drainState` is the
  *  pull-mode drain loop's shared state (omitted/undefined in push mode, where there is no drain loop) -- its
  *  `lastDrainAtMs` feeds the no-progress-window half of {@link isOrbRelayRegistrationAlerting}. */
 export async function registerOrbRelayWithMonitor(args: {
@@ -261,7 +247,7 @@ export async function registerOrbRelayWithMonitor(args: {
   log?: (line: string) => void;
   nowMs?: number;
 }): Promise<void> {
-  await withBothMonitors("orb-relay-register", { jobType: "orb-relay-register" }, async () => {
+  await withPostHogMonitor("orb-relay-register", { jobType: "orb-relay-register" }, async () => {
     const result = await args.register(args.env, args.state);
     if (result.status === "skipped" || result.status === "already_registered" || result.status === "backoff") return;
     const mode = args.env.ORB_RELAY_MODE === "pull" ? "pull" : "push";

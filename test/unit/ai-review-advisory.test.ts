@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildAiReviewDiff, claimAiReviewLock, runAiReviewForAdvisory, shouldStartAiReviewForAdvisory } from "../../src/queue/processors";
 import { resolveAiReviewableAuthor } from "../../src/queue/ai-review-orchestration";
 import { BEST_REVIEW_MODELS, INCOHERENT_DIFF_ASSESSMENT } from "../../src/services/ai-review";
-import * as sentryModule from "../../src/selfhost/sentry";
+import * as posthogModule from "../../src/selfhost/posthog";
 import { upsertRepositoryAiKey } from "../../src/db/repositories";
 import type { Advisory, PullRequestFileRecord, RepositorySettings } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
@@ -432,7 +432,7 @@ describe("runAiReviewForAdvisory", () => {
     // The first slot parses; the second slot's primary AND its reliable fallback fail → no consensus possible.
     const run = (async (model: string) => ({ response: model === BEST_REVIEW_MODELS[0] ? notesOnlyJson() : "garbage" })) as unknown as () => Promise<unknown>;
     const env = aiEnv(run);
-    const captureSpy = vi.spyOn(sentryModule, "captureReviewFailure");
+    const captureSpy = vi.spyOn(posthogModule, "capturePostHogReviewFailure");
     const result = await runAiReviewForAdvisory(env, {
       mode: "live",
       settings: { aiReviewMode: "block" } as RepositorySettings,
@@ -473,7 +473,7 @@ describe("runAiReviewForAdvisory", () => {
     // opinion parses to null → the combiner yields `inconclusive`, the same review-failure path as a missing opinion.
     const incoherent = JSON.stringify({ assessment: INCOHERENT_DIFF_ASSESSMENT, blockers: [], nits: [], suggestions: [] });
     const env = aiEnv((async () => ({ response: incoherent })) as unknown as () => Promise<unknown>);
-    const captureSpy = vi.spyOn(sentryModule, "captureReviewFailure");
+    const captureSpy = vi.spyOn(posthogModule, "capturePostHogReviewFailure");
     await runAiReviewForAdvisory(env, {
       mode: "live",
       settings: { aiReviewMode: "block" } as RepositorySettings,
@@ -725,7 +725,7 @@ describe("runAiReviewForAdvisory", () => {
 
   it("holds for manual review when the AI provider produces no public notes", async () => {
     const adv = advisory();
-    const captureSpy = vi.spyOn(sentryModule, "captureReviewFailure");
+    const captureSpy = vi.spyOn(posthogModule, "capturePostHogReviewFailure");
     const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: "" })), {
       mode: "live",
       settings: { aiReviewMode: "advisory" } as RepositorySettings,

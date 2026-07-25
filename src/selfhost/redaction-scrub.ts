@@ -38,6 +38,39 @@ export const PRIVATE_TEXT =
 export const PUBLIC_UNSAFE_SCRUB = new RegExp(String.raw`\b(${PUBLIC_UNSAFE_TERMS})\b`, "gi");
 export const REDACTED = "[redacted]";
 
+/** Low-cardinality operational fields safe to surface as an indexed tag/property on a captured error --
+ *  formerly sentry.ts's SENTRY_OPERATIONAL_TAG_KEYS, moved here (2026-07-25 Sentry removal) since posthog.ts
+ *  is now this repo's only consumer. */
+export const OPERATIONAL_TAG_KEYS = [
+  "repo",
+  "repository",
+  "owner",
+  "installation_id_hash",
+  "pull",
+  "pullNumber",
+  "pr",
+  "head_sha",
+  "project",
+  "kind",
+  "subsystem",
+  "job_type",
+  "jobType",
+  "reason",
+  "result",
+  "deliveryId",
+  "provider",
+  "model",
+  "effort",
+  "timeoutMs",
+  "trace_id",
+  "span_id",
+  "operation",
+  "agent",
+  "decision_outcome",
+  "event",
+  "monitor",
+] as const;
+
 export function nonBlank(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;

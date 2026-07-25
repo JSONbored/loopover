@@ -8,7 +8,7 @@ import * as rateLimitModule from "../../src/github/rate-limit";
 import * as repositoriesModule from "../../src/db/repositories";
 import * as reviewEffortModule from "../../src/review/review-effort";
 import * as repositorySettingsModule from "../../src/settings/repository-settings";
-import * as sentryModule from "../../src/selfhost/sentry";
+import * as posthogModule from "../../src/selfhost/posthog";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { jobCoalesceKey } from "../../src/selfhost/queue-common";
 import {
@@ -6307,7 +6307,7 @@ describe("queue processors", () => {
       if (url.includes("/commits/context500/check-runs")) return new Response("GitHub check API failed", { status: 500 });
       return new Response("not found", { status: 404 });
     });
-    const captureSpy = vi.spyOn(sentryModule, "captureReviewFailure");
+    const captureSpy = vi.spyOn(posthogModule, "capturePostHogReviewFailure");
 
     await expect(
       processJob(env, {

@@ -76,7 +76,7 @@ import { STRUCTURED_CLOSE_REASONS_MAX_COUNT } from "../../src/settings/agent-exe
 import { AGENT_LABEL_PENDING_CLOSURE } from "../../src/review/linked-issue-hard-rules";
 import { clearProcessLocalGlobalAgentFrozenCacheForTest, getGlobalContributorBlacklist, isGlobalAgentFrozen, setGlobalAgentFrozen, upsertGlobalModerationConfig, upsertPullRequestFile, upsertPullRequestFromGitHub } from "../../src/db/repositories";
 import * as repositoriesModule from "../../src/db/repositories";
-import * as sentryModule from "../../src/selfhost/sentry";
+import * as posthogModule from "../../src/selfhost/posthog";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { createTestEnv } from "../helpers/d1";
 import { MODERATION_VIOLATION_EVENT_TYPE } from "../../src/settings/moderation-rules";
@@ -1381,7 +1381,7 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
   it("records a failed mutation as error rather than swallowing it", async () => {
     const env = createTestEnv({});
     vi.mocked(mergePullRequest).mockRejectedValueOnce(new Error("Pull Request is not mergeable"));
-    const captureSpy = vi.spyOn(sentryModule, "captureError");
+    const captureSpy = vi.spyOn(posthogModule, "capturePostHogError");
     const outcomes = await executeAgentMaintenanceActions(env, ctx(), [merge]);
     expect(outcomes[0]?.outcome).toBe("error");
     expect(outcomes[0]?.detail).toMatch(/not mergeable/i);
@@ -1396,7 +1396,7 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     const env = createTestEnv({});
     await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "c" }, head: { sha: "sha7" }, labels: [], body: "" });
     vi.mocked(mergePullRequest).mockRejectedValueOnce(Object.assign(new Error("Resource not accessible by integration"), { status: 403 }));
-    const captureSpy = vi.spyOn(sentryModule, "captureError");
+    const captureSpy = vi.spyOn(posthogModule, "capturePostHogError");
 
     const outcomes = await executeAgentMaintenanceActions(env, ctx(), [merge]);
 
@@ -1420,7 +1420,7 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
   it("opportunistically refreshes installation health when a PR-write mutation fails with a 403 (#2265)", async () => {
     const env = createTestEnv({});
     vi.mocked(closePullRequest).mockRejectedValueOnce(Object.assign(new Error("Resource not accessible by integration"), { status: 403 }));
-    const captureSpy = vi.spyOn(sentryModule, "captureError");
+    const captureSpy = vi.spyOn(posthogModule, "capturePostHogError");
     const outcomes = await executeAgentMaintenanceActions(env, ctx(), [close]);
     expect(outcomes[0]?.outcome).toBe("error");
     expect(refreshInstallationHealthForInstallation).toHaveBeenCalledTimes(1);
@@ -1459,7 +1459,7 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
   it("REGRESSION (LOOPOVER-24): a merge-conflict update_branch failure does not page Sentry", async () => {
     const env = createTestEnv({});
     vi.mocked(updatePullRequestBranch).mockRejectedValueOnce(new Error("merge conflict between base and head"));
-    const captureSpy = vi.spyOn(sentryModule, "captureError");
+    const captureSpy = vi.spyOn(posthogModule, "capturePostHogError");
 
     const outcomes = await executeAgentMaintenanceActions(env, ctx(), [updateBranch]);
 
@@ -1479,7 +1479,7 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     vi.mocked(updatePullRequestBranch).mockRejectedValueOnce(
       Object.assign(new Error("There are no new commits on the base branch. - https://docs.github.com/rest/pulls/pulls#update-a-pull-request-branch"), { status: 422 }),
     );
-    const captureSpy = vi.spyOn(sentryModule, "captureError");
+    const captureSpy = vi.spyOn(posthogModule, "capturePostHogError");
 
     const outcomes = await executeAgentMaintenanceActions(env, ctx(), [updateBranch]);
 
@@ -1492,7 +1492,7 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
   it("a non-conflict update_branch failure still pages Sentry (#agent_action_execution_failed unchanged)", async () => {
     const env = createTestEnv({});
     vi.mocked(updatePullRequestBranch).mockRejectedValueOnce(new Error("network timeout"));
-    const captureSpy = vi.spyOn(sentryModule, "captureError");
+    const captureSpy = vi.spyOn(posthogModule, "capturePostHogError");
 
     await executeAgentMaintenanceActions(env, ctx(), [updateBranch]);
 
@@ -1956,7 +1956,7 @@ describe("executeIssueMaintenanceActions (#2270 issue-side actuation)", () => {
   it("records a failed mutation as error rather than swallowing it", async () => {
     const env = createTestEnv({});
     vi.mocked(closeIssue).mockRejectedValueOnce(new Error("github 500"));
-    const captureSpy = vi.spyOn(sentryModule, "captureError");
+    const captureSpy = vi.spyOn(posthogModule, "capturePostHogError");
     const outcomes = await executeIssueMaintenanceActions(env, issueCtx(), [issueClose]);
     expect(outcomes[0]?.outcome).toBe("error");
     expect((await auditFor(env, "close"))?.outcome).toBe("error");

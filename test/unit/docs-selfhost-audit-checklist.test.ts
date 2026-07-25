@@ -73,10 +73,10 @@ describe("self-host docs accuracy audit (#1829)", () => {
     );
   });
 
-  it("documents Sentry as opt-in with an operator-owned DSN", () => {
+  it("documents PostHog error tracking as opt-in with an operator-owned API key", () => {
     expect(auditSource).toMatch(/opt-in and off by default/i);
-    expect(auditSource).toContain("SENTRY_DSN");
-    expect(auditSource).toContain("SENTRY_DSN_FILE");
+    expect(auditSource).toContain("POSTHOG_API_KEY");
+    expect(auditSource).toContain("replaces Sentry");
   });
 
   it("records the loose-docs consolidation plan with canonical website links", () => {

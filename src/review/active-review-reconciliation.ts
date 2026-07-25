@@ -115,8 +115,8 @@ export async function runActiveReviewReconciliation(env: Env, nowMs: number = Da
         // warn, not error (LOOPOVER-2K): a successful terminalization is this feature WORKING, not an anomaly --
         // logging it at error level turned a backlog drain into 547 Sentry error events in a day (one per healed
         // row, message-fingerprint-collapsed into a single escalating issue). warn stays visible in stdout/
-        // Workers Logs but sits below the default SENTRY_MIN_SEVERITY of "error" (selfhost/sentry.ts's
-        // resolveSentryMinSeverity), so Sentry only sees it when an operator has explicitly lowered the
+        // Workers Logs but sits below the default POSTHOG_MIN_SEVERITY of "error" (selfhost/posthog.ts's
+        // resolvePostHogMinSeverity), so PostHog only sees it when an operator has explicitly lowered the
         // threshold. The row_error/scan-error paths below stay at error: a FAILED heal is still an anomaly.
         console.warn(
           JSON.stringify({

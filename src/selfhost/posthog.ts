@@ -14,10 +14,12 @@
 //
 // Env-var decision (#8287's own deliverable): POSTHOG_API_KEY/POSTHOG_HOST are the SAME vars #6235's MCP
 // telemetry (src/mcp/telemetry.ts) already reads off the typed Cloudflare Env -- one project key activates
-// both surfaces, the MCP tool-call allowlist (#6228) is untouched. Everything else here (POSTHOG_MIN_SEVERITY,
-// POSTHOG_REPO_MIN_SEVERITY, POSTHOG_ENVIRONMENT, POSTHOG_SERVER_NAME, POSTHOG_RELEASE) is self-host-only,
-// read off real process.env, never added to src/env.d.ts's typed Env, matching that file's precedent for
-// self-host-exclusive config.
+// both surfaces, the MCP tool-call allowlist (#6228) is untouched. POSTHOG_API_KEY additionally falls back to
+// LOOPOVER_CENTRAL_POSTHOG_KEY when unset (#8626) -- the fleet-wide key the hosted control-plane injects into a
+// tenant container; operator-set POSTHOG_API_KEY keeps precedence, this is only a hosted-image fallback source.
+// Everything else here (POSTHOG_MIN_SEVERITY, POSTHOG_REPO_MIN_SEVERITY, POSTHOG_ENVIRONMENT, POSTHOG_SERVER_NAME,
+// POSTHOG_RELEASE, and LOOPOVER_CENTRAL_POSTHOG_KEY) is self-host-only, read off real process.env, never added to
+// src/env.d.ts's typed Env, matching that file's precedent for self-host-exclusive config.
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import {
@@ -133,7 +135,12 @@ function operationalProperties(context: Record<string, unknown> | undefined): Re
  *  the SAME var #6235's MCP telemetry reads (env-var decision, #8287). `env` is real process.env, matching
  *  initSentry's identical NodeJS.ProcessEnv shape. */
 export async function initPostHog(env: NodeJS.ProcessEnv): Promise<boolean> {
-  const apiKey = processEnvString(env, "POSTHOG_API_KEY");
+  // #8626: POSTHOG_API_KEY is the operator's own explicit config (highest precedence, unchanged); when it is
+  // unset, fall back to LOOPOVER_CENTRAL_POSTHOG_KEY -- the fleet-wide key the hosted control-plane injects into
+  // a tenant container (control-plane/src/container-driver.ts) so a hosted image reports to the loopover-owned
+  // project without the operator setting anything. A hosted-injected fallback, never a silent override of an
+  // operator's explicit POSTHOG_API_KEY. When neither is set, initPostHog stays a complete no-op (returns false).
+  const apiKey = processEnvString(env, "POSTHOG_API_KEY") ?? processEnvString(env, "LOOPOVER_CENTRAL_POSTHOG_KEY");
   if (!apiKey) return false;
   await loadNodeHasher();
   const { PostHog } = await import("posthog-node");

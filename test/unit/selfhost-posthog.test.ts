@@ -77,6 +77,25 @@ describe("initPostHog", () => {
     expect(options.enableExceptionAutocapture).toBe(true);
     expect(options.before_send).toBe(scrubPostHogEvent);
   });
+
+  it("falls back to LOOPOVER_CENTRAL_POSTHOG_KEY when POSTHOG_API_KEY is unset (#8626)", async () => {
+    const enabled = await initPostHog({ LOOPOVER_CENTRAL_POSTHOG_KEY: "phc_central" } as unknown as NodeJS.ProcessEnv);
+    expect(enabled).toBe(true);
+    expect(mocks.PostHog).toHaveBeenCalledWith("phc_central", expect.objectContaining({ host: "https://us.i.posthog.com" }));
+  });
+
+  it("keeps POSTHOG_API_KEY's precedence when both it and LOOPOVER_CENTRAL_POSTHOG_KEY are set (#8626)", async () => {
+    const enabled = await initPostHog({ POSTHOG_API_KEY: "phc_operator", LOOPOVER_CENTRAL_POSTHOG_KEY: "phc_central" } as unknown as NodeJS.ProcessEnv);
+    expect(enabled).toBe(true);
+    expect(mocks.PostHog).toHaveBeenCalledWith("phc_operator", expect.anything());
+    expect(mocks.PostHog).not.toHaveBeenCalledWith("phc_central", expect.anything());
+  });
+
+  it("stays a no-op when neither POSTHOG_API_KEY nor LOOPOVER_CENTRAL_POSTHOG_KEY is set (#8626)", async () => {
+    const enabled = await initPostHog({} as unknown as NodeJS.ProcessEnv);
+    expect(enabled).toBe(false);
+    expect(mocks.PostHog).not.toHaveBeenCalled();
+  });
 });
 
 describe("resolvePostHogRelease", () => {

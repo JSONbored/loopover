@@ -1,15 +1,15 @@
-// PostHog error tracking for discovery-index (#8289, epic #8286). Parallel-run alongside sentry.ts (#4934) --
-// both active simultaneously when configured; Sentry is only removed once the gated decommission issue
-// (#8298) says so, per-issue across all six Phase-1 surfaces at once. This service runs as a long-lived Node
-// process in a Cloudflare Container (not a Workers isolate), so posthog-node's default batching client is
-// fine here -- unlike src/api/worker-posthog.ts's per-request ephemeral-client design for the actual Workers
-// isolate path, this mirrors src/selfhost/posthog.ts's long-running-server posture.
+// PostHog error tracking for discovery-index (#8289, epic #8286). REPLACES Sentry entirely -- per the epic's
+// revised strategy (2026-07-25 correction on #8286), PostHog is a straight swap-in, not a parallel sink; there
+// is no more sentry.ts in this package. This service runs as a long-lived Node process in a Cloudflare
+// Container (not a Workers isolate), so posthog-node's default batching client is fine here -- unlike
+// src/api/worker-posthog.ts's per-request ephemeral-client design for the actual Workers isolate path, this
+// mirrors src/selfhost/posthog.ts's long-running-server posture.
 //
-// Deliberately mirrors sentry.ts's shape (redaction, tag allowlist, capture entry points) rather than PostHog's
-// own withScope-free API design, so the two modules stay easy to compare line-for-line during the parallel-run
-// window. PostHog has no Sentry-style context/tags split -- captureException's flat properties bag carries the
-// SAME allowlisted fields sentry.ts's setAllowedTags exposes as tags (DISCOVERY_INDEX_POSTHOG_TAG_KEYS), not
-// the raw context object, so the redaction surface stays identical between the two sinks.
+// Deliberately kept the shape the now-deleted sentry.ts had (redaction, tag allowlist, capture entry points)
+// rather than PostHog's own withScope-free API design, so the swap stayed a straightforward like-for-like
+// replacement. PostHog has no Sentry-style context/tags split -- captureException's flat properties bag carries
+// the SAME allowlisted fields the old sentry.ts's setAllowedTags exposed as tags (DISCOVERY_INDEX_POSTHOG_TAG_KEYS),
+// not the raw context object, so the redaction surface matches the sink it replaced.
 import type { PostHog } from "posthog-node";
 
 type PostHogClient = Pick<PostHog, "captureException" | "flush" | "shutdown">;
@@ -26,9 +26,11 @@ const DISTINCT_ID = "loopover-discovery-index";
 /** PostHog US-cloud ingestion host, matching every other PostHog sink in this repo's default. */
 const DEFAULT_POSTHOG_HOST = "https://us.i.posthog.com";
 
-// Identical redaction rules to sentry.ts's SECRET_FIELD/SECRET_VALUE (#8289 deliverable: capture/redaction
-// parity with the existing Sentry sink) -- kept as a literal copy rather than an import so this module has no
-// compile-time dependency on sentry.ts at all, matching the two sinks' fully independent parallel-run posture.
+// The redaction rules match the SECRET_FIELD/SECRET_VALUE the now-deleted sentry.ts used (#8289 deliverable:
+// capture/redaction parity with the Sentry sink PostHog replaced) -- defined literally here rather than shared
+// via an import, so this module stays self-contained, exactly as review-enrichment/src/posthog.ts keeps its own
+// copy; the two packages' PostHog modules deliberately stay structurally in lockstep without a compile-time
+// dependency between them.
 const SECRET_FIELD = /(?:authorization|cookie|token|secret|password|private[_-]?key|shared[_-]?secret)/i;
 const SECRET_VALUE = /\b(?:github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9_]+|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b/g;
 const DISCOVERY_INDEX_POSTHOG_TAG_KEYS = ["event", "route", "method", "release", "environment"] as const;
@@ -74,7 +76,7 @@ function scrubValue(value: unknown): unknown {
 function tagValue(value: string | number | undefined): string | undefined {
   if (value === undefined) return undefined;
   const scrubbed = scrubValue(String(value));
-  /* v8 ignore next -- @preserve unreachable: scrubValue(string) always returns a string, mirrors sentry.ts's identical sentryTagValue guard */
+  /* v8 ignore next -- @preserve unreachable: scrubValue(string) always returns a string, mirrored the now-deleted sentry.ts's identical sentryTagValue guard */
   if (typeof scrubbed !== "string") return undefined;
   const text = nonBlank(scrubbed);
   return text ? text.slice(0, 200) : undefined;

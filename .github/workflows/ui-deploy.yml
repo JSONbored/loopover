@@ -37,4 +37,4 @@ jobs:
       - name: Validate frontend
         env:
           VITE_LOOPOVER_API_ORIGIN: https://api.loopover.ai
-        run: npm run ui:openapi:check && npm run ui:lint && npm run ui:typecheck && npm run extension:lint && npm run miner-extension:lint && npm run extension:typecheck && npm run miner-extension:typecheck && npm run extension:build && npm run miner-extension:build && npm --workspace @loopover/ui run build
+        run: npm run ui:openapi:check && npm run ui:lint && npm run ui:typecheck && npm --workspace @loopover/ui run build

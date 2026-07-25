@@ -3,9 +3,9 @@
 // server's local read-only endpoint (see `vite-ranked-candidates-api.ts`), which itself calls into
 // `packages/loopover-miner/lib/ranked-candidates.js`'s existing exports. Mirrors `lib/run-history.ts`'s shape.
 //
-// This surfaces the SAME per-issue discovery breakdown (laneFit/freshness/potential/feasibility/dupRisk) the
-// browser extension's opportunity badge already reads from this endpoint (#4859 prerequisite) — no ranking
-// logic duplicated here, strictly a read-only view of already-existing data.
+// This surfaces the per-issue discovery breakdown (laneFit/freshness/potential/feasibility/dupRisk) via this
+// endpoint (#4859 prerequisite) — no ranking logic duplicated here, strictly a read-only view of already-
+// existing data.
 
 import { DEMO_RANKED_CANDIDATES, isDemoMode } from "./demo-data";
 

@@ -65,7 +65,6 @@ coverage/
 *.tsbuildinfo
 site/.vitepress/cache/
 !migrations/*.sql
-apps/loopover-ui/public/downloads/loopover-extension.zip
 .worker-configuration.gen-check.d.ts
 # Ad-hoc operator backup files (e.g. `cp file.yml file.yml.bak-notes-20260707`) -- general
 # catch-alls so a stray manual snapshot never dirties `git status` on a Git-backed self-host

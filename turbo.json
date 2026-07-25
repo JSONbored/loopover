@@ -8,11 +8,11 @@
       // set, and tsc's real surface expands to everything transitively imported from there, regardless of
       // whether the imported file physically lives inside src/ or test/. test/** (deliberately included so
       // Codecov's codecov/patch has one source of truth, see the plan doc referenced in ci.yml) turned out
-      // to reach via relative-path imports into six other workspace packages/apps -- confirmed by grepping
+      // to reach via relative-path imports into four other workspace packages/apps -- confirmed by grepping
       // every import in src/+test/ that crosses a packages/**or apps/** boundary, not just spot-checked:
       // packages/loopover-miner/{lib,bin}/**, packages/loopover-mcp/package.json (JSON import), packages/
-      // discovery-index/src/**, apps/loopover-ui/src/lib/**, apps/loopover-extension/**, and apps/loopover-
-      // miner-extension/**. Before this was added, none of those six were hashed, so an edit to (say)
+      // discovery-index/src/**, and apps/loopover-ui/src/lib/**. Before this was added, none of those four
+      // were hashed, so an edit to (say)
       // packages/loopover-miner/lib/opportunity-fanout.js could silently leave a stale cache HIT here even
       // though a real `tsc --noEmit` would fail -- exactly the class of bug PR #5082 (see ci.yml's "Build
       // engine package" comment) already burned this repo on once. packages/loopover-mcp/bin/** is
@@ -42,9 +42,7 @@
         "packages/loopover-miner/bin/**",
         "packages/loopover-mcp/package.json",
         "packages/discovery-index/src/**",
-        "apps/loopover-ui/src/lib/**",
-        "apps/loopover-extension/**",
-        "apps/loopover-miner-extension/**"
+        "apps/loopover-ui/src/lib/**"
       ],
       "outputs": []
     },
@@ -93,7 +91,7 @@
     // NOT need the engine dependsOn edge @loopover/ui#typecheck has: the only file reaching into
     // packages/loopover-engine is imported from a .test.tsx file, which isn't part of the production build.
     "@loopover/ui#build": {
-      "dependsOn": ["^build", "@loopover/extension#build", "@loopover/miner-extension#build"],
+      "dependsOn": ["^build"],
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/src/signals/redaction.ts",
@@ -127,37 +125,6 @@
       "dependsOn": ["^build"],
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/packages/loopover-miner/lib/**"],
       "outputs": ["dist/**"]
-    },
-    "@loopover/extension#lint": {
-      "outputs": []
-    },
-    "@loopover/extension#typecheck": {
-      "outputs": []
-    },
-    // NOT declaring outputs here would be wrong, not just uncached: confirmed empirically (rm -rf'd
-    // apps/loopover-ui/public/downloads/loopover-extension.zip, ran `turbo run build --filter=@loopover/ui`
-    // against a warm cache, the zip never came back -- a cache HIT replays logs but restores nothing when
-    // no outputs are declared). This build's real output crosses a package boundary
-    // (apps/loopover-ui/public/downloads/loopover-extension.zip, written by scripts/build-extension.ts),
-    // and Turborepo's docs are silent on whether cross-package "outputs" globs are honored on restore --
-    // rather than rely on undocumented behavior, this task is never cached at all, so it always actually
-    // executes (cheap, a handful of files) whenever something depends on it. That's what actually closes
-    // the "@loopover/ui#build might silently ship without the extension zip" gap this graph edge exists
-    // to fix -- caching this task and getting the restore wrong would be worse than not caching it.
-    "@loopover/extension#build": {
-      "cache": false
-    },
-    "@loopover/miner-extension#lint": {
-      "outputs": []
-    },
-    "@loopover/miner-extension#typecheck": {
-      "outputs": []
-    },
-    // No cross-package writes here (unlike @loopover/extension#build above) -- but keep the same
-    // never-cached treatment for consistency with its sibling, since both are cheap and this avoids two
-    // different caching policies for what's otherwise the same shape of package.
-    "@loopover/miner-extension#build": {
-      "cache": false
     },
     "@loopover/mcp#build": {
       "dependsOn": ["^build"],

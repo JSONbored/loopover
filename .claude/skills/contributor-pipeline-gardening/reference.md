@@ -30,7 +30,7 @@ Two products, self-host-first:
 
 - **AMS (Autonomous Miner System)** — `packages/loopover-miner` (npm: `@loopover/miner`) +
   `packages/loopover-engine` (npm: `@loopover/engine`, shared core also used by ORB) +
-  `apps/loopover-miner-ui` + `apps/loopover-miner-extension`. The contributor/miner side: finds
+  `apps/loopover-miner-ui`. The contributor/miner side: finds
   issues, plans, writes code, opens PRs, autonomously. Self-host (a local Miner Node) is the only
   shipped deployment target; hosted AMS is a later phase (see "AMS/ORB Cloud Readiness" below).
 - **ORB (Owner/One-shot Review Brain)** — `src/**` (the Worker app: `src/review`, `src/queue`,

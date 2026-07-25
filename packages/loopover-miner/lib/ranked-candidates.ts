@@ -6,10 +6,9 @@ import { RANKED_CANDIDATES_PURGE_SPEC, purgeStoreByRepo } from "./store-maintena
 // Last-discover-run ranked-candidates snapshot (#4859 prerequisite): `discover-cli.js`'s runDiscover already
 // computes the FULL per-issue ranking breakdown (rankScore/laneFit/freshness/potential/feasibility/dupRisk, via
 // opportunity-ranker.js) and prints it to stdout with `--json`, but nothing durable ever stores it -- the
-// portfolio queue only carries a single derived `priority` number, not the per-dimension detail. The browser
-// extension's opportunity badge (apps/loopover-miner-extension/opportunity-badge.js) needs exactly that detail
-// to render its "why" reasoning, and today can only get it via a manual copy/paste of `discover --json`'s output
-// (#4859's whole premise). This module gives that output a durable home so a local HTTP endpoint can serve it.
+// portfolio queue only carries a single derived `priority` number, not the per-dimension detail. This module
+// gives that output a durable home so a local HTTP endpoint (apps/loopover-miner-ui's ranked-candidates
+// dashboard view) can serve it instead of requiring a manual copy/paste of `discover --json`'s output.
 //
 // Deliberately a SNAPSHOT, not a ledger: each real (non-dry-run) discover invocation REPLACES the whole table
 // wholesale (this run's candidates are what's live-fetchable now; a stale prior run's rows would be actively

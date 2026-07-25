@@ -134,7 +134,7 @@ Every PR should include:
 - A link to a currently open issue this PR resolves (e.g. `Closes #123`) — there is no exemption
   for explaining why an issue isn't needed.
 - The exact validation commands run from the repo root.
-- JPG/JPEG or PNG screenshot evidence for visible UI, frontend, docs, or extension changes,
+- JPG/JPEG or PNG screenshot evidence for visible UI, frontend, or docs changes,
   attached in the PR description as organized, captioned, clickable thumbnails. SVG screenshots
   are not accepted as review evidence. Recordings/GIFs are supplemental to (never a replacement
   for) static screenshots for anything a still image CAN show — but for an effect a static image
@@ -323,7 +323,7 @@ docs(contributing): clarify review gates
 ```
 
 Use one of these types: `feat`, `fix`, `test`, `docs`, `refactor`, `build`, `ci`, `chore`, or
-`revert`. Keep the scope lowercase and specific, such as `api`, `ui`, `mcp`, `extension`, `auth`,
+`revert`. Keep the scope lowercase and specific, such as `api`, `ui`, `mcp`, `auth`,
 `github`, `signals`, `data`, `docs`, or `release`. Avoid vague scopes or summaries such as
 `misc`, `general`, `updates`, `update stuff`, or `small tweaks`. Do not end PR titles with a
 trailing period. Release PR titles must use `chore(release): <version>`.

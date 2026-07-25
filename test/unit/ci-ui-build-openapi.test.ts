@@ -16,8 +16,6 @@ describe("UI build steps skip the redundant OpenAPI regen", () => {
     const stepEnd = workflow.indexOf("\n\n", stepStart);
     const step = workflow.slice(stepStart, stepEnd === -1 ? undefined : stepEnd);
 
-    // @loopover/ui#build's dependsOn (turbo.json) covers the same extension + miner-extension build pair
-    // the old hand-chained `&&` command ran explicitly -- see turbo.json's comment on that task.
     expect(step).toContain("run: npx turbo run build --filter=@loopover/ui");
     expect(step).not.toContain("npm run ui:build");
   });
@@ -25,9 +23,7 @@ describe("UI build steps skip the redundant OpenAPI regen", () => {
   it("ui-deploy.yml's Validate frontend step runs the split commands after the openapi check", () => {
     const workflow = read(".github/workflows/ui-deploy.yml");
 
-    expect(workflow).toContain(
-      "run: npm run ui:openapi:check && npm run ui:lint && npm run ui:typecheck && npm run extension:lint && npm run miner-extension:lint && npm run extension:typecheck && npm run miner-extension:typecheck && npm run extension:build && npm run miner-extension:build && npm --workspace @loopover/ui run build",
-    );
+    expect(workflow).toContain("run: npm run ui:openapi:check && npm run ui:lint && npm run ui:typecheck && npm --workspace @loopover/ui run build");
     expect(workflow).not.toContain("&& npm run ui:build");
   });
 });

@@ -645,8 +645,8 @@ export async function runDiscover(args: string[], options: RunDiscoverOptions = 
     ownsPolicyVerdictCache = false;
   }
 
-  // Snapshot of this run's full ranked output (#4859 prerequisite), so a local HTTP endpoint (and eventually the
-  // miner-ui/browser-extension live-fetch it's meant for) can serve the same per-issue breakdown `--json` prints,
+  // Snapshot of this run's full ranked output (#4859 prerequisite), so a local HTTP endpoint (the miner-ui
+  // live-fetch it's meant for) can serve the same per-issue breakdown `--json` prints,
   // without the operator re-running discover or hand-pasting its output. Same "own try/catch, degrade to null"
   // discipline as the two caches above: a corrupt/unwritable snapshot store must never abort discovery's actual
   // job (fan out, rank, enqueue). Unlike the caches, this store is a WRITE target, not a read optimization -- the

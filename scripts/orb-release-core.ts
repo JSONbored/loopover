@@ -13,8 +13,8 @@
 const ORB_TAG_PREFIX = "orb-v";
 
 // Paths that make the self-host container image itself (src/server.ts's bundle, its DB schema, and the
-// image/deploy tooling around it) -- NOT the Cloudflare Worker-only surfaces (UI, browser extension) or the
-// separately-versioned MCP/engine/miner packages, which have their own release automation.
+// image/deploy tooling around it) -- NOT the Cloudflare Worker-only UI surface or the separately-versioned
+// MCP/engine/miner packages, which have their own release automation.
 const IMAGE_RELEVANT_PREFIXES = [
   "src/",
   "migrations/",
@@ -35,7 +35,6 @@ const IMAGE_RELEVANT_PREFIXES = [
 // inside the self-host container.
 const EXCLUDED_PREFIXES = [
   "apps/loopover-ui/",
-  "apps/loopover-extension/",
   "packages/loopover-mcp/",
   "packages/loopover-miner/",
   "src/mcp/",

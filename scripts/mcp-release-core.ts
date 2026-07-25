@@ -37,9 +37,9 @@ const CLIENT_VISIBLE_PATHS = [
 const SUPPORTING_VISIBLE_PATHS = ["src/openapi/schemas.ts", "src/openapi/spec.ts"];
 
 const GENERATED_OPENAPI_PATHS = ["apps/loopover-ui/public/openapi.json", "src/openapi/spec.ts"];
-const UI_ONLY_PREFIXES = ["apps/loopover-ui/", "apps/loopover-extension/", "apps/loopover-miner-extension/"];
+const UI_ONLY_PREFIXES = ["apps/loopover-ui/"];
 const RELEASE_SCOPES = new Set(["release", "changelog"]);
-const EXCLUDED_SCOPES = new Set(["pwa", "ui", "extension", "github-agent", "sync", "upstream"]);
+const EXCLUDED_SCOPES = new Set(["pwa", "ui", "github-agent", "sync", "upstream"]);
 const GROUP_ORDER = ["Features", "Fixes", "Security", "CI", "Build", "Docs", "Tests", "Refactors", "Dependencies", "Chores", "Reverts"];
 
 export type McpReleaseCommit = {

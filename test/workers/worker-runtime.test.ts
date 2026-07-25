@@ -19,14 +19,9 @@ describe("worker runtime", () => {
     expect(mcp.status).toBe(401);
   });
 
-  it("REGRESSION: isCloudflareWorkerRuntime() is true in a real Workers isolate (the gate that lets the Sentry middleware register at all)", () => {
+  it("REGRESSION: isCloudflareWorkerRuntime() is true in a real Workers isolate (the gate that lets the PostHog error middleware register at all)", () => {
     expect(isCloudflareWorkerRuntime()).toBe(true);
     expect(navigator.userAgent).toBe("Cloudflare-Workers");
-  });
-
-  it("still serves a normal response when WORKER_SENTRY_DSN is unset -- the Sentry middleware being registered must not itself break requests", async () => {
-    const res = await worker.fetch(new Request("https://loopover.test/health"), { WORKER_SENTRY_DSN: undefined } as unknown as Env, createExecutionContext());
-    expect(res.status).toBe(200);
   });
 
   it("still serves a normal response when WORKER_POSTHOG_API_KEY is unset -- the PostHog middleware (#8288) being registered must not itself break requests", async () => {

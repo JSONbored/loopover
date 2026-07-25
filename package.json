@@ -125,8 +125,6 @@
     "@opentelemetry/exporter-trace-otlp-http": "^0.220.0",
     "@opentelemetry/resources": "^2.9.0",
     "@opentelemetry/sdk-trace-node": "^2.9.0",
-    "@sentry/cloudflare": "^10.63.0",
-    "@sentry/hono": "^10.63.0",
     "agents": "^0.17.3",
     "aws4fetch": "^1.0.20",
     "drizzle-orm": "^0.45.2",

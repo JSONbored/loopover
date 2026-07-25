@@ -2,8 +2,17 @@ import type { FileFetcher } from "../review/review-grounding";
 import { mapWithConcurrency } from "./map-with-concurrency";
 import type { AdvisoryFinding, PullRequestFileRecord } from "../types";
 
-/** Per-file cap when synthesizing a patch for GitHub's patch-less (binary/large) PR files. */
-export const SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS = 512_000;
+/** Per-file cap when synthesizing a patch for GitHub's patch-less (binary/large) PR files. The fetcher behind
+ *  this (grounding-wire.ts's makeGithubFileFetcher) requests the `application/vnd.github.raw+json` media type
+ *  specifically to bypass the Contents API's ~1MB base64-JSON envelope ceiling, so this cap is the real limit,
+ *  not GitHub's. Raised from 512_000 (2026-07-25): a repo whose regenerated OpenAPI/JSON-schema artifacts
+ *  routinely exceed 512KB (observed live: metagraphed's openapi.json at ~1.9MB, api-components.schema.json at
+ *  ~514KB) was hitting the fail-closed `secretScanIncomplete` block on every such PR even though the file is
+ *  deterministically generated from already-scanned source in the same diff. Raising this cap only EXPANDS scan
+ *  coverage (more content becomes fetchable-and-scannable instead of being marked incomplete-and-blocked) --
+ *  it never reduces detection on anything previously caught. 4MB gives real headroom above the largest
+ *  observed case without being unbounded; fetch count/concurrency stay capped separately below. */
+export const SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS = 4_000_000;
 /** Fetch probe limit passed to {@link FileFetcher.getFileContent}: the grounding fetcher returns `maxChars+1`
  *  bytes when the file exceeds `maxChars - 1`, so `content.length > SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS` reliably
  *  detects truncation instead of scanning a clipped prefix. Mirrors review-grounding's `+ 1` probe. */

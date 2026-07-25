@@ -1,5 +1,5 @@
 const siteOrigin = new URL(process.env.LOOPOVER_SITE_ORIGIN ?? "https://loopover.ai").origin;
-const routes = ["/", "/app", "/app/workbench", "/app/repos", "/app/runs", "/app/analytics", "/app/operator", "/app/commands", "/app/digest", "/api", "/roadmap", "/changelog", "/extension", "/docs"];
+const routes = ["/", "/app", "/app/workbench", "/app/repos", "/app/runs", "/app/analytics", "/app/operator", "/app/commands", "/app/digest", "/api", "/roadmap", "/changelog", "/docs"];
 
 const playwright = await import("playwright").catch(() => null);
 if (!playwright) {

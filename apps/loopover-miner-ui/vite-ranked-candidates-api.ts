@@ -1,11 +1,11 @@
 import { existsSync } from "node:fs";
 import type { Plugin } from "vite";
 
-// Local read-only ranked-candidates API (#4859 prerequisite): the browser extension's opportunity badge
-// (apps/loopover-miner-extension/opportunity-badge.js) needs the miner's last discover run's full per-issue
-// ranking breakdown to replace its manual copy/paste workflow with a live fetch. Bridges the browser app to
-// packages/loopover-miner/lib/ranked-candidates.js's EXISTING exports (resolveRankedCandidatesDbPath/
-// listRankedCandidates) -- no ranking logic duplicated in the UI layer, strictly read-only.
+// Local read-only ranked-candidates API (#4859 prerequisite): serves the miner's last discover run's full
+// per-issue ranking breakdown to this dashboard's own ranked-candidates view via a live fetch. Bridges the
+// browser app to packages/loopover-miner/lib/ranked-candidates.js's EXISTING exports
+// (resolveRankedCandidatesDbPath/listRankedCandidates) -- no ranking logic duplicated in the UI layer,
+// strictly read-only.
 //
 // Authenticated the same way as every other /api/* route: vite-auth.ts's authPlugin runs first in the Connect
 // chain (#4858), so this file needs no auth logic of its own.

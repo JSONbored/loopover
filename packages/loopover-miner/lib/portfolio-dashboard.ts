@@ -4,9 +4,8 @@
 // CLI glue), but scoped to the backlog/queue rather than per-PR manage state. 100% client-side, read-only — it never
 // mutates queue state and never gates or enforces anything.
 //
-// The extension-panel half named in the issue is a forward dependency, not delivered here: the miner's queue is a
-// local SQLite file with no local-reachable channel a GitHub-page content script can read today. The pure
-// collector below is factored so it is directly reusable once such a channel exists.
+// The pure collector below is factored separately from its thin CLI glue so it stays directly reusable by
+// any future consumer beyond this CLI's own text/JSON output.
 
 import { initPortfolioQueueStore } from "./portfolio-queue.js";
 import { argsWantJson, reportCliFailure } from "./cli-error.js";

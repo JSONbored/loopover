@@ -22,9 +22,9 @@ export const Route = createFileRoute("/ranked-candidates")({
 
 // Read-only ranked-candidates table (#7675): mirrors run-history.tsx's exact data-fetching, loading-state, and
 // layout conventions (usePolledFetch + StateBoundary + a content-shaped Skeleton + client-side Pagination above
-// PAGE_SIZE rows). `/api/ranked-candidates` already exposes the browser extension's opportunity-badge data --
-// the last discover run's full per-issue discovery breakdown (laneFit/freshness/potential/feasibility/dupRisk)
-// -- this route is the first miner-ui dashboard consumer of it. Purely presentational: `lib/ranked-candidates.ts`'s
+// PAGE_SIZE rows). `/api/ranked-candidates` exposes the last discover run's full per-issue discovery
+// breakdown (laneFit/freshness/potential/feasibility/dupRisk); this route is its miner-ui dashboard consumer.
+// Purely presentational: `lib/ranked-candidates.ts`'s
 // fetch/poll and `vite-ranked-candidates-api.ts`'s ranking data are both untouched.
 
 const TABLE_COLUMNS = [

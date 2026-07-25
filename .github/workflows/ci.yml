@@ -138,17 +138,13 @@ jobs:
             observability:
               - 'grafana/dashboards/**'
               - 'prometheus/rules/**'
-            # The UI's own app/extension code -- triggers the FULL toolchain (lint/typecheck/test/build).
+            # The UI's own app code -- triggers the FULL toolchain (lint/typecheck/test/build).
             # A dependency bump (package.json/package-lock.json) stays here too since it can break the UI
             # build or types in ways only that full toolchain would catch.
             ui:
               - 'apps/loopover-ui/**'
               - 'apps/loopover-miner-ui/**'
-              - 'apps/loopover-extension/**'
-              - 'apps/loopover-miner-extension/**'
               - 'packages/loopover-ui-kit/**'
-              - 'scripts/build-extension.ts'
-              - 'scripts/build-miner-extension.ts'
               - 'package.json'
               - 'package-lock.json'
             # Backend changes that can drift the OpenAPI contract the UI type-checks against, but say
@@ -448,7 +444,7 @@ jobs:
       # The matching "Save Turborepo cache" step is NOT alongside this one -- it's moved all the way down
       # to after "UI build" (the last step in this job that invokes turbo), since actions/cache/save takes
       # one synchronous snapshot at the moment it runs and every later turbo-routed step in between (Build
-      # MCP, Build miner CLI, Build UI-kit package, UI lint/typecheck, Extension lint/typecheck, UI build)
+      # MCP, Build miner CLI, Build UI-kit package, UI lint/typecheck, UI build)
       # would otherwise write to .turbo/cache AFTER the snapshot already happened, so none of their cache
       # entries would ever persist cross-run. Confirmed this was a real gap (not just theoretical) by
       # reading the actual step order before moving it.
@@ -459,7 +455,7 @@ jobs:
       # shards) raced for the SAME cache key. actions/cache/save no-ops on a duplicate key within a run (see
       # the comment on validate-tests' own Save step below), and a validate-tests shard reaches its Save
       # step after only ~6 steps versus this job's ~20+, so a shard almost always won the race -- meaning
-      # the richer cache this job builds (engine + mcp + miner + ui-kit + ui + extension) was very likely
+      # the richer cache this job builds (engine + mcp + miner + ui-kit + ui) was very likely
       # silently discarded in favor of a shard's much leaner engine-only save, defeating most of the point
       # of the Save-repositioning fix above. Splitting the prefixes gives each job's Restore/Save pair its
       # own independent lineage instead of racing.
@@ -729,7 +725,7 @@ jobs:
       # docs, manifest, engine-parity, branding, .nvmrc, release-manifest, observability, the MCP
       # version audit just above, ...) -- any ONE of those failing without continue-on-error otherwise
       # skips every step after it by GitHub Actions' own default, INCLUDING this build. "UI tests
-      # (ui-miner)"/"UI tests (miner-extension)" already had this guard (see their own comment below);
+      # (ui-miner)" already had this guard (see its own comment below);
       # this build step and everything through "UI tests (ui)" didn't, so a same-day MCP release
       # tripping the version-audit step above skipped ui-kit's build entirely, and ui-miner's tests
       # (which DID still run, guarded) then failed with a confusing "Failed to resolve import
@@ -773,8 +769,8 @@ jobs:
       # task for any package (per the plan doc: test orchestration stays out of Turborepo entirely, so
       # Codecov's codecov/patch keeps one centralized source of truth), so this can't use the same
       # union-`--filter` fix already applied to "UI lint"/"UI typecheck" two steps above. Plain `&&` meant a
-      # failing @loopover/ui test silently prevented @loopover/ui-miner's and @loopover/miner-extension's
-      # tests from ever running in that invocation -- same class of failure-masking bug those two steps'
+      # failing @loopover/ui test silently prevented @loopover/ui-miner's tests from ever running in that
+      # invocation -- same class of failure-masking bug those two steps'
       # own comment already describes, just still present here. `!cancelled()` on all 3 (not `always()`)
       # matches the pattern already used by "Save Turborepo cache"/"Save TypeScript incremental build
       # cache" elsewhere in this file: still run after an earlier step's failure, just not after the job
@@ -785,38 +781,20 @@ jobs:
       - name: UI tests (ui-miner)
         if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.outputs.ui == 'true') }}
         run: npm --workspace @loopover/ui-miner run test
-      - name: UI tests (miner-extension)
-        if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.outputs.ui == 'true') }}
-        run: npm --workspace @loopover/miner-extension run test
-      # Same rationale and --filter union semantics as "UI lint"/"UI typecheck" above -- and the same
-      # `!cancelled()` need as "Build UI-kit package" through "UI tests (ui)" above: an earlier
-      # unrelated step failing (a drift check, the MCP version audit) would otherwise skip these too,
-      # silently hiding real Extension lint/typecheck results behind it.
-      - name: Extension lint
-        if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.outputs.ui == 'true') }}
-        run: npx turbo run lint --filter=@loopover/extension --filter=@loopover/miner-extension
-      - name: Extension typecheck
-        if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.outputs.ui == 'true') }}
-        run: npx turbo run typecheck --filter=@loopover/extension --filter=@loopover/miner-extension
       # `npm run ui:build` also regenerates apps/loopover-ui/public/openapi.json (needed for a
       # standalone build), but this step's trigger condition is a strict subset of "OpenAPI drift
       # check" above (push || ui==true, vs. push || ui==true || uiContract==true), so whenever this
       # step runs, that check already ran and passed in this same job -- the committed spec is
       # already byte-identical to what regenerating it here would produce. apps/loopover-ui's own
       # `build` script (vite build) doesn't touch openapi.json either, so routing through Turborepo
-      # preserves that skip: @loopover/ui#build's dependsOn (turbo.json) is
-      # ["^build", "@loopover/extension#build", "@loopover/miner-extension#build"] -- the exact same
-      # extension + miner-extension build pair this step ran explicitly before, now resolved by turbo's
-      # own graph instead of hand-chained `&&`, plus ^build (ui-kit, already a same-job cache hit from
-      # "Build UI-kit package" above). Verified locally: deleting the committed-gitignored extension zip
-      # and running this exact invocation regenerates it correctly (the cross-package outputs edge is
-      # honored, not just replayed from cache).
+      # preserves that skip: @loopover/ui#build's dependsOn (turbo.json) is just ["^build"] (ui-kit,
+      # already a same-job cache hit from "Build UI-kit package" above).
       - name: UI build
         if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.outputs.ui == 'true') }}
         run: npx turbo run build --filter=@loopover/ui
       # Paired with "Restore Turborepo cache" above (same key, same gate condition) -- deliberately
       # positioned here, after every turbo-routed step in this job (Build engine package, Build MCP, Build
-      # miner CLI, Build UI-kit package, UI lint/typecheck, Extension lint/typecheck, UI build), rather than
+      # miner CLI, Build UI-kit package, UI lint/typecheck, UI build), rather than
       # immediately after "Build engine package" the way it was originally: actions/cache/save takes one
       # synchronous snapshot at the moment it runs, so anything written to .turbo/cache by a later step
       # would never be captured if this ran earlier. `!cancelled()` (not `always()`) still saves whatever
@@ -896,7 +874,7 @@ jobs:
       # actions/cache/save no-ops on a duplicate key within a run -- see the shard-vs-shard version of that
       # same race below. Because a shard reaches its own Save after only ~6 steps versus validate-code's
       # ~20+, a shard almost always won that race, meaning validate-code's much richer cache (engine + mcp +
-      # miner + ui-kit + ui + extension) was very likely discarded every run in favor of a shard's
+      # miner + ui-kit + ui) was very likely discarded every run in favor of a shard's
       # engine-only one. Splitting the prefixes gives each job's own lineage instead of racing; within THIS
       # prefix, the 6 shards below still race each other for one slot, which is fine since they all save the
       # exact same content (engine + mcp + miner builds all run in this job) -- whichever shard wins, the

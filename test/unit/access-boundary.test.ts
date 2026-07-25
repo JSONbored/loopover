@@ -116,6 +116,17 @@ describe("access boundary: per-repo maintainer data is repo-scoped", () => {
     expect((await app.request(SETTINGS_A, { headers: { cookie } }, env)).status).toBe(200);
     expect((await app.request(SETTINGS_B, { headers: { cookie } }, env)).status).toBe(403);
   });
+
+  it("any authenticated session reaches registration-readiness / gittensor-config-recommendation for any repo (#8654)", async () => {
+    // These two advisory routes are intentionally open to any logged-in user (no per-repo ownership scope), but
+    // were omitted from the session allowlist, so every real non-operator browser session got 403 on the owner
+    // panel's only two data calls. charlie maintains nothing here, yet must reach both for an arbitrary repo.
+    const { app, env } = await setup();
+    const { token } = await createSessionForGitHubUser(env, { login: "charlie", id: 999 });
+    const cookie = `loopover_session=${token}`;
+    expect((await app.request("/v1/repos/alice/repo-a/registration-readiness", { headers: { cookie } }, env)).status).toBe(200);
+    expect((await app.request("/v1/repos/alice/repo-a/gittensor-config-recommendation", { headers: { cookie } }, env)).status).toBe(200);
+  });
 });
 
 describe("access boundary: contributor (miner) data is self-scoped", () => {

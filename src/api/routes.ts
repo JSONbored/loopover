@@ -6110,6 +6110,13 @@ function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: 
   if (isRepoAiConfigPath(path)) return true;
   if (isRepoLinearConfigPath(path)) return true;
   if (isRepoCheckBeforeStartPath(path)) return true;
+  // #8654: advisory registration-readiness / gittensor-config-recommendation lookups are intentionally open to
+  // any authenticated session -- the handlers carry no per-repo ownership guard by design (the owner panel takes
+  // a free-text repo name, and the readiness handler already strips owner-private context via
+  // stripOwnerPolicyContext before returning). They were simply omitted from this allowlist, so every real
+  // non-operator browser session got 403 on the owner panel's only two data calls.
+  if (isRepoRegistrationReadinessPath(path)) return true;
+  if (isRepoGittensorConfigRecommendationPath(path)) return true;
   if (isRepoValidateLinkedIssuePath(path)) return true;
   if (isRepoAgentAuditFeedPath(path)) return true; // route's requireRepoMaintainer enforces per-repo authority (contributors → 403)
   if (isRepoDocRefreshPath(path)) return true; // route's requireRepoWriteAccess enforces real per-repo write authority
@@ -6125,6 +6132,14 @@ function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: 
 
 function isRepoSettingsPath(path: string): boolean {
   return /^\/v1\/repos\/[^/]+\/[^/]+\/settings$/.test(path);
+}
+
+function isRepoRegistrationReadinessPath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/registration-readiness$/.test(path);
+}
+
+function isRepoGittensorConfigRecommendationPath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/gittensor-config-recommendation$/.test(path);
 }
 
 function isRepoActivationPath(path: string): boolean {

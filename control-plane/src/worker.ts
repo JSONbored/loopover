@@ -56,7 +56,9 @@ export default {
     const driver = createTenantProvisioningDriver(
       // #8066: MAIN_APP_BASE_URL/INTERNAL_JOB_TOKEN select the real secret driver (against the main app's
       // token broker) once both are configured, same opt-in-per-piece shape as NEON_API_KEY/NEON_PROJECT_ID.
-      { NEON_API_KEY: env.NEON_API_KEY, NEON_PROJECT_ID: env.NEON_PROJECT_ID, MAIN_APP_BASE_URL: env.MAIN_APP_BASE_URL, INTERNAL_JOB_TOKEN: env.INTERNAL_JOB_TOKEN },
+      // #7876: CENTRAL_POSTHOG_KEY threads into every tenant container so the hosted fleet reports to the
+      // loopover-owned PostHog project (#7875); unset ⇒ omitted, tenants byte-identical to before.
+      { NEON_API_KEY: env.NEON_API_KEY, NEON_PROJECT_ID: env.NEON_PROJECT_ID, MAIN_APP_BASE_URL: env.MAIN_APP_BASE_URL, INTERNAL_JOB_TOKEN: env.INTERNAL_JOB_TOKEN, CENTRAL_POSTHOG_KEY: env.CENTRAL_POSTHOG_KEY },
       { orb: env.ORB_TENANT_CONTAINER, ams: env.AMS_TENANT_CONTAINER },
     );
     const app = createTenantHttpApp({

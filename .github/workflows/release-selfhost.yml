@@ -159,8 +159,8 @@ jobs:
         if: steps.posthog.outputs.enabled == 'true'
         env:
           POSTHOG_CLI_API_KEY: ${{ secrets.POSTHOG_CLI_API_KEY }}
-          POSTHOG_CLI_PROJECT_ID: ${{ vars.POSTHOG_CLI_PROJECT_ID }}
-          POSTHOG_CLI_HOST: ${{ vars.POSTHOG_CLI_HOST }}
+          POSTHOG_CLI_PROJECT_ID: ${{ secrets.POSTHOG_CLI_PROJECT_ID }}
+          POSTHOG_CLI_HOST: ${{ secrets.POSTHOG_CLI_HOST }}
           POSTHOG_RELEASE: ${{ steps.version.outputs.release }}
         run: |
           set -euo pipefail
@@ -254,8 +254,8 @@ jobs:
         if: steps.posthog.outputs.enabled == 'true'
         env:
           POSTHOG_CLI_API_KEY: ${{ secrets.POSTHOG_CLI_API_KEY }}
-          POSTHOG_CLI_PROJECT_ID: ${{ vars.POSTHOG_CLI_PROJECT_ID }}
-          POSTHOG_CLI_HOST: ${{ vars.POSTHOG_CLI_HOST }}
+          POSTHOG_CLI_PROJECT_ID: ${{ secrets.POSTHOG_CLI_PROJECT_ID }}
+          POSTHOG_CLI_HOST: ${{ secrets.POSTHOG_CLI_HOST }}
           POSTHOG_RELEASE: ${{ steps.version.outputs.release }}
         run: |
           set -euo pipefail

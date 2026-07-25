@@ -1,3 +1,16 @@
+import {
+  bumpVersion,
+  compareSemver,
+  escapeIssueMarkdownText,
+  inferReleaseTypeFromSubjects,
+  latestSemverTagWithPrefix,
+  parseConventionalSubject,
+  shortSha,
+  type ParsedConventionalSubject,
+} from "./release-semver-utils.js";
+
+export { parseConventionalSubject, compareSemver, bumpVersion };
+
 export const MCP_RELEASE_DUE_MARKER = "<!-- loopover:mcp-release-due -->";
 
 const DIRECT_MCP_PATHS = [
@@ -48,82 +61,8 @@ export type McpReleaseReport = {
   changedFiles: string[];
 };
 
-type ParsedConventionalSubject = {
-  type: string | null;
-  scope: string | null;
-  breaking: boolean;
-  description: string;
-  conventional: boolean;
-};
-
-export function parseConventionalSubject(subject: string): ParsedConventionalSubject {
-  const trimmed = subject.trim();
-  const match = /^(?<type>[a-z]+)(?:\((?<scope>[^)]+)\))?(?<breaking>!)?:\s*(?<description>.+)$/.exec(trimmed);
-  if (match?.groups) {
-    return {
-      type: match.groups.type!,
-      scope: match.groups.scope ?? null,
-      breaking: Boolean(match.groups.breaking),
-      description: match.groups.description!.trim(),
-      conventional: true,
-    };
-  }
-
-  if (/^fix\b/i.test(trimmed)) {
-    return {
-      type: "fix",
-      scope: null,
-      breaking: false,
-      description: trimmed.replace(/^fix[:\s-]*/i, "").trim() || trimmed,
-      conventional: false,
-    };
-  }
-
-  return {
-    type: null,
-    scope: null,
-    breaking: false,
-    description: trimmed,
-    conventional: false,
-  };
-}
-
-type ParsedSemver = {
-  major: number;
-  minor: number;
-  patch: number;
-  prerelease: string | null;
-};
-
-export function compareSemver(leftVersion: string, rightVersion: string): number | null {
-  const left = parseSemver(leftVersion);
-  const right = parseSemver(rightVersion);
-  if (!left || !right) return null;
-  for (const part of ["major", "minor", "patch"] as const) {
-    if (left[part] !== right[part]) return left[part] < right[part] ? -1 : 1;
-  }
-  if (left.prerelease === right.prerelease) return 0;
-  if (!left.prerelease) return 1;
-  if (!right.prerelease) return -1;
-  const prereleaseComparison = left.prerelease.localeCompare(right.prerelease, undefined, { numeric: true, sensitivity: "base" });
-  return prereleaseComparison === 0 ? 0 : prereleaseComparison < 0 ? -1 : 1;
-}
-
-export function bumpVersion(version: string, releaseType: "major" | "minor" | "patch"): string {
-  const parsed = parseSemver(version);
-  if (!parsed) throw new Error(`Invalid semver version: ${version}`);
-  if (releaseType === "major") return `${parsed.major + 1}.0.0`;
-  if (releaseType === "minor") return `${parsed.major}.${parsed.minor + 1}.0`;
-  return `${parsed.major}.${parsed.minor}.${parsed.patch + 1}`;
-}
-
 export function latestSemverTag(tags: readonly string[]): { tag: string; version: string } | null {
-  return (
-    tags
-      .map((tag) => ({ tag, version: tag.replace(/^mcp-v/, "") }))
-      .filter(({ version }) => parseSemver(version))
-      .sort((left, right) => compareSemver(right.version, left.version) ?? 0)[0] ?? null
-  );
+  return latestSemverTagWithPrefix(tags, "mcp-v");
 }
 
 export function selectMcpReleaseCommits<T extends McpReleaseCommit>(commits: readonly T[]): T[] {
@@ -213,7 +152,7 @@ export function buildMcpReleaseReport({
   commits: McpReleaseCommit[];
 }): McpReleaseReport {
   const includedCommits = selectMcpReleaseCommits(commits);
-  const releaseType = inferReleaseType(includedCommits);
+  const releaseType = inferReleaseTypeFromSubjects(includedCommits);
   const latestVersion = latestTag?.version ?? "0.0.0";
   const inferredVersion = releaseType ? bumpVersion(latestVersion, releaseType) : latestVersion;
   const proposedVersion = packageVersion && compareSemver(packageVersion, inferredVersion) === 1 ? packageVersion : inferredVersion;
@@ -283,26 +222,8 @@ ${changedFiles}
   return { title, body };
 }
 
-function escapeIssueMarkdownText(value: string | undefined): string {
-  return String(value ?? "")
-    .replace(/[\x00-\x1f\x7f]/g, " ")
-    .replace(/@/g, "@\u200b")
-    .replace(/([\\`*_{}[\]()#+.!|>-])/g, "\\$1");
-}
-
 export function normalizeNewlines(value: string): string {
   return value.replace(/\r\n/g, "\n");
-}
-
-function parseSemver(version: string | null | undefined): ParsedSemver | null {
-  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(String(version ?? "").trim());
-  if (!match) return null;
-  return {
-    major: Number(match[1]),
-    minor: Number(match[2]),
-    patch: Number(match[3]),
-    prerelease: match[4] ?? null,
-  };
 }
 
 function isClientVisibleChange(parsed: ParsedConventionalSubject, subject: string): boolean {
@@ -365,23 +286,8 @@ function formatCommitForChangelog(commit: McpReleaseCommit): string {
   return upperFirst(description);
 }
 
-function inferReleaseType(commits: readonly McpReleaseCommit[]): "major" | "minor" | "patch" | null {
-  if (commits.length === 0) return null;
-  let type: "major" | "minor" | "patch" = "patch";
-  for (const commit of commits) {
-    const parsed = parseConventionalSubject(commit.subject ?? "");
-    if (parsed.breaking || /BREAKING CHANGE:/i.test(commit.body ?? "")) return "major";
-    if (parsed.type === "feat") type = "minor";
-  }
-  return type;
-}
-
 function uniqueSorted(values: readonly string[]): string[] {
   return [...new Set(values.filter(Boolean))].sort((left, right) => left.localeCompare(right));
-}
-
-function shortSha(sha: string | undefined): string {
-  return String(sha ?? "").slice(0, 7);
 }
 
 function upperFirst(value: string): string {

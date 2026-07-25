@@ -89,6 +89,15 @@ describe("rag: code-not-content filtering (free-tier cost guard)", () => {
     // go.sum stays skipped despite go.mod/go.work now being recognized — SKIP_FILE_RE's lockfile
     // check runs before ALLOW_EXTLESS_RE, so the resolved-tree lockfile never becomes indexable.
     expect(classifyRepoFile("go.sum")).toBe("skip");
+    // #8649: lockfile names that don't end in `.lock` are now skipped via the canonical isLockfile() set,
+    // not just the generic `.lock` suffix -- npm-shrinkwrap.json / packages.lock.json (.NET) were being
+    // misclassified as "code" and chunked into the RAG index. The rest of the canonical set still skips too.
+    expect(classifyRepoFile("npm-shrinkwrap.json")).toBe("skip");
+    expect(classifyRepoFile("packages.lock.json")).toBe("skip");
+    expect(classifyRepoFile("nested/dir/npm-shrinkwrap.json")).toBe("skip");
+    for (const lock of ["yarn.lock", "bun.lockb", "cargo.lock", "poetry.lock", "composer.lock"]) {
+      expect(classifyRepoFile(lock), lock).toBe("skip");
+    }
     expect(classifyRepoFile("public/logo.png")).toBe("skip");
     expect(classifyRepoFile("app.min.js")).toBe("skip");
     // more binary blobs: media/archives/fonts/compiled artifacts and ML model weights

@@ -232,6 +232,51 @@ Every contributor-facing issue's _entire_ body — not just its labels — has t
 consistent and unambiguous, checked by rereading the finished body end-to-end before publishing, not
 assumed correct because the individual edits each seemed right in isolation.
 
+## Completion standard: no partial credit, no shortcuts — write for the laziest passing path
+
+**The maintainer's own words (2026-07-24):** "contributors will throw their AI tools at this for the
+least path of resistance and submit the shittiest / lowest quality stuff possible to get it completed
+as fast as possible unless we are extremely explicit on exactly what we expect — I expect the entire
+issue done flawlessly start to finish, not broken up into smaller pieces and nothing skipped."
+
+Assume every contributor-facing issue is picked up by an AI coding agent optimizing to close the loop
+fast, not a careful human reading for nuance. That agent will take whichever interpretation lets it
+stop soonest: implementing one Deliverable and calling the rest "follow-up work," splitting an issue
+across two PRs, stubbing a test instead of writing the real one, or doing the mechanical 80% and
+skipping the hard 20% the issue didn't explicitly forbid skipping. This is the same failure mode "The
+gate only enforces what the issue explicitly says" (above) already documents for file-type/pattern
+ambiguity — this section extends it to **scope completeness**, not just shape.
+
+**Every gardening-generated contributor issue must therefore:**
+
+- Open with a leading `> ⚠️ Definition of Done` callout (see the updated template below) that states,
+  in words this explicit: _"This issue must be completed in full, in a single PR. Do not split this
+  work across multiple PRs. Do not defer any Deliverable below to a follow-up issue. A PR that
+  satisfies only some of the Deliverables, stubs a required test, or leaves a checkbox
+  partially-done does NOT resolve this issue and will be closed."_
+- Make every Deliverable checkbox **mechanically verifiable**, not a vague artifact description a
+  shortcut could plausibly satisfy. Prefer "function `X` in `path/to/file.ts` returns `null` (not
+  `undefined`) when `<condition>`, verified by a new test at `path/to/file.test.ts` asserting exactly
+  that" over "fix the null-handling bug." If a requirement can be satisfied 80% of the way and still
+  look done to a fast skim, rewrite it until it can't.
+- Never use soft/optional language for anything actually required — no "as time permits," "where
+  feasible," "ideally," "at least one of," or "consider also." Every Requirements/Deliverables bullet is
+  mandatory as written, or it doesn't belong in the issue at all (move it to Context as background, or
+  drop it).
+- State explicitly, per issue, what an incomplete/shortcut submission looks like and that it does not
+  count — mirror the existing anti-pattern-naming convention used for file-type mistakes (see "The
+  gate only enforces what the issue explicitly says" above) but aimed at partial-completion, e.g. "a
+  PR that only adds the test coverage from Deliverable 1 without also fixing the underlying bug in
+  Deliverable 2 does not resolve this issue."
+- When an issue has multiple Deliverables, say explicitly whether they're all required in one PR
+  (the default — always required unless you have an explicit, stated reason to scope narrower) or
+  whether the issue is intentionally narrow with a named follow-up issue for the rest. Never leave this
+  ambiguous by omission.
+
+This is a completion-standard check, not a new template section to skip past — reread every generated
+issue body asking "could an AI agent do 60% of this, technically satisfy the literal words, and get a
+PR through the gate?" If yes, tighten it before filing.
+
 ## Labels
 
 - `gittensor:bug` — 0.05x multiplier. Bug fixes.
@@ -252,18 +297,29 @@ assumed correct because the individual edits each seemed right in isolation.
 ## Issue body template (Wave-4-batch house style — use for new feature/bug work)
 
 ```md
+> ⚠️ Definition of Done: this issue must be completed in full, in a single PR. Do not split this
+> work across multiple PRs, and do not defer any Deliverable below to a follow-up issue. A PR that
+> satisfies only some of the Deliverables, stubs a required test, or leaves a checkbox
+> partially-done does NOT resolve this issue and will be closed.
+
 ## Context
 
 <what exists today, cite real file paths / function names, why this matters>
 
 ## Requirements
 
-<concrete, testable requirements — no "TBD" or "explore options" for anything actually decidable now>
+<concrete, testable requirements — no "TBD" or "explore options" for anything actually decidable now.
+No soft/optional language ("as time permits," "where feasible," "ideally") for anything actually
+required — if it's not mandatory as written, it doesn't belong here.>
 
 ## Deliverables
 
-- [ ] <concrete artifact 1>
+- [ ] <concrete artifact 1 — phrased so it's mechanically verifiable, not satisfiable by a shortcut>
 - [ ] <concrete artifact 2>
+
+<if there's more than one Deliverable, state explicitly here whether a PR must satisfy ALL of them
+(the default) or whether the issue is intentionally narrower with a named follow-up issue for the
+rest — never leave this ambiguous by omission>
 
 ## Test Coverage Requirements
 
@@ -279,6 +335,9 @@ reader isn't confused about why Codecov doesn't gate it>
 
 <related issues, the files to anchor on>
 ```
+
+See "Completion standard: no partial credit, no shortcuts" above for the full rationale and how to
+phrase Deliverables so they can't be technically-satisfied by a fast, incomplete pass.
 
 For pure architecture/design/spec issues (the kind that stay `maintainer-only`), use the lighter
 Problem/Area/Proposal/Deliverables/Resources/Boundaries shape instead — see any `AMS Cloud Readiness`

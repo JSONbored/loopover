@@ -56,6 +56,11 @@ function validateSourceMaps(): void {
   }
 
   const maps = listFiles(distDir).filter((path) => path.endsWith(".js.map"));
+  // Unreachable on a real filesystem: the existsSync(serverMap) check above already guarantees
+  // dist/server.js.map exists, and listFiles(distDir) always picks it up, so `maps` can never be empty
+  // here. Only forceable by mocking readdirSync independently of existsSync (as discovery-index's twin
+  // does) -- this package's tests spawn the real built subprocess against the real filesystem instead.
+  /* v8 ignore next -- @preserve unreachable without mocking fs: see comment above */
   if (maps.length === 0) throw new Error("dist has no JavaScript source maps");
 
   let sawServerSource = false;
@@ -103,6 +108,12 @@ async function runReleaseValidation(release: string): Promise<void> {
       encoding: "utf8",
     });
     status = result.status;
+    // process.execPath is the real running Node binary, so spawnSync here always spawns successfully --
+    // the null-stdout/stderr case only exists when spawnSync itself fails to launch (e.g. ENOENT on the
+    // command). Unlike discovery-index's twin (test/unit/discovery-index/upload-sourcemaps.test.ts), this
+    // package's node:test suite spawns the real built subprocess with no child_process mocking, so this
+    // fallback can't be exercised without breaking that testing strategy.
+    /* v8 ignore next -- @preserve unreachable without mocking child_process: see comment above */
     output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
     if (result.status === 0) {
       if (output) log("rees_posthog_release_validation", { output: output.slice(0, 500), attempt });
@@ -168,6 +179,11 @@ async function main(): Promise<number> {
       sha: nonBlank(process.env.POSTHOG_COMMIT_SHA),
     });
     await flushReesPostHog();
+    // Every throw site in this file's try block above (validateSourceMaps, runPostHog, runReleaseValidation)
+    // throws a real Error, so the String(error) arm below only exists for the general catch-clause-is-typed-
+    // unknown case. Discovery-index's twin covers the equivalent line by mocking child_process.spawnSync to
+    // throw a bare string; this package's real-subprocess test strategy has no equivalent hook.
+    /* v8 ignore next -- @preserve unreachable without mocking a non-Error throw: see comment above */
     warn("rees_posthog_sourcemap_upload_failed", { release, message: error instanceof Error ? error.message : String(error), strict });
     return strict ? 1 : 0;
   }

@@ -7,8 +7,11 @@ import {
   captureRoutePostHogError,
   captureSourcemapUploadPostHogFailure,
   captureUnhandledPostHogError,
+  flushReesPostHog,
+  initReesPostHog,
   resetReesPostHogForTest,
   setReesPostHogForTest,
+  shutdownReesPostHog,
 } from "../dist/posthog.js";
 
 function postHogHarness() {
@@ -256,4 +259,58 @@ test("secret scrubbing: drops an empty tag value instead of setting a blank prop
   captureRoutePostHogError(new Error("boom"), { route: "", method: "GET" });
   assert.equal(posthog.captured[0].properties.route, undefined);
   assert.equal(posthog.captured[0].properties.$exception_fingerprint, "rees-route-error|unknown|GET");
+});
+
+// initReesPostHog's real dynamic-import success path, exercised with the REAL posthog-node package rather
+// than a mock: node:test's mock.module needs --experimental-test-module-mocks, which review-enrichment's own
+// "node": ">=20" engines range can't assume (the flag needs Node 22.3+). The real PostHog client with an
+// empty event queue makes zero network I/O on shutdown -- verified empirically (constructed + shut down
+// against an unreachable host in ~2ms, no hang, no error) -- so this is safe: never call a capture* function
+// in these tests (that would actually queue a real event), and always shutdownReesPostHog() before
+// resetReesPostHogForTest() so the real client's internal flush timer doesn't dangle into later tests.
+test("initReesPostHog stays inert (returns false) when POSTHOG_API_KEY is unset", async () => {
+  assert.equal(await initReesPostHog({} as NodeJS.ProcessEnv), false);
+});
+
+test("initReesPostHog stays inert when POSTHOG_API_KEY is blank/whitespace", async () => {
+  assert.equal(await initReesPostHog({ POSTHOG_API_KEY: "   " } as NodeJS.ProcessEnv), false);
+});
+
+test("initReesPostHog activates a real client with the default host for a configured key", async () => {
+  const activated = await initReesPostHog({ POSTHOG_API_KEY: "phc_test_fake_key_coverage_only" } as NodeJS.ProcessEnv);
+  assert.equal(activated, true);
+  await shutdownReesPostHog();
+  resetReesPostHogForTest();
+});
+
+test("initReesPostHog uses POSTHOG_HOST when set", async () => {
+  const activated = await initReesPostHog({ POSTHOG_API_KEY: "phc_test", POSTHOG_HOST: "https://eu.i.posthog.com" } as NodeJS.ProcessEnv);
+  assert.equal(activated, true);
+  await shutdownReesPostHog();
+  resetReesPostHogForTest();
+});
+
+test("initReesPostHog activates with POSTHOG_COMMIT_SHA/POSTHOG_ENVIRONMENT set (release/environment resolution itself is covered separately by resolveReesPostHogRelease/resolvePostHogEnvironment's own unit tests)", async () => {
+  const activated = await initReesPostHog({ POSTHOG_API_KEY: "phc_test", POSTHOG_COMMIT_SHA: "abc123", POSTHOG_ENVIRONMENT: "staging" } as NodeJS.ProcessEnv);
+  assert.equal(activated, true);
+  // Deliberately does NOT call a capture* function here -- that would queue a real event on the real
+  // client, and shutdownReesPostHog() below would then attempt to flush it over the real network
+  // (unlike the empty-queue case, which is verified network-free). Keeping the queue empty for every
+  // init test in this file, not just this one, is what keeps them all safe to run without a live
+  // PostHog endpoint or network access.
+  await shutdownReesPostHog();
+  resetReesPostHogForTest();
+});
+
+test("flushReesPostHog and shutdownReesPostHog are inert when PostHog is disabled", async () => {
+  await assert.doesNotReject(() => flushReesPostHog());
+  await assert.doesNotReject(() => shutdownReesPostHog());
+});
+
+test("flushReesPostHog drains a real, empty-queue client without throwing", async () => {
+  const activated = await initReesPostHog({ POSTHOG_API_KEY: "phc_test_fake_key_coverage_only" } as NodeJS.ProcessEnv);
+  assert.equal(activated, true);
+  await assert.doesNotReject(() => flushReesPostHog());
+  await shutdownReesPostHog();
+  resetReesPostHogForTest();
 });

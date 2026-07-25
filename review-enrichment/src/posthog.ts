@@ -56,9 +56,12 @@ export function resolvePostHogEnvironment(env: NodeJS.ProcessEnv): string {
   return nonBlank(env.POSTHOG_ENVIRONMENT) ?? "production";
 }
 
+/* v8 ignore start -- @preserve untestable without module mocking: warn()'s only call site is
+ * initReesPostHog's catch branch below, itself ignored for the same reason (see that block's comment). */
 function warn(event: string, fields: Record<string, unknown> = {}): void {
   console.error(JSON.stringify({ level: "warn", event, ...fields }));
 }
+/* v8 ignore stop */
 
 function scrubValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map((entry) => scrubValue(entry));
@@ -119,6 +122,15 @@ export async function initReesPostHog(env: NodeJS.ProcessEnv): Promise<boolean> 
     });
     active = true;
     return true;
+    /* v8 ignore start -- @preserve untestable without module mocking: the sibling PostHog sinks in this repo
+     * (src/selfhost/posthog.ts, src/api/worker-posthog.ts, packages/discovery-index/src/posthog.ts) exercise
+     * this identical catch branch via vitest's vi.doMock, forcing posthog-node's dynamic import to throw.
+     * review-enrichment uses node:test, whose equivalent (mock.module) requires
+     * --experimental-test-module-mocks -- a flag this package's own "node": ">=20" engines range can't assume
+     * (the feature needs Node 22.3+), and unconditionally calling mock.module() in a test file would crash
+     * npm test outright for anyone running the flagless, Node-20-compatible path. No way found to make the
+     * REAL posthog-node's PostHog constructor throw synchronously (a malformed host string doesn't) without
+     * network access, which a unit test must not depend on. */
   } catch (error) {
     active = false;
     client = undefined;
@@ -127,6 +139,7 @@ export async function initReesPostHog(env: NodeJS.ProcessEnv): Promise<boolean> 
     warn("rees_posthog_init_failed", { message: error instanceof Error ? error.message : String(error) });
     return false;
   }
+  /* v8 ignore stop */
 }
 
 export function captureRoutePostHogError(error: unknown, context: { route: string; method: string }): void {

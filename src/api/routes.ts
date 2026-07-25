@@ -6516,4 +6516,3 @@ function normalizeOrigin(value: string | undefined): string | null {
     return null;
   }
 }
-

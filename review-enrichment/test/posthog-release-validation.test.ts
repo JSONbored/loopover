@@ -105,7 +105,11 @@ test("validatePostHogRelease falls back to statusText when a failed response bod
 });
 
 test("validatePostHogRelease accepts a bare array response body (not wrapped in {results})", async () => {
-  const fetchImpl = async (): Promise<Response> => response([{ release: "loopover-rees@abc123", failure_reason: null }]);
+  // The real error_tracking/symbol_sets API returns `release` as a NESTED OBJECT
+  // ({id, hash_id, created_at, metadata, version, project}), never a flat string -- these fixtures use that
+  // real shape throughout this file (see releaseIdentifier's own comment in the source for why).
+  const fetchImpl = async (): Promise<Response> =>
+    response([{ release: { project: "loopover-rees", version: "abc123" }, failure_reason: null }]);
   const result = await validatePostHogRelease(validationEnv(), fetchImpl);
   assert.deepEqual(result, { release: "loopover-rees@abc123", symbolSetCount: 1 });
 });
@@ -123,7 +127,33 @@ test("validatePostHogRelease treats a response body that's neither an array nor 
 });
 
 test("validatePostHogRelease fails when no symbol sets match the target release", async () => {
-  const fetchImpl = async (): Promise<Response> => response({ results: [{ release: "some-other-release" }] });
+  const fetchImpl = async (): Promise<Response> =>
+    response({ results: [{ release: { project: "some-other", version: "release" } }] });
+  await assert.rejects(
+    () => validatePostHogRelease(validationEnv(), fetchImpl),
+    (error) => {
+      assert(error instanceof PostHogReleaseValidationError);
+      assert.deepEqual(error.failures, ["no symbol sets found for release loopover-rees@abc123"]);
+      return true;
+    },
+  );
+});
+
+test("validatePostHogRelease fails when a symbol set's release is null (skip_release_on_fail path)", async () => {
+  const fetchImpl = async (): Promise<Response> => response({ results: [{ release: null }] });
+  await assert.rejects(
+    () => validatePostHogRelease(validationEnv(), fetchImpl),
+    (error) => {
+      assert(error instanceof PostHogReleaseValidationError);
+      assert.deepEqual(error.failures, ["no symbol sets found for release loopover-rees@abc123"]);
+      return true;
+    },
+  );
+});
+
+test("validatePostHogRelease treats a release object missing version or project as non-matching", async () => {
+  const fetchImpl = async (): Promise<Response> =>
+    response({ results: [{ release: { project: "loopover-rees" } }, { release: { version: "abc123" } }] });
   await assert.rejects(
     () => validatePostHogRelease(validationEnv(), fetchImpl),
     (error) => {
@@ -136,7 +166,9 @@ test("validatePostHogRelease fails when no symbol sets match the target release"
 
 test("validatePostHogRelease fails when a matching symbol set recorded a failure_reason", async () => {
   const fetchImpl = async (): Promise<Response> =>
-    response({ results: [{ release: "loopover-rees@abc123", failure_reason: "could not parse sourcemap" }] });
+    response({
+      results: [{ release: { project: "loopover-rees", version: "abc123" }, failure_reason: "could not parse sourcemap" }],
+    });
   await assert.rejects(
     () => validatePostHogRelease(validationEnv(), fetchImpl),
     (error) => {
@@ -151,9 +183,9 @@ test("validatePostHogRelease succeeds when at least one matching symbol set has 
   const fetchImpl = async (): Promise<Response> =>
     response({
       results: [
-        { release: "some-other-release", failure_reason: "unrelated" },
-        { release: "loopover-rees@abc123", failure_reason: null },
-        { release: "loopover-rees@abc123" },
+        { release: { project: "some-other", version: "release" }, failure_reason: "unrelated" },
+        { release: { project: "loopover-rees", version: "abc123" }, failure_reason: null },
+        { release: { project: "loopover-rees", version: "abc123" } },
       ],
     });
   const result = await validatePostHogRelease(validationEnv(), fetchImpl);
@@ -164,8 +196,8 @@ test("validatePostHogRelease counts every failed symbol set, not just the first 
   const fetchImpl = async (): Promise<Response> =>
     response({
       results: [
-        { release: "loopover-rees@abc123", failure_reason: "a" },
-        { release: "loopover-rees@abc123", failure_reason: "b" },
+        { release: { project: "loopover-rees", version: "abc123" }, failure_reason: "a" },
+        { release: { project: "loopover-rees", version: "abc123" }, failure_reason: "b" },
       ],
     });
   await assert.rejects(

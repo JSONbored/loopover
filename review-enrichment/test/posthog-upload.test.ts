@@ -55,7 +55,9 @@ async function postHogApiServer(options: { failFirstAttempt?: boolean } = {}) {
       res.end(JSON.stringify({ detail: "internal error" }));
       return;
     }
-    res.end(JSON.stringify({ results: [{ release: "loopover-rees@abc123", failure_reason: null }] }));
+    // The real error_tracking/symbol_sets API returns `release` as a nested {project, version} object, not
+    // a flat string (see validate-posthog-release.mjs's releaseIdentifier for why).
+    res.end(JSON.stringify({ results: [{ release: { project: "loopover-rees", version: "abc123" }, failure_reason: null }] }));
   });
   await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
   const address = server.address();

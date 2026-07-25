@@ -26,6 +26,19 @@ function apiBaseUrl(value) {
   return (nonBlank(value) ?? DEFAULT_POSTHOG_APP_HOST).replace(/\/+$/, "");
 }
 
+// GET .../error_tracking/symbol_sets returns each symbol set's `release` as a NESTED OBJECT
+// ({id, hash_id, created_at, metadata, version, project}, per PostHog's own
+// ErrorTrackingRelease/ErrorTrackingSymbolSet dataclasses) -- never a flat string. Reconstructing
+// "{project}@{version}" here is what actually makes this comparable to our own POSTHOG_RELEASE
+// convention (the same "{release-name}@{release-version}" split posthog-cli's --release-name/
+// --release-version flags combine server-side into the release posthog-cli itself resolves).
+function releaseIdentifier(release) {
+  if (!release || typeof release !== "object") return undefined;
+  const project = nonBlank(release.project);
+  const version = nonBlank(release.version);
+  return project && version ? `${project}@${version}` : undefined;
+}
+
 export function loadPostHogReleaseValidationConfig(env = process.env) {
   return {
     // The same personal API key posthog-cli's upload step uses (error-tracking write + organization read
@@ -89,7 +102,7 @@ export async function validatePostHogRelease(env = process.env, fetchImpl = glob
   requireConfig(config);
 
   const symbolSets = await fetchSymbolSets(config, fetchImpl);
-  const forRelease = symbolSets.filter((set) => nonBlank(set?.release) === config.release);
+  const forRelease = symbolSets.filter((set) => releaseIdentifier(set?.release) === config.release);
 
   const failures = [];
   if (forRelease.length === 0) {

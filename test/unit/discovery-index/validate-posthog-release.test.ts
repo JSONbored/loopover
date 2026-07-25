@@ -82,8 +82,13 @@ describe("validatePostHogRelease", () => {
     });
   });
 
+  // The real error_tracking/symbol_sets API returns `release` as a NESTED OBJECT
+  // ({id, hash_id, created_at, metadata, version, project}), never a flat string -- these fixtures use that
+  // real shape throughout (see releaseIdentifier's own comment in the source for why).
   it("accepts a bare array response body (not wrapped in {results})", async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse([{ release: "loopover-discovery-index@abc", failure_reason: null }]));
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(jsonResponse([{ release: { project: "loopover-discovery-index", version: "abc" }, failure_reason: null }]));
     await expect(validatePostHogRelease(validEnv, fetchImpl)).resolves.toEqual({ release: "loopover-discovery-index@abc", symbolSetCount: 1 });
   });
 
@@ -95,7 +100,23 @@ describe("validatePostHogRelease", () => {
   });
 
   it("fails when no symbol sets match the target release", async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ results: [{ release: "some-other-release" }] }));
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ results: [{ release: { project: "some-other", version: "release" } }] }));
+    await expect(validatePostHogRelease(validEnv, fetchImpl)).rejects.toMatchObject({
+      failures: [`no symbol sets found for release loopover-discovery-index@abc`],
+    });
+  });
+
+  it("fails when a symbol set's release is null (skip_release_on_fail path)", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ results: [{ release: null }] }));
+    await expect(validatePostHogRelease(validEnv, fetchImpl)).rejects.toMatchObject({
+      failures: [`no symbol sets found for release loopover-discovery-index@abc`],
+    });
+  });
+
+  it("treats a release object missing version or project as non-matching", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ results: [{ release: { project: "loopover-discovery-index" } }, { release: { version: "abc" } }] }));
     await expect(validatePostHogRelease(validEnv, fetchImpl)).rejects.toMatchObject({
       failures: [`no symbol sets found for release loopover-discovery-index@abc`],
     });
@@ -103,7 +124,9 @@ describe("validatePostHogRelease", () => {
 
   it("fails when a matching symbol set recorded a failure_reason", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
-      jsonResponse({ results: [{ release: "loopover-discovery-index@abc", failure_reason: "could not parse sourcemap" }] }),
+      jsonResponse({
+        results: [{ release: { project: "loopover-discovery-index", version: "abc" }, failure_reason: "could not parse sourcemap" }],
+      }),
     );
     await expect(validatePostHogRelease(validEnv, fetchImpl)).rejects.toMatchObject({
       failures: ["1 symbol set(s) for release loopover-discovery-index@abc recorded a failure_reason"],
@@ -114,9 +137,9 @@ describe("validatePostHogRelease", () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonResponse({
         results: [
-          { release: "some-other-release", failure_reason: "unrelated" },
-          { release: "loopover-discovery-index@abc", failure_reason: null },
-          { release: "loopover-discovery-index@abc" },
+          { release: { project: "some-other", version: "release" }, failure_reason: "unrelated" },
+          { release: { project: "loopover-discovery-index", version: "abc" }, failure_reason: null },
+          { release: { project: "loopover-discovery-index", version: "abc" } },
         ],
       }),
     );
@@ -125,7 +148,12 @@ describe("validatePostHogRelease", () => {
 
   it("counts every failed symbol set, not just the first one found", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
-      jsonResponse({ results: [{ release: "loopover-discovery-index@abc", failure_reason: "a" }, { release: "loopover-discovery-index@abc", failure_reason: "b" }] }),
+      jsonResponse({
+        results: [
+          { release: { project: "loopover-discovery-index", version: "abc" }, failure_reason: "a" },
+          { release: { project: "loopover-discovery-index", version: "abc" }, failure_reason: "b" },
+        ],
+      }),
     );
     await expect(validatePostHogRelease(validEnv, fetchImpl)).rejects.toMatchObject({
       failures: ["2 symbol set(s) for release loopover-discovery-index@abc recorded a failure_reason"],

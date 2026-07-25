@@ -10,12 +10,17 @@ import { createApp } from "./app.js";
 import { TtlCache } from "./cache.js";
 import { DEFAULT_CACHE_TTL_MS } from "./discovery-query.js";
 import { GitHubClient } from "./github-client.js";
+import { captureUnhandledPostHogError, flushDiscoveryIndexPostHog, initDiscoveryIndexPostHog, resolvePostHogEnvironment, shutdownDiscoveryIndexPostHog } from "./posthog.js";
 import { captureUnhandledError, flushSentry, initSentry, resolveSentryEnvironment } from "./sentry.js";
 import { DEFAULT_SOFT_CLAIM_TTL_MS, SoftClaimStore } from "./soft-claim.js";
 
 const sentryEnabled = await initSentry(process.env);
 if (sentryEnabled) {
   console.log(JSON.stringify({ event: "discovery_index_sentry", environment: resolveSentryEnvironment(process.env) }));
+}
+const posthogEnabled = await initDiscoveryIndexPostHog(process.env);
+if (posthogEnabled) {
+  console.log(JSON.stringify({ event: "discovery_index_posthog", environment: resolvePostHogEnvironment(process.env) }));
 }
 
 const githubToken = process.env.DISCOVERY_INDEX_GITHUB_TOKEN ?? "";
@@ -41,15 +46,17 @@ serve({ fetch: app.fetch, port }, (info) => {
 
 process.on("unhandledRejection", (reason) => {
   captureUnhandledError(reason, { event: "discovery_index_unhandled_rejection" });
+  captureUnhandledPostHogError(reason, { event: "discovery_index_unhandled_rejection" });
 });
 
 process.on("uncaughtException", (error) => {
   captureUnhandledError(error, { event: "discovery_index_uncaught_exception" });
-  void flushSentry().finally(() => process.exit(1));
+  captureUnhandledPostHogError(error, { event: "discovery_index_uncaught_exception" });
+  void Promise.all([flushSentry(), flushDiscoveryIndexPostHog()]).finally(() => process.exit(1));
 });
 
 process.on("SIGTERM", () => {
-  void flushSentry().finally(() => process.exit(0));
+  void Promise.all([flushSentry(), shutdownDiscoveryIndexPostHog()]).finally(() => process.exit(0));
 });
 
 export { app };

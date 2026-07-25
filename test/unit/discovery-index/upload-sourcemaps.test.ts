@@ -21,6 +21,7 @@ const SERVER_MAP = resolve(DIST_DIR, "server.js.map");
 
 const testRequire = createRequire(import.meta.url);
 const CLI_PKG_JSON = testRequire.resolve("@sentry/cli/package.json");
+const POSTHOG_CLI_PKG_JSON = testRequire.resolve("@posthog/cli/package.json");
 
 const { existsSyncMock, readFileSyncMock, readdirSyncMock, statSyncMock, spawnSyncMock } = vi.hoisted(() => ({
   existsSyncMock: vi.fn(),
@@ -74,6 +75,16 @@ const REQUIRED_ENV: Record<string, string> = {
   DISCOVERY_INDEX_SENTRY_VALIDATE_RELEASE: "0",
 };
 
+// PostHog leg's own required config (#8289) -- NOT included in REQUIRED_ENV above, so every existing Sentry-
+// only test in this file exercises the PostHog leg's missing-config skip path (contributing exit code 0 to
+// main()'s Math.max combine) without needing any changes.
+const POSTHOG_REQUIRED_ENV: Record<string, string> = {
+  POSTHOG_CLI_PATH: "FAKE_POSTHOG_CLI",
+  POSTHOG_CLI_API_KEY: "phx_test_personal_key",
+  POSTHOG_CLI_PROJECT_ID: "12345",
+  POSTHOG_RELEASE: "loopover-discovery-index@abc123",
+};
+
 let originalEnv: NodeJS.ProcessEnv;
 
 function setEnv(overrides: Record<string, string | undefined>): void {
@@ -81,6 +92,23 @@ function setEnv(overrides: Record<string, string | undefined>): void {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   }
+}
+
+/** Sets both legs' required env (Sentry's REQUIRED_ENV + PostHog's POSTHOG_REQUIRED_ENV), so a test can
+ *  exercise the PostHog leg's real behavior alongside the (unchanged, default-successful) Sentry leg. */
+function setEnvWithPostHog(overrides: Record<string, string | undefined>): void {
+  for (const [key, value] of Object.entries({ ...REQUIRED_ENV, ...POSTHOG_REQUIRED_ENV, ...overrides })) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+}
+
+function isPostHogCliCall(command: string): boolean {
+  return command === "FAKE_POSTHOG_CLI";
+}
+
+function isPostHogValidateReleaseCall(args: string[]): boolean {
+  return args[0] === "scripts/validate-posthog-release.mjs";
 }
 
 function spawnSuccess(): { status: number; stdout: string; stderr: string } {
@@ -444,5 +472,245 @@ describe("discovery-index upload-sourcemaps (#4934)", () => {
     await run();
     expect(process.exitCode).toBe(1);
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("discovery_index_sentry_sourcemap_upload_failed"));
+  });
+});
+
+describe("discovery-index upload-sourcemaps -- PostHog leg (#8289)", () => {
+  it("skips the PostHog upload and exits 0 when required PostHog config is missing (Sentry leg still runs)", async () => {
+    setEnv({});
+    await run();
+    expect(process.exitCode).toBe(0);
+    expect(spawnSyncMock.mock.calls.some(([command]) => isPostHogCliCall(command))).toBe(false);
+    expect(console.log).toHaveBeenCalledWith(expect.stringContaining("discovery_index_posthog_sourcemap_upload_skipped"));
+  });
+
+  it("runs the full PostHog success flow with the exact inject/upload args, after the Sentry leg", async () => {
+    setEnvWithPostHog({});
+    await run();
+    expect(process.exitCode).toBe(0);
+    const posthogCalls = spawnSyncMock.mock.calls.filter(([command]) => isPostHogCliCall(command)).map(([, args]) => args);
+    expect(posthogCalls).toEqual([
+      ["sourcemap", "inject", "--directory", "dist", "--release-version", "loopover-discovery-index@abc123"],
+      ["sourcemap", "upload", "--directory", "dist", "--release-version", "loopover-discovery-index@abc123"],
+    ]);
+    // Sentry's own calls are unaffected -- both legs' spawnSync calls coexist in the same mock's call list.
+    expect(spawnSyncMock.mock.calls.some(([command]) => command === "FAKE_SENTRY_CLI")).toBe(true);
+  });
+
+  it("treats a non-strict PostHog upload failure as a soft failure (exit 0) with the reason logged", async () => {
+    spawnSyncMock.mockImplementation((command: string, args: string[]) => {
+      if (isPostHogCliCall(command) && args[1] === "upload") return { status: 1, stdout: "", stderr: "upload rejected" };
+      return spawnSuccess();
+    });
+    setEnvWithPostHog({});
+    await run();
+    expect(process.exitCode).toBe(0);
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("discovery_index_posthog_sourcemap_upload_failed"));
+  });
+
+  it("propagates a strict PostHog upload failure as exit 1, even when the Sentry leg succeeds", async () => {
+    spawnSyncMock.mockImplementation((command: string, args: string[]) => {
+      if (isPostHogCliCall(command) && args[1] === "upload") return { status: 1, stdout: "", stderr: "upload rejected" };
+      return spawnSuccess();
+    });
+    setEnvWithPostHog({ DISCOVERY_INDEX_POSTHOG_UPLOAD_STRICT: "true" });
+    await run();
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("still runs (and can fail) the PostHog leg even when the Sentry leg fails strictly -- both legs are independent", async () => {
+    spawnSyncMock.mockImplementation((command: string, args: string[]) => {
+      if (args.includes("set-commits")) return { status: 1, stdout: "", stderr: "unrelated commit history" };
+      return spawnSuccess();
+    });
+    setEnvWithPostHog({ SENTRY_COMMIT_SHA: "abc123", DISCOVERY_INDEX_SENTRY_UPLOAD_STRICT: "true" });
+    await run();
+    expect(process.exitCode).toBe(1);
+    expect(spawnSyncMock.mock.calls.some(([command]) => isPostHogCliCall(command))).toBe(true);
+    expect(console.log).toHaveBeenCalledWith(expect.stringContaining("discovery_index_posthog_sourcemap_upload_complete"));
+  });
+
+  it("handles a non-Error value thrown out of the PostHog spawnSync as a soft failure", async () => {
+    spawnSyncMock.mockImplementation((command: string, args: string[]) => {
+      if (isPostHogCliCall(command) && args[0] === "sourcemap" && args[1] === "inject") {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error -- exercising the non-Error branch deliberately
+        throw "spawnSync exploded (string throw)";
+      }
+      return spawnSuccess();
+    });
+    setEnvWithPostHog({});
+    await run();
+    expect(process.exitCode).toBe(0);
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("spawnSync exploded (string throw)"));
+  });
+
+  it("resolves the real posthog-cli binary from its package.json bin field", async () => {
+    applyFsFixture({
+      ...validDistFixture(),
+      files: { ...validDistFixture().files, [POSTHOG_CLI_PKG_JSON]: JSON.stringify({ bin: { "posthog-cli": "run-posthog-cli.js" } }) },
+    });
+    setEnvWithPostHog({ POSTHOG_CLI_PATH: undefined });
+    await run();
+    expect(process.exitCode).toBe(0);
+    const posthogCall = spawnSyncMock.mock.calls.find(([, args]) => args[0] === "sourcemap");
+    expect(posthogCall?.[0]).toBe(resolve(dirname(POSTHOG_CLI_PKG_JSON), "run-posthog-cli.js"));
+  });
+
+  it("falls back to an '@posthog/cli'-keyed bin field when 'posthog-cli' isn't present", async () => {
+    applyFsFixture({
+      ...validDistFixture(),
+      files: { ...validDistFixture().files, [POSTHOG_CLI_PKG_JSON]: JSON.stringify({ bin: { "@posthog/cli": "bin/alt-cli" } }) },
+    });
+    setEnvWithPostHog({ POSTHOG_CLI_PATH: undefined });
+    await run();
+    expect(process.exitCode).toBe(0);
+    const posthogCall = spawnSyncMock.mock.calls.find(([, args]) => args[0] === "sourcemap");
+    expect(posthogCall?.[0]).toBe(resolve(dirname(POSTHOG_CLI_PKG_JSON), "bin/alt-cli"));
+  });
+
+  it("resolves a string-form package.json bin field", async () => {
+    applyFsFixture({
+      ...validDistFixture(),
+      files: { ...validDistFixture().files, [POSTHOG_CLI_PKG_JSON]: JSON.stringify({ bin: "run-posthog-cli.js" }) },
+    });
+    setEnvWithPostHog({ POSTHOG_CLI_PATH: undefined });
+    await run();
+    expect(process.exitCode).toBe(0);
+    const posthogCall = spawnSyncMock.mock.calls.find(([, args]) => args[0] === "sourcemap");
+    expect(posthogCall?.[0]).toBe(resolve(dirname(POSTHOG_CLI_PKG_JSON), "run-posthog-cli.js"));
+  });
+
+  it("fails when @posthog/cli's package.json has no resolvable bin entry", async () => {
+    applyFsFixture({
+      ...validDistFixture(),
+      files: { ...validDistFixture().files, [POSTHOG_CLI_PKG_JSON]: JSON.stringify({}) },
+    });
+    setEnvWithPostHog({ POSTHOG_CLI_PATH: undefined });
+    await run();
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("no resolvable bin entry"));
+  });
+
+  it("tolerates a posthog-cli spawnSync result missing stdout/stderr", async () => {
+    spawnSyncMock.mockImplementation((command: string) => {
+      if (isPostHogCliCall(command)) return { status: 0 };
+      return spawnSuccess();
+    });
+    setEnvWithPostHog({});
+    await run();
+    expect(process.exitCode).toBe(0);
+  });
+
+  it("logs verbose posthog-cli output on success", async () => {
+    spawnSyncMock.mockImplementation((command: string) => {
+      if (isPostHogCliCall(command)) return { status: 0, stdout: "uploaded 3 sourcemaps" };
+      return spawnSuccess();
+    });
+    setEnvWithPostHog({});
+    await run();
+    expect(console.log).toHaveBeenCalledWith(expect.stringContaining("discovery_index_posthog_cli"));
+  });
+
+  it("skips PostHog release validation entirely when DISCOVERY_INDEX_POSTHOG_VALIDATE_RELEASE is off", async () => {
+    setEnvWithPostHog({ DISCOVERY_INDEX_POSTHOG_VALIDATE_RELEASE: "0" });
+    await run();
+    expect(spawnSyncMock.mock.calls.some(([, args]) => isPostHogValidateReleaseCall(args))).toBe(false);
+  });
+
+  it("defaults PostHog release validation to ON when DISCOVERY_INDEX_POSTHOG_VALIDATE_RELEASE is unset", async () => {
+    setEnvWithPostHog({ DISCOVERY_INDEX_POSTHOG_VALIDATE_RELEASE: undefined });
+    await run();
+    expect(process.exitCode).toBe(0);
+    expect(spawnSyncMock.mock.calls.some(([, args]) => isPostHogValidateReleaseCall(args))).toBe(true);
+  });
+
+  it("retries PostHog release validation until it succeeds, logging a retry warning each time", async () => {
+    let validateAttempts = 0;
+    spawnSyncMock.mockImplementation((command: string, args: string[]) => {
+      if (isPostHogValidateReleaseCall(args)) {
+        validateAttempts += 1;
+        return validateAttempts < 3 ? { status: 1, stdout: "", stderr: "release not fully propagated yet" } : { status: 0, stdout: "release visible" };
+      }
+      return spawnSuccess();
+    });
+    setEnvWithPostHog({ DISCOVERY_INDEX_POSTHOG_VALIDATE_ATTEMPTS: "5", DISCOVERY_INDEX_POSTHOG_VALIDATE_RETRY_DELAY_MS: "0" });
+    await run();
+    expect(process.exitCode).toBe(0);
+    expect(validateAttempts).toBe(3);
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("discovery_index_posthog_release_validation_retry"));
+    expect(console.log).toHaveBeenCalledWith(expect.stringContaining("discovery_index_posthog_release_validation"));
+  });
+
+  it("tolerates a PostHog validate-release result missing stdout/stderr, and waits between retries", async () => {
+    let attempt = 0;
+    spawnSyncMock.mockImplementation((command: string, args: string[]) => {
+      if (!isPostHogValidateReleaseCall(args)) return spawnSuccess();
+      attempt += 1;
+      if (attempt === 1) return { status: 1 };
+      return { status: 0, stdout: "release visible" };
+    });
+    setEnvWithPostHog({ DISCOVERY_INDEX_POSTHOG_VALIDATE_ATTEMPTS: "3", DISCOVERY_INDEX_POSTHOG_VALIDATE_RETRY_DELAY_MS: "5" });
+    await run();
+    expect(process.exitCode).toBe(0);
+    expect(attempt).toBe(2);
+  });
+
+  it("exhausts PostHog validation attempts and fails softly (exit 0) when not strict", async () => {
+    spawnSyncMock.mockImplementation((command: string, args: string[]) => {
+      if (isPostHogValidateReleaseCall(args)) return { status: 1, stdout: "", stderr: "still not visible" };
+      return spawnSuccess();
+    });
+    setEnvWithPostHog({ DISCOVERY_INDEX_POSTHOG_VALIDATE_ATTEMPTS: "2", DISCOVERY_INDEX_POSTHOG_VALIDATE_RETRY_DELAY_MS: "0" });
+    await run();
+    expect(process.exitCode).toBe(0);
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("discovery_index_posthog_sourcemap_upload_failed"));
+  });
+
+  it("exhausts PostHog validation attempts and fails strictly (exit 1) when set to strict", async () => {
+    spawnSyncMock.mockImplementation((command: string, args: string[]) => {
+      if (isPostHogValidateReleaseCall(args)) return { status: 1, stdout: "", stderr: "still not visible" };
+      return spawnSuccess();
+    });
+    setEnvWithPostHog({
+      DISCOVERY_INDEX_POSTHOG_VALIDATE_ATTEMPTS: "2",
+      DISCOVERY_INDEX_POSTHOG_VALIDATE_RETRY_DELAY_MS: "0",
+      DISCOVERY_INDEX_POSTHOG_UPLOAD_STRICT: "true",
+    });
+    await run();
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("clamps an oversized DISCOVERY_INDEX_POSTHOG_VALIDATE_ATTEMPTS to its max of 20", async () => {
+    let validateAttempts = 0;
+    spawnSyncMock.mockImplementation((command: string, args: string[]) => {
+      if (isPostHogValidateReleaseCall(args)) {
+        validateAttempts += 1;
+        return { status: 1, stdout: "", stderr: "still not visible" };
+      }
+      return spawnSuccess();
+    });
+    setEnvWithPostHog({ DISCOVERY_INDEX_POSTHOG_VALIDATE_ATTEMPTS: "999", DISCOVERY_INDEX_POSTHOG_VALIDATE_RETRY_DELAY_MS: "0" });
+    await run();
+    expect(validateAttempts).toBe(20);
+  });
+
+  it("re-validates source maps between inject and upload, failing the PostHog leg if injection corrupted them", async () => {
+    let injected = false;
+    spawnSyncMock.mockImplementation((command: string, args: string[]) => {
+      if (isPostHogCliCall(command) && args[1] === "inject") {
+        injected = true;
+        return spawnSuccess();
+      }
+      return spawnSuccess();
+    });
+    readFileSyncMock.mockImplementation((path: string) => {
+      if (injected && path === SERVER_MAP) return JSON.stringify({ sources: [], sourcesContent: [] });
+      const fixture = validDistFixture().files;
+      if (!(path in fixture)) throw new Error(`ENOENT (fixture): ${path}`);
+      return fixture[path];
+    });
+    setEnvWithPostHog({});
+    await run();
+    expect(process.exitCode).toBe(0);
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("has no original sources"));
   });
 });

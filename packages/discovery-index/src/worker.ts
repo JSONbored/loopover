@@ -39,6 +39,12 @@ export class DiscoveryIndexContainer extends Container {
   // empty/unset SENTRY_DSN/SENTRY_AUTH_TOKEN; nothing here needs to conditionally omit them. Container.envVars
   // requires Record<string, string> (no undefined) -- SENTRY_RELEASE/SENTRY_AUTH_TOKEN are optional (env.d.ts),
   // so they're coerced to "" here, which initSentry's own nonBlank() already treats identically to unset.
+  //
+  // PostHog vars (#8289, parallel-run alongside the Sentry vars above) follow the identical forwarding
+  // discipline: initDiscoveryIndexPostHog/upload-sourcemaps.ts no-op cleanly on an empty/unset POSTHOG_API_KEY/
+  // POSTHOG_CLI_API_KEY, so they're forwarded unconditionally too. POSTHOG_CLI_API_KEY is a PostHog *personal*
+  // API key (error-tracking write + organization read scopes) -- deliberately separate from POSTHOG_API_KEY
+  // (the project token event capture uses), matching PostHog's own documented sourcemap-upload auth model.
   override envVars = {
     DISCOVERY_INDEX_SHARED_SECRET: env.DISCOVERY_INDEX_SHARED_SECRET,
     DISCOVERY_INDEX_GITHUB_TOKEN: env.DISCOVERY_INDEX_GITHUB_TOKEN,
@@ -48,6 +54,13 @@ export class DiscoveryIndexContainer extends Container {
     SENTRY_AUTH_TOKEN: env.SENTRY_AUTH_TOKEN ?? "",
     SENTRY_ORG: env.SENTRY_ORG,
     SENTRY_PROJECT: env.SENTRY_PROJECT,
+    POSTHOG_API_KEY: env.POSTHOG_API_KEY ?? "",
+    POSTHOG_HOST: env.POSTHOG_HOST ?? "",
+    POSTHOG_ENVIRONMENT: env.POSTHOG_ENVIRONMENT ?? "",
+    POSTHOG_RELEASE: env.POSTHOG_RELEASE ?? "",
+    POSTHOG_CLI_API_KEY: env.POSTHOG_CLI_API_KEY ?? "",
+    POSTHOG_CLI_PROJECT_ID: env.POSTHOG_CLI_PROJECT_ID ?? "",
+    POSTHOG_CLI_HOST: env.POSTHOG_CLI_HOST ?? "",
   };
 }
 
@@ -62,6 +75,13 @@ interface WorkerEnv {
   SENTRY_AUTH_TOKEN: string;
   SENTRY_ORG: string;
   SENTRY_PROJECT: string;
+  POSTHOG_API_KEY?: string;
+  POSTHOG_HOST?: string;
+  POSTHOG_ENVIRONMENT?: string;
+  POSTHOG_RELEASE?: string;
+  POSTHOG_CLI_API_KEY?: string;
+  POSTHOG_CLI_PROJECT_ID?: string;
+  POSTHOG_CLI_HOST?: string;
 }
 
 // /health, /ready, /metrics are cheap liveness/monitoring routes a legitimate uptime checker may poll

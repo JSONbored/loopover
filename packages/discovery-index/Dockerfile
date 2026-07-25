@@ -38,8 +38,14 @@ EXPOSE 8080
 # unset), and for source-map upload specifically: SENTRY_AUTH_TOKEN, SENTRY_ORG, SENTRY_PROJECT (also
 # optional -- upload-sourcemaps.ts skips itself with a log line, never fails the boot, when any is unset).
 #
+# PostHog (#8289, parallel-run alongside the Sentry vars above until the epic's gated decommission, #8298):
+# POSTHOG_API_KEY/POSTHOG_HOST/POSTHOG_ENVIRONMENT/POSTHOG_RELEASE for error tracking, and
+# POSTHOG_CLI_API_KEY/POSTHOG_CLI_PROJECT_ID/POSTHOG_CLI_HOST for source-map upload -- same optional,
+# no-op-when-unset posture as their Sentry counterparts. Pending #7875 (a real, loopover-owned PostHog
+# project), so this leg is currently inert in every real deployment.
+#
 # upload-sourcemaps.js runs FIRST, at container startup (not baked into the image at build time, since
-# SENTRY_AUTH_TOKEN is a runtime-only secret) -- deletes the .map files it just uploaded before the server
-# starts, so they're never served or left on disk in the running container. Mirrors
+# SENTRY_AUTH_TOKEN/POSTHOG_CLI_API_KEY are runtime-only secrets) -- deletes the .map files it just uploaded
+# before the server starts, so they're never served or left on disk in the running container. Mirrors
 # review-enrichment/Dockerfile's identical CMD shape.
 CMD ["sh", "-c", "node dist/upload-sourcemaps.js && find dist -type f -name '*.map' -delete && node dist/server.js"]

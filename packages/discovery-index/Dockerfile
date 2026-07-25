@@ -34,12 +34,14 @@ ENV PORT=8080
 EXPOSE 8080
 # Provide at runtime (NOT baked into the image): DISCOVERY_INDEX_SHARED_SECRET (bearer auth for callers),
 # DISCOVERY_INDEX_GITHUB_TOKEN (this service's own GitHub token, isolated from any other component's),
-# SENTRY_DSN/SENTRY_ENVIRONMENT/SENTRY_RELEASE (error tracking, #4934 -- optional, no-op when SENTRY_DSN is
-# unset), and for source-map upload specifically: SENTRY_AUTH_TOKEN, SENTRY_ORG, SENTRY_PROJECT (also
-# optional -- upload-sourcemaps.ts skips itself with a log line, never fails the boot, when any is unset).
+# POSTHOG_API_KEY/POSTHOG_HOST/POSTHOG_ENVIRONMENT/POSTHOG_RELEASE (error tracking, #8289 -- optional, no-op
+# when POSTHOG_API_KEY is unset), and for source-map upload specifically: POSTHOG_CLI_API_KEY,
+# POSTHOG_CLI_PROJECT_ID, POSTHOG_CLI_HOST (also optional -- upload-sourcemaps.ts skips itself with a log
+# line, never fails the boot, when POSTHOG_CLI_API_KEY/PROJECT_ID are unset). All PostHog vars are pending
+# #7875 (a real, loopover-owned PostHog project), so this is currently inert in every real deployment.
 #
 # upload-sourcemaps.js runs FIRST, at container startup (not baked into the image at build time, since
-# SENTRY_AUTH_TOKEN is a runtime-only secret) -- deletes the .map files it just uploaded before the server
+# POSTHOG_CLI_API_KEY is a runtime-only secret) -- deletes the .map files it just uploaded before the server
 # starts, so they're never served or left on disk in the running container. Mirrors
 # review-enrichment/Dockerfile's identical CMD shape.
 CMD ["sh", "-c", "node dist/upload-sourcemaps.js && find dist -type f -name '*.map' -delete && node dist/server.js"]

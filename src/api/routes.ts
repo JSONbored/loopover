@@ -228,7 +228,7 @@ import { evaluateEscalation } from "../loop-escalation";
 import { buildResultsPayload } from "../results-payload";
 import { buildProgressSnapshot } from "../loop-progress";
 import { validateIdeaSubmission, buildTaskGraph, buildClaimPlan } from "../idea-intake";
-import { loadPrAiReviewFindings } from "../mcp/pr-ai-review-findings";
+import { loadPrAiReviewFindings, assertContributorOwnsPullRequest } from "../mcp/pr-ai-review-findings";
 import {
   buildMcpCompatibilityMetadata,
   LATEST_RECOMMENDED_MCP_VERSION,
@@ -3463,6 +3463,17 @@ export function createApp() {
     if (!login) return c.json({ error: "login_required" }, 400);
     const unauthorized = await requireContributorAccess(c, login);
     if (unauthorized) return unauthorized;
+    // requireContributorAccess only proves the caller IS `login`; it does not prove `login` authored this PR.
+    // Mirror the MCP tool's guard order (server.ts getPrAiReviewFindings) so the REST surface can't leak another
+    // contributor's AI-review findings: 404 when the PR doesn't exist, 403 when it exists but belongs to someone
+    // else (#8659).
+    const pullRequest = await getPullRequest(c.env, fullName, number);
+    if (!pullRequest) return c.json({ error: "not_found" }, 404);
+    try {
+      assertContributorOwnsPullRequest(pullRequest.authorLogin, login);
+    } catch {
+      return c.json({ error: "forbidden" }, 403);
+    }
     return c.json(await loadPrAiReviewFindings(c.env, { repoFullName: fullName, pullNumber: number, login }));
   });
 

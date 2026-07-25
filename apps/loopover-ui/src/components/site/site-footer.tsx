@@ -15,7 +15,6 @@ const cols = [
       { to: "/miners", label: "For miners" },
       { to: "/maintainers", label: "For maintainers" },
       { to: "/agents", label: "For coding agents" },
-      { to: "/extension", label: "Browser extension" },
     ],
   },
   {

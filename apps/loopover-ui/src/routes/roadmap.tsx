@@ -55,11 +55,11 @@ const ROADMAP_ITEMS: Array<{
       "MCP doctor/status/init-client clarity, last-good decision packs, recommendation-change explanations, and command-copy flows for miners.",
   },
   {
-    title: "Phase 2: maintainer trust and browser extension",
+    title: "Phase 2: maintainer trust",
     status: "planned",
     issue: 235,
     description:
-      "Maintainer trust checklist, install health next actions, screenshot-backed extension states, and private/public rendering checks.",
+      "Maintainer trust checklist, install health next actions, and private/public rendering checks.",
   },
   {
     title: "Phase 3: repo owner intake console",
@@ -88,7 +88,7 @@ const ROADMAP_ITEMS: Array<{
 const BUILT_TITLES = new Set<string>([
   "Phase 0: stabilize while shipping",
   "Phase 1: miner command center",
-  "Phase 2: maintainer trust and browser extension",
+  "Phase 2: maintainer trust",
   "Phase 3: repo owner intake console",
   "Phase 4: adoption analytics and launch system",
   "Phase 5: ecosystem distribution",
@@ -96,9 +96,9 @@ const BUILT_TITLES = new Set<string>([
 
 const LINK_MAP: Record<string, { to: string; label: string }> = {
   "Phase 1: miner command center": { to: "/app/miner", label: "Open miner dashboard" },
-  "Phase 2: maintainer trust and browser extension": {
-    to: "/extension",
-    label: "Open extension page",
+  "Phase 2: maintainer trust": {
+    to: "/app/maintainer",
+    label: "Open maintainer console",
   },
   "Phase 3: repo owner intake console": { to: "/app/repos", label: "Open repos console" },
   "Phase 4: adoption analytics and launch system": {

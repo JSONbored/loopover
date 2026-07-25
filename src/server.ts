@@ -85,13 +85,6 @@ import { setRedeployTrigger } from "./mcp/redeploy-companion-registry";
 import { triggerRedeploy } from "./selfhost/redeploy-companion-client";
 import { assertSelfHostPreflight } from "./selfhost/preflight";
 import {
-  buildSentryOpenTelemetryBridge,
-  captureError,
-  flushSentry,
-  initSentry,
-  installStructuredLogForwarding,
-} from "./selfhost/sentry";
-import {
   capturePostHogError,
   flushPostHog,
   initPostHog,
@@ -108,7 +101,6 @@ import {
 import {
   currentOtelTraceParent,
   initOpenTelemetry,
-  openTelemetryTraceExportEnabled,
   selfHostHttpRequestAttributes,
   selfHostHttpResponseAttributes,
   setCurrentOtelSpanAttributes,
@@ -325,55 +317,33 @@ async function main(): Promise<void> {
   loadFileSecrets();
   /* v8 ignore next -- importing this entrypoint starts the Node server; pure validation is covered in selfhost-preflight tests. */
   assertSelfHostPreflight(process.env);
-  // Error tracking (#1468): opt-in via SENTRY_DSN — a complete no-op when unset. When on, capture uncaught crashes
-  // + unhandled rejections (flush before exit for the fatal case); per-subsystem captures (queue dead-letter,
-  // review failures) are wired at their sites.
+  // Error tracking (#1468, epic #8286): opt-in via POSTHOG_API_KEY -- the same var #6235's MCP telemetry
+  // already reads -- a complete no-op when unset. REPLACES the old Sentry sink entirely (2026-07-25 epic
+  // correction: full replacement, not a parallel-run). enableExceptionAutocapture (set inside initPostHog)
+  // already installs its own uncaughtException/unhandledRejection handlers per PostHog's own documented
+  // Node.js setup, so no manual process.on wiring is needed here for the crash case; only structured-log
+  // forwarding needs an explicit install.
   //
   // #6325 follow-up: initialized HERE, before every boot-time advisory below (emptyConfigDirAdvisory /
   // sqliteBackupAdvisory / publicOriginReachabilityAdvisory all "warn LOUDLY" via console.error, which
-  // installStructuredLogForwarding — wired below — is what actually forwards it to Sentry: only console.error
-  // and level:error/fatal console.log lines are ever forwarded, never console.warn). Originally this ran
-  // AFTER emptyConfigDirAdvisory's own check, so that ONE advisory's console.error was still silently
-  // unreachable by Sentry even after #6325's console.warn->console.error fix landed for the other two: the
-  // forwarding hook simply didn't exist yet at that point in the boot sequence. Kept immediately after
-  // loadFileSecrets()/assertSelfHostPreflight() specifically — a self-host SENTRY_DSN is commonly supplied via
-  // a mounted secret file loadFileSecrets() reads into process.env, and preflight is a fatal-exit gate that
-  // should run before anything else regardless of Sentry's own state.
-  /* v8 ignore start -- importing this entrypoint starts the Node server; Sentry/OTEL init behavior is covered in selfhost tests. */
-  const sentryEnabled = await initSentry(process.env);
-  if (sentryEnabled) {
-    console.log(
-      JSON.stringify({
-        event: "selfhost_sentry",
-        environment: process.env.SENTRY_ENVIRONMENT ?? "production",
-      }),
-    );
-    process.on("uncaughtException", (error) => {
-      captureError(error, { kind: "uncaughtException" }, "uncaughtException");
-      console.error(error);
-      void flushSentry().finally(() => process.exit(1));
-    });
-    process.on("unhandledRejection", (reason) => {
-      captureError(reason, { kind: "unhandledRejection" }, "unhandledRejection");
-      console.error(reason);
-    });
-    // Central error forwarding (#1468): operational failures are structured JSON logs emitted through stdout and
-    // stderr. Wrap both sinks so every level:"error"/"fatal" line surfaces as a Sentry issue WITHOUT per-site wiring.
-    installStructuredLogForwarding();
-  }
-  // PostHog error tracking (#8287, epic #8286): opt-in via POSTHOG_API_KEY -- the same var #6235's MCP telemetry
-  // already reads. PARALLEL-RUN: active alongside Sentry above, not instead of it, until the gated decommission
-  // issue (#8298) says otherwise. enableExceptionAutocapture (set inside initPostHog) already installs its own
-  // uncaughtException/unhandledRejection handlers per PostHog's own documented Node.js setup, so -- unlike
-  // Sentry's explicit process.on wiring above, added before that capability existed -- no manual mirror is
-  // needed here for the crash case; only structured-log forwarding needs an explicit install, same as Sentry.
+  // installPostHogStructuredLogForwarding — wired below — is what actually forwards it to PostHog: only
+  // console.error and level:error/fatal console.log lines are ever forwarded, never console.warn). Kept
+  // immediately after loadFileSecrets()/assertSelfHostPreflight() specifically — a self-host POSTHOG_API_KEY
+  // is commonly supplied via a mounted secret file loadFileSecrets() reads into process.env, and preflight is
+  // a fatal-exit gate that should run before anything else regardless of PostHog's own state.
+  /* v8 ignore start -- importing this entrypoint starts the Node server; PostHog/OTEL init behavior is covered in selfhost tests. */
   const posthogEnabled = await initPostHog(process.env);
   if (posthogEnabled) {
     console.log(JSON.stringify({ event: "selfhost_posthog", environment: process.env.POSTHOG_ENVIRONMENT ?? "production" }));
     installPostHogStructuredLogForwarding();
   }
-  if (await initOpenTelemetry(process.env, sentryEnabled ? await buildSentryOpenTelemetryBridge() : undefined))
-    console.log(JSON.stringify({ event: "selfhost_otel", traces: openTelemetryTraceExportEnabled(process.env) ? "otlp" : "sentry" }));
+  // PostHog's distributed-tracing product (beta: https://posthog.com/docs/distributed-tracing) is plain
+  // OTLP/HTTP, so initOpenTelemetry needs no PostHog-specific bridge argument -- it already defaults its OTLP
+  // trace endpoint to PostHog when POSTHOG_API_KEY is set and no explicit OTEL_EXPORTER_OTLP_* override is
+  // given (see resolveOtelTraceEndpoint in ./selfhost/otel). An operator still opts in via
+  // OTEL_TRACES_EXPORTER=otlp -- this never turns tracing on just because POSTHOG_API_KEY happens to be set.
+  if (await initOpenTelemetry(process.env))
+    console.log(JSON.stringify({ event: "selfhost_otel", traces: "otlp" }));
   /* v8 ignore stop */
   const startedAt = Date.now();
   // This entrypoint IS the self-host runtime by definition (the cloud worker never imports server.ts), so the
@@ -446,10 +416,10 @@ async function main(): Promise<void> {
   // Config-drift advisory: warn LOUDLY (not just the log line above) when the mount resolves but is empty --
   // see emptyConfigDirAdvisory's own doc comment for the incident this guards against.
   const configDirAdvisory = emptyConfigDirAdvisory(configDirOpts);
-  // #6325 follow-up: console.error, not console.warn -- installStructuredLogForwarding (initSentry, now above
-  // this check) only intercepts console.log (level:error/fatal only) and console.error (always forwarded);
-  // console.warn is never wrapped at all. `level: "warn"` in the payload still maps this to Sentry's own
-  // "warning" severity (see forwardStructuredLogToSentry), not an "error".
+  // #6325 follow-up: console.error, not console.warn -- installPostHogStructuredLogForwarding (initPostHog,
+  // now above this check) only intercepts console.log (level:error/fatal only) and console.error (always
+  // forwarded); console.warn is never wrapped at all. `level: "warn"` in the payload still maps this to
+  // PostHog's own "warning" severity (see forwardStructuredLogToPostHog), not an "error".
   if (configDirAdvisory)
     console.error(
       JSON.stringify({
@@ -514,11 +484,11 @@ async function main(): Promise<void> {
     backupAcknowledged: process.env.BACKUP_ACKNOWLEDGED === "true",
   };
   const backupAdvisory = sqliteBackupAdvisory(sqliteBackupOpts);
-  // #6325: console.error, not console.warn -- installStructuredLogForwarding (initSentry, above) only
+  // #6325: console.error, not console.warn -- installPostHogStructuredLogForwarding (initPostHog, above) only
   // intercepts console.log (level:error/fatal only) and console.error (always forwarded); console.warn is
-  // NEVER wrapped at all, so this "warn LOUDLY" advisory was silently unreachable by Sentry regardless of
-  // whether Sentry was configured. `level: "warn"` in the payload still maps this to Sentry's own "warning"
-  // severity (see forwardStructuredLogToSentry), not an "error" -- only the CONSOLE METHOD used to reach the
+  // NEVER wrapped at all, so this "warn LOUDLY" advisory was silently unreachable by PostHog regardless of
+  // whether PostHog was configured. `level: "warn"` in the payload still maps this to PostHog's own "warning"
+  // severity (see forwardStructuredLogToPostHog), not an "error" -- only the CONSOLE METHOD used to reach the
   // forwarder changes here, not the reported severity.
   if (backupAdvisory)
     console.error(
@@ -1139,7 +1109,7 @@ async function main(): Promise<void> {
     },
     () => {
       console.log(JSON.stringify({ event: "selfhost_listening", port }));
-      // Probe REES shared secret at startup so mismatches appear in logs/Sentry before
+      // Probe REES shared secret at startup so mismatches appear in logs/PostHog before
       // any PR triggers a review (fire-and-forget; never blocks server startup).
       probeReesSecretAtStartup(env);
     },
@@ -1240,7 +1210,6 @@ async function main(): Promise<void> {
       register: registerOrbRelayTargetWithRetry,
       ...(relayDrainState ? { drainState: relayDrainState } : {}),
     }).catch((error) => {
-      captureError(error, { kind: "orb_relay_register" }, "orb_relay_register");
       capturePostHogError(error, { kind: "orb_relay_register" }, "orb_relay_register");
     });
   void attemptOrbRelayRegistration();
@@ -1268,7 +1237,6 @@ async function main(): Promise<void> {
     /* v8 ignore start -- self-host entrypoint timer; probe logic itself is unit-tested in d1-size-probe.test.ts. */
     const runD1Probe = () =>
       runD1SizeProbe(d1ProbeEnv).catch((error) => {
-        captureError(error, { kind: "d1_size_probe" }, "d1_size_probe");
         capturePostHogError(error, { kind: "d1_size_probe" }, "d1_size_probe");
       });
     void runD1Probe();
@@ -1297,7 +1265,6 @@ async function main(): Promise<void> {
       }),
     );
     void drainRelay().catch((error) => {
-      captureError(error, { kind: "orb_relay_drain" }, "orb_relay_drain");
       capturePostHogError(error, { kind: "orb_relay_drain" }, "orb_relay_drain");
     });
     // 30s matches broker-client's request timeout so a slow/degraded broker's in-flight drain has fully
@@ -1305,7 +1272,6 @@ async function main(): Promise<void> {
     setInterval(
       () =>
         void drainRelay().catch((error) => {
-          captureError(error, { kind: "orb_relay_drain" }, "orb_relay_drain");
           capturePostHogError(error, { kind: "orb_relay_drain" }, "orb_relay_drain");
         }),
       30_000,
@@ -1324,7 +1290,6 @@ async function main(): Promise<void> {
     await backend.shutdown();
     /* v8 ignore next -- graceful process signal path is not imported in unit tests; shutdown helper is covered. */
     await shutdownOpenTelemetry();
-    await flushSentry();
     await shutdownPostHog();
     process.exit(0);
   };
@@ -1333,9 +1298,8 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
-  captureError(error, { kind: "boot" }, "boot");
   capturePostHogError(error, { kind: "boot" }, "boot");
   console.error(error);
   /* v8 ignore next -- boot failure exits the process; shutdown helper is covered independently. */
-  void Promise.all([shutdownOpenTelemetry(), flushSentry(), flushPostHog()]).finally(() => process.exit(1));
+  void Promise.all([shutdownOpenTelemetry(), flushPostHog()]).finally(() => process.exit(1));
 });

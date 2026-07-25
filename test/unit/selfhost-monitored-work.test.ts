@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  withSentryMonitor: vi.fn(
+  withPostHogMonitor: vi.fn(
     async (_name: string, _context: Record<string, unknown>, callback: () => Promise<unknown>) =>
       callback(),
   ),
 }));
 
-vi.mock("../../src/selfhost/sentry", () => ({
-  withSentryMonitor: mocks.withSentryMonitor,
+vi.mock("../../src/selfhost/posthog", () => ({
+  withPostHogMonitor: mocks.withPostHogMonitor,
 }));
 
 import {
@@ -30,14 +30,14 @@ beforeEach(() => {
 });
 
 describe("self-host monitored recurring work", () => {
-  it("runs the scheduled loop through the Sentry monitor with cron context", async () => {
+  it("runs the scheduled loop through the PostHog monitor with cron context", async () => {
     const scheduled = vi.fn().mockResolvedValue("done");
 
     await expect(runScheduledLoopWithMonitor("*/2 * * * *", scheduled)).resolves.toBe(
       "done",
     );
 
-    expect(mocks.withSentryMonitor).toHaveBeenCalledWith(
+    expect(mocks.withPostHogMonitor).toHaveBeenCalledWith(
       "scheduled-loop",
       { jobType: "scheduled-loop", cron: "*/2 * * * *" },
       expect.any(Function),
@@ -50,7 +50,7 @@ describe("self-host monitored recurring work", () => {
     const log = vi.fn();
 
     await runOrbExportWithMonitor(exportBatch, log);
-    expect(mocks.withSentryMonitor).toHaveBeenLastCalledWith(
+    expect(mocks.withPostHogMonitor).toHaveBeenLastCalledWith(
       "orb-export",
       { jobType: "orb-export" },
       expect.any(Function),
@@ -117,7 +117,7 @@ describe("self-host monitored recurring work", () => {
       log,
     });
 
-    expect(mocks.withSentryMonitor).toHaveBeenCalledWith(
+    expect(mocks.withPostHogMonitor).toHaveBeenCalledWith(
       "orb-relay-drain",
       { jobType: "orb-relay-drain", pendingAckCount: 1 },
       expect.any(Function),
@@ -427,7 +427,7 @@ describe("self-host monitored recurring work", () => {
 
       await registerOrbRelayWithMonitor({ env: { ORB_RELAY_MODE: "push" }, state, register, log });
 
-      expect(mocks.withSentryMonitor).toHaveBeenCalledWith(
+      expect(mocks.withPostHogMonitor).toHaveBeenCalledWith(
         "orb-relay-register",
         { jobType: "orb-relay-register" },
         expect.any(Function),

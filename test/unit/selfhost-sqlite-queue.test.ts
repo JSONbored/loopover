@@ -6,7 +6,7 @@ import { jobCoalesceKey, queueSnapshotFromBinding } from "../../src/selfhost/que
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { RetryableJobError } from "../../src/queue/retryable";
 import { hostLoadAvg1PerCore } from "../../src/selfhost/host-pressure";
-import * as sentryModule from "../../src/selfhost/sentry";
+import * as posthogModule from "../../src/selfhost/posthog";
 import type { JobMessage } from "../../src/types";
 
 // Real host CPU load is nondeterministic (and can legitimately spike on a busy CI runner), so every
@@ -2156,12 +2156,12 @@ describe("createSqliteQueue (durable #980)", () => {
       await q.stop();
     });
 
-    // (#1824): dead-letter revival stopping SILENTLY is worse than one throwing tick -- a Sentry cron monitor
-    // now wraps every tick so a stopped timer shows up as a missed check-in, not silence.
-    it("wraps each revive tick in the queue-dead-letter-revive Sentry monitor", async () => {
+    // (#1824): dead-letter revival stopping SILENTLY is worse than one throwing tick -- a PostHog monitor
+    // now wraps every tick so a stopped timer shows up as a missed heartbeat, not silence.
+    it("wraps each revive tick in the queue-dead-letter-revive PostHog monitor", async () => {
       process.env.QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS = "1000";
       vi.useFakeTimers();
-      const monitorSpy = vi.spyOn(sentryModule, "withSentryMonitor");
+      const monitorSpy = vi.spyOn(posthogModule, "withPostHogMonitor");
       try {
         const driver = makeDriver();
         const q = createSqliteQueue(driver, async () => undefined, { maxRetries: 1 });
@@ -2180,13 +2180,13 @@ describe("createSqliteQueue (durable #980)", () => {
       }
     });
 
-    // The monitor rethrows on failure (withSentryMonitor's own contract) -- confirms that rethrow is still caught
+    // The monitor rethrows on failure (withPostHogMonitor's own contract) -- confirms that rethrow is still caught
     // by reviveDeadLetterJobsSafely's own try/catch, so a crashing tick behaves exactly as it did before the
     // monitor was added: logged + captured, never an uncaught exception.
-    it("still catches a revive crash after adding the Sentry monitor wrapper (no regression on #2581)", async () => {
+    it("still catches a revive crash after adding the PostHog monitor wrapper (no regression on #2581)", async () => {
       process.env.QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS = "1000";
       vi.useFakeTimers();
-      const monitorSpy = vi.spyOn(sentryModule, "withSentryMonitor");
+      const monitorSpy = vi.spyOn(posthogModule, "withPostHogMonitor");
       try {
         const driver = makeDriver();
         const realQuery = driver.query.bind(driver);

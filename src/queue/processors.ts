@@ -584,7 +584,6 @@ import { commitE2eTestToPrBranch } from "../github/e2e-test-commit";
 import { shouldApplyRepoCultureProfile } from "../review/repo-culture-profile-wire";
 import { applyReviewMemorySuppression, getCachedReviewSuppressions, invalidateReviewSuppressionCache, shouldApplyReviewMemory } from "../review/review-memory-wire";
 import { isEnrichmentEnabled } from "../review/enrichment-wire";
-import { captureReviewFailure } from "../selfhost/sentry";
 import { capturePostHogReviewFailure } from "../selfhost/posthog";
 import {
   setReviewPipelineSpanOutcome,
@@ -1119,7 +1118,7 @@ async function isRegateRepairExhausted(env: Env, repoFullName: string, pr: Pick<
     });
     // level:"error" is deliberate, not a code failure: this line only fires once the cap above already
     // stopped the wasteful repair loop, so its OWN existence is the operator-visible signal (via the
-    // structured log → Sentry forwarder, forwardStructuredLogToSentry) that a PR kept failing repair for the
+    // structured log → PostHog forwarder, forwardStructuredLogToPostHog) that a PR kept failing repair for the
     // same head SHA — the same "surface an anomaly at error level" convention selfhost_ai_provider_failed /
     // selfhost_ai_providers_exhausted already use in src/selfhost/ai.ts.
     console.error(
@@ -3904,15 +3903,15 @@ async function prReadyForReview(
       }).catch(() => undefined);
       // level:"error" is deliberate, not a code failure: this line only fires once the guard above already
       // stopped the wasteful re-review, so its OWN existence is the operator-visible signal (via the structured
-      // log → Sentry forwarder, forwardStructuredLogToSentry) that a PR's CI has been permanently stuck long
+      // log → PostHog forwarder, forwardStructuredLogToPostHog) that a PR's CI has been permanently stuck long
       // enough to need a human — the same "surface an anomaly at error level" convention selfhost_ai_provider_
       // failed / selfhost_ai_providers_exhausted already use in src/selfhost/ai.ts. Rate-limited to once per
       // (repo, pr, headSha) per day (#4998) — the defer above still runs on every evaluation; only the log is
-      // coalesced, so one permanently-stuck PR doesn't flood Sentry with hundreds of copies of the same signal.
+      // coalesced, so one permanently-stuck PR doesn't flood PostHog with hundreds of copies of the same signal.
       if (!(await ciStuckRepeatLogCoalesced(env, repoFullName, pr.number, pr.headSha))) {
         // LOOPOVER-2F: for a release-automation PR the "stuck" state is EXPECTED (see
         // isReleaseAutomationHeadRef), so the once-a-day signal drops to warn — below the
-        // Sentry forwarder's error threshold, still in Workers Logs — while a real PR keeps
+        // PostHog forwarder's error threshold, still in Workers Logs — while a real PR keeps
         // paging at error. Sink matches the stamped level per #7806 (console.warn for warn,
         // console.error for error), which is why the whole call is picked, not just the level.
         const releaseAutomation = isReleaseAutomationHeadRef(pr.headRef);
@@ -5707,7 +5706,7 @@ async function maybeHandleRepositoryRenamedWebhookEvent(
  * (LOOPOVER_REPO_CONFIG_DIR/{owner}__{repo}/...), which the app can only READ (the mount is read-only)
  * and which private-config.ts derives from the repo's CURRENT name. If one existed under the old name but
  * not the new one, the operator's gate/autonomy/review policy for this repo just silently reverted to
- * global defaults -- loud enough to reach Sentry (level:"error"), not a routine info line, because the
+ * global defaults -- loud enough to reach PostHog (level:"error"), not a routine info line, because the
  * failure mode is exactly "reviews quietly stop matching what the operator configured," not a crash.
  * A cloud deployment (no local reader registered) always resolves both sides false, so this never fires there.
  */
@@ -9159,16 +9158,7 @@ async function maybePublishPrPublicSurface(
           },
         });
         // The advisory ran but NOTHING reached the PR (revoked token / perms removed / GitHub 5xx). For an
-        // advisory-only bot this is the worst failure — escalate to Sentry at error level, not just the audit ledger.
-        captureReviewFailure(new Error("PR public-surface publish failed — review produced output but nothing was posted to the PR"), {
-          kind: "publish",
-          installationId,
-          owner: repoFullName.split("/")[0],
-          repo: repoFullName,
-          pr: pr.number,
-          head_sha: advisory.headSha,
-          failedOutputs: failedOutputs.map((failure) => failure.output),
-        }, "pr_public_surface_publish_failed");
+        // advisory-only bot this is the worst failure — escalate to PostHog at error level, not just the audit ledger.
         capturePostHogReviewFailure(new Error("PR public-surface publish failed — review produced output but nothing was posted to the PR"), {
           kind: "publish",
           installationId,
@@ -10367,16 +10357,6 @@ async function maybePublishPrPublicSurface(
           aiReviewMode: settings.aiReviewMode,
         },
       }).catch(() => undefined);
-      captureReviewFailure(new Error(message), {
-        kind: "review",
-        reason: "ai_review_public_summary_missing",
-        installationId,
-        repo: repoFullName,
-        pr: pr.number,
-        head_sha: advisory.headSha,
-        reviewer_count: aiReview?.reviewerCount ?? 0,
-        public_notes: hasPublicReviewAssessment(aiReview?.notes),
-      }, "ai_review_public_summary_missing");
       capturePostHogReviewFailure(new Error(message), {
         kind: "review",
         reason: "ai_review_public_summary_missing",

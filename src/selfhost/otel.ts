@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { Attributes, Context, ContextManager, TextMapPropagator, Tracer } from "@opentelemetry/api";
-import type { ReadableSpan, Sampler, Span, SpanProcessor } from "@opentelemetry/sdk-trace-base";
+import type { Attributes, Context, Tracer } from "@opentelemetry/api";
+import type { SpanProcessor } from "@opentelemetry/sdk-trace-base";
 
 type OtelApi = typeof import("@opentelemetry/api");
 type OtelSdk = typeof import("@opentelemetry/sdk-trace-node");
@@ -10,13 +10,6 @@ type OtelProvider = {
   shutdown(): Promise<void>;
 };
 type SpanOptions = { parentTraceParent?: string | undefined };
-export type OpenTelemetryBridge = {
-  sampler?: Sampler;
-  spanProcessor?: SpanProcessor;
-  propagator?: TextMapPropagator;
-  contextManager?: ContextManager;
-  validate?: () => void;
-};
 export type OtelTraceIds = { trace_id: string; span_id: string };
 export type OtelTraceLogFields = { trace_id: string; span_id?: string };
 
@@ -41,13 +34,42 @@ function traceExporterEnabled(env: NodeJS.ProcessEnv): boolean {
   return exporters?.split(",").map((part) => part.trim().toLowerCase()).includes("otlp") === true;
 }
 
+const DEFAULT_POSTHOG_OTEL_HOST = "https://us.i.posthog.com";
+
+/** PostHog's distributed-tracing product (beta: https://posthog.com/docs/distributed-tracing) is a plain
+ *  OTLP/HTTP receiver -- PostHog's own docs describe pointing an existing OTel exporter at it as the whole
+ *  integration, not a proprietary SDK. Used only as a FALLBACK target/auth pair when the operator hasn't
+ *  explicitly configured their own OTEL_EXPORTER_OTLP_(TRACES_)ENDPOINT (e.g. their own collector) -- an
+ *  explicit endpoint always wins. Reuses the SAME POSTHOG_API_KEY/POSTHOG_HOST self-host's own error
+ *  tracking (posthog.ts) already reads off process.env (read directly here, not imported, to avoid a
+ *  posthog.ts<->otel.ts import cycle -- posthog.ts already imports currentOtelTraceIds from this file).
+ *  Per PostHog's docs, this must be the PROJECT token (phc_...), the same one POSTHOG_API_KEY already holds
+ *  for error capture -- never a personal API key. */
+function resolvePostHogOtelTraceTarget(env: NodeJS.ProcessEnv): { endpoint: string; headers: Record<string, string> } | undefined {
+  const apiKey = nonBlank(env.POSTHOG_API_KEY);
+  if (!apiKey) return undefined;
+  const host = (nonBlank(env.POSTHOG_HOST) ?? DEFAULT_POSTHOG_OTEL_HOST).replace(/\/+$/, "");
+  return { endpoint: `${host}/i/v1/traces`, headers: { Authorization: `Bearer ${apiKey}` } };
+}
+
 export function resolveOtelTraceEndpoint(env: NodeJS.ProcessEnv): string | undefined {
   const explicit = nonBlank(env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT);
   if (explicit) return explicit;
   const base = nonBlank(env.OTEL_EXPORTER_OTLP_ENDPOINT);
-  if (!base) return undefined;
-  const trimmed = base.replace(/\/+$/, "");
-  return trimmed.endsWith("/v1/traces") ? trimmed : `${trimmed}/v1/traces`;
+  if (base) {
+    const trimmed = base.replace(/\/+$/, "");
+    return trimmed.endsWith("/v1/traces") ? trimmed : `${trimmed}/v1/traces`;
+  }
+  return resolvePostHogOtelTraceTarget(env)?.endpoint;
+}
+
+/** Extra headers to send with the OTLP trace exporter, beyond what the SDK's own native
+ *  OTEL_EXPORTER_OTLP_(TRACES_)HEADERS env var reading already provides -- only non-empty when
+ *  {@link resolveOtelTraceEndpoint} resolved via the PostHog fallback (an explicit operator-configured
+ *  endpoint relies entirely on the SDK's native header handling, never overridden here). */
+function resolveOtelTraceHeaders(env: NodeJS.ProcessEnv): Record<string, string> | undefined {
+  if (nonBlank(env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT) || nonBlank(env.OTEL_EXPORTER_OTLP_ENDPOINT)) return undefined;
+  return resolvePostHogOtelTraceTarget(env)?.headers;
 }
 
 export function openTelemetryTraceExportEnabled(env: NodeJS.ProcessEnv): boolean {
@@ -57,9 +79,9 @@ export function openTelemetryTraceExportEnabled(env: NodeJS.ProcessEnv): boolean
 function serviceAttributes(env: NodeJS.ProcessEnv): Attributes {
   const attrs: Attributes = {
     "service.name": nonBlank(env.OTEL_SERVICE_NAME) ?? "loopover-selfhost",
-    "deployment.environment.name": nonBlank(env.OTEL_SERVICE_ENVIRONMENT) ?? nonBlank(env.SENTRY_ENVIRONMENT) ?? "selfhost",
+    "deployment.environment.name": nonBlank(env.OTEL_SERVICE_ENVIRONMENT) ?? nonBlank(env.POSTHOG_ENVIRONMENT) ?? "selfhost",
   };
-  const version = nonBlank(env.LOOPOVER_VERSION) ?? nonBlank(env.SENTRY_RELEASE);
+  const version = nonBlank(env.LOOPOVER_VERSION) ?? nonBlank(env.POSTHOG_RELEASE);
   if (version) attrs["service.version"] = version;
   return attrs;
 }
@@ -78,48 +100,6 @@ function samplerFromEnv(env: NodeJS.ProcessEnv, sdk: OtelSdk) {
   if (sampler === "parentbased_traceidratio")
     return new sdk.ParentBasedSampler({ root: new sdk.TraceIdRatioBasedSampler(ratioFromEnv(env.OTEL_TRACES_SAMPLER_ARG)) });
   return new sdk.ParentBasedSampler({ root: new sdk.AlwaysOnSampler() });
-}
-
-function processorSamplingContext(
-  parentContext: Context,
-  spanDecisions: WeakMap<object, boolean>,
-): Context {
-  const api = Otel;
-  const parentSpan = api?.trace.getSpan(parentContext);
-  if (!api || !parentSpan) return parentContext;
-  const sampled = spanDecisions.get(parentSpan);
-  if (sampled === undefined) return parentContext;
-  return api.trace.setSpanContext(parentContext, {
-    ...parentSpan.spanContext(),
-    traceFlags: sampled ? api.TraceFlags.SAMPLED : api.TraceFlags.NONE,
-  });
-}
-
-function sampledSpanProcessor(spanProcessor: SpanProcessor, sampler: Sampler, sampledDecision: number): SpanProcessor {
-  const spanDecisions = new WeakMap<object, boolean>();
-  return {
-    forceFlush: () => spanProcessor.forceFlush(),
-    shutdown: () => spanProcessor.shutdown(),
-    onStart(span: Span, parentContext: Context) {
-      const samplingContext = processorSamplingContext(parentContext, spanDecisions);
-      const decision = sampler.shouldSample(
-        samplingContext,
-        span.spanContext().traceId,
-        span.name,
-        span.kind,
-        span.attributes,
-        span.links,
-      ).decision;
-      const sampled = decision === sampledDecision;
-      spanDecisions.set(span, sampled);
-      if (!sampled) return;
-      spanProcessor.onStart(span, parentContext);
-    },
-    onEnd(span: ReadableSpan) {
-      if (!spanDecisions.get(span)) return;
-      spanProcessor.onEnd(span);
-    },
-  };
 }
 
 export function otelSafeAttributes(input: Record<string, unknown> | undefined): Attributes {
@@ -241,55 +221,29 @@ export function selfHostHttpResponseAttributes(status: number): Record<string, u
   };
 }
 
-/** Initialize self-host OTEL traces. Sentry can attach its span processor/context bridge when configured. */
-export async function initOpenTelemetry(
-  env: NodeJS.ProcessEnv,
-  bridge?: OpenTelemetryBridge | undefined,
-): Promise<boolean> {
+/** Initialize self-host OTEL traces. A no-op unless OTEL_TRACES_EXPORTER includes "otlp" AND a trace
+ *  endpoint resolves (explicit OTEL_EXPORTER_OTLP_(TRACES_)ENDPOINT, or a PostHog-derived fallback --
+ *  {@link resolveOtelTraceEndpoint}). PostHog's distributed-tracing product is plain OTLP/HTTP, so it needs
+ *  no dedicated bridge/sampler-reconciliation machinery the way Sentry's proprietary tracing SDK once did
+ *  (removed alongside sentry.ts) -- exactly one exporter, one sampler, straight from the OTel SDK. */
+export async function initOpenTelemetry(env: NodeJS.ProcessEnv): Promise<boolean> {
   const endpoint = resolveOtelTraceEndpoint(env);
-  const otlpEnabled = Boolean(endpoint && traceExporterEnabled(env));
-  if (!otlpEnabled && !bridge?.spanProcessor) return false;
+  if (!endpoint || !traceExporterEnabled(env)) return false;
   if (active) return true;
   const [api, sdk, exporterNs, resources] = await Promise.all([
     import("@opentelemetry/api"),
     import("@opentelemetry/sdk-trace-node"),
-    otlpEnabled ? import("@opentelemetry/exporter-trace-otlp-http") : Promise.resolve(undefined),
+    import("@opentelemetry/exporter-trace-otlp-http"),
     import("@opentelemetry/resources"),
   ]);
-  const otelSampler = samplerFromEnv(env, sdk);
-  const independentBridgeSampler = Boolean(otlpEnabled && bridge?.spanProcessor && bridge.sampler);
-  const spanProcessors: SpanProcessor[] = [];
-  if (otlpEnabled && endpoint && exporterNs) {
-    const exporter = new exporterNs.OTLPTraceExporter({ url: endpoint });
-    const otlpSpanProcessor = new sdk.BatchSpanProcessor(exporter);
-    spanProcessors.push(
-      independentBridgeSampler
-        ? sampledSpanProcessor(otlpSpanProcessor, otelSampler, sdk.SamplingDecision.RECORD_AND_SAMPLED)
-        : otlpSpanProcessor,
-    );
-  }
-  if (bridge?.spanProcessor) {
-    const bridgeSpanProcessor = independentBridgeSampler && bridge.sampler
-      ? sampledSpanProcessor(bridge.spanProcessor, bridge.sampler, sdk.SamplingDecision.RECORD_AND_SAMPLED)
-      : bridge.spanProcessor;
-    spanProcessors.push(bridgeSpanProcessor);
-  }
-  const sampler = independentBridgeSampler
-    ? new sdk.AlwaysOnSampler()
-    : otlpEnabled
-      ? otelSampler
-      : bridge?.sampler ?? otelSampler;
+  const headers = resolveOtelTraceHeaders(env);
+  const exporter = new exporterNs.OTLPTraceExporter({ url: endpoint, ...(headers ? { headers } : {}) });
+  const spanProcessors: SpanProcessor[] = [new sdk.BatchSpanProcessor(exporter)];
   const nextProvider = new sdk.NodeTracerProvider({
     resource: resources.resourceFromAttributes(serviceAttributes(env)),
-    sampler,
+    sampler: samplerFromEnv(env, sdk),
     spanProcessors,
   });
-  if (bridge?.propagator || bridge?.contextManager)
-    nextProvider.register({
-      ...(bridge.propagator ? { propagator: bridge.propagator } : {}),
-      ...(bridge.contextManager ? { contextManager: bridge.contextManager } : {}),
-    });
-  bridge?.validate?.();
   provider = nextProvider;
   Otel = api;
   tracer = nextProvider.getTracer("loopover-selfhost");

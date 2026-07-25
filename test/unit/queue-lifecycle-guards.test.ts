@@ -8,7 +8,6 @@ import * as rateLimitModule from "../../src/github/rate-limit";
 import * as repositoriesModule from "../../src/db/repositories";
 import * as reviewEffortModule from "../../src/review/review-effort";
 import * as repositorySettingsModule from "../../src/settings/repository-settings";
-import * as sentryModule from "../../src/selfhost/sentry";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { jobCoalesceKey } from "../../src/selfhost/queue-common";
 import {

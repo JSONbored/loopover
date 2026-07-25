@@ -8,7 +8,6 @@ import { logAudit, extractPayloadType, extractPayloadContext } from "./audit";
 import { incr } from "./metrics";
 import { withReviewSpan } from "./tracing";
 import { withOtelSpan } from "./otel";
-import { captureError, withSentryMonitor } from "./sentry";
 import { capturePostHogError, withPostHogMonitor } from "./posthog";
 import {
   consumingRetryDelayMs,
@@ -621,27 +620,22 @@ export function createPgQueue(
 
   /** Wraps reviveDeadLetterJobs() for the setInterval callback below, which has no rejection handler of its
    *  own -- a transient pool/driver/metric failure here would otherwise surface as an unhandled promise
-   *  rejection and can terminate the process (fatal when SENTRY_DSN is unset, since server.ts only installs
-   *  the handler when Sentry is configured), exactly the failure mode pump()'s own try/catch above guards
-   *  against for the main poll loop. A failed revive tick just waits for the next interval, same as a failed
-   *  poll tick waits for the next poll.
+   *  rejection and can terminate the process (fatal when POSTHOG_API_KEY is unset, since initPostHog's
+   *  enableExceptionAutocapture only installs a handler when PostHog is configured), exactly the failure mode
+   *  pump()'s own try/catch above guards against for the main poll loop. A failed revive tick just waits for
+   *  the next interval, same as a failed poll tick waits for the next poll.
    *
-   *  Also wrapped in a Sentry cron monitor (#1824): dead-letter revival stopping SILENTLY (the timer never
-   *  fires again, e.g. after an unexpected process-level disruption) is worse than one throwing tick -- a
-   *  crashed tick self-reports via captureError below, but a stopped one reports nothing at all without a
-   *  monitor watching for the missed check-in. withSentryMonitor rethrows on failure so its own capture
-   *  fires; the outer try/catch (this function's actual job) still guards the setInterval callback. */
+   *  Also wrapped in a PostHog monitor heartbeat (#1824): dead-letter revival stopping SILENTLY (the timer
+   *  never fires again, e.g. after an unexpected process-level disruption) is worse than one throwing tick --
+   *  a crashed tick self-reports via capturePostHogError below, but a stopped one reports nothing at all
+   *  without a monitor watching for the missed heartbeat. withPostHogMonitor rethrows on failure so its own
+   *  capture fires; the outer try/catch (this function's actual job) still guards the setInterval callback. */
   async function reviveDeadLetterJobsSafely(): Promise<void> {
     try {
       await withPostHogMonitor(
         "queue-dead-letter-revive",
         { jobType: "queue-dead-letter-revive" },
-        () =>
-          withSentryMonitor(
-            "queue-dead-letter-revive",
-            { jobType: "queue-dead-letter-revive" },
-            reviveDeadLetterJobs,
-          ),
+        reviveDeadLetterJobs,
       );
     } catch (error) {
       console.error(
@@ -651,7 +645,6 @@ export function createPgQueue(
           error: errorMessageWithCause(error),
         }),
       );
-      captureError(error, { kind: "queue_dead_letter_revive_crashed" }, "queue_dead_letter_revive_crashed");
       capturePostHogError(error, { kind: "queue_dead_letter_revive_crashed" }, "queue_dead_letter_revive_crashed");
     }
   }
@@ -778,7 +771,6 @@ export function createPgQueue(
           error: errorMessageWithCause(error),
         }),
       );
-      captureError(error, { kind: "queue_foreground_liveness_release_crashed" }, "queue_foreground_liveness_release_crashed");
       capturePostHogError(error, { kind: "queue_foreground_liveness_release_crashed" }, "queue_foreground_liveness_release_crashed");
     }
   }
@@ -1104,12 +1096,6 @@ export function createPgQueue(
           timeout_ms: processingTimeoutMs,
         }),
       );
-      captureError(new Error("self-host queue processing lease expired"), {
-        kind: "job_recovered",
-        reason: "processing_timeout",
-        recovered,
-        timeoutMs: processingTimeoutMs,
-      }, "processing_timeout");
       capturePostHogError(new Error("self-host queue processing lease expired"), {
         kind: "job_recovered",
         reason: "processing_timeout",
@@ -1139,11 +1125,6 @@ export function createPgQueue(
           attempts: Number(job.attempts) + 1,
           error: "unparseable payload",
         });
-        captureError(new Error("unparseable queue payload"), {
-          kind: "job_dead",
-          reason: "unparseable_payload",
-          jobId: job.id,
-        }, "unparseable_payload");
         capturePostHogError(new Error("unparseable queue payload"), {
           kind: "job_dead",
           reason: "unparseable_payload",
@@ -1453,13 +1434,6 @@ export function createPgQueue(
             attempts,
             error: errMsg,
           }, jobTraceParent);
-          captureError(error, {
-            kind: "job_dead",
-            reason: "max_retries_exhausted",
-            jobType: extractPayloadType(job.payload),
-            jobId: job.id,
-            attempts,
-          }, "job_dead");
           capturePostHogError(error, {
             kind: "job_dead",
             reason: "max_retries_exhausted",
@@ -1505,7 +1479,8 @@ export function createPgQueue(
       // claimNext()/reclaimExpiredProcessingJobs() run OUTSIDE processOne's own try/finally, so a raw pool
       // failure (a dropped connection, a lock timeout) lands here. Every `void pump()` call site (kickOne/kickAll)
       // is fire-and-forget, so an uncaught rejection here would surface as an unhandled promise rejection — fatal
-      // when SENTRY_DSN is unset (server.ts only installs the handler when Sentry is configured) (#2498).
+      // when POSTHOG_API_KEY is unset (initPostHog's enableExceptionAutocapture only installs a handler when
+      // PostHog is configured) (#2498).
       console.error(
         JSON.stringify({
           level: "error",
@@ -1513,7 +1488,6 @@ export function createPgQueue(
           error: errorMessageWithCause(error),
         }),
       );
-      captureError(error, { kind: "queue_pump_crashed" }, "queue_pump_crashed");
       capturePostHogError(error, { kind: "queue_pump_crashed" }, "queue_pump_crashed");
     } finally {
       active--;

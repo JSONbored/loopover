@@ -1,33 +1,33 @@
-// Self-host PostHog error tracking (#8287, epic #8286). Opt-in: a complete NO-OP unless POSTHOG_API_KEY is set,
-// mirroring sentry.ts's env-gated posture exactly. posthog-node is dynamically imported inside initPostHog()
-// so it never enters the Worker bundle when unconfigured, same discipline as @sentry/node in sentry.ts.
+// Self-host PostHog error tracking (#1468, epic #8286). Opt-in: a complete NO-OP unless POSTHOG_API_KEY is
+// set. posthog-node is dynamically imported inside initPostHog() so it never enters the Worker bundle when
+// unconfigured.
 //
-// PARALLEL-RUN (epic principle, confirmed 2026-07-25): this sink runs alongside sentry.ts, not instead of it.
-// Both are active simultaneously when both are configured; Sentry is only removed once the gated decommission
-// issue (#8298) says so, per-issue across all six Phase-1 surfaces at once -- never removed early just because
-// this surface's PostHog sink works.
+// REPLACES Sentry entirely (2026-07-25 epic correction on #8286: full replacement, not a parallel-run --
+// src/selfhost/sentry.ts, @sentry/node, and @sentry/opentelemetry are gone from this surface). This file was
+// originally built as a parallel sink alongside sentry.ts (#8287); its shape reflects that heritage (mirrors
+// what sentry.ts used to do, field for field) even though sentry.ts itself no longer exists.
 //
-// Reuses the SAME pure redaction primitives sentry.ts uses (./redaction-scrub) -- one security-critical scrub
-// implementation, two provider-specific event-shape orchestrators. PostHog's event shape (event name + a flat
-// `properties` bag) is materially simpler than Sentry's (request/contexts/extra/tags/breadcrumbs/exception),
-// so this file's own orchestrator (scrubPostHogEvent) is correspondingly smaller than sentry.ts's scrubEvent.
+// Reuses the pure redaction primitives originally extracted out of sentry.ts into ./redaction-scrub (#8287) --
+// PostHog's event shape (event name + a flat `properties` bag) is materially simpler than Sentry's own
+// request/contexts/extra/tags/breadcrumbs/exception shape was, so this file's own orchestrator
+// (scrubPostHogEvent) stays a straightforward single-bag walk.
 //
 // Env-var decision (#8287's own deliverable): POSTHOG_API_KEY/POSTHOG_HOST are the SAME vars #6235's MCP
 // telemetry (src/mcp/telemetry.ts) already reads off the typed Cloudflare Env -- one project key activates
 // both surfaces, the MCP tool-call allowlist (#6228) is untouched. Everything else here (POSTHOG_MIN_SEVERITY,
 // POSTHOG_REPO_MIN_SEVERITY, POSTHOG_ENVIRONMENT, POSTHOG_SERVER_NAME, POSTHOG_RELEASE) is self-host-only,
-// read off real process.env exactly like sentry.ts's own SENTRY_MIN_SEVERITY/SENTRY_REPO_MIN_SEVERITY/etc --
-// never added to src/env.d.ts's typed Env, matching that file's precedent for self-host-exclusive config.
+// read off real process.env, never added to src/env.d.ts's typed Env, matching that file's precedent for
+// self-host-exclusive config.
 import { hostname } from "node:os";
 import {
   currentOtelTraceIds,
 } from "./otel";
 import { meetsSeverityThreshold, resolveSeverityThreshold, type LoopoverSeverity } from "../services/severity-threshold";
-import { SENTRY_OPERATIONAL_TAG_KEYS } from "./sentry";
 import {
   hashedInstallationContext,
   loadNodeHasher,
   nonBlank,
+  OPERATIONAL_TAG_KEYS,
   REDACTED,
   resetRedactionScrubForTest,
   scrubRecord,
@@ -72,9 +72,8 @@ function contextRepoFullName(properties: Record<string, unknown> | undefined): s
 }
 
 /** Resolve the minimum severity for `repoFullName`: POSTHOG_REPO_MIN_SEVERITY (a JSON `{repoFullName: severity}`
- *  map) wins, else the global POSTHOG_MIN_SEVERITY, else `"error"`. Separate knobs from Sentry's
- *  SENTRY_MIN_SEVERITY/SENTRY_REPO_MIN_SEVERITY on purpose: an operator running both sinks in parallel may
- *  legitimately want PostHog quieter/noisier than Sentry while comparing the two during the parallel-run window. */
+ *  map) wins, else the global POSTHOG_MIN_SEVERITY, else `"error"` -- the quietest safe default, matching the
+ *  behavior every capture path below already had (error/fatal-only) before this resolver existed. */
 function resolvePostHogMinSeverity(repoFullName: string): LoopoverSeverity {
   const processEnv = (globalThis as unknown as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {};
   return resolveSeverityThreshold(processEnv as unknown as Env, repoFullName, "POSTHOG_MIN_SEVERITY", "POSTHOG_REPO_MIN_SEVERITY");
@@ -107,8 +106,8 @@ export function scrubPostHogEvent(event: PostHogEventMessage | null): PostHogEve
 }
 
 /** Build the properties bag for a captured error/log: hashes any installation id, then tags the shared
- *  operational key allowlist (reused from sentry.ts -- the same fields are exactly as safe to surface as a
- *  PostHog property as they are as a Sentry tag) alongside whatever else the caller passed. */
+ *  operational key allowlist (./redaction-scrub's OPERATIONAL_TAG_KEYS) alongside whatever else the caller
+ *  passed. */
 function operationalProperties(context: Record<string, unknown> | undefined): Record<string, unknown> {
   const safeContext = context ? hashedInstallationContext(context) : {};
   const normalized: Record<string, unknown> =
@@ -116,7 +115,7 @@ function operationalProperties(context: Record<string, unknown> | undefined): Re
       ? { ...safeContext, repo: safeContext.repository }
       : { ...safeContext };
   const properties: Record<string, unknown> = {};
-  for (const key of SENTRY_OPERATIONAL_TAG_KEYS) {
+  for (const key of OPERATIONAL_TAG_KEYS) {
     const value = normalized[key];
     if (typeof value === "string" || typeof value === "number") properties[key] = value;
   }

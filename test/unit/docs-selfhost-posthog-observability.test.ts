@@ -3,18 +3,19 @@ import { describe, expect, it } from "vitest";
 
 import { POSTHOG_MONITOR_HEARTBEAT_EVENT } from "../../src/selfhost/posthog";
 
-// Drift guard (#8287): self-host PostHog docs must stay aligned with the exported monitor-heartbeat event
-// name, mirroring docs-selfhost-sentry-observability.test.ts's identical discipline for Sentry.
+// Drift guard (#8287, #1468 -- 2026-07-25 Sentry removal): self-host PostHog docs must stay aligned with the
+// exported monitor-heartbeat event name. Sentry's own docs test (docs-selfhost-sentry-observability.test.ts)
+// was deleted alongside src/selfhost/sentry.ts -- PostHog is this surface's only error-tracking sink now.
 
 const OPERATIONS = "apps/loopover-ui/content/docs/self-hosting-operations.mdx";
 const operations = readFileSync(OPERATIONS, "utf8");
 
 describe("self-host PostHog observability docs (#8287)", () => {
-  it("documents enabling PostHog as opt-in and parallel-run alongside Sentry", () => {
+  it("documents enabling PostHog as opt-in and REPLACING Sentry", () => {
     expect(operations).toContain("Enabling PostHog error tracking");
     expect(operations).toContain("POSTHOG_API_KEY");
     expect(operations).toContain("opt-in and off by default");
-    expect(operations).toContain("parallel with Sentry");
+    expect(operations).toContain("replaces Sentry");
   });
 
   it("documents the shared redaction module both sinks use", () => {

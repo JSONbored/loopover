@@ -179,11 +179,11 @@ export const SELFHOST_SOURCE_OF_TRUTH_ROWS: readonly SelfHostSourceOfTruthRow[] 
     driftGuard: "docs-selfhost-release-checklist-event-names.test.ts",
   },
   {
-    topic: "Sentry (opt-in, operator-owned DSN)",
-    runtimeSources: ["src/selfhost/sentry.ts", "docker-compose.yml"],
+    topic: "PostHog error tracking (opt-in, replaces Sentry)",
+    runtimeSources: ["src/selfhost/posthog.ts", "docker-compose.yml"],
     docsPath: "/docs/self-hosting-operations",
-    driftGuard: "docs-selfhost-sentry-observability.test.ts",
-    notes: "Sentry is off by default until SENTRY_DSN or SENTRY_DSN_FILE is set.",
+    driftGuard: "docs-selfhost-posthog-observability.test.ts",
+    notes: "PostHog is off by default until POSTHOG_API_KEY is set.",
   },
   {
     topic: "OTEL metrics/traces and Grafana dashboards",

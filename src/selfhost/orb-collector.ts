@@ -236,8 +236,8 @@ export async function exportOrbBatch(db: D1Database, batchSize = 200, fetchFn: t
     }
   } catch (error) {
     // Was silent beyond the counter -- this catch also swallows the error rather than rethrowing, so
-    // withSentryMonitor's own capture (wrapping this call in monitored-work.ts) never sees it either; a hung/
-    // failed export tick was previously indistinguishable from "nothing new to export" in both Sentry and Loki.
+    // withPostHogMonitor's own capture (wrapping this call in monitored-work.ts) never sees it either; a hung/
+    // failed export tick was previously indistinguishable from "nothing new to export" in both PostHog and Loki.
     incr("loopover_orb_export_errors_total");
     console.error(JSON.stringify({ level: "error", event: "orb_export_failed", message: String(error).slice(0, 200) }));
     return 0;

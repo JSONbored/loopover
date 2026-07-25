@@ -59,8 +59,8 @@ connection pressure, lock waits, long transactions, deadlocks, database/table gr
 tuples, autovacuum activity, and backup freshness. Backup freshness appears when the
 `backup` profile is active.
 
-When OpenTelemetry and Sentry are enabled, job audit logs and Sentry events include
-trace_id/span_id fields so an operator can jump from a failed job or issue to the matching
+When OpenTelemetry and PostHog error tracking are enabled, job audit logs and PostHog events
+include trace_id/span_id fields so an operator can jump from a failed job or issue to the matching
 trace in Grafana or Tempo.
 
 <CodeBlock
@@ -522,40 +522,13 @@ volumes:
   runner-work-2:`}
 />
 
-## Enabling Sentry (your own DSN)
+## Enabling PostHog error tracking (replaces Sentry)
 
-Sentry is **opt-in and off by default**. Leave `SENTRY_DSN` unset
-for a complete no-op with negligible overhead — no events leave your box. When you want
-error tracking, point the runtime at a project you control in your own Sentry organization.
-
-<CodeBlock
-  filename=".env"
-  code={`# Your Sentry project DSN — never commit this to git
-SENTRY_DSN=https://examplePublicKey@o0.ingest.sentry.io/0
-SENTRY_ENVIRONMENT=production
-SENTRY_SERVER_NAME=loopover-us-east
-SENTRY_RELEASE=loopover-selfhost@2026.07.05
-# Optional: sample review tracing spans (0.05 = 5%)
-# SENTRY_TRACES_SAMPLE_RATE=0.05`}
-/>
-
-Official release images bake `LOOPOVER_VERSION` as the default release id;
-override with `SENTRY_RELEASE` when you tag custom builds. Mount secrets with
-`SENTRY_DSN_FILE` instead of inline env when you prefer a file-backed DSN. After
-changing Sentry env, restart the `loopover` service — there is no hot reload.
-
-<Callout variant="note">
-  Community self-hosters should send events only to their own DSN. The shipped stack never phones
-  home to a maintainer-owned project unless you configure one.
-</Callout>
-
-## Enabling PostHog error tracking (parallel run alongside Sentry)
-
-PostHog error tracking is **opt-in and off by default**, and runs **in parallel with Sentry
-above** — both sinks are active simultaneously when both are configured; enabling one does not
-disable the other. Leave `POSTHOG_API_KEY` unset for a complete no-op with negligible overhead.
-The same key also activates MCP tool-call telemetry (`src/mcp/telemetry.ts`) — one PostHog
-project covers both surfaces.
+PostHog error tracking is **opt-in and off by default** and **replaces Sentry** entirely for this
+surface — there is no Sentry integration left to run alongside it. Leave `POSTHOG_API_KEY` unset
+for a complete no-op with negligible overhead — no events leave your box. The same key also
+activates MCP tool-call telemetry (`src/mcp/telemetry.ts`) — one PostHog project covers both
+surfaces.
 
 <CodeBlock
   filename=".env"
@@ -566,38 +539,35 @@ POSTHOG_API_KEY=phc_examplePostHogProjectKey
 POSTHOG_ENVIRONMENT=production
 POSTHOG_SERVER_NAME=loopover-us-east
 POSTHOG_RELEASE=loopover-selfhost@2026.07.05
-# Optional: per-repo/global severity floors, independent of SENTRY_MIN_SEVERITY/
-# SENTRY_REPO_MIN_SEVERITY — an operator comparing the two sinks during the parallel-run window
-# may legitimately want PostHog quieter or noisier than Sentry.
+# Optional: per-repo/global severity floors (default: only error/critical reach PostHog)
 # POSTHOG_MIN_SEVERITY=error
 # POSTHOG_REPO_MIN_SEVERITY={"owner/repo":"warning"}`}
 />
 
-Every captured event is scrubbed by the same redaction primitives Sentry's `beforeSend` uses
-(`src/selfhost/redaction-scrub.ts`, shared by both sinks so there is one security-critical
-implementation, not two independently-drifting copies): secret-shaped keys/values, JWTs, local
-filesystem paths, and installation ids (hashed, never raw) are all redacted before an event
-leaves the box.
+Official release images bake `LOOPOVER_VERSION` as the default release id; override with
+`POSTHOG_RELEASE` when you tag custom builds. Mount secrets with a `POSTHOG_API_KEY_FILE`
+instead of inline env when you prefer a file-backed key. After changing PostHog env, restart the
+`loopover` service — there is no hot reload.
+
+<Callout variant="note">
+  Community self-hosters should send events only to their own PostHog project. The shipped stack
+  never phones home to a maintainer-owned project unless you configure one.
+</Callout>
+
+Every captured event is scrubbed by the same redaction primitives (`src/selfhost/redaction-scrub.ts`):
+secret-shaped keys/values, JWTs, local filesystem paths, and installation ids (hashed, never raw)
+are all redacted before an event leaves the box.
 
 PostHog's own [exception autocapture](https://posthog.com/docs/error-tracking/installation/node)
-is enabled, so genuinely uncaught exceptions and unhandled rejections are captured automatically
-— mirroring Sentry's own default global-handler posture — in addition to the explicit capture
-call sites mirrored throughout the codebase.
-
-There is no PostHog equivalent to Sentry Cron Monitors' missed-check-in alerting, so the five
-recurring jobs (`scheduled-loop`, `orb-export`, `orb-relay-drain`, `orb-relay-register`,
-`queue-dead-letter-revive`) instead emit a plain heartbeat event, `orb_monitor_heartbeat`
-(properties: `monitor`, `status: "ok" | "error"`, `duration_ms`), on every run. Configure a
-PostHog insight alert on a no-data condition over that event (filtered to a given monitor name)
-to reproduce the same "silent death is an alert" property Sentry Crons provides.
-
-After changing PostHog env, restart the `loopover` service — there is no hot reload.
+is enabled, so genuinely uncaught exceptions and unhandled rejections are captured automatically,
+in addition to the explicit capture call sites throughout the codebase.
 
 ## Browser Sentry (operator UI)
 
 The operator UI (`apps/loopover-ui`) has its own, separate client-side Sentry
 integration for route errors, unhandled browser exceptions, and failed app-level resource
-loads — independent of the backend's `SENTRY_DSN` above.
+loads — independent of the backend's PostHog error tracking above (not yet migrated; see
+epic #8286).
 **Opt-in and off by default**: leave `VITE_SENTRY_DSN` unset for a
 complete no-op — the SDK is never even fetched by the browser. Session Replay is not
 enabled.
@@ -628,24 +598,26 @@ low-cardinality set: `route` (pathname only), `release`,
   whenever `apps/loopover-ui` changes on `main`.
 </Callout>
 
-## Sentry context taxonomy
+## PostHog event properties
 
-Self-host Sentry events carry a small, scrubbed taxonomy so operators can filter by
+Self-host PostHog events carry a small, scrubbed set of properties so operators can filter by
 subsystem without opening raw payloads. Structured error logs forwarded from
-`console.error` use the JSON `event` slug as the issue type; direct
-captures use a `kind` or review `operation` tag instead.
+`console.error` use the JSON `event` slug as the captured error's name; direct
+captures use a `kind` or review `operation` property instead. Unlike Sentry's separate
+tags/contexts/extra namespaces, every property below lives in one flat `properties` bag on the
+captured event.
 
 <FeatureRow
   items={[
     {
-      title: "Tags (indexed, low cardinality)",
+      title: "Operational properties (low cardinality)",
       description:
-        "repo (also indexed when logs emit repository), pr, head_sha, kind, subsystem, jobType, operation, agent, decision_outcome, provider, model, monitor, installation_id_hash (never raw installation id), trace_id, span_id.",
+        "repo (also set when logs emit repository), pr, head_sha, kind, subsystem, jobType, operation, agent, decision_outcome, provider, model, monitor, installation_id_hash (never raw installation id), trace_id, span_id.",
     },
     {
-      title: "Contexts (full scrubbed detail)",
+      title: "Full scrubbed detail",
       description:
-        "loopover (engine captures), review (failed reviews), log (structured console lines), sentry_monitor (cron failures), otel (active trace ids). Secrets, tokens, bodies, diffs, prompts, and review text are redacted before send.",
+        "The rest of the captured context (review failures, structured console lines) is merged into the same properties bag after redaction. Secrets, tokens, bodies, diffs, prompts, and review text are redacted before send.",
     },
     {
       title: "Subsystems",
@@ -655,24 +627,19 @@ captures use a `kind` or review `operation` tag instead.
   ]}
 />
 
-Cron monitor slugs follow
-`loopover-selfhost-{environment}-{loop}` (for example
-`loopover-selfhost-production-scheduled-loop`). Pair monitor alerts with queue
-depth, dead-job counts, and the matching structured log event.
+## PostHog alert classes and runbook
 
-## Sentry alert classes and runbook
-
-Tune Sentry alert rules for **persistent failure classes**, not one-off
+Tune PostHog insight alerts for **persistent failure classes**, not one-off
 fail-open noise. The table below lists actionable signals, what they usually mean, and the
 first checks an operator should run. Prometheus/Grafana alerts in the observability profile
-cover the same failure modes from a metrics angle — use both when Sentry is enabled.
+cover the same failure modes from a metrics angle — use both when PostHog is enabled.
 
 <div className="overflow-x-auto">
   <table className="w-full border-collapse text-token-sm">
     <thead>
       <tr className="border-hairline text-left text-token-xs text-muted-foreground">
         <th className="py-2 pr-4 font-medium">Alert class</th>
-        <th className="py-2 pr-4 font-medium">Sentry signal</th>
+        <th className="py-2 pr-4 font-medium">PostHog signal</th>
         <th className="py-2 pr-4 font-medium">Threshold guidance</th>
         <th className="py-2 font-medium">First response</th>
       </tr>
@@ -753,11 +720,12 @@ cover the same failure modes from a metrics angle — use both when Sentry is en
       <tr>
         <td className="py-2 pr-4 align-top">Scheduled monitor misses</td>
         <td className="py-2 pr-4 align-top text-muted-foreground">
-          Sentry monitor alert on <code>scheduled-loop</code>, <code>orb-export</code>, or other
-          wrapped loops
+          PostHog insight alert on a no-data condition over <code>orb_monitor_heartbeat</code>,
+          filtered to <code>scheduled-loop</code>, <code>orb-export</code>, or other wrapped loops
         </td>
         <td className="py-2 pr-4 align-top text-muted-foreground">
-          Use Sentry's built-in monitor failure thresholds (2 consecutive misses on most loops)
+          Alert when a monitor's heartbeat is missing for roughly 2 expected intervals (there is no
+          built-in failure threshold like Sentry Crons had — configure the no-data window yourself)
         </td>
         <td className="py-2 align-top text-muted-foreground">
           Process may still be alive but cron work stopped — check <code>selfhost_cron_error</code>,
@@ -769,25 +737,45 @@ cover the same failure modes from a metrics angle — use both when Sentry is en
   </table>
 </div>
 
-## Sentry server name
+## PostHog server name
 
-`SENTRY_SERVER_NAME` sets a clean, human name for this instance in Sentry (for
+`POSTHOG_SERVER_NAME` sets a clean, human name for this instance in PostHog (for
 example `loopover-us-east`). Unset defaults to the OS hostname — never the
 public-origin URL. Set this explicitly if you run more than one instance and want to tell
-their Sentry events apart at a glance instead of matching container hostnames.
+their PostHog events apart at a glance instead of matching container hostnames.
 
-## Sentry tracing
+## Distributed tracing
 
-Leave `SENTRY_TRACES_SAMPLE_RATE` unset or blank to disable trace export, or set
-a positive sample rate such as `0.05` to send sampled review spans to Sentry. The
-custom OpenTelemetry provider installs Sentry hooks for review-stage spans carrying repo,
-PR, operation, outcome, and hashed installation tags.
+Self-host's OpenTelemetry provider is standard OTLP/HTTP — set
+`OTEL_TRACES_EXPORTER=otlp` to enable trace export at all. Where the traces go depends on
+what else is configured:
 
-## Sentry cron monitors
+<CodeBlock
+  filename=".env"
+  code={`# Turn tracing on
+OTEL_TRACES_EXPORTER=otlp
+# If POSTHOG_API_KEY (above) is also set and you leave the two vars below unset, traces default
+# to PostHog's own distributed-tracing product (https://posthog.com/docs/distributed-tracing,
+# currently in beta) automatically -- same project, same auth, no extra config.
+#
+# To send traces somewhere else instead (your own OTel collector, another vendor), set an
+# explicit endpoint -- it always wins over the PostHog default:
+# OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+# OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://otel-collector:4318/v1/traces`}
+/>
 
-When `SENTRY_DSN` is set, the self-host runtime emits Sentry monitor check-ins
-for the recurring loops where silent stoppage matters most. Leaving `SENTRY_DSN`
-unset keeps monitor reporting off.
+Review-stage spans carry repo, PR, operation, outcome, and hashed installation attributes.
+`OTEL_TRACES_SAMPLER`/`OTEL_TRACES_SAMPLER_ARG` control sampling the same way any standard OTel
+SDK does (default: `parentbased_always_on`).
+
+## PostHog monitor heartbeats
+
+When `POSTHOG_API_KEY` is set, the self-host runtime emits a PostHog heartbeat event,
+`orb_monitor_heartbeat` (properties: `monitor`, `status: "ok" | "error"`, `duration_ms`), for the
+recurring loops where silent stoppage matters most, on every run. Leaving `POSTHOG_API_KEY`
+unset keeps monitor reporting off. Unlike Sentry Cron Monitors, PostHog has no built-in missed-check-in
+alerting — configure a PostHog insight alert on a no-data condition over that event (filtered to
+a given monitor name) to get the same "silent death is an alert" coverage.
 
 <FeatureRow
   items={[
@@ -818,26 +806,31 @@ unset keeps monitor reporting off.
   ]}
 />
 
-Monitor loop slugs (the `{loop}` segment in the slug) are
+The `monitor` property on each heartbeat event is the loop's own name:
 `scheduled-loop`, `orb-export`, `orb-relay-drain`,
-`orb-relay-register`, and `queue-dead-letter-revive`. A missed monitor
+`orb-relay-register`, and `queue-dead-letter-revive`. A missed heartbeat
 means the process may still be alive but the recurring work is not checking in on schedule.
 Pair the monitor with queue depth, dead-job counts, and the structured error log for the
 same subsystem.
 
 ## Grafana Sentry data source (in-Grafana issue visualization)
 
+<Callout variant="note">
+  Self-host no longer sends new events to Sentry (error tracking now goes through PostHog, above)
+  -- this panel only remains useful for an operator's own PRE-EXISTING Sentry issue history in an
+  org they still separately maintain. It is pending removal (tracked under epic #8286).
+</Callout>
+
 Query recent Sentry issues, top issues by event count, and error-volume trend directly in
 Grafana — no more switching tabs to check Sentry, and errors line up in time with the rest
 of the stack's metrics/logs/traces. This is read-only visualization; alert routing to
 Sentry/Discord/Slack is a separate, unrelated concern covered above.
 
-<Callout variant="warn" title="SENTRY_DSN is NOT reusable here">
-  The `SENTRY_DSN` above authenticates event **ingestion** (sending errors to Sentry), not the
-  read/query API this data source needs. You need a separate **Sentry Internal Integration token**:
-  Sentry → Settings → Developer Settings → Custom Integrations → New Internal Integration (requires
-  an Admin/Manager/Owner role in Sentry), with **Read** access on the **Project**, **Issue &amp;
-  Event**, and **Organization** resource scopes.
+<Callout variant="warn" title="A DSN does not work here">
+  This data source needs a separate **Sentry Internal Integration token**, not an event-ingestion
+  DSN: Sentry → Settings → Developer Settings → Custom Integrations → New Internal Integration
+  (requires an Admin/Manager/Owner role in Sentry), with **Read** access on the **Project**,
+  **Issue &amp; Event**, and **Organization** resource scopes.
 </Callout>
 
 The [grafana-sentry-datasource](https://grafana.com/grafana/plugins/grafana-sentry-datasource/)

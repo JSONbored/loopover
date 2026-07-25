@@ -29,7 +29,6 @@
   "src/selfhost/health.ts": 3,
   "src/selfhost/monitored-work.ts": 1,
   "src/selfhost/orb-collector.ts": 1,
-  "src/selfhost/sentry.ts": 2,
   "src/services/ai-review.ts": 4,
   "src/services/ai-slop.ts": 1,
   "src/services/ai-summaries.ts": 1,

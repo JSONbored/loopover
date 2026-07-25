@@ -9,7 +9,6 @@ import * as rateLimitModule from "../../src/github/rate-limit";
 import * as repositoriesModule from "../../src/db/repositories";
 import * as reviewEffortModule from "../../src/review/review-effort";
 import * as repositorySettingsModule from "../../src/settings/repository-settings";
-import * as sentryModule from "../../src/selfhost/sentry";
 import { counterValue, renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { REQUIRED_CONTEXTS_UNRESOLVED_METRIC } from "../../src/queue/ci-resolution";
 import { jobCoalesceKey } from "../../src/selfhost/queue-common";

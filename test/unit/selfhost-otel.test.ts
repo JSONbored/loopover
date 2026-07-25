@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ROOT_CONTEXT } from "@opentelemetry/api";
 
 const otelMocks = vi.hoisted(() => {
   const exportedSpans: any[] = [];
@@ -93,7 +92,7 @@ describe("self-host OpenTelemetry", () => {
           OTEL_TRACES_EXPORTER: "console,otlp",
           OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318/",
           OTEL_SERVICE_NAME: "loopover-test",
-          SENTRY_ENVIRONMENT: "selfhost-test",
+          POSTHOG_ENVIRONMENT: "selfhost-test",
           LOOPOVER_VERSION: "loopover-selfhost@test",
         }),
       ),
@@ -306,7 +305,7 @@ describe("self-host OpenTelemetry", () => {
     await initOpenTelemetry(env({
       OTEL_TRACES_EXPORTER: "otlp",
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector",
-      SENTRY_RELEASE: "custom-release",
+      POSTHOG_RELEASE: "custom-release",
     }));
     await expect(withOtelSpan("plain-failure", undefined, async () => {
       throw "plain boom";
@@ -353,228 +352,50 @@ describe("self-host OpenTelemetry", () => {
     expect(otelMocks.exportedSpans.map((span) => span.name)).toContain("ratio-defaults-on");
   });
 
-  it("can export custom spans through a Sentry bridge without requiring OTLP export", async () => {
-    const sentryEndedSpans: any[] = [];
-    const sentryProcessor = {
-      onStart: vi.fn(),
-      onEnd: vi.fn((span: unknown) => sentryEndedSpans.push(span)),
-      forceFlush: vi.fn(async () => undefined),
-      shutdown: vi.fn(async () => undefined),
-    };
-    const validate = vi.fn();
-    const propagator = {
-      inject: vi.fn(),
-      extract: vi.fn((context) => context),
-      fields: vi.fn(() => []),
-    };
-    let contextManager: any;
-    contextManager = {
-      active: vi.fn(() => ROOT_CONTEXT),
-      with: vi.fn((context, fn, thisArg, ...args) => fn.apply(thisArg, args)),
-      bind: vi.fn((_context, target) => target),
-      enable: vi.fn(() => contextManager),
-      disable: vi.fn(() => contextManager),
-    };
+  it("defaults the OTLP trace endpoint and auth header to PostHog when POSTHOG_API_KEY is set and no explicit OTEL endpoint is configured", async () => {
+    expect(resolveOtelTraceEndpoint(env({ POSTHOG_API_KEY: "phc_test" }))).toBe("https://us.i.posthog.com/i/v1/traces");
+    expect(resolveOtelTraceEndpoint(env({ POSTHOG_API_KEY: "phc_test", POSTHOG_HOST: "https://eu.i.posthog.com/" }))).toBe(
+      "https://eu.i.posthog.com/i/v1/traces",
+    );
+    // An explicit operator-configured endpoint always wins over the PostHog fallback.
+    expect(
+      resolveOtelTraceEndpoint(env({ POSTHOG_API_KEY: "phc_test", OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318" })),
+    ).toBe("http://collector:4318/v1/traces");
 
-    expect(await initOpenTelemetry(env({}), {
-      spanProcessor: sentryProcessor,
-      propagator,
-      contextManager,
-      validate,
-    })).toBe(true);
-    await withOtelSpan("selfhost.review.gate", { "loopover.operation": "gate_decision" }, () => undefined);
+    expect(
+      await initOpenTelemetry(env({ OTEL_TRACES_EXPORTER: "otlp", POSTHOG_API_KEY: "phc_test" })),
+    ).toBe(true);
+    await withOtelSpan("selfhost.queue.job", {}, () => undefined);
     await flushOpenTelemetry();
-
-    expect(otelMocks.OTLPTraceExporter).not.toHaveBeenCalled();
-    expect(validate).toHaveBeenCalledTimes(1);
-    expect(contextManager.enable).toHaveBeenCalledTimes(1);
-    expect(sentryProcessor.onEnd).toHaveBeenCalledTimes(1);
-    expect(sentryEndedSpans[0].name).toBe("selfhost.review.gate");
-    expect(sentryEndedSpans[0].attributes).toMatchObject({
-      "loopover.operation": "gate_decision",
+    expect(otelMocks.exporterInstances[0]?.options).toEqual({
+      url: "https://us.i.posthog.com/i/v1/traces",
+      headers: { Authorization: "Bearer phc_test" },
     });
 
     await resetOpenTelemetryForTest();
+    otelMocks.exporterInstances.length = 0;
 
-    expect(await initOpenTelemetry(env({}), { spanProcessor: sentryProcessor, propagator })).toBe(true);
-    await resetOpenTelemetryForTest();
-
-    expect(await initOpenTelemetry(env({}), { spanProcessor: sentryProcessor, contextManager })).toBe(true);
-    expect(contextManager.enable).toHaveBeenCalledTimes(2);
-
-    await resetOpenTelemetryForTest();
-    otelMocks.exportedSpans.length = 0;
-
-    expect(await initOpenTelemetry(env({
-      OTEL_TRACES_EXPORTER: "otlp",
-      OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector",
-      OTEL_TRACES_SAMPLER: "always_on",
-    }), { propagator, contextManager })).toBe(true);
-    await withOtelSpan("otlp-only-with-sentry-context", undefined, () => undefined);
-    await flushOpenTelemetry();
-    expect(otelMocks.exportedSpans.map((span) => span.name)).toContain("otlp-only-with-sentry-context");
-    expect(contextManager.enable).toHaveBeenCalledTimes(3);
-
-    await resetOpenTelemetryForTest();
-    otelMocks.exportedSpans.length = 0;
-    sentryEndedSpans.length = 0;
-    sentryProcessor.onStart.mockClear();
-    sentryProcessor.onEnd.mockClear();
-    sentryProcessor.forceFlush.mockClear();
-    sentryProcessor.shutdown.mockClear();
-
-    expect(await initOpenTelemetry(env({
-      OTEL_TRACES_EXPORTER: "otlp",
-      OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector",
-      OTEL_TRACES_SAMPLER: "always_on",
-    }), {
-      spanProcessor: sentryProcessor,
-      propagator,
-      contextManager,
-    })).toBe(true);
-    await withOtelSpan("otlp-and-sentry-no-sampler", undefined, () => undefined);
-    await flushOpenTelemetry();
-    expect(otelMocks.exportedSpans.map((span) => span.name)).toContain("otlp-and-sentry-no-sampler");
-    expect(sentryEndedSpans.map((span) => span.name)).toContain("otlp-and-sentry-no-sampler");
-    expect(sentryProcessor.forceFlush).toHaveBeenCalledTimes(1);
-    expect(contextManager.enable).toHaveBeenCalledTimes(4);
-
-    await resetOpenTelemetryForTest();
-    otelMocks.exportedSpans.length = 0;
-    sentryEndedSpans.length = 0;
-    sentryProcessor.onStart.mockClear();
-    sentryProcessor.onEnd.mockClear();
-    sentryProcessor.forceFlush.mockClear();
-    sentryProcessor.shutdown.mockClear();
-    const dropAllBridgeSampler = {
-      shouldSample: vi.fn((..._args: any[]) => ({ decision: 0 })),
-      toString: () => "drop-all-bridge-sampler",
-    };
-
-    expect(await initOpenTelemetry(env({
-      OTEL_TRACES_EXPORTER: "otlp",
-      OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector",
-      OTEL_TRACES_SAMPLER: "always_on",
-    }), {
-      sampler: dropAllBridgeSampler as any,
-      spanProcessor: sentryProcessor,
-      propagator,
-      contextManager,
-    })).toBe(true);
-    await withOtelSpan("otlp-keeps-env-sampler", undefined, () => undefined);
-    await flushOpenTelemetry();
-    expect(otelMocks.exportedSpans.map((span) => span.name)).toContain("otlp-keeps-env-sampler");
-    expect(dropAllBridgeSampler.shouldSample).toHaveBeenCalledTimes(1);
-    expect(dropAllBridgeSampler.shouldSample.mock.calls[0]?.[2]).toBe("otlp-keeps-env-sampler");
-    expect(sentryProcessor.onStart).not.toHaveBeenCalled();
-    expect(sentryProcessor.onEnd).not.toHaveBeenCalled();
-    expect(sentryProcessor.forceFlush).toHaveBeenCalledTimes(1);
-    expect(contextManager.enable).toHaveBeenCalledTimes(5);
-
-    await resetOpenTelemetryForTest();
-    otelMocks.exportedSpans.length = 0;
-    sentryEndedSpans.length = 0;
-    sentryProcessor.onStart.mockClear();
-    sentryProcessor.onEnd.mockClear();
-    sentryProcessor.forceFlush.mockClear();
-    sentryProcessor.shutdown.mockClear();
-    const sampleBridgeSampler = {
-      shouldSample: vi.fn((..._args: any[]) => ({ decision: 2 })),
-      toString: () => "sample-bridge-sampler",
-    };
-
-    expect(await initOpenTelemetry(env({
-      OTEL_TRACES_EXPORTER: "otlp",
-      OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector",
-      OTEL_TRACES_SAMPLER: "always_on",
-    }), {
-      sampler: sampleBridgeSampler as any,
-      spanProcessor: sentryProcessor,
-      propagator,
-      contextManager,
-    })).toBe(true);
-    await withOtelSpan("otlp-and-sentry-sampled", undefined, () => undefined);
-    await flushOpenTelemetry();
-    expect(otelMocks.exportedSpans.map((span) => span.name)).toContain("otlp-and-sentry-sampled");
-    expect(sampleBridgeSampler.shouldSample).toHaveBeenCalledTimes(1);
-    expect(sentryProcessor.onStart).toHaveBeenCalledTimes(1);
-    expect(sentryEndedSpans.map((span) => span.name)).toContain("otlp-and-sentry-sampled");
-    expect(sentryProcessor.forceFlush).toHaveBeenCalledTimes(1);
-    expect(contextManager.enable).toHaveBeenCalledTimes(6);
-
-    await resetOpenTelemetryForTest();
-    otelMocks.exportedSpans.length = 0;
-    sentryEndedSpans.length = 0;
-    sentryProcessor.onStart.mockClear();
-    sentryProcessor.onEnd.mockClear();
-    sentryProcessor.forceFlush.mockClear();
-    sentryProcessor.shutdown.mockClear();
-    const sampleSentryWhenOtelDropsSampler = {
-      shouldSample: vi.fn((..._args: any[]) => ({ decision: 2 })),
-      toString: () => "sample-sentry-when-otel-drops",
-    };
-
-    expect(await initOpenTelemetry(env({
-      OTEL_TRACES_EXPORTER: "otlp",
-      OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector",
-      OTEL_TRACES_SAMPLER: "always_off",
-    }), {
-      sampler: sampleSentryWhenOtelDropsSampler as any,
-      spanProcessor: sentryProcessor,
-      propagator,
-      contextManager,
-    })).toBe(true);
-    await withOtelSpan("sentry-keeps-span-when-otel-drops", undefined, () => undefined);
-    await flushOpenTelemetry();
-    expect(otelMocks.exportedSpans.map((span) => span.name)).not.toContain("sentry-keeps-span-when-otel-drops");
-    expect(sampleSentryWhenOtelDropsSampler.shouldSample).toHaveBeenCalledTimes(1);
-    expect(sentryProcessor.onStart).toHaveBeenCalledTimes(1);
-    expect(sentryEndedSpans.map((span) => span.name)).toContain("sentry-keeps-span-when-otel-drops");
-    expect(sentryProcessor.forceFlush).toHaveBeenCalledTimes(1);
-    expect(contextManager.enable).toHaveBeenCalledTimes(7);
+    // An explicit endpoint relies entirely on the SDK's own native header handling -- the PostHog auth header
+    // is never injected once an explicit endpoint is configured, even if POSTHOG_API_KEY also happens to be set.
+    expect(
+      await initOpenTelemetry(env({
+        OTEL_TRACES_EXPORTER: "otlp",
+        OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318",
+        POSTHOG_API_KEY: "phc_test",
+      })),
+    ).toBe(true);
+    expect(otelMocks.exporterInstances[0]?.options).toEqual({ url: "http://collector:4318/v1/traces" });
   });
 
-  it("keeps parent-based OTLP sampling isolated when Sentry samples nested spans", async () => {
-    const sentryEndedSpans: any[] = [];
-    const sentryProcessor = {
-      onStart: vi.fn(),
-      onEnd: vi.fn((span: unknown) => sentryEndedSpans.push(span)),
-      forceFlush: vi.fn(async () => undefined),
-      shutdown: vi.fn(async () => undefined),
-    };
-    const sampleSentrySampler = {
-      shouldSample: vi.fn((..._args: any[]) => ({ decision: 2 })),
-      toString: () => "sample-sentry",
-    };
+  it("stays a no-op when POSTHOG_API_KEY is unset and no explicit OTEL endpoint is configured, even with OTEL_TRACES_EXPORTER=otlp", async () => {
+    expect(await initOpenTelemetry(env({ OTEL_TRACES_EXPORTER: "otlp" }))).toBe(false);
+    expect(otelMocks.OTLPTraceExporter).not.toHaveBeenCalled();
+  });
 
-    expect(await initOpenTelemetry(env({
-      OTEL_TRACES_EXPORTER: "otlp",
-      OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector",
-      OTEL_TRACES_SAMPLER: "parentbased_always_off",
-    }), {
-      sampler: sampleSentrySampler as any,
-      spanProcessor: sentryProcessor,
-    })).toBe(true);
-    await withOtelSpan("sentry-only-parent", undefined, async () => {
-      await withOtelSpan("sentry-only-child", undefined, () => undefined);
-    });
-    await withOtelSpan(
-      "remote-parent-not-sampled",
-      undefined,
-      () => undefined,
-      { parentTraceParent: "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-00" },
-    );
-    await flushOpenTelemetry();
-
-    expect(otelMocks.exportedSpans.map((span) => span.name)).toEqual([]);
-    expect(sentryEndedSpans.map((span) => span.name)).toEqual([
-      "sentry-only-child",
-      "sentry-only-parent",
-      "remote-parent-not-sampled",
-    ]);
-    expect(sampleSentrySampler.shouldSample).toHaveBeenCalledTimes(3);
-    expect(sentryProcessor.onStart).toHaveBeenCalledTimes(3);
-    expect(sentryProcessor.forceFlush).toHaveBeenCalledTimes(1);
+  it("never enables tracing just because POSTHOG_API_KEY is set, without OTEL_TRACES_EXPORTER=otlp", async () => {
+    expect(openTelemetryTraceExportEnabled(env({ POSTHOG_API_KEY: "phc_test" }))).toBe(false);
+    expect(await initOpenTelemetry(env({ POSTHOG_API_KEY: "phc_test" }))).toBe(false);
+    expect(otelMocks.OTLPTraceExporter).not.toHaveBeenCalled();
   });
 
   it("adds hashed tenant and decision attributes to review pipeline spans", async () => {

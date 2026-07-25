@@ -58,7 +58,6 @@ import {
   resolveEnrichmentLinkedIssue,
   resolveEnrichmentLinkedIssueNumbers,
 } from "../review/enrichment-wire";
-import { captureReviewFailure } from "../selfhost/sentry";
 import { capturePostHogReviewFailure } from "../selfhost/posthog";
 import { isReputationEnabled, shouldSkipAiForReputation } from "../review/reputation-wire";
 import { isConvergenceRepoAllowed } from "../review/cutover-gate";
@@ -805,24 +804,8 @@ export async function runAiReviewForAdvisory(
         action:
           "The gate is held for a human reviewer rather than passed automatically; it re-evaluates on the next update.",
       });
-      // A review that could not be produced is a real failure the maintainer must SEE — surface it to Sentry as an
+      // A review that could not be produced is a real failure the maintainer must SEE — surface it to PostHog as an
       // ERROR (this also covers the INCOHERENT_DIFF bail, which parses to a missing opinion → inconclusive). (#1468)
-      captureReviewFailure(new Error("AI review inconclusive — no usable verdict for the PR head"), {
-        kind: "review",
-        reason: "ai_review_inconclusive",
-        installationId: args.installationId,
-        owner: args.repoFullName.split("/")[0],
-        repo: args.repoFullName,
-        pr: args.pr.number,
-        head_sha: args.advisory.headSha,
-        ai_review_mode: args.settings.aiReviewMode,
-        reviewer_count: result.reviewerCount,
-        public_notes: hasPublicReviewAssessment(result.advisoryNotes),
-        // Compact strings, not the raw objects -- Sentry's normalizeDepth flattens nested entries to "[Object]"
-        // and destroys the per-attempt detail (LOOPOVER-2B); see formatReviewDiagnosticsForCapture.
-        /* v8 ignore next -- current review runner always supplies diagnostics for completed AI attempts. */
-        review_diagnostics: formatReviewDiagnosticsForCapture(result.reviewDiagnostics ?? []),
-      }, "ai_review_inconclusive");
       capturePostHogReviewFailure(new Error("AI review inconclusive — no usable verdict for the PR head"), {
         kind: "review",
         reason: "ai_review_inconclusive",
@@ -893,28 +876,6 @@ export async function runAiReviewForAdvisory(
     };
     findings.push(unavailableFinding);
     args.advisory.findings.push(unavailableFinding);
-    captureReviewFailure(
-      new Error("AI review did not produce public notes for the PR head"),
-      {
-        kind: "review",
-        reason: "ai_review_public_summary_missing",
-        installationId: args.installationId,
-        owner: args.repoFullName.split("/")[0],
-        repo: args.repoFullName,
-        pr: args.pr.number,
-        head_sha: args.advisory.headSha,
-        ai_review_mode: args.settings.aiReviewMode,
-        reviewer_count: result.reviewerCount,
-        // Same "[Object]" flattening hazard as the inconclusive capture above (LOOPOVER-2B).
-        /* v8 ignore next -- current review runner always supplies diagnostics for completed AI attempts. */
-        review_diagnostics: formatReviewDiagnosticsForCapture(result.reviewDiagnostics ?? []),
-        configured_reviewers:
-          env.AI_REVIEW_PLAN?.reviewers?.map((reviewer) => reviewer.model) ??
-          null,
-        combine: env.AI_REVIEW_PLAN?.combine ?? null,
-      },
-      "ai_review_public_summary_missing",
-    );
     capturePostHogReviewFailure(
       new Error("AI review did not produce public notes for the PR head"),
       {
@@ -958,13 +919,6 @@ export async function runAiReviewForAdvisory(
     // error is a genuinely caught exception here (unlike the two captures above, which construct their own
     // Error to report a known condition) -- named to mirror the structured log's own "event" field just above,
     // not the exception's native class, so every unexpected review crash groups under one readable title.
-    captureReviewFailure(error, {
-      kind: "review",
-      installationId: args.installationId,
-      repo: args.repoFullName,
-      pr: args.pr.number,
-      head_sha: args.advisory.headSha,
-    }, "ai_review_failed");
     capturePostHogReviewFailure(error, {
       kind: "review",
       installationId: args.installationId,

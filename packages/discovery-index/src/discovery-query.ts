@@ -116,6 +116,19 @@ function scopeCacheKey(query: DiscoveryIndexQuery): string {
   });
 }
 
+/** Surface — as a structured warn-level log line carrying the querying scope's identity — the per-repo
+ *  diagnostics `github-client.ts` already computes (e.g. "GitHub returned 404/500 for N issues", "non-array
+ *  issues payload") but that {@link computeCandidates} otherwise discards at every call site. Without this a
+ *  renamed, misconfigured, or rate-limited repo silently contributes 0 candidates with no per-repo signal,
+ *  distinguishable only from an unattributed aggregate `discovery_index_github_requests_total{outcome="failed"}`
+ *  counter. `source` is the repoFullName for a direct repo fetch, or the GitHub search query (which encodes the
+ *  org/search-term scope) for a search fetch, so an operator can attribute each warning to what produced it. */
+function surfaceGithubWarnings(source: string, warnings: string[]): void {
+  for (const warning of warnings) {
+    console.error(JSON.stringify({ level: "warn", event: "discovery_index_github_warning", source, warning }));
+  }
+}
+
 async function computeCandidates(query: DiscoveryIndexQuery, deps: DiscoveryQueryDeps): Promise<DiscoveryIndexCandidate[]> {
   const seen = new Set<string>();
   const candidates: DiscoveryIndexCandidate[] = [];
@@ -142,17 +155,22 @@ async function computeCandidates(query: DiscoveryIndexQuery, deps: DiscoveryQuer
   for (const repoFullName of query.repos) {
     const verdict = await resolveRepoAiPolicy(repoFullName, deps);
     if (!verdict.allowed) continue;
-    const { issues } = await deps.github.fetchRepoIssues(repoFullName);
+    const { issues, warnings } = await deps.github.fetchRepoIssues(repoFullName);
+    surfaceGithubWarnings(repoFullName, warnings);
     for (const issue of issues) addCandidate(repoFullName, issue, verdict);
   }
 
   for (const org of query.orgs) {
-    const { issues } = await deps.github.searchIssues(`org:${org} state:open type:issue`);
+    const searchQuery = `org:${org} state:open type:issue`;
+    const { issues, warnings } = await deps.github.searchIssues(searchQuery);
+    surfaceGithubWarnings(searchQuery, warnings);
     await addFromSearch(issues);
   }
 
   for (const term of query.searchTerms) {
-    const { issues } = await deps.github.searchIssues(`${term} state:open type:issue`);
+    const searchQuery = `${term} state:open type:issue`;
+    const { issues, warnings } = await deps.github.searchIssues(searchQuery);
+    surfaceGithubWarnings(searchQuery, warnings);
     await addFromSearch(issues);
   }
 

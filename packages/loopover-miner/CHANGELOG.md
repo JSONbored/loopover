@@ -1,5 +1,19 @@
 # Changelog
 
+## [3.14.1](https://github.com/JSONbored/loopover/compare/miner-v3.14.0...miner-v3.14.1) (2026-07-25)
+
+
+### Fixes
+
+* **build:** migrate loopover-miner/loopover-mcp to out-of-place dist/ emit ([#8590](https://github.com/JSONbored/loopover/issues/8590)) ([c896797](https://github.com/JSONbored/loopover/commit/c89679761d8392f267fd19b458574e0b6a9e49fa))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @loopover/engine bumped from ^3.14.0 to ^3.14.1
+
 ## [3.14.0](https://github.com/JSONbored/loopover/compare/miner-v3.13.0...miner-v3.14.0) (2026-07-24)
 
 

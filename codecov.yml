@@ -67,6 +67,13 @@ ignore:
   # Self-host process entry + build-time stubs: exercised by the Docker build+boot smoke test
   # (.github/workflows/selfhost.yml), not unit-coverable without booting a server/subprocess.
   - "src/server.ts"
+  # review-enrichment's process entrypoint (#1473) -- same "Docker build+boot, not unit-coverable" reasoning
+  # as src/server.ts above; module-scope serve() binds a real port as a side effect of importing this file,
+  # so it's never imported by test/**. Pre-existing gap: this entry was missing even though
+  # discovery-index/src/server.ts's own header comment already claimed review-enrichment/src/server.ts got
+  # "the same treatment" -- surfaced by #8290 finally touching enough of this file's lines to trip
+  # codecov/patch on it.
+  - "review-enrichment/src/server.ts"
   - "src/selfhost/cf-workers-shim.ts"
   - "src/selfhost/stubs/**"
   # Postgres runtime adapters: validated by the real-Postgres integration test (test/integration/selfhost-pg.ts,

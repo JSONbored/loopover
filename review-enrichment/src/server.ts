@@ -17,15 +17,16 @@ import {
   readEnrichRequestText,
 } from "./request-guardrails.js";
 import {
-  captureRouteError,
-  captureUnhandledError,
-  flushSentry,
-  initSentry,
-  resolveSentryEnvironment,
-} from "./sentry.js";
+  captureRoutePostHogError,
+  captureUnhandledPostHogError,
+  flushReesPostHog,
+  initReesPostHog,
+  resolvePostHogEnvironment,
+  shutdownReesPostHog,
+} from "./posthog.js";
 
 const app = new Hono();
-const sentryEnabled = await initSentry(process.env);
+const posthogEnabled = await initReesPostHog(process.env);
 const TRACEPARENT_RE = /^00-([0-9a-f]{32})-[0-9a-f]{16}-[0-9a-f]{2}$/i;
 
 function traceIdFromTraceparent(value: string | undefined): string | undefined {
@@ -33,13 +34,8 @@ function traceIdFromTraceparent(value: string | undefined): string | undefined {
   return match?.[1]?.toLowerCase();
 }
 
-if (sentryEnabled) {
-  console.log(
-    JSON.stringify({
-      event: "rees_sentry",
-      environment: resolveSentryEnvironment(process.env),
-    }),
-  );
+if (posthogEnabled) {
+  console.log(JSON.stringify({ event: "rees_posthog", environment: resolvePostHogEnvironment(process.env) }));
 }
 
 app.get("/health", (c) =>
@@ -54,7 +50,7 @@ function recordEnrichOutcome(status: string, startedAtMs: number): void {
 }
 
 app.onError((error, c) => {
-  captureRouteError(error, { method: c.req.method, route: c.req.path });
+  captureRoutePostHogError(error, { method: c.req.method, route: c.req.path });
   return c.json({ error: "internal_error" }, 500);
 });
 
@@ -101,7 +97,7 @@ app.post("/v1/enrich", async (c) => {
     recordEnrichOutcome("ok", startedAtMs);
     return c.json(brief);
   } catch (error) {
-    // Rethrow to app.onError below, which still owns the 500 response + Sentry capture -- this catch exists
+    // Rethrow to app.onError below, which still owns the 500 response + PostHog capture -- this catch exists
     // only to record the outcome with the duration/startedAtMs this route handler has and onError doesn't.
     recordEnrichOutcome("error", startedAtMs);
     throw error;
@@ -114,16 +110,16 @@ serve({ fetch: app.fetch, port }, (info) => {
 });
 
 process.on("unhandledRejection", (reason) => {
-  captureUnhandledError(reason, { event: "rees_unhandled_rejection" });
+  captureUnhandledPostHogError(reason, { event: "rees_unhandled_rejection" });
 });
 
 process.on("uncaughtException", (error) => {
-  captureUnhandledError(error, { event: "rees_uncaught_exception" });
-  void flushSentry().finally(() => process.exit(1));
+  captureUnhandledPostHogError(error, { event: "rees_uncaught_exception" });
+  void flushReesPostHog().finally(() => process.exit(1));
 });
 
 process.on("SIGTERM", () => {
-  void flushSentry().finally(() => process.exit(0));
+  void shutdownReesPostHog().finally(() => process.exit(0));
 });
 
 export { app };

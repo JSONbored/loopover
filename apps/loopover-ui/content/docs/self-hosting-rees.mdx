@@ -64,11 +64,11 @@ REES_URL=http://rees:8080
 REES_SHARED_SECRET=<generate-a-new-shared-secret>`}
 />
 
-No `SENTRY_*` variables are required for a working local REES. Set them only if you want REES
+No `POSTHOG_*` variables are required for a working local REES. Set them only if you want REES
 error reporting — see "Service configuration" below for the variables REES reads, and add them
 for the `rees` service through a `docker-compose.override.yml` rather than the root `.env`: REES
-reads the same `SENTRY_DSN` name the main engine uses, so forwarding the whole `.env` file would
-point REES's error reporting at the engine's Sentry project instead of a dedicated one.
+reads the same `POSTHOG_API_KEY` name the main engine uses, so forwarding the whole `.env` file
+would point REES's error reporting at the engine's PostHog project instead of a dedicated one.
 
 ### Pointing at an external or managed instance instead
 
@@ -177,15 +177,14 @@ when the REES service is inside your trust boundary.
 
 ## Service configuration
 
-The REES service must use the matching `REES_SHARED_SECRET`. Optional Sentry env captures
+The REES service must use the matching `REES_SHARED_SECRET`. Optional PostHog env captures
 analyzer degradations without logging request bodies, tokens, diffs, or review content.
 
 <CodeBlock
   filename="REES service env"
   code={`REES_SHARED_SECRET=<shared-secret>
-SENTRY_DSN=
-SENTRY_ENVIRONMENT=production
-SENTRY_TRACES_SAMPLE_RATE=0`}
+POSTHOG_API_KEY=
+POSTHOG_ENVIRONMENT=production`}
 />
 
 ## Failure behavior

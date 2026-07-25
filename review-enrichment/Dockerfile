@@ -1,7 +1,8 @@
 # LoopOver review-enrichment service (REES). Lean two-stage Node build; analyzers are pure-JS diff-hunk
 # heuristics with no external CLI tools (#1477 scoped this to the cheap, no-checkout path -- see
 # review-enrichment/src/analyzers/complexity.ts's header for why a real linter/AST toolchain is out of scope).
-# Build context = the review-enrichment/ directory (Railway "Root Directory" = review-enrichment).
+# Build context = the review-enrichment/ directory ("Root Directory" = review-enrichment for any
+# Dockerfile-builder platform).
 FROM node:22-slim AS build
 WORKDIR /app
 COPY package*.json ./
@@ -27,5 +28,5 @@ USER rees
 ENV PORT=8080
 EXPOSE 8080
 # Provide at runtime (NOT baked into the image): REES_SHARED_SECRET (shared bearer with the engine),
-# plus optional Sentry vars. The uploader no-ops unless Sentry auth/org/project/release are configured.
+# plus optional PostHog vars. The uploader no-ops unless POSTHOG_CLI_API_KEY/PROJECT_ID/POSTHOG_RELEASE are configured.
 CMD ["sh", "-c", "node dist/upload-sourcemaps.js && find dist -type f -name '*.map' -delete && node dist/server.js"]

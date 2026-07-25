@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "LoopOver review-enrichment service (REES) — heavy/external/historical PR analysis returned as a structured brief the review engine splices into the prompt. Deploys standalone on Railway; see #1473.",
+  "description": "LoopOver review-enrichment service (REES) — heavy/external/historical PR analysis returned as a structured brief the review engine splices into the prompt. Deploys standalone, operator-hosted; see #1473.",
   "engines": {
     "node": ">=20"
   },
@@ -19,9 +19,9 @@
   },
   "dependencies": {
     "@hono/node-server": "^2.0.0",
-    "@sentry/cli": "^3.6.0",
-    "@sentry/node": "^10.63.0",
-    "hono": "^4.12.27"
+    "@posthog/cli": "0.9.1",
+    "hono": "^4.12.27",
+    "posthog-node": "^5.44.0"
   },
   "devDependencies": {
     "@types/node": "^22.20.0",

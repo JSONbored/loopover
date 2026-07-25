@@ -549,6 +549,50 @@ changing Sentry env, restart the `loopover` service — there is no hot reload.
   home to a maintainer-owned project unless you configure one.
 </Callout>
 
+## Enabling PostHog error tracking (parallel run alongside Sentry)
+
+PostHog error tracking is **opt-in and off by default**, and runs **in parallel with Sentry
+above** — both sinks are active simultaneously when both are configured; enabling one does not
+disable the other. Leave `POSTHOG_API_KEY` unset for a complete no-op with negligible overhead.
+The same key also activates MCP tool-call telemetry (`src/mcp/telemetry.ts`) — one PostHog
+project covers both surfaces.
+
+<CodeBlock
+  filename=".env"
+  code={`# Your PostHog project API key — never commit this to git
+POSTHOG_API_KEY=phc_examplePostHogProjectKey
+# Optional: EU-cloud ingestion (default is US-cloud, https://us.i.posthog.com)
+# POSTHOG_HOST=https://eu.i.posthog.com
+POSTHOG_ENVIRONMENT=production
+POSTHOG_SERVER_NAME=loopover-us-east
+POSTHOG_RELEASE=loopover-selfhost@2026.07.05
+# Optional: per-repo/global severity floors, independent of SENTRY_MIN_SEVERITY/
+# SENTRY_REPO_MIN_SEVERITY — an operator comparing the two sinks during the parallel-run window
+# may legitimately want PostHog quieter or noisier than Sentry.
+# POSTHOG_MIN_SEVERITY=error
+# POSTHOG_REPO_MIN_SEVERITY={"owner/repo":"warning"}`}
+/>
+
+Every captured event is scrubbed by the same redaction primitives Sentry's `beforeSend` uses
+(`src/selfhost/redaction-scrub.ts`, shared by both sinks so there is one security-critical
+implementation, not two independently-drifting copies): secret-shaped keys/values, JWTs, local
+filesystem paths, and installation ids (hashed, never raw) are all redacted before an event
+leaves the box.
+
+PostHog's own [exception autocapture](https://posthog.com/docs/error-tracking/installation/node)
+is enabled, so genuinely uncaught exceptions and unhandled rejections are captured automatically
+— mirroring Sentry's own default global-handler posture — in addition to the explicit capture
+call sites mirrored throughout the codebase.
+
+There is no PostHog equivalent to Sentry Cron Monitors' missed-check-in alerting, so the five
+recurring jobs (`scheduled-loop`, `orb-export`, `orb-relay-drain`, `orb-relay-register`,
+`queue-dead-letter-revive`) instead emit a plain heartbeat event, `orb_monitor_heartbeat`
+(properties: `monitor`, `status: "ok" | "error"`, `duration_ms`), on every run. Configure a
+PostHog insight alert on a no-data condition over that event (filtered to a given monitor name)
+to reproduce the same "silent death is an alert" property Sentry Crons provides.
+
+After changing PostHog env, restart the `loopover` service — there is no hot reload.
+
 ## Browser Sentry (operator UI)
 
 The operator UI (`apps/loopover-ui`) has its own, separate client-side Sentry

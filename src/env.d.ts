@@ -629,15 +629,21 @@ declare global {
      *  token is sufficient — this probe never writes). A secret — never commit a real value. See
      *  CLOUDFLARE_D1_MONITOR_ACCOUNT_ID. */
     CLOUDFLARE_D1_MONITOR_API_TOKEN?: string;
-    /** Opt-in MCP telemetry (#6228/#6235): the PostHog project API key the typed `src/mcp/telemetry.ts`
-     *  wrapper sends anonymized tool-call counters to. Unset (default — every self-hoster who doesn't opt in)
-     *  ⇒ recordMcpToolCall is a safe no-op that records nothing, byte-identical to before this module existed.
-     *  Only the #6228 allowlist is ever sent — tool name, caller type, ok, coarse duration — never arguments,
-     *  source, or any wallet/hotkey/trust-score data. A secret — inject via `wrangler secret`, never commit. */
+    /** Opt-in PostHog project API key, shared by two independent surfaces (#8287's env-var decision): (1) MCP
+     *  telemetry (#6228/#6235) — the typed `src/mcp/telemetry.ts` wrapper sends anonymized tool-call counters
+     *  (tool name, caller type, ok, coarse duration — never arguments, source, or wallet/hotkey/trust-score
+     *  data); (2) self-host ORB error tracking (`src/selfhost/posthog.ts`) — the parallel-run PostHog sink
+     *  alongside SENTRY_DSN, both active simultaneously when both are configured. Unset (default — every
+     *  self-hoster who doesn't opt in) ⇒ both surfaces are safe no-ops, byte-identical to before either
+     *  module existed. A secret — inject via `wrangler secret` (Worker) or a mounted secret file (self-host),
+     *  never commit. */
     POSTHOG_API_KEY?: string;
-    /** Opt-in MCP telemetry host override (#6235): the PostHog ingestion host recordMcpToolCall points at
-     *  (e.g. https://eu.i.posthog.com for EU-cloud). Unset ⇒ the US-cloud default (https://us.i.posthog.com).
-     *  Only meaningful alongside POSTHOG_API_KEY; ignored when telemetry is unconfigured. */
+    /** PostHog ingestion host override (e.g. https://eu.i.posthog.com for EU-cloud), shared by both surfaces
+     *  POSTHOG_API_KEY activates. Unset ⇒ the US-cloud default (https://us.i.posthog.com). Only meaningful
+     *  alongside POSTHOG_API_KEY; ignored when unconfigured. Self-host error tracking also reads its own
+     *  process.env-only vars (POSTHOG_MIN_SEVERITY, POSTHOG_REPO_MIN_SEVERITY, POSTHOG_ENVIRONMENT,
+     *  POSTHOG_SERVER_NAME, POSTHOG_RELEASE) — not declared here, mirroring SENTRY_MIN_SEVERITY/
+     *  SENTRY_REPO_MIN_SEVERITY's identical self-host-only precedent (src/selfhost/sentry.ts). */
     POSTHOG_HOST?: string;
   }
 }

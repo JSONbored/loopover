@@ -9,6 +9,7 @@ import { incr } from "./metrics";
 import { withReviewSpan } from "./tracing";
 import { withOtelSpan } from "./otel";
 import { captureError, withSentryMonitor } from "./sentry";
+import { capturePostHogError, withPostHogMonitor } from "./posthog";
 import {
   consumingRetryDelayMs,
   deterministicJitterMs,
@@ -632,10 +633,15 @@ export function createPgQueue(
    *  fires; the outer try/catch (this function's actual job) still guards the setInterval callback. */
   async function reviveDeadLetterJobsSafely(): Promise<void> {
     try {
-      await withSentryMonitor(
+      await withPostHogMonitor(
         "queue-dead-letter-revive",
         { jobType: "queue-dead-letter-revive" },
-        reviveDeadLetterJobs,
+        () =>
+          withSentryMonitor(
+            "queue-dead-letter-revive",
+            { jobType: "queue-dead-letter-revive" },
+            reviveDeadLetterJobs,
+          ),
       );
     } catch (error) {
       console.error(
@@ -646,6 +652,7 @@ export function createPgQueue(
         }),
       );
       captureError(error, { kind: "queue_dead_letter_revive_crashed" }, "queue_dead_letter_revive_crashed");
+      capturePostHogError(error, { kind: "queue_dead_letter_revive_crashed" }, "queue_dead_letter_revive_crashed");
     }
   }
 
@@ -772,6 +779,7 @@ export function createPgQueue(
         }),
       );
       captureError(error, { kind: "queue_foreground_liveness_release_crashed" }, "queue_foreground_liveness_release_crashed");
+      capturePostHogError(error, { kind: "queue_foreground_liveness_release_crashed" }, "queue_foreground_liveness_release_crashed");
     }
   }
 
@@ -1102,6 +1110,12 @@ export function createPgQueue(
         recovered,
         timeoutMs: processingTimeoutMs,
       }, "processing_timeout");
+      capturePostHogError(new Error("self-host queue processing lease expired"), {
+        kind: "job_recovered",
+        reason: "processing_timeout",
+        recovered,
+        timeoutMs: processingTimeoutMs,
+      }, "processing_timeout");
     }
     const job = await claimNext();
     if (!job) return false;
@@ -1126,6 +1140,11 @@ export function createPgQueue(
           error: "unparseable payload",
         });
         captureError(new Error("unparseable queue payload"), {
+          kind: "job_dead",
+          reason: "unparseable_payload",
+          jobId: job.id,
+        }, "unparseable_payload");
+        capturePostHogError(new Error("unparseable queue payload"), {
           kind: "job_dead",
           reason: "unparseable_payload",
           jobId: job.id,
@@ -1441,6 +1460,13 @@ export function createPgQueue(
             jobId: job.id,
             attempts,
           }, "job_dead");
+          capturePostHogError(error, {
+            kind: "job_dead",
+            reason: "max_retries_exhausted",
+            jobType: extractPayloadType(job.payload),
+            jobId: job.id,
+            attempts,
+          }, "job_dead");
         } else {
           const retryDelayMs = consumingRetryDelayMs(error, backoff(attempts));
           await pool.query(
@@ -1488,6 +1514,7 @@ export function createPgQueue(
         }),
       );
       captureError(error, { kind: "queue_pump_crashed" }, "queue_pump_crashed");
+      capturePostHogError(error, { kind: "queue_pump_crashed" }, "queue_pump_crashed");
     } finally {
       active--;
     }

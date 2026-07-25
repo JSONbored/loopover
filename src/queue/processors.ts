@@ -585,6 +585,7 @@ import { shouldApplyRepoCultureProfile } from "../review/repo-culture-profile-wi
 import { applyReviewMemorySuppression, getCachedReviewSuppressions, invalidateReviewSuppressionCache, shouldApplyReviewMemory } from "../review/review-memory-wire";
 import { isEnrichmentEnabled } from "../review/enrichment-wire";
 import { captureReviewFailure } from "../selfhost/sentry";
+import { capturePostHogReviewFailure } from "../selfhost/posthog";
 import {
   setReviewPipelineSpanOutcome,
   withReviewPipelineSpan,
@@ -9168,6 +9169,15 @@ async function maybePublishPrPublicSurface(
           head_sha: advisory.headSha,
           failedOutputs: failedOutputs.map((failure) => failure.output),
         }, "pr_public_surface_publish_failed");
+        capturePostHogReviewFailure(new Error("PR public-surface publish failed — review produced output but nothing was posted to the PR"), {
+          kind: "publish",
+          installationId,
+          owner: repoFullName.split("/")[0],
+          repo: repoFullName,
+          pr: pr.number,
+          head_sha: advisory.headSha,
+          failedOutputs: failedOutputs.map((failure) => failure.output),
+        }, "pr_public_surface_publish_failed");
         // At least one output failed for a reason that can plausibly clear on its own (rate limit / 5xx / momentary
         // token issue) — retry the whole job instead of leaving the review permanently unposted. A mix of transient
         // and permanent failures still retries: the permanent one re-fails identically next pass and re-audits, but
@@ -10358,6 +10368,16 @@ async function maybePublishPrPublicSurface(
         },
       }).catch(() => undefined);
       captureReviewFailure(new Error(message), {
+        kind: "review",
+        reason: "ai_review_public_summary_missing",
+        installationId,
+        repo: repoFullName,
+        pr: pr.number,
+        head_sha: advisory.headSha,
+        reviewer_count: aiReview?.reviewerCount ?? 0,
+        public_notes: hasPublicReviewAssessment(aiReview?.notes),
+      }, "ai_review_public_summary_missing");
+      capturePostHogReviewFailure(new Error(message), {
         kind: "review",
         reason: "ai_review_public_summary_missing",
         installationId,

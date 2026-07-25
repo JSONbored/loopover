@@ -10,6 +10,7 @@ import { incr } from "./metrics";
 import { withReviewSpan } from "./tracing";
 import { withOtelSpan } from "./otel";
 import { captureError, withSentryMonitor } from "./sentry";
+import { capturePostHogError, withPostHogMonitor } from "./posthog";
 import {
   consumingRetryDelayMs,
   deterministicJitterMs,
@@ -311,10 +312,15 @@ export function createSqliteQueue(
    *  synchronous one it replaces -- see the call site). */
   async function reviveDeadLetterJobsSafely(): Promise<void> {
     try {
-      await withSentryMonitor(
+      await withPostHogMonitor(
         "queue-dead-letter-revive",
         { jobType: "queue-dead-letter-revive" },
-        () => Promise.resolve(reviveDeadLetterJobs()),
+        () =>
+          withSentryMonitor(
+            "queue-dead-letter-revive",
+            { jobType: "queue-dead-letter-revive" },
+            () => Promise.resolve(reviveDeadLetterJobs()),
+          ),
       );
     } catch (error) {
       console.error(
@@ -325,6 +331,7 @@ export function createSqliteQueue(
         }),
       );
       captureError(error, { kind: "queue_dead_letter_revive_crashed" }, "queue_dead_letter_revive_crashed");
+      capturePostHogError(error, { kind: "queue_dead_letter_revive_crashed" }, "queue_dead_letter_revive_crashed");
     }
   }
 
@@ -446,6 +453,7 @@ export function createSqliteQueue(
         }),
       );
       captureError(error, { kind: "queue_foreground_liveness_release_crashed" }, "queue_foreground_liveness_release_crashed");
+      capturePostHogError(error, { kind: "queue_foreground_liveness_release_crashed" }, "queue_foreground_liveness_release_crashed");
     }
   }
 
@@ -831,6 +839,12 @@ export function createSqliteQueue(
         recovered,
         timeoutMs: processingTimeoutMs,
       }, "processing_timeout");
+      capturePostHogError(new Error("self-host queue processing lease expired"), {
+        kind: "job_recovered",
+        reason: "processing_timeout",
+        recovered,
+        timeoutMs: processingTimeoutMs,
+      }, "processing_timeout");
     }
     const job = claimNext();
     if (!job) return false;
@@ -855,6 +869,11 @@ export function createSqliteQueue(
           error: "unparseable payload",
         });
         captureError(new Error("unparseable queue payload"), {
+          kind: "job_dead",
+          reason: "unparseable_payload",
+          jobId: job.id,
+        }, "unparseable_payload");
+        capturePostHogError(new Error("unparseable queue payload"), {
           kind: "job_dead",
           reason: "unparseable_payload",
           jobId: job.id,
@@ -1118,6 +1137,13 @@ export function createSqliteQueue(
             jobId: job.id,
             attempts,
           }, "job_dead");
+          capturePostHogError(error, {
+            kind: "job_dead",
+            reason: "max_retries_exhausted",
+            jobType: extractPayloadType(job.payload),
+            jobId: job.id,
+            attempts,
+          }, "job_dead");
         } else {
           const retryDelayMs = consumingRetryDelayMs(error, backoff(attempts));
           driver.query(
@@ -1168,6 +1194,7 @@ export function createSqliteQueue(
         }),
       );
       captureError(error, { kind: "queue_pump_crashed" }, "queue_pump_crashed");
+      capturePostHogError(error, { kind: "queue_pump_crashed" }, "queue_pump_crashed");
     } finally {
       active--;
     }

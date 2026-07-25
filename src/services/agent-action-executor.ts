@@ -41,6 +41,7 @@ import {
 import { incr } from "../selfhost/metrics";
 import { shouldWaitForOlderSiblings } from "../review/merge-train";
 import { captureError } from "../selfhost/sentry";
+import { capturePostHogError } from "../selfhost/posthog";
 import { claimContributorCapLock, releaseContributorCapLock } from "../queue/transient-locks";
 
 // The agent actor name on every audit record — the App acts on the maintainer's behalf per their configured
@@ -639,6 +640,7 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
         // for review-pass failures (selfhost/sentry.ts's captureReviewFailure, queue/processors.ts). Previously
         // this class of failure was audit-log-only, invisible without a manual audit_events query.
         captureError(error, { kind: "agent_action_execution_failed", repo: ctx.repoFullName, pr: ctx.pullNumber, installationId: ctx.installationId, actionClass: action.actionClass }, "agent_action_execution_failed");
+        capturePostHogError(error, { kind: "agent_action_execution_failed", repo: ctx.repoFullName, pr: ctx.pullNumber, installationId: ctx.installationId, actionClass: action.actionClass }, "agent_action_execution_failed");
       }
       // #2265: a permission-looking 403 on a PR-write mutation can mean the LOCAL installations.permissions
       // snapshot is stale after a maintainer-initiated downgrade (GitHub sends no downgrade webhook). Rate-limit
@@ -941,6 +943,7 @@ export async function executeIssueMaintenanceActions(env: Env, ctx: IssueActionE
       // Mirrors executeAgentMaintenanceActions's non-merge capture below -- issue-side label/close has no retry
       // loop either, so a single failure here is already this pass's terminal outcome.
       captureError(error, { kind: "agent_issue_action_execution_failed", repo: ctx.repoFullName, issue: ctx.issueNumber, installationId: ctx.installationId, actionClass: action.actionClass }, "agent_issue_action_execution_failed");
+      capturePostHogError(error, { kind: "agent_issue_action_execution_failed", repo: ctx.repoFullName, issue: ctx.issueNumber, installationId: ctx.installationId, actionClass: action.actionClass }, "agent_issue_action_execution_failed");
     }
   }
 
@@ -977,6 +980,7 @@ async function handleMergeFailure(env: Env, ctx: AgentActionExecutionContext, er
   // merge hold groups under one readable title regardless of which HTTP status caused it -- the specific
   // status/reason stays in the message and the "review" context object either way.
   captureError(error, { kind: "agent_merge_blocked", repo: ctx.repoFullName, pr: ctx.pullNumber, installationId: ctx.installationId, reason: reason.slice(0, 280) }, "agent_merge_blocked");
+  capturePostHogError(error, { kind: "agent_merge_blocked", repo: ctx.repoFullName, pr: ctx.pullNumber, installationId: ctx.installationId, reason: reason.slice(0, 280) }, "agent_merge_blocked");
   await recordAuditEvent(env, {
     eventType: "agent.action.merge_blocked",
     actor: AGENT_ACTOR,

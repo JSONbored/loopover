@@ -50,6 +50,24 @@ describe("scanBrandingHits", () => {
     expect(capturedArgs).toContain("apps/*/scripts/**/*.mjs");
   });
 
+  it("scans packages/*/src/**/*.tsx, so ui-kit design-system components are covered like apps/* .tsx are", () => {
+    let capturedArgs: string[] = [];
+    const exec = (_root: string, args: string[]) => {
+      capturedArgs = args;
+      return "";
+    };
+    scanBrandingHits({ root: "/fake", exec });
+
+    expect(capturedArgs).toContain("packages/*/src/**/*.tsx");
+  });
+
+  it("includes a packages/*/src/*.tsx hit in the scanned set (a ui-kit component now in scope)", () => {
+    const exec = () => "packages/loopover-ui-kit/src/card.tsx:1\n";
+    const result = scanBrandingHits({ root: "/fake", exec });
+
+    expect(result).toEqual({ "packages/loopover-ui-kit/src/card.tsx": 1 });
+  });
+
   // Real regression guard, mirroring check-manifest-drift-script.test.ts's own real-repo-state test: proves
   // the actual defaultExec (real `git grep` subprocess, real exit-1-means-empty handling) works against this
   // repo's real tracked files, not just the injected fake above.

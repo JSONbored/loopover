@@ -34,6 +34,7 @@ export const BRANDING_DRIFT_PATHSPECS = [
   "packages/*/lib/**/*.js",
   "packages/*/lib/**/*.ts",
   "packages/*/src/**/*.ts",
+  "packages/*/src/**/*.tsx",
   "packages/*/scripts/**/*.mjs",
   "apps/*/src/**/*.ts",
   "apps/*/src/**/*.tsx",

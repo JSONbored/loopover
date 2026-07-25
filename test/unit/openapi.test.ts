@@ -56,8 +56,6 @@ describe("OpenAPI contract", () => {
     expect(spec.paths["/v1/app/analytics/daily-rollups"]).toBeDefined();
     expect(spec.paths["/v1/auth/github/start"]).toBeDefined();
     expect(spec.paths["/v1/auth/github/callback"]).toBeDefined();
-    expect(spec.paths["/v1/auth/extension/session"]).toBeDefined();
-    expect(spec.paths["/v1/extension/pull-context"]).toBeDefined();
     expect(spec.paths["/v1/auth/github/device/start"]).toBeDefined();
     expect(spec.paths["/v1/auth/session"]).toBeDefined();
     expect(spec.paths["/v1/internal/jobs/repair-data-fidelity"]).toBeDefined();
@@ -84,6 +82,8 @@ describe("OpenAPI contract", () => {
       "/v1/repos/{owner}/{repo}/pulls/{number}/review-intelligence",
       "/v1/repos/{owner}/{repo}/pulls/{number}/scoring-preview",
       "/v1/internal/jobs/generate-signal-snapshots/run",
+      "/v1/auth/extension/session",
+      "/v1/extension/pull-context",
     ]) {
       expect(spec.paths[removedPath]).toBeUndefined();
     }
@@ -132,7 +132,7 @@ describe("OpenAPI contract", () => {
     expect(spec.paths["/v1/app/overview"]?.get?.security).toEqual([{ LoopOverBearer: [] }, { LoopOverSessionCookie: [] }]);
     expect(spec.paths["/v1/auth/session"]?.get?.security).toBeUndefined();
     expect(spec.paths["/v1/auth/logout"]?.post?.security).toBeUndefined();
-    expect(spec.paths["/v1/auth/extension/session"]?.post?.security).toEqual([{ LoopOverBearer: [] }, { LoopOverSessionCookie: [] }]);
+    expect(spec.paths["/v1/auth/github/token"]?.post?.security).toEqual([{ LoopOverBearer: [] }, { LoopOverSessionCookie: [] }]);
   });
 
   // #5810: every operation needs a title in the generated spec and the rendered API browser. Iterating the built

@@ -249,42 +249,6 @@ describe("private-beta auth and rate limiting", () => {
     expect(observedKeys[0]).toMatch(/^strict:\/v1\/auth\/github\/token:ip:/);
   });
 
-  it("keys /v1/auth/extension/session by SESSION, not by IP -- same pre-existing gap as #6117, fixed the same way", async () => {
-    const observedKeys: string[] = [];
-    const env = rateLimitTestEnv({}, observedKeys);
-    const { token: sessionToken } = await createSessionForGitHubUser(env, { login: "jsonbored", id: 42 });
-
-    // The same session's token from two DIFFERENT IPs shares one bucket -- a stolen token can't be used to
-    // bypass the strict cap by rotating source IPs.
-    await expect(
-      enforceRateLimit(fakeContext(env, "/v1/auth/extension/session", { authorization: `Bearer ${sessionToken}`, "cf-connecting-ip": "203.0.113.9" }), "strict"),
-    ).resolves.toBeNull();
-    await expect(
-      enforceRateLimit(fakeContext(env, "/v1/auth/extension/session", { authorization: `Bearer ${sessionToken}`, "cf-connecting-ip": "198.51.100.50" }), "strict"),
-    ).resolves.toBeNull();
-    expect(observedKeys).toHaveLength(2);
-    expect(observedKeys[0]).toBe(observedKeys[1]);
-    expect(observedKeys[0]).toMatch(/^strict:\/v1\/auth\/extension\/session:token:/);
-    const firstSessionKey = observedKeys[0];
-
-    // A DIFFERENT session's token from the SAME IP gets its own independent bucket -- unrelated sessions
-    // behind one NAT/CI-runner IP don't throttle each other.
-    observedKeys.length = 0;
-    const { token: otherSessionToken } = await createSessionForGitHubUser(env, { login: "other-user", id: 43 });
-    await expect(
-      enforceRateLimit(fakeContext(env, "/v1/auth/extension/session", { authorization: `Bearer ${otherSessionToken}`, "cf-connecting-ip": "203.0.113.9" }), "strict"),
-    ).resolves.toBeNull();
-    expect(observedKeys[0]).toMatch(/^strict:\/v1\/auth\/extension\/session:token:/);
-    expect(observedKeys[0]).not.toBe(firstSessionKey);
-
-    // No/invalid bearer still falls back to IP-keying (the pre-auth default), matching every other route.
-    observedKeys.length = 0;
-    await expect(
-      enforceRateLimit(fakeContext(env, "/v1/auth/extension/session", { "cf-connecting-ip": "203.0.113.9" }), "strict"),
-    ).resolves.toBeNull();
-    expect(observedKeys[0]).toMatch(/^strict:\/v1\/auth\/extension\/session:ip:/);
-  });
-
   it("keys /v1/github/webhook and /v1/orb/webhook by the payload's installation.id, not IP (#4891) -- a shared hosted egress path can't collide two tenants' buckets", async () => {
     const observedKeys: string[] = [];
     const env = rateLimitTestEnv({}, observedKeys);

@@ -343,19 +343,27 @@ describe("product usage events", () => {
 
   it("accepts the full product surface and outcome catalogs", async () => {
     const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "fixed-test-salt" });
-    const surfaces = ["api", "mcp", "github_app", "control_panel", "browser_extension", "internal"] as const;
+    const surfaces = ["api", "mcp", "github_app", "control_panel", "internal"] as const;
     const outcomes = ["success", "denied", "error", "queued", "completed", "skipped"] as const;
 
-    for (const [index, surface] of surfaces.entries()) {
+    for (const surface of surfaces) {
       await recordProductUsageEvent(env, {
         surface,
         eventName: `surface_${surface}`,
-        outcome: outcomes[index],
+        outcome: "success",
         metadata: { surface },
       });
     }
+    for (const outcome of outcomes) {
+      await recordProductUsageEvent(env, {
+        surface: "api",
+        eventName: `outcome_${outcome}`,
+        outcome,
+        metadata: { outcome },
+      });
+    }
 
-    const events = await listProductUsageEvents(env, { limit: 10 });
+    const events = await listProductUsageEvents(env, { limit: 20 });
     expect(events.map((event) => event.surface)).toEqual(expect.arrayContaining([...surfaces]));
     expect(events.map((event) => event.outcome)).toEqual(expect.arrayContaining([...outcomes]));
   });
@@ -891,7 +899,6 @@ describe("product usage events", () => {
       { eventName: "mcp_request", route: "/mcp", actor: "mcp-user", outcome: "error" },
       { eventName: "command_previewed", route: "/v1/app/commands/preview", actor: "panel-user", outcome: "success", metadata: { command: "packet" } },
       { eventName: "agent_pr_packet_completed", route: "/v1/agent/prepare-pr-packet", actor: "denied-agent", outcome: "denied", metadata: { command: "packet" } },
-      { eventName: "pull_context_viewed", route: "/v1/extension/pull-context", actor: "extension-user", outcome: "success" },
       { eventName: "github_installation_created", route: "/v1/github/webhook", actor: "github-user", outcome: "completed" },
       { eventName: "repair_data_fidelity_completed", route: "/v1/internal/jobs/repair-data-fidelity", actor: "internal-user", outcome: "completed" },
       { eventName: "repo_snapshot_opened", route: "/v1/repos/JSONbored/loopover", actor: "repo-user", outcome: "success" },
@@ -919,7 +926,7 @@ describe("product usage events", () => {
       activation: {
         loginActors: 1,
         doctorPassActors: 0,
-        firstUsefulActionActors: 2,
+        firstUsefulActionActors: 1,
         fullyActivatedActors: 0,
         githubInstalledRepos: 0,
         githubFirstCommandRepos: 0,
@@ -932,7 +939,6 @@ describe("product usage events", () => {
         { key: "agent", count: 1 },
         { key: "api", count: 1 },
         { key: "auth", count: 1 },
-        { key: "browser_extension", count: 1 },
         { key: "control_panel", count: 1 },
         { key: "github_app", count: 1 },
         { key: "health", count: 1 },

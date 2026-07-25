@@ -7623,7 +7623,6 @@ function productUsageBaseRolesForEvent(event: ProductUsageEventRecord): ProductU
   if (roles.size > 0) return [...roles].sort((a, b) => productUsageRoleSortValue(a) - productUsageRoleSortValue(b));
 
   if (event.eventName === "github_installation_created") return ["owner"];
-  if (event.eventName === "extension_session_created" || event.eventName === "pull_context_viewed") return ["maintainer"];
   if (event.surface === "mcp") return ["miner"];
   if (
     event.eventName === "local_branch_analysis_completed" ||
@@ -7785,7 +7784,6 @@ function productUsageRouteClass(route: string | null | undefined): string {
   if (route === "/mcp" || route.startsWith("/v1/mcp/")) return "mcp";
   if (route.startsWith("/v1/app/")) return "control_panel";
   if (route.startsWith("/v1/agent/")) return "agent";
-  if (route.startsWith("/v1/extension/")) return "browser_extension";
   if (route.startsWith("/v1/github/")) return "github_app";
   if (route.startsWith("/v1/internal/")) return "internal";
   if (route.startsWith("/v1/repos/")) return "repository";
@@ -7851,7 +7849,6 @@ const PRODUCT_USAGE_ACTOR_REDACTION_MAX_CHARS = 256;
 const PRODUCT_USAGE_ROLE_ORDER: ProductUsageRole[] = ["miner", "maintainer", "owner", "operator", "contributor", "unknown"];
 const PRODUCT_USAGE_USEFUL_ACTION_EVENTS = new Set([
   "command_previewed",
-  "pull_context_viewed",
   "local_branch_analysis_completed",
   "agent_run_started",
   "agent_plan_next_work_completed",
@@ -7862,7 +7859,7 @@ const PRODUCT_USAGE_USEFUL_ACTION_EVENTS = new Set([
   "pr_public_surface_published",
   "mcp_tool_called",
 ]);
-const PRODUCT_USAGE_SURFACES = new Set<ProductUsageSurface>(["api", "mcp", "github_app", "control_panel", "browser_extension", "internal"]);
+const PRODUCT_USAGE_SURFACES = new Set<ProductUsageSurface>(["api", "mcp", "github_app", "control_panel", "internal"]);
 const PRODUCT_USAGE_OUTCOMES = new Set<ProductUsageOutcome>(["success", "denied", "error", "queued", "completed", "skipped"]);
 const PRODUCT_USAGE_SENSITIVE_KEY =
   /authorization|cookie|token|secret|password|private[_-]?key|source|body|diff|patch|prompt|raw[_-]?trust|trust[_-]?score|wallet|hotkey|coldkey|seed|mnemonic|local[_-]?path|repo[_-]?root|cwd|scoreability|reviewability|farming/i;

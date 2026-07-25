@@ -19,7 +19,6 @@ import {
   buildClearedBrowserSessionCookie,
   buildClearedGitHubOAuthStateCookie,
   buildGitHubOAuthStateCookie,
-  createSessionForGitHubUser,
   extractBearerToken,
   extractBrowserSessionToken,
   extractCookieValue,
@@ -274,22 +273,10 @@ import {
   buildMaintainerLaneReport,
   buildPullRequestMaintainerPacket,
   buildPreStartCheck,
-  buildRoleContext,
   buildPreflightResult,
   buildQueueHealth,
   buildRegistryChangeReport,
-  buildContributorOpportunities,
-  buildPublicReadinessScore,
-  type ContributorOutcomeHistory,
-  type IssueQualityReport,
-  type PullRequestMaintainerPacket,
-  type RoleContext,
 } from "../signals/engine";
-import {
-  buildExtensionIssueFit,
-  buildExtensionIssueBadges,
-  buildExtensionPrStatus,
-} from "../signals/extension-contributor-context";
 import { attachDataQuality, buildCoreSignalFidelity, buildFreshnessSloReport, buildRepoDataQuality, buildSignalFidelity } from "../signals/data-quality";
 import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { buildContributorPrOutcomes } from "../signals/contributor-pr-outcomes";
@@ -1219,11 +1206,6 @@ export function createApp() {
     const identity = await authenticateRequestIdentity(c);
     if (!identity) return c.json({ error: "unauthorized" }, 401);
     if (identity.kind === "session" && !canSessionAccessPath(c.env, identity, c.req.path)) return c.json({ error: "insufficient_role" }, 403);
-    if (isExtensionScopedSession(identity) && c.req.path !== EXTENSION_PULL_CONTEXT_PATH) return c.json({ error: "insufficient_scope" }, 403);
-    // Contributor extension tokens are STRICTLY self-only: like the pull-context token above, they are
-    // confined to their own surface and may not reach any other path (control-panel /v1/app/*, the
-    // session-mint endpoint, etc.). Without this they would be LESS confined than the maintainer token.
-    if (isExtensionContributorScopedSession(identity) && !isExtensionContributorContextPath(c.req.path)) return c.json({ error: "insufficient_scope" }, 403);
     return next();
   });
 
@@ -1486,9 +1468,9 @@ export function createApp() {
 
   // #6114/#6115: fetch the calling session's live GitHub token (persisted at login, transparently refreshed
   // near/past its 8h expiry via getLiveSessionGitHubToken) so a CLI/AMS process can authenticate git
-  // operations without a separately-configured GITHUB_TOKEN PAT. Session-only (mirrors
-  // /v1/auth/extension/session's identity gate below) -- the static "mcp"/"api" shared-secret identities
-  // never reach this, since they don't represent one logged-in GitHub user's own credential. Never cached
+  // operations without a separately-configured GITHUB_TOKEN PAT. Session-only -- the static "mcp"/"api"
+  // shared-secret identities never reach this, since they don't represent one logged-in GitHub user's own
+  // credential. Never cached
   // (this is live credential material) and never included in product-usage metadata or audit events.
   app.post("/v1/auth/github/token", async (c) => {
     const identity = await authenticateRequestIdentity(c);
@@ -1505,53 +1487,6 @@ export function createApp() {
     const revoked = await revokeSession(c.env, identity);
     c.header("Set-Cookie", buildClearedBrowserSessionCookie(c.req.url));
     return c.json({ ok: true, revoked });
-  });
-
-  app.post("/v1/auth/extension/session", async (c) => {
-    const identity = await authenticateRequestIdentity(c);
-    if (!identity || identity.kind !== "session") return c.json({ error: "browser_session_required" }, 403);
-    // An extension token (maintainer OR contributor scope) may not mint another — only a full browser
-    // session can. Without covering the contributor scope here, a contributor token could self-renew an
-    // unbounded, effectively non-revocable chain of sessions.
-    if (isExtensionScopedSession(identity) || isExtensionContributorScopedSession(identity)) return c.json({ error: "browser_session_required" }, 403);
-    const roleSummary = await loadControlPanelRoleSummary(c.env, identity.actor);
-    // Maintainers (own/installed a repo, or operators) get the maintainer pull-context scope; everyone
-    // else gets the strictly self-only contributor scope (#556). Either way the session is minted from a
-    // verified browser sign-in, so a non-maintainer can only ever read its OWN contributor data.
-    const isMaintainer = roleSummary.roles.some((role) => role === "maintainer" || role === "owner" || role === "operator");
-    const scope = isMaintainer ? EXTENSION_PULL_CONTEXT_SCOPE : EXTENSION_CONTRIBUTOR_CONTEXT_SCOPE;
-    const githubUser = identity.session.githubUserId === undefined ? { login: identity.session.login } : { login: identity.session.login, id: identity.session.githubUserId };
-    const { token, session } = await createSessionForGitHubUser(
-      c.env,
-      githubUser,
-      {
-        scopes: [scope],
-        metadata: {
-          source: "browser_extension",
-          parentSessionId: identity.session.id,
-        },
-      },
-    );
-    await recordRouteProductUsage(c, {
-      surface: "browser_extension",
-      eventName: "extension_session_created",
-      role: isMaintainer ? "maintainer" : "contributor",
-      identity,
-      sessionId: session.id,
-      outcome: "success",
-      clientName: "browser_extension",
-      metadata: { scopeCount: session.scopes.length },
-    });
-    return c.json(
-      {
-        token,
-        login: session.login,
-        expiresAt: session.expiresAt,
-        scopes: session.scopes,
-        apiOrigin: c.env.PUBLIC_API_ORIGIN ?? new URL(c.req.url).origin,
-      },
-      201,
-    );
   });
 
   app.get("/v1/app/overview", async (c) => {
@@ -2305,96 +2240,6 @@ export function createApp() {
       metadata: { source: "app", deliveryMode: "store_only" },
     });
     return c.json({ status: "stored", subscription, delivery: { mode: "store_only", emailDeliveryEnabled: false } }, 201);
-  });
-
-  app.get("/v1/extension/pull-context", async (c) => {
-    const identity = await authenticateRequestIdentity(c);
-    if (!identity || identity.kind !== "session" || !isExtensionScopedSession(identity)) return c.json({ error: "extension_session_required" }, 403);
-    const owner = c.req.query("owner") ?? "";
-    const repoName = c.req.query("repo") ?? "";
-    const pullNumber = Number(c.req.query("pullNumber") ?? "");
-    if (!owner || !repoName || !Number.isInteger(pullNumber) || pullNumber <= 0) return c.json({ error: "valid_owner_repo_pull_required" }, 400);
-    const fullName = `${owner}/${repoName}`;
-    const repo = await getRepository(c.env, fullName);
-    const repoForbidden = await requireExtensionPullContextRepoAccess(c, identity, fullName, repo);
-    if (repoForbidden) return repoForbidden;
-    const [pullRequest, issues, pullRequests, files, reviews, checks, recentMergedPullRequests] = await Promise.all([
-      getPullRequest(c.env, fullName, pullNumber),
-      listIssues(c.env, fullName),
-      listPullRequests(c.env, fullName),
-      listPullRequestFiles(c.env, fullName, pullNumber),
-      listPullRequestReviews(c.env, fullName, pullNumber),
-      listCheckSummaries(c.env, fullName, pullNumber),
-      listRecentMergedPullRequests(c.env, fullName),
-    ]);
-    const contributor = pullRequest?.authorLogin;
-    const contributorContext = contributor ? await loadContributorFastContext(c.env, contributor).catch(() => null) : null;
-    const signalArgs = {
-      repo,
-      pullRequest,
-      issues,
-      pullRequests,
-      files,
-      reviews,
-      checks,
-      recentMergedPullRequests,
-      repoFullName: fullName,
-      pullNumber,
-      profile: contributorContext?.profile,
-      outcomeHistory: contributorContext?.outcomeHistory,
-    };
-    const packet = buildPullRequestMaintainerPacket(signalArgs);
-    const reviewability = buildPullRequestReviewability(signalArgs);
-    const roleContext = buildRoleContext({
-      login: contributor ?? contributorContext?.profile.login ?? "unknown",
-      repo,
-      repoFullName: fullName,
-      pullRequests,
-      issues,
-      profile: contributorContext?.profile,
-    });
-    const publicSafePacketMarkdown = buildExtensionPublicSafePacket({
-      repoFullName: fullName,
-      pullNumber,
-      reviewability,
-      contributor: contributor ?? "unknown",
-    });
-    const privateBlockers = buildExtensionPrivateBlockers(reviewability);
-    await recordAuditEvent(c.env, {
-      eventType: "extension.pull_context_view",
-      actor: identity.actor,
-      route: c.req.path,
-      outcome: "success",
-      metadata: {
-        redacted: true,
-        hasPublicPacket: publicSafePacketMarkdown.length > 0,
-        blockerCount: privateBlockers.length,
-      },
-    });
-    await recordRouteProductUsage(c, {
-      surface: "browser_extension",
-      eventName: "pull_context_viewed",
-      identity,
-      repoFullName: fullName,
-      targetKey: `${fullName}#${pullNumber}`,
-      outcome: "success",
-      clientName: "browser_extension",
-      metadata: { hasContributorContext: Boolean(contributorContext), hasCachedPullRequest: Boolean(pullRequest) },
-    });
-    return c.json(
-      buildExtensionPullContextPayload({
-        fullName,
-        pullNumber,
-        pullRequest,
-        contributorContext,
-        packet,
-        reviewability,
-        roleContext,
-        pullRequests,
-        publicSafePacketMarkdown,
-        privateBlockers,
-      }),
-    );
   });
 
   app.get("/v1/registry/snapshot", async (c) => {
@@ -4081,95 +3926,6 @@ export function createApp() {
       loadOrComputeIssueQualityResponse(c.env, parsed.data.repoFullName),
     ]);
     return c.json(buildLocalDiffPreflightResult(parsed.data, repo, issues, pullRequests, bounties, issueQuality?.report));
-  });
-
-  // ─── Extension contributor-context endpoints (#556) ─────────────────────────────────────────────
-  // Self-only (requireContributorAccess: actor === login), public-safe, scores returned as BANDS.
-  // The coarse path allowlist (canSessionAccessPath) only lets the contributor scope reach these paths.
-  app.get("/v1/extension/contributors/:login/issue-fit", async (c) => {
-    const login = c.req.param("login");
-    const unauthorized = await requireContributorAccess(c, login);
-    if (unauthorized) return unauthorized;
-    const owner = c.req.query("owner") ?? "";
-    const repoName = c.req.query("repo") ?? "";
-    const issueNumber = Number(c.req.query("issueNumber") ?? "");
-    if (!owner || !repoName || !Number.isInteger(issueNumber) || issueNumber <= 0) return c.json({ error: "valid_owner_repo_issue_required" }, 400);
-    const repoFullName = `${owner}/${repoName}`;
-    const repo = await getRepository(c.env, repoFullName);
-    if (!repo) return c.json({ error: "repo_not_found" }, 404);
-    const repoForbidden = await requireContributorRepoAccess(c, repoFullName, repo);
-    if (repoForbidden) return repoForbidden;
-    const [context, issues, pullRequests, bounties, issueQuality] = await Promise.all([
-      loadContributorFastContext(c.env, login),
-      listIssues(c.env, repoFullName),
-      listPullRequests(c.env, repoFullName),
-      listBountiesByRepo(c.env, repoFullName),
-      loadOrComputeIssueQualityResponse(c.env, repoFullName),
-    ]);
-    const opportunities = buildContributorOpportunities(context.profile, [repo], issues, pullRequests, bounties, issueQualityMap(repoFullName, issueQuality?.report));
-    const opportunity = opportunities.find((entry) => entry.issueNumber === issueNumber);
-    if (!opportunity) return c.json({ repoFullName, issueNumber, eligible: false, reason: "Issue is not an open, unclaimed outside-contributor target right now." }, 200);
-    return c.json({ eligible: true, ...buildExtensionIssueFit(opportunity) });
-  });
-
-  app.get("/v1/extension/contributors/:login/issue-badges", async (c) => {
-    const login = c.req.param("login");
-    const unauthorized = await requireContributorAccess(c, login);
-    if (unauthorized) return unauthorized;
-    const owner = c.req.query("owner") ?? "";
-    const repoName = c.req.query("repo") ?? "";
-    if (!owner || !repoName) return c.json({ error: "valid_owner_repo_required" }, 400);
-    const repoFullName = `${owner}/${repoName}`;
-    const repo = await getRepository(c.env, repoFullName);
-    if (!repo) return c.json({ error: "repo_not_found" }, 404);
-    const repoForbidden = await requireContributorRepoAccess(c, repoFullName, repo);
-    if (repoForbidden) return repoForbidden;
-    const [context, issues, pullRequests, bounties, issueQuality] = await Promise.all([
-      loadContributorFastContext(c.env, login),
-      listIssues(c.env, repoFullName),
-      listPullRequests(c.env, repoFullName),
-      listBountiesByRepo(c.env, repoFullName),
-      loadOrComputeIssueQualityResponse(c.env, repoFullName),
-    ]);
-    const opportunities = buildContributorOpportunities(context.profile, [repo], issues, pullRequests, bounties, issueQualityMap(repoFullName, issueQuality?.report));
-    return c.json({ repoFullName, badges: buildExtensionIssueBadges(opportunities, repoFullName) });
-  });
-
-  app.get("/v1/extension/contributors/:login/pr-status", async (c) => {
-    const login = c.req.param("login");
-    const unauthorized = await requireContributorAccess(c, login);
-    if (unauthorized) return unauthorized;
-    const owner = c.req.query("owner") ?? "";
-    const repoName = c.req.query("repo") ?? "";
-    const pullNumber = Number(c.req.query("pullNumber") ?? "");
-    if (!owner || !repoName || !Number.isInteger(pullNumber) || pullNumber <= 0) return c.json({ error: "valid_owner_repo_pull_required" }, 400);
-    const repoFullName = `${owner}/${repoName}`;
-    const repo = await getRepository(c.env, repoFullName);
-    if (!repo) return c.json({ error: "repo_not_found" }, 404);
-    const repoForbidden = await requireContributorRepoAccess(c, repoFullName, repo);
-    if (repoForbidden) return repoForbidden;
-    const [issues, pullRequests, bounties, issueQuality] = await Promise.all([
-      listIssues(c.env, repoFullName),
-      listPullRequests(c.env, repoFullName),
-      listBountiesByRepo(c.env, repoFullName),
-      loadOrComputeIssueQualityResponse(c.env, repoFullName),
-    ]);
-    const pr = pullRequests.find((entry) => entry.number === pullNumber);
-    if (!pr) return c.json({ error: "pull_request_not_found" }, 404);
-    // Self-only on the PR itself: a contributor reads only their OWN PR's status.
-    if ((pr.authorLogin ?? "").toLowerCase() !== login.toLowerCase()) return c.json({ error: "forbidden_contributor" }, 403);
-    const preflight = buildPreflightResult(
-      { repoFullName, contributorLogin: login, title: pr.title, body: pr.body ?? undefined, labels: pr.labels, linkedIssues: pr.linkedIssues, authorAssociation: pr.authorAssociation ?? undefined },
-      repo,
-      issues,
-      pullRequests,
-      bounties,
-      issueQuality?.report,
-    );
-    const collisions = buildCollisionReport(repoFullName, issues, pullRequests);
-    const queueHealth = buildQueueHealth(repo, issues, pullRequests, collisions);
-    const readiness = buildPublicReadinessScore({ pr, preflight, queueHealth });
-    return c.json(buildExtensionPrStatus({ repoFullName, pullNumber, readiness }));
   });
 
   app.post("/v1/local/branch-analysis", async (c) => {
@@ -6233,316 +5989,6 @@ async function loadContributorFastContext(env: Env, login: string) {
   };
 }
 
-type ExtensionContributorContext = Awaited<ReturnType<typeof loadContributorFastContext>> | null;
-
-type ExtensionPullContextSection = {
-  id: string;
-  label: string;
-  badge: string;
-  tone: "good" | "warn" | "neutral" | "private";
-  rows: Array<{ label: string; value: string }>;
-  items: string[];
-  actions: string[];
-};
-
-type ExtensionQueueLevel = "low" | "medium" | "high" | "unknown";
-
-const EXTENSION_REVIEWABILITY_TONES: Record<PullRequestReviewability["action"], ExtensionPullContextSection["tone"]> = {
-  review_now: "good",
-  needs_author: "warn",
-  likely_duplicate: "warn",
-  close_or_redirect: "warn",
-  watch: "neutral",
-  maintainer_lane: "private",
-};
-
-const EXTENSION_QUEUE_TONES: Record<ExtensionQueueLevel, ExtensionPullContextSection["tone"]> = {
-  low: "good",
-  medium: "warn",
-  high: "warn",
-  unknown: "neutral",
-};
-
-const EXTENSION_QUEUE_DETAILS: Record<ExtensionQueueLevel, string> = {
-  low: "Cached repo and author queue pressure are low enough for normal review flow.",
-  medium: "Some open PR pressure is visible; check queue hygiene before encouraging more work from the same lane.",
-  high: "Resolve open PR pressure before encouraging more work from the same lane.",
-  unknown: "Author repo-history context is unavailable; use cached repo open PR count as a lightweight pressure signal.",
-};
-
-function buildExtensionPullContextPayload(args: {
-  fullName: string;
-  pullNumber: number;
-  pullRequest: PullRequestRecord | null;
-  contributorContext: ExtensionContributorContext;
-  packet: PullRequestMaintainerPacket;
-  reviewability: PullRequestReviewability;
-  roleContext: RoleContext;
-  pullRequests: PullRequestRecord[];
-  publicSafePacketMarkdown: string;
-  privateBlockers: ReturnType<typeof buildExtensionPrivateBlockers>;
-}) {
-  const contributor = args.pullRequest?.authorLogin ?? args.contributorContext?.profile.login ?? "unknown";
-  const minerStatus = extensionMinerStatus(args.contributorContext);
-  const repoOutcome = args.contributorContext?.outcomeHistory.repoOutcomes.find((outcome) => outcome.repoFullName.toLowerCase() === args.fullName.toLowerCase());
-  const repoOpenPullRequests = args.pullRequests.filter((pull) => pull.repoFullName === args.fullName && pull.state === "open").length;
-  const queue = extensionQueuePressure(repoOpenPullRequests, repoOutcome);
-  const linkedIssues = args.packet.reviewSignals.linkedIssues;
-  const duplicateCount = args.packet.reviewSignals.collisionClusters;
-  const publicActions = uniqueStrings([...args.reviewability.maintainerNextSteps, ...args.packet.contributorNextSteps]).slice(0, 5).map(sanitizeExtensionPrivateText);
-  const sections: ExtensionPullContextSection[] = [
-    cleanExtensionSection({
-      id: "miner-context",
-      label: "Miner Context",
-      badge: minerStatus.badge,
-      tone: minerStatus.tone,
-      rows: [
-        { label: "author", value: contributor },
-        { label: "status", value: minerStatus.label },
-        { label: "source", value: minerStatus.source },
-      ],
-      items: [minerStatus.detail],
-      actions: [],
-    }),
-    cleanExtensionSection({
-      id: "lane-fit",
-      label: "Lane Fit",
-      badge: args.roleContext.maintainerLane ? "maintainer lane" : args.roleContext.role,
-      tone: args.roleContext.maintainerLane ? "private" : args.roleContext.role === "outside_contributor" ? "good" : "neutral",
-      rows: [
-        { label: "role", value: args.roleContext.role },
-        { label: "normal evidence", value: args.roleContext.normalContributorEvidenceAllowed ? "allowed" : "separate lane" },
-        { label: "source", value: args.roleContext.source },
-      ],
-      items: uniqueStrings([args.roleContext.guidance, ...args.roleContext.reasons]).slice(0, 4),
-      actions: [],
-    }),
-    cleanExtensionSection({
-      id: "duplicate-risk",
-      label: "Duplicate Risk",
-      badge: duplicateCount > 0 ? "check overlap" : "clear",
-      tone: duplicateCount > 0 ? "warn" : "good",
-      rows: [
-        { label: "clusters", value: String(duplicateCount) },
-        { label: "action", value: duplicateCount > 0 ? "compare before review" : "no cached overlap" },
-      ],
-      items:
-        duplicateCount > 0
-          ? ["Compare linked issues, active PRs, and recent merges before detailed review."]
-          : ["No duplicate or WIP collision cluster includes this PR in cached metadata."],
-      actions: [],
-    }),
-    cleanExtensionSection({
-      id: "linked-issue-state",
-      label: "Linked Issue State",
-      badge: linkedIssues.length > 0 ? "linked" : "missing",
-      tone: linkedIssues.length > 0 ? "good" : "warn",
-      rows: [
-        { label: "issues", value: linkedIssues.length > 0 ? linkedIssues.map((issue) => `#${issue}`).join(", ") : "none cached" },
-        { label: "policy", value: linkedIssues.length > 0 ? "review traceable" : "ask for context" },
-      ],
-      items:
-        linkedIssues.length > 0
-          ? [`Cached PR body links ${linkedIssues.map((issue) => `#${issue}`).join(", ")}.`]
-          : ["Ask for a linked issue or a clear no-issue rationale before deep review."],
-      actions: [],
-    }),
-    cleanExtensionSection({
-      id: "queue-pressure",
-      label: "Queue Pressure",
-      badge: queue.level,
-      tone: queue.tone,
-      rows: [
-        { label: "repo open PRs", value: String(repoOpenPullRequests) },
-        { label: "author open PRs", value: queue.authorOpenPullRequests },
-        { label: "author merged", value: queue.authorMergedPullRequests },
-      ],
-      items: [queue.detail],
-      actions: [],
-    }),
-    cleanExtensionSection({
-      id: "public-safe-actions",
-      label: "Public-Safe Packet Actions",
-      badge: args.reviewability.action,
-      tone: EXTENSION_REVIEWABILITY_TONES[args.reviewability.action],
-      rows: [
-        { label: "priority", value: args.packet.reviewPriority },
-        { label: "checks", value: `${args.packet.reviewSignals.checkFailureCount} failing` },
-        { label: "reviews", value: `${args.packet.reviewSignals.reviewCount} cached` },
-      ],
-      items: args.reviewability.whyThisHelps.slice(0, 3),
-      actions: publicActions,
-    }),
-    cleanExtensionSection({
-      id: "boundary",
-      label: "Boundary",
-      badge: "private",
-      tone: "private",
-      rows: [
-        { label: "surface", value: "browser extension" },
-        { label: "public posting", value: "none" },
-        { label: "source upload", value: "none" },
-      ],
-      items: ["This panel is maintainer-private context and does not create comments, labels, checks, or source uploads."],
-      actions: [],
-    }),
-  ];
-
-  return {
-    generatedAt: nowIso(),
-    repoFullName: args.fullName,
-    pullNumber: args.pullNumber,
-    contributor: {
-      login: sanitizeExtensionPrivateText(contributor),
-      minerStatus: minerStatus.status,
-      role: sanitizeExtensionPrivateText(args.roleContext.role),
-      maintainerLane: args.roleContext.maintainerLane,
-    },
-    privacy: {
-      surface: "browser_extension",
-      publicPosting: false,
-      sourceUpload: false,
-      githubMutations: false,
-    },
-    reviewability: args.reviewability,
-    actions: [
-      {
-        id: "copy_public_safe_packet",
-        label: "Copy public-safe packet",
-        visibility: "public_safe",
-        markdown: args.publicSafePacketMarkdown,
-      },
-      {
-        id: "view_private_blockers",
-        label: "View private blockers",
-        visibility: "private",
-        requiresAuth: true,
-        blockers: args.privateBlockers,
-      },
-    ],
-    sections,
-    panels: [
-      {
-        label: "Reviewability",
-        badge: sanitizeExtensionPrivateText(args.reviewability.action),
-        rows: [
-          { k: "action", v: sanitizeExtensionPrivateText(args.reviewability.action) },
-          { k: "score", v: String(args.reviewability.score) },
-        ],
-      },
-      {
-        label: "Contributor",
-        badge: sanitizeExtensionPrivateText(contributor),
-        rows: [
-          { k: "author", v: sanitizeExtensionPrivateText(contributor) },
-          { k: "prs", v: String(args.contributorContext?.contributorPullRequests.length ?? 0) },
-        ],
-      },
-      {
-        label: "Boundary",
-        badge: "private",
-        rows: [
-          { k: "surface", v: "browser extension" },
-          { k: "public", v: "no" },
-        ],
-      },
-    ],
-  };
-}
-
-function extensionMinerStatus(context: ExtensionContributorContext): {
-  status: "confirmed" | "not_found" | "unavailable";
-  badge: string;
-  label: string;
-  source: string;
-  detail: string;
-  tone: ExtensionPullContextSection["tone"];
-} {
-  if (!context) {
-    return {
-      status: "unavailable",
-      badge: "unavailable",
-      label: "official context unavailable",
-      source: "unavailable",
-      detail: "Official contributor context is unavailable; this panel does not guess or post publicly.",
-      tone: "neutral",
-    };
-  }
-  if (context.profile.gittensor) {
-    return {
-      status: "confirmed",
-      badge: "confirmed",
-      label: "confirmed miner",
-      source: "official Gittensor API",
-      detail: "Official miner context is available for private maintainer triage without exposing wallet or key material.",
-      tone: "good",
-    };
-  }
-  return {
-    status: "not_found",
-    badge: "non-miner",
-    label: "no confirmed miner record",
-    source: context.profile.source,
-    detail: "No confirmed miner record is cached for this GitHub login; use normal PR review signals.",
-    tone: "neutral",
-  };
-}
-
-function extensionQueuePressure(
-  repoOpenPullRequests: number,
-  repoOutcome: ContributorOutcomeHistory["repoOutcomes"][number] | undefined,
-): { level: ExtensionQueueLevel; tone: ExtensionPullContextSection["tone"]; authorOpenPullRequests: string; authorMergedPullRequests: string; detail: string } {
-  if (!repoOutcome) {
-    const level = repoOpenPullRequests >= 6 ? "medium" : "unknown";
-    return {
-      level,
-      tone: EXTENSION_QUEUE_TONES[level],
-      authorOpenPullRequests: "unknown",
-      authorMergedPullRequests: "unknown",
-      detail: EXTENSION_QUEUE_DETAILS[level],
-    };
-  }
-  const authorOpenPullRequests = repoOutcome.openPullRequests;
-  const level = extensionQueueLevel(repoOpenPullRequests, authorOpenPullRequests);
-  return {
-    level,
-    tone: EXTENSION_QUEUE_TONES[level],
-    authorOpenPullRequests: String(authorOpenPullRequests),
-    authorMergedPullRequests: String(repoOutcome.mergedPullRequests),
-    detail: EXTENSION_QUEUE_DETAILS[level],
-  };
-}
-
-function extensionQueueLevel(repoOpenPullRequests: number, authorOpenPullRequests: number): "low" | "medium" | "high" {
-  if (repoOpenPullRequests >= 8 || authorOpenPullRequests >= 4) return "high";
-  if (repoOpenPullRequests >= 4 || authorOpenPullRequests >= 2) return "medium";
-  return "low";
-}
-
-function cleanExtensionSection(section: ExtensionPullContextSection): ExtensionPullContextSection {
-  return {
-    id: section.id,
-    label: sanitizeExtensionPrivateText(section.label),
-    badge: sanitizeExtensionPrivateText(section.badge),
-    tone: section.tone,
-    rows: section.rows.map((row) => ({ label: sanitizeExtensionPrivateText(row.label), value: sanitizeExtensionPrivateText(row.value) })),
-    items: section.items.map(sanitizeExtensionPrivateText),
-    actions: section.actions.map(sanitizeExtensionPrivateText),
-  };
-}
-
-function sanitizeExtensionPrivateText(value: unknown): string {
-  const text = String(value).replace(
-    /\b(wallets?|hotkeys?|coldkeys?|seed phrases?|mnemonics?|private keys?|raw trust scores?|trust scores?|raw rankings?|private rankings?|reward estimates?|payouts?|farming)\b|github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9_]+/gi,
-    "private signal",
-  );
-  return text.replace(/\s+/g, " ").trim();
-}
-
-function uniqueStrings(values: string[]): string[] {
-  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
-}
-
 async function loadCheckSummariesForPullRequests(env: Env, repoFullName: string, input: Parameters<typeof findCurrentBranchPullRequest>[0], pullRequests: Parameters<typeof findCurrentBranchPullRequest>[1]) {
   const currentPullRequest = findCurrentBranchPullRequest(input, pullRequests);
   return currentPullRequest ? listCheckSummaries(env, repoFullName, currentPullRequest.number) : [];
@@ -6620,42 +6066,18 @@ function contributorEvidenceFromProfile(profile: {
   };
 }
 
-const EXTENSION_PULL_CONTEXT_PATH = "/v1/extension/pull-context";
-const EXTENSION_PULL_CONTEXT_SCOPE = "extension:pull_context";
 const OPPORTUNITIES_FIND_PATH = "/v1/opportunities/find";
 const ISSUE_RAG_RETRIEVE_PATH = "/v1/issue-rag/retrieve";
 const LINT_PR_TEXT_PATH = "/v1/lint/pr-text";
 const VALIDATE_FOCUS_MANIFEST_PATH = "/v1/validate/focus-manifest";
 const LINT_SLOP_RISK_PATH = "/v1/lint/slop-risk";
 const LINT_ISSUE_SLOP_PATH = "/v1/lint/issue-slop";
-// Contributor (miner) side of the extension (#556). Minted for NON-maintainer sign-ins; strictly
-// self-only — a token may only reach `/v1/extension/contributors/<self>/*`, enforced by the coarse
-// path check below plus `requireContributorAccess` (actor === login) in every handler.
-const EXTENSION_CONTRIBUTOR_CONTEXT_SCOPE = "extension:contributor_context";
-const EXTENSION_CONTRIBUTOR_CONTEXT_PATH = /^\/v1\/extension\/contributors\/[^/]+\/[^/]+$/;
 
 type ProtectedRouteContext = {
   env: Env;
   req: { header: (name: string) => string | undefined | null };
   json: (object: { error: string; reason?: string }, status?: number) => Response;
 };
-
-function isExtensionScopedSession(identity: AuthIdentity): boolean {
-  return identity.kind === "session" && identity.session.scopes.includes(EXTENSION_PULL_CONTEXT_SCOPE);
-}
-
-function isExtensionContributorScopedSession(identity: AuthIdentity): boolean {
-  return identity.kind === "session" && identity.session.scopes.includes(EXTENSION_CONTRIBUTOR_CONTEXT_SCOPE);
-}
-
-function isExtensionContributorContextPath(path: string): boolean {
-  return EXTENSION_CONTRIBUTOR_CONTEXT_PATH.test(path);
-}
-
-// Wrap a single repo's issue-quality report in the by-repo map buildContributorOpportunities expects.
-function issueQualityMap(repoFullName: string, report: IssueQualityReport | undefined): Map<string, IssueQualityReport> | undefined {
-  return report ? new Map([[repoFullName, report]]) : undefined;
-}
 
 // ─── Authorization model (the miner ⊕ maintainer boundary) ──────────────────────────────────────
 // Identity is per-LOGIN; authority is per-REPO. Two independent axes a single session can hold at once:
@@ -6699,10 +6121,6 @@ function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: 
   if (path === OPPORTUNITIES_FIND_PATH) return true;
   if (path === ISSUE_RAG_RETRIEVE_PATH) return true;
   if (path === LINT_PR_TEXT_PATH || path === VALIDATE_FOCUS_MANIFEST_PATH || path === LINT_SLOP_RISK_PATH || path === LINT_ISSUE_SLOP_PATH) return true;
-  if (path === EXTENSION_PULL_CONTEXT_PATH && isExtensionScopedSession(identity)) return true;
-  // Contributor extension scope reaches only `/v1/extension/contributors/<login>/*`; the handler's
-  // requireContributorAccess then enforces actor === login (self-only).
-  if (isExtensionContributorContextPath(path) && isExtensionContributorScopedSession(identity)) return true;
   return false;
 }
 
@@ -6878,15 +6296,6 @@ async function requireContributorAccess(c: ProtectedRouteContext, login: string)
   return null;
 }
 
-async function requireContributorRepoAccess(c: ProtectedRouteContext, repoFullName: string, repo: RepositoryRecord): Promise<Response | null> {
-  if (!repo.isPrivate) return null;
-  const identity = await authenticateRequestIdentity(c);
-  /* v8 ignore next -- Contributor route guard authenticates before repository access is checked. */
-  if (!identity) return c.json({ error: "unauthorized" }, 401);
-  if (identity.kind !== "session") return null;
-  return requireSessionRepoAccess(c, identity, repoFullName, repo);
-}
-
 async function requireCommandPreviewRepoAccess(
   c: ProtectedRouteContext,
   identity: AuthIdentity | null,
@@ -6896,15 +6305,6 @@ async function requireCommandPreviewRepoAccess(
   /* v8 ignore next -- The broad route role guard already authenticates protected preview requests. */
   if (!identity) return c.json({ error: "unauthorized" }, 401);
   if (identity.kind !== "session" || !repoFullName) return null;
-  return requireSessionRepoAccess(c, identity, repoFullName, repo);
-}
-
-async function requireExtensionPullContextRepoAccess(
-  c: ProtectedRouteContext,
-  identity: Extract<AuthIdentity, { kind: "session" }>,
-  repoFullName: string,
-  repo: RepositoryRecord | null,
-): Promise<Response | null> {
   return requireSessionRepoAccess(c, identity, repoFullName, repo);
 }
 
@@ -7116,65 +6516,3 @@ function normalizeOrigin(value: string | undefined): string | null {
     return null;
   }
 }
-
-function buildExtensionPublicSafePacket(args: { repoFullName: string; pullNumber: number; contributor: string; reviewability: { action: string; noiseSources?: string[]; maintainerNextSteps?: string[] } }): string {
-  const lines = [
-    "# Public-safe PR packet",
-    "",
-    "## Linked context",
-    `- Repository: ${args.repoFullName}`,
-    `- Pull request: #${args.pullNumber}`,
-    `- Contributor: ${args.contributor}`,
-    "",
-    "## Review readiness",
-    ...extensionPublicReviewReadinessLines(args.reviewability.action),
-    "",
-    "## Queue caution",
-    "- Use only public GitHub context when discussing prioritization or next steps.",
-    "- Keep private reviewability signals in the extension and out of public comments.",
-    "",
-    "## Safety",
-    "- Keep public comments limited to linked context, validation status, and maintainer-ready next steps.",
-  ];
-  const markdown = sanitizePublicComment(lines.join("\n"));
-  return ensureExtensionPublicSafeText(markdown);
-}
-
-function extensionPublicReviewReadinessLines(action: string): string[] {
-  switch (action) {
-    case "review_now":
-      return ["- Public status: ready for maintainer review.", "- Suggested next step: review the technical diff and public checks."];
-    case "maintainer_lane":
-      return ["- Public status: maintainer follow-up recommended.", "- Suggested next step: verify the public diff and repository impact."];
-    case "likely_duplicate":
-      return ["- Public status: possible overlap to verify.", "- Suggested next step: compare against linked public issues, active PRs, and recent merges."];
-    case "close_or_redirect":
-      return ["- Public status: triage may be needed before review.", "- Suggested next step: confirm whether the public PR context is still current and actionable."];
-    case "needs_author":
-      return ["- Public status: author input may be needed before deep review.", "- Suggested next step: ask for missing public context, tests, or validation details."];
-    default:
-      return ["- Public status: keep monitoring the public PR context.", "- Suggested next step: watch for public tests, checks, linked context, or related changes before prioritizing review."];
-  }
-}
-
-function buildExtensionPrivateBlockers(reviewability: { noiseSources: string[]; maintainerNextSteps: string[]; privateSummary: string }) {
-  const items = [...reviewability.noiseSources.slice(0, 5), ...reviewability.maintainerNextSteps.slice(0, 3)];
-  if (items.length === 0) items.push("No private blocker detail is currently cached.");
-  return items.map((detail, index) => ({ id: `blocker-${index + 1}`, detail: sanitizePublicComment(detail) }));
-}
-
-function ensureExtensionPublicSafeText(text: string): string {
-  const compact = text.replace(/\s+/g, " ").trim();
-  if (/\b(wallet|hotkey|coldkey|raw trust score|trust score|estimated score|score estimate|reward estimate|payout|farming|private reviewability|reviewability\s*\d|\/100)\b/i.test(compact)) {
-    return "# Public-safe PR packet\n\n- Public-safe packet unavailable. Regenerate after private context is sanitized.";
-  }
-  return text;
-}
-
-export const __routesInternals = {
-  buildExtensionPublicSafePacket,
-  buildExtensionPrivateBlockers,
-  ensureExtensionPublicSafeText,
-  authenticateRequestIdentity,
-  issueQualityMap,
-};

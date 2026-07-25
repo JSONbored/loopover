@@ -1,6 +1,6 @@
 // Check-run details-page readiness table model (#2216). Pure helpers + types for the Context check
-// details slice — mirrors the public-safe band shape from buildExtensionPrStatus (src/signals/
-// extension-contributor-context.ts) so the UI never renders raw readiness scores.
+// details slice — mirrors the public-safe band shape from buildContributorPrStatus (src/signals/
+// contributor-readiness-band.ts) so the UI never renders raw readiness scores.
 
 export type CheckRunDetailLevel = "minimal" | "standard";
 

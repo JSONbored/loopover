@@ -1,32 +1,10 @@
 import { describe, expect, it } from "vitest";
-import {
-  buildExtensionIssueBadges,
-  buildExtensionIssueFit,
-  buildExtensionPrStatus,
-  contributorReadinessBand,
-  redactExtensionText,
-} from "../../src/signals/extension-contributor-context";
-import type { ContributorOpportunity, PublicReadinessScore } from "../../src/signals/engine";
+import { buildContributorPrStatus, contributorReadinessBand, redactContributorText } from "../../src/signals/contributor-readiness-band";
+import type { PublicReadinessScore } from "../../src/signals/engine";
 import { PUBLIC_UNSAFE_TERMS } from "../../src/signals/redaction";
 
 const FORBIDDEN_PUBLIC_TERMS =
   /wallet|hotkey|coldkey|mnemonic|reward|payout|farming|raw trust|trust score|scoreability|cohort|ranking|miner-originated|human-originated|reviewability/i;
-
-function opportunity(over: Partial<ContributorOpportunity> = {}): ContributorOpportunity {
-  return {
-    repoFullName: "octo/demo",
-    issueNumber: 7,
-    title: "Add cursor pagination to the labels endpoint",
-    fit: "good",
-    score: 82,
-    lane: "direct_pr",
-    multiplierTier: "maintainer_created",
-    availability: "ready",
-    reasons: ["Maintainer-created issue with the biggest multiplier.", "You have touched this repo before."],
-    warnings: [],
-    ...over,
-  };
-}
 
 function readiness(total: number, over: Partial<PublicReadinessScore> = {}): PublicReadinessScore {
   return {
@@ -51,37 +29,37 @@ describe("contributorReadinessBand", () => {
   });
 });
 
-describe("redactExtensionText", () => {
+describe("redactContributorText", () => {
   it("redacts forbidden private terms and collapses whitespace", () => {
-    expect(redactExtensionText("Your reward and trust score are high")).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
-    expect(redactExtensionText("hotkey wallet payout")).toBe("[redacted] [redacted] [redacted]");
-    expect(redactExtensionText("  clean   text  ")).toBe("clean text");
+    expect(redactContributorText("Your reward and trust score are high")).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
+    expect(redactContributorText("hotkey wallet payout")).toBe("[redacted] [redacted] [redacted]");
+    expect(redactContributorText("  clean   text  ")).toBe("clean text");
   });
 
   it("leaves safe text untouched", () => {
-    expect(redactExtensionText("Maintainer-created issue, good fit.")).toBe("Maintainer-created issue, good fit.");
+    expect(redactContributorText("Maintainer-created issue, good fit.")).toBe("Maintainer-created issue, good fit.");
   });
 
-  // #5840: FORBIDDEN_EXTENSION_TERMS had drifted from redaction.ts's canonical PUBLIC_UNSAFE_TERMS and let
+  // #5840: FORBIDDEN_PRIVATE_TERMS had drifted from redaction.ts's canonical PUBLIC_UNSAFE_TERMS and let
   // these economic-identity terms through unredacted.
   it("redacts bare cohort, previously leaked", () => {
-    expect(redactExtensionText("Cohort diagnostics flagged this PR")).toBe("[redacted] diagnostics flagged this PR");
+    expect(redactContributorText("Cohort diagnostics flagged this PR")).toBe("[redacted] diagnostics flagged this PR");
   });
 
   it("redacts bare ranking, previously leaked", () => {
-    expect(redactExtensionText("Your ranking dropped this week")).toBe("Your [redacted] dropped this week");
+    expect(redactContributorText("Your ranking dropped this week")).toBe("Your [redacted] dropped this week");
   });
 
   it("redacts miner-originated / human-originated, previously leaked", () => {
-    expect(redactExtensionText("This looks miner-originated, not human-originated")).toBe("This looks [redacted], not [redacted]");
+    expect(redactContributorText("This looks miner-originated, not human-originated")).toBe("This looks [redacted], not [redacted]");
     // the [-_\s]? separator matches underscore and space forms too, matching PUBLIC_UNSAFE_TERMS.
-    expect(redactExtensionText("miner_originated and human originated")).toBe("[redacted] and [redacted]");
+    expect(redactContributorText("miner_originated and human originated")).toBe("[redacted] and [redacted]");
   });
 
   it("redacts standalone reviewability while still redacting the compound forms as a whole", () => {
-    expect(redactExtensionText("Reviewability is limited right now")).toBe("[redacted] is limited right now");
-    expect(redactExtensionText("reviewability internals exposed")).toBe("[redacted] exposed");
-    expect(redactExtensionText("private reviewability data")).toBe("[redacted] data");
+    expect(redactContributorText("Reviewability is limited right now")).toBe("[redacted] is limited right now");
+    expect(redactContributorText("reviewability internals exposed")).toBe("[redacted] exposed");
+    expect(redactContributorText("private reviewability data")).toBe("[redacted] data");
   });
 
   it("stays in sync with the canonical PUBLIC_UNSAFE_TERMS vocabulary (drift guard)", () => {
@@ -111,7 +89,7 @@ describe("redactExtensionText", () => {
     ];
     for (const sample of samples) {
       expect(canonical.test(sample)).toBe(true); // sanity: the canonical vocabulary really does flag it
-      const redacted = redactExtensionText(sample);
+      const redacted = redactContributorText(sample);
       if (intentionalExceptions.has(sample)) {
         expect(redacted).toBe(sample); // band-gated: intentionally left as-is
       } else {
@@ -121,45 +99,9 @@ describe("redactExtensionText", () => {
   });
 });
 
-describe("buildExtensionIssueFit", () => {
-  it("returns the fit band (not a raw score) plus public-safe reasons", () => {
-    const fit = buildExtensionIssueFit(opportunity());
-    expect(fit).toMatchObject({ repoFullName: "octo/demo", issueNumber: 7, fit: "good", multiplierTier: "maintainer_created", availability: "ready" });
-    expect(fit).not.toHaveProperty("score");
-    expect(JSON.stringify(fit)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
-  });
-
-  it("redacts a forbidden term that slips into a reason or title", () => {
-    const fit = buildExtensionIssueFit(opportunity({ title: "reward farming issue", reasons: ["You can payout here"] }));
-    expect(JSON.stringify(fit)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
-  });
-
-  it("defaults a missing issue number to 0", () => {
-    expect(buildExtensionIssueFit(opportunity({ issueNumber: undefined })).issueNumber).toBe(0);
-  });
-});
-
-describe("buildExtensionIssueBadges", () => {
-  it("returns per-issue badges scoped to the repo, with bands not scores", () => {
-    const badges = buildExtensionIssueBadges(
-      [opportunity({ issueNumber: 7 }), opportunity({ issueNumber: 8, fit: "caution" }), opportunity({ repoFullName: "other/repo", issueNumber: 9 })],
-      "octo/demo",
-    );
-    expect(badges.map((badge) => badge.issueNumber)).toEqual([7, 8]);
-    expect(badges.every((badge) => !("score" in badge))).toBe(true);
-    expect(badges[1]!.fit).toBe("caution");
-    expect(JSON.stringify(badges)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
-  });
-
-  it("matches the repo case-insensitively and drops opportunities without an issue number", () => {
-    const badges = buildExtensionIssueBadges([opportunity({ issueNumber: undefined }), opportunity({ issueNumber: 7 })], "OCTO/Demo");
-    expect(badges.map((badge) => badge.issueNumber)).toEqual([7]);
-  });
-});
-
-describe("buildExtensionPrStatus", () => {
+describe("buildContributorPrStatus", () => {
   it("returns an overall band + per-component bands, never raw scores", () => {
-    const status = buildExtensionPrStatus({ repoFullName: "octo/demo", pullNumber: 12, readiness: readiness(72) });
+    const status = buildContributorPrStatus({ repoFullName: "octo/demo", pullNumber: 12, readiness: readiness(72) });
     expect(status.readinessBand).toBe("strong");
     expect(status.reviewStatus).toBe("ready_for_review");
     expect(JSON.stringify(status)).not.toMatch(/"score"|"total"|"max"/);
@@ -168,12 +110,12 @@ describe("buildExtensionPrStatus", () => {
   });
 
   it("maps developing/early bands to the matching review status", () => {
-    expect(buildExtensionPrStatus({ repoFullName: "octo/demo", pullNumber: 1, readiness: readiness(50) }).reviewStatus).toBe("in_progress");
-    expect(buildExtensionPrStatus({ repoFullName: "octo/demo", pullNumber: 1, readiness: readiness(20) }).reviewStatus).toBe("needs_attention");
+    expect(buildContributorPrStatus({ repoFullName: "octo/demo", pullNumber: 1, readiness: readiness(50) }).reviewStatus).toBe("in_progress");
+    expect(buildContributorPrStatus({ repoFullName: "octo/demo", pullNumber: 1, readiness: readiness(20) }).reviewStatus).toBe("needs_attention");
   });
 
   it("treats a zero-max component as unmet without dividing by zero", () => {
-    const status = buildExtensionPrStatus({
+    const status = buildContributorPrStatus({
       repoFullName: "octo/demo",
       pullNumber: 1,
       readiness: readiness(80, { components: [{ key: "queue_pressure", label: "Queue pressure", score: 0, max: 0, evidence: "n/a", action: "n/a" }] }),
@@ -182,9 +124,9 @@ describe("buildExtensionPrStatus", () => {
   });
 
   it("bands a component at the readiness rubric's partial cutoff (ratio >= 0.45) as partial, not unmet", () => {
-    // scoreResultIcon in the readiness table treats ratio >= 0.45 as ⚠️ (partial); the extension band must agree,
+    // scoreResultIcon in the readiness table treats ratio >= 0.45 as ⚠️ (partial); this band must agree,
     // otherwise a component scored in [0.45, 0.5) is shown as fully unmet in the overlay while the table shows partial.
-    const status = buildExtensionPrStatus({
+    const status = buildContributorPrStatus({
       repoFullName: "octo/demo",
       pullNumber: 1,
       readiness: readiness(55, {

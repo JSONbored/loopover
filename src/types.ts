@@ -2587,7 +2587,7 @@ export type AuditEventRecord = {
   createdAt?: string | null | undefined;
 };
 
-export type ProductUsageSurface = "api" | "mcp" | "github_app" | "control_panel" | "browser_extension" | "internal";
+export type ProductUsageSurface = "api" | "mcp" | "github_app" | "control_panel" | "internal";
 
 export type ProductUsageOutcome = "success" | "denied" | "error" | "queued" | "completed" | "skipped";
 

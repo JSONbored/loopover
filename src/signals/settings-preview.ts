@@ -14,7 +14,7 @@ import {
   buildQueueHealth,
   type ContributorDetection,
 } from "./engine";
-import { buildExtensionPrStatus, type ExtensionPrStatus } from "./extension-contributor-context";
+import { buildContributorPrStatus, type ContributorPrStatus } from "./contributor-readiness-band";
 import { REQUIRED_INSTALLATION_PERMISSIONS } from "../github/backfill";
 import { loopoverFooter, type LoopOverFooterEnv } from "../github/footer";
 import type { GateCheckConclusion, GateCheckEvaluation } from "../rules/advisory";
@@ -291,7 +291,7 @@ export type RepoSettingsPreview = {
   checkRun: { willCreate: boolean; title: string; detailLevel: RepositorySettings["checkRunDetailLevel"] } | null;
   /** Public-safe readiness bands for the Context check details page (#2216). Null when check runs are off,
    *  detail level is minimal, or the sample would not publish a check run. */
-  checkRunReadiness: Pick<ExtensionPrStatus, "readinessBand" | "components"> | null;
+  checkRunReadiness: Pick<ContributorPrStatus, "readinessBand" | "components"> | null;
   installPreview: RepoInstallPreview;
   warnings: string[];
   summary: string;
@@ -658,7 +658,7 @@ export function buildSampleCheckRunReadiness(args: {
   sample: { authorLogin: string; authorAssociation: string; minerStatus: "confirmed" | "not_found" | "unavailable"; title: string; labels: string[]; linkedIssues: number[] };
   body: string | null;
   decision: PublicSurfaceDecision;
-}): Pick<ExtensionPrStatus, "readinessBand" | "components"> | null {
+}): Pick<ContributorPrStatus, "readinessBand" | "components"> | null {
   if (!args.decision.willCheckRun || args.settings.checkRunDetailLevel === "minimal") return null;
   const samplePr: PullRequestRecord = {
     repoFullName: args.repoFullName,
@@ -688,7 +688,7 @@ export function buildSampleCheckRunReadiness(args: {
     args.pullRequests,
   );
   const readiness = buildPublicReadinessScore({ pr: samplePr, preflight, queueHealth });
-  const status = buildExtensionPrStatus({ repoFullName: args.repoFullName, pullNumber: 0, readiness });
+  const status = buildContributorPrStatus({ repoFullName: args.repoFullName, pullNumber: 0, readiness });
   return { readinessBand: status.readinessBand, components: status.components };
 }
 

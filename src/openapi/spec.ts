@@ -1027,7 +1027,6 @@ export function buildOpenApiSpec() {
     ["/v1/auth/github/device/poll", "Poll a pending GitHub device-flow authorization"],
     ["/v1/auth/github/session", "Exchange a GitHub token for a LoopOver session"],
     ["/v1/auth/logout", "End the current session"],
-    ["/v1/auth/extension/session", "Create an extension-scoped session"],
   ] as const) {
     registry.registerPath({
       method: "post",
@@ -1267,26 +1266,6 @@ export function buildOpenApiSpec() {
     });
   }
   registry.registerPath({
-    method: "get",
-    // Hard-coded by apps/loopover-extension (content → background → auth). Keep this path stable;
-    // the MV3 sources have no OpenAPI client (#8023).
-    path: "/v1/extension/pull-context",
-    summary: "Pull request context for the browser extension",
-    request: {
-      query: z.object({
-        owner: z.string().min(1).openapi({ param: { description: "Repository owner" }, example: "JSONbored" }),
-        repo: z.string().min(1).openapi({ param: { description: "Repository name" }, example: "loopover" }),
-        pullNumber: z.string().min(1).openapi({ param: { description: "Pull request number" }, example: "120" }),
-      }),
-    },
-    responses: {
-      200: { description: "Browser extension PR context overlay payload", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
-      400: { description: "Invalid pull context query" },
-      401: { description: "Unauthorized" },
-      403: { description: "Extension-scoped session required" },
-    },
-  });
-  registry.registerPath({
     method: "post",
     path: "/v1/internal/jobs/refresh-registry",
     summary: "Queue a registry refresh job",
@@ -1390,7 +1369,7 @@ function applySecurityMetadata(document: GeneratedOpenApiDocument): GeneratedOpe
       LoopOverBearer: {
         type: "http",
         scheme: "bearer",
-        description: "Static API/MCP token, GitHub device-flow LoopOver session token, or extension-scoped LoopOver session token where supported. GitHub personal access tokens are not accepted.",
+        description: "Static API/MCP token or GitHub device-flow LoopOver session token where supported. GitHub personal access tokens are not accepted.",
       },
       LoopOverSessionCookie: {
         type: "apiKey",
@@ -1412,7 +1391,7 @@ function applySecurityMetadata(document: GeneratedOpenApiDocument): GeneratedOpe
 
 function isProtectedPath(path: string): boolean {
   if (path === "/health" || path === "/openapi.json" || path === "/mcp" || path === "/v1/mcp/compatibility" || path === "/v1/public/stats" || path === "/v1/public/github/repos/{owner}/{repo}/stats" || path === "/v1/public/repos/{owner}/{repo}/quality") return false;
-  if (path.startsWith("/v1/auth/")) return path === "/v1/auth/extension/session" || path === "/v1/auth/github/token";
+  if (path.startsWith("/v1/auth/")) return path === "/v1/auth/github/token";
   if (path === "/v1/github/webhook") return false;
   return path.startsWith("/v1/");
 }

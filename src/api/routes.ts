@@ -1,5 +1,4 @@
 import { Hono, type Context } from "hono";
-import { sentry } from "@sentry/hono/cloudflare";
 import { createWorkerPostHogErrorMiddleware } from "./worker-posthog";
 import { z } from "zod";
 import { parsePositiveInt } from "../utils/json";
@@ -1127,8 +1126,8 @@ function contributorOpenIssueCount(issues: Array<{ repoFullName: string; state: 
  *  for this project's compatibility_date, sets `navigator.userAgent` to this exact literal -- Cloudflare's own
  *  documented idiom for this check). Self-host's server.ts calls the SAME exported `worker.fetch` this app
  *  produces (it synthesizes a Worker-shaped `env` by spreading `process.env` specifically so it can reuse this
- *  handler byte-for-byte) -- gating the Cloudflare-only Sentry middleware on this, rather than on env var
- *  presence alone, is what keeps it from ever activating inside a self-hoster's own Node process. */
+ *  handler byte-for-byte) -- gating the Cloudflare-only PostHog error middleware on this, rather than on env
+ *  var presence alone, is what keeps it from ever activating inside a self-hoster's own Node process. */
 export function isCloudflareWorkerRuntime(): boolean {
   return typeof navigator !== "undefined" && navigator.userAgent === "Cloudflare-Workers";
 }
@@ -1145,22 +1144,15 @@ function internalOpsAgentConfig(env: Env): OpsAgentConfig {
 
 export function createApp() {
   const app = new Hono<AppBindings>();
-  // Registered FIRST/outermost (Sentry's own guidance) so it wraps every other middleware and route below,
-  // including a thrown exception from the CORS/rate-limit middleware right after this. No-ops completely
-  // outside a real Workers isolate (see isCloudflareWorkerRuntime) and when WORKER_SENTRY_DSN is unset -- this
-  // is the Worker-side counterpart to self-host's own initSentry()/installStructuredLogForwarding(), which
-  // this Worker has never had any equivalent of despite being the actual central Orb broker server.
+  // Registered FIRST/outermost so it wraps every other middleware and route below, including a thrown
+  // exception from the CORS/rate-limit middleware right after this. REPLACES the old Sentry middleware
+  // entirely (2026-07-25 epic #8286 correction: full replacement, not a parallel-run). No-ops completely
+  // outside a real Workers isolate (see isCloudflareWorkerRuntime) and when WORKER_POSTHOG_API_KEY is unset.
   /* v8 ignore start -- the TRUE branch only genuinely exercises inside a real Workers isolate (this vitest
    * run is Node); covered instead by test/workers/worker-runtime.test.ts, which runs under
    * @cloudflare/vitest-pool-workers and is NOT part of this coverage-instrumented run. isCloudflareWorkerRuntime
    * itself has its own direct Node-side (false) and real-isolate (true) tests. */
   if (isCloudflareWorkerRuntime()) {
-    app.use(sentry(app, (env) => ({ dsn: env.WORKER_SENTRY_DSN, environment: env.WORKER_SENTRY_ENVIRONMENT ?? "production" })));
-    // PostHog parallel sink (#8288, epic #8286): registered right after Sentry so it still wraps every route
-    // below. Independent of Sentry's own middleware -- both observe the same shared Context.error Hono sets
-    // once a downstream handler throws (see createWorkerPostHogErrorMiddleware's own doc comment for why this
-    // is a c.error check, not a try/catch), so ordering between the two doesn't matter. No-ops completely when
-    // WORKER_POSTHOG_API_KEY is unset -- byte-identical request handling until configured.
     app.use(createWorkerPostHogErrorMiddleware());
   }
   /* v8 ignore stop */

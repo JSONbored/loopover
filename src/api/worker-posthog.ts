@@ -1,6 +1,6 @@
-// Hosted ORB Worker PostHog error tracking (#8288, epic #8286). Parallel-run alongside the existing
-// @sentry/hono/cloudflare middleware in routes.ts -- both active simultaneously when configured; Sentry is
-// only removed once the gated decommission issue (#8298) says so, exactly like #8287's self-host swap.
+// Hosted ORB Worker PostHog error tracking (#8288, epic #8286). REPLACES the old @sentry/hono/cloudflare
+// middleware entirely (2026-07-25 epic correction: full replacement, not a parallel-run) -- same treatment
+// as #8287's self-host swap.
 //
 // Uses posthog-node's own documented captureException(), NOT a hand-built $exception payload. #8288 originally
 // scoped this as a raw-HTTP capture (mirroring JSONbored/metagraphed#7777's usage-telemetry.ts, which really
@@ -33,14 +33,12 @@ const WORKER_ERROR_DISTINCT_ID = "loopover-worker";
 let hasherLoaded = false;
 
 /** The env slice this module reads. Deliberately NAMED DIFFERENTLY from the dual-purpose POSTHOG_API_KEY/
- *  POSTHOG_HOST (MCP telemetry #6228/#6235 + self-host error tracking #8287), for the same reason
- *  WORKER_SENTRY_DSN is named differently from self-host's SENTRY_DSN (see that var's doc comment): this
- *  Worker's fetch handler is the SAME one self-host's server.ts calls by synthesizing a Worker-shaped env from
- *  process.env, so reusing POSTHOG_API_KEY here would silently activate Worker-path exception capture inside a
- *  self-hoster's own Node process the moment they set POSTHOG_API_KEY for #8287's self-host sink -- an
- *  unrelated, unintended cross-wire. A second, independent reason on top of the Sentry precedent: keeping this
- *  separate from POSTHOG_API_KEY also lets an operator toggle Worker-level exception capture without touching
- *  MCP tool-call telemetry, or vice versa. Opt-in like every other Sentry/PostHog var in this codebase: a
+ *  POSTHOG_HOST (MCP telemetry #6228/#6235 + self-host error tracking #8287): this Worker's fetch handler is
+ *  the SAME one self-host's server.ts calls by synthesizing a Worker-shaped env from process.env, so reusing
+ *  POSTHOG_API_KEY here would silently activate Worker-path exception capture inside a self-hoster's own Node
+ *  process the moment they set POSTHOG_API_KEY for #8287's self-host sink -- an unrelated, unintended
+ *  cross-wire. A second, independent reason: keeping this separate from POSTHOG_API_KEY also lets an operator
+ *  toggle Worker-level exception capture without touching MCP tool-call telemetry, or vice versa. Opt-in: a
  *  complete no-op until BOTH isCloudflareWorkerRuntime() AND this is set. Inject as a wrangler secret. */
 export type WorkerPostHogEnv = Pick<Env, "WORKER_POSTHOG_API_KEY" | "WORKER_POSTHOG_HOST" | "WORKER_POSTHOG_ENVIRONMENT">;
 
@@ -142,9 +140,9 @@ function resolveExecutionCtx(c: Context): ExecutionContext<unknown> {
  *
  *  Scope note: this captures errors that propagate through the Hono middleware/handler chain specifically, not
  *  every possible Workers-runtime failure mode (e.g. a crash reachable only via the raw fetch() export outside
- *  Hono's dispatch). Sentry's middleware (which additionally patches the Worker's fetch export via
- *  @sentry/cloudflare's withSentry) remains the more exhaustive safety net until the decommission gate --
- *  consistent with #8288 being a parallel addition, not a byte-for-byte replacement. */
+ *  Hono's dispatch). Sentry's old middleware additionally patched the Worker's fetch export via
+ *  @sentry/cloudflare's withSentry for that broader case -- this codebase has no PostHog equivalent, since every
+ *  real route in this app is dispatched through Hono anyway. */
 export function createWorkerPostHogErrorMiddleware() {
   return async (c: Context<{ Bindings: WorkerPostHogEnv }>, next: () => Promise<void>): Promise<void> => {
     if (!isWorkerPostHogConfigured(c.env)) {

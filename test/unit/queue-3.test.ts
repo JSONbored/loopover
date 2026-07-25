@@ -627,6 +627,24 @@ describe("queue processors", () => {
     expect(audit?.outcome).toBe("completed");
   });
 
+  it("configuration (#8688): a posted @loopover configuration is recorded in product-usage telemetry", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await setupPlannerRepo(env);
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "admin" }); // maintainer
+      if (url.includes("/issues/77/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/77/comments") && method === "POST") return Response.json({ id: 5 }, { status: 201 });
+      return new Response("not found", { status: 404 });
+    });
+    await processJob(env, plannerWebhook("@loopover configuration", "maintainer1"));
+    const usage = await env.DB.prepare("select outcome, json_extract(metadata_json, '$.mode') as mode from product_usage_events where event_name = ?").bind("configuration_posted").first<{ outcome: string; mode: string }>();
+    expect(usage?.outcome).toBe("completed");
+    expect(usage?.mode).toBe("live");
+  });
+
   it.each([
     ["env pause", async (env: Env) => { (env as Env & { AGENT_ACTIONS_PAUSED: string }).AGENT_ACTIONS_PAUSED = "true"; }, "paused"],
     ["repo pause", async (env: Env) => { await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", agentPaused: true }); }, "paused"],

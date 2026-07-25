@@ -93,7 +93,7 @@ fi
 
 if [ -f "$ENV_FILE" ]; then
   echo "selfhost post-update check: release metadata from $ENV_FILE"
-  grep -E '^(LOOPOVER_IMAGE|LOOPOVER_VERSION|SENTRY_RELEASE)=' "$ENV_FILE" || true
+  grep -E '^(LOOPOVER_IMAGE|LOOPOVER_VERSION|POSTHOG_RELEASE)=' "$ENV_FILE" || true
 else
   echo "selfhost post-update check: warning — $ENV_FILE not found (skipping release metadata grep)" >&2
 fi

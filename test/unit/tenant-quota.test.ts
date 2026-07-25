@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { evaluateTenantQuota } from "../../packages/loopover-engine/src/tenant-quota";
+import { evaluateTenantQuota, evaluateTenantQuotaWarning } from "../../packages/loopover-engine/src/tenant-quota";
 
 const QUOTA = { computeUnits: 100, wallClockMs: 60_000, maxConcurrentLoops: 3 };
 
@@ -70,5 +70,42 @@ describe("evaluateTenantQuota (#4796)", () => {
     expect(under.allowed).toBe(true);
     // Re-evaluating the over-quota tenant does not change the under-quota tenant's independent decision.
     expect(evaluateTenantQuota({ computeUnitsUsed: 5, wallClockMsUsed: 5_000, activeLoops: 1 }, QUOTA)).toEqual(under);
+  });
+});
+
+describe("evaluateTenantQuotaWarning (#7662)", () => {
+  it("does not warn when every dimension has comfortable headroom", () => {
+    const w = evaluateTenantQuotaWarning({ computeUnitsUsed: 40, wallClockMsUsed: 10_000, activeLoops: 1 }, QUOTA);
+    expect(w).toEqual({ warned: false, dimension: null, remaining: { computeUnits: 60, wallClockMs: 50_000, concurrentLoops: 2 } });
+  });
+
+  it("warns on the first low dimension at/below the soft threshold (85/100 compute ⇒ 15% left ≤ 20%)", () => {
+    const w = evaluateTenantQuotaWarning({ computeUnitsUsed: 85, wallClockMsUsed: 0, activeLoops: 0 }, QUOTA);
+    expect(w.warned).toBe(true);
+    expect(w.dimension).toBe("compute");
+  });
+
+  it("reports the time dimension when compute is healthy but wall-clock is low (precedence respected)", () => {
+    const w = evaluateTenantQuotaWarning({ computeUnitsUsed: 10, wallClockMsUsed: 50_000, activeLoops: 0 }, QUOTA);
+    expect(w.dimension).toBe("time");
+  });
+
+  it("does not warn a dimension already exhausted — the hard check owns remaining 0", () => {
+    const w = evaluateTenantQuotaWarning({ computeUnitsUsed: 100, wallClockMsUsed: 0, activeLoops: 0 }, QUOTA);
+    expect(w.warned).toBe(false);
+    expect(w.dimension).toBeNull();
+  });
+
+  it("skips a dimension whose cap is zero/undefined (no meaningful fraction)", () => {
+    const w = evaluateTenantQuotaWarning(
+      { computeUnitsUsed: 0, wallClockMsUsed: 1_000, activeLoops: 0 },
+      { computeUnits: 0, wallClockMs: 60_000, maxConcurrentLoops: 3 },
+    );
+    expect(w.warned).toBe(false);
+  });
+
+  it("honors a custom warn threshold (30% left: no warn at the 20% default, warns at 40%)", () => {
+    expect(evaluateTenantQuotaWarning({ computeUnitsUsed: 70, wallClockMsUsed: 0, activeLoops: 0 }, QUOTA).warned).toBe(false);
+    expect(evaluateTenantQuotaWarning({ computeUnitsUsed: 70, wallClockMsUsed: 0, activeLoops: 0 }, QUOTA, 0.4).dimension).toBe("compute");
   });
 });

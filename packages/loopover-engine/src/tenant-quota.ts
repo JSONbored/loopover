@@ -99,3 +99,32 @@ export function evaluateTenantQuota(usage: TenantUsage, quota: TenantQuota): Ten
     remaining,
   };
 }
+
+/**
+ * #7662: the soft-warning counterpart to {@link evaluateTenantQuota}. Returns the FIRST dimension — same
+ * compute→time→concurrency precedence as the hard check — whose remaining headroom has fallen to or below
+ * `warnThreshold` of its cap (default 0.2 ⇒ ≤20% left / ≥80% consumed), the pre-exhaustion band a soft
+ * "running low" notification fires in — or null when every bounded dimension still has comfortable headroom.
+ * A dimension already exhausted (remaining 0) is owned by the hard check and is NOT warned on here; a
+ * zero/undefined cap yields no meaningful fraction and is skipped. Pure: the caller decides whether/when to
+ * actually fire a notification from the result (the delivery wiring rides #7647's admission-check point).
+ */
+export function evaluateTenantQuotaWarning(
+  usage: TenantUsage,
+  quota: TenantQuota,
+  warnThreshold = 0.2,
+): { warned: boolean; dimension: QuotaDimension | null; remaining: TenantQuotaDecision["remaining"] } {
+  const { remaining } = evaluateTenantQuota(usage, quota);
+  const byDimension: ReadonlyArray<[QuotaDimension, number, number]> = [
+    ["compute", remaining.computeUnits, finiteNonNegativeInt(quota.computeUnits)],
+    ["time", remaining.wallClockMs, finiteNonNegativeInt(quota.wallClockMs)],
+    ["concurrency", remaining.concurrentLoops, finiteNonNegativeInt(quota.maxConcurrentLoops)],
+  ];
+  for (const [dimension, left, cap] of byDimension) {
+    if (cap <= 0) continue;
+    if (left > 0 && left / cap <= warnThreshold) {
+      return { warned: true, dimension, remaining };
+    }
+  }
+  return { warned: false, dimension: null, remaining };
+}

@@ -4,6 +4,7 @@ import {
   addedLinesForSecretScan,
   enrichSecretScanFilesWithPatchFallback,
   incompletePatchLessSecretScanFinding,
+  SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS,
   SECRET_SCAN_PATCH_FALLBACK_MAX_FETCHES,
   markEligiblePatchLessFilesIncomplete,
   patchlessSecretScanInternals,
@@ -389,7 +390,7 @@ describe("enrichSecretScanFilesWithPatchFallback", () => {
   });
 
   it("marks a renamed file incomplete when base content exceeds the scan cap", async () => {
-    const oversized = "x".repeat(512_001);
+    const oversized = "x".repeat(SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS + 1);
     const fetcher: FileFetcher = {
       async getFileContent(path, ref) {
         if (path === "old-secrets.env" && ref === "base-sha") return oversized;
@@ -420,7 +421,7 @@ describe("enrichSecretScanFilesWithPatchFallback", () => {
   });
 
   it("marks a renamed file incomplete when head content exceeds the scan cap", async () => {
-    const oversized = "x".repeat(512_001);
+    const oversized = "x".repeat(SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS + 1);
     const fetcher: FileFetcher = {
       async getFileContent(path, ref) {
         if (path === "secrets.env" && ref === "head-sha") return oversized;
@@ -536,7 +537,7 @@ describe("enrichSecretScanFilesWithPatchFallback", () => {
   });
 
   it("marks a modified file incomplete when base content exceeds the scan cap", async () => {
-    const oversized = "x".repeat(512_001);
+    const oversized = "x".repeat(SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS + 1);
     const fetcher: FileFetcher = {
       async getFileContent(path, ref) {
         if (path !== "src/config.ts") return null;
@@ -821,8 +822,8 @@ describe("enrichSecretScanFilesWithPatchFallback", () => {
     expect(secretLeakFinding(buildSecretScanDiff(enriched))).toBeNull();
   });
 
-  it("scans patch-less content at the exact 512KB cap without marking incomplete", async () => {
-    const atCap = "x".repeat(512_000);
+  it("scans patch-less content at the exact cap without marking incomplete", async () => {
+    const atCap = "x".repeat(SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS);
     const fetcher: FileFetcher = {
       async getFileContent(path, ref) {
         if (path === "large.env" && ref === "head-sha") return atCap;
@@ -876,7 +877,7 @@ describe("enrichSecretScanFilesWithPatchFallback", () => {
   });
 
   it("marks a patch-less file incomplete when fetched content exceeds the scan cap", async () => {
-    const oversized = "x".repeat(512_001);
+    const oversized = "x".repeat(SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS + 1);
     const fetcher: FileFetcher = {
       async getFileContent(path, ref) {
         if (path === "secrets.env" && ref === "head-sha") return oversized;
@@ -1060,8 +1061,8 @@ describe("patchlessSecretScanInternals", () => {
 
   it("covers helper boundaries for synthetic patches and content limits", () => {
     expect(syntheticSecretScanPatch(["a", "b"])).toBe("+a\n+b");
-    expect(isOverSecretScanContentLimit("x".repeat(512_000))).toBe(false);
-    expect(isOverSecretScanContentLimit("x".repeat(512_001))).toBe(true);
+    expect(isOverSecretScanContentLimit("x".repeat(SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS))).toBe(false);
+    expect(isOverSecretScanContentLimit("x".repeat(SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS + 1))).toBe(true);
     const incomplete = markPatchLessSecretScanIncomplete({
       path: "secrets.env",
     } as Parameters<typeof markPatchLessSecretScanIncomplete>[0]);
@@ -1457,7 +1458,7 @@ describe("maybeAddSecretLeakFinding patch-less fallback wiring", () => {
   it("blocks when patch-less enrichment cannot fully scan an oversized file", async () => {
     const env = createTestEnv();
     const adv = advisory();
-    const oversized = "x".repeat(512_001);
+    const oversized = "x".repeat(SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS + 1);
     const files = [
       {
         repoFullName: "acme/widgets",

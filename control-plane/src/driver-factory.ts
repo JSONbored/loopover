@@ -75,7 +75,13 @@ export function createTenantProvisioningDriver(
   }
 
   if (containerBindings && Object.keys(containerBindings).length > 0) {
-    driver = withRealContainerDriver(driver, createContainerDriver({ bindings: containerBindings }));
+    // #7876: when the central PostHog key is configured, thread it into the container driver so every tenant
+    // container it starts reports errors to the loopover-owned project; unset ⇒ omitted, tenants unchanged.
+    const centralPosthogKey = nonBlank(env.CENTRAL_POSTHOG_KEY);
+    driver = withRealContainerDriver(
+      driver,
+      createContainerDriver({ bindings: containerBindings, ...(centralPosthogKey ? { centralPosthogKey } : {}) }),
+    );
   }
 
   const mainAppBaseUrl = nonBlank(env.MAIN_APP_BASE_URL);

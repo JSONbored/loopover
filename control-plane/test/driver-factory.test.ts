@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 
 import {
+  CENTRAL_POSTHOG_KEY_ENV_VAR,
   createFakeTenantProvisioningDriver,
   createTenantProvisioningDriver,
   withRealContainerDriver,
@@ -170,6 +171,41 @@ test("createTenantProvisioningDriver: selects the real container driver when con
   assert.equal(await driver.containerExists(REQUEST), false);
   await driver.createContainer(REQUEST);
   assert.equal(await driver.containerExists(REQUEST), true);
+});
+
+// #7876: env.CENTRAL_POSTHOG_KEY (the injected control-plane secret) threads through the real container driver
+// so every tenant container it starts carries the key; a blank/unset value is omitted (nonBlank), unchanged.
+function startCapturingNamespace(startOptions: Array<Record<string, unknown> | undefined>): ContainerNamespaceLike {
+  const stub: ContainerStubLike = {
+    async start(options) {
+      startOptions.push(options);
+    },
+    async stop() {},
+    async isProvisioned() {
+      return false;
+    },
+    async markProvisioned() {},
+    async markDeprovisioned() {},
+  };
+  return { getByName: () => stub };
+}
+
+test("createTenantProvisioningDriver: threads env.CENTRAL_POSTHOG_KEY into every tenant container (#7876)", async () => {
+  const startOptions: Array<Record<string, unknown> | undefined> = [];
+  const driver = createTenantProvisioningDriver({ CENTRAL_POSTHOG_KEY: "phc_from_env" }, { orb: startCapturingNamespace(startOptions) });
+
+  await driver.createContainer(REQUEST);
+
+  assert.deepEqual(startOptions, [{ envVars: { [CENTRAL_POSTHOG_KEY_ENV_VAR]: "phc_from_env" } }]);
+});
+
+test("createTenantProvisioningDriver: a blank CENTRAL_POSTHOG_KEY is omitted, leaving the tenant start byte-identical (#7876)", async () => {
+  const startOptions: Array<Record<string, unknown> | undefined> = [];
+  const driver = createTenantProvisioningDriver({ CENTRAL_POSTHOG_KEY: "   " }, { orb: startCapturingNamespace(startOptions) });
+
+  await driver.createContainer(REQUEST);
+
+  assert.deepEqual(startOptions, [undefined]);
 });
 
 test("createTenantProvisioningDriver: composes both the real database driver AND the real container driver together", async () => {

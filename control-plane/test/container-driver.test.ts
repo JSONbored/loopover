@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  CENTRAL_POSTHOG_KEY_ENV_VAR,
   createContainerDriver,
   createTenantContainer,
   destroyTenantContainer,
@@ -223,4 +224,28 @@ test("a repeat create of an already-provisioned tenant with a bootstrap secret n
   await createTenantContainer(configFor(stub), { tenant: { name: "acme" }, product: "orb", bootstrapSecret: "orbsec_xyz" });
 
   assert.deepEqual(stub.startOptions, []);
+});
+
+// #7876: the central PostHog key is a control-plane CONFIG value (fleet-wide, not per-tenant), so it rides into
+// EVERY tenant container as CENTRAL_POSTHOG_KEY_ENV_VAR, merged with any per-tenant env vars, letting the
+// self-host image report errors to the loopover-owned project. Absent ⇒ never injected (existing tests above).
+test("a configured central PostHog key rides into a tenant's container as CENTRAL_POSTHOG_KEY_ENV_VAR", async () => {
+  const stub = optionCapturingStub();
+
+  await createTenantContainer({ ...configFor(stub), centralPosthogKey: "phc_central123" }, { tenant: { name: "acme" }, product: "orb" });
+
+  assert.deepEqual(stub.startOptions, [{ envVars: { [CENTRAL_POSTHOG_KEY_ENV_VAR]: "phc_central123" } }]);
+});
+
+test("the central PostHog key merges with per-tenant pinned-version and bootstrap-secret env vars into one start call", async () => {
+  const stub = optionCapturingStub();
+
+  await createTenantContainer(
+    { ...configFor(stub), centralPosthogKey: "phc_central123" },
+    { tenant: { name: "acme", pinnedVersion: "v1.4.2" }, product: "orb", bootstrapSecret: "orbsec_xyz" },
+  );
+
+  assert.deepEqual(stub.startOptions, [
+    { envVars: { [PINNED_VERSION_ENV_VAR]: "v1.4.2", [TENANT_SECRET_ENV_VAR]: "orbsec_xyz", [CENTRAL_POSTHOG_KEY_ENV_VAR]: "phc_central123" } },
+  ]);
 });

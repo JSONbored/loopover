@@ -60,6 +60,7 @@ export {
   type SecretDriverConfig,
 } from "./secret-driver.js";
 export {
+  CENTRAL_POSTHOG_KEY_ENV_VAR,
   createContainerDriver,
   createTenantContainer,
   destroyTenantContainer,

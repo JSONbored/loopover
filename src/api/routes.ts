@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 import { sentry } from "@sentry/hono/cloudflare";
+import { createWorkerPostHogErrorMiddleware } from "./worker-posthog";
 import { z } from "zod";
 import { parsePositiveInt } from "../utils/json";
 import { analyzePRQueue, type AuthorRole, type ChecksStatus } from "../queue-intelligence";
@@ -1155,6 +1156,12 @@ export function createApp() {
    * itself has its own direct Node-side (false) and real-isolate (true) tests. */
   if (isCloudflareWorkerRuntime()) {
     app.use(sentry(app, (env) => ({ dsn: env.WORKER_SENTRY_DSN, environment: env.WORKER_SENTRY_ENVIRONMENT ?? "production" })));
+    // PostHog parallel sink (#8288, epic #8286): registered right after Sentry so it still wraps every route
+    // below. Independent of Sentry's own middleware -- both observe the same shared Context.error Hono sets
+    // once a downstream handler throws (see createWorkerPostHogErrorMiddleware's own doc comment for why this
+    // is a c.error check, not a try/catch), so ordering between the two doesn't matter. No-ops completely when
+    // WORKER_POSTHOG_API_KEY is unset -- byte-identical request handling until configured.
+    app.use(createWorkerPostHogErrorMiddleware());
   }
   /* v8 ignore stop */
   app.use("*", async (c, next) => {

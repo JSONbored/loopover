@@ -28,4 +28,9 @@ describe("worker runtime", () => {
     const res = await worker.fetch(new Request("https://loopover.test/health"), { WORKER_SENTRY_DSN: undefined } as unknown as Env, createExecutionContext());
     expect(res.status).toBe(200);
   });
+
+  it("still serves a normal response when WORKER_POSTHOG_API_KEY is unset -- the PostHog middleware (#8288) being registered must not itself break requests", async () => {
+    const res = await worker.fetch(new Request("https://loopover.test/health"), { WORKER_POSTHOG_API_KEY: undefined } as unknown as Env, createExecutionContext());
+    expect(res.status).toBe(200);
+  });
 });

@@ -493,3 +493,21 @@ test("REGRESSION (#3014): combined metric stays anchored to the documented 62% b
   assert.equal(result.combinedAccuracy, 0.62);
   assert.equal(result.deltaFromBaseline, 0);
 });
+
+test("normalizeCompositeWeights preserves an explicit all-zero weighting rather than silently defaulting (#8644)", () => {
+  const config = enabledConfig({ historicalReplayWeight: 0, prOutcomeWeight: 0 });
+  assert.equal(config.historicalReplayWeight, 0);
+  assert.equal(config.prOutcomeWeight, 0);
+
+  const result = computePhase7CalibrationLoop({
+    config,
+    prOutcome: sufficientPrOutcome(0.75),
+    historicalReplay: healthyReplay(0.82),
+    now: NOW,
+  });
+
+  // Preserved, not reverted to the 50/50 default; {0,0} yields no composite (null), matching the
+  // "preserve explicit zero" principle rather than overriding the operator's intent.
+  assert.deepEqual(result.weights, { historicalReplay: 0, prOutcome: 0 });
+  assert.equal(result.combinedAccuracy, null);
+});

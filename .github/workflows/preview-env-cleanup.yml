@@ -1,0 +1,88 @@
+name: Clean up closed-PR preview environments
+
+# Every UI preview deploy (ui-preview.yml / ui-preview-deploy.yml, via the shared
+# .github/actions/deploy-ui-preview composite) records a GitHub Deployment against a
+# `preview/pr-<N>` environment. GitHub auto-creates that Environment object the first time a
+# deployment targets a name that doesn't exist yet -- `transient_environment: true` on those calls
+# is only a display hint for the Deployments UI, it does NOT trigger any automatic deletion. Nothing
+# else in this repo ever calls the "delete an environment" API, so every PR that ever got a preview
+# deploy leaves a permanent, empty Environment behind once it closes. Confirmed live before adding
+# this workflow: 1254 of this repo's 1260 environments were `preview/pr-*` entries for already-closed
+# PRs (spanning PR #4140 through #8617), none carrying any protection rules -- pure disposable
+# deploy-tracking metadata with no reason to persist.
+#
+# BATCHED, not per-close-event (same fix cache-cleanup.yml already applied to the identical class of
+# problem for GHA caches): a `pull_request: [closed]` trigger would queue one runner per closed PR,
+# competing with real CI for the org's concurrent-runner cap during exactly the bursts when CI is
+# busiest. Environments carry no storage-budget pressure the way the 10GB cache cap did, so there is
+# no urgency case for anything faster than once a day -- one flat daily sweep, independent of PR
+# volume, keeps the environments list clean without ever fighting CI for runners.
+#
+# Requires the ENVIRONMENT_ADMIN_TOKEN secret: deleting an environment needs a token with `repo`-scope
+# (classic PAT) or "Administration: write" (fine-grained PAT) -- confirmed the default GITHUB_TOKEN
+# can NEVER be granted this via a `permissions:` block, regardless of what's declared here, so a
+# dedicated PAT is unavoidable (unlike cache deletion, which GITHUB_TOKEN's own `actions: write`
+# already covers). Scope a fine-grained PAT to THIS REPO ONLY with "Administration: write" -- nothing
+# else in this workflow needs write access to anything.
+
+on:
+  schedule:
+    - cron: "20 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  pull-requests: read
+
+concurrency:
+  group: preview-env-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: Delete closed PRs' preview environments
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check admin token
+        id: cfg
+        env:
+          ENVIRONMENT_ADMIN_TOKEN: ${{ secrets.ENVIRONMENT_ADMIN_TOKEN }}
+        run: |
+          if [ -n "$ENVIRONMENT_ADMIN_TOKEN" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::ENVIRONMENT_ADMIN_TOKEN not set -- skipping preview environment cleanup."
+          fi
+
+      # PR state still checked per unique PR number (never inferred from anything else) so an idle-
+      # but-open PR never loses its active preview environment. Every `preview/pr-*` environment is
+      # equally disposable regardless of which of the three call sites created it.
+      - name: Sweep preview environments scoped to closed PRs
+        if: steps.cfg.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.ENVIRONMENT_ADMIN_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${{ github.repository }}/environments?per_page=100" --paginate \
+            --jq '.environments[].name | select(test("^preview/pr-[0-9]+$"))' > envs.txt || true
+          if [ ! -s envs.txt ]; then
+            echo "No preview/pr-* environments found."
+            exit 0
+          fi
+          deleted=0
+          skipped=0
+          while read -r env_name; do
+            pr="${env_name#preview/pr-}"
+            state=$(gh api "repos/${{ github.repository }}/pulls/$pr" --jq .state 2>/dev/null || echo "unknown")
+            if [ "$state" != "closed" ]; then
+              skipped=$((skipped + 1))
+              continue
+            fi
+            echo "Deleting environment $env_name (PR #$pr closed)"
+            encoded="${env_name//\//%2F}"
+            gh api -X DELETE "repos/${{ github.repository }}/environments/$encoded" \
+              || echo "::warning::Failed to delete $env_name (may already be gone)"
+            deleted=$((deleted + 1))
+          done < envs.txt
+          echo "Swept $deleted preview environment(s); $skipped still-open PR(s) left untouched."

@@ -162,6 +162,55 @@ describe("gen-selfhost-env-reference (#2081)", () => {
   });
 });
 
+describe("PostHog self-host env reads invisible to the visitor (#8627)", () => {
+  function rootWith(source: string): string {
+    const root = mkdtempSync(join(tmpdir(), "gt-env-reference-8627-"));
+    mkdirSync(join(root, "src", "selfhost"), { recursive: true });
+    writeFileSync(join(root, "src", "selfhost", "posthog.ts"), source);
+    return root;
+  }
+
+  function collectedNames(root: string): string[] {
+    return collectSelfHostEnvVars({ rootDir: root }).map((row) => row.name);
+  }
+
+  it("recognizes a .env property access whose base is globalThis.process behind an `as unknown as` cast", () => {
+    // The exact shape src/selfhost/posthog.ts uses to read POSTHOG_SERVER_NAME: the base of `.env` is a
+    // property access on a cast expression, not a bare `process` identifier.
+    const root = rootWith(
+      "const serverName = nonBlank((globalThis as unknown as { process?: { env?: Record<string, string | undefined> } }).process?.env?.POSTHOG_SERVER_NAME) ?? hostname();\n",
+    );
+    expect(collectSelfHostEnvVars({ rootDir: root })).toEqual([{ name: "POSTHOG_SERVER_NAME", firstReference: "src/selfhost/posthog.ts" }]);
+  });
+
+  it("does NOT match the cast shape when the .process base is not globalThis", () => {
+    // Same cast-and-property-access silhouette, different base identifier: the new branch must not treat any
+    // `<something>.process.env` as the ambient process env.
+    const root = rootWith(
+      "const serverName = ((someScope as unknown as { process?: { env?: Record<string, string | undefined> } }).process?.env?.NOT_AMBIENT_PROCESS_READ);\n",
+    );
+    expect(collectedNames(root)).toEqual([]);
+  });
+
+  it("captures both env var name literals of a resolveSeverityThreshold call", () => {
+    // The exact call shape of src/selfhost/posthog.ts's resolvePostHogMinSeverity: env var names appear only
+    // as string-literal arguments 2 and 3 -- the reads inside the helper are computed and AST-invisible.
+    const root = rootWith(
+      'const severity = resolveSeverityThreshold(processEnv as unknown as Env, repoFullName, "POSTHOG_MIN_SEVERITY", "POSTHOG_REPO_MIN_SEVERITY");\n',
+    );
+    expect(collectedNames(root)).toEqual(["POSTHOG_MIN_SEVERITY", "POSTHOG_REPO_MIN_SEVERITY"]);
+  });
+
+  it("does NOT capture name-shaped literals passed to a call outside the helper allowlist", () => {
+    // A same-arity call to a different function must stay invisible: recognition is keyed on the helper name,
+    // not on any string literal that merely looks like an env var name.
+    const root = rootWith(
+      'const severity = resolveSeverityCeiling(processEnv as unknown as Env, repoFullName, "NOT_CAPTURED_GLOBAL", "NOT_CAPTURED_REPO_MAP");\n',
+    );
+    expect(collectedNames(root)).toEqual([]);
+  });
+});
+
 describe("AI review-pipeline self-host env vars (#6993)", () => {
   it("scans the AI review source roots so their self-host AI_* vars are collected", () => {
     // Against the REAL repo with the default (now-extended) source roots: the four AI review-pipeline knobs are

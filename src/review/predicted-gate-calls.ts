@@ -4,7 +4,7 @@
 // src/review/predicted-gate-agreement.ts for the read/join side). Structurally a sibling of
 // src/review/contributor-calibration.ts: `review_audit` (migrations/0049) is DELIBERATELY actor-login-free
 // (feeds the anonymized orb-collector export), so this is its own separate, LOCAL-ONLY table
-// (migrations/0132) -- never wired into exportOrbBatch or any other cross-instance/public export path.
+// (migrations/0137) -- never wired into exportOrbBatch or any other cross-instance/public export path.
 //
 // UNLIKE contributor-calibration.ts's per-commit dedup (a re-run at the same head_sha replaces its prior row),
 // every predict_gate call gets its OWN row here: there is no commit to dedup against pre-submission, and a

@@ -24,6 +24,7 @@ vi.mock("../../src/selfhost/otel", () => ({
 }));
 
 import {
+  capturePostHogAiGeneration,
   capturePostHogError,
   capturePostHogReviewFailure,
   flushPostHog,
@@ -442,6 +443,125 @@ describe("withPostHogMonitor", () => {
     await expect(withPostHogMonitor("orb-export", undefined, async () => { throw "a string failure"; })).rejects.toBe("a string failure");
     expect(lastCapturedException()).toBeInstanceOf(Error);
     expect(lastCapturedException().message).toBe("a string failure");
+  });
+});
+
+describe("capturePostHogAiGeneration (#8296)", () => {
+  const BASE = { provider: "ollama", model: "llama3.1", requestKind: "review" as const, latencyMs: 1500, isError: false };
+
+  it("is a no-op when PostHog is unconfigured", () => {
+    capturePostHogAiGeneration(BASE);
+    expect(mocks.capture).not.toHaveBeenCalled();
+  });
+
+  it("captures a well-formed $ai_generation event with token/latency metadata on success", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiGeneration({ ...BASE, inputTokens: 120, outputTokens: 40, totalCostUsd: 0.002, effort: "medium" });
+    expect(mocks.capture).toHaveBeenCalledTimes(1);
+    const call = mocks.capture.mock.calls[0]?.[0];
+    expect(call.event).toBe("$ai_generation");
+    expect(call.properties.$ai_model).toBe("llama3.1");
+    expect(call.properties.$ai_provider).toBe("ollama");
+    expect(call.properties.$ai_latency).toBe(1.5); // ms -> seconds
+    expect(call.properties.$ai_http_status).toBe(200);
+    expect(call.properties.$ai_input_tokens).toBe(120);
+    expect(call.properties.$ai_output_tokens).toBe(40);
+    expect(call.properties.$ai_is_error).toBe(false);
+    expect(call.properties.$ai_total_cost_usd).toBe(0.002);
+    expect(call.properties.$ai_model_parameters).toEqual({ effort: "medium" });
+    expect("$ai_error" in call.properties).toBe(false);
+  });
+
+  it("captures $ai_embedding for an embedding request kind", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiGeneration({ ...BASE, requestKind: "embedding" });
+    expect(mocks.capture.mock.calls[0]?.[0].event).toBe("$ai_embedding");
+  });
+
+  it("defaults input/output tokens to 0 when omitted or non-finite", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiGeneration({ ...BASE, inputTokens: undefined, outputTokens: Number.NaN });
+    const { properties } = mocks.capture.mock.calls[0]?.[0];
+    expect(properties.$ai_input_tokens).toBe(0);
+    expect(properties.$ai_output_tokens).toBe(0);
+  });
+
+  it("omits $ai_total_cost_usd when cost is not supplied or non-finite", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiGeneration({ ...BASE, totalCostUsd: Number.NaN });
+    expect("$ai_total_cost_usd" in mocks.capture.mock.calls[0]?.[0].properties).toBe(false);
+  });
+
+  it("omits $ai_model_parameters when effort is not supplied", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiGeneration(BASE);
+    expect("$ai_model_parameters" in mocks.capture.mock.calls[0]?.[0].properties).toBe(false);
+  });
+
+  it("falls back to 'unknown' for a blank model/provider", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiGeneration({ ...BASE, model: "", provider: "   " });
+    const { properties } = mocks.capture.mock.calls[0]?.[0];
+    expect(properties.$ai_model).toBe("unknown");
+    expect(properties.$ai_provider).toBe("unknown");
+  });
+
+  it("marks a failed generation with $ai_is_error/$ai_http_status/$ai_error, redacted to 500 chars", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiGeneration({ ...BASE, isError: true, error: new Error("x".repeat(600)) });
+    const { properties } = mocks.capture.mock.calls[0]?.[0];
+    expect(properties.$ai_is_error).toBe(true);
+    expect(properties.$ai_http_status).toBe(500);
+    expect(properties.$ai_error).toHaveLength(500);
+  });
+
+  it("wraps a non-Error thrown value on the error path", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiGeneration({ ...BASE, isError: true, error: "just a string" });
+    expect(mocks.capture.mock.calls[0]?.[0].properties.$ai_error).toBe("just a string");
+  });
+
+  it("never carries prompt/response content -- no field beyond model/provider ids", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiGeneration(BASE);
+    const keys = Object.keys(mocks.capture.mock.calls[0]?.[0].properties);
+    expect(keys).not.toContain("$ai_input");
+    expect(keys).not.toContain("$ai_output_choices");
+  });
+
+  it("mints a fresh, real UUID trace id on every call", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiGeneration(BASE);
+    capturePostHogAiGeneration(BASE);
+    const first = mocks.capture.mock.calls[0]?.[0].properties.$ai_trace_id;
+    const second = mocks.capture.mock.calls[1]?.[0].properties.$ai_trace_id;
+    expect(first).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    expect(first).not.toBe(second);
+  });
+
+  it("merges correlation context (repo/pullNumber) through the shared operational-tag allowlist", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiGeneration({ ...BASE, context: { repo: "owner/repo", pullNumber: 7 } });
+    const { properties } = mocks.capture.mock.calls[0]?.[0];
+    expect(properties.repo).toBe("owner/repo");
+    expect(properties.pullNumber).toBe(7);
+  });
+
+  it("drops an unlisted context key (not on OPERATIONAL_TAG_KEYS)", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiGeneration({ ...BASE, context: { notAllowlisted: "should be dropped" } });
+    expect("notAllowlisted" in mocks.capture.mock.calls[0]?.[0].properties).toBe(false);
+  });
+
+  it("does not gate on POSTHOG_MIN_SEVERITY (unlike capturePostHogError)", async () => {
+    process.env.POSTHOG_MIN_SEVERITY = "critical";
+    try {
+      await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+      capturePostHogAiGeneration({ ...BASE, isError: true, error: new Error("boom") });
+      expect(mocks.capture).toHaveBeenCalledTimes(1);
+    } finally {
+      delete process.env.POSTHOG_MIN_SEVERITY;
+    }
   });
 });
 

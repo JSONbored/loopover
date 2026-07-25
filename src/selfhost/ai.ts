@@ -11,6 +11,7 @@ import type { AiContentBlock, CombineStrategy, OnMerge } from "../services/ai-re
 import { isConfiguredSelfHostProvider, resolveConfiguredProviderNames } from "./ai-config";
 export { assertNoLegacySharedAiEnv } from "./ai-config";
 import { incr, observe } from "./metrics";
+import { capturePostHogAiGeneration, type PostHogAiGenerationRequestKind } from "./posthog";
 import { withReviewSpan } from "./tracing";
 import { delimiter } from "node:path";
 
@@ -1337,23 +1338,37 @@ async function runProviderWithOtel(
       request_kind: requestKindLabel,
     });
     aiProviderCircuits.delete(provider.name);
-    if (result.usage) {
-      return {
-        ...result,
-        usage: {
-          ...result.usage,
-          provider: result.usage.provider ?? provider.name,
-          model: result.usage.model ?? (model || "default"),
-        },
-      };
-    }
-    return result;
+    const usage = result.usage
+      ? { ...result.usage, provider: result.usage.provider ?? provider.name, model: result.usage.model ?? (model || "default") }
+      : undefined;
+    capturePostHogAiGeneration({
+      provider: usage?.provider ?? provider.name,
+      model: usage?.model ?? (model || "default"),
+      requestKind: requestKindLabel,
+      latencyMs: Date.now() - startedAtMs,
+      isError: false,
+      inputTokens: usage?.inputTokens,
+      outputTokens: usage?.outputTokens,
+      totalCostUsd: usage?.costUsd,
+      effort: usage?.effort,
+      context: { repo: options.repoFullName, pullNumber: options.pullNumber },
+    });
+    return usage ? { ...result, usage } : result;
   } catch (error) {
     observe("loopover_ai_provider_request_duration_seconds", (Date.now() - startedAtMs) / 1000, {
       provider: provider.name,
       request_kind: requestKindLabel,
     });
     if (isExpectedEmbeddingRoutingError(options, error)) throw error;
+    capturePostHogAiGeneration({
+      provider: provider.name,
+      model: model || "default",
+      requestKind: requestKindLabel,
+      latencyMs: Date.now() - startedAtMs,
+      isError: true,
+      error,
+      context: { repo: options.repoFullName, pullNumber: options.pullNumber },
+    });
     incr("loopover_ai_provider_failures_total", { provider: provider.name });
     incr("loopover_ai_provider_request_errors_total", { provider: provider.name, request_kind: requestKindLabel });
     // Re-read the map here rather than reusing the `circuit` captured above: that read happened BEFORE the
@@ -1479,6 +1494,50 @@ export function createSelfHostAi(env: Record<string, string | undefined>): SelfH
   const providers = buildProviders(env);
   if (providers.length === 0) return undefined;
   return routeProviders(providers);
+}
+
+/** Wrap a standalone `SelfHostAi` binding with the same `$ai_generation`/`$ai_embedding` PostHog capture
+ *  {@link runProviderWithOtel} gives the main provider chain (#8296). AI_EMBED/AI_VISION/AI_ADVISORY
+ *  (server.ts) are each a single, unrouted provider built directly by `createOpenAiCompatibleAi` -- they
+ *  never pass through `buildProviders`/`routeProviders`/`runProviderWithOtel`, so before this wrapper they
+ *  had zero per-call spend/latency visibility beyond a one-time boot log. No circuit breaker or chain
+ *  metrics here (those are the main-chain's own concerns) -- this ONLY adds the capture call, matching this
+ *  file's existing separation between chain-level concerns and the leaf capture itself. */
+export function withAiGenerationCapture(providerName: string, ai: SelfHostAi): SelfHostAi {
+  return {
+    async run(model, options) {
+      const requestKindLabel: PostHogAiGenerationRequestKind = requestKind(options);
+      const startedAtMs = Date.now();
+      try {
+        const result = await ai.run(model, options);
+        const usage = result.usage
+          ? { ...result.usage, provider: result.usage.provider ?? providerName, model: result.usage.model ?? (model || "default") }
+          : undefined;
+        capturePostHogAiGeneration({
+          provider: usage?.provider ?? providerName,
+          model: usage?.model ?? (model || "default"),
+          requestKind: requestKindLabel,
+          latencyMs: Date.now() - startedAtMs,
+          isError: false,
+          inputTokens: usage?.inputTokens,
+          outputTokens: usage?.outputTokens,
+          totalCostUsd: usage?.costUsd,
+          effort: usage?.effort,
+        });
+        return usage ? { ...result, usage } : result;
+      } catch (error) {
+        capturePostHogAiGeneration({
+          provider: providerName,
+          model: model || "default",
+          requestKind: requestKindLabel,
+          latencyMs: Date.now() - startedAtMs,
+          isError: true,
+          error,
+        });
+        throw error;
+      }
+    },
+  };
 }
 
 const COMBINE_STRATEGIES = new Set<CombineStrategy>(["single", "consensus", "synthesis"]);

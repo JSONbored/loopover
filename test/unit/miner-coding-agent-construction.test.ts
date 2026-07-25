@@ -1,11 +1,34 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@loopover/engine", async () => {
   return import("../../packages/loopover-engine/src/index");
 });
 
-import { createRealCliSubprocessSpawn, constructProductionCodingAgentDriver } from "../../packages/loopover-miner/lib/coding-agent-construction.js";
-import type { AgentSdkQueryFn, CodingAgentDriverTask } from "../../packages/loopover-engine/src/index";
+const posthogMock = vi.hoisted(() => {
+  const capture = vi.fn();
+  const PostHog = vi.fn(function (this: any) {
+    this.capture = capture;
+    this.flush = vi.fn().mockResolvedValue(undefined);
+  });
+  return { capture, PostHog };
+});
+vi.mock("posthog-node", () => ({ PostHog: posthogMock.PostHog }));
+
+import {
+  createRealCliSubprocessSpawn,
+  constructProductionCodingAgentDriver,
+  withCodingAgentAiGenerationCapture,
+} from "../../packages/loopover-miner/lib/coding-agent-construction.js";
+import { initMinerPostHog, resetMinerPostHogForTesting } from "../../packages/loopover-miner/lib/posthog.js";
+import type { AgentSdkQueryFn, CodingAgentDriver, CodingAgentDriverTask } from "../../packages/loopover-engine/src/index";
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+afterEach(() => {
+  resetMinerPostHogForTesting();
+});
 
 const task: CodingAgentDriverTask = {
   attemptId: "attempt-1",
@@ -173,5 +196,93 @@ describe("constructProductionCodingAgentDriver (#5131)", () => {
     const hooks = captured.input!.options.hooks as { PreToolUse: Array<{ hooks: Array<(input: unknown) => Promise<unknown>> }> };
     await hooks.PreToolUse[0]!.hooks[0]!({ tool_name: "Read", tool_input: { file_path: ".env" } });
     expect(append).toHaveBeenCalledWith(expect.objectContaining({ repoFullName: "acme/widgets" }));
+  });
+});
+
+describe("withCodingAgentAiGenerationCapture (#8296 AMS follow-up)", () => {
+  function driverReturning(result: Awaited<ReturnType<CodingAgentDriver["run"]>>): CodingAgentDriver {
+    return { run: async () => result };
+  }
+
+  it("stays a no-op end-to-end when PostHog is unconfigured", async () => {
+    const driver = withCodingAgentAiGenerationCapture("claude-cli", "claude-sonnet-5", driverReturning({ ok: true, changedFiles: [], summary: "done", transcript: "" }));
+    const result = await driver.run(task);
+    expect(result.ok).toBe(true);
+    expect(posthogMock.capture).not.toHaveBeenCalled();
+  });
+
+  it("captures a successful attempt's cost/tokens as a combined figure (no fabricated input/output split)", async () => {
+    await initMinerPostHog({ LOOPOVER_MINER_POSTHOG_API_KEY: "phc_test_key" });
+    const driver = withCodingAgentAiGenerationCapture(
+      "claude-cli",
+      "claude-sonnet-5",
+      driverReturning({ ok: true, changedFiles: ["a.ts"], summary: "done", transcript: "", costUsd: 0.12, tokensUsed: 4000 }),
+    );
+    await driver.run(task);
+    expect(posthogMock.capture).toHaveBeenCalledTimes(1);
+    const { properties } = posthogMock.capture.mock.calls[0]?.[0];
+    expect(properties.$ai_provider).toBe("claude-cli");
+    expect(properties.$ai_model).toBe("claude-sonnet-5");
+    expect(properties.$ai_is_error).toBe(false);
+    expect(properties.tokens_used).toBe(4000);
+    expect(properties.$ai_total_cost_usd).toBe(0.12);
+  });
+
+  it("captures result.ok:false as a failure, using the driver's own error string -- no exception thrown", async () => {
+    await initMinerPostHog({ LOOPOVER_MINER_POSTHOG_API_KEY: "phc_test_key" });
+    const driver = withCodingAgentAiGenerationCapture(
+      "codex-cli",
+      "gpt-5-codex",
+      driverReturning({ ok: false, changedFiles: [], summary: "failed", transcript: "", error: "codex_timeout_120000ms" }),
+    );
+    const result = await driver.run(task);
+    expect(result.ok).toBe(false);
+    const { properties } = posthogMock.capture.mock.calls[0]?.[0];
+    expect(properties.$ai_is_error).toBe(true);
+    expect(properties.$ai_http_status).toBe(500);
+    expect(properties.$ai_error).toBe("codex_timeout_120000ms");
+  });
+
+  it("REGRESSION: still captures a failure AND rethrows when the wrapped driver itself throws unexpectedly", async () => {
+    await initMinerPostHog({ LOOPOVER_MINER_POSTHOG_API_KEY: "phc_test_key" });
+    const driver = withCodingAgentAiGenerationCapture("agent-sdk", "agent-sdk", { run: async () => { throw new Error("sdk crashed"); } });
+    await expect(driver.run(task)).rejects.toThrow("sdk crashed");
+    const { properties } = posthogMock.capture.mock.calls[0]?.[0];
+    expect(properties.$ai_is_error).toBe(true);
+    expect(properties.$ai_error).toBe("sdk crashed");
+  });
+});
+
+describe("constructProductionCodingAgentDriver -- $ai_generation capture wiring (#8296 AMS follow-up)", () => {
+  it("captures using the configured model env var for a CLI provider", async () => {
+    await initMinerPostHog({ LOOPOVER_MINER_POSTHOG_API_KEY: "phc_test_key" });
+    const driver = constructProductionCodingAgentDriver(
+      { MINER_CODING_AGENT_PROVIDER: "claude-cli", MINER_CODING_AGENT_CLAUDE_MODEL: "claude-opus-5" },
+      { spawn: async () => ({ stdout: "done", code: 0 }) },
+    );
+    await driver.run(task);
+    const { properties } = posthogMock.capture.mock.calls[0]?.[0];
+    expect(properties.$ai_provider).toBe("claude-cli");
+    expect(properties.$ai_model).toBe("claude-opus-5");
+  });
+
+  it("falls back to the provider name as the model when no model env var is configured (e.g. agent-sdk, which declares none)", async () => {
+    await initMinerPostHog({ LOOPOVER_MINER_POSTHOG_API_KEY: "phc_test_key" });
+    const driver = constructProductionCodingAgentDriver(
+      { MINER_CODING_AGENT_PROVIDER: "agent-sdk" },
+      { query: queryCapturing({}), listChangedFiles: async () => [] },
+    );
+    await driver.run(task);
+    expect(posthogMock.capture.mock.calls[0]?.[0].properties.$ai_model).toBe("agent-sdk");
+  });
+
+  it("falls back to the provider name when a CLI provider's own model env var is configured but blank", async () => {
+    await initMinerPostHog({ LOOPOVER_MINER_POSTHOG_API_KEY: "phc_test_key" });
+    const driver = constructProductionCodingAgentDriver(
+      { MINER_CODING_AGENT_PROVIDER: "codex-cli", MINER_CODING_AGENT_CODEX_MODEL: "" },
+      { spawn: async () => ({ stdout: "done", code: 0 }) },
+    );
+    await driver.run(task);
+    expect(posthogMock.capture.mock.calls[0]?.[0].properties.$ai_model).toBe("codex-cli");
   });
 });

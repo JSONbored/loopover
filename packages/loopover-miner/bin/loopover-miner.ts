@@ -21,6 +21,7 @@ import { runOrbExportCli } from "../lib/orb-export.js";
 import { runTenantCli } from "../lib/tenant-cli.js";
 import { installCliSignalHandlers } from "../lib/process-lifecycle.js";
 import { captureMinerErrorAndFlush, initMinerSentry } from "../lib/sentry.js";
+import { captureMinerPostHogErrorAndFlush, initMinerPostHog } from "../lib/posthog.js";
 import { runStateCli } from "../lib/run-state-cli.js";
 import { runInit } from "../lib/laptop-init.js";
 import { createWizardIo, runInteractiveInit } from "../lib/init-wizard.js";
@@ -48,20 +49,27 @@ try {
   process.exit(2);
 }
 
-// Opt-in Sentry (#6011): a complete no-op unless the operator sets LOOPOVER_MINER_SENTRY_DSN themselves. Must
-// run AFTER loadMinerFileSecrets (so a `_FILE`-mounted DSN resolves first) and BEFORE installCliSignalHandlers
-// (so a startup crash is still captured).
+// Opt-in Sentry (#6011) + opt-in PostHog (#8292, epic #8286 -- parallel-run alongside Sentry, both capture
+// when both configured): each a complete no-op unless its own env var is set. Must run AFTER
+// loadMinerFileSecrets (so a `_FILE`-mounted DSN/key resolves first) and BEFORE installCliSignalHandlers
+// (so a startup crash is still captured by whichever sink(s) are configured).
 /* v8 ignore start -- process entry point (this bin's top level runs unconditionally, every invocation);
  * exercised by the real --help/--version subprocess spawn in miner-package-skeleton.test.ts (a different
  * Node process, invisible to this test run's own coverage instrumentation), not unit-coverable here. The
- * functions themselves (initMinerSentry, installCliSignalHandlers) are fully unit-tested in isolation
- * (miner-sentry.test.ts, miner-process-lifecycle.test.ts) -- this is only the top-level wiring that calls
- * them, mirroring src/server.ts's identical, already-established exemption in codecov.yml. */
-await initMinerSentry(process.env);
+ * functions themselves (initMinerSentry, initMinerPostHog, installCliSignalHandlers) are fully unit-tested
+ * in isolation (miner-sentry.test.ts, miner-posthog.test.ts, miner-process-lifecycle.test.ts) -- this is
+ * only the top-level wiring that calls them, mirroring src/server.ts's identical, already-established
+ * exemption in codecov.yml. */
+await Promise.all([initMinerSentry(process.env), initMinerPostHog(process.env)]);
 
 // Register signal + crash handlers once, before any command runs, so an interrupted run closes its open ledgers
-// cleanly instead of dying mid-write (#4826). Covers every subcommand below, including the local ones.
-installCliSignalHandlers({ captureError: captureMinerErrorAndFlush });
+// cleanly instead of dying mid-write (#4826). Covers every subcommand below, including the local ones. Both
+// opt-in sinks capture the crash independently -- neither call awaits the other, so a slow/hung flush on one
+// sink can never delay the other's delivery.
+installCliSignalHandlers({
+  captureError: (error, context) =>
+    Promise.all([captureMinerErrorAndFlush(error, context), captureMinerPostHogErrorAndFlush(error, context)]).then(() => undefined),
+});
 /* v8 ignore stop */
 
 // Peel the global logging flags (--quiet/--verbose/--log-level) off the front of argv and configure the

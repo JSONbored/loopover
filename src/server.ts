@@ -27,6 +27,7 @@ import {
   resolveSubscriptionCliPath,
   shouldMarkAiProviderUnhealthyAtBoot,
   subscriptionCliEnv,
+  withAiGenerationCapture,
 } from "./selfhost/ai";
 import {
   cookieValue,
@@ -572,12 +573,15 @@ async function main(): Promise<void> {
   // the review chain — so a Claude/Codex outage never falls reviews back to a weak local model. Unset ⇒ absent ⇒
   // createReviewAdapters falls back to the review `ai` for embeds (byte-identical to before).
   const embedAi = process.env.AI_EMBED_BASE_URL
-    ? createOpenAiCompatibleAi({
-        baseUrl: process.env.AI_EMBED_BASE_URL,
-        apiKey: process.env.AI_EMBED_API_KEY ?? process.env.OPENAI_API_KEY,
-        embedModel: process.env.AI_EMBED_MODEL,
-        providerName: providerNameFromBaseUrl(process.env.AI_EMBED_BASE_URL),
-      })
+    ? withAiGenerationCapture(
+        "ai_embed",
+        createOpenAiCompatibleAi({
+          baseUrl: process.env.AI_EMBED_BASE_URL,
+          apiKey: process.env.AI_EMBED_API_KEY ?? process.env.OPENAI_API_KEY,
+          embedModel: process.env.AI_EMBED_MODEL,
+          providerName: providerNameFromBaseUrl(process.env.AI_EMBED_BASE_URL),
+        }),
+      )
     : undefined;
   if (embedAi)
     console.log(
@@ -593,12 +597,15 @@ async function main(): Promise<void> {
   // different model, a different capability) the same way AI_EMBED is kept separate from the review chain.
   // Unset ⇒ absent ⇒ visual-vision falls back to BYOK-only (byte-identical to before this binding existed).
   const visionAi = process.env.AI_VISION_BASE_URL
-    ? createOpenAiCompatibleAi({
-        baseUrl: process.env.AI_VISION_BASE_URL,
-        apiKey: process.env.AI_VISION_API_KEY ?? process.env.OPENAI_API_KEY,
-        model: process.env.AI_VISION_MODEL,
-        providerName: providerNameFromBaseUrl(process.env.AI_VISION_BASE_URL),
-      })
+    ? withAiGenerationCapture(
+        "ai_vision",
+        createOpenAiCompatibleAi({
+          baseUrl: process.env.AI_VISION_BASE_URL,
+          apiKey: process.env.AI_VISION_API_KEY ?? process.env.OPENAI_API_KEY,
+          model: process.env.AI_VISION_MODEL,
+          providerName: providerNameFromBaseUrl(process.env.AI_VISION_BASE_URL),
+        }),
+      )
     : undefined;
   if (visionAi)
     console.log(
@@ -616,12 +623,15 @@ async function main(): Promise<void> {
   // config-driven, not hardcoded. Unset ⇒ absent ⇒ every advisory capability falls back to env.AI, byte-
   // identical to before this binding existed.
   const advisoryAi = process.env.AI_ADVISORY_BASE_URL
-    ? createOpenAiCompatibleAi({
-        baseUrl: process.env.AI_ADVISORY_BASE_URL,
-        apiKey: process.env.AI_ADVISORY_API_KEY,
-        model: process.env.AI_ADVISORY_MODEL,
-        providerName: providerNameFromBaseUrl(process.env.AI_ADVISORY_BASE_URL),
-      })
+    ? withAiGenerationCapture(
+        "ai_advisory",
+        createOpenAiCompatibleAi({
+          baseUrl: process.env.AI_ADVISORY_BASE_URL,
+          apiKey: process.env.AI_ADVISORY_API_KEY,
+          model: process.env.AI_ADVISORY_MODEL,
+          providerName: providerNameFromBaseUrl(process.env.AI_ADVISORY_BASE_URL),
+        }),
+      )
     : undefined;
   if (advisoryAi)
     console.log(

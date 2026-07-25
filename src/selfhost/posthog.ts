@@ -18,6 +18,7 @@
 // POSTHOG_REPO_MIN_SEVERITY, POSTHOG_ENVIRONMENT, POSTHOG_SERVER_NAME, POSTHOG_RELEASE) is self-host-only,
 // read off real process.env, never added to src/env.d.ts's typed Env, matching that file's precedent for
 // self-host-exclusive config.
+import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import {
   currentOtelTraceIds,
@@ -317,6 +318,72 @@ export async function withPostHogMonitor<T>(name: PostHogMonitorName, context: R
     client.captureException(error instanceof Error ? error : new Error(String(error)), POSTHOG_DISTINCT_ID, properties);
     throw error;
   }
+}
+
+/** `"review"` (chat/completion) vs `"embedding"` -- matches ai.ts's own `requestKind()` classification
+ *  (`options.text` set ⇒ embedding), which picks the PostHog event name below. */
+export type PostHogAiGenerationRequestKind = "review" | "embedding";
+
+/** One AI provider attempt (#8296, epic #8286 track 3): every field here is metadata -- model id, provider
+ *  name, timing, token/cost accounting, and (on failure) an already-redacted error string ai.ts's own
+ *  `redactSecrets`/`errorMessage` produced before ever throwing. There is deliberately no field for the
+ *  prompt or the response text; `$ai_generation`'s own optional content properties are never populated. */
+export type PostHogAiGenerationEvent = {
+  provider: string;
+  model: string;
+  requestKind: PostHogAiGenerationRequestKind;
+  latencyMs: number;
+  isError: boolean;
+  inputTokens?: number | undefined;
+  outputTokens?: number | undefined;
+  /** A single blended figure -- ai.ts's own `AiUsage.costUsd` never splits input/output cost, so this
+   *  never fabricates a split its source data doesn't have. Absent for the claude-code/codex subscription
+   *  CLIs whenever their own stdout reports none (a flat subscription has no real per-call dollar cost). */
+  totalCostUsd?: number | undefined;
+  /** Reasoning-effort dial ("low"/"medium"/"high"/"max") -- generation CONFIG, never prompt content. */
+  effort?: string | undefined;
+  /** Correlation context (repo/PR), the same optional fields AiRunOptions already threads through for
+   *  `logSelfHostAiProviderFailed` -- routed through {@link operationalProperties} so only the shared
+   *  operational-tag allowlist survives, exactly like every other capture path in this file. */
+  context?: Record<string, unknown> | undefined;
+  /** Raw caught value on the error path (mirrors capturePostHogError's own `error` param) -- never a
+   *  caller-preformatted string. Ignored when `isError` is false. */
+  error?: unknown;
+};
+
+/** Capture one AI provider attempt as PostHog's `$ai_generation` (`$ai_embedding` for an embedding
+ *  request) event (#8296). No-op when PostHog is off -- same contract as every other capture function in
+ *  this file. Unlike {@link capturePostHogError}, this never gates on POSTHOG_MIN_SEVERITY: a successful
+ *  generation is not an error-severity event at all, and a failed one is ALREADY captured as a real
+ *  exception by the caller's own existing `selfhost_ai_provider_failed` log line (forwarded via
+ *  {@link forwardStructuredLogToPostHog}) -- this event exists for spend/latency/failure ANALYTICS, a
+ *  parallel concern to error tracking, not a substitute gate for it. */
+export function capturePostHogAiGeneration(event: PostHogAiGenerationEvent): void {
+  if (!active || !client) return;
+  const properties: Record<string, unknown> = {
+    ...operationalProperties(event.context),
+    $ai_trace_id: randomUUID(),
+    $ai_model: nonBlank(event.model) ?? "unknown",
+    $ai_provider: nonBlank(event.provider) ?? "unknown",
+    // PostHog's own $ai_generation schema reports latency in SECONDS, not ms.
+    $ai_latency: event.latencyMs / 1000,
+    $ai_http_status: event.isError ? 500 : 200,
+    $ai_input_tokens: Number.isFinite(event.inputTokens) ? event.inputTokens : 0,
+    $ai_output_tokens: Number.isFinite(event.outputTokens) ? event.outputTokens : 0,
+    $ai_is_error: event.isError,
+    environment: posthogEnvironment,
+  };
+  if (Number.isFinite(event.totalCostUsd)) properties.$ai_total_cost_usd = event.totalCostUsd;
+  if (event.effort) properties.$ai_model_parameters = { effort: event.effort };
+  if (event.isError) {
+    const error = event.error instanceof Error ? event.error : new Error(String(event.error));
+    properties.$ai_error = error.message.slice(0, 500);
+  }
+  client.capture({
+    distinctId: POSTHOG_DISTINCT_ID,
+    event: event.requestKind === "embedding" ? "$ai_embedding" : "$ai_generation",
+    properties,
+  });
 }
 
 /** Flush buffered events before exit. No-op when off. */

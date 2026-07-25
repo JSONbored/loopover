@@ -31,6 +31,8 @@
 //    (`ORB_ENROLLMENT_SECRET` or #8202/#8246's `LOOPOVER_TENANT_SECRET_TOKEN` is set)
 //  - the discovery-index plane (`LOOPOVER_MINER_DISCOVERY_INDEX_URL`) -- only if set (opt-in, no default)
 //  - Sentry (`LOOPOVER_MINER_SENTRY_DSN`) -- only if set (opt-in, no default)
+//  - PostHog (`LOOPOVER_MINER_POSTHOG_API_KEY`, #8292) -- only if set (opt-in); host defaults to
+//    us.i.posthog.com when `LOOPOVER_MINER_POSTHOG_HOST` isn't also set, mirroring posthog.ts's own default
 //  - Neon's API (console.neon.tech, #7858's per-attempt DB fork) -- only if all three
 //    `LOOPOVER_MINER_NEON_*` vars are set, mirroring `resolveAttemptDbForkConfig`'s own all-or-nothing gate
 // This is deliberately NOT exhaustive against every possible operator configuration (a fully custom, self-run
@@ -76,6 +78,10 @@ const ECOSYSTEM_REGISTRY_HOSTS: Record<AmsNetworkAllowlistEcosystem, string[]> =
 /** Neon's REST API host (`attempt-db-fork.ts`'s own `DEFAULT_API_BASE_URL`) -- fixed, not per-project. */
 const NEON_API_HOST = "console.neon.tech";
 
+/** PostHog's US-cloud ingestion host -- matches posthog.ts's own `DEFAULT_POSTHOG_HOST` default, used when
+ *  an operator sets LOOPOVER_MINER_POSTHOG_API_KEY without also overriding LOOPOVER_MINER_POSTHOG_HOST. */
+const DEFAULT_POSTHOG_HOST = "us.i.posthog.com";
+
 function hostnameOf(url: string | undefined): string | undefined {
   if (!url) return undefined;
   try {
@@ -115,6 +121,9 @@ export function resolveEgressAllowlist(networkAllowlist: AmsNetworkAllowlist, en
   if (discoveryIndexHost) add(discoveryIndexHost, "loopover-platform");
   const sentryHost = hostnameOf(env.LOOPOVER_MINER_SENTRY_DSN);
   if (sentryHost) add(sentryHost, "loopover-platform");
+  if (env.LOOPOVER_MINER_POSTHOG_API_KEY) {
+    add(hostnameOf(env.LOOPOVER_MINER_POSTHOG_HOST) ?? DEFAULT_POSTHOG_HOST, "loopover-platform");
+  }
   if (env.LOOPOVER_MINER_NEON_API_KEY && env.LOOPOVER_MINER_NEON_PROJECT_ID && env.LOOPOVER_MINER_NEON_PARENT_BRANCH_ID) {
     add(NEON_API_HOST, "loopover-platform");
   }

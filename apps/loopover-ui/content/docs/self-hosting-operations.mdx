@@ -627,6 +627,35 @@ captured event.
   ]}
 />
 
+## AI observability (`$ai_generation`)
+
+When PostHog is configured (the same `POSTHOG_API_KEY`/`POSTHOG_HOST` as error tracking above — no
+separate flag), every self-host AI provider attempt is also captured as a PostHog LLM-analytics
+event, so spend/latency/failure are visible per provider+model+effort without opening raw logs.
+This covers the full self-host AI surface: the configured review chain (`AI_PROVIDER` —
+ollama/openai/openai-compatible/anthropic, and the `claude-code`/`codex` subscription CLIs) and the
+three standalone bindings (`AI_EMBED`, `AI_VISION`, `AI_ADVISORY`).
+
+<FeatureRow
+  items={[
+    {
+      title: "Event names",
+      description:
+        "$ai_generation for a chat/review call, $ai_embedding for an embedding call (RAG) — PostHog's own recognized LLM-analytics event family.",
+    },
+    {
+      title: "Properties",
+      description:
+        "$ai_model, $ai_provider, $ai_latency (seconds), $ai_http_status, $ai_input_tokens/$ai_output_tokens, $ai_is_error, $ai_total_cost_usd (when derivable), $ai_model_parameters (e.g. effort), plus repo/pr from the same operational allowlist above.",
+    },
+    {
+      title: "Content policy",
+      description:
+        "Metadata only — never the prompt or completion text. $ai_generation's own optional content fields ($ai_input/$ai_output_choices) are never populated, the same redaction posture as every other capture path on this page.",
+    },
+  ]}
+/>
+
 ## PostHog alert classes and runbook
 
 Tune PostHog insight alerts for **persistent failure classes**, not one-off

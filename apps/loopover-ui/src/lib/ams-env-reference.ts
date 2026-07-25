@@ -162,6 +162,16 @@ export const AMS_ENV_REFERENCE_ROWS: MinerEnvReferenceRow[] = [
     defaultValue: null,
   },
   {
+    name: "LOOPOVER_MINER_POSTHOG_API_KEY",
+    firstReference: "lib/egress-allowlist.ts",
+    defaultValue: null,
+  },
+  {
+    name: "LOOPOVER_MINER_POSTHOG_HOST",
+    firstReference: "lib/egress-allowlist.ts",
+    defaultValue: null,
+  },
+  {
     name: "LOOPOVER_MINER_PREDICTION_LEDGER_DB",
     firstReference: "lib/prediction-ledger.ts",
     defaultValue: null,
@@ -271,6 +281,8 @@ export const AMS_ENV_REFERENCE_MARKDOWN = [
   "| `LOOPOVER_MINER_POLICY_DOC_CACHE_DB` | `lib/policy-doc-cache.ts` | (none) |",
   "| `LOOPOVER_MINER_POLICY_VERDICT_CACHE_DB` | `lib/policy-verdict-cache.ts` | (none) |",
   "| `LOOPOVER_MINER_PORTFOLIO_QUEUE_DB` | `lib/portfolio-queue.ts` | (none) |",
+  "| `LOOPOVER_MINER_POSTHOG_API_KEY` | `lib/egress-allowlist.ts` | (none) |",
+  "| `LOOPOVER_MINER_POSTHOG_HOST` | `lib/egress-allowlist.ts` | (none) |",
   "| `LOOPOVER_MINER_PREDICTION_LEDGER_DB` | `lib/prediction-ledger.ts` | (none) |",
   "| `LOOPOVER_MINER_RANKED_CANDIDATES_DB` | `lib/ranked-candidates.ts` | (none) |",
   "| `LOOPOVER_MINER_REPLAY_SNAPSHOT_DB` | `lib/replay-snapshot.ts` | (none) |",

@@ -2,9 +2,26 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { assertNoLegacySharedAiEnv, buildProvider, claudeErrorStatus, codexErrorFromStdout, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, extractCliUsage, isAiProviderHealthy, markAiProviderUnhealthyAtBoot, providerNameFromBaseUrl, resetAiProviderCircuitBreakerForTest, resetAiProviderHealthForTest, resolveAiReviewerPlan, resolveClaudeCliTimeoutMs, resolveClaudeFirstOutputTimeoutMs, resolveCodexAuthPath, resolveCodexCliTimeoutMs, resolveCodexEffort, resolveCodexFirstOutputTimeoutMs, resolveEffort, resolveModel, resolveProviderNames, resolveRequiredCliProviders, resolveSubscriptionCliPath, redactSecrets, routeProviders, shouldMarkAiProviderUnhealthyAtBoot, subscriptionCliEnv, withAdvisoryAiEnv, __selfHostAiInternals } from "../../src/selfhost/ai";
+
+// Mock posthog-node so ai.ts's new $ai_generation capture (via src/selfhost/posthog.ts) resolves to a
+// spy-backed client -- mirrors selfhost-posthog.test.ts's identical hoisted mocking pattern.
+const posthogMocks = vi.hoisted(() => {
+  const capture = vi.fn();
+  const captureException = vi.fn();
+  const PostHog = vi.fn(function (this: any) {
+    this.capture = capture;
+    this.captureException = captureException;
+    this.flush = vi.fn().mockResolvedValue(undefined);
+    this.shutdown = vi.fn().mockResolvedValue(undefined);
+  });
+  return { capture, captureException, PostHog };
+});
+vi.mock("posthog-node", () => ({ PostHog: posthogMocks.PostHog }));
+
+import { assertNoLegacySharedAiEnv, buildProvider, claudeErrorStatus, codexErrorFromStdout, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, extractCliUsage, isAiProviderHealthy, markAiProviderUnhealthyAtBoot, providerNameFromBaseUrl, resetAiProviderCircuitBreakerForTest, resetAiProviderHealthForTest, resolveAiReviewerPlan, resolveClaudeCliTimeoutMs, resolveClaudeFirstOutputTimeoutMs, resolveCodexAuthPath, resolveCodexCliTimeoutMs, resolveCodexEffort, resolveCodexFirstOutputTimeoutMs, resolveEffort, resolveModel, resolveProviderNames, resolveRequiredCliProviders, resolveSubscriptionCliPath, redactSecrets, routeProviders, shouldMarkAiProviderUnhealthyAtBoot, subscriptionCliEnv, withAdvisoryAiEnv, withAiGenerationCapture, __selfHostAiInternals } from "../../src/selfhost/ai";
 import { labelSelfHostReviewerModel, labelSelfHostReviewerModels } from "../../src/selfhost/ai-config";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
+import { initPostHog, resetPostHogForTest } from "../../src/selfhost/posthog";
 
 describe("resolveModel (#979 — never leak the Workers-AI default to a self-host backend)", () => {
   const WORKERS_DEFAULT = "@cf/meta/llama-3.1-8b-instruct-fp8-fast";
@@ -127,6 +144,8 @@ afterEach(() => {
   resetMetrics();
   resetAiProviderHealthForTest();
   resetAiProviderCircuitBreakerForTest();
+  resetPostHogForTest();
+  vi.clearAllMocks();
 });
 
 type SpawnResult = { stdout: string; code: number | null; stderr?: string; timedOut?: boolean; stalledNoOutput?: boolean };
@@ -618,6 +637,142 @@ describe("AI provider request duration/error metrics (#4367)", () => {
     const metrics = await renderMetrics();
     expect(metrics).toContain('loopover_ai_provider_request_duration_seconds_count{provider="gpu-metrics-routing-provider",request_kind="embedding"} 1');
     expect(metrics).not.toContain('loopover_ai_provider_request_errors_total{provider="gpu-metrics-routing-provider"');
+  });
+});
+
+describe("$ai_generation PostHog capture at the chain chokepoint (#8296)", () => {
+  it("captures a well-formed $ai_generation event on a successful chain call, using the provider's own usage", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    const provider = {
+      name: "posthog-ok-provider",
+      ai: { run: async () => ({ response: "ok", usage: { inputTokens: 10, outputTokens: 5, costUsd: 0.01, effort: "low" } }) },
+    };
+    await createChainAi([provider]).run("m", { prompt: "review this", repoFullName: "owner/repo", pullNumber: 3 });
+    expect(posthogMocks.capture).toHaveBeenCalledTimes(1);
+    const { properties } = posthogMocks.capture.mock.calls[0]?.[0];
+    expect(posthogMocks.capture.mock.calls[0]?.[0].event).toBe("$ai_generation");
+    expect(properties.$ai_provider).toBe("posthog-ok-provider");
+    expect(properties.$ai_model).toBe("m");
+    expect(properties.$ai_input_tokens).toBe(10);
+    expect(properties.$ai_output_tokens).toBe(5);
+    expect(properties.$ai_total_cost_usd).toBe(0.01);
+    expect(properties.$ai_model_parameters).toEqual({ effort: "low" });
+    expect(properties.$ai_is_error).toBe(false);
+    expect(properties.repo).toBe("owner/repo");
+    expect(properties.pullNumber).toBe(3);
+  });
+
+  it("captures $ai_embedding for an embedding request through the chain", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    const provider = { name: "posthog-embed-provider", ai: { run: async () => ({ data: [[0.1, 0.2]] }) } };
+    await createChainAi([provider]).run("m", { text: ["chunk"] });
+    expect(posthogMocks.capture.mock.calls[0]?.[0].event).toBe("$ai_embedding");
+  });
+
+  it("falls back to the provider's registry name when the result carries no usage", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    const provider = { name: "posthog-no-usage-provider", ai: { run: async () => ({ response: "ok" }) } };
+    await createChainAi([provider]).run("m", { prompt: "x" });
+    const { properties } = posthogMocks.capture.mock.calls[0]?.[0];
+    expect(properties.$ai_provider).toBe("posthog-no-usage-provider");
+    expect(properties.$ai_input_tokens).toBe(0);
+  });
+
+  it("captures a failed generation with $ai_is_error/$ai_error on a real chain failure", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    const provider = { name: "posthog-fail-provider", ai: { run: async () => { throw new Error("boom"); } } };
+    await expect(createChainAi([provider]).run("m", { prompt: "review this" })).rejects.toThrow(/boom/);
+    const { properties } = posthogMocks.capture.mock.calls[0]?.[0];
+    expect(properties.$ai_is_error).toBe(true);
+    expect(properties.$ai_error).toBe("boom");
+    expect(properties.$ai_provider).toBe("posthog-fail-provider");
+  });
+
+  it("does NOT capture for an expected embedding-routing fallback (mirrors the metrics exemption above)", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    const provider = { name: "posthog-routing-provider", ai: { run: async () => { throw new Error("claude_code_no_embed"); } } };
+    await expect(createChainAi([provider]).run("m", { text: ["chunk"] })).rejects.toThrow();
+    expect(posthogMocks.capture).not.toHaveBeenCalled();
+  });
+
+  it("stays a no-op end-to-end when PostHog is unconfigured (no posthog-node client constructed)", async () => {
+    const provider = { name: "posthog-unconfigured-provider", ai: { run: async () => ({ response: "ok" }) } };
+    await createChainAi([provider]).run("m", { prompt: "x" });
+    expect(posthogMocks.capture).not.toHaveBeenCalled();
+  });
+});
+
+describe("withAiGenerationCapture (#8296 — AI_EMBED/AI_VISION/AI_ADVISORY, ungoverned single-provider bindings)", () => {
+  it("captures a successful call's usage, falling back to the given providerName when usage carries none", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    const ai = withAiGenerationCapture("ai_embed", { run: async () => ({ data: [[0.1]] }) });
+    const result = await ai.run("bge-m3", { text: ["chunk"] });
+    expect(result.data).toEqual([[0.1]]);
+    const { properties } = posthogMocks.capture.mock.calls[0]?.[0];
+    expect(posthogMocks.capture.mock.calls[0]?.[0].event).toBe("$ai_embedding");
+    expect(properties.$ai_provider).toBe("ai_embed");
+    expect(properties.$ai_model).toBe("bge-m3");
+  });
+
+  it("prefers the wrapped provider's own reported usage.provider/model over the given providerName", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    const ai = withAiGenerationCapture("ai_vision", {
+      run: async () => ({ response: "ok", usage: { provider: "ollama", model: "llava" } }),
+    });
+    await ai.run("configured-model", { prompt: "describe this image" });
+    const { properties } = posthogMocks.capture.mock.calls[0]?.[0];
+    expect(properties.$ai_provider).toBe("ollama");
+    expect(properties.$ai_model).toBe("llava");
+  });
+
+  it("captures a failure and still rethrows the original error", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    const ai = withAiGenerationCapture("ai_advisory", { run: async () => { throw new Error("advisory down"); } });
+    await expect(ai.run("m", { prompt: "x" })).rejects.toThrow("advisory down");
+    const { properties } = posthogMocks.capture.mock.calls[0]?.[0];
+    expect(properties.$ai_is_error).toBe(true);
+    expect(properties.$ai_provider).toBe("ai_advisory");
+    expect(properties.$ai_error).toBe("advisory down");
+  });
+
+  it("labels a chat (non-embedding) request kind as $ai_generation, not $ai_embedding", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    const ai = withAiGenerationCapture("ai_advisory", { run: async () => ({ response: "ok" }) });
+    await ai.run("m", { prompt: "x" });
+    expect(posthogMocks.capture.mock.calls[0]?.[0].event).toBe("$ai_generation");
+  });
+
+  it("falls back to providerName/'default' when usage is present but omits its own provider/model, and the model arg is empty", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    const ai = withAiGenerationCapture("ai_vision", { run: async () => ({ response: "ok", usage: { inputTokens: 3 } }) });
+    await ai.run("", { prompt: "x" });
+    const { properties } = posthogMocks.capture.mock.calls[0]?.[0];
+    expect(properties.$ai_provider).toBe("ai_vision");
+    expect(properties.$ai_model).toBe("default");
+    expect(properties.$ai_input_tokens).toBe(3);
+  });
+
+  it("falls back to the model arg (not 'default') when usage omits its own model but the model arg is truthy", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    const ai = withAiGenerationCapture("ai_vision", { run: async () => ({ response: "ok", usage: { inputTokens: 3 } }) });
+    await ai.run("configured-model", { prompt: "x" });
+    expect(posthogMocks.capture.mock.calls[0]?.[0].properties.$ai_model).toBe("configured-model");
+  });
+
+  it("falls back to 'default' model on the failure path when the model arg is empty", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    const ai = withAiGenerationCapture("ai_embed", { run: async () => { throw new Error("down"); } });
+    await expect(ai.run("", { text: ["chunk"] })).rejects.toThrow("down");
+    expect(posthogMocks.capture.mock.calls[0]?.[0].properties.$ai_model).toBe("default");
+  });
+
+  it("falls back to 'default' model when the result carries no usage at all AND the model arg is empty", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    const ai = withAiGenerationCapture("ai_advisory", { run: async () => ({ response: "ok" }) });
+    await ai.run("", { prompt: "x" });
+    const { properties } = posthogMocks.capture.mock.calls[0]?.[0];
+    expect(properties.$ai_provider).toBe("ai_advisory");
+    expect(properties.$ai_model).toBe("default");
   });
 });
 

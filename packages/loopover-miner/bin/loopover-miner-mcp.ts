@@ -24,6 +24,7 @@ import { initPredictionLedger, type PredictionLedgerEntry } from "../lib/predict
 import { loadMinerFileSecrets } from "../lib/env-file-indirection.js";
 import { installCliSignalHandlers } from "../lib/process-lifecycle.js";
 import { captureMinerErrorAndFlush, initMinerSentry } from "../lib/sentry.js";
+import { captureMinerPostHogErrorAndFlush, initMinerPostHog } from "../lib/posthog.js";
 
 // MCP stdio server for @loopover/miner (scaffold #5153). Mirrors the packages/loopover-mcp
 // harness (MCP SDK server + stdio transport). Tools:
@@ -443,16 +444,23 @@ if (invokedPath && invokedPath === realpathSync(fileURLToPath(import.meta.url)))
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
   }
-  await initMinerSentry(process.env);
-  installCliSignalHandlers({ captureError: captureMinerErrorAndFlush });
+  await Promise.all([initMinerSentry(process.env), initMinerPostHog(process.env)]);
+  installCliSignalHandlers({
+    captureError: (error, context) =>
+      Promise.all([captureMinerErrorAndFlush(error, context), captureMinerPostHogErrorAndFlush(error, context)]).then(() => undefined),
+  });
 
   createMinerMcpServer()
     .connect(new StdioServerTransport())
     .catch(async (error) => {
       console.error(error);
-      // Awaited so the captured event has a chance to actually reach Sentry before exit() tears the process
-      // down -- a bare synchronous capture only queues it (#6011 follow-up).
-      await captureMinerErrorAndFlush(error, { kind: "mcp_startup_connect_failed" });
+      // Awaited so the captured event has a chance to actually reach each configured sink before exit() tears
+      // the process down -- a bare synchronous capture only queues it (#6011 follow-up, extended to PostHog
+      // per #8292's parallel-run posture).
+      await Promise.all([
+        captureMinerErrorAndFlush(error, { kind: "mcp_startup_connect_failed" }),
+        captureMinerPostHogErrorAndFlush(error, { kind: "mcp_startup_connect_failed" }),
+      ]);
       process.exit(1);
     });
 }

@@ -218,6 +218,7 @@ and `LOOPOVER_MINER_CONFIG_DIR` are covered above under the fleet/state notes; t
 | `LOOPOVER_MINER_REPO_CLONE_DIR` | `dist/lib/repo-clone.js` | Base directory for cloned target repos. |
 | `LOOPOVER_MINER_WORKTREE_DIR` | `dist/lib/worktree-allocator.js` | Base directory for per-attempt git worktrees. |
 | `LOOPOVER_MINER_SENTRY_DSN`, `LOOPOVER_MINER_SENTRY_ENVIRONMENT` | `dist/lib/sentry.js` | Optional Sentry error reporting (DSN + environment tag). |
+| `LOOPOVER_MINER_POSTHOG_API_KEY`, `LOOPOVER_MINER_POSTHOG_HOST` | `dist/lib/posthog.js` | Optional PostHog error + AI-generation reporting ([#8292](https://github.com/JSONbored/loopover/issues/8292), epic [#8286](https://github.com/JSONbored/loopover/issues/8286)) — runs alongside Sentry during the parallel-run window; API key + optional ingestion host override (defaults to PostHog's US-cloud host). |
 | `LOOPOVER_MINER_VERSION` | `dist/lib/version.js` | Overrides the reported release id (e.g. for a custom build). |
 
 ## Optional hosted discovery plane (opt-in)

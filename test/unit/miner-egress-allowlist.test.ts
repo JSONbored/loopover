@@ -91,6 +91,26 @@ describe("resolveEgressAllowlist (#7857)", () => {
       expect(entries).toContainEqual({ host: "o1.ingest.sentry.io", reason: "loopover-platform" });
     });
 
+    it("adds the PostHog default host only when LOOPOVER_MINER_POSTHOG_API_KEY is set, with no host override (#8292)", () => {
+      expect(resolveEgressAllowlist(EMPTY_ALLOWLIST, {}).some((e) => e.host === "us.i.posthog.com")).toBe(false);
+      const entries = resolveEgressAllowlist(EMPTY_ALLOWLIST, { LOOPOVER_MINER_POSTHOG_API_KEY: "phc_test" });
+      expect(entries).toContainEqual({ host: "us.i.posthog.com", reason: "loopover-platform" });
+    });
+
+    it("adds the overridden PostHog host when LOOPOVER_MINER_POSTHOG_HOST is also set", () => {
+      const entries = resolveEgressAllowlist(EMPTY_ALLOWLIST, {
+        LOOPOVER_MINER_POSTHOG_API_KEY: "phc_test",
+        LOOPOVER_MINER_POSTHOG_HOST: "https://eu.i.posthog.com",
+      });
+      expect(entries).toContainEqual({ host: "eu.i.posthog.com", reason: "loopover-platform" });
+      expect(entries.some((e) => e.host === "us.i.posthog.com")).toBe(false);
+    });
+
+    it("falls back to the PostHog default host when LOOPOVER_MINER_POSTHOG_HOST is malformed but the API key is set", () => {
+      const entries = resolveEgressAllowlist(EMPTY_ALLOWLIST, { LOOPOVER_MINER_POSTHOG_API_KEY: "phc_test", LOOPOVER_MINER_POSTHOG_HOST: "not a url" });
+      expect(entries).toContainEqual({ host: "us.i.posthog.com", reason: "loopover-platform" });
+    });
+
     it("adds Neon's API host only when ALL THREE LOOPOVER_MINER_NEON_* vars are set (all-or-nothing, matching resolveAttemptDbForkConfig's own gate)", () => {
       expect(
         resolveEgressAllowlist(EMPTY_ALLOWLIST, { LOOPOVER_MINER_NEON_API_KEY: "k", LOOPOVER_MINER_NEON_PROJECT_ID: "p" }).some((e) => e.reason === "loopover-platform"),

@@ -1673,14 +1673,26 @@ function stdioToolDescription(name: any) {
   return tool.description;
 }
 
-/* v8 ignore next 8 -- the CLI dispatch runs only in the launched process (runAsCliEntrypoint); an in-process
+/* v8 ignore next 5 -- draining stdout/stderr before exit only matters for the real launched process writing to
+   an OS pipe (large output can exceed the pipe's buffer, and a POSIX pipe write is asynchronous); the
+   in-process test harness below never spawns a subprocess, so this never runs there. */
+function flushStdio(): Promise<void> {
+  const drained = (stream: NodeJS.WriteStream) =>
+    stream.writableLength > 0 ? new Promise<void>((resolve) => stream.once("drain", resolve)) : Promise.resolve();
+  return Promise.all([drained(process.stdout), drained(process.stderr)]).then(() => undefined);
+}
+
+/* v8 ignore next 11 -- the CLI dispatch runs only in the launched process (runAsCliEntrypoint); an in-process
    unit importer keeps it false and drives runCli/maintainCli directly instead (mcp-cli-plan-issues.test.ts). */
 if (runAsCliEntrypoint && cliArgs[0] !== "--stdio") {
   try {
     const exitCode = await runCli(cliArgs);
+    await flushStdio();
     process.exit(typeof exitCode === "number" ? exitCode : 0);
   } catch (error) {
-    process.exit(reportCliFailure(argsWantJson(cliArgs), describeCliError(error), 1));
+    const code = reportCliFailure(argsWantJson(cliArgs), describeCliError(error), 1);
+    await flushStdio();
+    process.exit(code);
   }
 }
 

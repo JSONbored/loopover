@@ -6,8 +6,18 @@ const read = (path: string) => readFileSync(path, "utf8");
 describe("self-host PostHog release wiring", () => {
   it("keeps source-map uploads in the maintainer release workflow only", () => {
     const releaseWorkflow = read(".github/workflows/release-selfhost.yml");
-    expect(releaseWorkflow).toContain("sourcemap inject --directory dist --release-version");
-    expect(releaseWorkflow).toContain("sourcemap upload --directory dist --release-version");
+    // Explicit --release-name AND --release-version, never a bare --release-version: posthog-cli
+    // auto-derives its own release-name from git/package.json when --release-name is omitted (this repo
+    // resolves to "loopover"), silently doubling the stored release id into
+    // "loopover@loopover-orb@$VERSION" -- which the "Validate PostHog release" step below would never find.
+    expect(releaseWorkflow).toContain(
+      'sourcemap inject --directory dist --release-name "$POSTHOG_RELEASE_NAME" --release-version "$POSTHOG_RELEASE_VERSION"',
+    );
+    expect(releaseWorkflow).toContain(
+      'sourcemap upload --directory dist --release-name "$POSTHOG_RELEASE_NAME" --release-version "$POSTHOG_RELEASE_VERSION"',
+    );
+    expect(releaseWorkflow).toContain("POSTHOG_RELEASE_NAME: loopover-orb");
+    expect(releaseWorkflow).toContain("POSTHOG_RELEASE_VERSION: ${{ steps.version.outputs.v }}");
     // No separate "create release"/"set-commits"/"finalize" steps -- PostHog release metadata is a
     // byproduct of the inject/upload calls themselves, unlike Sentry's releases/commits/deploys/finalize
     // lifecycle this replaced.

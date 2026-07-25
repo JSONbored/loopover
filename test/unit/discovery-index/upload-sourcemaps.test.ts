@@ -136,11 +136,22 @@ describe("discovery-index upload-sourcemaps -- PostHog (#8289)", () => {
     await run();
     expect(process.exitCode).toBe(0);
     const posthogCalls = spawnSyncMock.mock.calls.filter(([command]) => isPostHogCliCall(command)).map(([, args]) => args);
+    // Split at the first "@", not a bare --release-version: passing the combined string as --release-version
+    // alone would leave --release-name unset, and posthog-cli auto-derives its own from git/package.json
+    // instead, silently doubling the stored release id (see splitRelease's own comment in the source).
     expect(posthogCalls).toEqual([
-      ["sourcemap", "inject", "--directory", "dist", "--release-version", "loopover-discovery-index@abc123"],
-      ["sourcemap", "upload", "--directory", "dist", "--release-version", "loopover-discovery-index@abc123"],
+      ["sourcemap", "inject", "--directory", "dist", "--release-name", "loopover-discovery-index", "--release-version", "abc123"],
+      ["sourcemap", "upload", "--directory", "dist", "--release-name", "loopover-discovery-index", "--release-version", "abc123"],
     ]);
     expect(console.log).toHaveBeenCalledWith(expect.stringContaining("discovery_index_posthog_sourcemap_upload_complete"));
+  });
+
+  it("falls back to a default release-name when POSTHOG_RELEASE has no '@'", async () => {
+    setEnv({ POSTHOG_RELEASE: "abc123" });
+    await run();
+    expect(process.exitCode).toBe(0);
+    const posthogCalls = spawnSyncMock.mock.calls.filter(([command]) => isPostHogCliCall(command)).map(([, args]) => args);
+    expect(posthogCalls[0]).toEqual(["sourcemap", "inject", "--directory", "dist", "--release-name", "loopover-discovery-index", "--release-version", "abc123"]);
   });
 
   it("treats a non-strict upload failure as a soft failure (exit 0) with the reason logged", async () => {

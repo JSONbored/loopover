@@ -28,6 +28,18 @@ function nonBlank(value: string | undefined): string | undefined {
   return text ? text : undefined;
 }
 
+// posthog-cli's sourcemap inject/upload take --release-name and --release-version as SEPARATE flags, which
+// it combines server-side into the release id "{name}@{version}". Passing our own already-combined
+// POSTHOG_RELEASE (e.g. "loopover-rees@<sha>") as --release-version alone leaves --release-name unset, and
+// the CLI then auto-derives one from git/package.json instead -- silently doubling up into
+// "<auto-derived>@loopover-rees@<sha>", which never matches what runReleaseValidation looks up. Splitting
+// our own convention at its first "@" reproduces exactly the release id we already expect.
+function splitRelease(release: string, defaultName: string): { name: string; version: string } {
+  const at = release.indexOf("@");
+  if (at === -1) return { name: defaultName, version: release };
+  return { name: release.slice(0, at), version: release.slice(at + 1) };
+}
+
 function log(event: string, fields: Record<string, unknown> = {}): void {
   console.log(JSON.stringify({ event, ...fields }));
 }
@@ -166,9 +178,10 @@ async function main(): Promise<number> {
     // No separate "create release" step (PostHog release metadata is a byproduct of inject/upload) and an
     // explicit --release-version rather than posthog-cli's own git-metadata auto-detection -- the deploy
     // environment isn't guaranteed to have a usable .git checkout at this step.
-    runPostHog(["sourcemap", "inject", "--directory", "dist", "--release-version", release!]);
+    const { name: releaseName, version: releaseVersion } = splitRelease(release!, "loopover-rees");
+    runPostHog(["sourcemap", "inject", "--directory", "dist", "--release-name", releaseName, "--release-version", releaseVersion]);
     validateSourceMaps();
-    runPostHog(["sourcemap", "upload", "--directory", "dist", "--release-version", release!]);
+    runPostHog(["sourcemap", "upload", "--directory", "dist", "--release-name", releaseName, "--release-version", releaseVersion]);
     await runReleaseValidation(release!);
     log("rees_posthog_sourcemap_upload_complete", { release });
     return 0;

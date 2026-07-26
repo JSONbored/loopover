@@ -10,6 +10,7 @@ import {
   checkLaptopStateSqlite,
   findExecutableOnPath,
   resolveCodexAuthPath,
+  resolveLaptopStateDbPath,
 } from "./laptop-init.js";
 import { resolveMinerVersion } from "./version.js";
 import { checkStoreIntegrity, describeError } from "./store-maintenance.js";
@@ -409,6 +410,9 @@ function storeIntegrityChecks(env: Record<string, string | undefined>): DoctorCh
     // #8318: orb-export.sqlite3 (the opt-in Orb telemetry export's HMAC secret + cursor, #4277/#5681) is a
     // durable local store like every entry above, but was never added when it shipped.
     ["orb-export", resolveOrbExportDbPath(env)],
+    // #8641: laptop-state.sqlite3 (laptop-mode bootstrap meta) uses the same resolveLocalStoreDbPath +
+    // applySchemaMigrations pattern, but was never added to either twin list when it shipped.
+    ["laptop-state", resolveLaptopStateDbPath(env)],
   ];
   return stores.map(([name, dbPath]) => checkStoreIntegrity(`store-integrity:${name}`, dbPath));
 }

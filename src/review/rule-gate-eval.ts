@@ -258,3 +258,18 @@ export function rulesBelowClosePrecisionFloor(
 ): BlendedRuleGateEvalRow[] {
   return rows.filter((r) => r.wouldClose >= minDecided && r.weightedClosePrecision != null && r.weightedClosePrecision < floor);
 }
+
+/**
+ * The per-(project, ruleCode) counterpart to {@link rulesBelowClosePrecisionFloor}: same floor/minDecided
+ * check, over an already-fetched {@link RuleGateEvalReport}'s rows instead of the blended ones (no I/O). This
+ * is the "which rule is broken on which repo" view (#8906) — a rule that looks healthy once pooled across
+ * every project can still be systematically wrong on ONE of them, diluted out of the blended figure by every
+ * other project's correct usage of the same rule.
+ */
+export function projectRulesBelowClosePrecisionFloor(
+  rows: readonly RuleGateEvalRow[],
+  floor: number = AUTOTUNE_CLOSE_PRECISION_FLOOR,
+  minDecided: number = AUTOTUNE_MIN_DECIDED,
+): RuleGateEvalRow[] {
+  return rows.filter((r) => r.wouldClose >= minDecided && r.weightedClosePrecision != null && r.weightedClosePrecision < floor);
+}

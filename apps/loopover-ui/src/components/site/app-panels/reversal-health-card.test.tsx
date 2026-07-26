@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { ReversalHealthCard } from "@/components/site/app-panels/reversal-health-card";
 import {
   formatRatePct,
+  formatReversalEventType,
   reversalHealthStatus,
   type ReversalHealth,
 } from "@/components/site/app-panels/reversal-health-card-model";
@@ -85,5 +86,20 @@ describe("ReversalHealthCard", () => {
     expect(screen.getByText("no auto-actions in window")).toBeTruthy();
     expect(screen.getAllByText("0%").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("No reversals in window")).toBeTruthy();
+  });
+});
+
+describe("formatReversalEventType (#8665)", () => {
+  it("names a bot-merge revert (the reversal_reverted branch, the headline event this card surfaces)", () => {
+    expect(formatReversalEventType("reversal_reverted")).toBe("merge reverted");
+  });
+
+  it("names a close reopen (the reversal_reopened branch)", () => {
+    expect(formatReversalEventType("reversal_reopened")).toBe("close reopened");
+  });
+
+  it("humanizes any other event type by replacing underscores (the fallback branch)", () => {
+    expect(formatReversalEventType("some_other_event")).toBe("some other event");
+    expect(formatReversalEventType("plain")).toBe("plain");
   });
 });

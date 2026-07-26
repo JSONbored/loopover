@@ -502,6 +502,8 @@ declare global {
      *  recording are wired, reading a promoted override into the live gate is a noted follow-up that must not
      *  risk loosening the gate. See src/review/selftune-wire.ts. */
     LOOPOVER_REVIEW_SELFTUNE?: string;
+    /** #8830: weekly stratified human-audit sampling of gate decisions (default OFF). */
+    LOOPOVER_DECISION_AUDIT?: string;
     /** Experimental `gittensor` plugin (the `experimental:` manifest block, first key): the operator-level
      *  kill-switch for loopover's original subnet mining-registry/scoring integration, now opt-in rather than
      *  a core dependency. ANDed with the per-repo `.loopover.yml experimental.gittensor` opt-in -- neither

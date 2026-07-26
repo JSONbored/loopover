@@ -40,6 +40,7 @@ export const RAW_SQL_ONLY_TABLES: Set<string> = new Set([
   "ams_instances",
   "ams_signals",
   "contributor_gate_history",
+  "decision_audit_labels",
   "global_agent_controls",
   "global_contributor_blacklist",
   "global_moderation_config",

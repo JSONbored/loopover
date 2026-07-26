@@ -146,6 +146,12 @@ export type JobMessage =
       dryRun?: boolean;
     }
   | {
+      // Decision-audit sampling (#8830, epic #8828): weekly stratified draw of decided PRs for human
+      // adjudication (decision_audit_labels). Flag-gated by LOOPOVER_DECISION_AUDIT.
+      type: "decision-audit-sample";
+      requestedBy: "schedule" | "api" | "test";
+    }
+  | {
       type: "generate-weekly-value-report";
       requestedBy: "schedule" | "api" | "test";
       variant?: WeeklyValueReportVariant;

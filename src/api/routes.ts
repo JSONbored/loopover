@@ -4397,6 +4397,49 @@ export function createApp() {
   // but only REGISTERED ones count toward fleet calibration (computeFleetAnalytics). Bearer-gated by the
   // `/v1/internal/*` middleware (INTERNAL_JOB_TOKEN). List shows pending + registered instances with their
   // stored-signal counts so an operator knows what they're opting in before they register it.
+  // Decision-audit adjudication (#8830, epic #8828): the operator surface for the weekly stratified sample.
+  // Bearer-gated by the /v1/internal/* middleware (INTERNAL_JOB_TOKEN). List is filterable by status; the
+  // adjudicate write is idempotent-hostile on purpose — a second adjudication 409s rather than silently
+  // rewriting a label (labels are calibration data; rewrites must be deliberate, via a fresh rubric version).
+  app.get("/v1/internal/audit-labels", async (c) => {
+    const status = c.req.query("status");
+    const where = status === "pending" || status === "adjudicated" ? "WHERE status = ?" : "";
+    const stmt = c.env.DB.prepare(
+      `SELECT id, project, target_id AS targetId, verdict, outcome, stratum, rubric_version AS rubricVersion,
+              sampled_at AS sampledAt, status, adjudication, reason_category AS reasonCategory, adjudicated_at AS adjudicatedAt
+         FROM decision_audit_labels ${where} ORDER BY sampled_at DESC, target_id ASC LIMIT 500`,
+    );
+    const rows = await (where ? stmt.bind(status) : stmt).all();
+    return c.json({ labels: rows.results });
+  });
+
+  app.post("/v1/internal/audit-labels/adjudicate", async (c) => {
+    const payload = (await c.req.json().catch(() => null)) as { id?: unknown; adjudication?: unknown; reasonCategory?: unknown } | null;
+    const id = typeof payload?.id === "string" ? payload.id : "";
+    const adjudication = payload?.adjudication;
+    if (!id || (adjudication !== "correct" && adjudication !== "incorrect" && adjudication !== "uncertain")) {
+      return c.json({ error: "id and adjudication (correct|incorrect|uncertain) required" }, 400);
+    }
+    const reasonCategory = typeof payload?.reasonCategory === "string" ? payload.reasonCategory.slice(0, 100) : null;
+    // Atomic claim: the status predicate rides the UPDATE itself, so two concurrent adjudications can never
+    // both win — a select-then-update here would let both pass the pending check and silently violate the
+    // one-adjudication-per-label guarantee (labels are calibration data; rewrites must be impossible, not
+    // merely discouraged). meta.changes disambiguates afterwards: 0 changes is either "no such label" (404)
+    // or "someone else already adjudicated it" (409), resolved by one read that no longer guards anything.
+    const result = await c.env.DB.prepare(
+      `UPDATE decision_audit_labels SET status = 'adjudicated', adjudication = ?, reason_category = ?, adjudicated_at = ?
+        WHERE id = ? AND status = 'pending'`,
+    )
+      .bind(adjudication, reasonCategory, new Date().toISOString(), id)
+      .run();
+    if (result.meta.changes === 0) {
+      const existing = await c.env.DB.prepare("SELECT status FROM decision_audit_labels WHERE id = ?").bind(id).first<{ status: string }>();
+      if (!existing) return c.json({ error: "label_not_found" }, 404);
+      return c.json({ error: "already_adjudicated" }, 409);
+    }
+    return c.json({ id, adjudication, reasonCategory });
+  });
+
   app.get("/v1/internal/orb/instances", async (c) => {
     const rows = await c.env.DB
       .prepare(

@@ -2040,8 +2040,11 @@ export function derivePublicCommentMergeFacts(args: {
   liveMergeState: string | undefined;
   mergeableState: string | null | undefined;
   authorLogin: string | null | undefined;
+  // #8683: the live per-repo admin verdict for the author, resolved by the caller (isPerTenantAdmin) so this
+  // pure function can match the planner's owner-OR-admin close-eligibility formula without an async fetch.
+  authorIsAdmin: boolean;
   liveCi: Pick<LiveCiAggregate, "ciState" | "failingDetails" | "nonRequiredFailingDetails">;
-  settings: Pick<RepositorySettings, "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants" | "manualReviewLabel">;
+  settings: Pick<RepositorySettings, "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants" | "manualReviewLabel" | "closeOwnerAuthors">;
   unifiedFiles: Awaited<ReturnType<typeof listPullRequestFiles>>;
   repoFullName: string;
   prLabels: readonly string[];
@@ -2071,8 +2074,16 @@ export function derivePublicCommentMergeFacts(args: {
     isGuardrailHit(changedPathsForGuardrail(args.unifiedFiles), resolveHardGuardrailGlobs(args.settings)) || manualReviewLabelPresent;
   const repoOwner = args.repoFullName.includes("/") ? args.repoFullName.slice(0, args.repoFullName.indexOf("/")) : "";
   const authorLogin = args.authorLogin ?? "";
+  const authorIsOwner = authorLogin.length > 0 && authorLogin.toLowerCase() === repoOwner.toLowerCase();
+  // #8683: match the REAL close-eligibility formula the planner uses (closeWithheldReason above, and
+  // agent-actions.ts's `closeEligible`): an owner OR per-repo admin author is close-protected only while the
+  // repo has NOT opted into `closeOwnerAuthors` -- with `closeOwnerAuthors === true` the planner can close
+  // them, so the public comment must not headline "held". Previously this checked only the owner (never the
+  // admin) and ignored `closeOwnerAuthors` entirely, so it diverged from the planner in exactly those two
+  // cases: an admin (non-owner) author was wrongly shown as closable, and an owner author on a
+  // `closeOwnerAuthors: true` repo was wrongly shown as un-closable.
   const neverClosed =
-    (authorLogin.length > 0 && authorLogin.toLowerCase() === repoOwner.toLowerCase()) ||
+    ((authorIsOwner || args.authorIsAdmin) && args.settings.closeOwnerAuthors !== true) ||
     isProtectedAutomationAuthor(args.authorLogin, args.env);
   return { ciState, mergeStateLabel, mergeReadiness, heldForReview, neverClosed };
 }
@@ -11154,10 +11165,21 @@ async function maybePublishPrPublicSurface(
       // The stored pr.mergeableState lags GitHub's async recompute, and the gate's own check/review publication can
       // also advance mergeability after readiness ran, so refresh at this post-publish boundary.
       const liveMergeState = await refreshLiveMergeState(env, repoFullName, webhook.liveFacts, pr.number, token, admissionKey).catch(() => undefined);
+      // #8683: resolve the author's live per-repo admin status (isPerTenantAdmin, the SAME source the
+      // freeze-exemption check above uses) so neverClosed matches the planner's owner-OR-admin formula.
+      // `String(author)` keeps this branch-free -- a null author coerces to a login isPerTenantAdmin treats
+      // as not-admin, the correct outcome, without a conditional the coverage gate would count.
+      const authorIsAdminForMergeFacts = await isPerTenantAdmin(
+        env,
+        installationId,
+        repoFullName,
+        String(author),
+      );
       const { ciState, mergeStateLabel, mergeReadiness, heldForReview, neverClosed } = derivePublicCommentMergeFacts({
         liveMergeState,
         mergeableState: pr.mergeableState,
         authorLogin: pr.authorLogin,
+        authorIsAdmin: authorIsAdminForMergeFacts,
         liveCi,
         settings,
         unifiedFiles,

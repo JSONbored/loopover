@@ -1682,6 +1682,24 @@ function flushStdio(): Promise<void> {
   return Promise.all([drained(process.stdout), drained(process.stderr)]).then(() => undefined);
 }
 
+/* v8 ignore start -- an "error" on stdout/stderr only occurs in the real launched process writing to an OS
+   pipe: a reader that closes early (`... | head`) breaks the pipe, and the next unguarded write would surface
+   as an uncaught `Error: write EPIPE` and crash the whole CLI with a stack trace instead of exiting cleanly.
+   flushStdio() above only drains via "drain", which never fires once the stream has errored, so the listener
+   must be attached separately. The in-process unit importer never spawns a subprocess and never binds these,
+   so this stays unhit there; mcp-cli-broken-pipe.test.ts drives the real subprocess path out-of-band. */
+if (runAsCliEntrypoint) {
+  const onStreamError = (error: NodeJS.ErrnoException) => {
+    // A broken pipe (EPIPE) is the downstream reader closing early — a normal, expected end to a piped
+    // command, not a failure — so exit with success. Any other stream error is unexpected but still must not
+    // crash as an uncaught exception, so exit with a conventional failure code instead.
+    process.exit(error.code === "EPIPE" ? 0 : 1);
+  };
+  process.stdout.on("error", onStreamError);
+  process.stderr.on("error", onStreamError);
+}
+/* v8 ignore stop */
+
 /* v8 ignore next 11 -- the CLI dispatch runs only in the launched process (runAsCliEntrypoint); an in-process
    unit importer keeps it false and drives runCli/maintainCli directly instead (mcp-cli-plan-issues.test.ts). */
 if (runAsCliEntrypoint && cliArgs[0] !== "--stdio") {

@@ -2045,6 +2045,9 @@ export function derivePublicCommentMergeFacts(args: {
   unifiedFiles: Awaited<ReturnType<typeof listPullRequestFiles>>;
   repoFullName: string;
   prLabels: readonly string[];
+  // Optional so a self-hoster's PROTECTED_AUTOCLOSE_AUTHORS_EXTRA allowlist extension reaches neverClosed
+  // (#8645). Callers that already hold `env` MUST pass it; omitted only keeps the built-in bot set.
+  env?: Env;
 }): PublicCommentMergeFacts {
   const mergeStateLabel = args.liveMergeState ?? args.mergeableState ?? undefined; // fail-safe to the stored value
   const ciState: MergeReadiness["ciState"] =
@@ -2069,7 +2072,8 @@ export function derivePublicCommentMergeFacts(args: {
   const repoOwner = args.repoFullName.includes("/") ? args.repoFullName.slice(0, args.repoFullName.indexOf("/")) : "";
   const authorLogin = args.authorLogin ?? "";
   const neverClosed =
-    (authorLogin.length > 0 && authorLogin.toLowerCase() === repoOwner.toLowerCase()) || isProtectedAutomationAuthor(args.authorLogin);
+    (authorLogin.length > 0 && authorLogin.toLowerCase() === repoOwner.toLowerCase()) ||
+    isProtectedAutomationAuthor(args.authorLogin, args.env);
   return { ciState, mergeStateLabel, mergeReadiness, heldForReview, neverClosed };
 }
 
@@ -2721,7 +2725,7 @@ async function maybeCloseForContributorCapOnOpen(
   const authorIsOwner = pr.authorLogin.toLowerCase() === repoOwner.toLowerCase();
   // #4889: per-repo admin mode swaps the global-allowlist grant for the live per-repo permission.
   const authorIsAdmin = await isPerTenantAdmin(env, installationId, repoFullName, pr.authorLogin);
-  const authorIsAutomationBot = isProtectedAutomationAuthor(pr.authorLogin);
+  const authorIsAutomationBot = isProtectedAutomationAuthor(pr.authorLogin, env);
   if (authorIsOwner || authorIsAdmin || authorIsAutomationBot) return false;
   // #ignore-authors-parity: a manifest ignore_authors match (e.g. "release-please*") means the bot treats
   // this author as entirely invisible -- maybePublishPrPublicSurface's own reviewEligibility check (deep
@@ -2975,7 +2979,7 @@ async function runAgentMaintenancePlanAndExecute(
     authorLogin.length > 0 &&
     // #4889: per-repo admin mode swaps the global-allowlist grant for the live per-repo permission.
     (await isPerTenantAdmin(env, installationId, repoFullName, authorLogin));
-  const authorIsAutomationBot = isProtectedAutomationAuthor(pr.authorLogin);
+  const authorIsAutomationBot = isProtectedAutomationAuthor(pr.authorLogin, env);
 
   // Linked-issue HARD-RULE close (#linked-issue-hard-rules): when the repo enabled any rule, a body that links
   // MORE closing references than we can safely verify (overflow) is itself a violation; otherwise evaluate the
@@ -3550,7 +3554,7 @@ export async function reReviewStoredPullRequest(
   // this resync exists to recover), fail open into the full review/gate instead of trusting the immutable author.
   if (
     automationBotSkipEnabled &&
-    isTrustedAutomationBotAuthor(pr.authorLogin) &&
+    isTrustedAutomationBotAuthor(pr.authorLogin, env) &&
     live?.head?.sha === storedHeadShaBeforeResync
   )
     return false;
@@ -5476,7 +5480,7 @@ async function maybeCloseIssueOverContributorCap(
   const authorIsOwner = authorLogin.toLowerCase() === repoOwner.toLowerCase();
   // #4889: per-repo admin mode swaps the global-allowlist grant for the live per-repo permission.
   const authorIsAdmin = await isPerTenantAdmin(env, args.installationId, repoFullName, authorLogin);
-  const authorIsAutomationBot = isProtectedAutomationAuthor(authorLogin);
+  const authorIsAutomationBot = isProtectedAutomationAuthor(authorLogin, env);
   if (authorIsOwner || authorIsAdmin || authorIsAutomationBot) return;
 
   // Account-age throttle (#2561): mirror the PR-path cap tightening — a below-threshold author gets half
@@ -6231,7 +6235,7 @@ async function handlePullRequestWebhookEvent(
     // bot PR's branch still gets full review of their own commits.
     if (
       resolveSkipAutomationBotPullRequests(isSkipAutomationBotPullRequestsEnabledGlobally(env), settings.skipAutomationBotAuthors) &&
-      isTrustedAutomationBotWebhookActor(payload.sender, pr.authorLogin)
+      isTrustedAutomationBotWebhookActor(payload.sender, pr.authorLogin, env)
     ) {
       await recordAuditEvent(env, {
         eventType: "github_app.automation_bot_pr_skipped",
@@ -6365,7 +6369,7 @@ async function handlePullRequestWebhookEvent(
       pr.headSha &&
       pr.state === "open" &&
       isAgentConfigured(settings.autonomy) &&
-      !isProtectedAutomationAuthor(pr.authorLogin)
+      !isProtectedAutomationAuthor(pr.authorLogin, env)
     ) {
       // Deliberately UNCAUGHT here: closeDraftDodgeAttemptIfBlocked catches every operation that should
       // fail safely, but leaves the write-permission-readiness getInstallation read (#2134) uncaught on
@@ -6732,7 +6736,7 @@ async function handleIssueWebhookEvent(
       const authorIsOwner = authorLogin.toLowerCase() === repoOwner.toLowerCase();
       // #4889: per-repo admin mode swaps the global-allowlist grant for the live per-repo permission.
       const authorIsAdmin = await isPerTenantAdmin(env, installationId, payload.repository.full_name, authorLogin);
-      const authorIsAutomationBot = isProtectedAutomationAuthor(authorLogin);
+      const authorIsAutomationBot = isProtectedAutomationAuthor(authorLogin, env);
       const accountAgeThresholdDays = issueSettings.accountAgeThresholdDays;
       if (
         !authorIsOwner &&
@@ -9727,7 +9731,7 @@ async function maybePublishPrPublicSurface(
       (author.toLowerCase() === repoOwnerLoginFromFullName(repoFullName).toLowerCase() ||
         // #4889: per-repo admin mode swaps the global-allowlist grant for the live per-repo permission.
         (await isPerTenantAdmin(env, installationId, repoFullName, author)) ||
-        isProtectedAutomationAuthor(author));
+        isProtectedAutomationAuthor(author, env));
     const isFrozenForManualReview =
       webhook.forceAiReview !== true &&
       !authorIsExemptFromFreeze &&
@@ -11154,6 +11158,7 @@ async function maybePublishPrPublicSurface(
         unifiedFiles,
         repoFullName,
         prLabels: pr.labels,
+        env,
       });
       // The public comment must match the authoritative Gate check-run conclusion.
       const commentGate = commentGateEvaluation;

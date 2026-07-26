@@ -1673,6 +1673,31 @@ function stdioToolDescription(name: any) {
   return tool.description;
 }
 
+/**
+ * Attach error listeners so a broken pipe (EPIPE) or destroyed stream exits cleanly instead of
+ * crashing with an uncaught `Error: write EPIPE` (#8691). Injected streams/exit keep this unit-testable
+ * for codecov/patch; the real CLI wires process.stdout/stderr at entrypoint startup.
+ */
+export function installStdioErrorHandlers(
+  stdout: NodeJS.EventEmitter = process.stdout,
+  stderr: NodeJS.EventEmitter = process.stderr,
+  exitProcess: (code: number) => void = (code) => {
+    process.exit(code);
+  },
+): void {
+  const onWriteError = (_error: NodeJS.ErrnoException) => {
+    // Any stdout/stderr write failure (EPIPE when `| head` closes early, ERR_STREAM_DESTROYED, etc.)
+    // must end as a normal exit — never an uncaughtException stack dump.
+    exitProcess(1);
+  };
+  stdout.on("error", onWriteError);
+  stderr.on("error", onWriteError);
+}
+
+if (runAsCliEntrypoint) {
+  installStdioErrorHandlers();
+}
+
 /* v8 ignore next 5 -- draining stdout/stderr before exit only matters for the real launched process writing to
    an OS pipe (large output can exceed the pipe's buffer, and a POSIX pipe write is asynchronous); the
    in-process test harness below never spawns a subprocess, so this never runs there. */

@@ -187,6 +187,45 @@ describe("predicted-gate engine module coverage (#2283)", () => {
     expect(sanitizePublicComment("open pr count 12 exceeds threshold 10")).toContain("private context");
   });
 
+  // #8697: CHECK_RUN_FORBIDDEN_TERMS in gate-advisory.ts had silently drifted from its host twin, missing the
+  // `likely_duplicate` and `reviewability\s*\d` alternatives, so sanitizeForCheckRun leaked those terms. Prove
+  // the engine copy now redacts them, both directly and through evaluateGateCheck's rendered check-run text.
+  it("sanitizeForCheckRun redacts likely_duplicate and reviewability<digit> (#8697 twin drift)", () => {
+    expect(gateAdvisoryInternals.sanitizeForCheckRun("this is likely_duplicate of another PR")).toBe(
+      "this is [context] of another PR",
+    );
+    const scrubbed = gateAdvisoryInternals.sanitizeForCheckRun("reviewability 87 too low");
+    expect(scrubbed).not.toContain("reviewability");
+    expect(scrubbed).toContain("[context]");
+
+    const evaluation = evaluateGateCheck(
+      {
+        id: "a",
+        targetType: "pull_request",
+        targetKey: "k",
+        repoFullName: REPO.fullName,
+        conclusion: "action_required",
+        severity: "critical",
+        title: "t",
+        summary: "s",
+        generatedAt: "2026-01-01T00:00:00.000Z",
+        findings: [
+          {
+            code: "duplicate_pr_risk",
+            severity: "critical",
+            title: "This PR is likely_duplicate of #123",
+            detail: "overlaps an existing PR",
+            action: "reviewability 87 is below the floor",
+          },
+        ],
+      },
+      { duplicatePrGateMode: "block" },
+    );
+    expect(evaluation.conclusion).toBe("failure");
+    expect(`${evaluation.title} ${evaluation.summary}`).not.toMatch(/likely_duplicate|reviewability/);
+    expect(evaluation.summary).toContain("[context]");
+  });
+
   // Regression: this sanitizer's phrase list had no entry for bare "cohort" or standalone
   // miner-originated/human-originated/raw-trust (only compound phrases like "raw trust score"), unlike the
   // canonical PUBLIC_UNSAFE_TERMS boundary (src/signals/redaction.ts) which treats all of these as unsafe.

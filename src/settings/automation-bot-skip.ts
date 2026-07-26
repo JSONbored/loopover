@@ -53,11 +53,12 @@ export function resolveSkipAutomationBotPullRequests(globalDefault: boolean, mod
 export function isTrustedAutomationBotWebhookActor(
   sender: { login?: string | null | undefined; type?: string | null | undefined } | null | undefined,
   prAuthorLogin: string | null | undefined,
+  env?: Env,
 ): boolean {
   return (
     sender?.type === "Bot" &&
-    isProtectedAutomationAuthor(sender.login) &&
-    isProtectedAutomationAuthor(prAuthorLogin)
+    isProtectedAutomationAuthor(sender.login, env) &&
+    isProtectedAutomationAuthor(prAuthorLogin, env)
   );
 }
 
@@ -67,6 +68,6 @@ export function isTrustedAutomationBotWebhookActor(
  * live PR head still matches the stored head) before using this result to bypass review. Original PR authorship
  * alone does not prove that later commits on the branch were still produced by the trusted bot.
  */
-export function isTrustedAutomationBotAuthor(prAuthorLogin: string | null | undefined): boolean {
-  return isProtectedAutomationAuthor(prAuthorLogin);
+export function isTrustedAutomationBotAuthor(prAuthorLogin: string | null | undefined, env?: Env): boolean {
+  return isProtectedAutomationAuthor(prAuthorLogin, env);
 }

@@ -3108,6 +3108,51 @@ describe("createPgQueue (durable #977)", () => {
     }
   });
 
+  it("REGRESSION (#9007): stop() lets only the in-flight job finish -- it does not drain the whole preloaded backlog", async () => {
+    // Reproduces the shutdown bug directly: pump()'s `while (await processOne())` loop used to be blind to
+    // shutdown state, so a single already-looping pump kept claiming every subsequent due job regardless of a
+    // concurrent stop() -- shutdown was bounded by "drain everything still due", not by "finish what's
+    // already in flight". With concurrency:1 and a huge pollIntervalMs, start() fires exactly one kickAll(),
+    // which starts exactly one pump() that (pre-fix) would have claimed all 5 preloaded jobs back-to-back.
+    const m = makePool();
+    const consumed: string[] = [];
+    const q = createPgQueue(
+      m.pool,
+      async (j) => {
+        consumed.push(typeOf(j));
+        await new Promise((r) => setTimeout(r, 25));
+      },
+      { concurrency: 1, pollIntervalMs: 100_000 },
+    );
+    await q.init();
+    m.enqueueJob("1", { type: "a" });
+    m.enqueueJob("2", { type: "b" });
+    m.enqueueJob("3", { type: "c" });
+    m.enqueueJob("4", { type: "d" });
+    m.enqueueJob("5", { type: "e" });
+    q.start(); // the one tick's kickAll() starts the lone pump, which claims "a" and enters its 25ms consume
+    await new Promise((r) => setTimeout(r, 5));
+    await q.stop(); // must return once "a" finishes -- NOT after b/c/d/e also drain
+    expect(consumed).toEqual(["a"]);
+  });
+
+  it("REGRESSION (#9007): a pump kicked via send()/drain() BEFORE start() is ever called is unaffected by shuttingDown", async () => {
+    // Guards against a real mistake made while fixing the bug above: gating the pump loop on `running` itself
+    // (instead of a separate `shuttingDown` flag) would have made every pre-start() drain()/send() no-op,
+    // since `running` starts false and isn't set until start() is first called -- breaking the extremely
+    // common test/production pattern of `send()` + `drain()` with no start()/stop() lifecycle involved at all.
+    const m = makePool();
+    m.enqueueJob("1", { type: "never-started" });
+    let calls = 0;
+    const q = createPgQueue(m.pool, async () => {
+      calls += 1;
+    });
+    await q.init();
+    await q.binding.send(msg("never-started"));
+    await q.drain();
+    expect(calls).toBe(1);
+  });
+
   it("start() is idempotent", async () => {
     const { pool } = makePool();
     const q = createPgQueue(pool, async () => undefined, { pollIntervalMs: 100_000 });

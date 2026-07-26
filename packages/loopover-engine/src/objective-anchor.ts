@@ -228,7 +228,10 @@ function kindsFromPath(path: string): ObjectiveAnchorChangeKind[] {
   if (DOC_EXTENSIONS.has(extensionOf(path)) || segments.includes("docs") || filename.toLowerCase() === "readme.md") {
     kinds.push("docs");
   }
-  if (segments.some((segment) => CI_SEGMENTS.has(segment)) || filename.endsWith(".yml") || filename.endsWith(".yaml")) {
+  // "ci" is classified ONLY by a real CI path segment (CI_SEGMENTS), matching the path-segment discipline every
+  // other kind here uses. The old bare `.yml`/`.yaml` extension fallback tagged any YAML file anywhere (root
+  // `.loopover.yml`, `docs/mkdocs.yml`) as "ci", diluting the signal scoreObjectiveAnchor relies on (#8873).
+  if (segments.some((segment) => CI_SEGMENTS.has(segment))) {
     kinds.push("ci");
   }
   if (CONFIG_FILENAMES.has(filename) || filename.endsWith(".jsonc") || filename.endsWith(".toml")) {

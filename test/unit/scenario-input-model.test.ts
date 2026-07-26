@@ -4,7 +4,6 @@ import {
   SCENARIO_MAX_LINKED_ISSUE_NUMBERS,
   SCENARIO_MAX_REPO_FULL_NAME_CHARS,
   SCENARIO_MAX_SIGNAL_DETAIL_CHARS,
-  assertScenarioLocalBranchInputSafe,
   buildScenarioInput,
   createScenarioSignalEntry,
   normalizeScenarioInput,
@@ -13,6 +12,10 @@ import {
   serializeScenarioInputPrivate,
   serializeScenarioInputPublic,
 } from "../../src/scenarios/input-model";
+// Import the guard from its engine-src home (#8884) so v8 attributes coverage to
+// packages/loopover-engine/src/scenario-input-safety.ts rather than the built dist copy reached via the
+// @loopover/engine barrel. src/scenarios/input-model.ts re-exports the same symbol for the public surface.
+import { assertScenarioLocalBranchInputSafe } from "../../packages/loopover-engine/src/scenario-input-safety";
 
 const FORBIDDEN_PUBLIC_LANGUAGE =
   /wallet|hotkey|coldkey|mnemonic|seed phrase|payout|estimated[-\s]?rewards?|rewards?|reward[-\s]?estimate|rankings?|farming|raw trust|trust[-\s]?score|scoreability|private[-\s]?reviewability|public[-\s]?score[-\s]?(?:estimate|prediction)/i;

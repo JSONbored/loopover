@@ -1,5 +1,6 @@
 import { createApp } from "./api/routes";
 import { RateLimiter } from "./auth/rate-limit";
+import { SubmissionLock } from "./queue/submission-lock";
 import { delayUntil, shouldWaitForGitHubRateLimit, LOW_REST_RATE_LIMIT_REMAINING, MAINTENANCE_RESERVED_HEADROOM } from "./github/rate-limit";
 import { processDlqBatch } from "./queue/dlq";
 import { processJob } from "./queue/processors";
@@ -43,7 +44,7 @@ const REGATE_SWEEP_TRIGGER_TYPES = ["agent-regate-sweep"] as const;
 // queueProcessingTimeoutMs(), which defaults to this sweep's own 30-min cadence) go unnoticed by the next tick.
 const BACKLOG_CONVERGENCE_SWEEP_TRIGGER_TYPES = ["backlog-convergence-sweep"] as const;
 
-export { RateLimiter };
+export { RateLimiter, SubmissionLock };
 
 export default {
   fetch: app.fetch,

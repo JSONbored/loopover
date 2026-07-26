@@ -23,8 +23,10 @@ describe("loopover-miner local storage README (#4272, #4876)", () => {
       ["deny-hook-synthesis.sqlite3", "deny_rule_proposals", "deny-hook-synthesis.js", "LOOPOVER_MINER_DENY_HOOK_SYNTHESIS_DB"],
       ["worktree-allocator.sqlite3", "worktree_slots", "worktree-allocator.js", "LOOPOVER_MINER_WORKTREE_ALLOCATOR_DB"],
       ["orb-export.sqlite3", "orb_export_meta", "orb-export.js", "LOOPOVER_MINER_ORB_EXPORT_DB"],
+      ["contribution-profile-cache.sqlite3", "miner_contribution_profile", "contribution-profile-cache.js", "LOOPOVER_MINER_CONTRIBUTION_PROFILE_CACHE_DB"],
       ["policy-doc-cache.sqlite3", "policy_doc_cache", "policy-doc-cache.js", "LOOPOVER_MINER_POLICY_DOC_CACHE_DB"],
       ["policy-verdict-cache.sqlite3", "policy_verdict_cache", "policy-verdict-cache.js", "LOOPOVER_MINER_POLICY_VERDICT_CACHE_DB"],
+      ["ranked-candidates.sqlite3", "miner_ranked_candidates", "ranked-candidates.js", "LOOPOVER_MINER_RANKED_CANDIDATES_DB"],
     ]) {
       for (const token of row) expect(readme).toContain(token);
     }

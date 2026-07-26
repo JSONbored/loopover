@@ -789,6 +789,43 @@ export function demoteCiClaimBlockers(review: ModelReview): { review: ModelRevie
   };
 }
 
+/** The prompt's PR-description window (buildUserPrompt slices the body here). Exported so the truncation
+ *  FACT and the evidence-absence demotion below stay pinned to the same number the prompt actually uses. */
+export const PR_BODY_PROMPT_LIMIT = 2000;
+
+/** #8961: whether a PR body carries image/video attachments is a deterministic FACT — count it from the
+ *  FULL body (markdown images, GitHub user-attachments links, <img> tags, bare media URLs), never let a
+ *  model infer it from a truncated window. PURE. */
+export function countBodyAttachments(body: string): number {
+  const matches = body.match(/!\[[^\]]*\]\([^)]+\)|github\.com\/user-attachments\/|<img\s|https?:\/\/\S+\.(?:png|jpe?g|gif|webp|mp4|mov)\b/gi);
+  return matches ? matches.length : 0;
+}
+
+/** An evidence-ABSENCE claim about visual proof (screenshots / recordings / before-after), in either
+ *  direction ("no screenshots provided" / "screenshots are missing"). Deliberately scoped to visual
+ *  evidence: scope or issue-text absence claims are judgments the model may still make. */
+export const EVIDENCE_ABSENCE_PATTERN =
+  /\b(?:no|missing|absent|lacks?|lacking|without|not\s+(?:provided|included|attached|supplied|confirmed)|none\s+(?:provided|included|attached|supplied)|cannot\s+confirm|fails?\s+to\s+(?:provide|include|attach))\b[^.]{0,80}\b(?:screenshots?|screen\s+recordings?|before\/after|image\s+evidence|visual\s+evidence)\b|\b(?:screenshots?|screen\s+recordings?|visual\s+evidence)\b[^.]{0,80}\b(?:missing|absent|not\s+provided|none|lacking|omitted)\b/i;
+
+/** #8961: when the description was TRUNCATED for the prompt, absence of visual evidence inside the window
+ *  is not evidence of absence — the 2026-07-26 decision audit confirmed a production close on a PR whose 6
+ *  screenshots sat beyond the cut. Deterministically demote such blockers to nits, parse-time, mirroring
+ *  demoteCiClaimBlockers (the prompt carries the attachment fact; this guarantees it). Untruncated bodies
+ *  are untouched — there the model saw everything and the claim is a legitimate judgment. PURE. */
+export function demoteEvidenceAbsenceBlockers(review: ModelReview, bodyTruncated: boolean): { review: ModelReview; demoted: string[] } {
+  if (!bodyTruncated) return { review, demoted: [] };
+  const demoted = review.blockers.filter((blocker) => EVIDENCE_ABSENCE_PATTERN.test(blocker));
+  if (demoted.length === 0) return { review, demoted };
+  return {
+    review: {
+      ...review,
+      blockers: review.blockers.filter((blocker) => !EVIDENCE_ABSENCE_PATTERN.test(blocker)),
+      nits: [...review.nits, ...demoted.map((claim) => `${claim} (demoted: the PR description was truncated for review — absence of evidence inside the truncated window is not evidence of absence)`)],
+    },
+    demoted,
+  };
+}
+
 /** Parse a model's JSON review into a normalized {@link ModelReview}, or null when unparseable. */
 export function parseModelReview(text: string): ModelReview | null {
   const jsonText = extractLastJsonObject(text);
@@ -983,8 +1020,13 @@ function buildUserPrompt(input: LoopOverAiReviewInput): string {
   const lines = [
     `Repository: ${input.repoFullName}`,
     `Pull request #${input.prNumber}: ${input.title}`,
+    // #8961: when the body exceeds the window, say so and carry the attachment COUNT as a structured fact
+    // computed from the FULL body — a reviewer must never conclude required visual evidence is absent just
+    // because the truncation point fell before a Screenshots section (confirmed production failure class).
     input.body
-      ? `Description:\n${input.body.slice(0, 2000)}`
+      ? input.body.length > PR_BODY_PROMPT_LIMIT
+        ? `Description (TRUNCATED at ${PR_BODY_PROMPT_LIMIT} chars — the FULL body contains ${countBodyAttachments(input.body)} image/video attachment(s) beyond what you can see; NEVER claim screenshots or visual evidence are missing):\n${input.body.slice(0, PR_BODY_PROMPT_LIMIT)}`
+        : `Description:\n${input.body}`
       : "Description: (none)",
     "",
     "Unified diff (truncated if large):",
@@ -1250,6 +1292,8 @@ async function runWorkersOpinion(
   // wiring a real caller (source images, invoke with them) is a deliberately deferred follow-up; see
   // review/visual/visual-findings.ts.
   images?: readonly AiContentBlock[] | undefined,
+  // #8961: true when the PR description exceeded the prompt window — arms the evidence-absence demotion.
+  bodyTruncated = false,
 ): Promise<ReviewerOpinionOutcome> {
   const ai = env.AI as unknown as AiRunner | undefined;
   if (!ai || typeof ai.run !== "function") return { review: null };
@@ -1355,9 +1399,14 @@ async function runWorkersOpinion(
         const parsedRaw = parseModelReview(text);
         // #8833: enforce the CI-adjudication ban at parse time — the prompt REQUESTS it, this guarantees it.
         const demotion = parsedRaw ? demoteCiClaimBlockers(parsedRaw) : null;
-        const parsed = demotion?.review ?? null;
+        // #8961: same guarantee for evidence-absence claims against a truncated description.
+        const evidenceDemotion = demotion ? demoteEvidenceAbsenceBlockers(demotion.review, bodyTruncated) : null;
+        const parsed = evidenceDemotion?.review ?? null;
         if (demotion && demotion.demoted.length > 0) {
           console.warn(JSON.stringify({ level: "warn", event: "ai_review_ci_claim_demoted", model, count: demotion.demoted.length }));
+        }
+        if (evidenceDemotion && evidenceDemotion.demoted.length > 0) {
+          console.warn(JSON.stringify({ level: "warn", event: "ai_review_evidence_absence_demoted", model, count: evidenceDemotion.demoted.length }));
         }
         if (parsed && parsed.assessment.trim() !== "") {
           diagnostics.push({ model, attempt, status: "parsed", responseChars: text.length, hasJsonObject: Boolean(extractLastJsonObject(text)), ...usageFields });
@@ -1675,6 +1724,7 @@ async function runProviderReview(
   user: string,
   maxTokens: number,
   images?: readonly AiContentBlock[] | undefined,
+  bodyTruncated = false, // #8961: arms the evidence-absence demotion, same contract as runWorkersOpinion
 ): Promise<ProviderReviewOutcome> {
   const { text, usage, failure } = await callAiProvider(
     providerKey,
@@ -1693,7 +1743,12 @@ async function runProviderReview(
   if (providerDemotion && providerDemotion.demoted.length > 0) {
     console.warn(JSON.stringify({ level: "warn", event: "ai_review_ci_claim_demoted", provider: providerKey.provider, count: providerDemotion.demoted.length }));
   }
-  const review = providerDemotion?.review ?? null;
+  // #8961: same evidence-absence enforcement as the Workers path.
+  const providerEvidenceDemotion = providerDemotion ? demoteEvidenceAbsenceBlockers(providerDemotion.review, bodyTruncated) : null;
+  if (providerEvidenceDemotion && providerEvidenceDemotion.demoted.length > 0) {
+    console.warn(JSON.stringify({ level: "warn", event: "ai_review_evidence_absence_demoted", provider: providerKey.provider, count: providerEvidenceDemotion.demoted.length }));
+  }
+  const review = providerEvidenceDemotion?.review ?? null;
   return {
     review,
     diagnostic: {
@@ -2374,6 +2429,9 @@ export async function runLoopOverAiReview(
     ? { ...input, ...defangReviewInput(input) }
     : input;
   const user = buildUserPrompt(promptInput);
+  // #8961: pinned to the SAME body buildUserPrompt just sliced, so the demotion can never disagree with
+  // the prompt about whether the description was cut.
+  const bodyTruncated = (promptInput.body?.length ?? 0) > PR_BODY_PROMPT_LIMIT;
   // Grounding-discipline SYSTEM suffix (convergence, flag-gated). When the caller supplied grounding, the
   // reviewers are told to verify claims against the attached CI/files; otherwise this is REVIEW_SYSTEM_PROMPT
   // unchanged (byte-identical). Computed from `promptInput` so it travels with the (possibly defanged) input.
@@ -2519,6 +2577,8 @@ export async function runLoopOverAiReview(
       system,
       user,
       maxTokens,
+      undefined,
+      bodyTruncated,
     );
     advisoryReview = outcome.review;
     byokFailure = outcome.failure;
@@ -2535,6 +2595,8 @@ export async function runLoopOverAiReview(
       reviewDiagnostics,
       repoInstructionsSystemAppend,
       aiRunCorrelation,
+      undefined,
+      bodyTruncated,
     );
     advisoryReview = outcome.review;
     if (outcome.fallbackNote) fallbackNotes.push(outcome.fallbackNote);
@@ -2563,6 +2625,8 @@ export async function runLoopOverAiReview(
               reviewDiagnostics,
               repoInstructionsSystemAppend,
               aiRunCorrelation,
+              undefined,
+              bodyTruncated,
             )
           : Promise.resolve<ReviewerOpinionOutcome>({ review: advisoryReview }),
         runWorkersOpinion(
@@ -2575,6 +2639,8 @@ export async function runLoopOverAiReview(
           reviewDiagnostics,
           repoInstructionsSystemAppend,
           aiRunCorrelation,
+          undefined,
+          bodyTruncated,
         ),
       ]);
       if (a.fallbackNote) fallbackNotes.push(a.fallbackNote);
@@ -2639,6 +2705,8 @@ export async function runLoopOverAiReview(
             reviewDiagnostics,
             repoInstructionsSystemAppend,
             aiRunCorrelation,
+            undefined,
+            bodyTruncated,
           )
         : ({ review: advisoryReview } as ReviewerOpinionOutcome);
       if (a.fallbackNote) fallbackNotes.push(a.fallbackNote);

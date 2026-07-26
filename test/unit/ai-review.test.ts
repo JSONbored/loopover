@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  CONFIDENCE_WHEN_UNSTATED,
   __aiReviewInternals,
   BEST_REVIEW_MODELS,
   buildTestEvidencePromptSection,
@@ -250,6 +251,47 @@ describe("runLoopOverAiReview gating", () => {
     expect(result.status === "ok" && result.estimatedNeurons).toBe(0); // advisory-only BYOK consumes no free budget
     expect(fetchMock).toHaveBeenCalled();
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it("#8833: the BYOK provider path demotes a CI-state blocker too — no parse route escapes the enforcement", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            content: [
+              {
+                type: "text",
+                text: '{"assessment":"provider view","blockers":["The tests are failing on CI","Race in src/lock.ts"],"nits":[],"suggestions":[]}',
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const env = createTestEnv({
+      AI: { run: vi.fn() } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "1",
+      AI_BYOK_DAILY_REPO_LIMIT: "5",
+    });
+    const result = await runLoopOverAiReview(env, { ...baseInput, providerKey: { provider: "anthropic", key: "sk-ant-secret" } });
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      // Single-provider BYOK is advisory-only (no consensus defect) — the observable contract is the
+      // rendered advisory: the CI claim appears ONLY in the Nits section, annotated, never under Blockers.
+      const notes = result.advisoryNotes ?? "";
+      const blockersSection = notes.split("**Nits")[0] ?? notes;
+      expect(blockersSection).toContain("Race in src/lock.ts");
+      expect(blockersSection).not.toContain("tests are failing");
+      expect(notes).toContain("decided deterministically");
+    }
+    // The demotion arm executed on the provider path (its log fired) — the strong behavioral assertions live
+    // in the pure demoteCiClaimBlockers tests and the workers-path test above.
+    expect(warn.mock.calls.some(([line]) => String(line).includes("ai_review_ci_claim_demoted"))).toBe(true);
+    warn.mockRestore();
   });
 
   it("enforces a separate per-repo daily quota before BYOK provider calls", async () => {
@@ -2209,17 +2251,20 @@ describe("pure helpers", () => {
     expect(parsed?.blockers).toEqual(["X in src/a.ts"]);
   });
 
-  it("parseReviewConfidence uses a present value, falls back to 1.0 when absent/garbage, and clamps to [0,1] (#8)", () => {
+  it("parseReviewConfidence uses a present value, falls back to CONFIDENCE_WHEN_UNSTATED when absent/garbage, and clamps to [0,1] (#8, #8833)", () => {
     expect(parseReviewConfidence(0.75)).toBe(0.75); // present, in range → used verbatim
     expect(parseReviewConfidence(0)).toBe(0); // explicit zero is honored (not treated as falsy/absent)
-    expect(parseReviewConfidence(undefined)).toBe(1); // absent → fallback 1.0
-    expect(parseReviewConfidence("0.5")).toBe(1); // non-number → fallback 1.0
-    expect(parseReviewConfidence(Number.NaN)).toBe(1); // non-finite → fallback 1.0
+    // #8833: silence is not certainty — the old 1.0 fallback made a review that STATED no confidence skip
+    // every low-confidence safeguard. Absent/garbage now reads as sub-floor, routing to the low-confidence
+    // disposition (default hold_for_review — still blocks, a human decides the close).
+    expect(parseReviewConfidence(undefined)).toBe(CONFIDENCE_WHEN_UNSTATED);
+    expect(parseReviewConfidence("0.5")).toBe(CONFIDENCE_WHEN_UNSTATED);
+    expect(parseReviewConfidence(Number.NaN)).toBe(CONFIDENCE_WHEN_UNSTATED);
     expect(parseReviewConfidence(1.7)).toBe(1); // above range → clamped to 1
     expect(parseReviewConfidence(-0.3)).toBe(0); // below range → clamped to 0
   });
 
-  it("parseModelReview threads a calibrated confidence and defaults it to 1.0 when absent/unparseable (#8)", () => {
+  it("parseModelReview threads a calibrated confidence and defaults it to CONFIDENCE_WHEN_UNSTATED when absent/unparseable (#8, #8833)", () => {
     const withConfidence = parseModelReview(
       '{"assessment":"leak in b.ts","blockers":["Unclosed handle in src/b.ts"],"nits":[],"suggestions":[],"confidence":0.4}',
     );
@@ -2227,11 +2272,11 @@ describe("pure helpers", () => {
     const noConfidence = parseModelReview(
       reviewJson({ present: true, title: "Null deref in src/a.ts" }),
     );
-    expect(noConfidence?.confidence).toBe(1); // absent → fallback 1.0
+    expect(noConfidence?.confidence).toBe(CONFIDENCE_WHEN_UNSTATED); // absent → sub-floor, never certainty
     const garbageConfidence = parseModelReview(
       '{"assessment":"ok","blockers":["X in src/a.ts"],"nits":[],"suggestions":[],"confidence":"high"}',
     );
-    expect(garbageConfidence?.confidence).toBe(1); // unparseable → fallback 1.0
+    expect(garbageConfidence?.confidence).toBe(CONFIDENCE_WHEN_UNSTATED); // unparseable → sub-floor
   });
 
   describe("combineReviews (#dual-ai-combiner)", () => {
@@ -3189,6 +3234,19 @@ describe("pure helpers", () => {
     );
     expect(parsed.review?.assessment).toContain("reasonable");
     expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("#8833: runWorkersOpinion demotes a CI-state blocker in the parsed review and logs the attempt", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const run = vi.fn(async () => ({
+      response: '{"assessment":"looks off","blockers":["CI is failing (validate, validate-tests)","Null deref in src/a.ts"],"nits":[],"suggestions":[]}',
+    }));
+    const env = createTestEnv({ AI: { run } as unknown as Ai });
+    const parsed = await runWorkersOpinion(env, "@cf/x/model", "@cf/x/model", "sys", "user", 256);
+    expect(parsed.review?.blockers).toEqual(["Null deref in src/a.ts"]);
+    expect(parsed.review?.nits.some((nit) => nit.includes("decided deterministically"))).toBe(true);
+    expect(warn.mock.calls.some(([line]) => String(line).includes("ai_review_ci_claim_demoted"))).toBe(true);
+    warn.mockRestore();
   });
 
   it("REGRESSION (#4111): runWorkersOpinion attaches supplied images to the user message; omits them (plain string) when absent", async () => {
@@ -4753,5 +4811,46 @@ describe("REVIEW_SYSTEM_PROMPT performance-regression instruction (#2559)", () =
     expect(system).toContain("PERFORMANCE SEVERITY");
     // Severity discipline: a micro-optimization/style preference must still be steered toward a nit, not a blocker.
     expect(system).toContain("micro-optimization preference");
+  });
+});
+
+describe("#8833: enforced boundaries between model judgment and deterministic fact", async () => {
+  const { demoteCiClaimBlockers, CI_CLAIM_PATTERN, parseReviewConfidence, CONFIDENCE_WHEN_UNSTATED } = await import("../../src/services/ai-review");
+
+  const review = (blockers: string[], nits: string[] = []) =>
+    ({ assessment: "a", blockers, nits, suggestions: [], confidence: 0.97, inlineFindings: [] }) as never;
+
+  it("demotes CI-STATE claims to nits — the model reports on runs it was told not to adjudicate", () => {
+    const { review: out, demoted } = demoteCiClaimBlockers(review(["CI is failing (validate, validate-tests)", "The function drops the error branch"]));
+    expect(demoted).toEqual(["CI is failing (validate, validate-tests)"]);
+    expect(out.blockers).toEqual(["The function drops the error branch"]);
+    expect(out.nits.some((nit: string) => nit.includes("decided deterministically"))).toBe(true);
+    for (const claim of ["Tests are failing on main", "the build failed twice", "typecheck is still red", "workflow run is pending"]) {
+      expect(CI_CLAIM_PATTERN.test(claim)).toBe(true);
+    }
+  });
+
+  it("NEVER touches code-content judgment — predictions about the diff are the model's job", () => {
+    const kept = [
+      "This change breaks the build contract for downstream consumers", // prediction about the DIFF, no run-state verb shape
+      "Missing test coverage for the error branch",
+      "The added check silently swallows the failure",
+    ];
+    const { review: out, demoted } = demoteCiClaimBlockers(review(kept));
+    expect(demoted).toEqual([]);
+    expect(out.blockers).toEqual(kept);
+    // Zero-demotion returns the SAME object (no pointless reallocation on the hot path).
+    const untouched = review(kept);
+    expect(demoteCiClaimBlockers(untouched).review).toBe(untouched);
+  });
+
+  it("silence is not certainty: an unstated/garbage confidence parses to CONFIDENCE_WHEN_UNSTATED, a stated one is honored", () => {
+    expect(parseReviewConfidence(undefined)).toBe(CONFIDENCE_WHEN_UNSTATED);
+    expect(parseReviewConfidence("very sure")).toBe(CONFIDENCE_WHEN_UNSTATED);
+    expect(parseReviewConfidence(Number.NaN)).toBe(CONFIDENCE_WHEN_UNSTATED);
+    expect(CONFIDENCE_WHEN_UNSTATED).toBeLessThan(0.93); // must sit under the default close floor
+    expect(parseReviewConfidence(0.97)).toBe(0.97);
+    expect(parseReviewConfidence(1.7)).toBe(1);
+    expect(parseReviewConfidence(-2)).toBe(0);
   });
 });

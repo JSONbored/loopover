@@ -745,13 +745,46 @@ export function extractLastJsonObject(text: string): string | null {
  *  parser and the combiners so the fallback is identical everywhere. */
 export const DEFAULT_REVIEW_CONFIDENCE = 1;
 
-/** Coerce a model's `confidence` field to a calibrated value in [0,1] (#8). A finite number is clamped into range;
- *  anything else (absent, NaN/±Infinity — which JSON can't even encode — string, etc.) falls back to 1.0 so the gate
- *  degrades to today's always-block behavior rather than silently un-blocking a real defect. PURE. */
+/** #8833: the fallback when a model states NO usable confidence at all. The old fallback was 1.0 — "the
+ *  model said nothing" read as MAXIMUM certainty, so a review missing the field skipped every low-confidence
+ *  safeguard (#4603's disposition, the close-confidence floor) and drove a straight close. 0.5 sits below
+ *  every sane close floor (default 0.93), so an unstated confidence routes to the low-confidence disposition
+ *  (default hold_for_review — still blocks, but a human decides the close) instead of asserting certainty
+ *  the model never claimed. A STATED confidence is untouched. */
+export const CONFIDENCE_WHEN_UNSTATED = 0.5;
+
+/** Coerce a model's `confidence` field to a calibrated value in [0,1] (#8). A finite number is clamped into
+ *  range; anything else (absent, NaN/±Infinity — which JSON can't even encode — string, etc.) falls back to
+ *  {@link CONFIDENCE_WHEN_UNSTATED} — silence is not certainty (#8833). PURE. */
 export function parseReviewConfidence(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value))
-    return DEFAULT_REVIEW_CONFIDENCE;
+    return CONFIDENCE_WHEN_UNSTATED;
   return Math.min(1, Math.max(0, value));
+}
+
+/** #8833: vocabulary of claims the model is FORBIDDEN to adjudicate because a deterministic owner already
+ *  decides them — CI/build/test-run state comes from buildCheckAggregate, never from a model's reading of
+ *  the CI table the prompt shows it for context. The prompt has always SAID this (twice); this makes it
+ *  enforced instead of requested. Deliberately narrow: matches run/state phrasing ("CI is failing", "build
+ *  failed", "tests are failing/red") — never code-content phrasing ("this breaks the build" as a prediction
+ *  about the DIFF is judgment, "the build is failing" as a report about CI is not. The pattern requires the
+ *  run-state verb shape). */
+export const CI_CLAIM_PATTERN = /\b(ci|pipeline|workflow|checks?|builds?|type-?checks?|tests?(\s+(run|suite))?)\b[^.]{0,40}\b(is|are|was|were|still)?\s*(failing|failed|red|broken|not\s+passing|pending|in\s+progress)\b/i;
+
+/** #8833: deterministically demote CI-state blockers to nits. Returns the demoted claims so callers can
+ *  audit how often the model attempts the forbidden adjudication (a rising rate is a prompt-regression
+ *  signal). PURE; never touches non-CI claims; never touches nits/suggestions. */
+export function demoteCiClaimBlockers(review: ModelReview): { review: ModelReview; demoted: string[] } {
+  const demoted = review.blockers.filter((blocker) => CI_CLAIM_PATTERN.test(blocker));
+  if (demoted.length === 0) return { review, demoted };
+  return {
+    review: {
+      ...review,
+      blockers: review.blockers.filter((blocker) => !CI_CLAIM_PATTERN.test(blocker)),
+      nits: [...review.nits, ...demoted.map((claim) => `${claim} (demoted: CI state is decided deterministically, not by review)`)],
+    },
+    demoted,
+  };
 }
 
 /** Parse a model's JSON review into a normalized {@link ModelReview}, or null when unparseable. */
@@ -1317,7 +1350,13 @@ async function runWorkersOpinion(
           break;
         }
         lastRawText = text;
-        const parsed = parseModelReview(text);
+        const parsedRaw = parseModelReview(text);
+        // #8833: enforce the CI-adjudication ban at parse time — the prompt REQUESTS it, this guarantees it.
+        const demotion = parsedRaw ? demoteCiClaimBlockers(parsedRaw) : null;
+        const parsed = demotion?.review ?? null;
+        if (demotion && demotion.demoted.length > 0) {
+          console.warn(JSON.stringify({ level: "warn", event: "ai_review_ci_claim_demoted", model, count: demotion.demoted.length }));
+        }
         if (parsed && parsed.assessment.trim() !== "") {
           diagnostics.push({ model, attempt, status: "parsed", responseChars: text.length, hasJsonObject: Boolean(extractLastJsonObject(text)), ...usageFields });
           return { review: parsed };
@@ -1646,7 +1685,13 @@ async function runProviderReview(
   if (failure) return { review: null, failure, diagnostic: { model, attempt: 0, status: "provider_error", error: failure } };
   /* v8 ignore next -- callAiProvider returns a string for every non-failure response; null is a type-level guard. */
   const textValue = text ?? "";
-  const review = textValue ? parseModelReview(textValue) : null;
+  const parsedProviderReview = textValue ? parseModelReview(textValue) : null;
+  // #8833: same CI-adjudication enforcement as the Workers path — no parse route escapes it.
+  const providerDemotion = parsedProviderReview ? demoteCiClaimBlockers(parsedProviderReview) : null;
+  if (providerDemotion && providerDemotion.demoted.length > 0) {
+    console.warn(JSON.stringify({ level: "warn", event: "ai_review_ci_claim_demoted", provider: providerKey.provider, count: providerDemotion.demoted.length }));
+  }
+  const review = providerDemotion?.review ?? null;
   return {
     review,
     diagnostic: {

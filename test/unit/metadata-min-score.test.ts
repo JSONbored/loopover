@@ -23,9 +23,9 @@ describe("rankMetadataOpportunitiesAtOrAboveScore", () => {
   ];
 
   it("keeps only metadata candidates at or above the score threshold in rank order", () => {
-    const filtered = rankMetadataOpportunitiesAtOrAboveScore(candidates, { nowMs: NOW }, 0.1);
+    const filtered = rankMetadataOpportunitiesAtOrAboveScore(candidates, { nowMs: NOW }, 0.05);
     expect(filtered.map((entry) => entry.issueNumber)).toEqual([3, 2]);
-    expect(filtered.every((entry) => entry.rankScore >= 0.1)).toBe(true);
+    expect(filtered.every((entry) => entry.rankScore >= 0.05)).toBe(true);
   });
 
   it("returns every targetable candidate when the threshold is zero", () => {
@@ -72,7 +72,7 @@ describe("rankMetadataOpportunitiesAtOrAboveScore", () => {
     const barrel = await import("../../packages/loopover-engine/src/index");
     expect(typeof barrel.rankMetadataOpportunitiesAtOrAboveScore).toBe("function");
     expect(
-      barrel.rankMetadataOpportunitiesAtOrAboveScore(candidates, { nowMs: NOW }, 0.1).map(
+      barrel.rankMetadataOpportunitiesAtOrAboveScore(candidates, { nowMs: NOW }, 0.05).map(
         (entry: { issueNumber: number }) => entry.issueNumber,
       ),
     ).toEqual([3, 2]);

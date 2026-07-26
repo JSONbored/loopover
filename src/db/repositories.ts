@@ -5100,6 +5100,58 @@ export async function getCachedAiReview(
   };
 }
 
+/** Bounds the fingerprint scan below to a handful of rows — a PR rarely accumulates more than a few AI
+ *  review cache rows across its lifetime, and this is a fallback path, not the hot lookup. */
+const AI_REVIEW_FINGERPRINT_SCAN_LIMIT = 20;
+
+/**
+ * #9016 (security): a content-fingerprint-sticky FALLBACK for {@link getCachedAiReview}, used only when the
+ * exact head-SHA lookup misses. The head-SHA-keyed cache treats every new commit as an independent roll of
+ * the (non-deterministic) AI reviewer — so a contributor can force fresh re-rolls with a no-op recommit
+ * (an empty commit, a metadata-only push) until a lucky CLEAN roll auto-merges a PR another roll flagged as
+ * blocked. `expectedInputFingerprint` already hashes every prompt-shaping input including the actual per-
+ * file PATCH content (see ai-review-cache-input.ts's `reviewFiles`), so an IDENTICAL fingerprint under a
+ * DIFFERENT head SHA means the reviewed content is genuinely unchanged — this reuses that prior verdict
+ * instead of spending a fresh, independently-random roll on content the reviewer has already judged.
+ * Same recency/cacheable rules as getCachedAiReview: a durable (cacheable) row reuses unboundedly; a
+ * dynamic-context (non-cacheable) row only within `maxAgeMs` of being written, and never once published
+ * (a stale non-durable published verdict is not trustworthy indefinitely across heads either).
+ */
+export async function getCachedAiReviewAcrossHeads(
+  env: Env,
+  repoFullName: string,
+  pullNumber: number,
+  mode: string,
+  inputFingerprint: string,
+  options?: { maxAgeMs?: number } | undefined,
+): Promise<{ notes: string; reviewerCount: number; findings: AdvisoryFinding[]; metadata?: Record<string, unknown> | undefined } | null> {
+  const { results } = await env.DB
+    .prepare(
+      "SELECT notes, reviewer_count AS reviewerCount, findings_json AS findingsJson, metadata_json AS metadataJson, cacheable, published_at AS publishedAt, created_at AS createdAt FROM ai_review_cache WHERE repo_full_name = ? AND pull_number = ? AND ai_review_mode = ? ORDER BY created_at DESC LIMIT ?",
+    )
+    .bind(repoFullName, pullNumber, mode, AI_REVIEW_FINGERPRINT_SCAN_LIMIT)
+    .all<{ notes: string; reviewerCount: number; findingsJson: string | null; metadataJson: string | null; cacheable: number; publishedAt: string | null; createdAt: string }>();
+  for (const row of results ?? []) {
+    const metadata = parseJson<Record<string, unknown>>(row.metadataJson, {});
+    if (metadata.inputFingerprint !== inputFingerprint) continue;
+    if (row.cacheable !== 1) {
+      if (row.publishedAt != null) continue;
+      const ageMs = Date.now() - Date.parse(row.createdAt);
+      if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > (options?.maxAgeMs ?? 0)) continue;
+    }
+    // Unlike getCachedAiReview above, `metadata` is NEVER empty here by construction: reaching this line
+    // already required `metadata.inputFingerprint === inputFingerprint` to pass, above — so no conditional
+    // spread is needed (there is no empty-metadata arm to guard).
+    return {
+      notes: row.notes,
+      reviewerCount: row.reviewerCount,
+      findings: parseJson<AdvisoryFinding[]>(row.findingsJson, []),
+      metadata,
+    };
+  }
+  return null;
+}
+
 /** #regate-churn (maintainer-gated freeze): the most recently PUBLISHED AI review for this PR, regardless of
  *  which head SHA it was computed against. Used ONLY when the PR is currently held for manual review — a repeat
  *  contributor push must not buy a fresh, real AI call (or a chance to flip the published verdict via plain LLM

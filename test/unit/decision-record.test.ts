@@ -9,7 +9,7 @@ import {
   sha256Hex,
   type DecisionRecord,
 } from "../../src/review/decision-record";
-import { loadDecisionRecordCollapsible } from "../../src/review/decision-record";
+import { appendDecisionLedger, LEDGER_GENESIS_HASH, loadDecisionRecordCollapsible, verifyDecisionLedger } from "../../src/review/decision-record";
 import { createTestEnv } from "../helpers/d1";
 
 // #8836: the digests are commitments a contributor can challenge — key-order invariance and unicode
@@ -150,6 +150,84 @@ describe("loadDecisionRecordCollapsible", () => {
     await env.DB.prepare("UPDATE decision_records SET record_json = '{not json' WHERE pull_number = 7").run();
     expect(await loadDecisionRecordCollapsible(env, "o/r", 7)).toBeNull();
     expect(warn).toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+});
+
+describe("decision ledger (#8837)", () => {
+  const persist = async (env: Env, pull: number, action = "close") => {
+    const { record, recordDigest } = await buildDecisionRecord(recordInput({ pullNumber: pull, action }));
+    await persistDecisionRecord(env, record, recordDigest);
+    return recordDigest;
+  };
+
+  it("every persist appends a chained row: explicit contiguous seq, genesis prev, linked hashes", async () => {
+    const env = createTestEnv();
+    await persist(env, 1);
+    await persist(env, 2);
+    // A rewrite of the SAME record id appends a THIRD row — supersessions are visible history.
+    await persist(env, 1, "merge");
+    const rows = (await env.DB.prepare("SELECT seq, prev_hash AS prevHash, row_hash AS rowHash FROM decision_ledger ORDER BY seq").all<{ seq: number; prevHash: string; rowHash: string }>()).results!;
+    expect(rows.map((r) => r.seq)).toEqual([1, 2, 3]);
+    expect(rows[0]!.prevHash).toBe(LEDGER_GENESIS_HASH);
+    expect(rows[1]!.prevHash).toBe(rows[0]!.rowHash);
+    expect(rows[2]!.prevHash).toBe(rows[1]!.rowHash);
+    const verified = await verifyDecisionLedger(env);
+    expect(verified).toMatchObject({ ok: true, checked: 3, nextAfterSeq: null });
+  });
+
+  it("verification is RESUMABLE: a full window returns the cursor, the next call continues from it", async () => {
+    const env = createTestEnv();
+    for (let i = 1; i <= 5; i += 1) await persist(env, i);
+    const first = await verifyDecisionLedger(env, 0, 2);
+    expect(first).toMatchObject({ ok: true, checked: 2, nextAfterSeq: 2 });
+    const second = await verifyDecisionLedger(env, first.nextAfterSeq!, 2);
+    expect(second).toMatchObject({ ok: true, checked: 2, nextAfterSeq: 4 });
+    const last = await verifyDecisionLedger(env, second.nextAfterSeq!, 2);
+    expect(last).toMatchObject({ ok: true, checked: 1, nextAfterSeq: null });
+    // Resuming from a seq that does not exist is itself a reported gap, not a silent clean pass.
+    expect((await verifyDecisionLedger(env, 99)).break).toMatchObject({ kind: "sequence_gap" });
+  });
+
+  it("reports the FIRST break per corruption class: gap, predecessor, row rewrite", async () => {
+    const gapEnv = createTestEnv();
+    for (let i = 1; i <= 3; i += 1) await persist(gapEnv, i);
+    await gapEnv.DB.prepare("DELETE FROM decision_ledger WHERE seq = 2").run();
+    expect((await verifyDecisionLedger(gapEnv)).break).toMatchObject({ kind: "sequence_gap", atSeq: 3, expectedSeq: 2 });
+
+    const predEnv = createTestEnv();
+    for (let i = 1; i <= 3; i += 1) await persist(predEnv, i);
+    await predEnv.DB.prepare("UPDATE decision_ledger SET prev_hash = ? WHERE seq = 3").bind("f".repeat(64)).run();
+    expect((await verifyDecisionLedger(predEnv)).break).toMatchObject({ kind: "predecessor_mismatch", atSeq: 3 });
+
+    const rewriteEnv = createTestEnv();
+    for (let i = 1; i <= 3; i += 1) await persist(rewriteEnv, i);
+    await rewriteEnv.DB.prepare("UPDATE decision_ledger SET record_digest = ? WHERE seq = 2").bind("a".repeat(64)).run();
+    const broken = await verifyDecisionLedger(rewriteEnv);
+    expect(broken.break).toMatchObject({ kind: "row_hash_mismatch", atSeq: 2 });
+    expect(broken.checked).toBe(1); // seq 1 verified before the break
+  });
+
+  it("a concurrent append races on the PK and retries with a re-read predecessor — both rows land, chain intact", async () => {
+    const env = createTestEnv();
+    await Promise.all([appendDecisionLedger(env, "record:a", "1".repeat(64)), appendDecisionLedger(env, "record:b", "2".repeat(64))]);
+    const verified = await verifyDecisionLedger(env);
+    expect(verified).toMatchObject({ ok: true, checked: 2 });
+  });
+
+  it("an exhausted retry budget rethrows (persistDecisionRecord's own warn covers it)", async () => {
+    const env = createTestEnv();
+    await appendDecisionLedger(env, "record:a", "1".repeat(64));
+    const { vi } = await import("vitest");
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    // Freeze the tip read at a stale value so every retry collides.
+    vi.spyOn(env.DB, "prepare").mockImplementation((sql: string) => {
+      if (sql.includes("ORDER BY seq DESC LIMIT 1")) {
+        return { first: async () => ({ seq: 0, rowHash: LEDGER_GENESIS_HASH }) } as never;
+      }
+      return realPrepare(sql);
+    });
+    await expect(appendDecisionLedger(env, "record:c", "3".repeat(64), 2)).rejects.toThrow();
     vi.restoreAllMocks();
   });
 });

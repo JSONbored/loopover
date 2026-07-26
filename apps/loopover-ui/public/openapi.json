@@ -19149,6 +19149,27 @@
           }
         ]
       }
+    },
+    "/v1/public/decision-ledger/verify": {
+      "get": {
+        "summary": "Verify a window of the hash-chained decision ledger (resumable via afterSeq)",
+        "responses": {
+          "200": {
+            "description": "Window verified clean; nextAfterSeq is the resume cursor (null at the tip)"
+          },
+          "409": {
+            "description": "First break found: sequence_gap | predecessor_mismatch | row_hash_mismatch"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
     }
   },
   "servers": [

@@ -121,6 +121,9 @@ export async function persistDecisionRecord(env: Env, record: DecisionRecord, re
         record.decidedAt,
       )
       .run();
+    // #8837: every write appends a chain row — including latest-finalize-wins rewrites of the same id, so
+    // supersessions are visible history rather than silent replacement.
+    await appendDecisionLedger(env, `record:${record.repoFullName}#${record.pullNumber}@${record.headSha}`.slice(0, 250), recordDigest);
   } catch (error) {
     console.warn(JSON.stringify({ event: "decision_record_persist_error", target: `${record.repoFullName}#${record.pullNumber}`, message: errorMessage(error).slice(0, 160) }));
   }
@@ -161,4 +164,81 @@ export async function loadDecisionRecordCollapsible(env: Env, repoFullName: stri
     console.warn(JSON.stringify({ event: "decision_record_load_error", target: `${repoFullName}#${pullNumber}`, message: errorMessage(error).slice(0, 160) }));
     return null;
   }
+}
+
+// ── Hash-chained ledger (#8837) ─────────────────────────────────────────────────────────────────────────────
+
+/** Genesis predecessor: the chain's first row links to 64 zero nibbles. */
+export const LEDGER_GENESIS_HASH = "0".repeat(64);
+
+/** The semantic fields a ledger row commits to (canonical-JSON'd inside the row hash). */
+export type LedgerRowFields = { seq: number; recordId: string; recordDigest: string; createdAt: string };
+
+/** row_hash = SHA-256(prev_hash || canonicalJson(fields)) — the ONE definition append and verify share. */
+export async function ledgerRowHash(prevHash: string, fields: LedgerRowFields): Promise<string> {
+  return sha256Hex(prevHash + canonicalJson(fields));
+}
+
+/**
+ * Append one chain row for a persisted record. seq is explicit (last+1, genesis 1) so a GAP is itself a
+ * detectable break — never autoincrement, which would silently paper over deletions. A concurrent append
+ * races on the PRIMARY KEY and retries with a re-read predecessor (bounded); persistDecisionRecord treats a
+ * final failure as its own best-effort failure (the record row still lands — an unchained record is caught
+ * by the verify endpoint's record/ledger reconciliation, a follow-up check, rather than by losing the
+ * decision itself).
+ */
+export async function appendDecisionLedger(env: Env, recordId: string, recordDigest: string, attempts = 3): Promise<void> {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const tip = await env.DB.prepare("SELECT seq, row_hash AS rowHash FROM decision_ledger ORDER BY seq DESC LIMIT 1").first<{ seq: number; rowHash: string }>();
+    const seq = (tip?.seq ?? 0) + 1;
+    const prevHash = tip?.rowHash ?? LEDGER_GENESIS_HASH;
+    const createdAt = nowIso();
+    const rowHash = await ledgerRowHash(prevHash, { seq, recordId, recordDigest, createdAt });
+    try {
+      await env.DB.prepare(
+        "INSERT INTO decision_ledger (seq, record_id, record_digest, prev_hash, row_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+        .bind(seq, recordId, recordDigest, prevHash, rowHash, createdAt)
+        .run();
+      return;
+    } catch (error) {
+      if (attempt === attempts) throw error;
+      // PK collision from a concurrent append — re-read the tip and retry.
+    }
+  }
+}
+
+export type LedgerBreak =
+  | { kind: "sequence_gap"; atSeq: number; expectedSeq: number }
+  | { kind: "predecessor_mismatch"; atSeq: number }
+  | { kind: "row_hash_mismatch"; atSeq: number };
+
+/**
+ * Verify a window of the chain, resumable via `afterSeq` (0 = genesis). Reports the FIRST break with its
+ * class — a gap, a broken predecessor link, or a rewritten row — and the cursor for the next window. Pure
+ * read; safe on a public route (hashes and ids only, no record contents).
+ */
+export async function verifyDecisionLedger(env: Env, afterSeq = 0, limit = 500): Promise<{ ok: boolean; checked: number; nextAfterSeq: number | null; break?: LedgerBreak }> {
+  const bounded = Math.max(1, Math.min(1000, limit));
+  const prior = afterSeq > 0 ? await env.DB.prepare("SELECT seq, row_hash AS rowHash FROM decision_ledger WHERE seq = ?").bind(afterSeq).first<{ seq: number; rowHash: string }>() : null;
+  // `== null` deliberately: D1 drivers disagree on .first() returning null vs undefined for no-row.
+  if (afterSeq > 0 && prior == null) return { ok: false, checked: 0, nextAfterSeq: null, break: { kind: "sequence_gap", atSeq: afterSeq, expectedSeq: afterSeq } };
+  let prevHash = prior?.rowHash ?? LEDGER_GENESIS_HASH;
+  let expectedSeq = afterSeq + 1;
+  const { results } = await env.DB.prepare(
+    "SELECT seq, record_id AS recordId, record_digest AS recordDigest, prev_hash AS prevHash, row_hash AS rowHash, created_at AS createdAt FROM decision_ledger WHERE seq > ? ORDER BY seq ASC LIMIT ?",
+  )
+    .bind(afterSeq, bounded)
+    .all<{ seq: number; recordId: string; recordDigest: string; prevHash: string; rowHash: string; createdAt: string }>();
+  let checked = 0;
+  for (const row of results) {
+    if (row.seq !== expectedSeq) return { ok: false, checked, nextAfterSeq: null, break: { kind: "sequence_gap", atSeq: row.seq, expectedSeq } };
+    if (row.prevHash !== prevHash) return { ok: false, checked, nextAfterSeq: null, break: { kind: "predecessor_mismatch", atSeq: row.seq } };
+    const recomputed = await ledgerRowHash(prevHash, { seq: row.seq, recordId: row.recordId, recordDigest: row.recordDigest, createdAt: row.createdAt });
+    if (recomputed !== row.rowHash) return { ok: false, checked, nextAfterSeq: null, break: { kind: "row_hash_mismatch", atSeq: row.seq } };
+    prevHash = row.rowHash;
+    expectedSeq = row.seq + 1;
+    checked += 1;
+  }
+  return { ok: true, checked, nextAfterSeq: results.length === bounded ? results[results.length - 1]!.seq : null };
 }

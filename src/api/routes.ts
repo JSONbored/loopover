@@ -304,6 +304,7 @@ import { getContributorTrustProfile } from "../review/contributor-trust-profile"
 import { backfillContributorGateHistory } from "../review/contributor-gate-history-backfill";
 import { isFairnessAnalyticsEnabled, resolveFairnessAnalyticsManifestOverride } from "../review/contributor-trust-profile-wire";
 import { isRagEnabled } from "../review/rag-wire";
+import { verifyDecisionLedger } from "../review/decision-record";
 import { getPublicStats, isPublicStatsEnabled, resolvePublicStatsManifestOverride } from "../review/public-stats";
 import { loadPublicAccuracyTrend } from "../services/public-accuracy-trend";
 import { loadPublicRulePrecision } from "../review/public-rule-precision";
@@ -1258,6 +1259,16 @@ export function createApp() {
     } catch {
       return c.json({ error: "public_stats_unavailable" }, 503);
     }
+  });
+
+  // #8837: public chain-verification for the decision ledger. Hashes/ids only — no record contents — so it
+  // is safe unauthenticated; any observer can confirm no decision was deleted, reordered, or rewritten.
+  // Resumable: pass afterSeq from the previous response's nextAfterSeq until it returns null.
+  app.get("/v1/public/decision-ledger/verify", async (c) => {
+    const afterSeq = Math.max(0, Number(c.req.query("afterSeq")) || 0);
+    const limit = Number(c.req.query("limit")) || 500;
+    const result = await verifyDecisionLedger(c.env, afterSeq, limit);
+    return c.json(result, result.ok ? 200 : 409);
   });
 
   app.get("/v1/public/github/repos/:owner/:repo/stats", async (c) => {

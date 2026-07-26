@@ -34,8 +34,11 @@ export type RemediationPlanInput = {
   }>;
 };
 
-const FORBIDDEN_PATTERN =
-  /\b(reward\w*|wallet|hotkey|coldkey|mnemonic|farming|payout|ranking|raw[-_\s]?trust|trust[-_\s]?score|private[-_\s]?reviewability|reviewability|private[-_\s]?scoreability|scoreability|score\w*|token[-_\s]?gate|token[-_\s]?score|base[-_\s]?score|multiplier|eligibility)\b|\/Users\/|\/home\/|\/tmp\/|[A-Z]:[\\/]Users[\\/]/i;
+// #8886: exported so its forbidden-term coverage (specifically the plural `rankings`, unreachable through the
+// public builder because sanitizePublicComment rewrites the term before this secondary gate ever sees it) can
+// be asserted directly, matching how the issue itself verified the gap.
+export const FORBIDDEN_PATTERN =
+  /\b(reward\w*|wallet|hotkey|coldkey|mnemonic|farming|payout|rankings?|raw[-_\s]?trust|trust[-_\s]?score|private[-_\s]?reviewability|reviewability|private[-_\s]?scoreability|scoreability|score\w*|token[-_\s]?gate|token[-_\s]?score|base[-_\s]?score|multiplier|eligibility)\b|\/Users\/|\/home\/|\/tmp\/|[A-Z]:[\\/]Users[\\/]/i;
 
 const SOURCE_PRIORITY: Record<RemediationPlanSource, number> = {
   account_state: 0,

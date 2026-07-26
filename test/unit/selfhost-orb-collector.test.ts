@@ -162,6 +162,36 @@ describe("exportOrbBatch() — always-on; reads review_audit, ships anonymized r
     expect(flags).toEqual(["reopened", "reverted"]);
   });
 
+  it("flags reversal_superseded (#8820) — and an explicit reopen outranks the successor heuristic", async () => {
+    const db = makeDb();
+    // The one-shot culture's dominant reversal shape (#8166): bot-closed PR whose work merged via a successor.
+    await audit(db, "o/r", 3, "gate_decision", "close", "2026-02-01T00:00:00Z");
+    await audit(db, "o/r", 3, "pr_outcome", "closed", "2026-02-01T01:00:00Z");
+    await audit(db, "o/r", 3, "reversal_superseded", null, "2026-02-01T04:00:00Z");
+    // Both signals present → the stronger explicit reopen wins the single exported flag.
+    await audit(db, "o/r", 4, "gate_decision", "close", "2026-02-01T00:00:00Z");
+    await audit(db, "o/r", 4, "pr_outcome", "closed", "2026-02-01T01:30:00Z");
+    await audit(db, "o/r", 4, "reversal_reopened", null, "2026-02-01T02:00:00Z");
+    await audit(db, "o/r", 4, "reversal_superseded", null, "2026-02-01T03:00:00Z");
+    let captured: { events: Array<{ reversal_flag: string }> } | undefined;
+    await exportOrbBatch(db, 200, async (_u, init) => { captured = JSON.parse(init!.body as string); return new Response(null, { status: 200 }); });
+    expect(captured!.events.map((e) => e.reversal_flag).sort()).toEqual(["reopened", "superseded"]);
+  });
+
+  it("REGRESSION (#8820): a reversal recorded AFTER a PR was already exported re-exports that PR with the flag", async () => {
+    const db = makeDb();
+    await audit(db, "o/r", 5, "gate_decision", "close", "2026-02-01T00:00:00Z");
+    await audit(db, "o/r", 5, "pr_outcome", "closed", "2026-02-01T01:00:00Z");
+    const bodies: Array<{ events: Array<{ reversal_flag: string }> }> = [];
+    const capture = async (_u: RequestInfo | URL, init?: RequestInit) => { bodies.push(JSON.parse(init!.body as string)); return new Response(null, { status: 200 }); };
+    expect(await exportOrbBatch(db, 200, capture)).toBe(1); // exported clean, cursor advanced past outcome_at
+    expect(bodies[0]!.events[0]!.reversal_flag).toBe("none");
+    // The successor merge lands LATER — event_at bumps to rev_at, past the cursor, so the row re-exports.
+    await audit(db, "o/r", 5, "reversal_superseded", null, "2026-02-01T06:00:00Z");
+    expect(await exportOrbBatch(db, 200, capture)).toBe(1);
+    expect(bodies[1]!.events[0]!.reversal_flag).toBe("superseded");
+  });
+
   it("sends raw repo when ORB_ANONYMIZE=false", async () => {
     process.env.ORB_ANONYMIZE = "false";
     const db = makeDb();

@@ -9,7 +9,7 @@ const MAX_HASH_CHARS = 128;
 const MAX_BUCKET_CHARS = 64;
 const MAX_VERDICT_CHARS = 32;
 const VALID_OUTCOMES = new Set(["merged", "closed"]);
-const VALID_REVERSALS = new Set(["none", "reopened", "reverted"]);
+const VALID_REVERSALS = new Set(["none", "reopened", "reverted", "superseded"]);
 const MIN_CYCLE_MS = 1_000; // <1s is implausible
 const MAX_CYCLE_MS = 31_536_000_000; // >1y is implausible
 

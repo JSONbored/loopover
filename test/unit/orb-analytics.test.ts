@@ -87,6 +87,17 @@ describe("computeFleetAnalytics()", () => {
     expect(inst.fnRate).toBeCloseTo(1 / 5);
   });
 
+  it("a superseded close (#8820) disconfirms closePrecision and counts toward reversalRate, exactly like a reopen", async () => {
+    const env = createTestEnv();
+    await signals(env, "i", 3, { verdict: "close", outcome: "closed", reversal: "none" }); // confirmed
+    await signals(env, "i", 1, { verdict: "close", outcome: "closed", reversal: "superseded" }); // work merged via a successor PR — the close was wrong
+    await signals(env, "i", 1, { verdict: "close", outcome: "closed", reversal: "reopened" }); // literal reopen — same treatment
+    const inst = (await computeFleetAnalytics(env)).instances[0]!;
+    expect(inst.closePrecision).toBeCloseTo(3 / 5);
+    expect(inst.fnRate).toBeCloseTo(2 / 5);
+    expect(inst.reversalRate).toBeCloseTo(2 / 5);
+  });
+
   it("null precision when an instance made no merge verdicts", async () => {
     const env = createTestEnv();
     await signals(env, "inst1", 5, { verdict: "close", outcome: "closed" });

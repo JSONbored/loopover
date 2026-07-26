@@ -107,7 +107,9 @@ export function percentile(sorted: number[], p: number): number | null {
 }
 
 /** Fold the confusion-matrix cells for one instance into accuracy metrics (reversals count as the gate
- *  being wrong: a reverted merge is a false positive; a reopened close is a false negative).
+ *  being wrong: a reverted merge is a false positive; a reopened OR superseded close is a false negative —
+ *  `superseded` (#8166) is the one-shot culture's dominant "bot was wrong" shape: the closed PR's work later
+ *  merged via a successor PR, so the close is disconfirmed exactly like a literal reopen).
  *
  *  Exported for the federated bundle export (#1970, src/orb/federated-bundle.ts): a bundle publishes this
  *  instance's own precision for #6481 to compare against the peer median computed here, so both sides MUST use
@@ -126,7 +128,7 @@ export function foldInstance(instanceId: string, cells: Cell[]): InstanceMetrics
       else mergeFalse += c.n;
     } else if (c.verdict === "close") {
       wouldClose += c.n;
-      if (c.outcome === "closed" && c.reversal_flag !== "reopened") closeConfirmed += c.n;
+      if (c.outcome === "closed" && c.reversal_flag !== "reopened" && c.reversal_flag !== "superseded") closeConfirmed += c.n;
       else closeFalse += c.n;
     }
   }

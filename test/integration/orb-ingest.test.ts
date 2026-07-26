@@ -53,10 +53,14 @@ describe("handleOrbIngest()", () => {
       ev({ pr_hash: "r1", reversal_flag: "reverted" }),
       ev({ pr_hash: "r2", reversal_flag: "bogus" }),
       ev({ pr_hash: "r3" }),
+      // #8820: the successor-merge reversal (#8166) — previously rejected by the whitelist, silently
+      // downgraded to 'none' and pinning the fleet's published reversalRate at 0.
+      ev({ pr_hash: "r4", reversal_flag: "superseded" }),
     ]);
     expect(await col(db, "r1", "reversal_flag")).toBe("reverted");
     expect(await col(db, "r2", "reversal_flag")).toBe("none");
     expect(await col(db, "r3", "reversal_flag")).toBe("none");
+    expect(await col(db, "r4", "reversal_flag")).toBe("superseded");
   });
 
   it("stores gate_reasoncode_bucket string vs null", async () => {

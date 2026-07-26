@@ -33,6 +33,7 @@ interface FleetRow {
   outcome_at: string;
   reverted: number; // 0|1
   reopened: number; // 0|1
+  superseded: number; // 0|1
   event_at: string; // max(outcome_at, latest reversal time) — the export watermark unit
 }
 
@@ -41,7 +42,7 @@ interface FleetEvent {
   pr_hash: string;
   gate_verdict: string | null;
   outcome: string;
-  reversal_flag: "none" | "reopened" | "reverted";
+  reversal_flag: "none" | "reopened" | "reverted" | "superseded";
   gate_reasoncode_bucket: string;
   time_to_close_ms: number | null;
   decision_timestamp: string | null;
@@ -125,16 +126,18 @@ const FLEET_QUERY = `
     SELECT target_id,
       MAX(CASE WHEN event_type = 'reversal_reverted' THEN 1 ELSE 0 END) AS reverted,
       MAX(CASE WHEN event_type = 'reversal_reopened' THEN 1 ELSE 0 END) AS reopened,
+      MAX(CASE WHEN event_type = 'reversal_superseded' THEN 1 ELSE 0 END) AS superseded,
       MAX(created_at) AS rev_at
     FROM review_audit
-    WHERE event_type IN ('reversal_reverted', 'reversal_reopened')
+    WHERE event_type IN ('reversal_reverted', 'reversal_reopened', 'reversal_superseded')
     GROUP BY target_id
   )
-  SELECT project, target_id, verdict, reasoncode, decided_at, outcome, outcome_at, reverted, reopened, event_at
+  SELECT project, target_id, verdict, reasoncode, decided_at, outcome, outcome_at, reverted, reopened, superseded, event_at
   FROM (
     SELECT gd.project AS project, gd.target_id AS target_id, gd.verdict AS verdict, gd.reasoncode AS reasoncode,
            gd.decided_at AS decided_at, po.outcome AS outcome, po.outcome_at AS outcome_at,
            COALESCE(rev.reverted, 0) AS reverted, COALESCE(rev.reopened, 0) AS reopened,
+           COALESCE(rev.superseded, 0) AS superseded,
            CASE WHEN rev.rev_at IS NOT NULL AND rev.rev_at > po.outcome_at THEN rev.rev_at ELSE po.outcome_at END AS event_at
     FROM gd
     JOIN po ON gd.target_id = po.target_id
@@ -202,7 +205,10 @@ export async function exportOrbBatch(db: D1Database, batchSize = 200, fetchFn: t
       pr_hash: anonymize ? hmacAnonymize(r.target_id, secret) : r.target_id,
       gate_verdict: r.verdict,
       outcome: r.outcome,
-      reversal_flag: r.reverted ? "reverted" : r.reopened ? "reopened" : "none",
+      // Priority mirrors signal strength: an explicit revert PR beats a reopen beats the successor-merge
+      // heuristic (#8166's reversal_superseded — the one-shot culture's dominant real "bot was wrong" shape,
+      // which this export previously DROPPED entirely, silently pinning the fleet's reversalRate at 0).
+      reversal_flag: r.reverted ? "reverted" : r.reopened ? "reopened" : r.superseded ? "superseded" : "none",
       gate_reasoncode_bucket: bucketReasonCode(r.reasoncode),
       time_to_close_ms: cycleTimeMs(r.decided_at, r.outcome_at),
       decision_timestamp: r.decided_at,

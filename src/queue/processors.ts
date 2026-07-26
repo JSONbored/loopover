@@ -2076,13 +2076,17 @@ export function derivePublicCommentMergeFacts(args: {
   const repoOwner = args.repoFullName.includes("/") ? args.repoFullName.slice(0, args.repoFullName.indexOf("/")) : "";
   const authorLogin = args.authorLogin ?? "";
   const authorIsOwner = authorLogin.length > 0 && authorLogin.toLowerCase() === repoOwner.toLowerCase();
-  const authorIsAdmin = args.authorIsAdmin === true;
+  const authorIsAdmin = Boolean(args.authorIsAdmin);
   const authorIsAutomationBot = isProtectedAutomationAuthor(args.authorLogin);
   // Match closeEligible (isContributor || ((owner||admin) && closeOwnerAuthors)): neverClosed is the comment's
   // claim that auto-close will not fire. Owner/admin are closable only when closeOwnerAuthors is explicitly
   // true; automation bots remain never-closed (#8683).
-  const neverClosed =
-    authorIsAutomationBot || ((authorIsOwner || authorIsAdmin) && args.settings.closeOwnerAuthors !== true);
+  let neverClosed = false;
+  if (authorIsAutomationBot) {
+    neverClosed = true;
+  } else if (authorIsOwner || authorIsAdmin) {
+    neverClosed = args.settings.closeOwnerAuthors !== true;
+  }
   return { ciState, mergeStateLabel, mergeReadiness, heldForReview, neverClosed };
 }
 

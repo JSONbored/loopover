@@ -10820,6 +10820,17 @@ async function maybePublishPrPublicSurface(
               });
             }
           }
+          // #8686: when both the primary publish and its fallback fail (or there was no pending id to fall
+          // back on), record the same failedOutputs entry check_run/comment/label already push — otherwise a
+          // gate-only repo silently leaves publishedOutputs+failedOutputs empty and finishPublicSurfacePublication
+          // skips pr_public_surface_failed / PostHog escalation / transient retry entirely.
+          if (!gateFinalized) {
+            failedOutputs.push({
+              output: "gate_check_run",
+              error: gateCheckResult.warning,
+              transient: false,
+            });
+          }
         }
       } catch (checkError) {
         if (isGitHubRateLimitedError(checkError)) throw checkError;
@@ -10861,6 +10872,16 @@ async function maybePublishPrPublicSurface(
               );
             });
           }
+        }
+        // #8686: final failure after fallback also failed (or was unavailable) — same failedOutputs contract
+        // as check_run so gate-only repos get operator-visible failure + transient retry when applicable.
+        if (!gateFinalized) {
+          const message = errorMessage(checkError);
+          failedOutputs.push({
+            output: "gate_check_run",
+            error: message,
+            transient: isGitHubTransientPublishError(checkError),
+          });
         }
         await recordAuditEvent(env, {
           eventType: "github_app.gate_check_failed_nonfatal",

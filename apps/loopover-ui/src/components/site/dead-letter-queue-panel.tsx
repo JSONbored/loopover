@@ -120,6 +120,7 @@ export function DeadLetterQueuePanel() {
         <StateBoundary
           isLoading={resource.status === "loading"}
           isError={resource.status === "error" || isMalformed}
+          errorKind={resource.status === "error" ? resource.errorKind : undefined}
           isEmpty={page !== null && page.items.length === 0}
           onRetry={resource.reload}
           onRefresh={resource.reload}

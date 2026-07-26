@@ -102,7 +102,7 @@ type AppOverviewResponse = {
   }>;
 };
 
-function AppOverview() {
+export function AppOverview() {
   const { session } = useSession();
   const { status, connection } = useApiStatus();
   const overview = useApiResource<AppOverviewResponse>("/v1/app/overview", "App overview");
@@ -175,6 +175,8 @@ function AppOverview() {
               className="col-span-full"
               title="App overview is unavailable right now"
               description={overview.error}
+              errorKind={overview.errorKind}
+              onRetry={overview.reload}
             />
           )}
           {series.length === 0 ? (

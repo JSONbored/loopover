@@ -14580,12 +14580,20 @@ async function maybeProcessAgentCommandFeedbackReaction(
           deliveryId,
         })
       : undefined;
+  // #8682: feedback votes must be authorized against the SAME command policy that authorized the answer,
+  // not isAuthorizedCommandActor's `"preflight"` default. Load live settings so commandAuthorization /
+  // commandRateLimitPolicy overrides reach the check; PR open/non-draft mirrors the chat call site (#5092).
+  const settings = await resolveRepositorySettings(env, repoFullName);
   const authorization = await authorizeFeedbackActor(env, {
     installationId: getInstallationId(payload),
     actor,
     repoFullName,
     pullRequestAuthor,
     officialAuthorDetection: official,
+    commandName: command as LoopOverMentionCommandName,
+    commandAuthorizationPolicy: settings.commandAuthorization,
+    commandRateLimitPolicy: settings.commandRateLimitPolicy,
+    pullRequestOpenAndNotDraft: cachedPullRequest?.state === "open" && cachedPullRequest?.isDraft !== true,
   });
   if (!authorization.authorized) {
     await recordAuditEvent(env, {
@@ -14646,6 +14654,13 @@ async function authorizeFeedbackActor(
     installationId: number | null;
     pullRequestAuthor?: string | null | undefined;
     officialAuthorDetection?: OfficialGittensorMinerDetection | undefined;
+    // #8682: the command whose answer is being voted on, plus the live policy/rate-limit/PR-state context
+    // every other isAuthorizedCommandActor call site in this file already threads through. Omitting these
+    // silently falls back to `"preflight"` and ignores repo commandAuthorization overrides.
+    commandName?: LoopOverMentionCommandName | undefined;
+    commandAuthorizationPolicy?: RepositorySettings["commandAuthorization"] | undefined;
+    commandRateLimitPolicy?: RepositorySettings["commandRateLimitPolicy"] | undefined;
+    pullRequestOpenAndNotDraft?: boolean | undefined;
   },
 ): Promise<{ authorized: boolean; reason: string; actorKind: "maintainer" | "author" }> {
   const [owner] = args.repoFullName.split("/");
@@ -14665,10 +14680,14 @@ async function authorizeFeedbackActor(
     };
   }
   const authorAuthorization = isAuthorizedCommandActor({
+    commandName: args.commandName,
     commenterLogin: args.actor,
     commenterAssociation: null,
     pullRequestAuthorLogin: args.pullRequestAuthor,
     officialAuthorDetection: args.officialAuthorDetection,
+    commandAuthorizationPolicy: args.commandAuthorizationPolicy,
+    commandRateLimitPolicy: args.commandRateLimitPolicy,
+    pullRequestOpenAndNotDraft: args.pullRequestOpenAndNotDraft,
   });
   return {
     authorized: authorAuthorization.authorized,

@@ -163,16 +163,29 @@ export async function recordNativeGateDecision(
   const targetId = `${project}#${input.pullNumber}`;
   const summary = input.reasonCode ? input.reasonCode.slice(0, 200) : null;
   const minerAuthored = input.minerAuthored === true ? 1 : 0;
+  // #8825: whether this verdict is the ACTUAL disposition the bot acted on (`input.action` supplied by the
+  // disposition-aware caller) or merely DERIVED from the gate-check conclusion. Both callers write the same
+  // deterministic row id below, so without this distinction the conclusion-derived write clobbers the real one.
+  const derivedFromConclusion = input.action === undefined ? 1 : 0;
   try {
     // Deterministic id per (source, project, pr, sha): a re-run at the SAME commit REPLACES its prior decision
     // (the latest finalize wins), while a new commit gets its own row. event_type/source default in the schema
     // but are written explicitly for clarity.
+    //
+    // #8825 — the DO UPDATE is guarded so a conclusion-derived verdict can never overwrite a recorded `close`.
+    // A gate conclusion of "success" maps to `merge` (nativeGateActionFromConclusion), and the conclusion-only
+    // caller runs AFTER the disposition-aware one on a PR the bot closed for a downstream reason (CI failure,
+    // policy). That wrote `merge` over the real `close`, sometimes seconds after the PR was already closed --
+    // measured on the live self-host, 59 rows recorded a verdict timestamped AFTER the close action it
+    // contradicted, and calibration scored every one as a merge prediction that ended closed. A close is a
+    // terminal action that already happened; no later conclusion can un-close it, so the older row wins.
     await env.DB.prepare(
       `INSERT INTO review_audit (id, project, target_id, event_type, decision, source, head_sha, summary, miner_authored, created_at)
        VALUES (?, ?, ?, 'gate_decision', ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET decision = excluded.decision, summary = excluded.summary, miner_authored = excluded.miner_authored, created_at = excluded.created_at`,
+       ON CONFLICT(id) DO UPDATE SET decision = excluded.decision, summary = excluded.summary, miner_authored = excluded.miner_authored, created_at = excluded.created_at
+       WHERE NOT (? = 1 AND review_audit.decision = 'close')`,
     )
-      .bind(`gate:${LOOPOVER_NATIVE_SOURCE}:${targetId}@${input.headSha}`, project, targetId, action, LOOPOVER_NATIVE_SOURCE, input.headSha, summary, minerAuthored, nowIso())
+      .bind(`gate:${LOOPOVER_NATIVE_SOURCE}:${targetId}@${input.headSha}`, project, targetId, action, LOOPOVER_NATIVE_SOURCE, input.headSha, summary, minerAuthored, nowIso(), derivedFromConclusion)
       .run();
   } catch (error) {
     // Telemetry must never break finalization.

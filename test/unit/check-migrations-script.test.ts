@@ -37,7 +37,7 @@ describe("check-migrations script", () => {
   it("reports every grandfathered duplicate migration number in the success summary", () => {
     const output = execFileSync(TSX_BIN, ["scripts/check-migrations.ts"], { encoding: "utf8" });
 
-    expect(output).toContain("(5 grandfathered duplicates: 0015, 0017, 0074, 0090, 0156)");
+    expect(output).toContain("(4 grandfathered duplicates: 0015, 0017, 0074, 0156)");
   });
 
   it.each([

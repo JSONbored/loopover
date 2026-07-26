@@ -10,6 +10,7 @@ import {
   readUntrustworthyRuleCodes,
   recordPrOutcome,
   recordReversalSignals,
+  recordTerminalActionOutcome,
   resolveDispositionReason,
   runSelfTuneBreaker,
 } from "../../src/review/outcomes-wire";
@@ -238,6 +239,63 @@ describe("recordPrOutcome — realized merge/close ground truth", () => {
 });
 
 // ── 2) reversal_reopened — a contributor reopened a bot-CLOSED PR ──────────────────────────────────────────────
+
+describe("recordTerminalActionOutcome — webhook-independent ground truth (#8823)", () => {
+  it("writes the pr_outcome the bot's own action realized, without any webhook", async () => {
+    const env = createTestEnv();
+    await recordTerminalActionOutcome(env, "owner/repo", 42, "closed");
+    const rows = await reviewAuditRows(env, "pr_outcome");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ project: "owner/repo", target_id: "owner/repo#42", decision: "closed" });
+  });
+
+  it("records a merge the same way", async () => {
+    const env = createTestEnv();
+    await recordTerminalActionOutcome(env, "owner/repo", 7, "merged");
+    expect((await reviewAuditRows(env, "pr_outcome"))[0]).toMatchObject({ target_id: "owner/repo#7", decision: "merged" });
+  });
+
+  it("is IDEMPOTENT against the webhook path — whichever wins the race, exactly one row survives", async () => {
+    const env = createTestEnv();
+    await recordPrOutcome(env, "pull_request", {
+      action: "closed",
+      repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
+      pull_request: pullRequestPayload({ number: 42 }),
+      sender: { login: "loopover[bot]", type: "Bot" },
+    });
+    await recordTerminalActionOutcome(env, "owner/repo", 42, "closed");
+    expect(await reviewAuditRows(env, "pr_outcome")).toHaveLength(1);
+  });
+
+  it("a failing audit_events mirror never breaks the canonical review_audit write", async () => {
+    const env = createTestEnv();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    // Fail ONLY the audit_events mirror insert; the review_audit write and the probe still run for real.
+    vi.spyOn(env.DB, "prepare").mockImplementation((sql: string) => {
+      if (sql.includes("audit_events") && sql.trim().toUpperCase().startsWith("INSERT")) throw new Error("mirror down");
+      return realPrepare(sql);
+    });
+    await recordTerminalActionOutcome(env, "owner/repo", 55, "merged");
+    (env.DB.prepare as unknown as { mockRestore: () => void }).mockRestore();
+    expect((await reviewAuditRows(env, "pr_outcome"))[0]).toMatchObject({ target_id: "owner/repo#55", decision: "merged" });
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it("still writes when the idempotency probe itself fails — a lost outcome is worse than a duplicate", async () => {
+    const env = createTestEnv();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    vi.spyOn(env.DB, "prepare").mockImplementationOnce(() => {
+      throw new Error("ledger unavailable");
+    });
+    await recordTerminalActionOutcome(env, "owner/repo", 99, "closed");
+    (env.DB.prepare as unknown as { mockRestore: () => void }).mockRestore?.();
+    void realPrepare;
+    expect((await reviewAuditRows(env, "pr_outcome"))[0]).toMatchObject({ target_id: "owner/repo#99" });
+    expect(warn).toHaveBeenCalled();
+  });
+});
 
 describe("recordReversalSignals — reversal_reopened", () => {
   it("writes reversal_reopened (review_audit + audit_events) when a contributor reopens a bot-CLOSED PR", async () => {

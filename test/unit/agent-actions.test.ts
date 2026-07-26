@@ -544,6 +544,92 @@ describe("planAgentMaintenanceActions (#778)", () => {
     });
   });
 
+  describe('unstable mergeable-state hold: GitHub reports "unstable" while gate+required CI are green (#8758, the #8711 regression)', () => {
+    // The exact #8711 state: gate success, required CI passed, a non-required third-party check red →
+    // mergeable_state "unstable". Pre-#8758: approve fired, ready-to-merge labeled, merge silently never
+    // planned, nothing on the PR said why. Synthetic check name — the suite hardcodes no real vendor.
+    const unstable = {
+      conclusion: "success" as const,
+      ciState: "passed" as const,
+      nonRequiredCheckFailures: [{ name: "Third-Party Trust Check" }],
+      pr: { labels: [], mergeableState: "unstable", reviewDecision: "APPROVED" as const },
+    };
+
+    it("the #8711 regression: does NOT approve, does NOT merge, and surfaces a manual-review label + comment naming the check (review_state_label not acting)", () => {
+      const plan = planAgentMaintenanceActions(input({ ...unstable, autonomy: { approve: "auto", merge: "auto" } }));
+      expect(classes(plan)).not.toContain("approve");
+      expect(classes(plan)).not.toContain("merge");
+      const label = plan.find((a) => a.actionClass === "label");
+      expect(label?.label).toBe(AGENT_LABEL_NEEDS_REVIEW);
+      expect(label?.reason).toContain("unstable");
+      expect(label?.reason).toContain("Third-Party Trust Check");
+      expect(label?.comment).toContain("unstable");
+      expect(label?.comment).toContain("Third-Party Trust Check");
+      expect(label?.comment).toContain("will not auto-merge");
+    });
+
+    it("labels manual-review (never ready-to-merge) with the unstable reason + comment when review_state_label IS acting", () => {
+      const plan = planAgentMaintenanceActions(input({ ...unstable, autonomy: { review_state_label: "auto", merge: "auto" } }));
+      const label = plan.find((a) => a.actionClass === "label");
+      expect(label?.label).toBe(AGENT_LABEL_NEEDS_REVIEW);
+      expect(label?.label).not.toBe(AGENT_LABEL_READY);
+      expect(label?.reason).toContain("unstable");
+      expect(label?.reason).toContain("Third-Party Trust Check");
+      expect(label?.comment).toContain("Third-Party Trust Check");
+      expect(classes(plan)).not.toContain("merge");
+    });
+
+    it("still holds with GENERIC wording when the CI aggregate could not itemize the culprit (empty/absent failures list)", () => {
+      const plan = planAgentMaintenanceActions(
+        input({ conclusion: "success", ciState: "passed", autonomy: { approve: "auto", merge: "auto" }, pr: { labels: [], mergeableState: "unstable", reviewDecision: "APPROVED" } }),
+      );
+      expect(classes(plan)).not.toContain("approve");
+      expect(classes(plan)).not.toContain("merge");
+      const label = plan.find((a) => a.actionClass === "label");
+      expect(label?.comment).toContain("a non-required check or status");
+    });
+
+    it("never CLOSES on unstable — the hold only downgrades a would-merge, close semantics untouched", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ ...unstable, autonomy: { merge: "auto", close: "auto" } })));
+      expect(plan).not.toContain("close");
+      expect(plan).not.toContain("merge");
+    });
+
+    it("a red-CI contributor PR still CLOSES even when mergeable_state is also unstable (the hold never softens a real adverse signal)", () => {
+      const plan = classes(
+        planAgentMaintenanceActions(
+          input({ conclusion: "failure", ciState: "failed", blockerTitles: ["x"], autonomy: { close: "auto" }, pr: { labels: [], mergeableState: "unstable" } }),
+        ),
+      );
+      expect(plan).toContain("close");
+    });
+
+    it("does not re-plan the manual-review label when the PR already carries it (idempotent)", () => {
+      const plan = planAgentMaintenanceActions(input({ ...unstable, autonomy: { approve: "auto", merge: "auto" }, pr: { ...unstable.pr, labels: [AGENT_LABEL_NEEDS_REVIEW] } }));
+      expect(plan.filter((a) => a.actionClass === "label" && a.labelOp === "add")).toEqual([]);
+    });
+
+    it('still approves "blocked" and "behind" states — only unstable joined dirty as non-approvable (the approval itself can be the unblocking act)', () => {
+      for (const state of ["blocked", "behind"]) {
+        const plan = planAgentMaintenanceActions(input({ conclusion: "success", ciState: "passed", autonomy: { approve: "auto" }, pr: { labels: [], mergeableState: state } }));
+        expect(classes(plan), `mergeableState=${state}`).toContain("approve");
+        expect(plan.find((a) => a.actionClass === "label" && a.label === AGENT_LABEL_NEEDS_REVIEW), `mergeableState=${state}`).toBeUndefined();
+      }
+    });
+
+    it("a clean PR with an itemized-but-green failures list is untouched — the hold keys on mergeable_state, never on the list", () => {
+      // Same fixture shape as the advisory-hold suite's empty-array test: APPROVED satisfies requireApprovals so
+      // the merge arm is observable (the approve arm is then idempotency-suppressed — covered at its own test).
+      const plan = classes(
+        planAgentMaintenanceActions(
+          input({ conclusion: "success", ciState: "passed", autonomy: { approve: "auto", merge: "auto" }, nonRequiredCheckFailures: [], pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }),
+        ),
+      );
+      expect(plan).toContain("merge");
+      expect(plan).not.toContain("label");
+    });
+  });
+
   describe("live migration-collision hold: a live premerge recheck found a same-numbered sibling on the base branch (#2550)", () => {
     const collided = { migrationCollisionHold: { reason: "live migrations/** collision on main (0090: 0090_a.sql, 0090_b.sql)", comment: "LoopOver: a live check found a migration-number collision. Please rebase." } };
 

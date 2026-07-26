@@ -436,14 +436,23 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
     // and is left as a no-op here, matching closeRequiresMergeableState's own "false ⇒ skip" scoping above.
     const requiresLiveDuplicateRecheck =
       action.actionClass === "close" && action.closeKind === "heuristic" && action.closeRequiresDuplicateStillOpen === true && action.duplicateWinnerPrNumber !== undefined;
-    if (requiresLiveCiRecheck || requiresLiveMergeableRecheck || requiresLiveThreadRecheck || requiresLiveDuplicateRecheck) {
+    // #8758: an APPROVE is likewise planned from the planning-pass snapshot, and the planner never approves a
+    // "dirty" (about-to-close conflict) or "unstable" (merge self-suppresses, unstable hold) mergeable state —
+    // but nothing re-verified that right before posting the formal review. A check flipping red in the window
+    // between planning and actuation used to yield exactly #8711's incoherence: an approval claiming "gate
+    // satisfied and CI green" on a PR the same plan's merge arm would refuse. Same live signal the #3863
+    // conflict recheck already uses; one extra GET per approve (approves fire at most once per head).
+    const requiresLiveApproveMergeableRecheck = action.actionClass === "approve";
+    if (requiresLiveCiRecheck || requiresLiveMergeableRecheck || requiresLiveThreadRecheck || requiresLiveDuplicateRecheck || requiresLiveApproveMergeableRecheck) {
       const ciToken = await createInstallationToken(env, ctx.installationId).catch(() => undefined);
       const admissionKey = githubRateLimitAdmissionKeyForToken(env, ciToken, ctx.installationId);
       const [liveCi, liveMergeableState, liveThreadBlockers, liveWinnerState] = await Promise.all([
         requiresLiveCiRecheck
           ? fetchLiveCiAggregate(env, ctx.repoFullName, expectedHeadSha, ciToken, ctx.requiredCiContexts ?? null, admissionKey, ctx.advisoryCheckRuns ?? null)
           : Promise.resolve(undefined),
-        requiresLiveMergeableRecheck ? fetchLivePullRequestMergeState(env, ctx.repoFullName, ctx.pullNumber, ciToken, admissionKey) : Promise.resolve(undefined),
+        requiresLiveMergeableRecheck || requiresLiveApproveMergeableRecheck
+          ? fetchLivePullRequestMergeState(env, ctx.repoFullName, ctx.pullNumber, ciToken, admissionKey)
+          : Promise.resolve(undefined),
         requiresLiveThreadRecheck ? fetchLiveReviewThreadBlockers(env, ctx.repoFullName, ctx.pullNumber, ciToken, admissionKey) : Promise.resolve(undefined),
         requiresLiveDuplicateRecheck
           ? fetchLivePullRequestState(env, ctx.repoFullName, action.duplicateWinnerPrNumber!, ciToken, admissionKey).catch(() => undefined)
@@ -485,7 +494,15 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
         requiresLiveDuplicateRecheck && liveWinnerState !== undefined && liveWinnerState !== "open"
           ? `duplicate-cluster winner #${action.duplicateWinnerPrNumber} is no longer open`
           : null;
-      const staleReason = ciStaleReason ?? mergeableStaleReason ?? threadStaleReason ?? duplicateStaleReason;
+      // #8758: only a CONFIRMED bad state suppresses the approve — a failed/ambiguous live read (undefined,
+      // "unknown", null) fails OPEN, matching the planner's own posture (it approves those states too: an
+      // approval is reversible and a transient fetch hiccup must not strand approval-required repos). Only the
+      // two states the planner itself refuses to approve ("dirty", "unstable") deny here.
+      const approveMergeableStaleReason =
+        requiresLiveApproveMergeableRecheck && (liveMergeableState === "dirty" || liveMergeableState === "unstable")
+          ? `live mergeable_state is now "${liveMergeableState}" — the planner never approves this state`
+          : null;
+      const staleReason = ciStaleReason ?? mergeableStaleReason ?? threadStaleReason ?? duplicateStaleReason ?? approveMergeableStaleReason;
       if (staleReason) {
         await audit("denied", `${staleReason} — action not executed`);
         continue;

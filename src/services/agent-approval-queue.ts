@@ -141,7 +141,7 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
     const repoOwner = pending.repoFullName.includes("/") ? pending.repoFullName.slice(0, pending.repoFullName.indexOf("/")) : "";
     const authorLogin = pr.authorLogin ?? "";
     const authorIsOwner = authorLogin.length > 0 && authorLogin.toLowerCase() === repoOwner.toLowerCase();
-    const authorIsAutomationBot = isProtectedAutomationAuthor(pr.authorLogin);
+    const authorIsAutomationBot = isProtectedAutomationAuthor(pr.authorLogin, env);
     const closeEligible = (!authorIsOwner && !authorIsAutomationBot) || (authorIsOwner && settings.closeOwnerAuthors === true);
     let stillJustified = closeEligible;
     if (closeEligible) {
@@ -358,7 +358,7 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
     const repoOwner = pending.repoFullName.includes("/") ? pending.repoFullName.slice(0, pending.repoFullName.indexOf("/")) : "";
     const authorLogin = pr.authorLogin ?? "";
     const authorIsOwner = authorLogin.length > 0 && authorLogin.toLowerCase() === repoOwner.toLowerCase();
-    const authorIsAutomationBot = isProtectedAutomationAuthor(pr.authorLogin);
+    const authorIsAutomationBot = isProtectedAutomationAuthor(pr.authorLogin, env);
     const closeEligible = (!authorIsOwner && !authorIsAutomationBot) || (authorIsOwner && settings.closeOwnerAuthors === true);
     if (closeEligible) {
       const linkedIssueRulesConfig = await loadLinkedIssueHardRules(env, pending.repoFullName);

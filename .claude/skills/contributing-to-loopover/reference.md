@@ -14,8 +14,10 @@ for maintainer approval (CI shows unverified → the engine **holds**, never clo
 
 ## 1. Every CI check → local command → what fails it
 
-The **required** status checks on `main` are **`validate`** (it aggregates `changes, lint, test,
-workers, mcp, ui`; a path-skipped job counts as success) and **`Superagent Security Scan`**
+The **required** status checks on `main` are **`validate`** (it aggregates the workflow jobs
+`changes`, `validate-code`, and `validate-tests` — see `.github/workflows/ci.yml` `needs:
+[changes, validate-code, validate-tests]` around L1156; a path-skipped step inside those jobs
+counts as success) and **`Superagent Security Scan`**
 (a separate third-party GitHub App check, not part of this repo's own workflow files — confirmed via
 `gh api repos/JSONbored/loopover/branches/main/protection/required_status_checks`). **Codecov** posts
 `codecov/patch` (the real coverage gate) and `codecov/project` (informational) independently. The
@@ -23,23 +25,39 @@ review engine also posts its own check run named **`LoopOver Orb Review Agent`**
 (`src/github/app.ts` `LOOPOVER_GATE_CHECK_NAME`) — the gate verdict (§3), separate from CI. On a PR,
 jobs run only if their path filter matched; on push to `main`, everything runs.
 
-| Check | Runs | Local command | Fails when |
+**Job vs step (2026-07-24 unsharding):** `.github/workflows/ci.yml` no longer has top-level jobs named
+`lint`, `test (1/3..3/3)`, `workers`, `mcp`, or `ui`. Those former names are now **steps** inside
+`validate-code` / `validate-tests` (see the UNSHARDED comment around L825–850). When debugging a red
+check in the GitHub Actions UI, look for the four job names below — not the historical check labels.
+
+### CI jobs (what appears in the Actions UI)
+
+| Job | Role | Where in `ci.yml` |
+|---|---|---|
+| `changes` | whitespace + path filter (gates later jobs) | job at L27; Check whitespace ~L78 |
+| `validate-code` | lint/drift/typecheck/workers/mcp/miner/ui gates | job at L258 |
+| `validate-tests` | unsharded vitest + coverage (Codecov upload) | job at L829; UNSHARDED note ~L843 |
+| `validate` | required aggregate gate over the three jobs above | job at L1154; `needs` at L1156 |
+
+### Check → CI job/step → local command
+
+| Check (historical / local name) | CI job → step | Local command | Fails when |
 |---|---|---|---|
-| changes | `git diff --check` + path filter | `git diff --check` | trailing whitespace / conflict markers |
-| lint → actionlint | workflow lint | `npm run actionlint` | any `.github/workflows/*.yml` violation |
-| lint → migrations | migration guard | `npm run db:migrations:check` | duplicate/gap/misnamed migration number |
-| lint → cf-typegen | worker types drift | `npm run cf-typegen:check` | committed `worker-configuration.d.ts` is stale (run `npm run cf-typegen`) |
-| lint → schema-drift | `src/db/schema.ts` vs `migrations/` | `npm run db:schema-drift:check` | a Drizzle table's schema doesn't match the migration history |
-| lint → selfhost-env-reference | self-host env-var doc drift | `npm run selfhost:env-reference:check` | committed `apps/loopover-ui/src/lib/selfhost-env-reference.ts` is stale (run `npm run selfhost:env-reference`) — triggers when `src/selfhost/**` (+ a few other scanned files) adds/removes an env var read; a pure line shift of an existing read does NOT trigger it, since the doc cites the file only, not `file:line` (#env-reference-churn) |
-| lint → miner-env-reference | miner/AMS env-var doc drift | `npm run miner:env-reference:check` | committed `packages/loopover-miner/docs/env-reference.md` / `apps/loopover-ui/src/lib/ams-env-reference.ts` is stale (run `npm run miner:env-reference`) — miner/AMS twin of the selfhost check above |
-| lint → observability | Grafana/Prometheus/alert config validation | `npm run selfhost:validate-observability` | a self-host observability config (dashboard/rule/datasource) is malformed |
-| lint → typecheck | `tsc --noEmit` | `npm run typecheck` | any backend type error |
-| test (1/3..3/3) | sharded vitest + coverage | `npm run test:coverage` (unsharded) | any failing `test/**/*.test.ts` (excl. `test/workers/**`) |
-| workers | workers-pool vitest | `npm run test:workers` | any failing `test/workers/**` |
-| mcp → build | MCP pkg build | `npm run build:mcp` | MCP package build error |
-| mcp → pack | tarball hygiene | `npm run test:mcp-pack` | unexpected/forbidden file or stale README in the npm tarball |
-| miner → build | miner engine/pkg build | `npm run build:miner` | `@loopover/{engine,miner}` build error |
-| miner → pack | tarball hygiene | `npm run test:miner-pack` | unexpected/forbidden file in the miner npm tarball |
+| changes | `changes` → Check whitespace | `git diff --check` | trailing whitespace / conflict markers |
+| lint → actionlint | `validate-code` → Lint workflows (L286) | `npm run actionlint` | any `.github/workflows/*.yml` violation |
+| lint → migrations | `validate-code` → Check migrations (L300) | `npm run db:migrations:check` | duplicate/gap/misnamed migration number |
+| lint → cf-typegen | `validate-code` → cf-typegen drift check (L312) | `npm run cf-typegen:check` | committed `worker-configuration.d.ts` is stale (run `npm run cf-typegen`) |
+| lint → schema-drift | `validate-code` → Schema-vs-migrations drift check (L306) | `npm run db:schema-drift:check` | a Drizzle table's schema doesn't match the migration history |
+| lint → selfhost-env-reference | `validate-code` → Selfhost env-reference drift check (L323) | `npm run selfhost:env-reference:check` | committed `apps/loopover-ui/src/lib/selfhost-env-reference.ts` is stale (run `npm run selfhost:env-reference`) — triggers when `src/selfhost/**` (+ a few other scanned files) adds/removes an env var read; a pure line shift of an existing read does NOT trigger it, since the doc cites the file only, not `file:line` (#env-reference-churn) |
+| lint → miner-env-reference | `validate-code` → Miner env-reference drift check (L337) | `npm run miner:env-reference:check` | committed `packages/loopover-miner/docs/env-reference.md` / `apps/loopover-ui/src/lib/ams-env-reference.ts` is stale (run `npm run miner:env-reference`) — miner/AMS twin of the selfhost check above |
+| lint → observability | `validate-code` → Validate observability configs (L411) | `npm run selfhost:validate-observability` | a self-host observability config (dashboard/rule/datasource) is malformed |
+| lint → typecheck | `validate-code` → Typecheck (L510) | `npm run typecheck` | any backend type error |
+| test (was 1/3..3/3; now unsharded) | `validate-tests` → Test with coverage (L950) | `npm run test:coverage` (unsharded) | any failing `test/**/*.test.ts` (excl. `test/workers/**`) |
+| workers | `validate-code` → Worker runtime tests (L525) | `npm run test:workers` | any failing `test/workers/**` |
+| mcp → build | `validate-code` → Build MCP (L541) | `npm run build:mcp` | MCP package build error |
+| mcp → pack | `validate-code` → MCP package check (L544) | `npm run test:mcp-pack` | unexpected/forbidden file or stale README in the npm tarball |
+| miner → build | `validate-code` → Build miner CLI (L563) | `npm run build:miner` | `@loopover/{engine,miner}` build error |
+| miner → pack | `validate-code` → Miner package check (L571) | `npm run test:miner-pack` | unexpected/forbidden file in the miner npm tarball |
 
 `packages/loopover-{miner,mcp}` are `.ts`-only in git: editing their `bin`/`lib` source means editing `.ts`
 and nothing else — the compiled `.js`/`.d.ts` these two `build` commands produce lands in a gitignored
@@ -53,22 +71,24 @@ majority) resolve straight to the sibling `.ts` with no build needed. Tests that
 directly without it. `build:mcp`/`build:miner`'s pack-check role (validating the real publishable artifact
 still compiles and packs cleanly) is unchanged.
 
-| rees → test | review-enrichment-service's own suite | `npm run rees:test` | any failing test under `review-enrichment/` |
-| ui → openapi drift | spec check | `npm run ui:openapi:check` | committed `openapi.json` is stale (run `npm run ui:openapi`) |
-| ui → openapi settings-parity | schema/type structural diff | `npm run ui:openapi:settings-parity` | `RepositorySettingsSchema` (src/openapi/schemas.ts) is missing a field the `RepositorySettings` type has |
-| ui → version audit | MCP version copy | `npm run ui:version-audit` | stale MCP version strings / non-`@latest` install copy (hits npm registry) |
-| docs → drift | doc/code claim checker | `npm run docs:drift-check` | a doc makes a claim the mechanical lint can verify is now false |
-| docs → command-reference | generated CLI reference drift | `npm run command-reference:check` | committed command-reference doc is stale (run `npm run command-reference`) |
-| manifest drift | `.loopover.yml` vs bundled fallback YAML | `npm run manifest:drift-check` | `src/config/loopover-repo-focus-manifest.ts`'s bundled YAML diverges from the real root `.loopover.yml` |
-| coverage bolt-on filenames | blocks new `*-coverage.test.ts` / `*-branch-coverage.test.ts` files | `npm run coverage-boltons:check` | a new test file matches the bolt-on pattern instead of extending its module's existing suite (see Phase 3) |
-| engine-parity drift | `src/{review,settings,signals}` vs `loopover-engine` twins | `npm run engine-parity:drift-check` | a hand-duplicated twin file pair diverges, or the installed `@loopover/engine` semver skews from the monorepo package |
-| branding drift | "gittensory" leaking into runtime source | `npm run branding-drift:check` | a file's gittensory-string hit count rises above the recorded baseline (`scripts/branding-drift-baseline.json`) |
-| engines/.nvmrc sync | every `engines.node` (root + each workspace that declares one) vs `.nvmrc`'s pinned major | `npm run engines-nvmrc:check` | any declared `engines.node` still allows the major above `.nvmrc`'s pin (paired with the root `.npmrc`'s `engine-strict=true`, which turns that mismatch into a hard local `npm install`/`npm run` error instead of a silently-ignored warning) |
-| release-please manifest sync | `.release-please-manifest.json` vs each package's real `package.json` version | `npm run release-manifest:sync:check` | the manifest and a package's `package.json` version disagree — normally only possible after a manual out-of-band release (release-please's own PR-merge flow keeps them in sync automatically); fix with `npm run release-manifest:sync` (never hand-edit the manifest) |
-| ui → lint | `eslint .` (UI) | `npm run ui:lint` | ESLint **incl. Prettier formatting** + design-token rules |
-| ui → typecheck | `tsc --noEmit` (UI) | `npm run ui:typecheck` | UI type error |
-| ui → tests | vitest jsdom (UI) | `npm run ui:test` | failing UI component test |
-| ui → build | UI build | `npm run ui:build` | build failure (note: it re-runs `ui:openapi` internally) |
+| Check (historical / local name) | CI job → step | Local command | Fails when |
+|---|---|---|---|
+| rees → test | `validate-code` → REES build, source-map validation, and tests (L601) | `npm run rees:test` | any failing test under `review-enrichment/` |
+| ui → openapi drift | `validate-code` → OpenAPI drift check (L702) | `npm run ui:openapi:check` | committed `openapi.json` is stale (run `npm run ui:openapi`) |
+| ui → openapi settings-parity | `validate-code` → OpenAPI settings-parity check (L708) | `npm run ui:openapi:settings-parity` | `RepositorySettingsSchema` (src/openapi/schemas.ts) is missing a field the `RepositorySettings` type has |
+| ui → version audit | `validate-code` → UI/MCP version audit (L714) | `npm run ui:version-audit` | stale MCP version strings / non-`@latest` install copy (hits npm registry) |
+| docs → drift | `validate-code` → Docs drift check (L355) | `npm run docs:drift-check` | a doc makes a claim the mechanical lint can verify is now false |
+| docs → command-reference | `validate-code` → Command reference drift check (L342) | `npm run command-reference:check` | committed command-reference doc is stale (run `npm run command-reference`) |
+| manifest drift | `validate-code` → Manifest drift check (L363) | `npm run manifest:drift-check` | `src/config/loopover-repo-focus-manifest.ts`'s bundled YAML diverges from the real root `.loopover.yml` |
+| coverage bolt-on filenames | local / `npm run test:ci` (not a named CI step) | `npm run coverage-boltons:check` | a new test file matches the bolt-on pattern instead of extending its module's existing suite (see Phase 3) |
+| engine-parity drift | `validate-code` → Engine-parity drift check (L372) | `npm run engine-parity:drift-check` | a hand-duplicated twin file pair diverges, or the installed `@loopover/engine` semver skews from the monorepo package |
+| branding drift | `validate-code` → Branding drift check (L381) | `npm run branding-drift:check` | a file's gittensory-string hit count rises above the recorded baseline (`scripts/branding-drift-baseline.json`) |
+| engines/.nvmrc sync | `validate-code` → Engines/.nvmrc sync check (L392) | `npm run engines-nvmrc:check` | any declared `engines.node` still allows the major above `.nvmrc`'s pin (paired with the root `.npmrc`'s `engine-strict=true`, which turns that mismatch into a hard local `npm install`/`npm run` error instead of a silently-ignored warning) |
+| release-please manifest sync | `validate-code` → Release-please manifest sync check (L403) | `npm run release-manifest:sync:check` | the manifest and a package's `package.json` version disagree — normally only possible after a manual out-of-band release (release-please's own PR-merge flow keeps them in sync automatically); fix with `npm run release-manifest:sync` (never hand-edit the manifest) |
+| ui → lint | `validate-code` → UI lint (L762) | `npm run ui:lint` | ESLint **incl. Prettier formatting** + design-token rules |
+| ui → typecheck | `validate-code` → UI typecheck (L765) | `npm run ui:typecheck` | UI type error |
+| ui → tests | `validate-code` → UI tests (ui) / UI tests (ui-miner) (L778/L781) | `npm run ui:test` | failing UI component test |
+| ui → build | `validate-code` → UI build (L792) | `npm run ui:build` | build failure (note: it re-runs `ui:openapi` internally) |
 
 **The Node-version guard: `test/helpers/vitest-global-setup-node-version.ts`, not just `pretest*`.**
 Every `vitest.config.ts` in the repo (root, `vitest.workers.config.ts`, and every workspace with its own

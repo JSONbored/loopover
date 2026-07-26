@@ -146,6 +146,43 @@ test("a blocked term in a text chunk is redacted, a clean chunk is forwarded ver
   assert.deepEqual(events, [{ type: "text", text: CHAT_REDACTED_TEXT }, { type: "done" }]);
 });
 
+test("a blocked term in a tool_result chunk is redacted, a clean chunk is forwarded verbatim", async () => {
+  const events = await collect(
+    runChatGrounding(USER_ONLY, {
+      env: AGENT_SDK_ENV,
+      query: queryYielding([
+        {
+          type: "user",
+          message: { content: [{ type: "tool_result", tool_use_id: "loopover_miner_status", content: "your wallet balance" }] },
+        },
+      ]),
+    }),
+  );
+  assert.deepEqual(events, [
+    { type: "tool_result", tool: "loopover_miner_status", output: CHAT_REDACTED_TEXT },
+    { type: "done" },
+  ]);
+});
+
+test("non-string tool_result content is forwarded without redaction", async () => {
+  const structured = { status: "idle" };
+  const events = await collect(
+    runChatGrounding(USER_ONLY, {
+      env: AGENT_SDK_ENV,
+      query: queryYielding([
+        {
+          type: "user",
+          message: { content: [{ type: "tool_result", tool_use_id: "loopover_miner_status", content: structured }] },
+        },
+      ]),
+    }),
+  );
+  assert.deepEqual(events, [
+    { type: "tool_result", tool: "loopover_miner_status", output: structured },
+    { type: "done" },
+  ]);
+});
+
 test("a thrown session becomes an error event still followed by done", async () => {
   const events = await collect(
     runChatGrounding(USER_ONLY, {

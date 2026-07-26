@@ -235,7 +235,9 @@ function* foldToolResultMessage(message: Record<string, unknown>): Generator<Cha
     const block = asRecord(rawBlock);
     if (!block || block.type !== "tool_result") continue;
     const tool = typeof block.tool_use_id === "string" ? block.tool_use_id : "";
-    yield { type: "tool_result", tool, output: block.content };
+    const output =
+      typeof block.content === "string" ? redactBlockedText(block.content) : block.content;
+    yield { type: "tool_result", tool, output };
   }
 }
 

@@ -59,6 +59,11 @@ describe("bucketReasonCode()", () => {
     expect(bucketReasonCode("self_authored_with_maintainer_cut")).toBe("author_policy");
     expect(bucketReasonCode("ci_state failing")).toBe("ci_readiness");
     expect(bucketReasonCode("something_unmapped")).toBe("other");
+    // #8825: an enforcement close buckets as policy_action, and the prefix wins over the substring rules
+    // below it -- `policy_close:linked-issue-hard-rule` must NOT flatten into plain issue_policy.
+    expect(bucketReasonCode("policy_close:contributor_cap")).toBe("policy_action");
+    expect(bucketReasonCode("policy_close:linked-issue-hard-rule")).toBe("policy_action");
+    expect(bucketReasonCode("policy_close:blacklist")).toBe("policy_action");
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { changedPathsHittingGuardrail, globToRegExp, guardrailPathMatches, isGuardrailHit, matchesAny } from "../../src/signals/change-guardrail";
+import { changedPathsHittingGuardrail, globToRegExp, GUARDRAIL_UNVERIFIABLE_FILE_COUNT, guardrailPathMatches, isGuardrailHit, matchesAny } from "../../src/signals/change-guardrail";
 
 describe("globToRegExp (the exported compiler itself — must be safe for ANY direct caller, not just matchesAny)", () => {
   it("compiles an ordinary glob to a working anchored RegExp", () => {
@@ -102,6 +102,7 @@ describe("change-guardrail glob matching", () => {
     expect(isGuardrailHit(["docs/a.md", "src/ui/b.tsx"], globs)).toBe(false);
     // FAIL-SAFE (#1062): guardrails configured but the changed-file set is empty (unknown) ⇒ treat as a hit.
     expect(isGuardrailHit([], globs)).toBe(true);
+
   });
 
   it("SECURITY (ReDoS): a glob with too many chained wildcards no longer risks catastrophic backtracking — it fails SAFE TOWARD GUARDING (matches every path) instead of ever compiling the pathological pattern", () => {
@@ -146,6 +147,37 @@ describe("change-guardrail glob matching", () => {
 
 // Operator-configured hard-guardrail globs can still cover sensitive files outside broad dir-prefix guards,
 // while leaving ordinary paths auto-mergeable. These examples are not runtime defaults.
+// #9017 (GHSA-rjhf-3xrf-j72w): the REST file-list walk stops silently at its 10-page x 100-file cap and returns
+// the TRUNCATED list with no truncation flag. isGuardrailHit used to fail safe only on an EMPTY list, so a
+// truncated NON-empty list that happened to omit the guarded file read as "no guardrail hit" — a PR padded past
+// 1000 files could hide a .github/workflows/** edit from the hard guardrail and auto-merge it (arbitrary CI
+// execution). A list at/above the cap is now UNVERIFIABLE and fails safe, which doubles as the hard
+// changed-file ceiling the advisory also asks for.
+describe("isGuardrailHit — truncated file lists are unverifiable (#9017, GHSA-rjhf-3xrf-j72w)", () => {
+  const globs = [".github/workflows/**"];
+  const pad = (count: number) => Array.from({ length: count }, (_, i) => `docs/pad-${i}.md`);
+
+  it("fails safe at the pagination cap even when no listed path hits a guarded glob", () => {
+    // Exactly the attack: 1000 innocuous files, the guarded edit sitting on the unreadable page 11.
+    const truncated = pad(GUARDRAIL_UNVERIFIABLE_FILE_COUNT);
+    expect(truncated.some((p) => p.startsWith(".github/"))).toBe(false);
+    expect(isGuardrailHit(truncated, globs)).toBe(true);
+  });
+
+  it("does NOT change the verdict for a normal-sized PR just under the cap", () => {
+    const justUnder = pad(GUARDRAIL_UNVERIFIABLE_FILE_COUNT - 1);
+    expect(isGuardrailHit(justUnder, globs)).toBe(false);
+    // ...and a real hit in a normal-sized PR is still reported for the real reason.
+    expect(isGuardrailHit([...pad(5), ".github/workflows/ci.yml"], globs)).toBe(true);
+  });
+
+  it("stays permissive when NO guardrails are configured, however many files changed", () => {
+    // The ceiling is a guardrail-verification rule, not a blanket PR-size limit — it must not invent a hold
+    // for a repo that configured no guarded paths at all.
+    expect(isGuardrailHit(pad(GUARDRAIL_UNVERIFIABLE_FILE_COUNT + 500), [])).toBe(false);
+  });
+});
+
 describe("configured hard-guardrail glob examples", () => {
   const LOOPOVER_GLOBS = [
     ".github/**", "scripts/**", "packages/**", "apps/loopover-ui/**",

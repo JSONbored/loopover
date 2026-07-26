@@ -4019,6 +4019,39 @@ describe("GitHub backfill", () => {
     expect((await listCheckSummaries(env, "JSONbored/gittensory", 20)).map((check) => check.name).sort()).toEqual(["lint", "test"]);
   });
 
+  // #9017 (GHSA-rjhf-3xrf-j72w): githubPaginatedList stops silently at its page cap and returns the TRUNCATED
+  // list with no flag. isGuardrailHit now fails safe on a list at/above the cap (that is what protects the
+  // merge); this asserts the fetch layer also SURFACES the truncation to the operator instead of staying
+  // silent, matching what the GraphQL supplement paths in this file already do at their own caps.
+  it("#9017: warns when the PR-files walk hits the pagination cap, so a truncated file set is never silent", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 22,
+      title: "Padded PR",
+      state: "open",
+      user: { login: "oktofeesh1" },
+      head: { sha: "padsha" },
+      labels: [],
+      body: "",
+    });
+    // Every page is full and advertises another — the walk ends by exhausting the cap, not by running out.
+    const fullPage = Array.from({ length: 100 }, (_, i) => ({ filename: `docs/pad-${i}.md`, status: "modified", additions: 1, deletions: 0, changes: 1 }));
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/pulls/22/files")) {
+        return Response.json(fullPage, { headers: { link: '<https://api.github.com/repositories/1/files?page=99>; rel="next"' } });
+      }
+      return Response.json([]);
+    });
+
+    const result = await backfillOpenPullRequestDetails(env, { repoFullName: "JSONbored/gittensory", mode: "full", cursor: 0 });
+
+    // The segment reports "partial" (reconciliation independently notices the truncated set) — the point of
+    // this test is the NAMED warning, which is what tells an operator *why*.
+    expect(result.warnings.some((w) => w.includes("pagination cap") && w.includes("#22"))).toBe(true);
+  });
+
   it("keeps the pages already fetched when a later PR-files page fails", async () => {
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
     await seedRegisteredRepo(env);

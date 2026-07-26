@@ -17,4 +17,5 @@ export {
   type GuardrailPathMatch,
   guardrailPathMatches,
   isGuardrailHit,
+  GUARDRAIL_UNVERIFIABLE_FILE_COUNT,
 } from "../../packages/loopover-engine/src/signals/change-guardrail";

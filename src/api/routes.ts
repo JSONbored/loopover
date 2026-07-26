@@ -3437,9 +3437,10 @@ export function createApp() {
   });
 
   app.get("/v1/repos/:owner/:repo/pulls/:number/maintainer-packet", async (c) => {
-    const unauthorized = await requireStaticProtectedApiToken(c);
-    if (unauthorized) return unauthorized;
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    // #9045: repo-scoped — this route was the one sibling that never checked the MCP read allowlist.
+    const unauthorized = await requireStaticProtectedApiToken(c, fullName);
+    if (unauthorized) return unauthorized;
     const number = Number(c.req.param("number"));
     if (!Number.isInteger(number) || number <= 0) return c.json({ error: "invalid_pull_number" }, 400);
     const [repo, pullRequest, issues, pullRequests, files, reviews, checks, recentMergedPullRequests] = await Promise.all([
@@ -3461,11 +3462,9 @@ export function createApp() {
   });
 
   app.get("/v1/repos/:owner/:repo/pulls/:number/reviewability", async (c) => {
-    const unauthorized = await requireStaticProtectedApiToken(c);
-    if (unauthorized) return unauthorized;
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
-    const identity = await authenticateRequestIdentity(c);
-    if (identity?.kind === "static" && identity.actor === "mcp" && !(await import("../auth/security")).isMcpReadRepoAllowed(c.env.MCP_READ_REPO_ALLOWLIST, fullName)) return c.json({ error: "forbidden_repo" }, 403);
+    const unauthorized = await requireStaticProtectedApiToken(c, fullName);
+    if (unauthorized) return unauthorized;
     const number = Number(c.req.param("number"));
     if (!Number.isInteger(number) || number <= 0) return c.json({ error: "invalid_pull_number" }, 400);
     const [repo, pullRequest, issues, pullRequests, files, reviews, checks, recentMergedPullRequests] = await Promise.all([
@@ -3531,15 +3530,10 @@ export function createApp() {
   // override_audit history or the shadow's queued recommendation, just a flag that a shadow is soaking.
   // Gated behind the same most-conservative repo-scoped read precedent the reviewability route (#6154) uses.
   app.get("/v1/repos/:owner/:repo/gate-config/effective", async (c) => {
-    const unauthorized = await requireStaticProtectedApiToken(c);
-    if (unauthorized) return unauthorized;
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
-    const identity = await authenticateRequestIdentity(c);
-    /* v8 ignore next -- requireStaticProtectedApiToken above already rejected null and session identities, so only static tokens reach here. */
-    if (!identity || identity.kind !== "static") return c.json({ error: "unauthorized" }, 401);
-    // Only the shared, end-user-obtainable static `mcp` token is allowlist-scoped; operator-only api/internal
-    // tokens stay trusted — same repo-scoped read precedent the reviewability route (#6154) uses.
-    if (identity.actor === "mcp" && !(await import("../auth/security")).isMcpReadRepoAllowed(c.env.MCP_READ_REPO_ALLOWLIST, fullName)) return c.json({ error: "forbidden_repo" }, 403);
+    // #9045: the MCP read-allowlist check now lives in requireStaticProtectedApiToken itself.
+    const unauthorized = await requireStaticProtectedApiToken(c, fullName);
+    if (unauthorized) return unauthorized;
     const storageEnv = c.env as unknown as StorageEnv;
     const [override, shadow] = await Promise.all([loadOverride(storageEnv, fullName), loadShadowOverride(storageEnv, fullName)]);
     return c.json({
@@ -3559,16 +3553,10 @@ export function createApp() {
   // applied_at / clear_at). Live row wins; soaking shadow fills in only when live is absent. 404 when neither
   // is active — same not-found convention as issue-quality. Auth matches gate-config/effective above.
   app.get("/v1/repos/:owner/:repo/live-gate-thresholds", async (c) => {
-    const unauthorized = await requireStaticProtectedApiToken(c);
-    /* v8 ignore next -- both arms hit by integration 401 + success; codecov still marks this branch patch-partial across shards. */
-    if (unauthorized) return unauthorized;
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
-    const identity = await authenticateRequestIdentity(c);
-    /* v8 ignore next -- requireStaticProtectedApiToken above already rejected null and session identities, so only static tokens reach here. */
-    if (!identity || identity.kind !== "static") return c.json({ error: "unauthorized" }, 401);
-    // Only the shared, end-user-obtainable static `mcp` token is allowlist-scoped; operator-only api/internal
-    // tokens stay trusted — same repo-scoped read precedent the reviewability route (#6154) uses.
-    if (identity.actor === "mcp" && !(await import("../auth/security")).isMcpReadRepoAllowed(c.env.MCP_READ_REPO_ALLOWLIST, fullName)) return c.json({ error: "forbidden_repo" }, 403);
+    // #9045: the MCP read-allowlist check now lives in requireStaticProtectedApiToken itself.
+    const unauthorized = await requireStaticProtectedApiToken(c, fullName);
+    if (unauthorized) return unauthorized;
     const storageEnv = c.env as unknown as StorageEnv;
     const [live, shadow] = await Promise.all([loadOverride(storageEnv, fullName), loadShadowOverride(storageEnv, fullName)]);
     const fields = toLiveGateThresholdFields(authoritativeGateOverride(live, shadow));
@@ -4412,7 +4400,7 @@ export function createApp() {
   // ⇒ the collector REQUIRES it, so an operator can lock the write path down after distributing the matching
   // ORB_COLLECTOR_TOKEN to exporters. Bounded by a hard body ceiling, and dedup'd via UNIQUE(instance_id, repo_hash, pr_hash).
   app.post("/v1/orb/ingest", async (c) => {
-    if (!(await isAuthorizedOrbIngest(c.env, extractBearerToken(c.req.header("authorization"))))) return c.json({ error: "unauthorized" }, 401);
+    if (!(await isAuthorizedIngest(c.env.ORB_INGEST_TOKEN, extractBearerToken(c.req.header("authorization"))))) return c.json({ error: "unauthorized" }, 401);
     const body = await readOrbIngestBody(c.req.raw, c.req.header("content-length"));
     if (body === null) return c.json({ error: "payload_too_large" }, 413);
     if (!body) return c.json({ error: "invalid_request" }, 400);
@@ -4425,7 +4413,7 @@ export function createApp() {
   // route above (same optional bearer-token gate, same hard body ceiling — readOrbIngestBody is generic over
   // request bytes despite the name, so it's reused as-is rather than duplicated).
   app.post("/v1/ams/ingest", async (c) => {
-    if (!(await isAuthorizedAmsIngest(c.env, extractBearerToken(c.req.header("authorization"))))) return c.json({ error: "unauthorized" }, 401);
+    if (!(await isAuthorizedIngest(c.env.AMS_INGEST_TOKEN, extractBearerToken(c.req.header("authorization"))))) return c.json({ error: "unauthorized" }, 401);
     const body = await readOrbIngestBody(c.req.raw, c.req.header("content-length"));
     if (body === null) return c.json({ error: "payload_too_large" }, 413);
     if (!body) return c.json({ error: "invalid_request" }, 400);
@@ -6452,11 +6440,26 @@ function installationRecordInScope(
   return scopedInstallationIds.has(record.installationId) || scopedAccountLogins.has(record.accountLogin.toLowerCase());
 }
 
-async function requireStaticProtectedApiToken(c: ProtectedRouteContext): Promise<Response | null> {
+/** #9045: `repoFullName` folds the MCP read-allowlist check INTO this gate rather than leaving it to each
+ *  route to remember. Three of the four repo-scoped callers hand-rolled the identical check; the fourth
+ *  (maintainer-packet) simply omitted it, so the shared, end-user-obtainable `mcp` token could read the full
+ *  packet — every issue, PR, file, review, and check summary — for ANY repo over HTTP, while the MCP tool this
+ *  route mirrors denied exactly that. Worse, MCP_READ_REPO_ALLOWLIST is fail-closed by default (unset ⇒ deny
+ *  all), so the intended posture was "deny everything" while this route allowed everything. Passing the repo
+ *  makes the check structural: a future repo-scoped route cannot forget it without also failing to pass the
+ *  argument it needs anyway. Operator-only `api`/`internal` tokens stay trusted and are never allowlist-scoped. */
+async function requireStaticProtectedApiToken(c: ProtectedRouteContext, repoFullName?: string): Promise<Response | null> {
   const identity = await authenticateRequestIdentity(c);
   /* v8 ignore next -- Protected middleware rejects unauthenticated private routes before static-token-only route guards. */
   if (!identity) return c.json({ error: "unauthorized" }, 401);
   if (identity.kind === "session") return c.json({ error: "static_token_required" }, 403);
+  if (
+    repoFullName !== undefined &&
+    identity.actor === "mcp" &&
+    !(await import("../auth/security")).isMcpReadRepoAllowed(c.env.MCP_READ_REPO_ALLOWLIST, repoFullName)
+  ) {
+    return c.json({ error: "forbidden_repo" }, 403);
+  }
   return null;
 }
 
@@ -6606,19 +6609,24 @@ function toIsoQueryDate(value: string): string | undefined {
 // OPEN (matching today's live fleet — deploying this is non-breaking). Once the operator sets the token, the
 // collector REQUIRES an exact bearer match, so the write path can be locked down after the matching
 // ORB_COLLECTOR_TOKEN is rolled out to exporters.
-async function isAuthorizedOrbIngest(env: Env, token: string | undefined): Promise<boolean> {
-  if (!env.ORB_INGEST_TOKEN) return true;
-  // Constant-time compare (mirrors every other secret check in auth/security) — a `===` here is timing-attack
-  // vulnerable for a shared secret.
-  return timingSafeEqual(token, env.ORB_INGEST_TOKEN);
-}
-
-// Optional AMS-ingest auth (#5681), same fail-open shape as isAuthorizedOrbIngest: unset ⇒ open ingress, set ⇒
-// the collector requires an exact bearer match. A separate token/env var from ORB_INGEST_TOKEN so the two
-// products' collector credentials can be rotated or locked down independently.
-async function isAuthorizedAmsIngest(env: Env, token: string | undefined): Promise<boolean> {
-  if (!env.AMS_INGEST_TOKEN) return true;
-  return timingSafeEqual(token, env.AMS_INGEST_TOKEN);
+/**
+ * #9046: the SINGLE authorization rule for every telemetry-collector ingest endpoint (Orb and AMS), so the two
+ * products cannot drift apart again. They previously had separate, near-identical copies — and AMS ended up
+ * BOTH fail-open AND missing from the strict rate class, purely because it was a second copy nobody kept in
+ * lockstep. Any future collector route gets the correct posture by calling this rather than hand-rolling it;
+ * the per-product secret stays separate (passed in) so the two credentials rotate independently.
+ *
+ * FAILS CLOSED when the token is unset. Both copies previously returned `true` for an unset token — the
+ * shipped default — so anyone with network access could POST batches, and Orb's batches feed the PUBLISHED
+ * accuracy numbers. Network isolation was doing all the work (the tunnel exposes only the shot path, 8787
+ * binds to loopback), which the planned hosted Orb removes. An unconfigured collector now rejects rather than
+ * accepting anonymous writes; operators who want ingest set the secret, matching every other credentialed
+ * surface here. Constant-time compare (mirrors auth/security) — a `===` is timing-attack vulnerable for a
+ * shared secret.
+ */
+async function isAuthorizedIngest(configuredToken: string | undefined, presentedToken: string | undefined): Promise<boolean> {
+  if (!configuredToken) return false;
+  return timingSafeEqual(presentedToken, configuredToken);
 }
 
 function requiresApiToken(path: string): boolean {

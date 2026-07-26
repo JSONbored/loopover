@@ -398,8 +398,7 @@ function storeIntegrityChecks(env: Record<string, string | undefined>): DoctorCh
     ["plan-store", resolvePlanStoreDbPath(env)],
     ["governor-state", resolveGovernorStateDbPath(env)],
     ["attempt-log", resolveAttemptLogDbPath(env)],
-    // replay-snapshot's .d.ts still types env as ProcessEnv (not yet migrated); cast is lossless.
-    ["replay-snapshot", resolveReplaySnapshotDbPath(env as NodeJS.ProcessEnv)],
+    ["replay-snapshot", resolveReplaySnapshotDbPath(env)],
     ["worktree-allocator", resolveWorktreeAllocatorDbPath(env)],
     ["contribution-profile", resolveContributionProfileCacheDbPath(env)],
     ["policy-verdict-cache", resolvePolicyVerdictCacheDbPath(env)],

@@ -1469,6 +1469,22 @@ export function resolveProviderNames(env: Record<string, string | undefined>): s
   return resolveConfiguredProviderNames(env);
 }
 
+/**
+ * #8765: true when RAG is enabled but NO configured provider can serve an embed request — AI_EMBED_BASE_URL
+ * is unset AND every AI_PROVIDER member is a CLI-subscription provider (claude-code/codex), which throw
+ * `*_no_embed` on every embed call by design. In that state the index never populates: every upsert embeds
+ * 0/N chunks forever, surfaced only as per-batch runtime ERROR logs. The review-CLI path already gets a
+ * fail-LOUD boot preflight (#1566); this is the same check for RAG's embed dependency. PURE — server.ts
+ * owns the actual boot-time shout.
+ */
+export function shouldWarnRagEmbedUnavailable(env: Record<string, string | undefined>): boolean {
+  if (!/^(1|true|yes|on)$/i.test((env.LOOPOVER_REVIEW_RAG ?? "").trim())) return false;
+  if ((env.AI_EMBED_BASE_URL ?? "").trim() !== "") return false;
+  const providers = resolveProviderNames(env);
+  if (providers.length === 0) return false; // no AI at all — RAG degrades for a different, already-loud reason
+  return providers.every((provider) => provider === "claude-code" || provider === "codex");
+}
+
 /** CLI-subscription providers need their binary present on PATH; keep boot preflight parsing identical to AI_PROVIDER. */
 export function resolveRequiredCliProviders(env: Record<string, string | undefined>): Array<{ provider: string; cli: string }> {
   const seen = new Set<string>();

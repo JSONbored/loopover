@@ -47,7 +47,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "AI_EMBED_BASE_URL",
-    firstReference: "src/server.ts",
+    firstReference: "src/selfhost/ai.ts",
   },
   {
     name: "AI_EMBED_MODEL",
@@ -284,6 +284,10 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   {
     name: "LOOPOVER_REVIEW_CONTINUOUS",
     firstReference: "src/queue/processors.ts",
+  },
+  {
+    name: "LOOPOVER_REVIEW_RAG",
+    firstReference: "src/selfhost/ai.ts",
   },
   {
     name: "LOOPOVER_VERSION",
@@ -636,7 +640,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `AI_DAILY_NEURON_BUDGET` | `src/services/ai-review.ts` |",
   "| `AI_DUAL_REVIEW` | `src/selfhost/ai.ts` |",
   "| `AI_EMBED_API_KEY` | `src/server.ts` |",
-  "| `AI_EMBED_BASE_URL` | `src/server.ts` |",
+  "| `AI_EMBED_BASE_URL` | `src/selfhost/ai.ts` |",
   "| `AI_EMBED_MODEL` | `src/selfhost/ai.ts` |",
   "| `AI_GATEWAY_ID` | `src/services/ai-review.ts` |",
   "| `AI_MAX_OUTPUT_TOKENS` | `src/services/ai-review.ts` |",
@@ -696,6 +700,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `LOOPOVER_MCP_TOKEN` | `src/selfhost/preflight.ts` |",
   "| `LOOPOVER_REPO_CONFIG_DIR` | `src/server.ts` |",
   "| `LOOPOVER_REVIEW_CONTINUOUS` | `src/queue/processors.ts` |",
+  "| `LOOPOVER_REVIEW_RAG` | `src/selfhost/ai.ts` |",
   "| `LOOPOVER_VERSION` | `src/selfhost/otel.ts` |",
   "| `MAINTENANCE_ADMISSION_DEFER_MS` | `src/selfhost/maintenance-admission.ts` |",
   "| `MAINTENANCE_ADMISSION_DRAIN_AGE_MS` | `src/selfhost/maintenance-admission.ts` |",

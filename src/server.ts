@@ -26,6 +26,7 @@ import {
   resolveRequiredCliProviders,
   resolveSubscriptionCliPath,
   shouldMarkAiProviderUnhealthyAtBoot,
+  shouldWarnRagEmbedUnavailable,
   subscriptionCliEnv,
   withAiGenerationCapture,
 } from "./selfhost/ai";
@@ -567,6 +568,22 @@ async function main(): Promise<void> {
   // fallback provider.
   if (shouldMarkAiProviderUnhealthyAtBoot(resolveProviderNames(process.env), [...missingCliProviders])) {
     markAiProviderUnhealthyAtBoot();
+  }
+  // Fail-LOUD preflight for RAG's embed dependency (#8765, mirrors #1566): with LOOPOVER_REVIEW_RAG=true, no
+  // AI_EMBED_BASE_URL, and a provider chain of only CLI-subscription providers, every embed call throws
+  // *_no_embed by design — the index never populates and every review pays a cold-index no-op, surfaced only
+  // as per-batch runtime errors. Shout once at boot instead. Warn-only: RAG's runtime degrade stays exactly
+  // as it was (this misconfig must not stop the server).
+  if (shouldWarnRagEmbedUnavailable(process.env)) {
+    console.error(
+      JSON.stringify({
+        level: "error",
+        event: "selfhost_rag_embed_unavailable",
+        provider: process.env.AI_PROVIDER,
+        message:
+          "LOOPOVER_REVIEW_RAG is enabled but no configured provider can serve embeddings — AI_EMBED_BASE_URL is unset and every AI_PROVIDER member is a CLI-subscription provider (they never embed). The RAG index will stay empty. Set AI_EMBED_BASE_URL (e.g. http://ollama:11434/v1 with AI_EMBED_MODEL=bge-m3) or add an OpenAI-compatible provider to the chain.",
+      }),
+    );
   }
   // Dedicated RAG embed provider (keeps the review chain frontier-only): when AI_EMBED_BASE_URL is set, embeddings
   // route to a SEPARATE openai-compatible endpoint (e.g. ollama at http://ollama:11434/v1, model bge-m3) instead of

@@ -18,7 +18,7 @@ const posthogMocks = vi.hoisted(() => {
 });
 vi.mock("posthog-node", () => ({ PostHog: posthogMocks.PostHog }));
 
-import { assertNoLegacySharedAiEnv, buildProvider, claudeErrorStatus, codexErrorFromStdout, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, extractCliUsage, isAiProviderHealthy, markAiProviderUnhealthyAtBoot, providerNameFromBaseUrl, resetAiProviderCircuitBreakerForTest, resetAiProviderHealthForTest, resolveAiReviewerPlan, resolveClaudeCliTimeoutMs, resolveClaudeFirstOutputTimeoutMs, resolveCodexAuthPath, resolveCodexCliTimeoutMs, resolveCodexEffort, resolveCodexFirstOutputTimeoutMs, resolveEffort, resolveModel, resolveProviderNames, resolveRequiredCliProviders, resolveSubscriptionCliPath, redactSecrets, routeProviders, shouldMarkAiProviderUnhealthyAtBoot, subscriptionCliEnv, withAdvisoryAiEnv, withAiGenerationCapture, __selfHostAiInternals } from "../../src/selfhost/ai";
+import { assertNoLegacySharedAiEnv, buildProvider, claudeErrorStatus, codexErrorFromStdout, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, extractCliUsage, isAiProviderHealthy, markAiProviderUnhealthyAtBoot, providerNameFromBaseUrl, resetAiProviderCircuitBreakerForTest, resetAiProviderHealthForTest, resolveAiReviewerPlan, resolveClaudeCliTimeoutMs, resolveClaudeFirstOutputTimeoutMs, resolveCodexAuthPath, resolveCodexCliTimeoutMs, resolveCodexEffort, resolveCodexFirstOutputTimeoutMs, resolveEffort, resolveModel, resolveProviderNames, resolveRequiredCliProviders, resolveSubscriptionCliPath, redactSecrets, routeProviders, shouldMarkAiProviderUnhealthyAtBoot, shouldWarnRagEmbedUnavailable, subscriptionCliEnv, withAdvisoryAiEnv, withAiGenerationCapture, __selfHostAiInternals } from "../../src/selfhost/ai";
 import { labelSelfHostReviewerModel, labelSelfHostReviewerModels } from "../../src/selfhost/ai-config";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { initPostHog, resetPostHogForTest } from "../../src/selfhost/posthog";
@@ -2376,5 +2376,32 @@ describe("withAdvisoryAiEnv (#4364 — per-capability local-inference routing)",
     const result = withAdvisoryAiEnv(env, true);
     expect(result).toBe(env);
     expect(result.AI).toBe(frontierAi);
+  });
+});
+
+describe("shouldWarnRagEmbedUnavailable (#8765 boot preflight)", () => {
+  it("warns for RAG-on + CLI-only chain + no dedicated embed endpoint — the index-never-populates misconfig", () => {
+    expect(shouldWarnRagEmbedUnavailable({ LOOPOVER_REVIEW_RAG: "true", AI_PROVIDER: "claude-code" })).toBe(true);
+    expect(shouldWarnRagEmbedUnavailable({ LOOPOVER_REVIEW_RAG: "1", AI_PROVIDER: "claude-code,codex" })).toBe(true);
+  });
+
+  it("stays silent when RAG is off (default), regardless of the chain", () => {
+    expect(shouldWarnRagEmbedUnavailable({ AI_PROVIDER: "claude-code" })).toBe(false);
+    expect(shouldWarnRagEmbedUnavailable({ LOOPOVER_REVIEW_RAG: "false", AI_PROVIDER: "codex" })).toBe(false);
+  });
+
+  it("stays silent when AI_EMBED_BASE_URL provides the dedicated embed endpoint", () => {
+    expect(
+      shouldWarnRagEmbedUnavailable({ LOOPOVER_REVIEW_RAG: "true", AI_PROVIDER: "claude-code", AI_EMBED_BASE_URL: "http://ollama:11434/v1" }),
+    ).toBe(false);
+  });
+
+  it("stays silent when the chain contains ANY embed-capable (non-CLI) provider — the chain falls through *_no_embed to it", () => {
+    expect(shouldWarnRagEmbedUnavailable({ LOOPOVER_REVIEW_RAG: "true", AI_PROVIDER: "claude-code,ollama" })).toBe(false);
+    expect(shouldWarnRagEmbedUnavailable({ LOOPOVER_REVIEW_RAG: "true", AI_PROVIDER: "ollama" })).toBe(false);
+  });
+
+  it("stays silent with no AI configured at all — that absence is already loud for its own reason", () => {
+    expect(shouldWarnRagEmbedUnavailable({ LOOPOVER_REVIEW_RAG: "true" })).toBe(false);
   });
 });

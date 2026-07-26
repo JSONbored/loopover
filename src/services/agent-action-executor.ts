@@ -24,6 +24,7 @@ import { githubRateLimitAdmissionKeyForToken } from "../github/client";
 import { ensurePullRequestAssignee } from "../github/assignees";
 import { ensurePullRequestLabel, removePullRequestLabel } from "../github/labels";
 import { closeIssue, closePullRequest, createIssueComment, createPullRequestReview, dismissLatestBotApproval, mergePullRequest, updatePullRequestBranch } from "../github/pr-actions";
+import { createOrUpdateCloseExplanationComment } from "../github/comments";
 import { fetchPullRequestFreshness, pullRequestFreshnessDetail } from "../github/pr-freshness";
 import { isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
 import { boundStructuredCloseReasonsForPersistence, buildAgentActionAudit, formatAgentPermissionDenial, isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness, type AgentActionMode } from "../settings/agent-execution";
@@ -1051,7 +1052,10 @@ async function performAction(env: Env, ctx: AgentActionExecutionContext, action:
       return;
     }
     case "close":
-      if (action.closeComment) await createIssueComment(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, action.closeComment);
+      // #8803: marker-idempotent — when the comment lands but the close call fails transiently, the retry's
+      // replan produces the identical closeComment; the marker helper skips/PATCHes the canonical comment
+      // instead of stacking a duplicate "why we closed you" every failed cycle.
+      if (action.closeComment) await createOrUpdateCloseExplanationComment(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, action.closeComment, action.closeKind);
       await closePullRequest(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber);
       return;
     case "update_branch": {

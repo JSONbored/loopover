@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createOrUpdatePrIntelligenceComment, createOrUpdateVisualFollowupComment, PR_INTELLIGENCE_COMMENT_MARKER, VISUAL_FOLLOWUP_COMMENT_MARKER } from "../../src/github/comments";
+import { closeExplanationMarker, createOrUpdateCloseExplanationComment, createOrUpdatePrIntelligenceComment, createOrUpdateVisualFollowupComment, PR_INTELLIGENCE_COMMENT_MARKER, VISUAL_FOLLOWUP_COMMENT_MARKER } from "../../src/github/comments";
 import { createTestEnv } from "../helpers/d1";
 import { generatePrivateKeyPem } from "../helpers/github-app-key";
 
@@ -518,5 +518,67 @@ describe("createOrUpdateIssueCommentWithMarker repoFullName guard (#8311)", () =
         createOrUpdatePrIntelligenceComment(env, 123, repoFullName, 12, `${PR_INTELLIGENCE_COMMENT_MARKER}\nbody`),
       ).rejects.toThrow(`Invalid repository full name: ${repoFullName}`);
     }
+  });
+});
+
+describe("createOrUpdateCloseExplanationComment (#8803)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("first attempt POSTs the explanation with the closeKind-scoped marker embedded in the body", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    let postedBody = "";
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.includes("/issues/7/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/7/comments") && method === "POST") {
+        postedBody = (JSON.parse(String(init?.body)) as { body: string }).body;
+        return Response.json({ id: 55, html_url: "https://github.com/comment/55" });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    const result = await createOrUpdateCloseExplanationComment(
+      createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }),
+      123,
+      "JSONbored/gittensory",
+      7,
+      "Closed: duplicate of #5.",
+      "heuristic",
+    );
+    expect(result?.id).toBe(55);
+    expect(postedBody).toContain(closeExplanationMarker("heuristic"));
+    expect(postedBody).toContain("Closed: duplicate of #5.");
+  });
+
+  it("a retry with the identical body SKIPS (no duplicate 'why we closed you' comment) — the #8803 incident shape", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    const marker = closeExplanationMarker("blacklist");
+    const posts: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.includes("/issues/7/comments") && method === "GET") {
+        // The first attempt's comment already landed; the close then failed and this is the replan's retry.
+        return Response.json([{ id: 90, user: { login: "loopover-orb[bot]", type: "Bot" }, body: `${marker}\nClosed: policy.` }]);
+      }
+      if (method === "POST" || method === "PATCH") {
+        posts.push(method);
+        return Response.json({ id: 91 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey, GITHUB_APP_SLUG: "loopover-orb" });
+    const result = await createOrUpdateCloseExplanationComment(env, 123, "JSONbored/gittensory", 7, "Closed: policy.", "blacklist");
+    expect(result?.changed).toBe(false); // byte-identical -> skip
+    expect(posts).toEqual([]); // neither a duplicate POST nor a pointless PATCH
+  });
+
+  it("distinct closeKinds use distinct markers so different close reasons keep separate canonical comments", () => {
+    expect(closeExplanationMarker("blacklist")).not.toBe(closeExplanationMarker("heuristic"));
+    expect(closeExplanationMarker(undefined)).toBe("<!-- loopover:close-explanation:close -->");
   });
 });

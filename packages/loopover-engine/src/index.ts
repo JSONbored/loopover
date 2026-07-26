@@ -679,8 +679,13 @@ export {
   type LoopRunFacts,
 } from "./loop-consumption.js";
 export {
+  DEFAULT_QUOTA_SOFT_WARNING_THRESHOLDS,
   evaluateTenantQuota,
+  evaluateTenantQuotaSoftWarnings,
   type QuotaDimension,
+  type QuotaSoftWarning,
+  type QuotaSoftWarningSeverity,
+  type QuotaSoftWarningThresholds,
   type TenantQuota,
   type TenantQuotaDecision,
   type TenantUsage,

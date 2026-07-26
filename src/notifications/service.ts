@@ -10,6 +10,7 @@ import {
 } from "../db/repositories";
 import { isGrabbableHighMultiplierIssue } from "../signals/engine";
 import { canLoginAccessRepo } from "../services/control-panel-roles";
+import { buildTenantQuotaWarningNotification, parseTenantQuotaWarningDedupKey } from "./quota-events";
 import type {
   DetectedNotificationEvent,
   IssueRecord,
@@ -106,6 +107,21 @@ export function buildAmsPrOutcomeNotification(event: DetectedNotificationEvent):
   };
 }
 
+// #7662: soft quota headroom before #7647's hard block — public-safe; no reward/trust figures.
+export function buildTenantQuotaWarningNotificationFromEvent(event: DetectedNotificationEvent): { title: string; body: string } {
+  const warning = parseTenantQuotaWarningDedupKey(event.dedupKey);
+  if (!warning) {
+    return {
+      title: sanitizePublicComment("Quota running low"),
+      body: sanitizePublicComment(
+        "Your current allocation is running low. Increase your allocation or pace your loops before a hard block stops new runs.",
+      ),
+    };
+  }
+  const copy = buildTenantQuotaWarningNotification({ warning });
+  return { title: sanitizePublicComment(copy.title), body: sanitizePublicComment(copy.body) };
+}
+
 // Maps a detected event to its public-safe notification content.
 export function buildNotificationContent(event: DetectedNotificationEvent): { title: string; body: string } {
   switch (event.eventType) {
@@ -121,6 +137,8 @@ export function buildNotificationContent(event: DetectedNotificationEvent): { ti
       return buildAmsGovernorPausedNotification(event);
     case "ams_pr_outcome":
       return buildAmsPrOutcomeNotification(event);
+    case "tenant_quota_warning":
+      return buildTenantQuotaWarningNotificationFromEvent(event);
     case "pull_request_changes_requested":
       return buildChangesRequestedNotification(event);
   }

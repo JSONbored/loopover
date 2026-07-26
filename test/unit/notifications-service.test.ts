@@ -198,6 +198,53 @@ describe("AMS notification event kinds (#7657)", () => {
   });
 });
 
+describe("tenant quota soft-warning notifications (#7662)", () => {
+  it("builds public-safe quota-warning copy and routes by event type", () => {
+    const warning = buildNotificationContent(
+      event({
+        eventType: "tenant_quota_warning",
+        repoFullName: "rent-a-loop/quota",
+        pullNumber: 0,
+        dedupKey: "tenant_quota_warning:miner:compute:critical:10:100",
+      }),
+    );
+    expect(warning.title.toLowerCase()).toContain("critically low");
+    expect(warning.body).toContain("10 of 100");
+    expect(JSON.stringify(warning)).not.toMatch(/reward|payout|trust score|wallet|\$/i);
+
+    const fallback = buildNotificationContent(
+      event({
+        eventType: "tenant_quota_warning",
+        repoFullName: "rent-a-loop/quota",
+        pullNumber: 0,
+        dedupKey: "tenant_quota_warning:malformed",
+      }),
+    );
+    expect(fallback.title.toLowerCase()).toContain("quota");
+  });
+
+  it("evaluates quota-warning events through the notify-deliver handoff", async () => {
+    const sent: Array<{ type: string; deliveryId?: string; requestedBy?: string }> = [];
+    const env = createTestEnv({
+      JOBS: {
+        async send(message: { type: string; deliveryId?: string; requestedBy?: string }) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    const deliveries = await evaluateAndEnqueueNotificationDeliveries(env, [
+      event({
+        eventType: "tenant_quota_warning",
+        repoFullName: "rent-a-loop/quota",
+        pullNumber: 0,
+        dedupKey: "tenant_quota_warning:miner:time:low:5000:60000",
+      }),
+    ]);
+    expect(deliveries).toHaveLength(1);
+    expect(sent).toEqual([{ type: "notify-deliver", requestedBy: "notify-evaluate", deliveryId: deliveries[0]!.id }]);
+  });
+});
+
 describe("evaluateNotificationEvent", () => {
   it("creates exactly one badge delivery and is idempotent on a duplicate event", async () => {
     const env = createTestEnv();

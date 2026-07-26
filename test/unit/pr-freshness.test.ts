@@ -302,6 +302,15 @@ describe("PR freshness guards", () => {
     expect(tokenMints).toBe(2);
   });
 
+  it("fetchLiveIssueState: returns undefined when GitHub omits issue state (#8892)", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      expect(String(input)).toContain("/repos/owner/repo/issues/5");
+      return Response.json({ title: "missing state field" });
+    });
+    await expect(fetchLiveIssueState(env, "owner/repo", 5, "public-token")).resolves.toBeUndefined();
+  });
+
   it("fetchLiveIssueState: self-heals a stale installation token on 401 when installationId is set (#8892)", async () => {
     clearInstallationTokenCacheForTest();
     let tokenMints = 0;

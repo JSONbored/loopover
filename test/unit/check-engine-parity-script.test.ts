@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   checkEngineParityDrift,
+  checkGateDecisionForbiddenTermsParity,
   checkGateDecisionTwinPresence,
   checkGateDecisionVersionBump,
   checkEngineVersionSkew,
@@ -18,6 +19,7 @@ import {
   discoverEngineParityPairs,
   discoverGateDecisionTwinPair,
   enginePackageVersionIncreased,
+  extractForbiddenTermsRegex,
   GATE_DECISION_TWIN_PAIR,
   type EngineParityPair,
   isEngineStubPair,
@@ -344,6 +346,111 @@ describe("check-engine-parity script", () => {
       // named twin pairs this readFile stub doesn't answer for.
       expect(result.failures.some((failure) => failure.includes("Gate-decision logic change"))).toBe(false);
       expect(execGit).not.toHaveBeenCalled();
+    });
+  });
+
+  // #8697: strengthen the gate-decision twin guard to diff the CHECK_RUN_FORBIDDEN_TERMS regex BODY, not just
+  // the four function-name markers -- the engine copy had silently dropped `likely_duplicate|reviewability\s*\d`
+  // and nothing caught it. These mirror the marker-presence test pattern above with a synthetic divergence.
+  describe("CHECK_RUN_FORBIDDEN_TERMS regex-body parity (#8697)", () => {
+    const gateDecisionReadFile = (host: string, engine: string) => (_root: string, relativePath: string) => {
+      if (relativePath === GATE_DECISION_TWIN_PAIR.hostRelative) return host;
+      if (relativePath === GATE_DECISION_TWIN_PAIR.engineRelative) return engine;
+      throw new Error(`unexpected read: ${relativePath}`);
+    };
+
+    it("extracts the regex literal (source + flags) and returns null when it is absent", () => {
+      const withRegex = String.raw`
+const CHECK_RUN_FORBIDDEN_TERMS =
+  /\b(?:rewards?|likely_duplicate|reviewability\s*\d)\b/gi;
+`;
+      expect(extractForbiddenTermsRegex(withRegex)).toBe("/\\b(?:rewards?|likely_duplicate|reviewability\\s*\\d)\\b/gi");
+      expect(extractForbiddenTermsRegex("export const OTHER = 1;\n")).toBeNull();
+      expect(extractForbiddenTermsRegex("const CHECK_RUN_FORBIDDEN_TERMS = buildTerms(list);\n")).toBeNull();
+    });
+
+    it("passes against the real repo now that both twins carry the same regex body", () => {
+      expect(checkGateDecisionForbiddenTermsParity({ root: process.cwd() }).failures).toEqual([]);
+    });
+
+    it("passes when the two synthetic regex bodies are byte-identical", () => {
+      const body = String.raw`
+const CHECK_RUN_FORBIDDEN_TERMS =
+  /\b(?:rewards?|likely_duplicate|reviewability\s*\d)\b/gi;
+`;
+      const result = checkGateDecisionForbiddenTermsParity({ root: "/fake", readFile: gateDecisionReadFile(body, body) });
+      expect(result.failures).toEqual([]);
+    });
+
+    it("fails when the two regex bodies are made to diverge again (synthetic fixture)", () => {
+      const host = String.raw`
+const CHECK_RUN_FORBIDDEN_TERMS =
+  /\b(?:rewards?|likely_duplicate|reviewability\s*\d)\b/gi;
+`;
+      const engine = String.raw`
+const CHECK_RUN_FORBIDDEN_TERMS =
+  /\b(?:rewards?)\b/gi;
+`;
+      const result = checkGateDecisionForbiddenTermsParity({ root: "/fake", readFile: gateDecisionReadFile(host, engine) });
+      expect(result.failures.some((failure) => failure.includes("regex body has drifted"))).toBe(true);
+      // runEngineParityChecks surfaces the same drift end-to-end.
+      const combined = runEngineParityChecks({
+        root: "/fake",
+        readFile: (_root, relativePath) => {
+          if (relativePath === "packages/loopover-engine/package.json") return JSON.stringify({ version: "0.2.0" });
+          if (relativePath === GATE_DECISION_TWIN_PAIR.hostRelative) return host;
+          if (relativePath === GATE_DECISION_TWIN_PAIR.engineRelative) return engine;
+          throw new Error(`unexpected read: ${relativePath}`);
+        },
+        listDir: () => [],
+        resolveInstalled: () => "0.2.0",
+        readExpected: () => "0.2.0",
+        changedFiles: [],
+        headEngineVersion: "0.2.0",
+      });
+      expect(combined.failures.some((failure) => failure.includes("regex body has drifted"))).toBe(true);
+    });
+
+    it("fails when either twin copy is missing its regex literal entirely", () => {
+      const withRegex = String.raw`
+const CHECK_RUN_FORBIDDEN_TERMS =
+  /\b(?:rewards?)\b/gi;
+`;
+      const withoutRegex = "const CHECK_RUN_FORBIDDEN_TERMS = buildForbiddenTerms();\n";
+
+      const engineMissing = checkGateDecisionForbiddenTermsParity({
+        root: "/fake",
+        readFile: gateDecisionReadFile(withRegex, withoutRegex),
+      });
+      expect(
+        engineMissing.failures.some((failure) => failure.includes(`${GATE_DECISION_TWIN_PAIR.engineRelative} is missing`)),
+      ).toBe(true);
+
+      const hostMissing = checkGateDecisionForbiddenTermsParity({
+        root: "/fake",
+        readFile: gateDecisionReadFile(withoutRegex, withRegex),
+      });
+      expect(
+        hostMissing.failures.some((failure) => failure.includes(`${GATE_DECISION_TWIN_PAIR.hostRelative} is missing`)),
+      ).toBe(true);
+    });
+
+    it("reports a load failure when a twin file cannot be read (both Error and non-Error throws)", () => {
+      const errorThrow = checkGateDecisionForbiddenTermsParity({
+        root: "/fake",
+        readFile: () => {
+          throw new Error("boom");
+        },
+      });
+      expect(errorThrow.failures).toEqual(["Could not load gate-decision twin pair files for regex-body parity: boom"]);
+
+      const stringThrow = checkGateDecisionForbiddenTermsParity({
+        root: "/fake",
+        readFile: () => {
+          throw "kaboom";
+        },
+      });
+      expect(stringThrow.failures).toEqual(["Could not load gate-decision twin pair files for regex-body parity: kaboom"]);
     });
   });
 

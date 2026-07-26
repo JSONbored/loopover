@@ -86,6 +86,18 @@ describe("entriesToPortfolioQueue() / selectEligibleBatch() (#4285)", () => {
     expect(() => parseQueueItemId("https://api.github.com::::issue:7")).toThrow("invalid_queue_item_id");
   });
 
+  it("queueItemId/parseQueueItemId round-trip an identifier that does NOT contain the '::' separator (#8857)", () => {
+    const id = queueItemId("https://api.github.com", "acme/widgets", "issue:5");
+    expect(parseQueueItemId(id)).toEqual({ apiBaseUrl: "https://api.github.com", repoFullName: "acme/widgets", identifier: "issue:5" });
+  });
+
+  it("rejects an identifier containing the '::' separator at enqueue time, preventing silent id corruption (#8857)", () => {
+    const manager = memoryManager({ globalWipCap: 4, perRepoWipCap: 2 });
+    expect(() => manager.enqueue({ repoFullName: "acme/widgets", identifier: "issue::5", apiBaseUrl: "https://api.github.com" })).toThrow("invalid_identifier");
+    // A single-colon identifier is still accepted — the invariant only forbids the "::" join sequence itself.
+    expect(manager.enqueue({ repoFullName: "acme/widgets", identifier: "issue:5", apiBaseUrl: "https://api.github.com" }).identifier).toBe("issue:5");
+  });
+
   it("entriesToPortfolioQueue falls back to the github.com default when a row's apiBaseUrl is missing (#5563)", () => {
     const entries = [
       { repoFullName: "acme/alpha", identifier: "x", priority: 0, status: "queued", enqueuedAt: "t1" },

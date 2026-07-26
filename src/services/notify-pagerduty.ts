@@ -218,3 +218,43 @@ export async function triggerPagerDutyIncident(
     await auditPagerDutyNotification(env, { repoFullName: params.repoFullName, dedupKey: params.dedupKey }, "error", message.slice(0, 280));
   }
 }
+
+/** Resolve (auto-close) a previously-triggered PagerDuty incident for `repoFullName` via the Events API's
+ *  `resolve` action, keyed by the SAME `dedupKey` the trigger used (#8903). Best-effort — never throws — like
+ *  {@link triggerPagerDutyIncident}, and a no-op under the same not-opted-in conditions (flag off / no routing
+ *  key resolves). Unlike a trigger it applies NO min-severity floor or cooldown: closing an incident that has
+ *  already cleared should always go through, and PagerDuty itself ignores a `resolve` for a `dedup_key` with no
+ *  open incident, so a spurious resolve is harmless. A `resolve` needs only the routing key + dedup key (no
+ *  payload). Audited as `completed`/`resolved` so the auto-resolve is discoverable and the trigger→resolve
+ *  lifecycle is queryable (an invalid-but-present key is audited `denied`, matching the trigger path). */
+export async function resolvePagerDutyIncident(
+  env: Env,
+  params: { repoFullName: string; dedupKey: string },
+): Promise<void> {
+  const resolution = resolvePagerDutyRoutingKey(env, params.repoFullName);
+  if (resolution.status === "disabled") {
+    if (resolution.reason !== "flag_off") {
+      await auditPagerDutyNotification(env, { repoFullName: params.repoFullName, dedupKey: params.dedupKey }, "denied", resolution.reason);
+    }
+    return;
+  }
+
+  try {
+    const response = await fetch(PAGERDUTY_EVENTS_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        routing_key: resolution.routingKey,
+        event_action: "resolve",
+        dedup_key: params.dedupKey,
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) throw new Error(`pagerduty_events_http_${response.status}`);
+    await auditPagerDutyNotification(env, { repoFullName: params.repoFullName, dedupKey: params.dedupKey }, "completed", "resolved", { source: resolution.source });
+  } catch (error) {
+    const message = errorMessage(error);
+    console.warn(JSON.stringify({ event: "pagerduty_resolve_failed", repo: params.repoFullName, message: message.slice(0, 200) }));
+    await auditPagerDutyNotification(env, { repoFullName: params.repoFullName, dedupKey: params.dedupKey }, "error", message.slice(0, 280));
+  }
+}

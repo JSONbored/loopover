@@ -2879,6 +2879,23 @@ export async function mostRecentAuditEventForOtherTarget(env: Env, actor: string
   return rows[0]?.createdAt ?? null;
 }
 
+/** The `detail` of the newest `completed` audit event for `(actor, eventType, targetKey)`, or `null` when
+ *  none exists. Backs the PagerDuty ops-anomaly auto-resolve lifecycle (#8903): only a *completed* trigger or
+ *  resolve actually moved the incident's state at PagerDuty (a denied/errored attempt did not), so the newest
+ *  completed detail is the durable "is an incident currently open" signal that survives cron ticks and isolate
+ *  recycling without a bespoke table -- the same `audit_events` row the trigger already writes stands in as the
+ *  persisted previous-tick state. */
+export async function latestCompletedAuditEventDetail(env: Env, actor: string, eventType: string, targetKey: string): Promise<string | null> {
+  const db = getDb(env.DB);
+  const rows = await db
+    .select({ detail: auditEvents.detail })
+    .from(auditEvents)
+    .where(and(eq(auditEvents.actor, actor), eq(auditEvents.eventType, eventType), eq(auditEvents.targetKey, targetKey), eq(auditEvents.outcome, "completed")))
+    .orderBy(desc(auditEvents.createdAt))
+    .limit(1);
+  return rows[0]?.detail ?? null;
+}
+
 /** Count-returning, cross-repo variant (#4515): how many recent events of this type has this actor generated,
  *  across EVERY target (repo/PR), within the recency window? Unlike {@link countRecentAuditEventsForActorAndTarget}
  *  (scoped to one target thread), this counts an actor's ACTIVITY VOLUME irrespective of which PR/repo each

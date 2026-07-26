@@ -4,7 +4,7 @@ import { DEFAULT_SCORING_CONSTANTS } from "../../packages/loopover-engine/src/sc
 import { buildScorePreview } from "../../src/scoring/preview";
 import type { RepositoryRecord, ScoringModelSnapshotRecord } from "../../src/types";
 
-const testWeight = DEFAULT_SCORING_CONSTANTS.TEST_FILE_CONTRIBUTION_WEIGHT;
+const testWeight = DEFAULT_SCORING_CONSTANTS.TEST_FILE_CONTRIBUTION_WEIGHT ?? 0.05;
 
 describe("computeLocalScorerTokens (#782)", () => {
   it("classifies source / test / non-code from metadata and sums additions + deletions", () => {

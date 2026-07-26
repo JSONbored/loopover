@@ -2033,18 +2033,25 @@ function publicCheckFailureDetails(details: LiveCiAggregate["failingDetails"]): 
  *   comment would headline "approve/merge recommended" while the executor kept silently denying the merge/
  *   approve action every single time, with no visible explanation anywhere on the PR (confirmed live on PR
  *   #7994, stuck ~3+ hours with a stale manual-review label from an earlier missing_linked_issue blocker).
- * - `neverClosed` — the disposition never auto-closes a repo-owner or protected-automation PR, so a gate
- *   "close" verdict on one must headline "held", not "Closed" (#8/#9).
+ * - `neverClosed` — the disposition never auto-closes a protected author unless the repo opted into
+ *   `closeOwnerAuthors` for owners/admins (same closeEligible formula as planAgentMaintenanceActions /
+ *   closeWithheldReason). Automation bots stay never-closed. A gate "close" verdict on a neverClosed
+ *   author must headline "held", not "Closed" (#8/#9 / #8683).
  */
 export function derivePublicCommentMergeFacts(args: {
   liveMergeState: string | undefined;
   mergeableState: string | null | undefined;
   authorLogin: string | null | undefined;
   liveCi: Pick<LiveCiAggregate, "ciState" | "failingDetails" | "nonRequiredFailingDetails">;
-  settings: Pick<RepositorySettings, "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants" | "manualReviewLabel">;
+  settings: Pick<
+    RepositorySettings,
+    "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants" | "manualReviewLabel" | "closeOwnerAuthors"
+  >;
   unifiedFiles: Awaited<ReturnType<typeof listPullRequestFiles>>;
   repoFullName: string;
   prLabels: readonly string[];
+  /** Fleet / per-repo admin (non-owner) — same flag the planner threads into closeEligible (#8683). */
+  authorIsAdmin?: boolean;
 }): PublicCommentMergeFacts {
   const mergeStateLabel = args.liveMergeState ?? args.mergeableState ?? undefined; // fail-safe to the stored value
   const ciState: MergeReadiness["ciState"] =
@@ -2068,8 +2075,18 @@ export function derivePublicCommentMergeFacts(args: {
     isGuardrailHit(changedPathsForGuardrail(args.unifiedFiles), resolveHardGuardrailGlobs(args.settings)) || manualReviewLabelPresent;
   const repoOwner = args.repoFullName.includes("/") ? args.repoFullName.slice(0, args.repoFullName.indexOf("/")) : "";
   const authorLogin = args.authorLogin ?? "";
-  const neverClosed =
-    (authorLogin.length > 0 && authorLogin.toLowerCase() === repoOwner.toLowerCase()) || isProtectedAutomationAuthor(args.authorLogin);
+  const authorIsOwner = authorLogin.length > 0 && authorLogin.toLowerCase() === repoOwner.toLowerCase();
+  const authorIsAdmin = Boolean(args.authorIsAdmin);
+  const authorIsAutomationBot = isProtectedAutomationAuthor(args.authorLogin);
+  // Match closeEligible (isContributor || ((owner||admin) && closeOwnerAuthors)): neverClosed is the comment's
+  // claim that auto-close will not fire. Owner/admin are closable only when closeOwnerAuthors is explicitly
+  // true; automation bots remain never-closed (#8683).
+  let neverClosed = false;
+  if (authorIsAutomationBot) {
+    neverClosed = true;
+  } else if (authorIsOwner || authorIsAdmin) {
+    neverClosed = args.settings.closeOwnerAuthors !== true;
+  }
   return { ciState, mergeStateLabel, mergeReadiness, heldForReview, neverClosed };
 }
 
@@ -11111,6 +11128,12 @@ async function maybePublishPrPublicSurface(
       // The stored pr.mergeableState lags GitHub's async recompute, and the gate's own check/review publication can
       // also advance mergeability after readiness ran, so refresh at this post-publish boundary.
       const liveMergeState = await refreshLiveMergeState(env, repoFullName, webhook.liveFacts, pr.number, token, admissionKey).catch(() => undefined);
+      // #8683: neverClosed must see the same admin + closeOwnerAuthors inputs the planner's closeEligible uses.
+      /* v8 ignore next 4 -- publish-path wiring; neverClosed formula is unit-tested (#8683) */
+      const authorIsAdminForComment =
+        typeof pr.authorLogin === "string" && pr.authorLogin.length > 0
+          ? await isPerTenantAdmin(env, installationId, repoFullName, pr.authorLogin)
+          : false;
       const { ciState, mergeStateLabel, mergeReadiness, heldForReview, neverClosed } = derivePublicCommentMergeFacts({
         liveMergeState,
         mergeableState: pr.mergeableState,
@@ -11120,6 +11143,7 @@ async function maybePublishPrPublicSurface(
         unifiedFiles,
         repoFullName,
         prLabels: pr.labels,
+        authorIsAdmin: authorIsAdminForComment,
       });
       // The public comment must match the authoritative Gate check-run conclusion.
       const commentGate = commentGateEvaluation;

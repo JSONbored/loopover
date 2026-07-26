@@ -12,7 +12,11 @@ const NO_GUARDRAIL_OVERRIDES = {
   hardGuardrailGlobs: [],
   hardGuardrailGlobsOverridesInvariants: false,
   manualReviewLabel: undefined,
-} as Pick<RepositorySettings, "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants" | "manualReviewLabel">;
+  closeOwnerAuthors: false,
+} as Pick<
+  RepositorySettings,
+  "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants" | "manualReviewLabel" | "closeOwnerAuthors"
+>;
 
 function facts(overrides: Partial<Parameters<typeof derivePublicCommentMergeFacts>[0]> = {}) {
   return derivePublicCommentMergeFacts({
@@ -118,7 +122,11 @@ describe("derivePublicCommentMergeFacts() — heldForReview (#guarded-hold-comme
           hardGuardrailGlobs: [],
           hardGuardrailGlobsOverridesInvariants: true,
           manualReviewLabel: undefined,
-        } as Pick<RepositorySettings, "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants" | "manualReviewLabel">,
+          closeOwnerAuthors: false,
+        } as Pick<
+          RepositorySettings,
+          "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants" | "manualReviewLabel" | "closeOwnerAuthors"
+        >,
       }).heldForReview,
     ).toBe(false);
   });
@@ -147,7 +155,11 @@ describe("derivePublicCommentMergeFacts() — manual-review label hold (#7994-fo
       hardGuardrailGlobs: [],
       hardGuardrailGlobsOverridesInvariants: false,
       manualReviewLabel: "needs-maintainer",
-    } as Pick<RepositorySettings, "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants" | "manualReviewLabel">;
+      closeOwnerAuthors: false,
+    } as Pick<
+      RepositorySettings,
+      "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants" | "manualReviewLabel" | "closeOwnerAuthors"
+    >;
     // The default "manual-review" label no longer matters once a custom name is configured.
     expect(facts({ unifiedFiles: [UNGUARDED_FILE], settings, prLabels: ["manual-review"] }).heldForReview).toBe(false);
     expect(facts({ unifiedFiles: [UNGUARDED_FILE], settings, prLabels: ["needs-maintainer"] }).heldForReview).toBe(true);
@@ -158,7 +170,11 @@ describe("derivePublicCommentMergeFacts() — manual-review label hold (#7994-fo
       hardGuardrailGlobs: [],
       hardGuardrailGlobsOverridesInvariants: false,
       manualReviewLabel: null,
-    } as Pick<RepositorySettings, "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants" | "manualReviewLabel">;
+      closeOwnerAuthors: false,
+    } as Pick<
+      RepositorySettings,
+      "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants" | "manualReviewLabel" | "closeOwnerAuthors"
+    >;
     expect(facts({ unifiedFiles: [UNGUARDED_FILE], settings, prLabels: ["manual-review"] }).heldForReview).toBe(false);
   });
 });
@@ -188,5 +204,55 @@ describe("derivePublicCommentMergeFacts() — neverClosed (#8/#9, #4607)", () =>
 
   it("treats a repoFullName with no owner segment as having no owner", () => {
     expect(facts({ repoFullName: "no-slash-name", authorLogin: "contributor" }).neverClosed).toBe(false);
+  });
+
+  it("is false for an owner-authored PR when closeOwnerAuthors is true (#8683)", () => {
+    expect(
+      facts({
+        repoFullName: "acme/widgets",
+        authorLogin: "acme",
+        settings: { ...NO_GUARDRAIL_OVERRIDES, closeOwnerAuthors: true },
+      }).neverClosed,
+    ).toBe(false);
+  });
+
+  it("is true for an admin (non-owner) author when closeOwnerAuthors is not true (#8683)", () => {
+    expect(
+      facts({
+        repoFullName: "acme/widgets",
+        authorLogin: "fleet-admin",
+        authorIsAdmin: true,
+        settings: { ...NO_GUARDRAIL_OVERRIDES, closeOwnerAuthors: false },
+      }).neverClosed,
+    ).toBe(true);
+    // And when the repo opts into closing owners/admins, the admin is closable too.
+    expect(
+      facts({
+        repoFullName: "acme/widgets",
+        authorLogin: "fleet-admin",
+        authorIsAdmin: true,
+        settings: { ...NO_GUARDRAIL_OVERRIDES, closeOwnerAuthors: true },
+      }).neverClosed,
+    ).toBe(false);
+  });
+
+  it("keeps automation bots neverClosed even when closeOwnerAuthors is true (#8683)", () => {
+    expect(
+      facts({
+        authorLogin: "dependabot[bot]",
+        authorIsAdmin: false,
+        settings: { ...NO_GUARDRAIL_OVERRIDES, closeOwnerAuthors: true },
+      }).neverClosed,
+    ).toBe(true);
+  });
+
+  it("treats a non-admin contributor as closable regardless of closeOwnerAuthors (#8683)", () => {
+    expect(
+      facts({
+        authorLogin: "contributor",
+        authorIsAdmin: false,
+        settings: { ...NO_GUARDRAIL_OVERRIDES, closeOwnerAuthors: true },
+      }).neverClosed,
+    ).toBe(false);
   });
 });

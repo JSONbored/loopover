@@ -93,6 +93,7 @@ export function gateCheckPolicy(
     aiReviewCloseConfidence:
       settings.aiReviewCloseConfidence ??
       (typeof aiReviewCloseConfidenceOverride === "number" ? aiReviewCloseConfidenceOverride : (aiReviewCloseConfidenceOverride?.value ?? null)),
+    aiReviewSalvageabilityMinScore: settings.aiReviewSalvageabilityMinScore ?? null,
     // #8849: provenance for the low-confidence hold copy — true ONLY when the floor in force actually came
     // from a live calibration (an explicit repo setting suppresses it).
     aiReviewCloseConfidenceCalibrated:

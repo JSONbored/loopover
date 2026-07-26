@@ -5,10 +5,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { openClaimLedger } from "../../packages/loopover-miner/lib/claim-ledger.js";
+import { openGovernorState } from "../../packages/loopover-miner/lib/governor-state.js";
 import { initPortfolioQueueStore } from "../../packages/loopover-miner/lib/portfolio-queue.js";
 
-// Real cross-process concurrency coverage for the claim-ledger and portfolio-queue stores (#4867). Only the
-// worktree-allocator had a dedicated multi-process collision test before this; claim-ledger/portfolio-queue
+// Real cross-process concurrency coverage for the claim-ledger, portfolio-queue, and governor reputation-history
+// stores (#4867, #8855). Only the worktree-allocator had a dedicated multi-process collision test before this;
 // atomicity was previously only exercised per-function (single process). This spawns two real Node child
 // processes racing the same on-disk SQLite file and asserts no double-claim/double-dequeue or corrupted state
 // results — the store's own atomic UPSERT/UPDATE...RETURNING statements are what's under test, not the
@@ -21,6 +22,10 @@ const claimChildScript = join(
 const dequeueChildScript = join(
   dirname(fileURLToPath(import.meta.url)),
   "../fixtures/miner-concurrent-stores/dequeue-child.mjs",
+);
+const incrementReputationChildScript = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "../fixtures/miner-concurrent-stores/increment-reputation-child.mjs",
 );
 
 const roots: string[] = [];
@@ -205,6 +210,52 @@ describe("portfolio-queue cross-process races (#4867)", () => {
 
   it("rejects the claim-child helper when required args are missing", async () => {
     const child = spawn(process.execPath, [claimChildScript], { stdio: ["ignore", "pipe", "pipe"] });
+    const exitCode = await new Promise<number | null>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", resolve);
+    });
+    expect(exitCode).toBe(2);
+  });
+});
+
+type IncrementReputationChildResult = {
+  ok: boolean;
+  history?: { decided: number; unfavorable: number };
+  message?: string;
+};
+
+describe("governor reputation-history cross-process races (#8855)", () => {
+  it("two processes racing incrementReputationHistory() on the same repo both apply their deltas", async () => {
+    const { dbPath } = tempRoot();
+    const bootstrap = openGovernorState(dbPath);
+    bootstrap.saveReputationHistory("acme/widgets", { decided: 0, unfavorable: 0 });
+    bootstrap.close();
+
+    const children = [
+      spawnChild(incrementReputationChildScript, [dbPath, "acme/widgets", "1", "0"]),
+      spawnChild(incrementReputationChildScript, [dbPath, "acme/widgets", "1", "1"]),
+    ];
+    const results = await runBarriered<IncrementReputationChildResult>(children);
+
+    expect(results.every((result) => result.ok)).toBe(true);
+    const histories = results.map((result) => result.history);
+    expect(histories).toHaveLength(2);
+    expect(histories).toContainEqual({ decided: 2, unfavorable: 1 });
+    expect(
+      histories.some((history) => history?.decided === 1 && history.unfavorable === 0) ||
+        histories.some((history) => history?.decided === 1 && history.unfavorable === 1),
+    ).toBe(true);
+
+    const state = openGovernorState(dbPath);
+    try {
+      expect(state.loadReputationHistory("acme/widgets")).toEqual({ decided: 2, unfavorable: 1 });
+    } finally {
+      state.close();
+    }
+  });
+
+  it("rejects the increment-reputation-child helper when required args are missing", async () => {
+    const child = spawn(process.execPath, [incrementReputationChildScript], { stdio: ["ignore", "pipe", "pipe"] });
     const exitCode = await new Promise<number | null>((resolve, reject) => {
       child.once("error", reject);
       child.once("exit", resolve);

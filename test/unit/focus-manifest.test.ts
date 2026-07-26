@@ -279,6 +279,7 @@ describe(".loopover.yml.example field-exhaustiveness (#1670)", () => {
     aiReviewModel: "model:",
     aiReviewAllAuthors: "allAuthors:",
     aiReviewCloseConfidence: "closeConfidence:",
+    aiReviewSalvageabilityMinScore: "salvageabilityMinScore:",
     aiReviewLowConfidenceDisposition: "lowConfidenceDisposition:",
     aiReviewCombine: "combine:",
     aiReviewOnMerge: "onMerge:",
@@ -955,7 +956,7 @@ describe("compileFocusManifestPolicy", () => {
       issueDiscoveryPolicy: "neutral",
       maintainerNotes: [],
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
-      gate: { present: false, enabled: null, checkMode: null, pack: null, closeAuditHoldoutPct: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, sizeMaxFiles: null, sizeMaxLines: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewLowConfidenceDisposition: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, contentLaneDeliverable: null, backtestRegression: null, manifestPolicy: null, dryRun: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, staleBaseAheadByThreshold: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, advisoryCheckRuns: null, aiJudgmentBlockersMode: null, copycatMode: null, copycatMinScore: null },
+      gate: { present: false, enabled: null, checkMode: null, pack: null, closeAuditHoldoutPct: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, sizeMaxFiles: null, sizeMaxLines: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewSalvageabilityMinScore: null, aiReviewLowConfidenceDisposition: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, contentLaneDeliverable: null, backtestRegression: null, manifestPolicy: null, dryRun: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, staleBaseAheadByThreshold: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, advisoryCheckRuns: null, aiJudgmentBlockersMode: null, copycatMode: null, copycatMinScore: null },
       settings: {},
       review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, sweepWatchdog: null, prReconciliation: null, activeReviewReconciliation: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { blockers: null, nits: null }, commentVerbosity: null, e2eTestDelivery: null, e2eTestAutoTrigger: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null },
       features: { present: false, rag: null, reputation: null, safety: null, grounding: null, e2eTests: null, screenshots: null, improvementSignal: null, amsReputationBridge: null },
@@ -1148,7 +1149,7 @@ describe("parseFocusManifest gate config", () => {
     // the block→advisory deprecation-downgrade behavior itself is covered separately below.
     const m = parseFocusManifest({ gate: { linkedIssue: "block", duplicates: "advisory", readiness: { mode: "advisory", minScore: 70 } } });
     expect(m.present).toBe(true);
-    expect(m.gate).toEqual({ present: true, enabled: null, checkMode: null, pack: null, closeAuditHoldoutPct: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, sizeMaxFiles: null, sizeMaxLines: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewLowConfidenceDisposition: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, contentLaneDeliverable: null, backtestRegression: null, manifestPolicy: null, dryRun: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, staleBaseAheadByThreshold: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, advisoryCheckRuns: null, aiJudgmentBlockersMode: null, copycatMode: null, copycatMinScore: null });
+    expect(m.gate).toEqual({ present: true, enabled: null, checkMode: null, pack: null, closeAuditHoldoutPct: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, sizeMaxFiles: null, sizeMaxLines: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewSalvageabilityMinScore: null, aiReviewLowConfidenceDisposition: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, contentLaneDeliverable: null, backtestRegression: null, manifestPolicy: null, dryRun: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, staleBaseAheadByThreshold: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, advisoryCheckRuns: null, aiJudgmentBlockersMode: null, copycatMode: null, copycatMinScore: null });
   });
 
   it("parses gate.mergeReadiness, round-trips it, and warns on a bad value (#822)", () => {
@@ -1465,6 +1466,15 @@ describe("parseFocusManifest gate config", () => {
     const noFlag = parseFocusManifest({ gate: { aiReview: { mode: "advisory" } } });
     expect(noFlag.gate.aiReviewAllAuthors).toBeNull();
     expect(resolveEffectiveSettings({ aiReviewAllAuthors: true , closeOwnerAuthors: false} as unknown as RepositorySettings, noFlag).aiReviewAllAuthors).toBe(true);
+  });
+
+  it("#8962: parses gate.aiReview.salvageabilityMinScore (0-100 score), round-trips, projects onto effective settings", () => {
+    const m = parseFocusManifest({ gate: { aiReview: { salvageabilityMinScore: 60 } } });
+    expect(m.gate.present).toBe(true);
+    expect(m.gate.aiReviewSalvageabilityMinScore).toBe(60);
+    expect((gateConfigToJson(m.gate) as { aiReview: { salvageabilityMinScore: number } }).aiReview.salvageabilityMinScore).toBe(60);
+    expect(parseFocusManifest({ gate: gateConfigToJson(m.gate) }).gate).toEqual(m.gate);
+    expect(parseFocusManifest({ gate: { aiReview: { salvageabilityMinScore: "high" } } }).warnings.some((w) => /salvageabilityMinScore/.test(w))).toBe(true);
   });
 
   it("parses gate.aiReview.closeConfidence, clamps to [0,1], makes the gate present, round-trips + resolves it, and warns on a bad value (#7)", () => {

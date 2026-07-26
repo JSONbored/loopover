@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   closeDefaultGovernorState,
+  incrementReputationHistory,
   loadPauseState,
   loadReputationHistory,
   openGovernorState,
@@ -386,6 +387,85 @@ describe("governor-state reputation history (#5134)", () => {
   });
 });
 
+describe("governor-state reputation-history increment atomicity (#8855)", () => {
+  it("REGRESSION: overlapping load/save increments from two sibling connections lose a count without a transaction", () => {
+    const root = mkdtempSync(join(tmpdir(), "loopover-miner-governor-state-reputation-race-"));
+    roots.push(root);
+    const dbPath = join(root, "shared-governor-state.sqlite3");
+    const processA = openGovernorState(dbPath);
+    const processB = openGovernorState(dbPath);
+    states.push(processA, processB);
+
+    processA.saveReputationHistory("acme/widgets", { decided: 0, unfavorable: 0 });
+
+    // Classic read-modify-write overlap: both loads see decided=0 before either save commits.
+    const priorA = processA.loadReputationHistory("acme/widgets");
+    const priorB = processB.loadReputationHistory("acme/widgets");
+    processA.saveReputationHistory("acme/widgets", { decided: priorA.decided + 1, unfavorable: 0 });
+    processB.saveReputationHistory("acme/widgets", { decided: priorB.decided + 1, unfavorable: 0 });
+    expect(processA.loadReputationHistory("acme/widgets")).toEqual({ decided: 1, unfavorable: 0 });
+  });
+
+  it("REGRESSION: incrementReputationHistory serializes sibling overlapping increments so none are lost", () => {
+    const root = mkdtempSync(join(tmpdir(), "loopover-miner-governor-state-reputation-increment-"));
+    roots.push(root);
+    const dbPath = join(root, "shared-governor-state.sqlite3");
+    const processA = openGovernorState(dbPath);
+    const processB = openGovernorState(dbPath);
+    states.push(processA, processB);
+
+    processA.saveReputationHistory("acme/widgets", { decided: 0, unfavorable: 0 });
+    processA.incrementReputationHistory("acme/widgets", { decided: 1, unfavorable: 0 });
+    processB.incrementReputationHistory("acme/widgets", { decided: 1, unfavorable: 1 });
+    expect(processA.loadReputationHistory("acme/widgets")).toEqual({ decided: 2, unfavorable: 1 });
+    expect(processB.loadReputationHistory("acme/widgets")).toEqual({ decided: 2, unfavorable: 1 });
+  });
+
+  it("increments from defaults when no prior row exists", () => {
+    const state = tempState();
+    expect(state.incrementReputationHistory("acme/widgets", { decided: 1, unfavorable: 1 })).toEqual({
+      decided: 1,
+      unfavorable: 1,
+    });
+  });
+
+  it("defaults non-integer delta fields to zero", () => {
+    const state = tempState();
+    state.saveReputationHistory("acme/widgets", { decided: 3, unfavorable: 1 });
+    expect(state.incrementReputationHistory("acme/widgets", { decided: 1 })).toEqual({ decided: 4, unfavorable: 1 });
+    expect(state.incrementReputationHistory("acme/widgets", {})).toEqual({ decided: 4, unfavorable: 1 });
+  });
+
+  it("rolls the transaction back if the upsert throws, leaving the handle usable for a later increment", () => {
+    const state = tempState();
+    state.saveReputationHistory("acme/widgets", { decided: 2, unfavorable: 1 });
+
+    const raw = new DatabaseSync(state.dbPath);
+    raw.exec("DROP TABLE governor_reputation_history");
+    raw.close();
+
+    expect(() => state.incrementReputationHistory("acme/widgets", { decided: 1, unfavorable: 0 })).toThrow(
+      /no such table/i,
+    );
+
+    // afterEach closes the handle cleanly, proving the failed increment left no dangling write transaction.
+  });
+
+  it("incrementReputationHistory module-level wrapper round-trips through the default singleton", () => {
+    const root = mkdtempSync(join(tmpdir(), "loopover-miner-governor-state-singleton-increment-"));
+    roots.push(root);
+    vi.stubEnv("LOOPOVER_MINER_GOVERNOR_STATE_DB", join(root, "governor-state.sqlite3"));
+    saveReputationHistory("acme/widgets", { decided: 1, unfavorable: 0 }, "https://ghe.example.com/api/v3");
+    const written = incrementReputationHistory(
+      "acme/widgets",
+      { decided: 2, unfavorable: 1 },
+      "https://ghe.example.com/api/v3",
+    );
+    expect(written).toEqual({ decided: 3, unfavorable: 1 });
+    expect(loadReputationHistory("acme/widgets", "https://ghe.example.com/api/v3")).toEqual(written);
+  });
+});
+
 describe("governor-state own-submission history (#5134)", () => {
   it("records and lists submissions newest-first", () => {
     const state = tempState();
@@ -500,5 +580,20 @@ describe("governor-state scalar-state save atomicity (#7221)", () => {
     // No stranded open transaction: a subsequent valid save on the SAME handle still succeeds.
     state.saveRateLimitState({ buckets: { global: {}, perRepo: {} }, backoffAttempts: {} });
     expect(state.loadRateLimitState()).toEqual({ buckets: { global: {}, perRepo: {} }, backoffAttempts: {} });
+  });
+});
+
+describe("governor-state withScalarStateTransaction (#8856)", () => {
+  it("is re-entrant so nested scalar saves inside one outer transaction commit together", () => {
+    const state = tempState();
+    state.withScalarStateTransaction(() => {
+      state.saveRateLimitState({
+        buckets: { global: { open_pr: { count: 3, windowStartMs: 0 } }, perRepo: {} },
+        backoffAttempts: {},
+      });
+      state.savePauseState({ paused: true, reason: "nested pause" });
+    });
+    expect(state.loadRateLimitState().buckets.global.open_pr?.count).toBe(3);
+    expect(state.loadPauseState()).toMatchObject({ paused: true, reason: "nested pause" });
   });
 });

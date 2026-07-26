@@ -262,7 +262,7 @@ describe("runLoopOverAiReview gating", () => {
             content: [
               {
                 type: "text",
-                text: '{"assessment":"provider view","blockers":["The tests are failing on CI","Race in src/lock.ts"],"nits":[],"suggestions":[]}',
+                text: '{"assessment":"provider view","blockers":["The tests are failing on CI","No before/after screenshots provided for this visual change","Race in src/lock.ts"],"nits":[],"suggestions":[]}',
               },
             ],
           }),
@@ -277,7 +277,8 @@ describe("runLoopOverAiReview gating", () => {
       AI_DAILY_NEURON_BUDGET: "1",
       AI_BYOK_DAILY_REPO_LIMIT: "5",
     });
-    const result = await runLoopOverAiReview(env, { ...baseInput, providerKey: { provider: "anthropic", key: "sk-ant-secret" } });
+    // #8961: a body past the prompt window arms the evidence-absence demotion on the provider path too.
+    const result = await runLoopOverAiReview(env, { ...baseInput, body: `${"y".repeat(2100)}\n![after](https://x.io/1.png)`, providerKey: { provider: "anthropic", key: "sk-ant-secret" } });
     expect(result.status).toBe("ok");
     if (result.status === "ok") {
       // Single-provider BYOK is advisory-only (no consensus defect) — the observable contract is the
@@ -286,11 +287,14 @@ describe("runLoopOverAiReview gating", () => {
       const blockersSection = notes.split("**Nits")[0] ?? notes;
       expect(blockersSection).toContain("Race in src/lock.ts");
       expect(blockersSection).not.toContain("tests are failing");
+      expect(blockersSection).not.toContain("screenshots"); // #8961: demoted, never a blocker on a truncated body
       expect(notes).toContain("decided deterministically");
+      expect(notes).toContain("absence of evidence inside the truncated window");
     }
-    // The demotion arm executed on the provider path (its log fired) — the strong behavioral assertions live
-    // in the pure demoteCiClaimBlockers tests and the workers-path test above.
+    // The demotion arms executed on the provider path (their logs fired) — the strong behavioral assertions
+    // live in the pure demotion tests and the workers-path tests above.
     expect(warn.mock.calls.some(([line]) => String(line).includes("ai_review_ci_claim_demoted"))).toBe(true);
+    expect(warn.mock.calls.some(([line]) => String(line).includes("ai_review_evidence_absence_demoted"))).toBe(true);
     warn.mockRestore();
   });
 
@@ -3249,6 +3253,22 @@ describe("pure helpers", () => {
     warn.mockRestore();
   });
 
+  it("#8961: runWorkersOpinion demotes an evidence-absence blocker ONLY when the body was truncated", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const run = vi.fn(async () => ({
+      response: '{"assessment":"looks off","blockers":["No before/after screenshots provided for this visual change","Null deref in src/a.ts"],"nits":[],"suggestions":[]}',
+    }));
+    const env = createTestEnv({ AI: { run } as unknown as Ai });
+    const truncated = await runWorkersOpinion(env, "@cf/x/model", "@cf/x/model", "sys", "user", 256, [], "", undefined, undefined, true);
+    expect(truncated.review?.blockers).toEqual(["Null deref in src/a.ts"]);
+    expect(truncated.review?.nits.some((nit) => nit.includes("absence of evidence inside the truncated window"))).toBe(true);
+    expect(warn.mock.calls.some(([line]) => String(line).includes("ai_review_evidence_absence_demoted"))).toBe(true);
+    // Untruncated body: the model saw everything — the same claim is a legitimate judgment and stays a blocker.
+    const full = await runWorkersOpinion(env, "@cf/x/model", "@cf/x/model", "sys", "user", 256);
+    expect(full.review?.blockers).toContain("No before/after screenshots provided for this visual change");
+    warn.mockRestore();
+  });
+
   it("REGRESSION (#4111): runWorkersOpinion attaches supplied images to the user message; omits them (plain string) when absent", async () => {
     const seenContents: unknown[] = [];
     const run = vi.fn(async (_model: string, options: Record<string, unknown>) => {
@@ -4842,6 +4862,50 @@ describe("#8833: enforced boundaries between model judgment and deterministic fa
     // Zero-demotion returns the SAME object (no pointless reallocation on the hot path).
     const untouched = review(kept);
     expect(demoteCiClaimBlockers(untouched).review).toBe(untouched);
+  });
+
+  it("#8961: attachment counting is a deterministic fact — markdown images, user-attachments links, img tags, bare media URLs", async () => {
+    const { countBodyAttachments } = await import("../../src/services/ai-review");
+    expect(countBodyAttachments("plain prose, no media")).toBe(0);
+    expect(countBodyAttachments("![before](https://example.com/a.png)")).toBe(1);
+    expect(countBodyAttachments("see https://github.com/user-attachments/assets/abc-123")).toBe(1);
+    expect(countBodyAttachments('<img src="x" width="400"> and https://cdn.example.com/demo.mp4')).toBe(2);
+    expect(countBodyAttachments("![a](u1) ![b](u2)\nhttps://x.io/shot.jpeg")).toBe(3);
+  });
+
+  it("#8961: evidence-absence blockers demote ONLY under a truncated body; other blockers and directions both match", async () => {
+    const { demoteEvidenceAbsenceBlockers, EVIDENCE_ABSENCE_PATTERN } = await import("../../src/services/ai-review");
+    const claims = ["No before/after screenshots are provided for this visual change", "Screenshots are missing for the rendered change", "The added check silently swallows the failure"];
+    // Untruncated: untouched, same object (the model saw the whole body — its claim is a judgment).
+    const untouched = review(claims);
+    expect(demoteEvidenceAbsenceBlockers(untouched, false).review).toBe(untouched);
+    // Truncated: both phrasing directions demote; the code-content blocker survives.
+    const { review: out, demoted } = demoteEvidenceAbsenceBlockers(review(claims), true);
+    expect(demoted).toHaveLength(2);
+    expect(out.blockers).toEqual(["The added check silently swallows the failure"]);
+    expect(out.nits.filter((nit: string) => nit.includes("absence of evidence inside the truncated window"))).toHaveLength(2);
+    // Truncated but no evidence claims: zero-demotion returns the same object.
+    const clean = review(["Null deref in src/a.ts"]);
+    expect(demoteEvidenceAbsenceBlockers(clean, true).review).toBe(clean);
+    for (const positive of ["cannot confirm before/after screenshot evidence", "fails to provide screen recordings", "visual evidence is omitted"]) {
+      expect(EVIDENCE_ABSENCE_PATTERN.test(positive)).toBe(true);
+    }
+    expect(EVIDENCE_ABSENCE_PATTERN.test("Missing test coverage for the error branch")).toBe(false);
+  });
+
+  it("#8961: the prompt carries the truncation + attachment FACT for a long body, and stays plain otherwise", async () => {
+    const { PR_BODY_PROMPT_LIMIT } = await import("../../src/services/ai-review");
+    const images = "![a](https://x.io/1.png) ![b](https://x.io/2.png)";
+    const longBody = "y".repeat(PR_BODY_PROMPT_LIMIT + 10) + "\n## Screenshots\n" + images;
+    const long = buildUserPrompt({ repoFullName: "o/r", prNumber: 1, title: "t", body: longBody, diff: "d", actor: "a", mode: "advisory" } as never);
+    expect(long).toContain(`TRUNCATED at ${PR_BODY_PROMPT_LIMIT}`);
+    expect(long).toContain("2 image/video attachment(s)");
+    expect(long).toContain("NEVER claim screenshots or visual evidence are missing");
+    const short = buildUserPrompt({ repoFullName: "o/r", prNumber: 1, title: "t", body: `hello ${images}`, diff: "d", actor: "a", mode: "advisory" } as never);
+    expect(short).toContain("Description:\nhello");
+    expect(short).not.toContain("TRUNCATED");
+    const bodiless = buildUserPrompt({ repoFullName: "o/r", prNumber: 1, title: "t", body: "", diff: "d", actor: "a", mode: "advisory" } as never);
+    expect(bodiless).toContain("Description: (none)");
   });
 
   it("silence is not certainty: an unstated/garbage confidence parses to CONFIDENCE_WHEN_UNSTATED, a stated one is honored", () => {

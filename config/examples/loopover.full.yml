@@ -427,6 +427,14 @@ gate:
     # Number 0-1, or null. Default: null (engine uses 0.93). Config-as-code
     # only — no DB column or dashboard toggle; this can only be set here.
     closeConfidence: null
+    # #8962: 0-100 salvageability floor. When set, an AT/ABOVE-closeConfidence
+    # consensus/split defect on a PR whose deterministic salvageability score
+    # (fixable defect class + author's merged history here + in-flight
+    # iteration) clears this floor is HELD with fix-it guidance instead of
+    # one-shot-closed — "real defect, salvageable PR" is the residual close
+    # error class. Number 0-100, or null. Default: null (axis off; behavior
+    # identical to today). Config-as-code only.
+    salvageabilityMinScore: null
     # Disposition for a sub-closeConfidence-floor consensus/split defect (#4603).
     #   one_shot         — ignore the floor; always one-shot-close (today's
     #                      pre-#4603 behavior). Opt-in only.

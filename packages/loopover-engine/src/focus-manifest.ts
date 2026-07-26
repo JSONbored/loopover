@@ -122,6 +122,11 @@ export type FocusManifestGateConfig = {
   /** `gate.aiReview.closeConfidence` (#7): minimum calibrated AI-reviewer confidence (0-1) for an AI defect to BLOCK
    *  under `aiReview.mode: block`. null (unset) ⇒ the gate's 0.93 default. Clamped to [0,1] at parse time. */
   aiReviewCloseConfidence: number | null;
+  /** `gate.aiReview.salvageabilityMinScore` (#8962): 0-100 floor on the deterministic salvageability score
+   *  at/above which an at-floor AI-judgment close is routed to hold-with-guidance instead ("real defect,
+   *  salvageable PR" — the residual close-error class the 2026-07 decision audit identified). null (unset,
+   *  the default) ⇒ the salvageability axis never changes a disposition. Manifest-only. */
+  aiReviewSalvageabilityMinScore: number | null;
   /** `gate.aiReview.lowConfidenceDisposition` (#4603): disposition for a sub-`closeConfidence`-floor
    *  `ai_consensus_defect`/`ai_review_split` finding. null (unset) ⇒ `hold_for_review` (the shipped default).
    *  DB-backed (dashboard-settable too, via the `/ai-review` route); this overrides the stored value -- mirrors
@@ -1319,6 +1324,7 @@ const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
   aiReviewModel: null,
   aiReviewAllAuthors: null,
   aiReviewCloseConfidence: null,
+  aiReviewSalvageabilityMinScore: null,
   aiReviewLowConfidenceDisposition: null,
   aiReviewCombine: null,
   aiReviewOnMerge: null,
@@ -1810,6 +1816,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     aiReviewModel: normalizeOptionalString(aiReviewRecord?.model, "gate.aiReview.model", warnings),
     aiReviewAllAuthors: normalizeOptionalBoolean(aiReviewRecord?.allAuthors, "gate.aiReview.allAuthors", warnings),
     aiReviewCloseConfidence: normalizeOptionalConfidence(aiReviewRecord?.closeConfidence, "gate.aiReview.closeConfidence", warnings),
+    aiReviewSalvageabilityMinScore: normalizeOptionalScore(aiReviewRecord?.salvageabilityMinScore, "gate.aiReview.salvageabilityMinScore", warnings),
     aiReviewLowConfidenceDisposition: normalizeOptionalEnum(
       aiReviewRecord?.lowConfidenceDisposition,
       "gate.aiReview.lowConfidenceDisposition",
@@ -1874,6 +1881,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     gate.aiReviewModel !== null ||
     gate.aiReviewAllAuthors !== null ||
     gate.aiReviewCloseConfidence !== null ||
+    gate.aiReviewSalvageabilityMinScore !== null ||
     gate.aiReviewLowConfidenceDisposition !== null ||
     gate.aiReviewCombine !== null ||
     gate.aiReviewOnMerge !== null ||
@@ -1941,6 +1949,7 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
     gate.aiReviewModel !== null ||
     gate.aiReviewAllAuthors !== null ||
     gate.aiReviewCloseConfidence !== null ||
+    gate.aiReviewSalvageabilityMinScore !== null ||
     gate.aiReviewLowConfidenceDisposition !== null ||
     gate.aiReviewCombine !== null ||
     gate.aiReviewOnMerge !== null ||
@@ -1953,6 +1962,7 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
     if (gate.aiReviewModel !== null) aiReview.model = gate.aiReviewModel;
     if (gate.aiReviewAllAuthors !== null) aiReview.allAuthors = gate.aiReviewAllAuthors;
     if (gate.aiReviewCloseConfidence !== null) aiReview.closeConfidence = gate.aiReviewCloseConfidence;
+    if (gate.aiReviewSalvageabilityMinScore !== null) aiReview.salvageabilityMinScore = gate.aiReviewSalvageabilityMinScore;
     if (gate.aiReviewLowConfidenceDisposition !== null) aiReview.lowConfidenceDisposition = gate.aiReviewLowConfidenceDisposition;
     if (gate.aiReviewCombine !== null) aiReview.combine = gate.aiReviewCombine;
     if (gate.aiReviewOnMerge !== null) aiReview.onMerge = gate.aiReviewOnMerge;

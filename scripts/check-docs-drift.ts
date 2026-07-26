@@ -175,6 +175,7 @@ export const SETTINGS_ALIAS_MANIFEST: AliasManifestRow[] = [
   { field: "aiReviewModel", aliases: ["aiReview:"] },
   { field: "aiReviewAllAuthors", aliases: ["allAuthors"] },
   { field: "aiReviewCloseConfidence", aliases: ["closeConfidence"] },
+  { field: "aiReviewSalvageabilityMinScore", aliases: ["salvageabilityMinScore"] },
   { field: "aiReviewLowConfidenceDisposition", aliases: ["lowConfidenceDisposition"] },
   { field: "aiReviewCombine", aliases: ["aiReview:"] },
   { field: "aiReviewOnMerge", aliases: ["onMerge"] },

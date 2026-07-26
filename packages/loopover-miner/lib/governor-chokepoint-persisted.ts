@@ -39,18 +39,23 @@ export function evaluateGovernorChokepointGatePersisted(
   const ownsGovernorState = options.governorState === undefined;
   const governorState = options.governorState ?? openGovernorState();
   try {
-    const persistedRateLimit = governorState.loadRateLimitState();
-    const persistedCapUsage = governorState.loadCapUsage();
-    const resolvedInput: GovernorChokepointInput = {
-      ...input,
-      rateLimitBuckets: input.rateLimitBuckets ?? persistedRateLimit.buckets,
-      rateLimitBackoffAttempts: input.rateLimitBackoffAttempts ?? persistedRateLimit.backoffAttempts,
-      capUsage: input.capUsage ?? persistedCapUsage,
-    };
-    const gateOptions = options.append === undefined ? {} : { append: options.append };
-    const result = evaluateGovernorChokepointGate(resolvedInput, gateOptions);
-    governorState.saveRateLimitState({ buckets: result.rateLimitBuckets, backoffAttempts: result.rateLimitBackoffAttempts });
-    return result;
+    // Load+evaluate+save must share one BEGIN IMMEDIATE (#8856): a read outside the transaction followed by a
+    // save inside saveRateLimitState's own transaction let two fleet containers both load the same bucket count,
+    // each advance by one, and the second save clobber the first.
+    return governorState.withScalarStateTransaction(() => {
+      const persistedRateLimit = governorState.loadRateLimitState();
+      const persistedCapUsage = governorState.loadCapUsage();
+      const resolvedInput: GovernorChokepointInput = {
+        ...input,
+        rateLimitBuckets: input.rateLimitBuckets ?? persistedRateLimit.buckets,
+        rateLimitBackoffAttempts: input.rateLimitBackoffAttempts ?? persistedRateLimit.backoffAttempts,
+        capUsage: input.capUsage ?? persistedCapUsage,
+      };
+      const gateOptions = options.append === undefined ? {} : { append: options.append };
+      const result = evaluateGovernorChokepointGate(resolvedInput, gateOptions);
+      governorState.saveRateLimitState({ buckets: result.rateLimitBuckets, backoffAttempts: result.rateLimitBackoffAttempts });
+      return result;
+    });
   } finally {
     if (ownsGovernorState) governorState.close();
   }

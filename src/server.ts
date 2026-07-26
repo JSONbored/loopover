@@ -687,10 +687,21 @@ async function main(): Promise<void> {
   const { Redis } = await import("ioredis");
   const redisClient = new Redis(redisUrl);
   const { createRedisRateLimiter } = await import("./selfhost/redis-ratelimit");
-  const { createRedisCache, assertSelfhostTransientCacheOwnershipRelease, isWebhookDeliveryDuplicate, rememberWebhookDelivery } = await import("./selfhost/redis-cache");
+  const { createRedisCache, assertSelfhostTransientCacheOwnershipRelease, flushOrphanedLocksAtBoot, isWebhookDeliveryDuplicate, rememberWebhookDelivery } = await import("./selfhost/redis-cache");
   const rateLimiter = createRedisRateLimiter(redisClient);
   const webhookCache = createRedisCache(redisClient);
   assertSelfhostTransientCacheOwnershipRelease(webhookCache);
+  // #9021: every Redis-backed lock (pr-actuation-lock, ai-review-lock, contributor-cap-wake/-lock) survives a
+  // container restart with its TTL intact. On this single-instance deployment any lock present at boot is
+  // provably orphaned -- the process that claimed it is gone -- so flush them before the queue starts
+  // processing rather than let each strand real work for up to its own TTL (30 min for ai-review-lock, #8998).
+  // Best-effort: a flush failure just falls back to the pre-#9021 behavior (each lock rides out its TTL).
+  const flushedOrphanedLocks = await flushOrphanedLocksAtBoot(redisClient);
+  if (flushedOrphanedLocks > 0) {
+    console.log(
+      JSON.stringify({ event: "selfhost_orphaned_locks_flushed", count: flushedOrphanedLocks }),
+    );
+  }
   // Persist the installation-token cache in Redis so warm GitHub App tokens survive restarts/deploys and are
   // shared across replicas (the in-isolate Map otherwise re-mints — an Orb round-trip — per replica/cold start).
   const { createRedisTokenCache } = await import("./selfhost/redis-token-cache");

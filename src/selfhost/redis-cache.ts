@@ -98,3 +98,40 @@ export function assertSelfhostTransientCacheOwnershipRelease(
 }
 
 export type RedisCache = ReturnType<typeof createRedisCache>;
+
+// #9021: every lock built on claimTransientLock (transient-locks.ts) survives a container restart with its
+// TTL intact -- there is no boot-time flush anywhere, so on a SINGLE-INSTANCE deployment any lock present at
+// boot is provably orphaned (the process that claimed it is gone; nothing else could be holding it). Left
+// alone, each class strands real work for its own TTL: pr-actuation-lock (600s) defers every close/merge/label
+// pass for that PR, ai-review-lock (1800s) starves that PR's review (#8998), contributor-cap-wake (1800s)
+// leaves an over-cap sibling un-reevaluated. Deliberately does NOT touch: `delivery:*` (webhook dedup --
+// flushing would re-process recent deliveries), `pr-panel-retrigger-pending:*` (must survive restarts by
+// design, #7626), `ci-pending-first-seen:*` (resets the stuck-CI clock), `fresh-rebase-forced:*` (re-arms a
+// safety cap) -- none of those are exclusivity locks, and each has its own restart-survival contract.
+export const ORPHANED_LOCK_KEY_PATTERNS: readonly string[] = [
+  "pr-actuation-lock:*",
+  "ai-review-lock:*",
+  "contributor-cap-wake:*",
+  "contributor-cap-lock:*",
+];
+
+/** Best-effort SCAN-delete of every key matching {@link ORPHANED_LOCK_KEY_PATTERNS}, meant to run once at
+ *  self-host boot before the queue starts processing. Never throws: a flush failure just means a lock (or
+ *  several) rides out its own TTL as before -- exactly the pre-#9021 behavior -- rather than blocking startup.
+ *  Returns the number of keys deleted, for a single boot-time log line. */
+export async function flushOrphanedLocksAtBoot(redis: Redis): Promise<number> {
+  let deleted = 0;
+  for (const pattern of ORPHANED_LOCK_KEY_PATTERNS) {
+    try {
+      const stream = redis.scanStream({ match: pattern, count: 100 });
+      for await (const keys of stream) {
+        const batch = keys as string[];
+        if (batch.length === 0) continue;
+        deleted += await redis.del(...batch);
+      }
+    } catch {
+      // best-effort — a scan/delete failure for one pattern must never block the others or startup itself.
+    }
+  }
+  return deleted;
+}

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LoopoverMcp } from "../../src/mcp/server";
 import { getRepositoryCollaboratorPermission } from "../../src/github/app";
 import { mergePullRequest } from "../../src/github/pr-actions";
-import { createPendingAgentActionIfAbsent, getPendingAgentAction, getRepositorySettings, listPendingAgentActions, recordAuditEvent, upsertInstallation, upsertOfficialMinerDetection, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub, upsertRepositorySettings } from "../../src/db/repositories";
+import { createPendingAgentActionIfAbsent, getPendingAgentAction, getRepositorySettings, listPendingAgentActions, listPullRequests, markPullRequestRegated, recordAuditEvent, upsertInstallation, upsertOfficialMinerDetection, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub, upsertRepositorySettings } from "../../src/db/repositories";
 import type { AuthIdentity } from "../../src/auth/security";
 import { createTestEnv } from "../helpers/d1";
 
@@ -192,6 +192,40 @@ describe("MCP loopover_set_agent_paused (#6087)", () => {
     const result = await client.callTool({ name: "loopover_set_agent_paused", arguments: { owner: "owner", repo: "repo", paused: true } });
     expect(result.isError).toBe(true);
     expect(JSON.stringify(result)).toMatch(/MCP_ACTUATION_REPO_ALLOWLIST/);
+  });
+
+  // #9018: a PR that went green DURING the pause window can be stranded forever if it was ALSO regated once
+  // before the pause -- agent-sweep.ts's #never-endless-reregate rule then permanently excludes it from sweep
+  // candidacy, and resume performed no catch-up. Clearing lastRegatedAt on the paused->live transition restores
+  // one-shot candidacy.
+  it("#9018: a paused->live transition clears lastRegatedAt for the repo's OPEN PRs (restoring sweep candidacy), never for closed ones or other transitions", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto" } });
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 1, title: "Went green during pause", state: "open", user: { login: "contributor" }, head: { sha: "a1" }, labels: [], body: "" });
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 2, title: "Already closed", state: "closed", user: { login: "contributor" }, head: { sha: "a2" }, labels: [], body: "" });
+    await markPullRequestRegated(env, "owner/repo", 1);
+    await markPullRequestRegated(env, "owner/repo", 2);
+    const beforePause = await listPullRequests(env, "owner/repo");
+    expect(beforePause.find((pr) => pr.number === 1)?.lastRegatedAt).toBeTruthy();
+    expect(beforePause.find((pr) => pr.number === 2)?.lastRegatedAt).toBeTruthy();
+
+    const client = await connect(env);
+    // Pausing itself must never clear anything -- only the paused->live direction does.
+    await client.callTool({ name: "loopover_set_agent_paused", arguments: { owner: "owner", repo: "repo", paused: true } });
+    const afterPause = await listPullRequests(env, "owner/repo");
+    expect(afterPause.find((pr) => pr.number === 1)?.lastRegatedAt).toBeTruthy();
+
+    await client.callTool({ name: "loopover_set_agent_paused", arguments: { owner: "owner", repo: "repo", paused: false } });
+    const afterResume = await listPullRequests(env, "owner/repo");
+    expect(afterResume.find((pr) => pr.number === 1)?.lastRegatedAt).toBeNull(); // OPEN -- restored to sweep candidacy
+    expect(afterResume.find((pr) => pr.number === 2)?.lastRegatedAt).toBeTruthy(); // CLOSED -- untouched
+
+    // A resume-while-already-live call (paused stays false -> false) is a no-op for this marker: re-mark PR 1
+    // regated and confirm a repeat "resume" call doesn't clear it again.
+    await markPullRequestRegated(env, "owner/repo", 1);
+    await client.callTool({ name: "loopover_set_agent_paused", arguments: { owner: "owner", repo: "repo", paused: false } });
+    expect((await listPullRequests(env, "owner/repo")).find((pr) => pr.number === 1)?.lastRegatedAt).toBeTruthy();
   });
 });
 

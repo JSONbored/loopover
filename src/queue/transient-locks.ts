@@ -182,7 +182,15 @@ export class PrActuationLockContendedError extends RetryableJobError {
 // view of "how many of this author's PRs are currently open" at the same time. Same short-TTL, best-effort,
 // per-holder-token shape as claimPrActuationLock above; see this module's own header comment for why a
 // missing claim()/releaseIfValue() primitive fails OPEN rather than fake exclusivity.
-const CONTRIBUTOR_CAP_LOCK_TTL_SECONDS = 30;
+// #9024: was 30s, sized only for the executor's brief contributorCapMergeRecheck() call. But
+// maybeCloseForContributorCapOnOpen (processors.ts) holds this SAME lock across a much longer body -- a token
+// mint, live GitHub calls, ensurePullRequestLabel, the nested pr-actuation-lock, and a full
+// executeAgentMaintenanceActions pass (live-CI recheck + GitHub close) -- which can exceed 30s under GitHub
+// rate-limit backoff. Once Redis expires the lock while that holder is still inside the executor, a
+// concurrent sibling PR's cap check (or the executor's own pre-merge recheck) acquires it and evaluates the
+// author's open-PR count before the in-flight close lands -- the exact TOCTOU #7284 this lock exists to close.
+// Matches claimPrActuationLock's own 600s TTL, the other lock guarding a comparably long mutating body.
+const CONTRIBUTOR_CAP_LOCK_TTL_SECONDS = 600;
 function contributorCapLockKey(repoFullName: string, authorLogin: string): string {
   return `contributor-cap-lock:${repoFullName.toLowerCase()}:${authorLogin.toLowerCase()}`;
 }

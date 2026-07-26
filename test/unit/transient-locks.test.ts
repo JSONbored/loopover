@@ -479,6 +479,38 @@ describe("domain wrappers + PrActuationLockContendedError (#8896)", () => {
     await releaseContributorCapLock(env, "Acme/Widgets", "Alice", cap.ownerToken);
   });
 
+  // #9024: claimContributorCapLock's TTL was 30s -- sized only for the executor's brief
+  // contributorCapMergeRecheck() call -- but maybeCloseForContributorCapOnOpen holds this SAME lock across a
+  // much longer body (token mint, live GitHub calls, ensurePullRequestLabel, the nested pr-actuation-lock, a
+  // full executeAgentMaintenanceActions pass), which can exceed 30s under GitHub rate-limit backoff. Once Redis
+  // expired the lock mid-hold, a concurrent sibling's cap check could acquire it before the in-flight close
+  // landed -- the exact #7284 TOCTOU this lock exists to close. Now matches claimPrActuationLock's own 600s TTL.
+  it("#9024: claimContributorCapLock's TTL matches claimPrActuationLock's (both guard comparably long mutating bodies)", async () => {
+    const ttlCalls: number[] = [];
+    const env = createTestEnv({
+      SELFHOST_TRANSIENT_CACHE: {
+        get: async () => null,
+        set: async () => undefined,
+        claim: async (_key, _value, ttlSeconds) => {
+          ttlCalls.push(ttlSeconds);
+          return true;
+        },
+        releaseIfValue: async () => true,
+      },
+    });
+    delete env.SUBMISSION_LOCK;
+
+    await claimPrActuationLock(env, "acme/widgets", 7);
+    const [actuationTtl] = ttlCalls;
+    ttlCalls.length = 0;
+
+    await claimContributorCapLock(env, "acme/widgets", "alice");
+    const [capTtl] = ttlCalls;
+
+    expect(capTtl).toBe(actuationTtl);
+    expect(capTtl).toBe(600);
+  });
+
   it("builds a fast-retry contended error with a distinct retryKind", () => {
     const error = new PrActuationLockContendedError("acme/widgets", 3, "maintenance");
     expect(error).toBeInstanceOf(PrActuationLockContendedError);

@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  AMS_POLICY_SPEC_FILENAMES,
   DEFAULT_AMS_POLICY_SPEC,
   parseAmsPolicySpec,
   parseAmsPolicySpecContent,
@@ -10,12 +9,6 @@ import {
 test("barrel: the public entrypoint re-exports the AmsPolicySpec parser API", () => {
   assert.equal(typeof parseAmsPolicySpec, "function");
   assert.equal(typeof parseAmsPolicySpecContent, "function");
-  assert.deepEqual(AMS_POLICY_SPEC_FILENAMES, [
-    ".loopover-ams.yml",
-    ".github/loopover-ams.yml",
-    ".loopover-ams.json",
-    ".github/loopover-ams.json",
-  ]);
 });
 
 test("parseAmsPolicySpec: missing raw input returns an absent safe-default spec with no warnings", () => {

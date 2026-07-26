@@ -407,6 +407,3 @@ export function parseAmsPolicySpecContent(content: string | null | undefined): P
   }
   return parseAmsPolicySpec(parsed);
 }
-
-/** The documented `.loopover-ams` file-discovery order (first match wins), mirroring `MINER_GOAL_SPEC_FILENAMES`. */
-export const AMS_POLICY_SPEC_FILENAMES = [".loopover-ams.yml", ".github/loopover-ams.yml", ".loopover-ams.json", ".github/loopover-ams.json"] as const;

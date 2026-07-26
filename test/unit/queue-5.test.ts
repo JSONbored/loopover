@@ -464,6 +464,26 @@ describe("queue processors", () => {
       expect(closeAudit?.n).toBeGreaterThanOrEqual(1);
     });
 
+    it("REGRESSION (#8681): a redelivered issue_comment does NOT double-count a review-nag ping", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "close", reviewNagMaxPings: 5 } });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 231, title: "Redelivery", state: "open", user: { login: "chatty" }, author_association: "NONE", labels: [], body: "" });
+      const seen = { comments: [] as string[], labels: [] as string[], closed: false };
+      stubReviewNagFetch(231, seen);
+      const payload = {
+        action: "created" as const,
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" as const } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 231, title: "Redelivery", state: "open", pull_request: {}, user: { login: "chatty" }, author_association: "NONE" },
+        comment: { id: 1, body: "@loopover help", user: { login: "chatty", type: "User" as const }, author_association: "NONE" },
+      };
+      await processJob(env, { type: "github-webhook", deliveryId: "nag-redelivery-same", eventName: "issue_comment", payload });
+      await processJob(env, { type: "github-webhook", deliveryId: "nag-redelivery-same", eventName: "issue_comment", payload });
+      // #8681: the webhook-redelivery guard suppresses the replay, so two deliveries of one real ping record once.
+      const pings = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.review_nag_ping'").first<{ n: number }>();
+      expect(pings?.n).toBe(1);
+    });
+
     it("close policy degrades to hold on an ISSUE thread (no closeIssue primitive yet)", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
       await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "close", reviewNagMaxPings: 3 } });
@@ -1110,10 +1130,10 @@ describe("queue processors", () => {
       await processJob(env, { type: "github-webhook", deliveryId: "mention-redelivery-same", eventName: "issue_comment", payload });
       await processJob(env, { type: "github-webhook", deliveryId: "mention-redelivery-same", eventName: "issue_comment", payload });
       const pings = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.monitored_mention_ping'").first<{ n: number }>();
-      // NOTE: unlike #2560's per-command limiter, review-nag/monitored-mention ping recording does not itself
-      // dedup by deliveryId -- it always records. This assertion documents CURRENT behavior (2 pings from 2
-      // deliveries) rather than asserting an idempotency guarantee this handler does not provide.
-      expect(pings?.n).toBe(2);
+      // #8681: monitored-mention recording now carries the same webhook-redelivery guard as #2560's per-command
+      // limiter -- a redelivered issue_comment (same deliveryId) is suppressed rather than counted a second
+      // time, so two deliveries of one real mention record exactly ONE ping.
+      expect(pings?.n).toBe(1);
     });
   });
 

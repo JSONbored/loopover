@@ -13314,6 +13314,12 @@ async function maybeThrottleReviewNagPing(
   if (isAutoCloseExempt(commenter, settings.autoCloseExemptLogins)) return false;
 
   const targetKey = `${repoFullName}#${issue.number}`;
+  // #8681: webhook-redelivery guard, backported from maybeThrottleLoopOverCommand/maybeThrottleIntentRouting.
+  // GitHub can redeliver the same issue_comment event; without this, a redelivery re-counts this ping toward
+  // the threshold (and can re-post the cooldown/close). The original delivery already recorded its ping under
+  // this deliveryId, so short-circuit the replay entirely.
+  const redeliverySinceIso = new Date(Date.now() - COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS).toISOString();
+  if (await hasAuditEventForDelivery(env, commenter, REVIEW_NAG_PING_EVENT_TYPE, targetKey, deliveryId, redeliverySinceIso)) return true;
   /* v8 ignore next -- resolveRepositorySettings always resolves a concrete positive integer (NOT NULL DEFAULT 3); the undefined side is defensive against the field's optional TS type. */
   const maxPings = settings.reviewNagMaxPings ?? 3;
   /* v8 ignore next -- resolveRepositorySettings always resolves a concrete positive integer (NOT NULL DEFAULT 5); the undefined side is defensive against the field's optional TS type. */
@@ -13503,6 +13509,11 @@ async function maybeThrottleMonitoredMentions(
   // the repo-wide count's suffix filter, so a naming drift between the two can never silently under/over-count.
   const mentionTargetSuffix = `mention:${mentionedLogin.toLowerCase()}`;
   const targetKey = `${repoFullName}#${issue.number}#${mentionTargetSuffix}`;
+  // #8681: webhook-redelivery guard, backported from maybeThrottleLoopOverCommand/maybeThrottleIntentRouting.
+  // A redelivered issue_comment event must not re-count this mention toward the threshold; the original
+  // delivery already recorded it under this deliveryId + per-login targetKey, so short-circuit the replay.
+  const redeliverySinceIso = new Date(Date.now() - COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS).toISOString();
+  if (await hasAuditEventForDelivery(env, commenter, MONITORED_MENTION_PING_EVENT_TYPE, targetKey, deliveryId, redeliverySinceIso)) return true;
   /* v8 ignore next -- resolveRepositorySettings always resolves a concrete positive integer (NOT NULL DEFAULT 3); the undefined side is defensive against the field's optional TS type. */
   const maxPings = settings.reviewNagMaxPings ?? 3;
   /* v8 ignore next -- resolveRepositorySettings always resolves a concrete positive integer (NOT NULL DEFAULT 5); the undefined side is defensive against the field's optional TS type. */

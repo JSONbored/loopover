@@ -44,6 +44,8 @@ import { openWorktreeAllocator } from "./worktree-allocator.js";
 import type { WorktreeAllocation, WorktreeAllocator } from "./worktree-allocator.js";
 import { isValidRepoSegment } from "./repo-clone.js";
 import { REJECTION_REASON_AI_USAGE_POLICY_BAN, REJECTION_REASON_OWN_SUBMISSION_REJECTED, resolveOwnOpenPrForIssue, resolveRejectionSignaled } from "./rejection-signal.js";
+import { initDenyHookSynthesisStore } from "./deny-hook-synthesis.js";
+import type { DenyRule } from "@loopover/engine";
 import type { resolveRejectionSignaled as ResolveRejectionSignaledFn } from "./rejection-signal.js";
 import { cleanupAttemptWorktree, prepareAttemptWorktree } from "./attempt-worktree.js";
 import type {
@@ -262,14 +264,41 @@ export function parseAttemptArgs(args: string[]): ParsedAttemptArgs {
  * constructProductionCodingAgentDriver's own contract) -- callers should report that clearly rather than
  * silently falling back to a driver that could never run.
  */
+/**
+ * #8806: maintainer-approved synthesized deny rules finally reach a live consumer. Pre-#8806 the synthesis
+ * store was written and reviewed but NEVER read at driver construction — every attempt fell back to
+ * DEFAULT_DENY_RULES, so an operator who approved a synthesized guardrail reasonably (and wrongly) believed
+ * future attempts respected it. Resolves the repo's effective rules (approved proposals merged over the
+ * defaults) for the driver's PreToolUse hooks. FAIL-OPEN to undefined (→ the pre-#8806 defaults) on any
+ * store failure — a guardrail read hiccup must never block an attempt, and the defaults are the historical
+ * floor, never nothing. `initStore` is an injection seam for tests.
+ */
+export function resolveAttemptHouseRulesConfig(
+  repoFullName: string | undefined,
+  initStore: typeof initDenyHookSynthesisStore = initDenyHookSynthesisStore,
+): { rules: readonly DenyRule[]; repoFullName: string } | undefined {
+  if (!repoFullName) return undefined;
+  try {
+    const store = initStore();
+    try {
+      return { rules: store.resolveEffectiveRules(repoFullName), repoFullName };
+    } finally {
+      store.close();
+    }
+  } catch {
+    return undefined;
+  }
+}
+
 export function buildAttemptDeps(
   env: Record<string, string | undefined>,
-  ledgers: { claimLedger: ClaimLedger; eventLedger: EventLedger; attemptLog: AttemptLog; governorLedger: GovernorLedger; nowMs: number },
+  ledgers: { claimLedger: ClaimLedger; eventLedger: EventLedger; attemptLog: AttemptLog; governorLedger: GovernorLedger; nowMs: number; repoFullName?: string },
 ): AttemptDeps {
+  const houseRulesConfig = resolveAttemptHouseRulesConfig(ledgers.repoFullName);
   // AttemptDeps' claimLedger/callback parameter types are looser structural stubs than the real ledgers
   // (pre-existing .d.ts drift on attempt-runner); cast preserves the same runtime wiring the .js had.
   return {
-    driver: constructProductionCodingAgentDriver(env),
+    driver: constructProductionCodingAgentDriver(env, houseRulesConfig !== undefined ? { houseRulesConfig } : {}),
     runSlopAssessment: (input) => runSlopAssessment(input as Parameters<typeof runSlopAssessment>[0]),
     appendAttemptLogEvent: (event) => {
       ledgers.attemptLog.appendAttemptLogEvent(event as Parameters<AttemptLog["appendAttemptLogEvent"]>[0]);
@@ -520,7 +549,9 @@ export async function runAttempt(args: string[], options: RunAttemptOptions = {}
     let deps;
     try {
       const buildDeps = options.buildAttemptDeps ?? buildAttemptDeps;
-      deps = buildDeps(env, { claimLedger, eventLedger, attemptLog, governorLedger, nowMs });
+      // #8806: the target repo threads through so the driver's PreToolUse deny hooks carry the repo's
+      // maintainer-approved synthesized rules, not only DEFAULT_DENY_RULES.
+      deps = buildDeps(env, { claimLedger, eventLedger, attemptLog, governorLedger, nowMs, repoFullName: parsed.repoFullName });
     } catch (error) {
       const reason = describeCliError(error);
       return reportCliFailure(

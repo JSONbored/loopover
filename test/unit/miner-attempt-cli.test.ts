@@ -15,7 +15,7 @@ import { closeDefaultGovernorLedger, initGovernorLedger } from "../../packages/l
 import { closeDefaultWorktreeAllocator, openWorktreeAllocator } from "../../packages/loopover-miner/lib/worktree-allocator.js";
 import { closeDefaultPortfolioQueueStore } from "../../packages/loopover-miner/lib/portfolio-queue.js";
 import { closeDefaultGovernorState } from "../../packages/loopover-miner/lib/governor-state.js";
-import { buildAttemptDeps, parseAttemptArgs, runAttempt } from "../../packages/loopover-miner/lib/attempt-cli.js";
+import { buildAttemptDeps, parseAttemptArgs, runAttempt, resolveAttemptHouseRulesConfig } from "../../packages/loopover-miner/lib/attempt-cli.js";
 import type { RunAttemptOptions } from "../../packages/loopover-miner/lib/attempt-cli.js";
 import type { RuleFiredEvent, SignalStore } from "../../packages/loopover-engine/src/calibration/signal-tracking.js";
 import * as minerSentryModule from "../../packages/loopover-miner/lib/sentry.js";
@@ -2636,5 +2636,37 @@ describe("runAttempt: Neon branch-per-attempt DB fork (#7858)", () => {
     });
 
     expect(exitCode).toBe(7);
+  });
+});
+
+describe("resolveAttemptHouseRulesConfig (#8806)", () => {
+  it("resolves the repo's effective rules (approved proposals merged over defaults) and closes the store", () => {
+    const close = vi.fn();
+    const resolveEffectiveRules = vi.fn(() => [{ toolNamePattern: /Bash/, inputTokenPattern: /CHANGELOG\.md/ }]);
+    const config = resolveAttemptHouseRulesConfig("acme/widgets", (() => ({ resolveEffectiveRules, close })) as never);
+    expect(config?.repoFullName).toBe("acme/widgets");
+    expect(config?.rules).toHaveLength(1);
+    expect(resolveEffectiveRules).toHaveBeenCalledWith("acme/widgets");
+    expect(close).toHaveBeenCalled(); // no leaked store handle
+  });
+
+  it("FAIL-OPEN: a store failure (or no repo) resolves undefined — the pre-#8806 DEFAULT_DENY_RULES floor, never a blocked attempt", () => {
+    expect(resolveAttemptHouseRulesConfig(undefined)).toBeUndefined();
+    expect(
+      resolveAttemptHouseRulesConfig("acme/widgets", (() => {
+        throw new Error("store down");
+      }) as never),
+    ).toBeUndefined();
+    // A resolve failure AFTER open still closes fail-open to undefined.
+    const close = vi.fn();
+    expect(
+      resolveAttemptHouseRulesConfig("acme/widgets", (() => ({
+        resolveEffectiveRules: () => {
+          throw new Error("read failed");
+        },
+        close,
+      })) as never),
+    ).toBeUndefined();
+    expect(close).toHaveBeenCalled();
   });
 });

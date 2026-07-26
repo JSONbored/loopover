@@ -644,6 +644,8 @@ import {
   recordPrOutcome,
   recordReversalSignals,
 } from "../review/outcomes-wire";
+import { AI_JUDGMENT_BLOCKER_CODES } from "../rules/advisory";
+import { REVIEW_PROMPT_VERSION, REVIEW_SYSTEM_PROMPT } from "../services/ai-review";
 import { maybeApplyCloseAuditHoldout } from "../review/close-audit-holdout";
 import { buildDecisionRecord, contentDigest, loadDecisionRecordCollapsible, persistDecisionRecord } from "../review/decision-record";
 import { neutralHoldReasonCode, nativeGateActionFromConclusion, recordNativeGateDecision } from "../review/parity-wire";
@@ -3322,12 +3324,16 @@ async function runAgentMaintenancePlanAndExecute(
     // erase a prior miner-authored prediction for the same head.
     minerAuthored: breakerMinerAuthored,
   });
-  // #8836: the content-addressed decision record — the public commitment that lets a contributor argue
-  // "clause X of config abc123 decided this". Persist-only here (best-effort inside); the same reasonCode
-  // expression as recordNativeGateDecision above so the record and the calibration row can never disagree
-  // about WHY. Model/prompt commitments are wired when the AI-review contribution lands (tracked on #8836's
-  // follow-up note); rule-only decisions carry null there by design.
+  // #8836/#8834: the content-addressed decision record — the public commitment that lets a contributor
+  // argue "clause X of config abc123 decided this". Persist-only here (best-effort inside); the same
+  // reasonCode expression as recordNativeGateDecision above so the record and the calibration row can never
+  // disagree about WHY. When an AI JUDGMENT shaped this decision (an AI_JUDGMENT_BLOCKER_CODES finding is
+  // present), the record carries the prompt-template commitment and the finding's calibrated confidence —
+  // the confidence is what joins every decision to the risk-control calibration set (#8835). modelId stays
+  // null at this site: the finding does not carry which concrete models ran, and recording a guess would be
+  // worse than recording nothing (the reviewDiagnostics ledger holds the per-run model identities).
   {
+    const aiJudgment = gate.blockers.find((blocker) => AI_JUDGMENT_BLOCKER_CODES.has(blocker.code));
     const { record, recordDigest } = await buildDecisionRecord({
       repoFullName,
       pullNumber: pr.number,
@@ -3344,7 +3350,8 @@ async function runAgentMaintenancePlanAndExecute(
       gatePack: settings.gatePack,
       ciState: null,
       modelId: null,
-      promptDigest: null,
+      promptDigest: aiJudgment !== undefined ? await contentDigest({ version: REVIEW_PROMPT_VERSION, template: REVIEW_SYSTEM_PROMPT }) : null,
+      aiConfidence: aiJudgment?.confidence ?? null,
     });
     await persistDecisionRecord(env, record, recordDigest);
   }

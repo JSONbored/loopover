@@ -60,6 +60,7 @@ function recordInput(over: Partial<DecisionRecord> = {}): Omit<DecisionRecord, "
     ciState: "failed",
     modelId: null,
     promptDigest: null,
+    aiConfidence: null,
     ...over,
   };
 }
@@ -71,10 +72,14 @@ describe("buildDecisionRecord / persistDecisionRecord", () => {
     expect(typeof record.decidedAt).toBe("string");
     expect(recordDigest).toBe(await contentDigest(record));
     // Call sites pass optional-shaped settings fields raw; normalization happens HERE, once.
-    const { record: bare } = await buildDecisionRecord({ ...recordInput(), gatePack: undefined, ciState: undefined, baseSha: undefined });
+    const { record: bare } = await buildDecisionRecord({ ...recordInput(), gatePack: undefined, ciState: undefined, baseSha: undefined, aiConfidence: undefined });
     expect(bare.gatePack).toBeNull();
     expect(bare.ciState).toBeNull();
     expect(bare.baseSha).toBeNull();
+    expect(bare.aiConfidence).toBeNull();
+    // #8834: a stated confidence (including explicit 0) survives normalization.
+    const { record: withConf } = await buildDecisionRecord({ ...recordInput(), aiConfidence: 0 });
+    expect(withConf.aiConfidence).toBe(0);
   });
 
   it("persists with latest-finalize-wins per (target, head sha)", async () => {
@@ -114,10 +119,11 @@ describe("renderDecisionRecordSection", () => {
     expect(body).toContain(recordDigest.slice(0, 12));
     expect(body).not.toContain("**model**");
 
-    const ai = await buildDecisionRecord(recordInput({ modelId: "claude-sonnet-5", promptDigest: "p".repeat(64) }));
+    const ai = await buildDecisionRecord(recordInput({ modelId: "claude-sonnet-5", promptDigest: "p".repeat(64), aiConfidence: 0.97 }));
     const aiBody = renderDecisionRecordSection(ai.record, ai.recordDigest);
     expect(aiBody).toContain("**model**: claude-sonnet-5");
     expect(aiBody).toContain("`pppppppppppp`");
+    expect(aiBody).toContain("**confidence**: 0.97");
     // Bounded: a record section must stay a small fixed-size block.
     expect(aiBody.length).toBeLessThan(700);
 

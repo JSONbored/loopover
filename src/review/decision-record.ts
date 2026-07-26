@@ -14,7 +14,7 @@
 import { errorMessage, nowIso } from "../utils/json";
 
 /** Bump when the record's FIELD SET changes meaning — consumers compare records only within a version. */
-export const DECISION_RECORD_SCHEMA_VERSION = "1";
+export const DECISION_RECORD_SCHEMA_VERSION = "2"; // v2 (#8834): + aiConfidence, model/prompt commitments live
 
 /**
  * Canonical JSON: recursively key-sorted, no insignificant whitespace — the ONE serialization every digest
@@ -72,17 +72,22 @@ export type DecisionRecord = {
   /** Model + prompt commitments when an AI review contributed; null for rule-only decisions. */
   modelId: string | null;
   promptDigest: string | null;
+  /** #8834: the calibrated confidence of the AI-judgment finding that shaped this decision (consensus
+   *  defect / split), null when no AI judgment contributed. Persisted so every decision joins the
+   *  risk-control calibration set (#8835) with its confidence attached. */
+  aiConfidence: number | null;
   decidedAt: string;
 };
 
 /** Assemble the record and its own content digest. PURE given pre-computed digests. Normalizes the
  *  optional-shaped caller fields (undefined -> null) HERE so call sites carry no fallback arms of their own. */
 export async function buildDecisionRecord(
-  input: Omit<DecisionRecord, "schemaVersion" | "decidedAt" | "gatePack" | "ciState" | "baseSha"> & {
+  input: Omit<DecisionRecord, "schemaVersion" | "decidedAt" | "gatePack" | "ciState" | "baseSha" | "aiConfidence"> & {
     decidedAt?: string;
     gatePack?: string | null | undefined;
     ciState?: string | null | undefined;
     baseSha?: string | null | undefined;
+    aiConfidence?: number | null | undefined;
   },
 ): Promise<{ record: DecisionRecord; recordDigest: string }> {
   const record: DecisionRecord = {
@@ -92,6 +97,7 @@ export async function buildDecisionRecord(
     gatePack: input.gatePack ?? null,
     ciState: input.ciState ?? null,
     baseSha: input.baseSha ?? null,
+    aiConfidence: input.aiConfidence ?? null,
   };
   return { record, recordDigest: await contentDigest(record) };
 }
@@ -139,7 +145,7 @@ export function renderDecisionRecordSection(record: DecisionRecord, recordDigest
     `- **action**: ${record.action} · **clause**: \`${record.reasonCode}\``,
     `- **config**: \`${short(record.configDigest)}\`${record.gatePack ? ` · **pack**: ${record.gatePack}` : ""}${record.ciState ? ` · **ci**: ${record.ciState}` : ""}`,
     ...(record.modelId !== null || record.promptDigest !== null
-      ? [`- **model**: ${record.modelId ?? "n/a"}${record.promptDigest !== null ? ` · **prompt**: \`${short(record.promptDigest)}\`` : ""}`]
+      ? [`- **model**: ${record.modelId ?? "n/a"}${record.promptDigest !== null ? ` · **prompt**: \`${short(record.promptDigest)}\`` : ""}${record.aiConfidence !== null ? ` · **confidence**: ${record.aiConfidence}` : ""}`]
       : []),
     `- **record**: \`${short(recordDigest)}\` (schema v${record.schemaVersion}, head \`${record.headSha.slice(0, 7)}\`)`,
   ];

@@ -184,6 +184,36 @@ describe("runMinerAttempt (#2337) — the real create->review->gate->submit pipe
     expect(result.loopResult.finalMeterTotals.tokens).toBe(1234);
   });
 
+  it("#8807: a FAILED target-repo verification blocks the submission after handoff — no freshness read, no PR", async () => {
+    const executeLocalWrite = vi.fn();
+    const fetchLiveIssueSnapshot = vi.fn();
+    const verification = {
+      status: "failed",
+      checks: [{ kind: "test", command: "npm test", ok: false, exitCode: 1, outputTail: "1 failing" }],
+      firstFailure: { kind: "test", command: "npm test", ok: false, exitCode: 1, outputTail: "1 failing" },
+    };
+    const deps = baseDeps({ executeLocalWrite, fetchLiveIssueSnapshot, verifyTargetRepo: async () => verification });
+    const result = await runMinerAttempt(baseAttemptInput(), deps);
+
+    expect(result.outcome).toBe("verification_failed");
+    if (result.outcome !== "verification_failed") throw new Error("expected verification_failed");
+    expect(result.verification).toEqual(verification);
+    expect(result.loopResult.outcome).toBe("handoff"); // the agent DID hand off — the gate caught it after
+    expect(fetchLiveIssueSnapshot).not.toHaveBeenCalled(); // blocked BEFORE spending the freshness read
+    expect(executeLocalWrite).not.toHaveBeenCalled(); // and no PR was opened
+  });
+
+  it("#8807: a PASSED or SKIPPED verification proceeds to submit exactly as before; absent dep is byte-identical pre-#8807 flow", async () => {
+    for (const verification of [{ status: "passed", checks: [] }, { status: "skipped", reason: "stack_undetected" }]) {
+      const deps = baseDeps({ verifyTargetRepo: async () => verification });
+      const result = await runMinerAttempt(baseAttemptInput(), deps);
+      expect(result.outcome, JSON.stringify(verification)).toBe("submitted");
+    }
+    // No dep at all (older callers): the happy path above already pins this; assert explicitly anyway.
+    const result = await runMinerAttempt(baseAttemptInput(), baseDeps());
+    expect(result.outcome).toBe("submitted");
+  });
+
   it("defaults the open_pr body to an empty string when the loop input never set one", async () => {
     const deps = baseDeps();
     const result = await runMinerAttempt(baseAttemptInput({ loopInput: passingLoopInput({ body: undefined }) }), deps);

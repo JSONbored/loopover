@@ -46,6 +46,8 @@ import { isValidRepoSegment } from "./repo-clone.js";
 import { REJECTION_REASON_AI_USAGE_POLICY_BAN, REJECTION_REASON_OWN_SUBMISSION_REJECTED, resolveOwnOpenPrForIssue, resolveRejectionSignaled } from "./rejection-signal.js";
 import { initDenyHookSynthesisStore } from "./deny-hook-synthesis.js";
 import type { DenyRule } from "@loopover/engine";
+import { runTargetRepoVerification } from "./target-repo-verification.js";
+import { detectRepoStack } from "./stack-detection.js";
 import type { resolveRejectionSignaled as ResolveRejectionSignaledFn } from "./rejection-signal.js";
 import { cleanupAttemptWorktree, prepareAttemptWorktree } from "./attempt-worktree.js";
 import type {
@@ -145,6 +147,8 @@ export type RunAttemptOptions = {
   resolveRejectionSignaled?: typeof ResolveRejectionSignaledFn;
   // #8808: injection seam for the own-open-PR idempotency guard, mirroring resolveRejectionSignaled above.
   resolveOwnOpenPrForIssue?: typeof resolveOwnOpenPrForIssue;
+  // #8807: injection seam for the target-repo verification gate, mirroring the resolver seams above.
+  runTargetRepoVerification?: typeof runTargetRepoVerification;
   fetchImpl?: SelfReviewContextFetch;
   prepareAttemptWorktree?: typeof PrepareAttemptWorktreeFn;
   cleanupAttemptWorktree?: typeof CleanupAttemptWorktreeFn;
@@ -739,6 +743,9 @@ export async function runAttempt(args: string[], options: RunAttemptOptions = {}
       };
     };
 
+    // #8807: captured as a const here (where the !ok early-return has already narrowed the union) because
+    // the verification thunk below closes over it — TS drops narrowing on a mutable binding inside closures.
+    const attemptWorktreePath = worktreeResult.worktreePath;
     const loopInput = buildAttemptLoopInput({
       codingTaskSpec,
       reviewContext,
@@ -872,6 +879,18 @@ export async function runAttempt(args: string[], options: RunAttemptOptions = {}
           ...deps,
           shouldAbort,
           resolveKillSwitchScope: () => resolveLiveKillSwitch().scope,
+          // #8807: pre-bound target-repo verification against THIS attempt's worktree, using the same stack
+          // detection the agent's own validation guidance rendered. Opt-out escape hatch for repos whose
+          // suites exceed the per-command bound; the gate itself skips (never fails) on an undetected stack.
+          ...(/^(1|true|yes|on)$/i.test((env.MINER_SKIP_TARGET_REPO_VERIFICATION ?? "").trim())
+            ? {}
+            : {
+                verifyTargetRepo: () =>
+                  (options.runTargetRepoVerification ?? runTargetRepoVerification)({
+                    worktreeDir: attemptWorktreePath,
+                    stack: detectRepoStack(attemptWorktreePath),
+                  }),
+              }),
         },
       );
     } catch (error) {

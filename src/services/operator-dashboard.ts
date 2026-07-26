@@ -34,7 +34,7 @@ import { computeFleetAnalytics, getFleetHealthSummary, type FleetAnalytics, type
 import { computeAgentHealth, computeCalibration, type AgentHealth, type Calibration } from "../review/ops";
 import { computeGateEval, type GateEvalReport } from "../review/parity";
 import { computeContributorGateEval, contributorFairnessFlags, computeBlendedContributorGateEval, contributorGlobalFairnessFlags } from "../review/contributor-gate-eval";
-import { computeBlendedRuleGateEval, rulesBelowClosePrecisionFloor } from "../review/rule-gate-eval";
+import { computeRuleGateEval, computeBlendedRuleGateEval, rulesBelowClosePrecisionFloor, projectRulesBelowClosePrecisionFloor } from "../review/rule-gate-eval";
 import { computeCycleTimeAggregate, computeFindingAcceptance, type CycleTimeAggregate } from "../review/stats";
 import { loadUpstreamStatus, type UpstreamStatus } from "../upstream/ruleset";
 import { nowIso } from "../utils/json";
@@ -140,6 +140,7 @@ export async function buildOperatorDashboardPayload(
     gateEval,
     contributorGateEval,
     blendedContributorGateEval,
+    ruleGateEval,
     blendedRuleGateEval,
     cycleTime,
     calibration,
@@ -172,6 +173,9 @@ export async function buildOperatorDashboardPayload(
     computeContributorGateEval(env, { days: GATE_ANALYTICS_WINDOW_DAYS, nowMs: Date.now() }),
     // #global-contributor-trust: the SAME data pooled cross-repo into one blended figure per login, same window.
     computeBlendedContributorGateEval(env, { days: GATE_ANALYTICS_WINDOW_DAYS, nowMs: Date.now() }),
+    // #8906: per-(project, ruleCode) gate accuracy -- the "which rule is broken on which repo" view that
+    // computeBlendedRuleGateEval's cross-repo pooling can't provide. Fails safe to an empty report.
+    computeRuleGateEval(env, { days: GATE_ANALYTICS_WINDOW_DAYS, nowMs: Date.now() }),
     // #7984: the SAME review_audit data re-aggregated by RULE CODE (pooled cross-repo) instead of by project —
     // isolates a single systematically-wrong deterministic rule even while its host project's own aggregate
     // still looks healthy. Fails safe to an empty report on any read error.
@@ -214,6 +218,9 @@ export async function buildOperatorDashboardPayload(
   // #7984: rules whose sample has cleared enough volume to trust but whose weighted close precision sits
   // below the SAME floor auto-tune.ts's project-level close-precision breaker uses -- pure fold, no extra I/O.
   const rulesBelowFloor = rulesBelowClosePrecisionFloor(blendedRuleGateEval.rows);
+  // #8906: the SAME floor check, per (project, ruleCode) instead of pooled -- surfaces a rule that's broken on
+  // one specific repo even while the blended figure above still looks healthy.
+  const projectRulesBelowFloor = projectRulesBelowClosePrecisionFloor(ruleGateEval.rows);
   const installedRepos = repositories.filter((repo: RepositoryRecord) => repo.isInstalled).length;
   const registeredRepos = repositories.filter((repo: RepositoryRecord) => repo.isRegistered).length;
   // #1967: map FindingAcceptanceAggregate's field names onto the AcceptanceRateCard's expected shape.
@@ -303,6 +310,17 @@ export async function buildOperatorDashboardPayload(
         label: "Rules below close-precision floor",
         value: String(rulesBelowFloor.length),
         delta: rulesBelowFloor.length > 0 ? rulesBelowFloor.map((r) => r.ruleCode).join(", ") : "no rule below floor",
+      },
+      {
+        // #8906: the per-(project, ruleCode) counterpart to the blended tile above -- names the specific repo
+        // a rule is broken on, same "name the specific thing" posture (rule codes and repo names are not
+        // personally identifying, unlike the contributor tiles' logins).
+        label: "Rules below close-precision floor (per-project)",
+        value: String(projectRulesBelowFloor.length),
+        delta:
+          projectRulesBelowFloor.length > 0
+            ? projectRulesBelowFloor.map((r) => `${r.project}:${r.ruleCode}`).join(", ")
+            : "no rule below floor",
       },
     ],
     noiseReduction: [

@@ -533,6 +533,14 @@ describe("advisory rules", () => {
     const belowFloor = DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE - 0.1;
     const atFloor = DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE;
 
+    it("#8849: the hold names its floor's SOURCE — calibrated risk-control threshold vs configured floor", () => {
+      const evaluation = failure([finding("ai_consensus_defect", belowFloor)]);
+      const calibrated = resolveAiReviewLowConfidenceHold(evaluation, { aiReviewCloseConfidenceCalibrated: true });
+      expect(calibrated?.reason).toContain("calibrated risk-control threshold");
+      const configured = resolveAiReviewLowConfidenceHold(evaluation, { aiReviewCloseConfidenceCalibrated: false });
+      expect(configured?.reason).toContain("configured close-confidence floor");
+    });
+
     it("acceptance (1): sub-floor consensus defect + hold_for_review (default) → returns the hold", () => {
       const evaluation = failure([finding("ai_consensus_defect", belowFloor)]);
       const hold = resolveAiReviewLowConfidenceHold(evaluation, {});

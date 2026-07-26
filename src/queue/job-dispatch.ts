@@ -47,6 +47,7 @@ import { syncBrokeredInstalledRepos } from "../orb/installed-repos-sync";
 import { incr } from "../selfhost/metrics";
 import { generateSignalSnapshots } from "./signal-snapshot";
 import { isDecisionAuditEnabled, runDecisionAuditSample } from "../review/decision-audit";
+import { isRiskControlEnabled, runRiskControlRecalibration } from "../review/risk-control-wire";
 import { runRetentionPrune } from "./retention";
 // The 15 handlers below have no reason to move -- each is only reachable via this dispatcher (or, for
 // mapWithConcurrency, ALSO used by other still-in-processors.ts code), so they stay put and are exported
@@ -242,6 +243,13 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       if (!isDecisionAuditEnabled(env)) return;
       const inserted = await runDecisionAuditSample(env);
       console.log(JSON.stringify({ event: "decision_audit_sampled", inserted }));
+      return;
+    }
+    case "risk-control-recalibrate": {
+      // #8835: same stale-queued-job posture as its sampling sibling above.
+      if (!isRiskControlEnabled(env)) return;
+      const summary = await runRiskControlRecalibration(env);
+      console.log(JSON.stringify({ event: "risk_control_recalibrated", ...summary }));
       return;
     }
     case "generate-weekly-value-report":

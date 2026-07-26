@@ -118,6 +118,18 @@ export const LATEST_ONLY_SIGNAL_SNAPSHOT_TYPES = [
   "contributor-evidence-graph",
   "contributor-outcome-history",
   "contributor-strategy",
+  // #8900: these eight writers also INSERT a fresh row every run (persistSignalSnapshot is not an
+  // upsert) while every consumer reads only index [0] / the latest row — same latest-only contract as
+  // the repo-* and contributor-intelligence types above. queue-health stays EXCLUDED (feeds
+  // buildQueueTrendReport as a real series).
+  "config-quality",
+  "label-audit",
+  "maintainer-lane",
+  "maintainer-cut-readiness",
+  "contributor-intake-health",
+  "issue-quality",
+  "repo-outcome-patterns",
+  "pr-reviewability",
 ] as const;
 
 /**

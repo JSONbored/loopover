@@ -168,7 +168,7 @@ export function ProofOfPowerStats({ className }: { className?: string }) {
               fleetEligible
                 ? // #8829: a bare accuracy scalar at unstated coverage is gameable (holding more raises it), so
                   // the tile names the coverage it was earned at whenever the backend supplies it.
-                  `merge/close calls confirmed by outcome${data.fleetAccuracy.coveragePct != null ? ` · at ${data.fleetAccuracy.coveragePct}% coverage` : ""} · ${intFmt.format(data.fleetAccuracy.instanceCount)} self-hosted instance${data.fleetAccuracy.instanceCount === 1 ? "" : "s"}${data.fleetAccuracy.gamingFlagsCaught > 0 ? ` · ${intFmt.format(data.fleetAccuracy.gamingFlagsCaught)} gaming pattern${data.fleetAccuracy.gamingFlagsCaught === 1 ? "" : "s"} flagged` : ""}`
+                  `merge/close calls confirmed by outcome${data.fleetAccuracy.coveragePct != null ? ` · at ${data.fleetAccuracy.coveragePct}% coverage` : ""}${data.fleetAccuracy.guaranteed?.close ? ` · closes ≥${Math.round((1 - data.fleetAccuracy.guaranteed.close.alpha) * 1000) / 10}% guaranteed at ${data.fleetAccuracy.guaranteed.close.coveragePct}% coverage` : ""} · ${intFmt.format(data.fleetAccuracy.instanceCount)} self-hosted instance${data.fleetAccuracy.instanceCount === 1 ? "" : "s"}${data.fleetAccuracy.gamingFlagsCaught > 0 ? ` · ${intFmt.format(data.fleetAccuracy.gamingFlagsCaught)} gaming pattern${data.fleetAccuracy.gamingFlagsCaught === 1 ? "" : "s"} flagged` : ""}`
                 : totals.reversed > 0
                   ? `${intFmt.format(totals.reversed)} human-reversed`
                   : "reversal-grounded"

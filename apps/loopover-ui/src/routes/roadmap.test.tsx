@@ -1,7 +1,6 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
-import { vi } from "vitest";
 
 // jsdom has no IntersectionObserver; RoadmapPage wraps its content in <Reveal>, a framer-motion
 // viewport-triggered animation that needs one to mount. No other test in this file tree renders

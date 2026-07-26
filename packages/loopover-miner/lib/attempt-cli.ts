@@ -43,7 +43,7 @@ import type { GovernorLedger } from "./governor-ledger.js";
 import { openWorktreeAllocator } from "./worktree-allocator.js";
 import type { WorktreeAllocation, WorktreeAllocator } from "./worktree-allocator.js";
 import { isValidRepoSegment } from "./repo-clone.js";
-import { REJECTION_REASON_AI_USAGE_POLICY_BAN, REJECTION_REASON_OWN_SUBMISSION_REJECTED, resolveRejectionSignaled } from "./rejection-signal.js";
+import { REJECTION_REASON_AI_USAGE_POLICY_BAN, REJECTION_REASON_OWN_SUBMISSION_REJECTED, resolveOwnOpenPrForIssue, resolveRejectionSignaled } from "./rejection-signal.js";
 import type { resolveRejectionSignaled as ResolveRejectionSignaledFn } from "./rejection-signal.js";
 import { cleanupAttemptWorktree, prepareAttemptWorktree } from "./attempt-worktree.js";
 import type {
@@ -141,6 +141,8 @@ export type RunAttemptOptions = {
   initSignalTrackingStore?: () => SignalStore;
   buildAttemptDeps?: typeof buildAttemptDeps;
   resolveRejectionSignaled?: typeof ResolveRejectionSignaledFn;
+  // #8808: injection seam for the own-open-PR idempotency guard, mirroring resolveRejectionSignaled above.
+  resolveOwnOpenPrForIssue?: typeof resolveOwnOpenPrForIssue;
   fetchImpl?: SelfReviewContextFetch;
   prepareAttemptWorktree?: typeof PrepareAttemptWorktreeFn;
   cleanupAttemptWorktree?: typeof CleanupAttemptWorktreeFn;
@@ -447,6 +449,51 @@ export async function runAttempt(args: string[], options: RunAttemptOptions = {}
         );
       }
       options.onResult?.(rejectedResult as AttemptCliResult);
+      return 5;
+    }
+
+    // #8808: idempotency against this miner's OWN already-open PR for this exact issue — the crash-retry
+    // double-open guard. Checked before a worktree slot is consumed, mirroring the rejection-signal block
+    // above. Fail-open by construction (resolveOwnOpenPrForIssue returns null on any read/fetch failure), so
+    // a hiccup never blocks a legitimate attempt; refusing (not adopting) is the safe disposition — the
+    // still-open PR is already doing this issue's job.
+    const ownOpenPr = await (options.resolveOwnOpenPrForIssue ?? resolveOwnOpenPrForIssue)(parsed.repoFullName, parsed.issueNumber, {
+      fetchImpl: options.fetchImpl,
+    } as Parameters<typeof resolveOwnOpenPrForIssue>[2]);
+    if (ownOpenPr !== null) {
+      const reason = "own_open_pr_for_issue";
+      attemptLog.appendAttemptLogEvent({
+        eventType: "attempt_aborted",
+        attemptId,
+        actionClass: "open_pr",
+        mode,
+        reason,
+        payload: { repoFullName: parsed.repoFullName, issueNumber: parsed.issueNumber, existingPullRequestNumber: ownOpenPr },
+      });
+      eventLedger.appendEvent({
+        type: "attempt_blocked",
+        repoFullName: parsed.repoFullName,
+        payload: { issueNumber: parsed.issueNumber, reason, existingPullRequestNumber: ownOpenPr },
+      });
+      const duplicateResult = {
+        outcome: "blocked_own_open_pr",
+        reason,
+        repoFullName: parsed.repoFullName,
+        issueNumber: parsed.issueNumber,
+        existingPullRequestNumber: ownOpenPr,
+        minerLogin: parsed.minerLogin,
+        base: parsed.base,
+        mode,
+        attemptId,
+      };
+      if (parsed.json) {
+        console.log(JSON.stringify(duplicateResult, null, 2));
+      } else {
+        console.error(
+          `Attempt for ${parsed.repoFullName}#${parsed.issueNumber} is blocked: this miner already has open PR #${ownOpenPr} for this issue (a crash-retry duplicate would double-open). Close it or wait for its outcome first.`,
+        );
+      }
+      options.onResult?.(duplicateResult as AttemptCliResult);
       return 5;
     }
 

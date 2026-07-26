@@ -287,7 +287,7 @@ export function buildRepoRewardRisk(args: {
   const labels = bestFitLabels(args.repo);
   const competitionFactor = opportunityCompetitionFactor(collisions.summary.highRiskCount, queueHealth.signals.openPullRequests);
   const freshnessFactor = opportunityFreshnessFactor(args.issues, args.nowMs ?? Date.now());
-  const currentOpenPrCount = nonNegative(args.outcomeHistory.totals.openPullRequests);
+  const currentOpenPrCount = nonNegative(repoOutcome?.openPullRequests ?? args.outcomeHistory.totals.openPullRequests);
   const currentOpenIssueCount = nonNegative(repoOutcome?.openIssues ?? args.outcomeHistory.totals.openIssues);
   /* v8 ignore next -- Credibility fallback order protects sparse private snapshots; behavior is covered through scoring profile tests. */
   const credibility = repoOutcome?.credibility && repoOutcome.credibility > 0 ? repoOutcome.credibility : args.scoringProfile?.evidence.credibilityAssumption ?? args.outcomeHistory.totals.credibility ?? 0.8;

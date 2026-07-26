@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   auditPullRequestAutoReviewSkip,
   maybeAddRequiredAutoReviewSkipHold,
+  maybeAddReputationSkipHold,
   resolveAutoReviewSkipForPullRequest,
   resolveReviewManifestForAiReview,
 } from "../../src/queue/processors";
@@ -405,6 +406,52 @@ describe("review.auto_review wiring (#1954)", () => {
 
     loadSpy.mockRestore();
   });
+  it("#9015: a reputation skip HOLDS where blocking AI review is required — suspicion must never buy less scrutiny", () => {
+    const blockingEnv = { AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI: {} } as Env;
+    const settings = { gatePack: "oss-anti-slop", aiReviewMode: "block", aiReviewAllAuthors: false } as never;
+    const advisory = { headSha: "sha", findings: [] as unknown[] };
+    const added = maybeAddReputationSkipHold(blockingEnv, {
+      settings,
+      advisory: advisory as never,
+      repoFullName: "acme/widgets",
+      author: "burst-farmer",
+      confirmedContributor: false,
+      reputationSkipped: true,
+    });
+    expect(added).toBe(true);
+    expect(advisory.findings).toEqual([
+      expect.objectContaining({ code: "ai_review_inconclusive", severity: "warning", title: expect.stringContaining("submitter-reputation") }),
+    ]);
+    // No skip fired: nothing is added (the overwhelmingly common path).
+    const untouched = { headSha: "sha", findings: [] as unknown[] };
+    expect(
+      maybeAddReputationSkipHold(blockingEnv, {
+        settings,
+        advisory: untouched as never,
+        repoFullName: "acme/widgets",
+        author: "alice",
+        confirmedContributor: false,
+        reputationSkipped: false,
+      }),
+    ).toBe(false);
+    expect(untouched.findings).toEqual([]);
+    // AI review is OFF for this repo: nothing was expected to run, so a skip is not a suppression — silent,
+    // exactly like the contributor-controlled sibling (both share shouldRequirePublicAiReviewForAdvisory).
+    // In advisory mode the finding IS recorded and is non-blocking by nature there.
+    const reviewOff = { headSha: "sha", findings: [] as unknown[] };
+    expect(
+      maybeAddReputationSkipHold(blockingEnv, {
+        settings: { gatePack: "oss-anti-slop", aiReviewMode: "off", aiReviewAllAuthors: false } as never,
+        advisory: reviewOff as never,
+        repoFullName: "acme/widgets",
+        author: "burst-farmer",
+        confirmedContributor: false,
+        reputationSkipped: true,
+      }),
+    ).toBe(false);
+    expect(reviewOff.findings).toEqual([]);
+  });
+
   it("holds instead of quietly skipping when contributor-controlled metadata suppresses required AI review", () => {
     const advisory = { headSha: "sha", findings: [] };
     const added = maybeAddRequiredAutoReviewSkipHold(

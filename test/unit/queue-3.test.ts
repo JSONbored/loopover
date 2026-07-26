@@ -2294,11 +2294,11 @@ describe("queue processors", () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
       await seedMigrationRecheckRepo(env, 69, { premergeContentRecheck: true });
       const seen = { closed: false, merged: false, labels: [] as string[], comments: [] as string[], treeCalls: 0 };
-      // The real, already-shipped 0090 grandfathered pair (see KNOWN_MIGRATION_DUPLICATES) is present on main —
+      // The real, already-shipped 0156 grandfathered pair (see KNOWN_MIGRATION_DUPLICATES) is present on main —
       // this must never trigger a hold for an unrelated PR touching a different number.
       stubMigrationRecheckFetch(69, { filename: "migrations/0099_a.sql", status: "added" }, [
-        { type: "blob", path: "migrations/0090_contributor_cap_label.sql" },
-        { type: "blob", path: "migrations/0090_pull_request_detail_sync_head_sha.sql" },
+        { type: "blob", path: "migrations/0156_draft_pr_close_policy.sql" },
+        { type: "blob", path: "migrations/0156_pull_request_screenshot_table_presence_satisfied.sql" },
       ], seen);
 
       await processJob(env, { type: "agent-regate-pr", deliveryId: "migration-grandfathered", repoFullName: "owner/repo", prNumber: 69, installationId: 123 });

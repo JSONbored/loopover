@@ -58,10 +58,11 @@ type FleetMetrics = {
   outliers: Array<{ instanceId: string; metric: string; value: number; fleetMedian: number }>;
 };
 
-const formatPct = (v: number | null): string => (v === null ? "—" : `${Math.round(v * 100)}%`);
+export const formatPct = (v: number | null): string =>
+  v === null ? "—" : `${Math.round(v * 100)}%`;
 const usdFmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const countFmt = new Intl.NumberFormat("en-US");
-const formatMs = (v: number | null): string =>
+export const formatMs = (v: number | null): string =>
   v === null
     ? "—"
     : v >= 3_600_000
@@ -579,7 +580,7 @@ export function OperatorDashboard() {
   );
 }
 
-function qualityStatus(rate: number): "ready" | "warn" | "stale" {
+export function qualityStatus(rate: number): "ready" | "warn" | "stale" {
   if (rate >= 0.67) return "ready";
   if (rate >= 0.4) return "stale";
   return "warn";

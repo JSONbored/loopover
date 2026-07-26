@@ -49,12 +49,9 @@ export function resolveLaptopStateDbPath(env: Record<string, string | undefined>
   return resolveLocalStoreDbPath(defaultDbFileName, "LOOPOVER_MINER_LAPTOP_STATE_DB", env);
 }
 
-/** Create the state dir and SQLite file. Re-running is idempotent and never clobbers existing rows. */
-export function initLaptopState(env: Record<string, string | undefined> = process.env): LaptopInitResult {
-  const stateDir = resolveMinerStateDir(env);
-  const dbPath = resolveLaptopStateDbPath(env);
-  // Sample before openLocalStoreDb: the helper creates the parent dir + file, so `created` must be read first.
-  const created = !existsSync(dbPath);
+/** Open an on-disk laptop-state DB at an explicit path and apply schema migrations (#8641). Used by
+ *  `migrate`'s STORES list — same open/migrate contract as every sibling store's `open(dbPath)` entry. */
+export function openLaptopStateStore(dbPath: string): DatabaseSync {
   // openLocalStoreDb centralizes the mkdir(0o700)/chmod(0o600)/busy_timeout + crash-safe cleanup registration
   // (#8319) -- this was previously the one store with no busy-timeout and no crash-safety registration at all.
   const db = openLocalStoreDb(dbPath);
@@ -66,6 +63,16 @@ export function initLaptopState(env: Record<string, string | undefined> = proces
   `);
   // Schema-version convention (#4832): stamp the baseline and run any post-baseline migrations (none yet).
   applySchemaMigrations(db, []);
+  return db;
+}
+
+/** Create the state dir and SQLite file. Re-running is idempotent and never clobbers existing rows. */
+export function initLaptopState(env: Record<string, string | undefined> = process.env): LaptopInitResult {
+  const stateDir = resolveMinerStateDir(env);
+  const dbPath = resolveLaptopStateDbPath(env);
+  // Sample before open: the helper creates the parent dir + file, so `created` must be read first.
+  const created = !existsSync(dbPath);
+  const db = openLaptopStateStore(dbPath);
   if (created) {
     db.prepare("INSERT INTO laptop_meta (key, value) VALUES ('initialized_at', ?)")
       .run(new Date().toISOString());

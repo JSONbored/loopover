@@ -207,7 +207,19 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     ]);
     expect(out.updatedAt).toBe(out.generatedAt);
     // No registered self-hosted instances in this fixture -- fleetAccuracy degrades to the "not eligible yet" shape.
-    expect(out.fleetAccuracy).toEqual({ accuracyPct: null, instanceCount: 0, windowDays: 90, gamingFlagsCaught: 0 });
+    expect(out.fleetAccuracy).toEqual({
+      accuracyPct: null,
+      accuracyCiPct: null,
+      mergePrecisionPct: null,
+      mergePrecisionCiPct: null,
+      closePrecisionPct: null,
+      closePrecisionCiPct: null,
+      coveragePct: null,
+      decidedCount: 0,
+      instanceCount: 0,
+      windowDays: 90,
+      gamingFlagsCaught: 0,
+    });
   });
 
   // #1955/#2070: minutesSaved sums per-PR estimates (with MINUTES_SAVED_PER_PR fallback for missing rows)
@@ -496,7 +508,19 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     const out = await getPublicStats(env, NOW);
 
     // 5 merge verdicts, 4 confirmed (the 5th was reverted) -> decisionAccuracy 4/5 -> 80%.
-    expect(out.fleetAccuracy).toEqual({ accuracyPct: 80, instanceCount: 1, windowDays: 90, gamingFlagsCaught: 0 });
+    expect(out.fleetAccuracy).toMatchObject({ accuracyPct: 80, instanceCount: 1, windowDays: 90, gamingFlagsCaught: 0 });
+    // #8829: per-arm split, coverage, sample size, and a Wilson interval ride every published figure.
+    expect(out.fleetAccuracy.mergePrecisionPct).toBe(80);
+    expect(out.fleetAccuracy.closePrecisionPct).toBeNull(); // no close verdicts in this fixture
+    expect(out.fleetAccuracy.closePrecisionCiPct).toBeNull();
+    expect(out.fleetAccuracy.coveragePct).toBe(100); // no holds in this fixture
+    expect(out.fleetAccuracy.decidedCount).toBe(5);
+    const ci = out.fleetAccuracy.accuracyCiPct!;
+    // Wilson at 4/5 is WIDE (n=5) -- the interval is the honesty the bare 80 lacks.
+    expect(ci.lo).toBeGreaterThan(30);
+    expect(ci.lo).toBeLessThan(80);
+    expect(ci.hi).toBeGreaterThan(80);
+    expect(ci.hi).toBeLessThanOrEqual(100);
   });
 
   it("REGRESSION (#8820): the published fleet accuracy scores DECISIONS — holds are excluded and marker-less mispredictions count", async () => {
@@ -513,12 +537,19 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     };
     await signal(6, "merge", "merged", "ok"); // confirmed
     await signal(2, "merge", "closed", "bad"); // WRONG, and carries no reversal marker
+    await signal(3, "close", "closed", "cok"); // confirmed closes
+    await signal(1, "close", "merged", "cbad"); // wrong close
     await signal(40, "hold", "merged", "hold"); // deferrals — must not enter the denominator
 
     const out = await getPublicStats(env, NOW);
-    // 8 real decisions, 6 confirmed -> 75%. The retired `1 - reversalRate` formula would have published
+    // 12 real decisions, 9 confirmed -> 75%. The retired `1 - reversalRate` formula would have published
     // 100% here: zero reversal markers, and 40 holds swamping its denominator.
     expect(out.fleetAccuracy.accuracyPct).toBe(75);
+    // #8829: per-arm split + the coverage this figure was earned at (12 verdicts over 52 scorable signals).
+    expect(out.fleetAccuracy.mergePrecisionPct).toBe(75);
+    expect(out.fleetAccuracy.closePrecisionPct).toBe(75);
+    expect(out.fleetAccuracy.coveragePct).toBeCloseTo(23.1, 1);
+    expect(out.fleetAccuracy.decidedCount).toBe(12);
   });
 
   it("REGRESSION (#fairness-analytics): surfaces gamingFlagsCaught from computeFleetAnalytics's anti-farming detector", async () => {

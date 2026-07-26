@@ -50,7 +50,7 @@
 // `github_app.pr_public_surface_published` audit events this file's own disposition query reads, so the two sums
 // are over disjoint PR sets and can be added directly.
 import { getOrbGlobalStats } from "../orb/outcomes";
-import { computeFleetAnalytics } from "../orb/analytics";
+import { computeFleetAnalytics, wilsonInterval } from "../orb/analytics";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { resolveLoopOverSelfRepoFullName } from "../config/loopover-repo-focus-manifest";
 import { errorMessage } from "../utils/json";
@@ -242,6 +242,20 @@ export interface PublicStatsPayload {
    *  computeFleetAnalytics's own minimum-volume bar -- the caller falls back to totals.accuracyPct then. */
   fleetAccuracy: {
     accuracyPct: number | null;
+    /** #8829: a bare scalar at unstated coverage is gameable (raising the hold rate mechanically raises it)
+     *  and, at small samples, unverifiable. Every published figure therefore carries: the per-arm split (a
+     *  wrong merge costs more than a wrong close, so the arms must be separable), the coverage it was earned
+     *  at, its Wilson 95% interval, and the sample size behind it. All null/0 when the fleet has no signal. */
+    accuracyCiPct: { lo: number; hi: number } | null;
+    mergePrecisionPct: number | null;
+    mergePrecisionCiPct: { lo: number; hi: number } | null;
+    closePrecisionPct: number | null;
+    closePrecisionCiPct: { lo: number; hi: number } | null;
+    /** Share of quality-scorable signals the gate decided (verdicts / (verdicts + holds)); policy actions are
+     *  enforcement and sit outside both sides. */
+    coveragePct: number | null;
+    /** merge + close verdicts behind accuracyPct — the denominator a reader needs to judge the claim. */
+    decidedCount: number;
     instanceCount: number;
     windowDays: number;
     /** Self-hosted instances currently flagged by computeFleetAnalytics's anti-farming detector
@@ -434,6 +448,15 @@ export async function getPublicStats(
   // for an empty fleet.
   const fleetAccuracyPct =
     fleet.fleet.decisionAccuracy === null ? null : Math.round(fleet.fleet.decisionAccuracy * 1000) / 10;
+  // #8829: intervals/coverage come from the POOLED counts (a median cannot carry a sample size); with one
+  // registered instance — the fleet today — pooled and median views coincide exactly.
+  const pooled = fleet.fleet.pooled;
+  const pooledVerdicts = pooled.mergeVerdicts + pooled.closeVerdicts;
+  const pct = (x: number): number => Math.round(x * 1000) / 10;
+  const ciPct = (successes: number, trials: number): { lo: number; hi: number } | null => {
+    const ci = wilsonInterval(successes, trials);
+    return ci === null ? null : { lo: pct(ci.lo), hi: pct(ci.hi) };
+  };
 
   const reviewed = reviewedOf(totals);
   const w = weeklyRows[0] ?? { reviewed: 0, merged: 0 };
@@ -461,6 +484,13 @@ export async function getPublicStats(
     byProject,
     fleetAccuracy: {
       accuracyPct: fleetAccuracyPct,
+      accuracyCiPct: ciPct(pooled.mergeConfirmed + pooled.closeConfirmed, pooledVerdicts),
+      mergePrecisionPct: pooled.mergeVerdicts > 0 ? pct(pooled.mergeConfirmed / pooled.mergeVerdicts) : null,
+      mergePrecisionCiPct: ciPct(pooled.mergeConfirmed, pooled.mergeVerdicts),
+      closePrecisionPct: pooled.closeVerdicts > 0 ? pct(pooled.closeConfirmed / pooled.closeVerdicts) : null,
+      closePrecisionCiPct: ciPct(pooled.closeConfirmed, pooled.closeVerdicts),
+      coveragePct: pooled.coverage === null ? null : pct(pooled.coverage),
+      decidedCount: pooledVerdicts,
       instanceCount: fleet.instanceCount,
       windowDays: fleet.windowDays,
       gamingFlagsCaught: fleet.gamingPatternFlags.length,

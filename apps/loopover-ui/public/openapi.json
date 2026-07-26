@@ -568,10 +568,80 @@
               },
               "gamingFlagsCaught": {
                 "type": "number"
+              },
+              "accuracyCiPct": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "lo": {
+                    "type": "number"
+                  },
+                  "hi": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "lo",
+                  "hi"
+                ]
+              },
+              "mergePrecisionPct": {
+                "type": "number",
+                "nullable": true
+              },
+              "mergePrecisionCiPct": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "lo": {
+                    "type": "number"
+                  },
+                  "hi": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "lo",
+                  "hi"
+                ]
+              },
+              "closePrecisionPct": {
+                "type": "number",
+                "nullable": true
+              },
+              "closePrecisionCiPct": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "lo": {
+                    "type": "number"
+                  },
+                  "hi": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "lo",
+                  "hi"
+                ]
+              },
+              "coveragePct": {
+                "type": "number",
+                "nullable": true
+              },
+              "decidedCount": {
+                "type": "number"
               }
             },
             "required": [
               "accuracyPct",
+              "accuracyCiPct",
+              "mergePrecisionPct",
+              "mergePrecisionCiPct",
+              "closePrecisionPct",
+              "closePrecisionCiPct",
+              "coveragePct",
+              "decidedCount",
               "instanceCount",
               "windowDays",
               "gamingFlagsCaught"

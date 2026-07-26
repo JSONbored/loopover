@@ -30,6 +30,15 @@ export type PublicStats = {
    *  (a frozen own-ledger snapshot) whenever instanceCount > 0. See public-stats.ts's PublicStatsPayload. */
   fleetAccuracy: {
     accuracyPct: number | null;
+    /** #8829 fields -- optional-chained at the render site: an older backend simply omits them and the tile
+     *  degrades to the bare figure rather than throwing. */
+    accuracyCiPct?: { lo: number; hi: number } | null;
+    mergePrecisionPct?: number | null;
+    mergePrecisionCiPct?: { lo: number; hi: number } | null;
+    closePrecisionPct?: number | null;
+    closePrecisionCiPct?: { lo: number; hi: number } | null;
+    coveragePct?: number | null;
+    decidedCount?: number;
     instanceCount: number;
     windowDays: number;
     gamingFlagsCaught: number;

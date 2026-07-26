@@ -134,6 +134,13 @@ export const PublicStatsSchema = z
      *  accuracyPct is null until at least one registered instance clears the fleet's own minimum-volume bar. */
     fleetAccuracy: z.object({
       accuracyPct: z.number().nullable(),
+      accuracyCiPct: z.object({ lo: z.number(), hi: z.number() }).nullable(),
+      mergePrecisionPct: z.number().nullable(),
+      mergePrecisionCiPct: z.object({ lo: z.number(), hi: z.number() }).nullable(),
+      closePrecisionPct: z.number().nullable(),
+      closePrecisionCiPct: z.object({ lo: z.number(), hi: z.number() }).nullable(),
+      coveragePct: z.number().nullable(),
+      decidedCount: z.number(),
       instanceCount: z.number(),
       windowDays: z.number(),
       gamingFlagsCaught: z.number(),

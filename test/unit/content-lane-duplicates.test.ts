@@ -58,6 +58,22 @@ describe("parseSimpleFrontmatter", () => {
     expect(f.title).toBe("Real");
     expect(Object.keys(f)).toEqual(["title"]);
   });
+
+  it("recognizes block-scalar headers with chomping/indent in either order and trailing comments (#9290)", () => {
+    const indicators = ["|", ">", "|-", ">-", "|+", ">+", "|2", ">2", "|-2", "|2-", ">2+", ">2-"];
+    for (const indicator of indicators) {
+      const src = ["---", `description: ${indicator}`, "  line one", "  line two", "title: Real", "---", "", "body"].join("\n");
+      const f = parseSimpleFrontmatter(src);
+      expect(f.description).toBe("line one\nline two");
+      expect(f.title).toBe("Real");
+    }
+    for (const indicator of ["|-", ">", "|2-"]) {
+      const src = ["---", `description: ${indicator} # sources below`, "  only line", "title: Real", "---", "", "body"].join("\n");
+      const f = parseSimpleFrontmatter(src);
+      expect(f.description).toBe("only line");
+      expect(f.title).toBe("Real");
+    }
+  });
 });
 
 describe("findDuplicateFrontmatterKeys", () => {
@@ -282,6 +298,36 @@ describe("findDuplicateFrontmatterKeys — block-scalar + sequence skipping", ()
     const src = ["---", "", "# comment line", "title: A", "slug: a", "---", "", "body"].join("\n");
     // The blank + comment lines fail the key regex → the `if (!head) continue` branch runs; no dupes.
     expect(findDuplicateFrontmatterKeys(src)).toEqual([]);
+  });
+
+  it("skips block-scalar headers with chomping/indent in either order and trailing comments (#9290)", () => {
+    const indicators = ["|", ">", "|-", ">-", "|+", ">+", "|2", ">2", "|-2", "|2-", ">2+", ">2-"];
+    for (const indicator of indicators) {
+      const src = [
+        "---",
+        `description: ${indicator}`,
+        "  title: not-a-real-key",
+        "title: Real",
+        "title: DupReal",
+        "---",
+        "",
+        "body",
+      ].join("\n");
+      expect(findDuplicateFrontmatterKeys(src)).toEqual(["title"]);
+    }
+    for (const indicator of ["|-", ">", "|2-"]) {
+      const src = [
+        "---",
+        `description: ${indicator} # sources below`,
+        "  title: not-a-real-key",
+        "title: Real",
+        "title: DupReal",
+        "---",
+        "",
+        "body",
+      ].join("\n");
+      expect(findDuplicateFrontmatterKeys(src)).toEqual(["title"]);
+    }
   });
 });
 

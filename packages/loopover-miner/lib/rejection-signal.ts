@@ -49,7 +49,7 @@ export type RejectionSignalFetch = (
 
 type RejectionSignalResponse = Awaited<ReturnType<RejectionSignalFetch>>;
 
-type OwnRejectionHistorySubmission = { pullRequestNumber?: number | null | undefined };
+type OwnRejectionHistorySubmission = { pullRequestNumber?: number | null | undefined; issueNumber?: number | null | undefined };
 
 type ListOwnSubmissions = (filter: { repoFullName?: string }) => OwnRejectionHistorySubmission[];
 
@@ -152,11 +152,13 @@ async function fetchPullRequestPayload(
  * fetch/parse failure is skipped so it never blocks the others. Consumes both upstream modules without modifying
  * either. Every dependency is injectable for testing.
  */
-export async function resolveOwnRejectionHistory(repoFullName: string, options: OwnRejectionHistoryOptions = {}): Promise<boolean> {
-  const target = parseRepoFullName(repoFullName);
-  if (!target) return false;
-  const listSubmissions = options.listSubmissions ?? listRecentOwnSubmissions;
-  const resolved = {
+function resolveHistoryOptions(options: OwnRejectionHistoryOptions): {
+  fetchImpl: RejectionSignalFetch;
+  githubToken: string;
+  githubApiBaseUrl: string;
+  maxChecks: number;
+} {
+  return {
     fetchImpl: options.fetchImpl ?? (fetch as unknown as RejectionSignalFetch),
     githubToken: typeof options.githubToken === "string" ? options.githubToken.trim() : (process.env.GITHUB_TOKEN ?? ""),
     githubApiBaseUrl:
@@ -166,6 +168,13 @@ export async function resolveOwnRejectionHistory(repoFullName: string, options: 
         ? (options.maxRejectionHistoryChecks as number)
         : DEFAULT_MAX_REJECTION_HISTORY_CHECKS,
   };
+}
+
+export async function resolveOwnRejectionHistory(repoFullName: string, options: OwnRejectionHistoryOptions = {}): Promise<boolean> {
+  const target = parseRepoFullName(repoFullName);
+  if (!target) return false;
+  const listSubmissions = options.listSubmissions ?? listRecentOwnSubmissions;
+  const resolved = resolveHistoryOptions(options);
 
   let submissions: OwnRejectionHistorySubmission[];
   try {
@@ -191,6 +200,52 @@ export async function resolveOwnRejectionHistory(repoFullName: string, options: 
     }
   }
   return false;
+}
+
+/**
+ * #8808: does THIS miner already have an OPEN PR for THIS exact issue on THIS repo? The crash-retry
+ * double-open guard: claim-conflict resolution deliberately never treats the miner's own sibling PR as a
+ * competing claim, and freshness excludes same-author PRs -- so nothing downstream refuses a duplicate
+ * attempt. Reads the miner's own recorded submissions (issue-tagged since #8172-era rows), live-checks the
+ * most recent candidates' PR state (bounded by the same maxRejectionHistoryChecks fan-out cap), and returns
+ * the first still-OPEN PR number -- or null. FULLY FAIL-OPEN: any read/fetch failure returns null (an
+ * idempotency guard must never block a legitimate attempt on a hiccup; submission-freshness + the claim
+ * ledger remain the downstream backstops).
+ */
+export async function resolveOwnOpenPrForIssue(
+  repoFullName: string,
+  issueNumber: number,
+  options: OwnRejectionHistoryOptions = {},
+): Promise<number | null> {
+  const target = parseRepoFullName(repoFullName);
+  if (!target || !Number.isInteger(issueNumber) || issueNumber <= 0) return null;
+  const listSubmissions = options.listSubmissions ?? listRecentOwnSubmissions;
+  const resolved = resolveHistoryOptions(options);
+
+  let submissions: OwnRejectionHistorySubmission[];
+  try {
+    submissions = listSubmissions({ repoFullName });
+  } catch {
+    return null; // wholesale read failure -- fail open, never block an attempt on it
+  }
+  const candidates = (Array.isArray(submissions) ? submissions : [])
+    .filter(
+      (submission) =>
+        submission &&
+        submission.issueNumber === issueNumber &&
+        Number.isInteger(submission.pullRequestNumber) &&
+        (submission.pullRequestNumber as number) > 0,
+    )
+    .slice(0, resolved.maxChecks);
+  for (const candidate of candidates) {
+    try {
+      const payload = (await fetchPullRequestPayload(target, candidate.pullRequestNumber as number, resolved)) as { state?: unknown } | null;
+      if (payload && payload.state === "open") return candidate.pullRequestNumber as number;
+    } catch {
+      // Individual fetch failure -- skip (fail open), keep checking the rest.
+    }
+  }
+  return null;
 }
 
 /**

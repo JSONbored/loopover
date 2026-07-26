@@ -1571,6 +1571,70 @@ describe("runAttempt (#5132)", () => {
     expect(error).toHaveBeenCalledWith(expect.stringContaining("AI-usage policy bans automated/AI-authored contributions"));
   });
 
+  it("#8808: refuses a duplicate attempt when this miner already has an open PR for the exact issue (crash-retry double-open guard)", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const appendAttemptLogEventSpy = vi.spyOn(attemptLog, "appendAttemptLogEvent");
+    const acquireSpy = vi.spyOn(allocator, "acquire");
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      resolveRejectionSignaled: async () => false,
+      resolveOwnOpenPrForIssue: async () => 42,
+    });
+
+    expect(exitCode).toBe(5);
+    expect(acquireSpy).not.toHaveBeenCalled(); // refused BEFORE consuming a worktree slot
+    expect(appendAttemptLogEventSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "attempt_aborted", reason: "own_open_pr_for_issue" }),
+    );
+    const payload = JSON.parse(String(log.mock.calls.at(-1)?.[0]));
+    expect(payload).toMatchObject({ outcome: "blocked_own_open_pr", reason: "own_open_pr_for_issue", existingPullRequestNumber: 42 });
+  });
+
+  it("#8808: the non-json refusal names the existing PR on stderr", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      resolveRejectionSignaled: async () => false,
+      resolveOwnOpenPrForIssue: async () => 42,
+    });
+
+    expect(exitCode).toBe(5);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("already has open PR #42"));
+  });
+
+  it("#8808: a null resolution (no open PR / fail-open hiccup) proceeds to the worktree slot exactly as before", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const acquireSpy = vi.spyOn(allocator, "acquire");
+
+    await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      resolveRejectionSignaled: async () => false,
+      resolveOwnOpenPrForIssue: async () => null,
+    });
+
+    expect(acquireSpy).toHaveBeenCalled(); // the guard let the attempt through
+  });
+
   it("REGRESSION (#6055): labels own-rejection-history aborts as own_submission_rejected in --json output", async () => {
     const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);

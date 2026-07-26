@@ -7,6 +7,7 @@ vi.mock("@loopover/engine", async () => {
 import {
   REJECTION_REASON_AI_USAGE_POLICY_BAN,
   REJECTION_REASON_OWN_SUBMISSION_REJECTED,
+  resolveOwnOpenPrForIssue,
   resolveOwnRejectionHistory,
   resolveRejectionSignaled,
 } from "../../packages/loopover-miner/lib/rejection-signal.js";
@@ -461,5 +462,66 @@ describe("resolveRejectionSignaled combines both triggers (#5655)", () => {
       listSubmissions: () => [{ pullRequestNumber: 42 }],
     });
     expect(result).toBe(false);
+  });
+});
+
+describe("resolveOwnOpenPrForIssue (#8808)", () => {
+  it("returns the still-open PR number when this miner already has one for the exact issue", async () => {
+    const fetchImpl = vi.fn(async (_url: string, _init?: unknown) => jsonResponse({ state: "open" }));
+    const result = await resolveOwnOpenPrForIssue("acme/widgets", 12, {
+      listSubmissions: () => [{ pullRequestNumber: 42, issueNumber: 12 }],
+      fetchImpl,
+    });
+    expect(result).toBe(42);
+    expect(String(fetchImpl.mock.calls[0]?.[0])).toContain("/repos/acme/widgets/pulls/42");
+  });
+
+  it("returns null (no fetch) when no recorded submission matches the issue — other issues' PRs never block", async () => {
+    const fetchImpl = vi.fn();
+    const result = await resolveOwnOpenPrForIssue("acme/widgets", 12, {
+      listSubmissions: () => [{ pullRequestNumber: 41, issueNumber: 11 }, { pullRequestNumber: null, issueNumber: 12 }, {}],
+      fetchImpl,
+    });
+    expect(result).toBeNull();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("a CLOSED/merged prior PR for the issue does not block a fresh attempt", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ state: "closed" }));
+    const result = await resolveOwnOpenPrForIssue("acme/widgets", 12, {
+      listSubmissions: () => [{ pullRequestNumber: 42, issueNumber: 12 }],
+      fetchImpl,
+    });
+    expect(result).toBeNull();
+  });
+
+  it("FAIL-OPEN: a submissions read failure or a fetch rejection returns null — never blocks an attempt on a hiccup", async () => {
+    expect(
+      await resolveOwnOpenPrForIssue("acme/widgets", 12, {
+        listSubmissions: () => {
+          throw new Error("store down");
+        },
+        fetchImpl: vi.fn(),
+      }),
+    ).toBeNull();
+    expect(
+      await resolveOwnOpenPrForIssue("acme/widgets", 12, {
+        listSubmissions: () => [{ pullRequestNumber: 42, issueNumber: 12 }],
+        fetchImpl: vi.fn(async () => {
+          throw new Error("network");
+        }),
+      }),
+    ).toBeNull();
+  });
+
+  it("bounds the live checks to maxRejectionHistoryChecks and rejects degenerate inputs", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ state: "closed" }));
+    const submissions = Array.from({ length: 15 }, (_, i) => ({ pullRequestNumber: i + 1, issueNumber: 12 }));
+    expect(await resolveOwnOpenPrForIssue("acme/widgets", 12, { listSubmissions: () => submissions, fetchImpl, maxRejectionHistoryChecks: 3 })).toBeNull();
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(await resolveOwnOpenPrForIssue("not-a-repo", 12, { listSubmissions: () => submissions, fetchImpl })).toBeNull();
+    expect(await resolveOwnOpenPrForIssue("acme/widgets", 0, { listSubmissions: () => submissions, fetchImpl })).toBeNull();
+    // Defensive non-array return (mirrors the sibling resolver's own guard).
+    expect(await resolveOwnOpenPrForIssue("acme/widgets", 12, { listSubmissions: (() => null) as never, fetchImpl })).toBeNull();
   });
 });

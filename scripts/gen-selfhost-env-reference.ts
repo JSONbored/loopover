@@ -80,6 +80,11 @@ function collectEnvReads(source: string, fileName: string): EnvRead[] {
   // whose body reads `env[x]` can be resolved back to the concrete var names -- src/selfhost/preflight.ts's
   // CRITICAL_SECRET_VARS loop reads four tokens (GITHUB_WEBHOOK_SECRET etc.) this way and nowhere else (#8652).
   const literalArrays = collectLiteralStringArrays(sourceFile);
+  // Same-file wrapper functions that forward a string PARAMETER (not a literal) into an already-recognized
+  // env-name sink -- src/selfhost/queue-common.ts's `envDurationMs(name)` -> `parsePositiveIntEnv(name, ...)`
+  // and maintenance-admission.ts's `parsePositiveFloatEnv(name)` -> `process.env[name]`. The var name is only a
+  // literal at the wrapper's CALL sites, so each such wrapper is treated like a literal-arg helper (#8651).
+  const localWrappers = collectParamForwardingWrappers(sourceFile);
   const visit = (node: ts.Node) => {
     if (ts.isPropertyAccessExpression(node) && isEnvContainer(node.expression)) {
       addRead(node.name.text);
@@ -101,6 +106,11 @@ function collectEnvReads(source: string, fileName: string): EnvRead[] {
       }
     } else if (ts.isForOfStatement(node)) {
       for (const name of envReadingForOfArrayLiterals(node, literalArrays)) addRead(name);
+    } else if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && localWrappers.has(node.expression.text)) {
+      for (const argIndex of localWrappers.get(node.expression.text)!) {
+        const arg = node.arguments[argIndex];
+        if (arg && ts.isStringLiteralLike(arg)) addRead(arg.text);
+      }
     }
     ts.forEachChild(node, visit);
   };
@@ -139,6 +149,86 @@ const ENV_NAME_LITERAL_ARG_HELPERS = new Map<string, readonly number[]>([
 
 function isProcessEnvNameHelperCall(node: ts.CallExpression): boolean {
   return ts.isIdentifier(node.expression) && PROCESS_ENV_NAME_HELPERS.has(node.expression.text) && node.arguments.length >= 1 && ts.isStringLiteralLike(node.arguments[0]!);
+}
+
+// Discover same-file wrapper functions that forward a string parameter, unmodified, into an already-recognized
+// env-name sink, and return a map of wrapper name -> the parameter index(es) that carry the env-var name at the
+// wrapper's call sites. A "sink" is a direct `env[param]`/`process.env[param]` read, an envString/parse*Env
+// helper called with the parameter as its name argument, a literal-arg helper, or another already-discovered
+// wrapper (resolved to a fixpoint so wrapper-of-wrapper chains are also caught). Generalizes to any such
+// forwarding function -- no wrapper name is special-cased (#8651).
+function collectParamForwardingWrappers(sourceFile: ts.SourceFile): Map<string, number[]> {
+  const candidates: { name: string; params: ts.NodeArray<ts.ParameterDeclaration>; body: ts.Node }[] = [];
+  const walk = (node: ts.Node) => {
+    if (ts.isFunctionDeclaration(node) && node.name && node.body) {
+      candidates.push({ name: node.name.text, params: node.parameters, body: node.body });
+    } else if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))
+    ) {
+      candidates.push({ name: node.name.text, params: node.initializer.parameters, body: node.initializer.body });
+    }
+    ts.forEachChild(node, walk);
+  };
+  walk(sourceFile);
+
+  const wrappers = new Map<string, number[]>();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const candidate of candidates) {
+      if (wrappers.has(candidate.name)) continue;
+      const indexes: number[] = [];
+      candidate.params.forEach((param, index) => {
+        if (ts.isIdentifier(param.name) && bodyForwardsParamAsEnvName(candidate.body, param.name.text, wrappers)) indexes.push(index);
+      });
+      if (indexes.length > 0) {
+        wrappers.set(candidate.name, indexes);
+        changed = true;
+      }
+    }
+  }
+  return wrappers;
+}
+
+// True if `body` forwards the identifier `paramName` as an env-var NAME anywhere: a direct `env[paramName]`
+// read, or a call passing `paramName` at the name-argument position of a recognized helper / discovered wrapper.
+function bodyForwardsParamAsEnvName(body: ts.Node, paramName: string, knownWrappers: Map<string, number[]>): boolean {
+  let found = false;
+  const walk = (node: ts.Node) => {
+    if (found) return;
+    if (ts.isElementAccessExpression(node) && isEnvContainer(node.expression) && ts.isIdentifier(node.argumentExpression) && node.argumentExpression.text === paramName) {
+      found = true;
+      return;
+    }
+    if (ts.isCallExpression(node) && callForwardsParamAsName(node, paramName, knownWrappers)) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, walk);
+  };
+  walk(body);
+  return found;
+}
+
+// True if `node` calls a recognized name-helper (envString / process-env-name / literal-arg) or an
+// already-discovered wrapper with the identifier `paramName` at that callee's env-var-name argument position.
+function callForwardsParamAsName(node: ts.CallExpression, paramName: string, knownWrappers: Map<string, number[]>): boolean {
+  if (!ts.isIdentifier(node.expression)) return false;
+  const callee = node.expression.text;
+  const argIsParam = (index: number): boolean => {
+    const arg = node.arguments[index];
+    return arg !== undefined && ts.isIdentifier(arg) && arg.text === paramName;
+  };
+  if (callee === "envString") return argIsParam(1);
+  if (PROCESS_ENV_NAME_HELPERS.has(callee)) return argIsParam(0);
+  const literalArgIndexes = ENV_NAME_LITERAL_ARG_HELPERS.get(callee);
+  if (literalArgIndexes) return literalArgIndexes.some((index) => argIsParam(index));
+  const wrapperArgIndexes = knownWrappers.get(callee);
+  if (wrapperArgIndexes) return wrapperArgIndexes.some((index) => argIsParam(index));
+  return false;
 }
 
 function isEnvNameLiteralArgHelperCall(node: ts.CallExpression): boolean {

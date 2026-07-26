@@ -276,3 +276,59 @@ describe("AI review-pipeline self-host env vars (#6993)", () => {
     expect(byName.get("AI_MAX_OUTPUT_TOKENS")).toBe("src/services/ai-review.ts");
   });
 });
+
+describe("same-file parameter-forwarding wrapper functions (#8651)", () => {
+  function collectFrom(source: string): string[] {
+    const root = mkdtempSync(join(tmpdir(), "gt-env-reference-8651-"));
+    mkdirSync(join(root, "src", "selfhost"), { recursive: true });
+    writeFileSync(join(root, "src", "selfhost", "wrappers.ts"), source);
+    return collectSelfHostEnvVars({ rootDir: root }).map((row) => row.name);
+  }
+
+  it("detects a wrapper forwarding its name parameter into parsePositiveIntEnv / process.env / envString / a chained wrapper", () => {
+    const source = [
+      // wrapper -> parsePositiveIntEnv (PROCESS_ENV_NAME_HELPERS); the console.log/plainCall decoys exercise the
+      // non-identifier-callee and unrecognized-callee branches of callForwardsParamAsName.
+      "function wrapInt(name, fallback) {",
+      "  console.log(name);",
+      "  plainCall(name);",
+      "  return parsePositiveIntEnv(name, { min: 0, fallback });",
+      "}",
+      // wrapper -> direct process.env[name] read.
+      "function wrapFloat(name) {",
+      "  return process.env[name];",
+      "}",
+      // wrapper-of-wrapper: forwards into wrapMap (declared AFTER it), forcing a second fixpoint iteration.
+      "function wrapOuter(k) {",
+      "  return wrapMap(env, k);",
+      "}",
+      // wrapper -> envString(env, envName) with the param at arg index 1.
+      "function wrapMap(env, envName) {",
+      "  return envString(env, envName);",
+      "}",
+      // wrapper -> a literal-arg helper (resolveLocalStoreDbPath reads env at arg index 1).
+      "function wrapLocal(p) {",
+      "  return resolveLocalStoreDbPath(base, p);",
+      "}",
+      // arrow-function and function-expression wrapper forms.
+      "const wrapArrow = (name) => parsePositiveIntEnv(name, { fallback: 2 });",
+      "const wrapFnExpr = function (name) { return parsePositiveIntEnv(name, { fallback: 9 }); };",
+      // NOT a wrapper: never forwards its parameter into an env sink.
+      "function notWrapper(name) {",
+      "  return name.length;",
+      "}",
+      // Call sites with literal names -> collected. Non-literal and non-wrapper calls -> ignored.
+      'const a = wrapInt("ALPHA_MS", 1);',
+      'const b = wrapFloat("BETA_LOAD");',
+      'const c = wrapOuter("DELTA_CHAIN");',
+      'const d = wrapMap(env, "GAMMA_MAP");',
+      'const e = wrapArrow("EPSILON_MS");',
+      'const f = wrapLocal("ZETA_DB");',
+      'const g = wrapFnExpr("ETA_MS");',
+      "const h = wrapInt(dynamicName, 3);",
+      'const i = notWrapper("NOT_ENV");',
+      "",
+    ].join("\n");
+    expect(collectFrom(source)).toEqual(["ALPHA_MS", "BETA_LOAD", "DELTA_CHAIN", "EPSILON_MS", "ETA_MS", "GAMMA_MAP", "ZETA_DB"]);
+  });
+});

@@ -1,0 +1,326 @@
+{
+  "$comment": "Golden gate corpus (#8832, epic #8828). Each entry replays the PURE gate evaluation (evaluateGateCheck) against a decision-input snapshot drawn from a REAL production failure archetype, pinning the expected conclusion and blocker set. knownBad entries additionally assert the invariant that they may NEVER evaluate to success \u2014 the exact regression class that motivated the epic. Version bumps when entry semantics change; additions are append-only.",
+  "version": 1,
+  "entries": [
+    {
+      "id": "clean-pr-succeeds",
+      "source": "baseline",
+      "description": "A clean PR with no findings passes the gate.",
+      "knownBad": false,
+      "findings": [],
+      "policy": {},
+      "expected": {
+        "conclusion": "success",
+        "blockerCodes": []
+      }
+    },
+    {
+      "id": "secret-leak-always-fails",
+      "source": "incident",
+      "description": "A detected secret is a hard blocker under every configuration.",
+      "knownBad": true,
+      "findings": [
+        {
+          "code": "secret_leak",
+          "severity": "critical",
+          "title": "Secret detected",
+          "detail": "A credential-shaped string was added."
+        }
+      ],
+      "policy": {},
+      "expected": {
+        "conclusion": "failure",
+        "blockerCodes": [
+          "secret_leak"
+        ]
+      }
+    },
+    {
+      "id": "inconclusive-ai-holds-not-passes",
+      "source": "incident-8794",
+      "description": "PRs 8735 et al: a block-mode AI review that returned no usable verdict must HOLD (neutral), never pass automatically and never fail on the model's own hiccup.",
+      "knownBad": false,
+      "findings": [
+        {
+          "code": "ai_review_inconclusive",
+          "severity": "warning",
+          "title": "AI review inconclusive",
+          "detail": "The dual-model AI review did not return a usable verdict."
+        }
+      ],
+      "policy": {
+        "aiReviewGateMode": "block"
+      },
+      "expected": {
+        "conclusion": "neutral",
+        "blockerCodes": []
+      }
+    },
+    {
+      "id": "inconclusive-ai-cannot-bury-a-blocker",
+      "source": "incident-8794",
+      "description": "An inconclusive AI review alongside a real deterministic blocker must still FAIL \u2014 the hold path must never soften a genuine violation.",
+      "knownBad": true,
+      "findings": [
+        {
+          "code": "ai_review_inconclusive",
+          "severity": "warning",
+          "title": "AI review inconclusive",
+          "detail": "No usable verdict."
+        },
+        {
+          "code": "secret_leak",
+          "severity": "critical",
+          "title": "Secret detected",
+          "detail": "A credential-shaped string was added."
+        }
+      ],
+      "policy": {
+        "aiReviewGateMode": "block"
+      },
+      "expected": {
+        "conclusion": "failure",
+        "blockerCodes": [
+          "secret_leak"
+        ]
+      }
+    },
+    {
+      "id": "guardrail-path-holds",
+      "source": "baseline",
+      "description": "A guardrail-protected path (policy.guardrailHit) yields a manual-review HOLD (neutral), never a failure and never an auto-merge.",
+      "knownBad": false,
+      "findings": [],
+      "policy": {
+        "guardrailHit": true,
+        "guardrailMatches": [
+          {
+            "path": "migrations/0001_init.sql",
+            "glob": "migrations/**"
+          }
+        ]
+      },
+      "expected": {
+        "conclusion": "neutral",
+        "blockerCodes": []
+      }
+    },
+    {
+      "id": "linked-issue-block-mode-fails",
+      "source": "reversal-class",
+      "description": "Missing linked issue under block mode is a hard failure.",
+      "knownBad": false,
+      "findings": [
+        {
+          "code": "missing_linked_issue",
+          "severity": "warning",
+          "title": "No linked issue",
+          "detail": "The PR body links no eligible open issue."
+        }
+      ],
+      "policy": {
+        "linkedIssueGateMode": "block"
+      },
+      "expected": {
+        "conclusion": "failure",
+        "blockerCodes": [
+          "missing_linked_issue"
+        ]
+      }
+    },
+    {
+      "id": "linked-issue-advisory-mode-passes",
+      "source": "reversal-class",
+      "description": "The SAME missing-linked-issue finding under advisory mode passes with a warning \u2014 mode flips must never silently harden.",
+      "knownBad": false,
+      "findings": [
+        {
+          "code": "missing_linked_issue",
+          "severity": "warning",
+          "title": "No linked issue",
+          "detail": "The PR body links no eligible open issue."
+        }
+      ],
+      "policy": {
+        "linkedIssueGateMode": "advisory"
+      },
+      "expected": {
+        "conclusion": "success",
+        "blockerCodes": []
+      }
+    },
+    {
+      "id": "duplicate-block-mode-fails",
+      "source": "reversal-class",
+      "description": "Duplicate-PR risk under block mode fails the gate.",
+      "knownBad": false,
+      "findings": [
+        {
+          "code": "duplicate_pr_risk",
+          "severity": "warning",
+          "title": "Duplicate PR",
+          "detail": "Substantially overlaps an open PR."
+        }
+      ],
+      "policy": {
+        "duplicatePrGateMode": "block"
+      },
+      "expected": {
+        "conclusion": "failure",
+        "blockerCodes": [
+          "duplicate_pr_risk"
+        ]
+      }
+    },
+    {
+      "id": "slop-below-floor-blocks-when-opted-in",
+      "source": "reversal-class",
+      "description": "Deterministic slop at/over the configured floor is a hard blocker only under slopGateMode: block.",
+      "knownBad": false,
+      "findings": [],
+      "policy": {
+        "slopGateMode": "block",
+        "slopGateMinScore": 60,
+        "slopRisk": 72
+      },
+      "expected": {
+        "conclusion": "failure",
+        "blockerCodes": [
+          "slop_risk_above_threshold"
+        ]
+      }
+    },
+    {
+      "id": "slop-under-threshold-passes",
+      "source": "baseline",
+      "description": "Slop risk under the floor passes even in block mode.",
+      "knownBad": false,
+      "findings": [],
+      "policy": {
+        "slopGateMode": "block",
+        "slopGateMinScore": 60,
+        "slopRisk": 35
+      },
+      "expected": {
+        "conclusion": "success",
+        "blockerCodes": []
+      }
+    },
+    {
+      "id": "not-synced-is-neutral-never-blocks",
+      "source": "baseline",
+      "description": "The app's own unsynced state (pr_not_cached) must never block a contributor.",
+      "knownBad": false,
+      "findings": [
+        {
+          "code": "pr_not_cached",
+          "severity": "info",
+          "title": "Not synced",
+          "detail": "LoopOver has not finished syncing this repo."
+        }
+      ],
+      "policy": {},
+      "expected": {
+        "conclusion": "neutral",
+        "blockerCodes": []
+      }
+    },
+    {
+      "id": "ai-consensus-defect-block-mode-fails",
+      "source": "disagreement-class",
+      "description": "A confident dual-model consensus defect under aiReviewGateMode: block is a hard blocker.",
+      "knownBad": false,
+      "findings": [
+        {
+          "code": "ai_consensus_defect",
+          "severity": "critical",
+          "title": "Consensus defect",
+          "detail": "Both reviewers found the same defect.",
+          "confidence": 0.97
+        }
+      ],
+      "policy": {
+        "aiReviewGateMode": "block",
+        "aiReviewCloseConfidence": 0.93
+      },
+      "expected": {
+        "conclusion": "failure",
+        "blockerCodes": [
+          "ai_consensus_defect"
+        ]
+      }
+    },
+    {
+      "id": "ai-defect-advisory-only-disposition-passes",
+      "source": "disagreement-class",
+      "description": "advisory_only low-confidence disposition: a SUB-FLOOR consensus defect does not block (#4603's advisory_only arm).",
+      "knownBad": false,
+      "findings": [
+        {
+          "code": "ai_consensus_defect",
+          "severity": "critical",
+          "title": "Consensus defect",
+          "detail": "Same defect, low confidence.",
+          "confidence": 0.4
+        }
+      ],
+      "policy": {
+        "aiReviewGateMode": "block",
+        "aiReviewCloseConfidence": 0.93,
+        "aiReviewLowConfidenceDisposition": "advisory_only"
+      },
+      "expected": {
+        "conclusion": "success",
+        "blockerCodes": []
+      }
+    },
+    {
+      "id": "dry-run-previews-without-enforcing",
+      "source": "baseline",
+      "description": "Dry-run: an advisory-mode AI defect posts SUCCESS as the real conclusion while displayConclusion previews the would-be failure.",
+      "knownBad": false,
+      "findings": [
+        {
+          "code": "ai_consensus_defect",
+          "severity": "critical",
+          "title": "Consensus defect",
+          "detail": "Both reviewers found the same defect.",
+          "confidence": 0.97
+        }
+      ],
+      "policy": {
+        "aiReviewGateMode": "advisory",
+        "aiReviewCloseConfidence": 0.93,
+        "dryRun": true
+      },
+      "expected": {
+        "conclusion": "success",
+        "blockerCodes": [],
+        "displayConclusion": "failure"
+      }
+    },
+    {
+      "id": "merge-readiness-composite-escalates-subgates",
+      "source": "baseline",
+      "description": "The merge-readiness composite escalates linked-issue/duplicate/slop to its mode with one switch.",
+      "knownBad": false,
+      "findings": [
+        {
+          "code": "missing_linked_issue",
+          "severity": "warning",
+          "title": "No linked issue",
+          "detail": "The PR body links no eligible open issue."
+        }
+      ],
+      "policy": {
+        "mergeReadinessGateMode": "block"
+      },
+      "expected": {
+        "conclusion": "failure",
+        "blockerCodes": [
+          "missing_linked_issue"
+        ]
+      }
+    }
+  ]
+}

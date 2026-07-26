@@ -155,6 +155,7 @@ import { requestAprRepoTransfer } from "../orb/apr-repo-transfer";
 import { handleOrbIngest, readOrbIngestBody } from "../orb/ingest";
 import { handleAmsIngest } from "../ams/ingest";
 import { handleOrbWebhook } from "../orb/webhook";
+import { backfillOrbInstallations } from "../orb/installations";
 import { handleOrbOAuthCallback } from "../orb/oauth";
 import {
   brokerOrbToken,
@@ -4510,6 +4511,15 @@ export function createApp() {
     const registered = payload?.registered === false ? 0 : 1;
     await c.env.DB.prepare("UPDATE orb_github_installations SET registered = ?, self_enrollment_disabled = ? WHERE installation_id = ?").bind(registered, registered === 1 ? 0 : 1, installationId).run();
     return c.json({ installationId, registered: registered === 1 });
+  });
+
+  // Operator-triggered reconciliation of the installation registry against GitHub's authoritative install list —
+  // recovers installs whose `installation` webhook fired before the receiver's secret was configured (so they were
+  // never recorded). Upserts each install WITHOUT touching `registered`, so a re-run never re-trusts an opted-out
+  // install and new rows land at registered=0 (the manual-onboarding gate). Bearer-gated by the `/v1/internal/*`
+  // middleware (INTERNAL_JOB_TOKEN). Returns { backfilled } — the count of installs GitHub reported.
+  app.post("/v1/internal/orb/installations/backfill", async (c) => {
+    return c.json(await backfillOrbInstallations(c.env));
   });
 
   // Operator-only: issue a one-time token-broker enrollment secret for a REGISTERED install, to hand to that

@@ -2800,6 +2800,16 @@ async function maybeCloseForContributorCapOnOpen(
       pr: { headSha: pr.headSha },
     });
     if (planned === null || planned.length === 0) return false;
+    // #8805: ALSO claim the per-PR actuation lock before executing — this early cap-close previously ran
+    // outside the "one shared lock namespace covering every mutating PR pass" (transient-locks.ts), so a
+    // sweep-fanned agent-regate-pr job could plan/execute a DIFFERENT action for this same PR concurrently.
+    // Nesting order here is author-outer → PR-inner, the OPPOSITE of the executor's pre-merge cap re-check
+    // (PR-outer → author-inner, #7284): safe regardless, because both locks are non-blocking TRY-claims —
+    // a cross-order contention degrades to both passes deferring cleanly (return false; the end-of-pipeline
+    // cap check and the next webhook/sweep tick are the backstops), never a blocking-wait deadlock.
+    const actuationLock = await claimPrActuationLock(env, repoFullName, pr.number);
+    if (!actuationLock.acquired) return false;
+    try {
     const installation = await getInstallation(env, installationId);
     const outcomes = await executeAgentMaintenanceActions(
       env,
@@ -2826,6 +2836,9 @@ async function maybeCloseForContributorCapOnOpen(
       planned,
     );
     return outcomes.some((outcome) => outcome.actionClass === "close" && outcome.outcome === "completed");
+    } finally {
+      await releasePrActuationLock(env, repoFullName, pr.number, actuationLock.ownerToken);
+    }
   } finally {
     await releaseContributorCapLock(env, repoFullName, pr.authorLogin, ownerToken);
   }

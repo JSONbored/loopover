@@ -100,9 +100,17 @@ export function computeProviderTrackRecords(
     stances.set(signal.provider, signal.vote === "fail");
   }
 
+  // #8876: collapse repeated (provider, targetKey) signals to the LATEST one before aggregating. A provider
+  // re-reviewing the same PR (common after a new push) emits another audit row, and loadLiveProviderTrackRecords
+  // reads raw rows with no dedup — so iterating `signals` directly counted signals/decided/shared/consensus once
+  // per row rather than once per distinct (provider, targetKey) pair, inflating that provider's precision and
+  // agreement stats. Keep the last row per pair, matching stancesByTarget's own latest-vote `.set` dedup above.
+  const latestByProviderTarget = new Map<string, ProviderReviewSignal>();
+  for (const signal of signals) latestByProviderTarget.set(`${signal.provider} ${signal.targetKey}`, signal);
+
   const perRepo = new Map<string, Map<string, MutableStats>>(); // provider → repo → stats
   const overall = new Map<string, MutableStats>();
-  for (const signal of signals) {
+  for (const signal of latestByProviderTarget.values()) {
     let repos = perRepo.get(signal.provider);
     if (repos === undefined) {
       repos = new Map();

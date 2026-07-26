@@ -63,6 +63,22 @@ describe("computeProviderTrackRecords (#8228)", () => {
     expect(aRepo).toMatchObject({ signals: aOverall.signals, decided: aOverall.decided, precision: aOverall.precision });
   });
 
+  // #8876: a provider re-reviewing the same PR (a second audit row after a push) must count ONCE per
+  // (provider, targetKey), scored on the LATEST vote — not inflate its signals/precision/agreement per raw row.
+  it("collapses a provider's repeated same-target signals to the latest, not double-counting (#8876)", () => {
+    const records = computeProviderTrackRecords(
+      [
+        signal("solo", "acme/widgets#1", "pass"), // first review
+        signal("solo", "acme/widgets#1", "fail"), // re-review after a new push — the latest vote wins
+      ],
+      [labeled("acme/widgets#1", "confirmed")],
+    );
+    const overall = records.find((r) => r.provider === "solo" && r.repoFullName === null)!;
+    // Before the fix this was signals: 2 / agreementRate: 0.5 (both raw rows counted); now one distinct pair,
+    // scored on the latest fail vote against the confirmed firing.
+    expect(overall).toMatchObject({ signals: 1, decided: 1, confirmed: 1, precision: 1, agreementRate: 1 });
+  });
+
   it("keeps a one-provider corpus's consensus/split rates null — no shared targets, no consensus to measure", () => {
     const records = computeProviderTrackRecords(
       [signal("solo", "acme/widgets#1", "fail"), signal("solo", "acme/widgets#2", "pass")],

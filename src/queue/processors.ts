@@ -10503,8 +10503,9 @@ async function maybePublishPrPublicSurface(
         let evaluation = shouldEvaluateGate
           ? evaluateGateCheck(advisory, gatePolicy)
           : undefined;
-        // #8104: record RuleFiredEvent for every configured gate blocker except linked_issue_scope_mismatch
-        // (#8101). Same advisory+policy as evaluateGateCheck above so the filter stays in lock-step.
+        // #8104/#8760: record RuleFiredEvent for every configured-gate-class finding whose resolved mode isn't
+        // "off" (tagged metadata.gateMode), except linked_issue_scope_mismatch (#8101). Same advisory+policy as
+        // evaluateGateCheck above so the mode resolution stays in lock-step.
         if (evaluation) {
           // #8130: thread the SAME memoized diff the AI review consumed so ai_consensus_defect/ai_review_split
           // fired events capture the raw context their detection evaluated (never re-fetched).

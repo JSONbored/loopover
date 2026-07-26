@@ -80,7 +80,7 @@ describe("recordConfiguredGateBlockerSignals (#8104)", () => {
       targetKey: "owner/repo#7",
       outcome: "critical",
     });
-    expect(history.fired[0]?.metadata).toBeUndefined();
+    expect(history.fired[0]?.metadata).toEqual({ gateMode: "block" });
   });
 
   it("records a fired signal for a deterministic code (secret_leak)", async () => {
@@ -126,9 +126,8 @@ describe("recordConfiguredGateBlockerSignals (#8104)", () => {
     expect((await createSignalStore(env).queryRuleHistory("secret_leak", 0)).fired).toHaveLength(1);
   });
 
-  it("records NO fired signal when isConfiguredGateBlocker returns false", async () => {
+  it("records an ADVISORY-mode finding too, tagged metadata.gateMode 'advisory' (#8760 — pre-#8760 this recorded nothing)", async () => {
     const env = createTestEnv();
-    // missing_linked_issue defaults to advisory — not a configured blocker.
     await recordConfiguredGateBlockerSignals(
       env,
       advisory([finding({ code: "missing_linked_issue" })]),
@@ -136,7 +135,55 @@ describe("recordConfiguredGateBlockerSignals (#8104)", () => {
       "owner/repo",
       7,
     );
-    expect((await createSignalStore(env).queryRuleHistory("missing_linked_issue", 0)).fired).toEqual([]);
+    const [fired] = (await createSignalStore(env).queryRuleHistory("missing_linked_issue", 0)).fired;
+    expect(fired).toBeDefined();
+    expect((fired!.metadata as { gateMode: string }).gateMode).toBe("advisory");
+  });
+
+  it("records NOTHING for a code whose gate resolves 'off' (#8760: off means the gate never evaluated, not silent-advisory)", async () => {
+    const env = createTestEnv();
+    // manifest_missing_tests defaults to off; lockfile_tamper_risk defaults to off.
+    await recordConfiguredGateBlockerSignals(
+      env,
+      advisory([finding({ code: "manifest_missing_tests" }), finding({ code: "lockfile_tamper_risk" })]),
+      {},
+      "owner/repo",
+      7,
+    );
+    expect((await createSignalStore(env).queryRuleHistory("manifest_missing_tests", 0)).fired).toEqual([]);
+    expect((await createSignalStore(env).queryRuleHistory("lockfile_tamper_risk", 0)).fired).toEqual([]);
+  });
+
+  it("tags a sub-floor AI finding demoted by advisory_only as gateMode 'advisory' — a real finding a human saw, never dropped (#8760)", async () => {
+    const env = createTestEnv();
+    await recordConfiguredGateBlockerSignals(
+      env,
+      advisory([finding({ code: "ai_consensus_defect", confidence: 0.2 })]),
+      { aiReviewGateMode: "block", aiReviewLowConfidenceDisposition: "advisory_only", aiReviewCloseConfidence: 0.9 },
+      "owner/repo",
+      7,
+    );
+    const [fired] = (await createSignalStore(env).queryRuleHistory("ai_consensus_defect", 0)).fired;
+    expect((fired!.metadata as { gateMode: string }).gateMode).toBe("advisory");
+  });
+
+  it("composes manifest_linked_issue_required's mode as the stricter of its two gates (#8760: advisory when neither blocks but one is advisory; off when both off)", async () => {
+    const env = createTestEnv();
+    // linkedIssueGateMode defaults to advisory -> resolved advisory (manifest off).
+    await recordConfiguredGateBlockerSignals(env, advisory([finding({ code: "manifest_linked_issue_required" })]), {}, "owner/repo", 7);
+    const [fired] = (await createSignalStore(env).queryRuleHistory("manifest_linked_issue_required", 0)).fired;
+    expect((fired!.metadata as { gateMode: string }).gateMode).toBe("advisory");
+
+    // Both gates explicitly off -> nothing records.
+    const envOff = createTestEnv();
+    await recordConfiguredGateBlockerSignals(
+      envOff,
+      advisory([finding({ code: "manifest_linked_issue_required" })]),
+      { manifestPolicyGateMode: "off", linkedIssueGateMode: "off" },
+      "owner/repo",
+      7,
+    );
+    expect((await createSignalStore(envOff).queryRuleHistory("manifest_linked_issue_required", 0)).fired).toEqual([]);
   });
 
   it("uses outcome 'blocker' when finding.severity is missing (nullish coalescing arm)", async () => {
@@ -181,7 +228,7 @@ describe("recordConfiguredGateBlockerSignals — raw context capture (#8130)", (
       { aiReviewDiff: "+const key = 'AKIA-REAL-SECRET';" },
     );
     const [fired] = (await createSignalStore(env).queryRuleHistory("secret_leak", 0)).fired;
-    expect(fired!.metadata).toEqual({ confidence: 0.99 });
+    expect(fired!.metadata).toEqual({ gateMode: "block", confidence: 0.99 });
     expect(fired!.metadata).not.toHaveProperty("diff");
     expect(fired!.metadata).not.toHaveProperty("rawSignal");
   });
@@ -206,7 +253,7 @@ describe("recordConfiguredGateBlockerSignals — raw context capture (#8130)", (
     const env = createTestEnv();
     await recordConfiguredGateBlockerSignals(env, advisory([finding({ code: "ai_review_split", confidence: 0.9 })]), blockAi, "owner/repo", 7);
     const [fired] = (await createSignalStore(env).queryRuleHistory("ai_review_split", 0)).fired;
-    expect(fired!.metadata).toEqual({ confidence: 0.9 });
+    expect(fired!.metadata).toEqual({ gateMode: "block", confidence: 0.9 });
   });
 
   it("captures a non-diff-based code's own evaluated signal (its detail) as rawSignal — the audited fallback", async () => {
@@ -220,14 +267,14 @@ describe("recordConfiguredGateBlockerSignals — raw context capture (#8130)", (
       { aiReviewDiff: "+irrelevant" },
     );
     const [fired] = (await createSignalStore(env).queryRuleHistory("missing_linked_issue", 0)).fired;
-    expect(fired!.metadata).toEqual({ rawSignal: "No linked issue reference found in the PR body." });
+    expect(fired!.metadata).toEqual({ gateMode: "block", rawSignal: "No linked issue reference found in the PR body." });
   });
 
-  it("records no metadata at all for a non-diff code with no confidence and an empty detail", async () => {
+  it("records ONLY the gateMode tag for a non-diff code with no confidence and an empty detail (#8760: gateMode is always present)", async () => {
     const env = createTestEnv();
     await recordConfiguredGateBlockerSignals(env, advisory([finding({ code: "missing_linked_issue", detail: "" })]), blockLinked, "owner/repo", 7);
     const [fired] = (await createSignalStore(env).queryRuleHistory("missing_linked_issue", 0)).fired;
-    expect(fired!.metadata).toBeUndefined();
+    expect(fired!.metadata).toEqual({ gateMode: "block" });
   });
 
   it("still skips linked_issue_scope_mismatch entirely (#8101's own site records it)", async () => {

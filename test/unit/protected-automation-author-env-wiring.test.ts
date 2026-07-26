@@ -2,7 +2,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { upsertInstallation, upsertPullRequestFromGitHub, upsertRepositorySettings } from "../../src/db/repositories";
 import { derivePublicCommentMergeFacts, processJob } from "../../src/queue/processors";
-import { maybeCloseReviewEvasionSelfClose } from "../../src/queue/review-evasion";
+import {
+  maybeCloseDraftPr,
+  maybeCloseRepeatedDraftCycling,
+  maybeCloseReviewEvasionDraftConversion,
+  maybeCloseReviewEvasionSelfClose,
+  maybeCloseSynchronizeAmendment,
+} from "../../src/queue/review-evasion";
 import {
   isTrustedAutomationBotAuthor,
   isTrustedAutomationBotWebhookActor,
@@ -50,13 +56,22 @@ describe("PROTECTED_AUTOCLOSE_AUTHORS_EXTRA production wiring (#8645)", () => {
     expect(derivePublicCommentMergeFacts({ ...base, env }).neverClosed).toBe(true);
   });
 
-  it("review-evasion self-close: EXTRA-only bot is suppressed (zero GitHub calls); without EXTRA the permission path is reached", async () => {
-    const settings = { reviewEvasionProtection: "on", autoCloseExemptLogins: [] } as unknown as RepositorySettings;
+  it("all five review-evasion guards: EXTRA-only bot early-returns (zero GitHub calls); without EXTRA the permission path is reached", async () => {
+    // codecov/patch on #8742 flagged review-evasion.ts at 80% (1 partial) because only self-close was
+    // exercised. Hit every production call site that gained the env argument so both outcomes of each
+    // isProtectedAutomationAuthor(..., env) branch are covered.
+    const evasionSettings = {
+      reviewEvasionProtection: "on",
+      autoCloseExemptLogins: [],
+      draftPrClosePolicy: "close",
+      synchronizeClosePolicy: "close",
+    } as unknown as RepositorySettings;
     const pr = {
       repoFullName: "owner/repo",
       number: 7,
       title: "t",
-      state: "closed",
+      state: "open",
+      isDraft: true,
       authorLogin: EXTRA_BOT,
       headSha: "abc123",
     } as PullRequestRecord;
@@ -71,7 +86,11 @@ describe("PROTECTED_AUTOCLOSE_AUTHORS_EXTRA production wiring (#8645)", () => {
       PROTECTED_AUTOCLOSE_AUTHORS_EXTRA: EXTRA_BOT,
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
     });
-    await maybeCloseReviewEvasionSelfClose(protectedEnv, "d-extra", 123, "owner/repo", pr, payload, settings);
+    await maybeCloseReviewEvasionSelfClose(protectedEnv, "d-extra-1", 123, "owner/repo", pr, payload, evasionSettings);
+    await maybeCloseReviewEvasionDraftConversion(protectedEnv, "d-extra-2", 123, "owner/repo", pr, payload, evasionSettings);
+    await maybeCloseRepeatedDraftCycling(protectedEnv, "d-extra-3", 123, "owner/repo", pr, payload, evasionSettings, 2);
+    await maybeCloseDraftPr(protectedEnv, "d-extra-4", 123, "owner/repo", pr, payload, evasionSettings);
+    await maybeCloseSynchronizeAmendment(protectedEnv, "d-extra-5", 123, "owner/repo", pr, payload, evasionSettings);
     expect(protectedUrls).toEqual([]);
 
     vi.unstubAllGlobals();
@@ -83,7 +102,11 @@ describe("PROTECTED_AUTOCLOSE_AUTHORS_EXTRA production wiring (#8645)", () => {
       return new Response("not found", { status: 404 });
     });
     const unprotectedEnv = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
-    await maybeCloseReviewEvasionSelfClose(unprotectedEnv, "d-no-extra", 123, "owner/repo", pr, payload, settings);
+    await maybeCloseReviewEvasionSelfClose(unprotectedEnv, "d-no-1", 123, "owner/repo", pr, payload, evasionSettings);
+    await maybeCloseReviewEvasionDraftConversion(unprotectedEnv, "d-no-2", 123, "owner/repo", pr, payload, evasionSettings);
+    await maybeCloseRepeatedDraftCycling(unprotectedEnv, "d-no-3", 123, "owner/repo", pr, payload, evasionSettings, 2);
+    await maybeCloseDraftPr(unprotectedEnv, "d-no-4", 123, "owner/repo", pr, payload, evasionSettings);
+    await maybeCloseSynchronizeAmendment(unprotectedEnv, "d-no-5", 123, "owner/repo", pr, payload, evasionSettings);
     // Without EXTRA the bot check no longer early-returns, so the maintainer-permission lookup runs.
     expect(unprotectedUrls.some((url) => url.includes("/collaborators/") || url.includes("/access_tokens"))).toBe(true);
   });

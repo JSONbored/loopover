@@ -1133,9 +1133,11 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
 
     expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/issues/42/comments"))).toBe(true);
     expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(true);
-    const audit = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.draft_dodge_closed").first<{ detail: string }>();
+    const audit = await env.DB.prepare("select detail, metadata_json from audit_events where event_type = ?").bind("github_app.draft_dodge_closed").first<{ detail: string; metadata_json: string }>();
     expect(audit?.detail).toContain("abc123");
     expect(audit?.detail).toContain("contributor");
+    // #8802: every guard's audit row records whether the contributor-facing explanation actually landed.
+    expect(JSON.parse(audit?.metadata_json ?? "{}").explanationPosted).toBe(true);
   });
 
   it("#8801: a FAILED close records outcome 'error' with the failure named — never a false 'completed' (the #2260 contract)", async () => {

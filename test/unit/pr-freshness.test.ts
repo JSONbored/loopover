@@ -311,6 +311,18 @@ describe("PR freshness guards", () => {
     await expect(fetchLiveIssueState(env, "owner/repo", 5, "public-token")).resolves.toBeUndefined();
   });
 
+  it("fetchLiveIssueState: soft-fails a retryable 401 when called with a bare token (#8892)", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    vi.stubGlobal("fetch", async () => Response.json({ message: "Bad credentials" }, { status: 401 }));
+    await expect(fetchLiveIssueState(env, "owner/repo", 5, "stale-token")).resolves.toBeUndefined();
+  });
+
+  it("fetchLivePullRequestHeadSha: soft-fails a retryable 401 when called with a bare token (#8892)", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    vi.stubGlobal("fetch", async () => Response.json({ message: "Bad credentials" }, { status: 401 }));
+    await expect(fetchLivePullRequestHeadSha(env, "owner/repo", 11, "stale-token")).resolves.toBeUndefined();
+  });
+
   it("fetchLiveIssueState: self-heals a stale installation token on 401 when installationId is set (#8892)", async () => {
     clearInstallationTokenCacheForTest();
     let tokenMints = 0;

@@ -112,7 +112,15 @@ export async function fetchPullRequestFreshness(
     token: string,
     admissionKey: ReturnType<typeof githubRateLimitAdmissionKeyForToken> | ReturnType<typeof githubRateLimitAdmissionKeyForPublicToken>,
   ): Promise<PullRequestFreshness> => {
-    const live = await fetchLivePullRequestResult(env, args.repoFullName, args.pullNumber, token, admissionKey);
+    const live = await fetchLivePullRequestResult(
+      env,
+      args.repoFullName,
+      args.pullNumber,
+      token,
+      admissionKey,
+      undefined,
+      { propagateRetryableTokenErrors: true },
+    );
     if (live.status === "error") {
       return classifyPullRequestFreshness(undefined, args.expectedHeadSha, {
         ...options,

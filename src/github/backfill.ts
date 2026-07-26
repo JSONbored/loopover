@@ -3444,6 +3444,36 @@ export async function fetchLinkedIssueClosedByPullRequest(
   return closer?.__typename === "PullRequest" && closer.number === prNumber ? "closed_by_pull_request" : "not_closed_by_pull_request";
 }
 
+type FetchLiveTokenErrorBehavior = "soft-fail" | "propagate-retryable-token-errors";
+
+async function fetchLiveIssueStateWithToken(
+  env: Env,
+  repoFullName: string,
+  issueNumber: number,
+  token: string | undefined,
+  admissionKey: GitHubRateLimitAdmissionKey | undefined,
+  tokenErrorBehavior: FetchLiveTokenErrorBehavior,
+): Promise<string | undefined> {
+  try {
+    const result = await githubJsonWithHeaders<{ state?: string | null }>(
+      env,
+      repoFullName,
+      `/issues/${issueNumber}`,
+      token,
+      githubRateLimitOptions(admissionKey),
+    );
+    return result.data.state ?? undefined;
+  } catch (error) {
+    if (
+      tokenErrorBehavior === "propagate-retryable-token-errors" &&
+      isGitHubInstallationTokenRetryableError(error)
+    ) {
+      throw error;
+    }
+    return undefined;
+  }
+}
+
 /** The issue's LIVE state ("open" / "closed") via REST `GET /issues/{n}`. Mirrors {@link fetchLivePullRequestState}
  *  for issues: the stored open-issue cache lags GitHub, so a sibling closed on GitHub (or elsewhere) can still
  *  read `open` locally. The per-contributor open-issue cap (#2479 gate finding) confirms each counted sibling's
@@ -3462,30 +3492,46 @@ export async function fetchLiveIssueState(
   if (installationId !== undefined) {
     try {
       return await withInstallationTokenRetry(env, installationId, async (freshToken) =>
-        fetchLiveIssueState(
+        fetchLiveIssueStateWithToken(
           env,
           repoFullName,
           issueNumber,
           freshToken,
           githubRateLimitAdmissionKeyForToken(env, freshToken, installationId),
+          "propagate-retryable-token-errors",
         ),
       );
     } catch {
       return undefined;
     }
   }
+  return fetchLiveIssueStateWithToken(env, repoFullName, issueNumber, token, admissionKey, "soft-fail");
+}
+
+async function fetchLivePullRequestHeadShaWithToken(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  token: string | undefined,
+  admissionKey: GitHubRateLimitAdmissionKey | undefined,
+  tokenErrorBehavior: FetchLiveTokenErrorBehavior,
+): Promise<string | undefined> {
   try {
-    const result = await githubJsonWithHeaders<{ state?: string | null }>(
+    const result = await githubJsonWithHeaders<{ head?: { sha?: string | null } | null }>(
       env,
       repoFullName,
-      `/issues/${issueNumber}`,
+      `/pulls/${prNumber}`,
       token,
       githubRateLimitOptions(admissionKey),
     );
-    return result.data.state ?? undefined;
+    return result.data.head?.sha ?? undefined;
   } catch (error) {
-    // Surface retryable token failures to withInstallationTokenRetry; soft-fail everything else.
-    if (isGitHubInstallationTokenRetryableError(error)) throw error;
+    if (
+      tokenErrorBehavior === "propagate-retryable-token-errors" &&
+      isGitHubInstallationTokenRetryableError(error)
+    ) {
+      throw error;
+    }
     return undefined;
   }
 }
@@ -3506,60 +3552,46 @@ export async function fetchLivePullRequestHeadSha(
   if (installationId !== undefined) {
     try {
       return await withInstallationTokenRetry(env, installationId, async (freshToken) =>
-        fetchLivePullRequestHeadSha(
+        fetchLivePullRequestHeadShaWithToken(
           env,
           repoFullName,
           prNumber,
           freshToken,
           githubRateLimitAdmissionKeyForToken(env, freshToken, installationId),
+          "propagate-retryable-token-errors",
         ),
       );
     } catch {
       return undefined;
     }
   }
-  try {
-    const result = await githubJsonWithHeaders<{ head?: { sha?: string | null } | null }>(
-      env,
-      repoFullName,
-      `/pulls/${prNumber}`,
-      token,
-      githubRateLimitOptions(admissionKey),
-    );
-    return result.data.head?.sha ?? undefined;
-  } catch (error) {
-    if (isGitHubInstallationTokenRetryableError(error)) throw error;
-    return undefined;
-  }
+  return fetchLivePullRequestHeadShaWithToken(
+    env,
+    repoFullName,
+    prNumber,
+    token,
+    admissionKey,
+    "soft-fail",
+  );
 }
 
 export type LivePullRequestFetchResult =
   | { status: "ok"; data: GitHubPullRequestPayload }
   | { status: "error"; error: string };
 
-export async function fetchLivePullRequestResult(
+export type FetchLivePullRequestResultOptions = {
+  /** When true, 401/403 from a bare token call propagate to {@link withInstallationTokenRetry} instead of becoming `{ status: "error" }`. */
+  propagateRetryableTokenErrors?: boolean;
+};
+
+async function fetchLivePullRequestResultWithToken(
   env: Env,
   repoFullName: string,
   prNumber: number,
   token: string | undefined,
-  admissionKey?: GitHubRateLimitAdmissionKey,
-  installationId?: number,
+  admissionKey: GitHubRateLimitAdmissionKey | undefined,
+  tokenErrorBehavior: FetchLiveTokenErrorBehavior,
 ): Promise<LivePullRequestFetchResult> {
-  if (installationId !== undefined) {
-    try {
-      return await withInstallationTokenRetry(env, installationId, async (freshToken) =>
-        fetchLivePullRequestResult(
-          env,
-          repoFullName,
-          prNumber,
-          freshToken,
-          githubRateLimitAdmissionKeyForToken(env, freshToken, installationId),
-        ),
-      );
-    } catch (error) {
-      return { status: "error", error: strippedErrorMessage(error, "GitHub live PR fetch failed").slice(0, 240) };
-    }
-  }
   try {
     const result = await githubJsonWithHeaders<GitHubPullRequestPayload>(
       env,
@@ -3570,10 +3602,49 @@ export async function fetchLivePullRequestResult(
     );
     return { status: "ok", data: result.data };
   } catch (error) {
-    // Rethrow so withInstallationTokenRetry can clear a stale cached token and remint (#8892).
-    if (isGitHubInstallationTokenRetryableError(error)) throw error;
+    if (
+      tokenErrorBehavior === "propagate-retryable-token-errors" &&
+      isGitHubInstallationTokenRetryableError(error)
+    ) {
+      throw error;
+    }
     return { status: "error", error: strippedErrorMessage(error, "GitHub live PR fetch failed").slice(0, 240) };
   }
+}
+
+export async function fetchLivePullRequestResult(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+  installationId?: number,
+  options?: FetchLivePullRequestResultOptions,
+): Promise<LivePullRequestFetchResult> {
+  if (installationId !== undefined) {
+    try {
+      return await withInstallationTokenRetry(env, installationId, async (freshToken) =>
+        fetchLivePullRequestResultWithToken(
+          env,
+          repoFullName,
+          prNumber,
+          freshToken,
+          githubRateLimitAdmissionKeyForToken(env, freshToken, installationId),
+          "propagate-retryable-token-errors",
+        ),
+      );
+    } catch (error) {
+      return { status: "error", error: strippedErrorMessage(error, "GitHub live PR fetch failed").slice(0, 240) };
+    }
+  }
+  return fetchLivePullRequestResultWithToken(
+    env,
+    repoFullName,
+    prNumber,
+    token,
+    admissionKey,
+    options?.propagateRetryableTokenErrors ? "propagate-retryable-token-errors" : "soft-fail",
+  );
 }
 
 /** The PR's FULL live payload via REST `GET /pulls/{n}`, ready to feed `upsertPullRequestFromGitHub`. The scheduled
@@ -3588,14 +3659,8 @@ export async function fetchLivePullRequest(
   token: string | undefined,
   admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<GitHubPullRequestPayload | undefined> {
-  try {
-    const result = await fetchLivePullRequestResult(env, repoFullName, prNumber, token, admissionKey);
-    return result.status === "ok" ? result.data : undefined;
-  } catch {
-    // fetchLivePullRequestResult rethrows retryable token failures for withInstallationTokenRetry (#8892);
-    // this soft wrapper keeps the historical fail-open contract for every call site that only wants a payload.
-    return undefined;
-  }
+  const result = await fetchLivePullRequestResult(env, repoFullName, prNumber, token, admissionKey);
+  return result.status === "ok" ? result.data : undefined;
 }
 
 // Bounded at 1000 open PRs (10 pages of 100) — far beyond any real repo's open-PR count; a pathological repo

@@ -603,7 +603,12 @@ NOVELTY_BONUS_SCALAR = 3
     const env = createTestEnv();
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
-      if (url.includes("constants.py")) return new Response("<!DOCTYPE html><html><body>rate limited</body></html>");
+      // HTML garbage that still parses a few IDENT = number lines (or none) — below the recognized floor.
+      // Include a fake "unmodeled" CONSTANT so findUnmodeledUpstreamConstants would fire if the drift
+      // sync still ran on garbage (#8902).
+      if (url.includes("constants.py")) {
+        return new Response("<!DOCTYPE html><html><body>rate limited</body></html>\nFAKE_UNMODELED_CONSTANT = 1\n");
+      }
       if (url.includes("programming_languages.json")) return Response.json({});
       return new Response("not found", { status: 404 });
     });
@@ -611,6 +616,8 @@ NOVELTY_BONUS_SCALAR = 3
     expect(refreshed.sourceKind).toBe("fallback"); // labeled fallback, NOT a deceptive raw-github
     expect(refreshed.warnings.join(" ")).toMatch(/parsed only \d+ recognized constant/i);
     expect(refreshed.constants.MERGED_PR_BASE_SCORE).toBe(25); // the hardcoded default
+    // Guard must check constantsUsable, not merely HTTP-ok — no spurious drift report (#8902).
+    await expect(listUpstreamDriftReports(env)).resolves.toEqual([]);
   });
 
   it("bootstraps to defaults (fallback) on a failed fetch ONLY when there is no verified last-good", async () => {

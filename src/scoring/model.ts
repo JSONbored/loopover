@@ -134,7 +134,9 @@ export async function refreshScoringModelSnapshot(env: Env): Promise<ScoringMode
     },
   };
   await persistScoringModelSnapshot(env, snapshot);
-  if (constantsResult.ok) {
+  // Only sync unmodeled-constant drift against a usable constants.py body — a 200-with-garbage
+  // response (no valid lastGood) must not open a spurious upstream_drift_reports row (#8902).
+  if (constantsUsable) {
     await syncUnmodeledScoringConstantDrift(env, {
       unmodeledConstants: findUnmodeledUpstreamConstants(constantsResult.value),
       source: { repo: upstream.repo, ref: fetchRef, commitSha: upstreamSourceSha },

@@ -1,0 +1,16 @@
+{
+ "record": {
+  "id": "record:fx/repo#1@policy-close",
+  "reason_code": "policy_close:stale_superseded",
+  "action": "close"
+ },
+ "replayInput": {
+  "findings": [],
+  "policy": {},
+  "policyCloseKind": "stale_superseded",
+  "evaluated": {
+   "conclusion": "success",
+   "blockerCodes": []
+  }
+ }
+}

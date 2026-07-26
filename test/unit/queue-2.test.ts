@@ -371,6 +371,13 @@ describe("queue processors", () => {
     expect(parsedRecord.schemaVersion).toBe("3");
     expect(parsedRecord.salvageability?.score).toBe(70);
     expect(parsedRecord.salvageability?.factors.join(" ")).toContain("mechanical defect class");
+    // #8838: the replay input persisted beside the record, and the decision re-derives bit-exactly from it.
+    const recordRow = await env.DB.prepare("select id, reason_code, action from decision_records where repo_full_name = ? and pull_number = ?").bind("owner/agent-repo", 18).first<{ id: string; reason_code: string; action: string }>();
+    const replayRow = await env.DB.prepare("select replay_json from decision_replay_inputs where record_id = ?").bind(recordRow!.id).first<{ replay_json: string }>();
+    expect(replayRow).toBeTruthy();
+    const { replayDecision } = await import("../../src/review/decision-replay");
+    const outcome = replayDecision({ id: recordRow!.id, reasonCode: recordRow!.reason_code, action: recordRow!.action }, JSON.parse(replayRow!.replay_json));
+    expect(outcome.verdict).toBe("match");
   });
 
   it("#4603: the SAME sub-floor defect one-shot-closes when aiReviewLowConfidenceDisposition is explicitly one_shot", async () => {

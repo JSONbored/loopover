@@ -12171,7 +12171,7 @@ async function maybeProcessExplainCommand(env: Env, deliveryId: string, payload:
   const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "explain" as LoopOverMentionCommandName, settings, pr });
   if (!authorization.authorized) {
     await recordAuditEvent(env, { eventType: "github_app.finding_explained_denied", actor: req.actor, targetKey, outcome: "denied", detail: authorization.reason, metadata: { deliveryId, repoFullName: req.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "explain") } });
-    await recordGithubProductUsage(env, "finding_explained_denied", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "denied", metadata: { reason: authorization.reason, actorKind: authorization.actorKind } });
+    await recordGithubProductUsage(env, "finding_explained_denied", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "denied", metadata: { reason: authorization.reason, actorKind: authorization.actorKind, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "explain") } });
     return true;
   }
   const findingRef = normalizeResolveFindingRef(command.argument);
@@ -12252,7 +12252,7 @@ async function maybeProcessGenerateTestsCommand(env: Env, deliveryId: string, pa
   const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "generate-tests" as LoopOverMentionCommandName, settings, pr });
   if (!authorization.authorized) {
     await recordAuditEvent(env, { eventType: "github_app.e2e_tests_generation_denied", actor: req.actor, targetKey, outcome: "denied", detail: authorization.reason, metadata: { deliveryId, repoFullName: req.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "generate-tests") } });
-    await recordGithubProductUsage(env, "e2e_tests_generation_denied", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "denied", metadata: { reason: authorization.reason, actorKind: authorization.actorKind } });
+    await recordGithubProductUsage(env, "e2e_tests_generation_denied", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "denied", metadata: { reason: authorization.reason, actorKind: authorization.actorKind, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "generate-tests") } });
     return true;
   }
   const manifest = await loadRepoFocusManifest(env, req.repoFullName).catch(() => null);
@@ -12490,6 +12490,7 @@ async function maybeProcessConfigurationCommand(
     detail: `Effective configuration posted for ${targetKey}.`,
     metadata: { deliveryId, repoFullName: req.repoFullName, mode },
   });
+  await recordGithubProductUsage(env, "configuration_posted", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "completed", metadata: { mode } });
   return true;
 }
 
@@ -12509,6 +12510,7 @@ async function recordConfigurationSkip(
     detail: reason,
     metadata: { deliveryId, repoFullName, reason },
   });
+  await recordGithubProductUsage(env, "configuration_skipped", { actor, repoFullName, targetKey, outcome: "skipped", metadata: { reason } });
 }
 
 /**
@@ -12989,7 +12991,7 @@ async function maybeProcessPrPanelGenerateTests(
       repoFullName,
       targetKey: `${repoFullName}#${pr.number}`,
       outcome: "denied",
-      metadata: { reason: authorization.reason, actorKind: authorization.actorKind },
+      metadata: { reason: authorization.reason, actorKind: authorization.actorKind, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "generate-tests") },
     });
     return true;
   }

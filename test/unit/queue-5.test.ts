@@ -4076,6 +4076,24 @@ describe("queue processors", () => {
       expect(denied).toMatchObject({ outcome: "denied" });
     });
 
+    it("records the explain denial in product-usage telemetry WITH the command's allowedRoles (#8688)", async () => {
+      const repoFullName = "JSONbored/explain-8688-deny-usage";
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await seedExplainPr(env, repoFullName, 8688, "explain-8688-deny-usage");
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/collaborators/org-member/permission")) return Response.json({ permission: "read" });
+        return new Response("not found", { status: 404 });
+      });
+
+      await processJob(env, explainWebhook(repoFullName, 8688, "@loopover explain ai_review_split", "org-member", { association: "MEMBER" }));
+
+      const usage = await env.DB.prepare("select outcome, json_extract(metadata_json, '$.allowedRoles') as roles from product_usage_events where event_name = ?").bind("finding_explained_denied").first<{ outcome: string; roles: string | null }>();
+      expect(usage?.outcome).toBe("denied");
+      expect(JSON.parse(usage?.roles ?? "null")).toEqual(["maintainer", "collaborator"]);
+    });
+
     it("records a classifier skip for a bot-authored explain command, never acting on it", async () => {
       const repoFullName = "JSONbored/explain-2169-bot";
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
@@ -4230,6 +4248,24 @@ describe("queue processors", () => {
       expect(posted).toBe(0); // denied before any generation or comment
       const denied = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("github_app.e2e_tests_generation_denied").first<{ outcome: string; detail: string }>();
       expect(denied?.outcome).toBe("denied");
+    });
+
+    it("records the generate-tests denial in product-usage telemetry WITH the command's allowedRoles (#8688)", async () => {
+      const repoFullName = "JSONbored/gen-tests-8688-deny-usage";
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
+      await seedGenerateTestsPr(env, repoFullName, 8690, "gen-tests-8688-deny-usage");
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/collaborators/writer/permission")) return Response.json({ permission: "write" });
+        return new Response("not found", { status: 404 });
+      });
+
+      await processJob(env, generateTestsWebhook(repoFullName, 8690, "writer", { association: "COLLABORATOR" }));
+
+      const usage = await env.DB.prepare("select outcome, json_extract(metadata_json, '$.allowedRoles') as roles from product_usage_events where event_name = ?").bind("e2e_tests_generation_denied").first<{ outcome: string; roles: string | null }>();
+      expect(usage?.outcome).toBe("denied");
+      expect(JSON.parse(usage?.roles ?? "null")).toEqual(["maintainer"]);
     });
 
     it("denies the PR's own author even though they authored it — the exact loophole a click-to-generate button must not open", async () => {

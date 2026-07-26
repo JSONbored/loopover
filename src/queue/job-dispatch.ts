@@ -24,6 +24,7 @@ import { isRecapEnabled, resolveMaintainerRecapManifestOverride, runMaintainerRe
 import { performRepoDocRefresh } from "../github/repo-doc-refresh-runner";
 import { executeAgentRun } from "../services/agent-orchestrator";
 import { deliverNotification, evaluateNotificationEvent } from "../notifications/service";
+import { admitRunAgentJob } from "./run-agent-quota-admission";
 import { isOpsEnabled, resolveOpsManifestOverride, runOpsAlerts } from "../review/ops-wire";
 import { isSweepWatchdogEnabled, resolveSweepWatchdogManifestOverride, runSweepLivenessWatchdog } from "../review/sweep-watchdog";
 import { isLoopEscalationSweepEnabled, resolveLoopEscalationManifestOverride, runLoopEscalationSweep } from "../review/loop-escalation-wire";
@@ -76,6 +77,22 @@ import {
 // fan-out, same shape as GLOBAL_OPEN_ITEM_LIVE_CHECK_CONCURRENCY in processors.ts. Moved here (rather than
 // imported back) since processJob was its only caller.
 const NOTIFY_EVALUATE_EVENT_CONCURRENCY = 5;
+
+async function enqueueNotificationDeliveries(env: Env, events: DetectedNotificationEvent[]): Promise<void> {
+  if (events.length === 0) return;
+  const deliveries = (
+    await mapWithConcurrency(events, NOTIFY_EVALUATE_EVENT_CONCURRENCY, (event) => evaluateNotificationEvent(env, event))
+  ).flat();
+  await Promise.all(
+    deliveries.map((delivery) =>
+      env.JOBS.send({
+        type: "notify-deliver",
+        requestedBy: "notify-evaluate",
+        deliveryId: delivery.id,
+      }),
+    ),
+  );
+}
 
 export async function processJob(env: Env, message: JobMessage): Promise<void> {
   switch (message.type) {
@@ -286,9 +303,15 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
         message.prCreatedAt,
       );
       return;
-    case "run-agent":
+    case "run-agent": {
+      // #7647 hard-block + #7662 soft-warning admission — warnings fire through the same notify-evaluate path
+      // as every other DetectedNotificationEvent before executeAgentRun is reached.
+      const admission = await admitRunAgentJob(env, message.runId);
+      await enqueueNotificationDeliveries(env, admission.warningEvents);
+      if (!admission.admitted) return;
       await executeAgentRun(env, message.runId);
       return;
+    }
     case "notify-evaluate": {
       // Legacy payload compat: a row enqueued before the batched-events deploy (#selfhost-maintenance-self-pin)
       // still carries the OLD singular `event` field on disk, not `events` -- a rolling deploy can process such
@@ -296,18 +319,7 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       // already matches the current type (which only the type checker, not the durable queue, enforces).
       const legacyMessage = message as unknown as { events?: DetectedNotificationEvent[]; event?: DetectedNotificationEvent };
       const events = Array.isArray(legacyMessage.events) ? legacyMessage.events : legacyMessage.event ? [legacyMessage.event] : [];
-      const deliveries = (
-        await mapWithConcurrency(events, NOTIFY_EVALUATE_EVENT_CONCURRENCY, (event) => evaluateNotificationEvent(env, event))
-      ).flat();
-      await Promise.all(
-        deliveries.map((delivery) =>
-          env.JOBS.send({
-            type: "notify-deliver",
-            requestedBy: "notify-evaluate",
-            deliveryId: delivery.id,
-          }),
-        ),
-      );
+      await enqueueNotificationDeliveries(env, events);
       return;
     }
     case "notify-deliver":

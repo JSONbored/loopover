@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { evaluateTenantQuota } from "../../packages/loopover-engine/src/tenant-quota";
+import {
+  evaluateTenantQuota,
+  evaluateTenantQuotaSoftWarnings,
+} from "../../packages/loopover-engine/src/tenant-quota";
 
 const QUOTA = { computeUnits: 100, wallClockMs: 60_000, maxConcurrentLoops: 3 };
 
@@ -70,5 +73,50 @@ describe("evaluateTenantQuota (#4796)", () => {
     expect(under.allowed).toBe(true);
     // Re-evaluating the over-quota tenant does not change the under-quota tenant's independent decision.
     expect(evaluateTenantQuota({ computeUnitsUsed: 5, wallClockMsUsed: 5_000, activeLoops: 1 }, QUOTA)).toEqual(under);
+  });
+});
+
+describe("evaluateTenantQuotaSoftWarnings (#7662)", () => {
+  it("returns no warnings when every dimension is above the low threshold", () => {
+    const decision = evaluateTenantQuota({ computeUnitsUsed: 70, wallClockMsUsed: 40_000, activeLoops: 1 }, QUOTA);
+    expect(evaluateTenantQuotaSoftWarnings(decision, QUOTA)).toEqual([]);
+  });
+
+  it("warns at the low threshold (20% remaining) but not just above it", () => {
+    const atThreshold = evaluateTenantQuota({ computeUnitsUsed: 80, wallClockMsUsed: 0, activeLoops: 0 }, QUOTA);
+    expect(evaluateTenantQuotaSoftWarnings(atThreshold, QUOTA)).toEqual([
+      { dimension: "compute", severity: "low", remaining: 20, cap: 100 },
+    ]);
+
+    const aboveThreshold = evaluateTenantQuota({ computeUnitsUsed: 79, wallClockMsUsed: 0, activeLoops: 0 }, QUOTA);
+    expect(evaluateTenantQuotaSoftWarnings(aboveThreshold, QUOTA)).toEqual([]);
+  });
+
+  it("escalates to critical at 10% remaining and prefers critical over low", () => {
+    const critical = evaluateTenantQuota({ computeUnitsUsed: 90, wallClockMsUsed: 0, activeLoops: 0 }, QUOTA);
+    expect(evaluateTenantQuotaSoftWarnings(critical, QUOTA)).toEqual([
+      { dimension: "compute", severity: "critical", remaining: 10, cap: 100 },
+    ]);
+  });
+
+  it("reports each exhausted-but-still-allowed dimension independently", () => {
+    const decision = evaluateTenantQuota({ computeUnitsUsed: 85, wallClockMsUsed: 55_000, activeLoops: 2 }, QUOTA);
+    expect(evaluateTenantQuotaSoftWarnings(decision, QUOTA)).toEqual([
+      { dimension: "compute", severity: "low", remaining: 15, cap: 100 },
+      { dimension: "time", severity: "critical", remaining: 5000, cap: 60_000 },
+    ]);
+  });
+
+  it("returns no warnings once the tenant is hard-blocked", () => {
+    const blocked = evaluateTenantQuota({ computeUnitsUsed: 100, wallClockMsUsed: 0, activeLoops: 0 }, QUOTA);
+    expect(blocked.allowed).toBe(false);
+    expect(evaluateTenantQuotaSoftWarnings(blocked, QUOTA)).toEqual([]);
+  });
+
+  it("honors custom threshold fractions", () => {
+    const decision = evaluateTenantQuota({ computeUnitsUsed: 50, wallClockMsUsed: 0, activeLoops: 0 }, QUOTA);
+    expect(
+      evaluateTenantQuotaSoftWarnings(decision, QUOTA, { lowRemainingFraction: 0.6, criticalRemainingFraction: 0.4 }),
+    ).toEqual([{ dimension: "compute", severity: "low", remaining: 50, cap: 100 }]);
   });
 });

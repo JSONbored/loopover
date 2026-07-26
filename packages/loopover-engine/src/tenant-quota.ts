@@ -99,3 +99,62 @@ export function evaluateTenantQuota(usage: TenantUsage, quota: TenantQuota): Ten
     remaining,
   };
 }
+
+/** Fractions of a dimension's cap remaining below which a soft warning fires (#7662). */
+export type QuotaSoftWarningThresholds = {
+  /** Warn once remaining drops to or below this fraction of the cap (default 0.2 = 80% consumed). */
+  lowRemainingFraction: number;
+  /** Escalate once remaining drops to or below this fraction (default 0.1 = 90% consumed). */
+  criticalRemainingFraction: number;
+};
+
+export const DEFAULT_QUOTA_SOFT_WARNING_THRESHOLDS: QuotaSoftWarningThresholds = {
+  lowRemainingFraction: 0.2,
+  criticalRemainingFraction: 0.1,
+};
+
+export type QuotaSoftWarningSeverity = "low" | "critical";
+
+export type QuotaSoftWarning = {
+  dimension: QuotaDimension;
+  severity: QuotaSoftWarningSeverity;
+  remaining: number;
+  cap: number;
+};
+
+function remainingFraction(remaining: number, cap: number): number | null {
+  const capNorm = finiteNonNegativeInt(cap);
+  if (capNorm === 0) return null;
+  return finiteNonNegativeInt(remaining) / capNorm;
+}
+
+/**
+ * Surface soft quota warnings for dimensions that are still within quota but running low (#7662). Pure: reads
+ * only the already-computed {@link TenantQuotaDecision} and the tenant's allocation. Hard-blocked tenants get
+ * no warnings here — the admission gate handles the block; this is the "before" path only.
+ */
+export function evaluateTenantQuotaSoftWarnings(
+  decision: TenantQuotaDecision,
+  quota: TenantQuota,
+  thresholds: QuotaSoftWarningThresholds = DEFAULT_QUOTA_SOFT_WARNING_THRESHOLDS,
+): QuotaSoftWarning[] {
+  if (!decision.allowed) return [];
+
+  const dimensions: Array<{ dimension: QuotaDimension; remaining: number; cap: number }> = [
+    { dimension: "compute", remaining: decision.remaining.computeUnits, cap: quota.computeUnits },
+    { dimension: "time", remaining: decision.remaining.wallClockMs, cap: quota.wallClockMs },
+    { dimension: "concurrency", remaining: decision.remaining.concurrentLoops, cap: quota.maxConcurrentLoops },
+  ];
+
+  const warnings: QuotaSoftWarning[] = [];
+  for (const { dimension, remaining, cap } of dimensions) {
+    const fraction = remainingFraction(remaining, cap);
+    if (fraction === null) continue;
+    if (fraction <= thresholds.criticalRemainingFraction) {
+      warnings.push({ dimension, severity: "critical", remaining: finiteNonNegativeInt(remaining), cap: finiteNonNegativeInt(cap) });
+    } else if (fraction <= thresholds.lowRemainingFraction) {
+      warnings.push({ dimension, severity: "low", remaining: finiteNonNegativeInt(remaining), cap: finiteNonNegativeInt(cap) });
+    }
+  }
+  return warnings;
+}

@@ -2473,7 +2473,9 @@ export type NotificationEventType =
   | "ams_attempt_started"
   | "ams_attempt_failed"
   | "ams_governor_paused"
-  | "ams_pr_outcome";
+  | "ams_pr_outcome"
+  // Rent-a-Loop quota headroom (#7662): soft warning before #7647's hard block at run-agent admission.
+  | "tenant_quota_warning";
 
 /** #699 path B: a miner's standing watch on a repo for new grabbable issues. `labels` ([]=any) filters
  *  which issues notify. The `pullNumber` field of the resulting notification event carries the ISSUE number. */

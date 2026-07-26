@@ -64,7 +64,7 @@ describe("loopover-mcp plan-DAG + local-scorer + predict-gate tools (#6150) — 
     expect(data.sourceTokenScore).toBe(14);
     expect(data.testTokenScore).toBe(8);
     expect(data.nonCodeTokenScore).toBe(3);
-    expect(data.totalTokenScore).toBe(25);
+    expect(data.totalTokenScore).toBe(14 + 0.05 * 8 + 3);
   });
 
   it("loopover_run_local_scorer surfaces a validation-failure warning without changing the scores", async () => {

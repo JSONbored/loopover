@@ -87,6 +87,16 @@ services:
         INSTALL_AI_CLIS: "${INSTALL_AI_CLIS:-true}"
         INSTALL_VISUAL_REVIEW: "${INSTALL_VISUAL_REVIEW:-false}"
     restart: unless-stopped
+    # #9007: a review pass routinely runs tens of seconds to minutes (AI calls + GitHub round-trips), but
+    # Docker's default stop_grace_period is only 10s -- far shorter than the queue's own graceful drain
+    # (pg-queue.ts/sqlite-queue.ts stop(), which now stops CLAIMING new work immediately but still waits for
+    # whatever pass is already in flight to finish). Without headroom here, every `docker compose
+    # restart`/`stop`/redeploy during active review traffic sends SIGKILL before that drain completes,
+    # severing the in-flight pass mid-way and leaving its Redis locks/DB state exactly where it stood --
+    # the root cause behind a whole class of "PR looks stuck" incidents. 300s covers the slowest realistic
+    # pass (see AI_REVIEW_LOCK_TTL_SECONDS's own 30-minute crash-safety backstop for the orphan case this
+    # doesn't fully eliminate) while still bounding a genuinely wedged shutdown.
+    stop_grace_period: 300s
     <<: *default-logging
     ports:
       # Remove this when using the caddy profile — Caddy becomes the public listener.

@@ -272,6 +272,13 @@ export function createSqliteQueue(
       }),
     );
   let running = false;
+  // #9007: distinct from `running`, which also governs pre-start()/direct pump()-drain() usage (binding.send()'s
+  // fire-and-forget kickOne(), and drain()'s own direct pump() call, both legitimately run a pump loop before
+  // start() has ever been called or after stop() -- gating the loop below on `running` itself broke exactly
+  // that path). `shuttingDown` instead means ONLY "stop() has been called and hasn't been superseded by a
+  // later start()" -- it starts false, flips true at the very top of stop() (before its own drain-wait), and
+  // resets false in start() so a stop()-then-restart cycle claims fresh again.
+  let shuttingDown = false;
   let active = 0; // number of concurrent pump() loops currently draining jobs
   let activeBackground = 0;
   const activeJobIds = new Set<number>();
@@ -1153,8 +1160,15 @@ export function createSqliteQueue(
     if (active >= concurrency) return;
     active++;
     try {
-      while (await processOne()) {
-        /* keep draining due jobs */
+      // #9007: `shuttingDown` is re-checked on every iteration (not just at pump() entry) so that stop() --
+      // which sets it synchronously, before its own `while (active > 0)` wait -- actually bounds this loop to
+      // the job already in flight. Without this guard, a pump already draining due work keeps calling
+      // processOne() for as long as more due jobs exist, entirely blind to a concurrent stop(): shutdown then
+      // waits for the WHOLE backlog to drain rather than for in-flight work to finish, so under sustained load
+      // stop() never returns before the container's SIGKILL grace period expires -- the root cause of every
+      // review pass severed mid-flight by a deploy.
+      while (!shuttingDown && (await processOne())) {
+        /* keep draining due jobs, but stop as soon as shutdown begins */
       }
     } catch (error) {
       // claimNext()/reclaimExpiredProcessingJobs() run OUTSIDE processOne's own try/finally, so a raw driver
@@ -1230,6 +1244,7 @@ export function createSqliteQueue(
     start() {
       if (running) return;
       running = true;
+      shuttingDown = false; // #9007: a stop()-then-restart cycle claims fresh again
       const tick = (): void => {
         /* v8 ignore next */ // stop() clears the timer, so a tick never fires with running=false
         if (!running) return;
@@ -1246,6 +1261,10 @@ export function createSqliteQueue(
       foregroundLivenessTimer = setInterval(() => void releaseStaleForegroundDeferralsSafely(), foregroundLivenessConfig.checkIntervalMs);
     },
     async stop() {
+      // #9007: set BEFORE the drain-wait below (and before `running = false`) so any pump loop still actively
+      // draining due work sees it on its very next iteration and stops claiming new jobs immediately, rather
+      // than continuing to drain the whole backlog while this wait loop sits idle.
+      shuttingDown = true;
       running = false;
       if (timer) clearTimeout(timer);
       if (deadLetterReviveTimer) clearInterval(deadLetterReviveTimer);

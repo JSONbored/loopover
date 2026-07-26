@@ -3352,6 +3352,42 @@ describe("createSqliteQueue (durable #980)", () => {
     expect(done).toBe(true);
   });
 
+  it("REGRESSION (#9007): stop() does not drain the whole backlog -- it lets only the in-flight job finish", async () => {
+    // Reproduces the bug directly: a single pump() invocation's `while (await processOne())` loop used to be
+    // blind to shutdown state, so once one pump claimed the first due job it kept claiming every subsequent
+    // due job regardless of a concurrent stop() -- shutdown wasn't bounded by "finish what's in flight", it
+    // was bounded by "drain everything still pending". With concurrency:1, sendBatch's 5 kickOne() calls all
+    // fire synchronously; only the FIRST actually starts a pump (the other 4 see active>=concurrency and
+    // no-op) -- so whether jobs 2-5 get processed during this one stop() call depends entirely on whether the
+    // loop condition checks shutdown state.
+    const consumed: string[] = [];
+    const q = createSqliteQueue(makeDriver(), async (message) => {
+      consumed.push((message as unknown as { type: string }).type);
+      await new Promise((r) => setTimeout(r, 25));
+    }, { concurrency: 1, pollIntervalMs: 100_000 }); // huge poll interval: no periodic kickAll to confound this
+    await q.binding.sendBatch([msg("a"), msg("b"), msg("c"), msg("d"), msg("e")].map((body) => ({ body })));
+    q.start();
+    await new Promise((r) => setTimeout(r, 5)); // let the lone pump claim "a" and enter its 25ms consume
+    await q.stop(); // must return once "a" finishes -- NOT after b/c/d/e also drain
+    expect(consumed).toEqual(["a"]);
+    expect(await q.size()).toBe(4); // b, c, d, e remain pending, untouched by this stop()
+  });
+
+  it("REGRESSION (#9007): a pump kicked via send()/drain() BEFORE start() is ever called is unaffected by shuttingDown", async () => {
+    // Guards against a real mistake made while fixing the bug above: gating the pump loop on `running` itself
+    // (instead of a separate `shuttingDown` flag) would have made every pre-start() drain()/send() no-op,
+    // since `running` starts false and isn't set until start() is first called -- breaking the extremely
+    // common test/production pattern of `send()` + `drain()` with no start()/stop() lifecycle involved at all.
+    let calls = 0;
+    const q = createSqliteQueue(makeDriver(), async () => {
+      calls += 1;
+    }, {});
+    await q.binding.send(msg("never-started"));
+    await q.drain();
+    expect(calls).toBe(1);
+    expect(await q.size()).toBe(0);
+  });
+
   describe("maintenance-admission pressure gating (#selfhost-runtime-pressure)", () => {
     const envKeys = [
       "MAINTENANCE_ADMISSION_ENABLED",

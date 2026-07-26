@@ -107,7 +107,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "ANTHROPIC_API_KEY",
-    firstReference: "src/selfhost/ai.ts",
+    firstReference: "src/selfhost/ai-config.ts",
   },
   {
     name: "BACKUP_ACKNOWLEDGED",
@@ -262,6 +262,10 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/selfhost/preflight.ts",
   },
   {
+    name: "LOOPOVER_CENTRAL_POSTHOG_KEY",
+    firstReference: "src/selfhost/posthog.ts",
+  },
+  {
     name: "LOOPOVER_ENABLE_PAGERDUTY",
     firstReference: "src/services/notify-pagerduty.ts",
   },
@@ -303,6 +307,10 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS",
+    firstReference: "src/selfhost/maintenance-admission.ts",
+  },
+  {
+    name: "MAINTENANCE_ADMISSION_MAX_HOST_LOAD",
     firstReference: "src/selfhost/maintenance-admission.ts",
   },
   {
@@ -351,7 +359,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "OPENAI_API_KEY",
-    firstReference: "src/selfhost/ai.ts",
+    firstReference: "src/selfhost/ai-config.ts",
   },
   {
     name: "OPENAI_COMPATIBLE_AI_API_KEY",
@@ -434,7 +442,15 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/services/notify-pagerduty.ts",
   },
   {
+    name: "PAGERDUTY_REPO_COOLDOWN_MINUTES",
+    firstReference: "src/services/notify-pagerduty.ts",
+  },
+  {
     name: "PAGERDUTY_REPO_MIN_SEVERITY",
+    firstReference: "src/services/notify-pagerduty.ts",
+  },
+  {
+    name: "PAGERDUTY_REPO_ROUTING_KEYS",
     firstReference: "src/services/notify-pagerduty.ts",
   },
   {
@@ -518,7 +534,27 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/selfhost/queue-common.ts",
   },
   {
+    name: "QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS",
+    firstReference: "src/selfhost/queue-common.ts",
+  },
+  {
+    name: "QUEUE_PROCESSING_TIMEOUT_MS",
+    firstReference: "src/selfhost/queue-common.ts",
+  },
+  {
+    name: "QUEUE_RATE_LIMIT_JITTER_MS",
+    firstReference: "src/selfhost/queue-common.ts",
+  },
+  {
+    name: "QUEUE_RECOVERY_JITTER_MS",
+    firstReference: "src/selfhost/queue-common.ts",
+  },
+  {
     name: "QUEUE_STARTUP_JITTER_MIN_JOBS",
+    firstReference: "src/selfhost/queue-common.ts",
+  },
+  {
+    name: "QUEUE_STARTUP_JITTER_MS",
     firstReference: "src/selfhost/queue-common.ts",
   },
   {
@@ -558,6 +594,10 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/server.ts",
   },
   {
+    name: "SCHEDULED_ENQUEUE_JITTER_MS",
+    firstReference: "src/selfhost/queue-common.ts",
+  },
+  {
     name: "SELFHOST_BUNDLE_ALL",
     firstReference: "scripts/build-selfhost.ts",
   },
@@ -572,6 +612,10 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   {
     name: "SETUP_OUTPUT_PATH",
     firstReference: "src/server.ts",
+  },
+  {
+    name: "SLACK_REPO_WEBHOOKS",
+    firstReference: "src/services/notify-discord.ts",
   },
   {
     name: "SLACK_WEBHOOK_URL",
@@ -607,7 +651,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `AI_VISION_MODEL` | `src/server.ts` |",
   "| `ANTHROPIC_AI_BASE_URL` | `src/selfhost/ai.ts` |",
   "| `ANTHROPIC_AI_MODEL` | `src/selfhost/ai.ts` |",
-  "| `ANTHROPIC_API_KEY` | `src/selfhost/ai.ts` |",
+  "| `ANTHROPIC_API_KEY` | `src/selfhost/ai-config.ts` |",
   "| `BACKUP_ACKNOWLEDGED` | `src/server.ts` |",
   "| `BROWSER_WS_ENDPOINT` | `src/selfhost/stubs/puppeteer.ts` |",
   "| `CLAUDE_AI_EFFORT` | `src/selfhost/ai.ts` |",
@@ -646,6 +690,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `HOME` | `src/selfhost/ai.ts` |",
   "| `INTERNAL_JOB_TOKEN` | `src/selfhost/preflight.ts` |",
   "| `LOOPOVER_API_TOKEN` | `src/selfhost/preflight.ts` |",
+  "| `LOOPOVER_CENTRAL_POSTHOG_KEY` | `src/selfhost/posthog.ts` |",
   "| `LOOPOVER_ENABLE_PAGERDUTY` | `src/services/notify-pagerduty.ts` |",
   "| `LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER` | `src/selfhost/ai.ts` |",
   "| `LOOPOVER_MCP_TOKEN` | `src/selfhost/preflight.ts` |",
@@ -657,6 +702,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `MAINTENANCE_ADMISSION_ENABLED` | `src/selfhost/maintenance-admission.ts` |",
   "| `MAINTENANCE_ADMISSION_MAX_BACKLOG_CONVERGENCE_PENDING` | `src/selfhost/maintenance-admission.ts` |",
   "| `MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS` | `src/selfhost/maintenance-admission.ts` |",
+  "| `MAINTENANCE_ADMISSION_MAX_HOST_LOAD` | `src/selfhost/maintenance-admission.ts` |",
   "| `MAINTENANCE_ADMISSION_MAX_LIVE_AGE_MS` | `src/selfhost/maintenance-admission.ts` |",
   "| `MAINTENANCE_ADMISSION_MAX_LIVE_PENDING` | `src/selfhost/maintenance-admission.ts` |",
   "| `MAINTENANCE_ADMISSION_MAX_PENDING` | `src/selfhost/maintenance-admission.ts` |",
@@ -668,7 +714,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `OLLAMA_AI_MODEL` | `src/selfhost/ai.ts` |",
   "| `OPENAI_AI_BASE_URL` | `src/selfhost/ai.ts` |",
   "| `OPENAI_AI_MODEL` | `src/selfhost/ai.ts` |",
-  "| `OPENAI_API_KEY` | `src/selfhost/ai.ts` |",
+  "| `OPENAI_API_KEY` | `src/selfhost/ai-config.ts` |",
   "| `OPENAI_COMPATIBLE_AI_API_KEY` | `src/selfhost/ai.ts` |",
   "| `OPENAI_COMPATIBLE_AI_BASE_URL` | `src/selfhost/ai.ts` |",
   "| `OPENAI_COMPATIBLE_AI_MODEL` | `src/selfhost/ai.ts` |",
@@ -689,7 +735,9 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `OTEL_TRACES_SAMPLER_ARG` | `src/selfhost/otel.ts` |",
   "| `PAGERDUTY_COOLDOWN_MINUTES` | `src/services/notify-pagerduty.ts` |",
   "| `PAGERDUTY_MIN_SEVERITY` | `src/services/notify-pagerduty.ts` |",
+  "| `PAGERDUTY_REPO_COOLDOWN_MINUTES` | `src/services/notify-pagerduty.ts` |",
   "| `PAGERDUTY_REPO_MIN_SEVERITY` | `src/services/notify-pagerduty.ts` |",
+  "| `PAGERDUTY_REPO_ROUTING_KEYS` | `src/services/notify-pagerduty.ts` |",
   "| `PAGERDUTY_ROUTING_KEY` | `src/services/notify-pagerduty.ts` |",
   "| `PGPOOL_MAX` | `src/selfhost/queue-common.ts` |",
   "| `PGVECTOR_ENABLED` | `src/server.ts` |",
@@ -710,7 +758,12 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `QUEUE_BACKGROUND_CONCURRENCY` | `src/selfhost/queue-common.ts` |",
   "| `QUEUE_CONCURRENCY` | `src/selfhost/pg-queue.ts` |",
   "| `QUEUE_DEAD_LETTER_AUTO_RETRY_MAX_EXTRA_ATTEMPTS` | `src/selfhost/queue-common.ts` |",
+  "| `QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS` | `src/selfhost/queue-common.ts` |",
+  "| `QUEUE_PROCESSING_TIMEOUT_MS` | `src/selfhost/queue-common.ts` |",
+  "| `QUEUE_RATE_LIMIT_JITTER_MS` | `src/selfhost/queue-common.ts` |",
+  "| `QUEUE_RECOVERY_JITTER_MS` | `src/selfhost/queue-common.ts` |",
   "| `QUEUE_STARTUP_JITTER_MIN_JOBS` | `src/selfhost/queue-common.ts` |",
+  "| `QUEUE_STARTUP_JITTER_MS` | `src/selfhost/queue-common.ts` |",
   "| `REDEPLOY_COMPANION_SOCKET_PATH` | `src/server.ts` |",
   "| `REDEPLOY_COMPANION_TOKEN` | `src/server.ts` |",
   "| `REDIS_URL` | `src/selfhost/preflight.ts` |",
@@ -720,9 +773,11 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `REVIEW_AUDIT_S3_ENDPOINT` | `src/server.ts` |",
   "| `REVIEW_AUDIT_S3_REGION` | `src/server.ts` |",
   "| `REVIEW_AUDIT_S3_SECRET_ACCESS_KEY` | `src/server.ts` |",
+  "| `SCHEDULED_ENQUEUE_JITTER_MS` | `src/selfhost/queue-common.ts` |",
   "| `SELFHOST_BUNDLE_ALL` | `scripts/build-selfhost.ts` |",
   "| `SELFHOST_SERVICE` | `scripts/smoke-observability-traces.ts` |",
   "| `SELFHOST_SETUP_TOKEN` | `src/selfhost/preflight.ts` |",
   "| `SETUP_OUTPUT_PATH` | `src/server.ts` |",
+  "| `SLACK_REPO_WEBHOOKS` | `src/services/notify-discord.ts` |",
   "| `SLACK_WEBHOOK_URL` | `src/services/notify-discord.ts` |",
 ].join("\n");

@@ -311,19 +311,23 @@ async function closeDraftDodgeAttemptIfBlocked(
       pr.number,
       `Gate verdict stands for this commit — converting to draft does not reset the review. Re-submit a new PR with the issues addressed${codes ? ` (${codes})` : ""}.`,
     ).catch(() => undefined);
-    await closePullRequest(
-      env,
-      installationId,
-      repoFullName,
-      pr.number,
-    ).catch(() => undefined);
+    // #2260/#8801: the audit outcome must reflect whether the close actually happened on GitHub, not just
+    // whether this handler ran. This guard was the ONE sibling in this file still swallowing the close
+    // error and unconditionally recording "completed" — a transient 403/5xx left the PR open on GitHub
+    // while the audit trail claimed a draft-dodge close was enforced.
+    const closeError = await closePullRequest(env, installationId, repoFullName, pr.number)
+      .then(() => null)
+      .catch((error: unknown) => error);
     await recordAuditEvent(env, {
       eventType: "github_app.draft_dodge_closed",
       actor: "loopover",
       targetKey,
-      outcome: "completed",
-      detail: `closed draft-dodge attempt by ${pr.authorLogin ?? "unknown"} — prior gate failure on headSha ${pr.headSha} stands`,
-      metadata: gateMetadata,
+      outcome: closeError === null ? "completed" : "error",
+      detail:
+        closeError === null
+          ? `closed draft-dodge attempt by ${pr.authorLogin ?? "unknown"} — prior gate failure on headSha ${pr.headSha} stands`
+          : `FAILED to close draft-dodge attempt by ${pr.authorLogin ?? "unknown"} — the close API call did not succeed; the PR may still be open`,
+      metadata: closeError === null ? gateMetadata : { ...gateMetadata, error: errorMessage(closeError) },
     }).catch(() => undefined);
   }
 }

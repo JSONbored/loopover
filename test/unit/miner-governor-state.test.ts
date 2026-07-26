@@ -582,3 +582,18 @@ describe("governor-state scalar-state save atomicity (#7221)", () => {
     expect(state.loadRateLimitState()).toEqual({ buckets: { global: {}, perRepo: {} }, backoffAttempts: {} });
   });
 });
+
+describe("governor-state withScalarStateTransaction (#8856)", () => {
+  it("is re-entrant so nested scalar saves inside one outer transaction commit together", () => {
+    const state = tempState();
+    state.withScalarStateTransaction(() => {
+      state.saveRateLimitState({
+        buckets: { global: { open_pr: { count: 3, windowStartMs: 0 } }, perRepo: {} },
+        backoffAttempts: {},
+      });
+      state.savePauseState({ paused: true, reason: "nested pause" });
+    });
+    expect(state.loadRateLimitState().buckets.global.open_pr?.count).toBe(3);
+    expect(state.loadPauseState()).toMatchObject({ paused: true, reason: "nested pause" });
+  });
+});

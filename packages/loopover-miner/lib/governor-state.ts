@@ -55,6 +55,8 @@ export type GovernorPauseInput = {
 
 export type GovernorState = {
   dbPath: string;
+  /** Runs `fn` inside one `BEGIN IMMEDIATE` on `governor_scalar_state` (#8856). Re-entrant: nested saves skip a second BEGIN. */
+  withScalarStateTransaction<T>(fn: () => T): T;
   loadRateLimitState(): GovernorRateLimitState;
   saveRateLimitState(rateLimitState: GovernorRateLimitState): void;
   loadCapUsage(): GovernorCapUsage;
@@ -299,8 +301,13 @@ export function openGovernorState(dbPath: string = resolveGovernorStateDbPath())
   // invocation racing it) cannot interleave a stale read with each other's write and silently clobber the
   // scalar-state column-group they don't own -- same fix shape as event-ledger.js's appendEvent (#7221). Shared
   // by all three governor_scalar_state save methods below, since they all read-then-write across the same row.
+  // Re-entrant so governor-chokepoint-persisted.js can wrap load+evaluate+save in one outer transaction while
+  // still calling saveRateLimitState internally (#8856).
+  let transactionDepth = 0;
   function withTransaction<T>(fn: () => T): T {
+    if (transactionDepth > 0) return fn();
     db.exec("BEGIN IMMEDIATE");
+    transactionDepth += 1;
     try {
       const result = fn();
       db.exec("COMMIT");
@@ -308,11 +315,16 @@ export function openGovernorState(dbPath: string = resolveGovernorStateDbPath())
     } catch (error) {
       db.exec("ROLLBACK");
       throw error;
+    } finally {
+      transactionDepth -= 1;
     }
   }
 
   const state: GovernorState = {
     dbPath: resolvedPath,
+    withScalarStateTransaction<T>(fn: () => T): T {
+      return withTransaction(fn);
+    },
     loadRateLimitState(): GovernorRateLimitState {
       const row = getScalarStatement.get() as ScalarStateRow | undefined;
       return {

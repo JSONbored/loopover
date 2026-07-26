@@ -639,6 +639,45 @@ describe("maybeSuggestProjectOrMilestoneMatch (#3183/#3184)", () => {
     expect(posted).toBe(false);
   });
 
+  it("finds the marker on page 4 (past the old 3-page cap) and does not double-post (#8889)", async () => {
+    // A >300-comment thread: pages 1-3 are full of unrelated comments, the marker is on page 4. The old
+    // 3-page cap stopped before page 4, missed the marker, and double-posted. The raised cap must reach it.
+    const fullPage = Array.from({ length: 100 }, (_, i) => ({ body: `unrelated comment ${i}`, user: { type: "User", login: "someone" } }));
+    let posted = false;
+    const requestedPages: number[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/milestones")) return Response.json([{ number: 14, title: "Self-host reliability roadmap" }]);
+      if (url.endsWith("/graphql")) return Response.json(noOpenProjectsGraphQlBody());
+      if (url.includes("/issues/4/comments") && method === "GET") {
+        const page = Number(new URL(url).searchParams.get("page") ?? "1");
+        requestedPages.push(page);
+        if (page <= 3) return Response.json(fullPage);
+        if (page === 4) return Response.json([{ body: PROJECT_TRACKER_SUGGEST_COMMENT_MARKER, user: { type: "Bot", login: "loopover-orb[bot]" } }]);
+        return Response.json([]);
+      }
+      if (url.includes("/issues/4/comments") && method === "POST") {
+        posted = true;
+        return Response.json({ id: 1 });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
+    const result = await maybeSuggestProjectOrMilestoneMatch(
+      { env, installationId: 123, repoFullName: "JSONbored/gittensory" },
+      4,
+      "Improve self-host reliability roadmap convergence",
+      "Follow-up on the self-host reliability roadmap work",
+      "github",
+      "https://github.com/JSONbored/gittensory/pull/4",
+    );
+    expect(requestedPages).toEqual([1, 2, 3, 4]);
+    expect(result).toEqual({ suggested: false });
+    expect(posted).toBe(false);
+  });
+
   it("does nothing when neither a milestone nor a project matches (never calls the comment POST endpoint)", async () => {
     let posted = false;
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {

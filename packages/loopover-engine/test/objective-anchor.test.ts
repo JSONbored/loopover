@@ -70,6 +70,14 @@ test("extractObjectiveAnchorFeatures normalizes paths, derives modules, and clas
   ]);
 });
 
+test("extractObjectiveAnchorFeatures tags only exact package(.-lock).json as a dependency, not a prefixed sibling (#8874)", () => {
+  const positive = extractObjectiveAnchorFeatures({ paths: ["package.json", "package-lock.json"] });
+  assert.ok(positive.changeKinds.includes("dependency"));
+
+  const negative = extractObjectiveAnchorFeatures({ paths: ["sub-package.json", "mock-package.json"] });
+  assert.ok(!negative.changeKinds.includes("dependency"));
+});
+
 test("scoreObjectiveAnchor returns 1 for full structural overlap", () => {
   const result = scoreObjectiveAnchor({ replayed: replay(), revealed: revealed() });
 

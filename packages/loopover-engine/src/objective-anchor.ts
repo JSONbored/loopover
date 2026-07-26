@@ -234,7 +234,7 @@ function kindsFromPath(path: string): ObjectiveAnchorChangeKind[] {
   if (CONFIG_FILENAMES.has(filename) || filename.endsWith(".jsonc") || filename.endsWith(".toml")) {
     kinds.push("config");
   }
-  if (/package(?:-lock)?\.json$/u.test(filename)) {
+  if (/^package(?:-lock)?\.json$/u.test(filename)) {
     kinds.push("dependency");
   }
   return kinds;

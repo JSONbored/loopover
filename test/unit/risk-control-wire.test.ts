@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isRiskControlEnabled, loadCalibrationPairs, riskControlFlagKey, runRiskControlRecalibration } from "../../src/review/risk-control-wire";
+import { isRiskControlEnabled, loadCalibrationPairs, parseBudget, readCalibratedThreshold, resolveAutomaticCloseConfidence, riskControlArms, riskControlFlagKey, runRiskControlRecalibration } from "../../src/review/risk-control-wire";
 import { processJob } from "../../src/queue/processors";
 import { createTestEnv } from "../helpers/d1";
 
@@ -114,5 +114,57 @@ describe("risk-control-recalibrate job dispatch (#8835)", () => {
     await processJob(off, { type: "risk-control-recalibrate", requestedBy: "test" });
     const none = await off.DB.prepare(`SELECT COUNT(*) AS n FROM audit_events WHERE event_type LIKE 'risk_control_%'`).first<{ n: number }>();
     expect(none!.n).toBe(0);
+  });
+});
+
+describe("actuation precedence (#8849)", () => {
+  it("a live calibrated λ̂ outranks the knob loosening; retraction restores it; flag-off ignores calibration", async () => {
+    const env = createTestEnv({ LOOPOVER_RISK_CONTROL: "true" });
+    await env.DB.prepare(`INSERT INTO system_flags (key, value) VALUES ('riskcontrol:close', ?)`).bind(JSON.stringify({ lambda: 0.94 })).run();
+    expect(await resolveAutomaticCloseConfidence(env, "o/r", 0.9)).toEqual({ value: 0.94, calibrated: true });
+    // Retraction → the loosening chain resumes automatically.
+    await env.DB.prepare(`DELETE FROM system_flags WHERE key = 'riskcontrol:close'`).run();
+    expect(await resolveAutomaticCloseConfidence(env, "o/r", 0.9)).toEqual({ value: 0.9, calibrated: false });
+    expect(await resolveAutomaticCloseConfidence(env, "o/r", null)).toBeNull();
+    // Flag off → calibration is never consulted even when a flag row exists.
+    const off = createTestEnv();
+    await off.DB.prepare(`INSERT INTO system_flags (key, value) VALUES ('riskcontrol:close', ?)`).bind(JSON.stringify({ lambda: 0.94 })).run();
+    expect(await resolveAutomaticCloseConfidence(off, "o/r", 0.9)).toEqual({ value: 0.9, calibrated: false });
+  });
+
+  it("readCalibratedThreshold prefers the repo-scoped key, falls back to global, fails OPEN on garbage", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare(`INSERT INTO system_flags (key, value) VALUES ('riskcontrol:close', ?)`).bind(JSON.stringify({ lambda: 0.9 })).run();
+    await env.DB.prepare(`INSERT INTO system_flags (key, value) VALUES ('riskcontrol:close:o/r', ?)`).bind(JSON.stringify({ lambda: 0.96 })).run();
+    expect(await readCalibratedThreshold(env, "close", "O/R")).toBe(0.96); // repo key, case-insensitive
+    expect(await readCalibratedThreshold(env, "close", "other/repo")).toBe(0.9); // global fallback
+    expect(await readCalibratedThreshold(env, "close")).toBe(0.9); // no-repo callers read global directly
+    await env.DB.prepare(`UPDATE system_flags SET value = '{oops' WHERE key = 'riskcontrol:close:o/r'`).run();
+    expect(await readCalibratedThreshold(env, "close", "o/r")).toBeNull(); // garbage fails open, never throws
+  });
+});
+
+describe("env-configurable budgets", () => {
+  it("clamped parse: defaults on absent/garbage/out-of-range; merge default is the relaxed 0.005", () => {
+    expect(parseBudget(undefined, 0.015, 0.05)).toBe(0.015);
+    expect(parseBudget("nope", 0.015, 0.05)).toBe(0.015);
+    expect(parseBudget("0.2", 0.015, 0.05)).toBe(0.015); // over max
+    expect(parseBudget("0", 0.015, 0.05)).toBe(0.015); // zero is not a budget
+    expect(parseBudget("0.01", 0.015, 0.05)).toBe(0.01);
+    const arms = riskControlArms(createTestEnv({ LOOPOVER_RISK_CONTROL_CLOSE_ALPHA: "0.02" }));
+    expect(arms.find((a) => a.arm === "close")!.alpha).toBe(0.02);
+    expect(arms.find((a) => a.arm === "merge")!.alpha).toBe(0.005);
+  });
+});
+
+describe("per-repo calibration (#8835)", () => {
+  it("publishes a repo-scoped λ̂ when that repo's own labels certify, retractable independently of global", async () => {
+    const env = createTestEnv({ LOOPOVER_RISK_CONTROL_CLOSE_ALPHA: "0.05" }); // floor ln(.05)/ln(.95) = 59 labels
+    for (let i = 1; i <= 65; i += 1) await seedLabeledDecision(env, i, "close", "correct", 0.95);
+    await runRiskControlRecalibration(env);
+    const repoKey = await env.DB.prepare(`SELECT value FROM system_flags WHERE key = 'riskcontrol:close:o/r'`).first<{ value: string }>();
+    expect(JSON.parse(repoKey!.value)).toMatchObject({ lambda: 0.95 });
+    const globalKey = await env.DB.prepare(`SELECT value FROM system_flags WHERE key = 'riskcontrol:close'`).first<{ value: string }>();
+    expect(JSON.parse(globalKey!.value)).toMatchObject({ lambda: 0.95 });
   });
 });

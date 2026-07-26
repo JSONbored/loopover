@@ -506,6 +506,11 @@ declare global {
     LOOPOVER_DECISION_AUDIT?: string;
     /** #8835: daily distribution-free risk-control recalibration over the audit labels (default OFF). */
     LOOPOVER_RISK_CONTROL?: string;
+    /** #8835/#8849: per-arm error budgets + calibration confidence — instance-level instrument parameters
+     *  (clamped; defaults 0.015 / 0.005 / 0.05). */
+    LOOPOVER_RISK_CONTROL_CLOSE_ALPHA?: string;
+    LOOPOVER_RISK_CONTROL_MERGE_ALPHA?: string;
+    LOOPOVER_RISK_CONTROL_DELTA?: string;
     /** Experimental `gittensor` plugin (the `experimental:` manifest block, first key): the operator-level
      *  kill-switch for loopover's original subnet mining-registry/scoring integration, now opt-in rather than
      *  a core dependency. ANDed with the per-repo `.loopover.yml experimental.gittensor` opt-in -- neither

@@ -54,6 +54,10 @@ interface OrbExportPayload {
   instance_id: string;
   events: FleetEvent[];
   health?: { ok: boolean };
+  /** #8835/#8849: the instance's live GLOBAL risk-control calibrations (system_flags riskcontrol:<arm>),
+   *  when published — counts/α/coverage only, no repo scoping (per-repo keys stay instance-local). The cloud
+   *  stores them ONLY for registered instances and the homepage renders the guarantee while it is live. */
+  risk_control?: Record<string, unknown>;
   /** #8820: day-bucketed cache hit/miss aggregates for the public "AI work reused" trend. Counts only —
    *  no repos, no PRs, no content. A rolling window re-sent every tick (the collector upserts per day),
    *  so the field is self-healing and needs no cursor. Omitted when the window has no cache events. */
@@ -244,6 +248,16 @@ export async function exportOrbBatch(db: D1Database, batchSize = 200, fetchFn: t
   // #8820: the reuse counters ride the same POST as the outcome events (same tick, same signature). Loaded
   // AFTER the early "nothing to send" return above, so a truly idle tick still costs nothing extra.
   const reuseCounters = await loadReuseCounters(db, Date.now());
+  // #8835: ship the live global calibrations, if any (fail-safe: absent on any read hiccup).
+  const riskControl: Record<string, unknown> = {};
+  for (const arm of ["close", "merge"]) {
+    try {
+      const row = await db.prepare("SELECT value FROM system_flags WHERE key = ?").bind(`riskcontrol:${arm}`).first<{ value: string }>();
+      if (row?.value) riskControl[arm] = JSON.parse(row.value);
+    } catch {
+      // a flags blip must never block the outcome export riding the same tick
+    }
+  }
 
   const payload: OrbExportPayload = {
     instance_id: instance,
@@ -265,6 +279,7 @@ export async function exportOrbBatch(db: D1Database, batchSize = 200, fetchFn: t
     })),
     ...(healthOk !== undefined ? { health: { ok: healthOk } } : {}),
     ...(reuseCounters.length > 0 ? { reuse_counters: reuseCounters } : {}),
+    ...(Object.keys(riskControl).length > 0 ? { risk_control: riskControl } : {}),
   };
 
   const body = JSON.stringify(payload);

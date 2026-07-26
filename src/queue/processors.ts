@@ -2266,6 +2266,16 @@ function closeWithheldReason(args: { protectedAuthor: boolean; closeOwnerAuthors
 export function agentHoldAuditDetail(args: {
   planned: PlannedAgentAction[];
   breakerOnPlan: PlannedAgentAction[];
+  // #9040: each plan transform REPORTS whether it engaged, threaded in from the transform's own call site --
+  // this function must never re-derive the cause from a planned-vs-final set difference. The old inference
+  // ("a terminal action was planned but is not in the final plan ⇒ the precision breaker did it") was
+  // provably wrong on the live fleet: `breakerOnPlan` was passed the POST-HOLDOUT plan, so every ε-holdout
+  // adjudication hold (#8831) was attributed to a breaker that had never engaged -- 6 of 6 live
+  // "precision circuit breaker" rows paired 1:1 (within 20ms) with decision_audit_holdout events, while
+  // system_flags contained no engaged breaker at all. A wrong reason is worse than none: an operator chases
+  // a breaker that never fired while the real cause sits one line above in the ledger.
+  precisionBreakerEngaged: boolean;
+  closeAuditHoldoutEngaged: boolean;
   gateConclusion: string;
   gateBlockerCodes: string[];
   ciState: string;
@@ -2279,10 +2289,20 @@ export function agentHoldAuditDetail(args: {
   mergeAutonomy: string;
   closeAutonomy: string;
 }): string {
+  // Specific, transform-reported causes always beat the residual inference below (#9040). Holdout first:
+  // it consumes the post-breaker plan, so when both somehow engaged in one pass the holdout is the transform
+  // that actually removed the final close.
+  if (args.closeAuditHoldoutEngaged)
+    return "auto-action held for close-audit adjudication (ε-holdout)";
+  if (args.precisionBreakerEngaged)
+    return "auto-action held by precision circuit breaker";
+  // Residual (should be unreachable while breaker+holdout are the only terminal-action-removing transforms):
+  // an HONEST generic reason for any future transform that removes a planned terminal action without
+  // reporting itself here -- never a false specific attribution.
   const plannedTerminalAction = args.planned.some((action) => action.actionClass === "merge" || action.actionClass === "close");
   const finalTerminalAction = args.breakerOnPlan.some((action) => action.actionClass === "merge" || action.actionClass === "close");
   if (plannedTerminalAction && !finalTerminalAction)
-    return "auto-action held by precision circuit breaker";
+    return "auto-action held: a planned terminal action was removed before execution (unreported transform)";
   if (args.ciHasPending || args.ciState === "pending")
     return "auto-action held because CI is still pending";
   const protectedAuthor = args.authorIsAutomationBot || args.authorIsOwner || args.authorIsAdmin;
@@ -2450,7 +2470,25 @@ async function maybeRunAgentMaintenance(
   // block); a pass that loses the race defers cleanly — the next webhook/sweep tick is the backstop. Prefers
   // the SubmissionLock Durable Object when bound; otherwise the transient-cache mutex in transient-locks.ts.
   const actuationLock = await claimPrActuationLock(env, repoFullName, pr.number);
-  if (!actuationLock.acquired) return;
+  if (!actuationLock.acquired) {
+    // #9025: this used to `return` silently -- the job completed "successfully", nothing re-queued the
+    // disposition, and no audit row recorded that a planned action was abandoned. That silently amplified
+    // every restart incident: the recovered job re-ran, republished a no-op surface, hit its own dead
+    // predecessor's orphaned actuation lock here, and lost the disposition a SECOND time with no trace.
+    // Throwing the retryable error instead (the exact pattern review-evasion.ts's withPrActuationLock
+    // established for this same condition) gets the queue's fast 5s-backoff retry, so the disposition lands
+    // once the contending pass (or the orphaned lock's boot-time flush, #9021) releases the PR. The audit row
+    // makes the contention itself visible even if every retry ultimately exhausts.
+    await recordAuditEvent(env, {
+      eventType: "github_app.agent_maintenance_lock_contended",
+      actor: null,
+      targetKey: `${repoFullName}#${pr.number}`,
+      outcome: "queued",
+      detail: "Another pass holds this PR's actuation lock; the disposition retries instead of being dropped.",
+      metadata: { deliveryId: args.deliveryId, repoFullName },
+    }).catch(() => undefined);
+    throw new PrActuationLockContendedError(repoFullName, pr.number, "agent-maintenance");
+  }
   try {
     await runAgentMaintenancePlanAndExecute(env, {
       installationId,
@@ -3427,9 +3465,16 @@ async function runAgentMaintenancePlanAndExecute(
     // by hand (#selfhost-holdplan-audit).
     const isContributorAuthor = !authorIsOwner && !authorIsAdmin && !authorIsAutomationBot;
     const closeEligible = isContributorAuthor || ((authorIsOwner || authorIsAdmin) && settings.closeOwnerAuthors === true);
+    // #9040: each transform's engagement is derived from ITS OWN before/after pair -- the breaker from
+    // (planned -> breakerOnPlan), the holdout from (breakerOnPlan -> holdoutOnPlan) -- and passed explicitly,
+    // so the audit function never guesses a cause from the combined end-to-end set difference again.
+    const closeAuditHoldoutEngaged =
+      breakerOnPlan.some((action) => action.actionClass === "close") && !holdoutOnPlan.some((action) => action.actionClass === "close");
     const holdDetail = agentHoldAuditDetail({
       planned,
       breakerOnPlan: holdoutOnPlan,
+      precisionBreakerEngaged: precisionBreakerDirections.length > 0,
+      closeAuditHoldoutEngaged,
       gateConclusion: gate.conclusion,
       gateBlockerCodes,
       ciState: ciAggregate.ciState,
@@ -3856,6 +3901,10 @@ export async function reReviewStoredPullRequest(
         liveFacts,
       }),
   ).catch((error) => {
+    // #9025: rate-limit / retryable errors (chiefly PrActuationLockContendedError from the maintenance
+    // lock claim) MUST reach the queue so the disposition retries instead of being logged-and-dropped --
+    // the same propagation contract the review pipeline's own catch sites already follow.
+    if (isGitHubRateLimitedError(error) || isRetryableJobError(error)) throw error;
     console.error(
       JSON.stringify({
         level: "error",
@@ -6740,6 +6789,10 @@ async function handlePullRequestWebhookEvent(
               liveFacts,
             }),
         ).catch((error) => {
+          // #9025: same propagation contract as the sibling maintenance catch above -- a retryable error
+          // (chiefly the maintenance lock's own PrActuationLockContendedError) must reach the queue's retry
+          // path instead of being logged-and-dropped, or the disposition is silently lost.
+          if (isGitHubRateLimitedError(error) || isRetryableJobError(error)) throw error;
           /* v8 ignore next -- best-effort: auto-maintain failures are logged, never surfaced to the gate. */
           console.error(
             JSON.stringify({
@@ -10005,9 +10058,13 @@ async function maybePublishPrPublicSurface(
     // a PR that's blacklisted/frozen/already-skipped for another reason never shows AI content at all today,
     // and one-shot mode must not change that. A non-null result here means this PR already had its one-shot
     // main-review pass, so the fresh call below must be skipped and this reused instead.
+    // #9019: `conclusiveOnly` -- this lookup is head-AGNOSTIC, so without it a non-cacheable row (a provider
+    // outage, an inconclusive/disputed roll, a lock-contention placeholder) pinned the PR's verdict across
+    // every future head, and a contributor pushing new code could not escape it. That PR never got its one
+    // real shot, so it must not count as spent; the next pass/push retries instead of replaying the outage.
     const oneShotPriorReview =
       oneShotCadenceActive && !authorBlacklisted && !isFrozenForManualReview && !autoReviewSkipReason
-        ? await getLatestPublishedAiReview(env, repoFullName, pr.number, settings.aiReviewMode).catch(() => null)
+        ? await getLatestPublishedAiReview(env, repoFullName, pr.number, settings.aiReviewMode, { conclusiveOnly: true }).catch(() => null)
         : null;
     const aiReviewWillRun =
       !authorBlacklisted &&
@@ -10599,6 +10656,13 @@ async function maybePublishPrPublicSurface(
                     /* v8 ignore next -- runAiReviewForAdvisory (the sole path reaching here) always sets metadata on its "ok" returns; the nullish fallback is a type-level (optional field) safeguard, not a reachable runtime path. */
                     ...(aiReview.metadata ?? {}),
                     inputFingerprint,
+                    // #9019: `cacheable=0` conflates TWO independent, unrelated reasons -- (a) a dynamic review
+                    // context (grounding/RAG), where the verdict itself is perfectly CONCLUSIVE but simply not
+                    // durable across time, and (b) the review's own verdict being inconclusive/consensus-
+                    // disputed. Only (b) should be retried; (a) is correctly reused once published (#2119).
+                    // Recording the review's OWN verdict here keeps the two separable at read time without
+                    // needing a schema migration, since `cacheable` alone can no longer tell them apart.
+                    inconclusive: aiReview.cacheable === false,
                     // Persist line-anchored findings for post-submission MCP readback (#4519). Inline comments
                     // themselves are still only posted on a fresh review (see inlineFindings hoisting above);
                     // this metadata is read-only structured output, not a cache-replay trigger.

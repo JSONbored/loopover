@@ -831,7 +831,7 @@ describe("queue processors", () => {
   it("pause (#8685): a confirmed Gittensor miner is authorized to pause their OWN PR once the repo widens commandAuthorization for pause", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await seedPausePr(env);
-    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commandAuthorization: { commands: { pause: ["confirmed_miner"] } } });
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commandAuthorization: { default: ["maintainer", "collaborator"], commands: { pause: ["confirmed_miner"] } } });
     await upsertOfficialMinerDetection(env, "reporter", { status: "confirmed", snapshot: queueMinerSnapshot("reporter") }, 60_000);
     let postedBody: string | undefined;
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {

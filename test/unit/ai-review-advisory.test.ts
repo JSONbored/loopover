@@ -760,6 +760,49 @@ describe("runAiReviewForAdvisory", () => {
     captureSpy.mockRestore();
   });
 
+  it("#8790: stops retrying a model after a byte-identical repeat of a failed attempt (deterministic at temperature 0)", async () => {
+    const adv = advisory();
+    let aiCalls = 0;
+    // The same unparseable markdown every time — the confirmed 2026-07-26 production shape. Attempt 0 fails,
+    // attempt 1 comes back byte-identical → the remaining retry budget is provably useless and is skipped.
+    const env = aiEnv(async () => {
+      aiCalls += 1;
+      return { response: "### Review of Code Changes\n\nProse, not JSON." };
+    });
+    const result = await runAiReviewForAdvisory(env, {
+      mode: "live",
+      settings: { aiReviewMode: "block" } as RepositorySettings,
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+    });
+    expect(result?.findings).toEqual([expect.objectContaining({ code: "ai_review_inconclusive" })]);
+    // This harness's plan resolves 4 model slots (two reviewers x primary+fallback); the invariant under
+    // test is per-slot: exactly 2 attempts each (attempt 0 + the identical attempt 1), never a third.
+    expect(aiCalls).toBe(8);
+  });
+
+  it("#8790: a model whose failed outputs DIFFER between attempts keeps its full retry budget (only determinism short-circuits)", async () => {
+    const adv = advisory();
+    let aiCalls = 0;
+    const env = aiEnv(async () => {
+      aiCalls += 1;
+      return { response: `### Prose attempt ${aiCalls}` };
+    });
+    await runAiReviewForAdvisory(env, {
+      mode: "live",
+      settings: { aiReviewMode: "block" } as RepositorySettings,
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+    });
+    expect(aiCalls).toBe(12); // 3 attempts x the same 4 model slots — pre-#8790 behavior pinned for varying output
+  });
+
   it("uses the non-cacheable block-mode inconclusive note when no reviewer returns public text", async () => {
     const adv = advisory();
     const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: "" })), {

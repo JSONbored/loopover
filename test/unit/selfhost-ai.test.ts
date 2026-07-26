@@ -178,6 +178,48 @@ describe("createOpenAiCompatibleAi (#979)", () => {
     expect(first?.body.model).toBe("llama3.1");
   });
 
+  it("#8790: forwards response_format json_object when the caller declares a JSON contract, and omits it otherwise", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: { body: string }) => {
+      bodies.push(JSON.parse(init.body));
+      return new Response(JSON.stringify({ choices: [{ message: { content: "{}" } }] }), { status: 200 });
+    }));
+    const ai = createOpenAiCompatibleAi({ baseUrl: "http://o/v1" });
+    await ai.run("m", { prompt: "x", responseFormat: "json_object" });
+    expect(bodies[0]).toMatchObject({ response_format: { type: "json_object" } });
+    await ai.run("m", { prompt: "x" });
+    expect("response_format" in bodies[1]!).toBe(false);
+  });
+
+  it("#8790: retries ONCE without response_format when the server 400s on it — degrade to ask-nicely, never fail the call", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: { body: string }) => {
+      const body = JSON.parse(init.body) as Record<string, unknown>;
+      bodies.push(body);
+      if ("response_format" in body) return new Response("unknown parameter", { status: 400 });
+      return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), { status: 200 });
+    }));
+    const ai = createOpenAiCompatibleAi({ baseUrl: "http://o/v1" });
+    const out = await ai.run("m", { prompt: "x", responseFormat: "json_object" });
+    expect(out.response).toBe("ok");
+    expect(bodies).toHaveLength(2);
+    expect("response_format" in bodies[1]!).toBe(false);
+  });
+
+  it("#8790: a 400 WITHOUT a declared JSON contract still throws ai_http_400 — the retry is format-rejection-specific", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("bad request", { status: 400 })));
+    const ai = createOpenAiCompatibleAi({ baseUrl: "http://o/v1" });
+    await expect(ai.run("m", { prompt: "x" })).rejects.toThrow("ai_http_400");
+  });
+
+  it("#8790: a NON-400 failure with the JSON contract set throws without a format-stripping retry (only 400 means parameter rejection)", async () => {
+    const fetchMock = vi.fn(async () => new Response("upstream broke", { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const ai = createOpenAiCompatibleAi({ baseUrl: "http://o/v1" });
+    await expect(ai.run("m", { prompt: "x", responseFormat: "json_object" })).rejects.toThrow("ai_http_500");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("attributes usage.provider from its own configured providerName (#ai-usage-provider-attribution) since an HTTP chat-completions response never reports one itself", async () => {
     vi.stubGlobal("fetch", vi.fn(async () =>
       new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), { status: 200 }),

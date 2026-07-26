@@ -1449,8 +1449,9 @@ describe("Workers AI fallback + degraded output", () => {
     const result = await runLoopOverAiReview(env, baseInput);
     expect(result.status === "ok" && result.advisoryNotes).toBeNull();
     expect(result.status === "ok" && result.inconclusive).toBe(true);
-    // primary 3× + fallback 3× retries, all unparseable.
-    expect(run).toHaveBeenCalledTimes(6);
+    // #8790: identical unparseable output on every call → each model stops after its byte-identical
+    // attempt 1 (2 calls per model) instead of burning the full 3-attempt budget on a deterministic repeat.
+    expect(run).toHaveBeenCalledTimes(4);
   });
 });
 
@@ -3259,7 +3260,10 @@ describe("pure helpers", () => {
     // attempt ever produced the required assessment field.
     expect(parsed.review?.assessment).toBe("");
     expect(parsed.review?.nits).toEqual(["Edge case on empty input is untested.", "Naming could be clearer."]);
-    expect(run).toHaveBeenCalledTimes(6); // 3 attempts x 2 models -- the full budget, since nothing here is a deliberate bail.
+    // #8790: the mock returns byte-identical output every call, so each model stops after its identical
+    // attempt 1 (2 calls per model). The incomplete-review fallback + exhausted log below are unaffected —
+    // attempt 0 already captured bestIncompleteReview.
+    expect(run).toHaveBeenCalledTimes(4);
     const exhausted = logSpy.mock.calls
       .map((c) => c[0])
       .find((l) => typeof l === "string" && l.includes("ai_review_missing_assessment_exhausted"));

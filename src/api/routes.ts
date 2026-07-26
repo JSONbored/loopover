@@ -1987,15 +1987,44 @@ export function createApp() {
     // longer prunes itself (see its own doc comment) precisely so a 500-installation fan-out below can't turn
     // into 500 redundant global TTL-prune scans/deletes against the shared orb_relay_pending table.
     await pruneRelayPending(c.env);
-    await Promise.all(installationIds.map((installationId) => enqueueConfigPushRelay(c.env, installationId, payload)));
+    // #8880: isolate each per-installation enqueue. A bare Promise.all let one target's throw abort the whole
+    // fan-out -- the audit event AND the response for the other ~499 installations were silently dropped, and
+    // there was no route-level try/catch to salvage them. Catch each target's failure inside its own fan-out
+    // task (mirroring pollPendingAprRepoTransfers' per-item isolation in src/orb/apr-repo-transfer.ts) so one
+    // bad row can't sink the batch, audit each failure so it is never silently swallowed, and still report the
+    // successful targets plus the partial failure to the caller.
+    const settled = await Promise.all(
+      installationIds.map(async (installationId): Promise<{ installationId: number; error?: string }> => {
+        try {
+          await enqueueConfigPushRelay(c.env, installationId, payload);
+          return { installationId };
+        } catch (error) {
+          return { installationId, error: errorMessage(error) };
+        }
+      }),
+    );
+    const failedInstallationIds: number[] = [];
+    for (const result of settled) {
+      if (result.error !== undefined) {
+        failedInstallationIds.push(result.installationId);
+        await recordAuditEvent(c.env, {
+          eventType: "operator.config_push_target_failed",
+          actor: identity.actor,
+          targetKey: `config_push#${parsed.data.pushId}#${result.installationId}`,
+          outcome: "error",
+          metadata: { installationId: result.installationId, pushId: parsed.data.pushId, message: result.error },
+        });
+      }
+    }
+    const succeededCount = installationIds.length - failedInstallationIds.length;
     await recordAuditEvent(c.env, {
       eventType: "operator.config_push_enqueued",
       actor: identity.actor,
       targetKey: `config_push#${parsed.data.pushId}`,
-      outcome: "completed",
-      metadata: { installationCount: installationIds.length, capability: payload.capability ?? null },
+      outcome: failedInstallationIds.length > 0 ? "error" : "completed",
+      metadata: { installationCount: installationIds.length, succeededCount, failedCount: failedInstallationIds.length, capability: payload.capability ?? null },
     });
-    return c.json({ ok: true, pushId: parsed.data.pushId, installationCount: installationIds.length });
+    return c.json({ ok: true, pushId: parsed.data.pushId, installationCount: installationIds.length, succeededCount, failedInstallationIds });
   });
 
   // #5672 post-merge incident report, internal-operator side: same reporting path as the repo-scoped customer

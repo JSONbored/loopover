@@ -4326,6 +4326,22 @@ export async function markPullRequestsRegated(env: Env, fullName: string, number
     .where(and(eq(pullRequests.repoFullName, fullName), inArray(pullRequests.number, numbers)));
 }
 
+/** #9018: on a repo's paused -> live transition, restore sweep candidacy for every currently-OPEN PR by
+ *  clearing its `lastRegatedAt` marker. Without this, a PR that went green DURING the pause window (CI-completion
+ *  passes plan-and-suppress the whole time) is stranded: the sweep's #never-endless-reregate rule
+ *  (agent-sweep.ts's hasBeenRegated) permanently excludes any PR already regated once, so if it had ALSO been
+ *  regated before the pause it never becomes a sweep candidate again on its own -- resume performs no catch-up
+ *  by itself. Clearing the marker restores it to "never regated" exactly once, the same one-shot candidacy a
+ *  genuinely new PR gets. A plain D1 write, never the #1258 GitHub chokepoint -- unconditional, so it is safe to
+ *  call even when nothing was actually stale. */
+export async function clearPullRequestsRegatedAtForOpenPrs(env: Env, fullName: string): Promise<void> {
+  const db = getDb(env.DB);
+  await db
+    .update(pullRequests)
+    .set({ lastRegatedAt: null, updatedAt: nowIso() })
+    .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.state, "open")));
+}
+
 /** Batch variant of {@link markPullRequestsRegated} for backlog-convergence-sweep (#4502): stamps the SEPARATE
  *  last_backlog_convergence_regated_at marker at sweep DISPATCH time, mirroring the same "stamp immediately, not
  *  in the downstream per-PR job" shape so getLatestBacklogConvergenceRegatedAt reflects this sweep before its

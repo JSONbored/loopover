@@ -63,6 +63,7 @@ import {
   listNotificationDeliveriesForRecipient,
   upsertIssueWatchSubscription,
   upsertRepositorySettings,
+  clearPullRequestsRegatedAtForOpenPrs,
   listOpenPullRequests,
   listPullRequests,
   listPullRequestFiles,
@@ -4872,6 +4873,15 @@ export class LoopoverMcp {
     await this.requireRepoManageAccess(fullName);
     const current = await getRepositorySettings(this.env, fullName);
     const updated = await upsertRepositorySettings(this.env, { ...current, agentPaused: input.paused });
+    // #9018: a paused->live transition performs no catch-up by default. A PR that went GREEN during the pause
+    // window (CI-completion passes plan-and-suppress the whole time) can be permanently stranded: if it was
+    // ALSO already regated once before the pause, agent-sweep.ts's #never-endless-reregate rule excludes it
+    // from sweep candidacy forever, and the only other wake (a sibling merge) may never fire in a quiet repo.
+    // Clearing lastRegatedAt for every open PR restores one-shot candidacy so the sweep re-evaluates and
+    // dispositions it without a human or a new commit.
+    if (current.agentPaused === true && input.paused === false) {
+      await clearPullRequestsRegatedAtForOpenPrs(this.env, fullName);
+    }
     return {
       summary: `Agent actions ${input.paused ? "paused" : "resumed"} for ${fullName}.`,
       data: { repoFullName: fullName, agentPaused: updated.agentPaused },

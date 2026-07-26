@@ -1,9 +1,12 @@
 import type { Redis } from "ioredis";
+import { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   assertSelfhostTransientCacheOwnershipRelease,
   createRedisCache,
+  flushOrphanedLocksAtBoot,
   isWebhookDeliveryDuplicate,
+  ORPHANED_LOCK_KEY_PATTERNS,
   rememberWebhookDelivery,
   webhookDeliveryCacheKey,
 } from "../../src/selfhost/redis-cache";
@@ -143,5 +146,77 @@ describe("isWebhookDeliveryDuplicate (#2075)", () => {
     const cache = createRedisCache(fakeRedis());
     await rememberWebhookDelivery(cache, "delivery-4");
     expect(await cache.get(webhookDeliveryCacheKey("delivery-4"))).toBe("1");
+  });
+});
+
+/** Minimal glob match supporting the one wildcard shape ORPHANED_LOCK_KEY_PATTERNS uses ("prefix:*"). */
+function globMatch(pattern: string, key: string): boolean {
+  if (!pattern.includes("*")) return pattern === key;
+  const prefix = pattern.slice(0, pattern.indexOf("*"));
+  return key.startsWith(prefix);
+}
+
+/** Fake ioredis client for flushOrphanedLocksAtBoot: `scanStream` emits the matching keys from `_store` as a
+ *  single batch (real SCAN would paginate; one batch is sufficient to exercise the consumer's own for-await
+ *  loop and del() call), and `del` removes them. */
+function fakeScanRedis(initialKeys: string[]): Redis & { _store: Set<string>; scanCalls: string[] } {
+  const _store = new Set(initialKeys);
+  const scanCalls: string[] = [];
+  return {
+    _store,
+    scanCalls,
+    scanStream({ match }: { match: string; count?: number }) {
+      scanCalls.push(match);
+      const matched = [..._store].filter((key) => globMatch(match, key));
+      return Readable.from(matched.length > 0 ? [matched] : []);
+    },
+    async del(...keys: string[]) {
+      let removed = 0;
+      for (const key of keys) if (_store.delete(key)) removed += 1;
+      return removed;
+    },
+  } as unknown as Redis & { _store: Set<string>; scanCalls: string[] };
+}
+
+describe("flushOrphanedLocksAtBoot (#9021)", () => {
+  it("deletes every key matching the configured orphaned-lock patterns and leaves everything else alone", async () => {
+    const redis = fakeScanRedis([
+      "pr-actuation-lock:owner/repo#1",
+      "ai-review-lock:owner/repo#1@sha1:block",
+      "contributor-cap-wake:owner/repo#1#sha1",
+      "contributor-cap-lock:owner/repo:alice",
+      // Must survive: not exclusivity locks, each has its own restart-survival contract.
+      "delivery:abc123",
+      "pr-panel-retrigger-pending:owner/repo#1",
+      "ci-pending-first-seen:owner/repo#1",
+      "fresh-rebase-forced:owner/repo#1",
+    ]);
+
+    const deleted = await flushOrphanedLocksAtBoot(redis);
+
+    expect(deleted).toBe(4);
+    expect([...redis._store].sort()).toEqual(
+      ["delivery:abc123", "pr-panel-retrigger-pending:owner/repo#1", "ci-pending-first-seen:owner/repo#1", "fresh-rebase-forced:owner/repo#1"].sort(),
+    );
+    // Scanned every configured pattern, not just a subset.
+    expect(redis.scanCalls.sort()).toEqual([...ORPHANED_LOCK_KEY_PATTERNS].sort());
+  });
+
+  it("returns 0 and never throws when nothing matches", async () => {
+    const redis = fakeScanRedis(["delivery:only-this"]);
+    await expect(flushOrphanedLocksAtBoot(redis)).resolves.toBe(0);
+  });
+
+  it("is best-effort: a scan failure for one pattern never blocks the others or startup itself", async () => {
+    const redis = fakeScanRedis(["ai-review-lock:owner/repo#1@sha1:block", "contributor-cap-lock:owner/repo:alice"]);
+    const original = redis.scanStream.bind(redis);
+    redis.scanStream = ((opts: { match: string; count?: number }) => {
+      if (opts.match === "pr-actuation-lock:*") throw new Error("redis connection dropped");
+      return original(opts);
+    }) as typeof redis.scanStream;
+
+    await expect(flushOrphanedLocksAtBoot(redis)).resolves.toBe(2); // ai-review-lock + contributor-cap-lock still flushed
+    expect(redis._store.has("ai-review-lock:owner/repo#1@sha1:block")).toBe(false);
+    expect(redis._store.has("contributor-cap-lock:owner/repo:alice")).toBe(false);
   });
 });

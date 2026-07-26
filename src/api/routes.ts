@@ -113,6 +113,7 @@ import {
   upsertContributorEvidence,
   upsertContributorScoringProfile,
   upsertRepositorySettings,
+  clearPullRequestsRegatedAtForOpenPrs,
   getRepositoryAiKeyStatus,
   upsertRepositoryAiKey,
   deleteRepositoryAiKey,
@@ -2658,6 +2659,13 @@ export function createApp() {
       repoFullNames.map(async (repoFullName) => {
         const current = await getRepositorySettings(c.env, repoFullName);
         await upsertRepositorySettings(c.env, { ...current, ...changes, repoFullName });
+        // #9018: mirrors the single-repo pause/resume tool's own catch-up (mcp/server.ts setAgentPaused) --
+        // a paused->live transition performs no re-evaluation by default, so a PR that went green during the
+        // pause window can be permanently stranded once #never-endless-reregate excludes it from future sweep
+        // candidacy. Restores one-shot candidacy for every open PR in this repo.
+        if (current.agentPaused === true && changes.agentPaused === false) {
+          await clearPullRequestsRegatedAtForOpenPrs(c.env, repoFullName);
+        }
       }),
     );
     await recordAuditEvent(c.env, {

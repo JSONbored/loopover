@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -33,6 +33,13 @@ describe("resolveAmsPolicyConfigDir (#8863)", () => {
   it("resolves the operator config directory from LOOPOVER_MINER_CONFIG_DIR or XDG_CONFIG_HOME", () => {
     expect(resolveAmsPolicyConfigDir({ LOOPOVER_MINER_CONFIG_DIR: "/cfg" })).toBe("/cfg");
     expect(resolveAmsPolicyConfigDir({ XDG_CONFIG_HOME: "/xdg" })).toBe(join("/xdg", "loopover-miner"));
+  });
+
+  it("falls back to ~/.config/loopover-miner when no config overrides are set", () => {
+    expect(resolveAmsPolicyConfigDir({})).toBe(join(homedir(), ".config", "loopover-miner"));
+    expect(resolveAmsPolicyConfigDir({ XDG_CONFIG_HOME: "   " })).toBe(
+      join(homedir(), ".config", "loopover-miner"),
+    );
   });
 });
 

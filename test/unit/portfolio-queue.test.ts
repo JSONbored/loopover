@@ -104,8 +104,20 @@ describe("portfolio queue primitives", () => {
   it("returns no eligible items when either cap normalizes to zero", () => {
     const queue = queueOf(item("a-queued-1", "acme/alpha"));
 
-    expect(nextEligibleItems(queue, { globalWipCap: Number.POSITIVE_INFINITY, perRepoWipCap: 1 })).toEqual([]);
+    expect(nextEligibleItems(queue, { globalWipCap: 0, perRepoWipCap: 1 })).toEqual([]);
     expect(nextEligibleItems(queue, { globalWipCap: 2, perRepoWipCap: -1 })).toEqual([]);
+  });
+
+  it("treats an Infinity cap as uncapped, returning eligible items instead of an empty batch (#8861)", () => {
+    const queue = queueOf(item("a-queued-1", "acme/alpha"), item("b-queued-1", "acme/beta"));
+
+    // Before the fix, Infinity collapsed to 0 and excluded EVERY item -- the opposite of the "uncapped"
+    // convention portfolio-queue-cli.ts documents.
+    expect(
+      nextEligibleItems(queue, { globalWipCap: Number.POSITIVE_INFINITY, perRepoWipCap: Number.POSITIVE_INFINITY })
+        .map((entry) => entry.id)
+        .sort(),
+    ).toEqual(["a-queued-1", "b-queued-1"]);
   });
 
   it("truncates fractional caps and treats NaN as zero", () => {

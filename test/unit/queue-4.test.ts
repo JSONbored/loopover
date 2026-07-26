@@ -1751,6 +1751,142 @@ describe("queue processors", () => {
     expect(audit?.detail).toMatch(/Checks: write permission is missing/i);
   });
 
+  it("records gate_check_run in failedOutputs when primary and fallback both fail with permission_missing (#8686)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await persistRegistrySnapshot(
+      asCloudEnv(env),
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      autoLabelEnabled: false,
+      requireLinkedIssue: true,
+    });
+    // Gate-only surface: no comment/label/check_run sibling can mask an empty failedOutputs.
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewCheckMode: "required", commentMode: "off", publicSurface: "off", checkRunMode: "off" } });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/gateDoubleFail/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs") && method === "POST") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { status?: string };
+        // Pending in_progress succeeds so the permission_missing finalize path has a check id to fall back on.
+        if (body.status === "in_progress") {
+          return Response.json({ id: 501, html_url: "https://example.test/check/501" }, { status: 201 });
+        }
+        // Primary completed publish → permission_missing (createOrUpdateGateCheckRun).
+        return new Response(JSON.stringify({ message: "Resource not accessible by integration" }), { status: 403 });
+      }
+      // Fallback createOrUpdateErroredGateCheckRun PATCHes the pending id — also permission_missing.
+      if (url.includes("/check-runs/") && method === "PATCH") {
+        return new Response(JSON.stringify({ message: "Resource not accessible by integration" }), { status: 403 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    const captureSpy = vi.spyOn(posthogModule, "capturePostHogReviewFailure");
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-double-fail-permission",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 86, title: "Gate without issue", state: "open", user: { login: "contributor" }, head: { sha: "gateDoubleFail" }, labels: [], body: "No issue link." },
+      },
+    });
+
+    const permissionAudit = await env.DB.prepare("select event_type from audit_events where event_type = ?")
+      .bind("github_app.gate_check_permission_missing")
+      .first<{ event_type: string }>();
+    expect(permissionAudit?.event_type).toBe("github_app.gate_check_permission_missing");
+
+    const aggregate = await env.DB.prepare("select detail, metadata_json from audit_events where event_type = ?")
+      .bind("github_app.pr_public_surface_failed")
+      .first<{ detail: string; metadata_json: string }>();
+    expect(aggregate).toMatchObject({ detail: "gate_check_run" });
+    expect(aggregate?.metadata_json).toContain('"output":"gate_check_run"');
+    expect(aggregate?.metadata_json).toContain('"transient":false');
+    expect(captureSpy).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({ kind: "publish", repo: "JSONbored/gittensory", failedOutputs: ["gate_check_run"] }),
+      "pr_public_surface_publish_failed",
+    );
+    captureSpy.mockRestore();
+  });
+
+  it("retries when gate_check_run primary throw and fallback both fail transiently (#8686)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await persistRegistrySnapshot(
+      asCloudEnv(env),
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      autoLabelEnabled: false,
+      requireLinkedIssue: true,
+    });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewCheckMode: "required", commentMode: "off", publicSurface: "off", checkRunMode: "off" } });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/gateTransientFail/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs") && method === "POST") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { status?: string };
+        if (body.status === "in_progress") {
+          return Response.json({ id: 502, html_url: "https://example.test/check/502" }, { status: 201 });
+        }
+        // Primary completed publish throws (octokit path) → catch + fallback.
+        return new Response("GitHub gate check API failed", { status: 500 });
+      }
+      if (url.includes("/check-runs/") && method === "PATCH") {
+        return new Response("GitHub gate check fallback failed", { status: 500 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    const captureSpy = vi.spyOn(posthogModule, "capturePostHogReviewFailure");
+
+    await expect(
+      processJob(env, {
+        type: "github-webhook",
+        deliveryId: "gate-double-fail-transient",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 87, title: "Gate without issue", state: "open", user: { login: "contributor" }, head: { sha: "gateTransientFail" }, labels: [], body: "No issue link." },
+        },
+      }),
+    ).rejects.toMatchObject({ retryKind: "public_surface_publish_transient" });
+
+    const aggregate = await env.DB.prepare("select detail, metadata_json from audit_events where event_type = ?")
+      .bind("github_app.pr_public_surface_failed")
+      .first<{ detail: string; metadata_json: string }>();
+    expect(aggregate).toMatchObject({ detail: "gate_check_run" });
+    expect(aggregate?.metadata_json).toContain('"output":"gate_check_run"');
+    expect(aggregate?.metadata_json).toContain('"transient":true');
+    expect(captureSpy).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({ kind: "publish", repo: "JSONbored/gittensory", failedOutputs: ["gate_check_run"] }),
+      "pr_public_surface_publish_failed",
+    );
+    captureSpy.mockRestore();
+  });
+
   it("marks closed PR gates skipped without creating late first comments", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await persistRegistrySnapshot(

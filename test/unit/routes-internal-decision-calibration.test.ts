@@ -85,3 +85,32 @@ describe("GET /v1/internal/calibration — operator calibration endpoint", () =>
     expect(((await res.json()) as { project: string }).project).toBe("loopover");
   });
 });
+
+// #8904: handleInternalStatus was fully implemented + unit-tested but its route was never registered in
+// routes.ts, unlike its two siblings above. These assert the newly-wired route end-to-end.
+describe("GET /v1/internal/status — operator agent-health endpoint (#8904)", () => {
+  it("401s without the internal token (the /v1/internal/* middleware gate)", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    expect((await app.request("/v1/internal/status", {}, env)).status).toBe(401);
+    expect((await app.request("/v1/internal/status", { headers: { authorization: "Bearer nope" } }, env)).status).toBe(401);
+  });
+
+  it("200s with the agent-health report (fail-safe empty), scoped to the app slug", async () => {
+    const app = createApp();
+    const env = createTestEnv(); // GITHUB_APP_SLUG defaults to "loopover-orb"
+    const res = await app.request("/v1/internal/status", { headers: bearer(env) }, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      project: string;
+      counts: { byStatus: unknown; byVerdict: unknown };
+      health: { manualRate: number };
+    };
+    expect(body.project).toBe("loopover-orb");
+    expect(body.counts).toBeTruthy();
+    expect(body.counts.byStatus).toBeTruthy();
+    expect(typeof body.health.manualRate).toBe("number");
+    // Privacy: aggregate review state only — never actor logins / trust internals.
+    expect(JSON.stringify(body)).not.toMatch(/login|actor|reward|payout|trust|wallet|hotkey/i);
+  });
+});

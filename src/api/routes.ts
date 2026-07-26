@@ -296,7 +296,7 @@ import { buildAutomationState } from "../services/automation-state";
 import { loadGatePrecisionReport } from "../services/gate-precision";
 import { computeOpsStats, isOpsEnabled, resolveOpsManifestOverride } from "../review/ops-wire";
   import { deleteLiveOverride, listOverrideAudit, loadOverride, loadShadowOverride, sanitizeOverridePayload, authoritativeGateOverride, toLiveGateThresholdFields, type StorageEnv } from "../review/auto-apply";
-import { handleInternalCalibration, handleInternalDecision, type OpsAgentConfig } from "../review/ops";
+import { handleInternalCalibration, handleInternalDecision, handleInternalStatus, type OpsAgentConfig } from "../review/ops";
 import { computeParityReadiness, isParityAuditEnabled } from "../review/parity-wire";
 import { computePredictedGateAgreement } from "../review/predicted-gate-agreement";
 import { computeContributorGateEval, contributorFairnessFlags, computeBlendedContributorGateEval, contributorGlobalFairnessFlags } from "../review/contributor-gate-eval";
@@ -4650,6 +4650,12 @@ export function createApp() {
   // Bearer-gated by the `/v1/internal/*` middleware (INTERNAL_JOB_TOKEN); handleInternalCalibration re-checks it.
   // Fails safe to an empty-but-shaped report when there is no review signal yet. Aggregate counts only.
   app.get("/v1/internal/calibration", (c) => handleInternalCalibration(c.req.raw, c.env, internalOpsAgentConfig(c.env)));
+
+  // Operator per-agent health/verdict breakdown, manual-rate, stuck targets, config-invariant violations, and
+  // recent decisions (#8904 — the handler existed and was unit-tested but its route was never registered, unlike
+  // its two siblings above). Bearer-gated by the `/v1/internal/*` middleware (INTERNAL_JOB_TOKEN);
+  // handleInternalStatus re-checks that same token. Aggregate review state only — no PR content.
+  app.get("/v1/internal/status", (c) => handleInternalStatus(c.req.raw, c.env, internalOpsAgentConfig(c.env)));
 
   // Operator calibration trend (#8113): weekly per-rule fired/decided/precision plus backtest-run verdict
   // counts, re-bucketed live from audit_events (no cron rollup — see rule-calibration-trend.ts's header). Sibling

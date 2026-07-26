@@ -162,11 +162,12 @@ export function canonicalizeFederatedBundleBody(body: FederatedSignalBundleBody)
 /**
  * HMAC-sign a bundle body so a receiving instance can verify it was not tampered with in transit.
  *
- * TODO(#6477): the KEY-TRUST scheme (how a peer establishes/rotates the key it verifies against) is #6477's
- * design decision and is deliberately NOT invented here. Until it lands, the signing key is this instance's
- * existing dedicated anonymization secret (getOrCreateAnonSecret) as a placeholder: it makes the bundle
- * tamper-evident to anyone who already holds the key, but it does NOT yet establish peer trust. #6480 (the
- * import side) is explicitly blocked on #6477 for exactly that reason.
+ * KEY-TRUST (#6477, ratified as an allowlist design — NOT a PKI/reputation system): the signing key is this
+ * instance's dedicated anonymization secret (getOrCreateAnonSecret), which makes the bundle tamper-evident to
+ * anyone holding that key. Peer trust itself is established on the RECEIVING side, where #6480 has SHIPPED
+ * (src/orb/federated-import.ts): an importing operator explicitly adds a peer's verification key to
+ * `federatedIntelligence.peerKeys` (fail-closed when unset), and only an allowlisted key can verify a bundle.
+ * So this signature is the tamper-evidence layer; the receiver's allowlist is what turns it into peer trust.
  */
 export function signFederatedBundle(body: FederatedSignalBundleBody, key: string): string {
   return createHmac("sha256", key).update(canonicalizeFederatedBundleBody(body)).digest("hex");

@@ -106,8 +106,16 @@
     // packages/loopover-miner/lib/** directory (not the 5 specific files) to match the same "don't
     // hand-track an ever-growing cross-package surface" reasoning already applied to //#typecheck's fix --
     // this UI already imports 5 files from that one directory, more is a matter of when, not if.
+    // @loopover/engine#build is an explicit dependsOn edge for the same reason @loopover/ui#typecheck
+    // declares it above: those reached-into packages/loopover-miner/lib/** files import @loopover/engine,
+    // whose "types" resolve to packages/loopover-engine/dist/index.d.ts -- and miner-ui has no package.json
+    // dependency on engine to create the edge via ^build. Without it, turbo runs engine build CONCURRENTLY
+    // with this typecheck; on an engine-build cache miss the typecheck can race ahead of the dist emit and
+    // fail with phantom "Cannot find module '@loopover/engine'" errors (observed intermittently in CI's
+    // validate-code job -- a scheduling race, so it only bit when the engine cache missed AND the
+    // scheduler interleaved the two tasks the wrong way).
     "@loopover/ui-miner#typecheck": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["^build", "@loopover/engine#build"],
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/packages/loopover-miner/lib/**"],
       "outputs": []
     },

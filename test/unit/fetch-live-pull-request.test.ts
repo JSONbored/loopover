@@ -30,4 +30,10 @@ describe("fetchLivePullRequest (#sweep-resync)", () => {
       await fetchLivePullRequest(env, "owner/repo", 7, "tok"),
     ).toBeUndefined();
   });
+
+  it("returns undefined (fail-open) when a retryable stale-token 401 escapes fetchLivePullRequestResult (#8892)", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    vi.stubGlobal("fetch", async () => Response.json({ message: "Bad credentials" }, { status: 401 }));
+    expect(await fetchLivePullRequest(env, "owner/repo", 7, "tok")).toBeUndefined();
+  });
 });

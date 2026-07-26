@@ -1,6 +1,6 @@
-import { createInstallationToken } from "./app";
+import { withInstallationTokenRetry } from "./app";
 import { fetchLivePullRequestResult } from "./backfill";
-import { githubRateLimitAdmissionKeyForToken } from "./client";
+import { githubRateLimitAdmissionKeyForPublicToken, githubRateLimitAdmissionKeyForToken } from "./client";
 import type { GitHubPullRequestPayload } from "../types";
 import { strippedErrorMessage } from "../utils/json";
 
@@ -107,29 +107,49 @@ export async function fetchPullRequestFreshness(
 ): Promise<PullRequestFreshness> {
   const options: PullRequestFreshnessOptions =
     args.requireDraft !== undefined ? { requireDraft: args.requireDraft } : {};
-  let tokenError: unknown;
-  const token =
-    (await createInstallationToken(env, args.installationId).catch((error) => {
-      tokenError = error;
-      return undefined;
-    })) ?? env.GITHUB_PUBLIC_TOKEN;
-  if (!token) {
-    return classifyPullRequestFreshness(undefined, args.expectedHeadSha, {
-      ...options,
-      unavailableSource: "token",
-      unavailableDetail: strippedErrorMessage(tokenError, "no token available").slice(0, 240),
-    });
+
+  const classifyLive = async (
+    token: string,
+    admissionKey: ReturnType<typeof githubRateLimitAdmissionKeyForToken> | ReturnType<typeof githubRateLimitAdmissionKeyForPublicToken>,
+  ): Promise<PullRequestFreshness> => {
+    const live = await fetchLivePullRequestResult(env, args.repoFullName, args.pullNumber, token, admissionKey);
+    if (live.status === "error") {
+      return classifyPullRequestFreshness(undefined, args.expectedHeadSha, {
+        ...options,
+        unavailableSource: "pull_request_fetch",
+        unavailableDetail: live.error,
+      });
+    }
+    return classifyPullRequestFreshness(live.data, args.expectedHeadSha, options);
+  };
+
+  try {
+    // Same self-heal as write-path GitHub helpers (#6191 / #8892): one cache eviction + remint on
+    // 401 / permission-scope, then retry the live PR GET before treating the PR as unavailable/stale.
+    return await withInstallationTokenRetry(env, args.installationId, async (token) =>
+      classifyLive(token, githubRateLimitAdmissionKeyForToken(env, token, args.installationId)),
+    );
+  } catch (error) {
+    // Mint failure (or exhausted retryable failure that escaped): fall back to the public token when
+    // configured — same fail-over as the prior createInstallationToken().catch → GITHUB_PUBLIC_TOKEN path.
+    const publicToken = env.GITHUB_PUBLIC_TOKEN;
+    if (!publicToken) {
+      return classifyPullRequestFreshness(undefined, args.expectedHeadSha, {
+        ...options,
+        unavailableSource: "token",
+        unavailableDetail: strippedErrorMessage(error, "installation token unavailable").slice(0, 240),
+      });
+    }
+    try {
+      return await classifyLive(publicToken, githubRateLimitAdmissionKeyForPublicToken());
+    } catch (publicError) {
+      return classifyPullRequestFreshness(undefined, args.expectedHeadSha, {
+        ...options,
+        unavailableSource: "pull_request_fetch",
+        unavailableDetail: strippedErrorMessage(publicError, "GitHub live PR fetch failed").slice(0, 240),
+      });
+    }
   }
-  const admissionKey = githubRateLimitAdmissionKeyForToken(env, token, args.installationId);
-  const live = await fetchLivePullRequestResult(env, args.repoFullName, args.pullNumber, token, admissionKey);
-  if (live.status === "error") {
-    return classifyPullRequestFreshness(undefined, args.expectedHeadSha, {
-      ...options,
-      unavailableSource: "pull_request_fetch",
-      unavailableDetail: live.error,
-    });
-  }
-  return classifyPullRequestFreshness(live.data, args.expectedHeadSha, options);
 }
 
 export function pullRequestFreshnessDetail(result: PullRequestFreshness): string {

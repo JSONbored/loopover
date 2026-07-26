@@ -5,11 +5,19 @@ import {
   pullRequestFreshnessDetail,
   reviewedPullRequestHeadSha,
 } from "../../src/github/pr-freshness";
+import {
+  fetchLiveIssueState,
+  fetchLivePullRequestHeadSha,
+  fetchLivePullRequestResult,
+} from "../../src/github/backfill";
+import { clearInstallationTokenCacheForTest } from "../../src/github/app";
 import { createTestEnv } from "../helpers/d1";
+import { generatePrivateKeyPem } from "../helpers/github-app-key";
 
 describe("PR freshness guards", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    clearInstallationTokenCacheForTest();
   });
 
   it("classifies a matching open head as current", () => {
@@ -233,6 +241,183 @@ describe("PR freshness guards", () => {
       reason: "unavailable",
       unavailableSource: "token",
       unavailableDetail: expect.any(String),
+    });
+  });
+
+  it("REGRESSION (#8892): evicts a stale installation token and retries the live PR GET once on 401", async () => {
+    clearInstallationTokenCacheForTest();
+    let tokenMints = 0;
+    let pullGetAttempts = 0;
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/access_tokens")) {
+        tokenMints += 1;
+        return Response.json({ token: `token-${tokenMints}`, expires_at: "2099-01-01T00:00:00Z" });
+      }
+      if (url.includes("/repos/owner/repo/pulls/7") && (init?.method ?? "GET") === "GET") {
+        pullGetAttempts += 1;
+        if (pullGetAttempts === 1) return Response.json({ message: "Bad credentials" }, { status: 401 });
+        return Response.json({ state: "open", head: { sha: "sha7" }, labels: [] });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+
+    await expect(
+      fetchPullRequestFreshness(env, {
+        installationId: 998877,
+        repoFullName: "owner/repo",
+        pullNumber: 7,
+        expectedHeadSha: "sha7",
+      }),
+    ).resolves.toMatchObject({ status: "current", liveHeadSha: "sha7", liveState: "open" });
+    expect(pullGetAttempts).toBe(2);
+    expect(tokenMints).toBe(2);
+  });
+
+  it("fetchLivePullRequestResult: self-heals a stale installation token on 401 when installationId is set (#8892)", async () => {
+    clearInstallationTokenCacheForTest();
+    let tokenMints = 0;
+    let pullGetAttempts = 0;
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/access_tokens")) {
+        tokenMints += 1;
+        return Response.json({ token: `token-${tokenMints}`, expires_at: "2099-01-01T00:00:00Z" });
+      }
+      if (url.includes("/repos/owner/repo/pulls/9") && (init?.method ?? "GET") === "GET") {
+        pullGetAttempts += 1;
+        if (pullGetAttempts === 1) return Response.json({ message: "Bad credentials" }, { status: 401 });
+        return Response.json({ state: "open", head: { sha: "abc" } });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+
+    await expect(fetchLivePullRequestResult(env, "owner/repo", 9, undefined, undefined, 42)).resolves.toMatchObject({
+      status: "ok",
+      data: { state: "open", head: { sha: "abc" } },
+    });
+    expect(pullGetAttempts).toBe(2);
+    expect(tokenMints).toBe(2);
+  });
+
+  it("fetchLiveIssueState: self-heals a stale installation token on 401 when installationId is set (#8892)", async () => {
+    clearInstallationTokenCacheForTest();
+    let tokenMints = 0;
+    let issueGetAttempts = 0;
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/access_tokens")) {
+        tokenMints += 1;
+        return Response.json({ token: `token-${tokenMints}`, expires_at: "2099-01-01T00:00:00Z" });
+      }
+      if (url.includes("/repos/owner/repo/issues/3") && (init?.method ?? "GET") === "GET") {
+        issueGetAttempts += 1;
+        if (issueGetAttempts === 1) return Response.json({ message: "Bad credentials" }, { status: 401 });
+        return Response.json({ state: "open" });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+
+    await expect(fetchLiveIssueState(env, "owner/repo", 3, undefined, undefined, 42)).resolves.toBe("open");
+    expect(issueGetAttempts).toBe(2);
+    expect(tokenMints).toBe(2);
+  });
+
+  it("fetchLivePullRequestHeadSha: self-heals a stale installation token on 401 when installationId is set (#8892)", async () => {
+    clearInstallationTokenCacheForTest();
+    let tokenMints = 0;
+    let pullGetAttempts = 0;
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/access_tokens")) {
+        tokenMints += 1;
+        return Response.json({ token: `token-${tokenMints}`, expires_at: "2099-01-01T00:00:00Z" });
+      }
+      if (url.includes("/repos/owner/repo/pulls/11") && (init?.method ?? "GET") === "GET") {
+        pullGetAttempts += 1;
+        if (pullGetAttempts === 1) return Response.json({ message: "Bad credentials" }, { status: 401 });
+        return Response.json({ head: { sha: "deadbeef" } });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+
+    await expect(fetchLivePullRequestHeadSha(env, "owner/repo", 11, undefined, undefined, 42)).resolves.toBe("deadbeef");
+    expect(pullGetAttempts).toBe(2);
+    expect(tokenMints).toBe(2);
+  });
+
+  it("fetchLive helpers soft-fail non-retryable errors when installationId is set", async () => {
+    clearInstallationTokenCacheForTest();
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/access_tokens")) {
+        return Response.json({ token: "token-1", expires_at: "2099-01-01T00:00:00Z" });
+      }
+      return new Response("temporary outage", { status: 503 });
+    });
+
+    await expect(fetchLiveIssueState(env, "owner/repo", 1, undefined, undefined, 7)).resolves.toBeUndefined();
+    await expect(fetchLivePullRequestHeadSha(env, "owner/repo", 1, undefined, undefined, 7)).resolves.toBeUndefined();
+    await expect(fetchLivePullRequestResult(env, "owner/repo", 1, undefined, undefined, 7)).resolves.toMatchObject({
+      status: "error",
+      error: expect.stringContaining("503"),
+    });
+  });
+
+  it("fetchLive helpers soft-fail when installation token minting fails with installationId set", async () => {
+    clearInstallationTokenCacheForTest();
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "not-a-real-key" });
+    await expect(fetchLiveIssueState(env, "owner/repo", 1, undefined, undefined, 7)).resolves.toBeUndefined();
+    await expect(fetchLivePullRequestHeadSha(env, "owner/repo", 1, undefined, undefined, 7)).resolves.toBeUndefined();
+    await expect(fetchLivePullRequestResult(env, "owner/repo", 1, undefined, undefined, 7)).resolves.toMatchObject({
+      status: "error",
+    });
+  });
+
+  it("falls back to the public token when installation minting fails but GITHUB_PUBLIC_TOKEN is set", async () => {
+    clearInstallationTokenCacheForTest();
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: "not-a-real-key",
+      GITHUB_PUBLIC_TOKEN: "public-token",
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      expect(String(input)).toContain("/repos/owner/repo/pulls/7");
+      return Response.json({ state: "open", head: { sha: "sha7" } });
+    });
+    await expect(
+      fetchPullRequestFreshness(env, {
+        installationId: 123,
+        repoFullName: "owner/repo",
+        pullNumber: 7,
+        expectedHeadSha: "sha7",
+      }),
+    ).resolves.toMatchObject({ status: "current", liveHeadSha: "sha7" });
+  });
+
+  it("classifies a public-token 401 after mint failure as unavailable freshness", async () => {
+    clearInstallationTokenCacheForTest();
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: "not-a-real-key",
+      GITHUB_PUBLIC_TOKEN: "public-token",
+    });
+    vi.stubGlobal("fetch", async () => Response.json({ message: "Bad credentials" }, { status: 401 }));
+    await expect(
+      fetchPullRequestFreshness(env, {
+        installationId: 123,
+        repoFullName: "owner/repo",
+        pullNumber: 7,
+        expectedHeadSha: "sha7",
+      }),
+    ).resolves.toMatchObject({
+      status: "stale",
+      reason: "unavailable",
+      unavailableSource: "pull_request_fetch",
+      unavailableDetail: expect.stringMatching(/401|Bad credentials/i),
     });
   });
 });

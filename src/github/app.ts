@@ -168,6 +168,11 @@ function isGitHubInstallationPermissionError(error: unknown): boolean {
   return githubErrorStatus(error) === 403 && /resource not accessible by integration|not have permission/i.test(errorMessage(error));
 }
 
+/** True when withInstallationTokenRetry should evict the cached token and retry once (#6191 / #8892). */
+export function isGitHubInstallationTokenRetryableError(error: unknown): boolean {
+  return isGitHubBadCredentialsError(error) || isGitHubInstallationPermissionError(error);
+}
+
 async function expireCachedInstallationToken(
   installationId: number,
   rejectedToken: string,
@@ -187,7 +192,7 @@ export async function withInstallationTokenRetry<T>(
     return await operation(token);
   } catch (error) {
     const refreshForPermission = isGitHubInstallationPermissionError(error);
-    if (!isGitHubBadCredentialsError(error) && !refreshForPermission) throw error;
+    if (!isGitHubInstallationTokenRetryableError(error)) throw error;
     await expireCachedInstallationToken(installationId, token).catch(
       () => undefined,
     );

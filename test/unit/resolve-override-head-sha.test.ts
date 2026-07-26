@@ -54,6 +54,13 @@ describe("resolveOverrideHeadSha (#16 / gate-override stale head)", () => {
     expect(await resolveOverrideHeadSha(env, 123, "owner/repo", makePr("stale-sha"))).toBe("stale-sha");
   });
 
+  it("fails OPEN to the cached head when the live fetch returns a stale-token 401 (#8892 rethrow contract)", async () => {
+    const env = createTestEnv();
+    mockedToken.mockResolvedValue("inst-tok");
+    vi.stubGlobal("fetch", async () => Response.json({ message: "Bad credentials" }, { status: 401 }));
+    expect(await resolveOverrideHeadSha(env, 123, "owner/repo", makePr("stale-sha"))).toBe("stale-sha");
+  });
+
   it("returns the cached head when the live payload omits head.sha (fail-open)", async () => {
     const env = createTestEnv();
     mockedToken.mockResolvedValue("inst-tok");

@@ -11834,7 +11834,7 @@ export async function resolveOverrideHeadSha(
     pr.number,
     token,
     admissionKey,
-  );
+  ).catch(() => undefined);
   return liveHeadSha ?? pr.headSha;
 }
 

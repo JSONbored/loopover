@@ -139,6 +139,8 @@ export function classifyOpenPullRequest(args: {
   checks: CheckSummaryRecord[];
   duplicateProne?: boolean | undefined;
   missingTests?: boolean | undefined;
+  // #8872: injected wall-clock for a deterministic staleness boundary; defaults to Date.now() in daysSince.
+  nowMs?: number | undefined;
 }): ClassifiedOpenPullRequest {
   const reasons: string[] = [];
   if (args.roleContext.maintainerLane) {
@@ -159,7 +161,7 @@ export function classifyOpenPullRequest(args: {
   const checkFailureCount = args.checks.filter(
     (check) => check.conclusion === "failure" || check.conclusion === "timed_out" || check.conclusion === "cancelled",
   ).length;
-  const ageDays = daysSince(args.pr.updatedAt ?? args.pr.createdAt);
+  const ageDays = daysSince(args.pr.updatedAt ?? args.pr.createdAt, args.nowMs);
 
   if (args.duplicateProne) reasons.push("Overlapping open work detected in the same repo (possible duplicate or WIP collision).");
   if (args.missingTests) reasons.push("Cached file list shows code changes without matching test files.");
@@ -210,11 +212,14 @@ function sameLogin(value: string | null | undefined, login: string): boolean {
   return Boolean(value && value.toLowerCase() === login.toLowerCase());
 }
 
-function daysSince(value: string | null | undefined): number {
+// #8872: nowMs is injectable (defaulting only here, at the call boundary) so classifyOpenPullRequest's
+// staleness split is deterministic and testable at exact day boundaries, matching this module's own
+// "pure classification/detection logic" contract and the nowMs injection its opportunity-freshness sibling uses.
+function daysSince(value: string | null | undefined, nowMs = Date.now()): number {
   if (!value) return Number.POSITIVE_INFINITY;
   const parsed = Date.parse(value);
   if (!Number.isFinite(parsed)) return Number.POSITIVE_INFINITY;
-  return Math.max(0, (Date.now() - parsed) / 86_400_000);
+  return Math.max(0, (nowMs - parsed) / 86_400_000);
 }
 
 function nonNegative(value: number | undefined): number {

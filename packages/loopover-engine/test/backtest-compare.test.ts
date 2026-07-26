@@ -73,3 +73,68 @@ test("compareDirectionalBacktestScores: win axis up + within-budget sacrifice is
   const over = compareDirectionalBacktestScores(report(), report({ recall: 0.9, precision: 0.3 }), orientation);
   assert.equal(over.verdict, "regressed");
 });
+
+test("compareDirectionalBacktestScores: mismatched ruleIds throw, naming both rules", () => {
+  assert.throws(
+    () =>
+      compareDirectionalBacktestScores(report(), report({ ruleId: "other_rule" }), {
+        mustImprove: "recall",
+        maxSacrifice: 0.1,
+      }),
+    /cannot compare backtest scores for different rules: missing_linked_issue vs other_rule/,
+  );
+});
+
+test("compareDirectionalBacktestScores: a negative or non-finite maxSacrifice throws -- a caller bug, not a comparison", () => {
+  assert.throws(
+    () => compareDirectionalBacktestScores(report(), report(), { mustImprove: "recall", maxSacrifice: -0.1 }),
+    /maxSacrifice must be a non-negative finite number, got -0.1/,
+  );
+  assert.throws(
+    () => compareDirectionalBacktestScores(report(), report(), { mustImprove: "recall", maxSacrifice: Number.NaN }),
+    /maxSacrifice must be a non-negative finite number, got NaN/,
+  );
+});
+
+test("compareDirectionalBacktestScores: a null on either axis excludes that axis -- unknown stays unknown", () => {
+  const orientation = { mustImprove: "recall" as const, maxSacrifice: 0.1 };
+  // A null WIN axis can never earn "improved": the axis the trade exists to win is unjudgeable.
+  const nullWin = compareDirectionalBacktestScores(report({ recall: null }), report({ recall: 0.9, precision: 0.9 }), orientation);
+  assert.deepEqual(nullWin.regressedAxes, []);
+  assert.deepEqual(nullWin.improvedAxes, ["precision"]);
+  assert.equal(nullWin.verdict, "unchanged");
+  // A null SACRIFICE axis drops out of the trade accounting entirely, leaving the win to decide the verdict.
+  const nullSacrifice = compareDirectionalBacktestScores(report(), report({ recall: 0.7, precision: null }), orientation);
+  assert.deepEqual(nullSacrifice.improvedAxes, ["recall"]);
+  assert.deepEqual(nullSacrifice.regressedAxes, []);
+  assert.equal(nullSacrifice.verdict, "improved");
+});
+
+test("compareDirectionalBacktestScores: an exact-boundary sacrifice (drop === maxSacrifice) is the accepted trade", () => {
+  // 0.75 and 0.5 are exact IEEE-754 binary fractions, so their difference is exactly 0.25 -- landing the
+  // sacrifice drop precisely on maxSacrifice to exercise the `> maxSacrifice` boundary's false arm.
+  const orientation = { mustImprove: "recall" as const, maxSacrifice: 0.25 };
+  const comparison = compareDirectionalBacktestScores(report({ precision: 0.75 }), report({ recall: 0.7, precision: 0.5 }), orientation);
+  assert.deepEqual(comparison.regressedAxes, []);
+  assert.deepEqual(comparison.improvedAxes, ["recall"]);
+  assert.equal(comparison.verdict, "improved");
+});
+
+test("compareDirectionalBacktestScores: a lone sacrifice-axis gain with a flat win axis stays unchanged", () => {
+  const orientation = { mustImprove: "recall" as const, maxSacrifice: 0.1 };
+  const comparison = compareDirectionalBacktestScores(report(), report({ precision: 0.9 }), orientation);
+  assert.deepEqual(comparison.improvedAxes, ["precision"]);
+  assert.deepEqual(comparison.regressedAxes, []);
+  assert.equal(comparison.verdict, "unchanged");
+});
+
+test("compareDirectionalBacktestScores: mustImprove precision flips the sacrifice axis to recall", () => {
+  const orientation = { mustImprove: "precision" as const, maxSacrifice: 0.1 };
+  const improved = compareDirectionalBacktestScores(report(), report({ precision: 0.7, recall: 0.42 }), orientation);
+  assert.deepEqual(improved.improvedAxes, ["precision"]);
+  assert.deepEqual(improved.regressedAxes, []);
+  assert.equal(improved.verdict, "improved");
+  const overBudget = compareDirectionalBacktestScores(report(), report({ precision: 0.7, recall: 0.3 }), orientation);
+  assert.deepEqual(overBudget.regressedAxes, ["recall"]);
+  assert.equal(overBudget.verdict, "regressed");
+});

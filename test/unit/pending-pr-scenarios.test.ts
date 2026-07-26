@@ -99,6 +99,20 @@ describe("pending PR scenario detection", () => {
     expect(classified.reasons.join(" ")).toMatch(/failing or cancelled check/i);
   });
 
+  // #8872: with an injected nowMs the staleness split is deterministic and testable at the exact 14-day
+  // boundary — an approved, passing-checks PR flips from merge_ready to stale_likely_close at ageDays >= 14.
+  it("splits merge_ready vs stale_likely_close at the exact 14-day boundary with an injected nowMs (#8872)", () => {
+    const nowMs = Date.parse("2026-07-01T00:00:00.000Z");
+    const staleMs = 14 * 86_400_000;
+    const base = { roleContext: outsideContributorRole, reviews: [approvedReview(1)], checks: [], nowMs };
+    expect(
+      classifyOpenPullRequest({ ...base, pr: pr({ number: 1, updatedAt: new Date(nowMs - staleMs).toISOString() }) }).classification,
+    ).toBe("stale_likely_close");
+    expect(
+      classifyOpenPullRequest({ ...base, pr: pr({ number: 1, updatedAt: new Date(nowMs - staleMs + 1).toISOString() }) }).classification,
+    ).toBe("merge_ready");
+  });
+
   it("counts stale approved PRs as pending closes and projects the post-cleanup open count", () => {
     const staleDate = new Date(Date.now() - 30 * 86_400_000).toISOString();
     const detection = detectPendingPrScenario({

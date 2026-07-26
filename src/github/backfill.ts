@@ -1476,7 +1476,12 @@ async function backfillOpenIssuesSegment(
     {
       countPersisted: () => countOpenIssues(env, repo.fullName),
       reconcileOnComplete: (scanStartedAt) => markUnseenOpenIssuesClosed(env, repo.fullName, scanStartedAt),
-      ...(token ? { supplementOnUnderCount: (scanStartedAt: string) => supplementOpenIssuesFromGraphQl(env, repo, token, scanStartedAt) } : {}),
+      ...(token
+        ? {
+            supplementOnUnderCount: (scanStartedAt: string, supplementWarnings: string[]) =>
+              supplementOpenIssuesFromGraphQl(env, repo, token, scanStartedAt, supplementWarnings),
+          }
+        : {}),
     },
   );
   return result;
@@ -1508,7 +1513,13 @@ async function backfillOpenPullRequestsSegment(
     {
       countPersisted: () => countOpenPullRequests(env, repo.fullName),
       reconcileOnComplete: (scanStartedAt) => markUnseenOpenPullRequestsClosed(env, repo.fullName, scanStartedAt),
-      ...(token ? { supplementOnUnderCount: (scanStartedAt: string) => supplementOpenPullRequestsFromGraphQl(env, repo, token, scanStartedAt), supplementDescription: "open pull request row(s)" } : {}),
+      ...(token
+        ? {
+            supplementOnUnderCount: (scanStartedAt: string, supplementWarnings: string[]) =>
+              supplementOpenPullRequestsFromGraphQl(env, repo, token, scanStartedAt, supplementWarnings),
+            supplementDescription: "open pull request row(s)",
+          }
+        : {}),
     },
   );
 }
@@ -1621,7 +1632,7 @@ async function fetchPagedSegment<T>(
     progressiveHistory?: boolean;
     countPersisted?: () => Promise<number>;
     reconcileOnComplete?: (scanStartedAt: string) => Promise<number>;
-    supplementOnUnderCount?: (scanStartedAt: string) => Promise<number>;
+    supplementOnUnderCount?: (scanStartedAt: string, warnings: string[]) => Promise<number>;
     supplementDescription?: string;
   } = {},
 ): Promise<{ status: RepoSyncSegmentRecord["status"]; segment: RepoSyncSegmentRecord }> {
@@ -1760,7 +1771,7 @@ async function fetchPagedSegment<T>(
 async function supplementUnderCountIfNeeded(
   options: {
     countPersisted?: () => Promise<number>;
-    supplementOnUnderCount?: (scanStartedAt: string) => Promise<number>;
+    supplementOnUnderCount?: (scanStartedAt: string, warnings: string[]) => Promise<number>;
     supplementDescription?: string;
   },
   scanStartedAt: string,
@@ -1770,7 +1781,7 @@ async function supplementUnderCountIfNeeded(
 ): Promise<number> {
   if (expectedCount === undefined || fetchedCount >= expectedCount || !options.supplementOnUnderCount) return fetchedCount;
   try {
-    const supplemented = await options.supplementOnUnderCount(scanStartedAt);
+    const supplemented = await options.supplementOnUnderCount(scanStartedAt, warnings);
     if (supplemented > 0) warnings.push(`Supplemented ${supplemented} ${options.supplementDescription ?? "open issue row(s)"} from GitHub GraphQL because REST pagination undercounted the authoritative total.`);
     /* v8 ignore next -- Under-count supplements normally re-count persisted rows; arithmetic fallback protects custom callers. */
     return options.countPersisted ? await options.countPersisted() : fetchedCount + supplemented;
@@ -1780,14 +1791,19 @@ async function supplementUnderCountIfNeeded(
   }
 }
 
-async function supplementOpenIssuesFromGraphQl(env: Env, repo: RepositoryRecord, token: string, seenOpenAt: string): Promise<number> {
-  /* v8 ignore start -- Defensive GitHub GraphQL payload normalization is covered by sparse-payload backfill tests. */
+async function supplementOpenIssuesFromGraphQl(
+  env: Env,
+  repo: RepositoryRecord,
+  token: string,
+  seenOpenAt: string,
+  warnings: string[],
+): Promise<number> {
   const existingNumbers = new Set(await listOpenIssueNumbers(env, repo.fullName));
   const { owner, name } = repoParts(repo.fullName);
   const admissionKey = repoAdmissionKeyForToken(env, repo, token);
   let after = "";
   let supplemented = 0;
-  for (;;) {
+  for (let page = 1; page <= GITHUB_LIST_MAX_PAGES; page += 1) {
     const query = `query LoopOverOpenIssuesSupplement {
       repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) {
         issues(states: OPEN, first: 100${after}) {
@@ -1829,20 +1845,30 @@ async function supplementOpenIssuesFromGraphQl(env: Env, repo: RepositoryRecord,
       supplemented += 1;
     }
     if (!issues?.pageInfo?.hasNextPage || !issues.pageInfo.endCursor) break;
+    if (page === GITHUB_LIST_MAX_PAGES) {
+      warnings.push(
+        `GitHub GraphQL open-issues supplement reached local page cap of ${GITHUB_LIST_MAX_PAGES}; stopping with ${supplemented} supplemented row(s).`,
+      );
+      break;
+    }
     after = `, after: ${JSON.stringify(issues.pageInfo.endCursor)}`;
   }
   return supplemented;
-  /* v8 ignore stop */
 }
 
-async function supplementOpenPullRequestsFromGraphQl(env: Env, repo: RepositoryRecord, token: string, seenOpenAt: string): Promise<number> {
-  /* v8 ignore start -- Defensive GitHub GraphQL payload normalization is covered by sparse-payload backfill tests. */
+async function supplementOpenPullRequestsFromGraphQl(
+  env: Env,
+  repo: RepositoryRecord,
+  token: string,
+  seenOpenAt: string,
+  warnings: string[],
+): Promise<number> {
   const existingNumbers = new Set((await listOpenPullRequests(env, repo.fullName)).map((pr) => pr.number));
   const { owner, name } = repoParts(repo.fullName);
   const admissionKey = repoAdmissionKeyForToken(env, repo, token);
   let after = "";
   let supplemented = 0;
-  for (;;) {
+  for (let page = 1; page <= GITHUB_LIST_MAX_PAGES; page += 1) {
     const query = `query LoopOverOpenPullRequestsSupplement {
       repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) {
         pullRequests(states: OPEN, first: 100${after}, orderBy: { field: CREATED_AT, direction: ASC }) {
@@ -1895,10 +1921,15 @@ async function supplementOpenPullRequestsFromGraphQl(env: Env, repo: RepositoryR
       supplemented += 1;
     }
     if (!pullRequests?.pageInfo?.hasNextPage || !pullRequests.pageInfo.endCursor) break;
+    if (page === GITHUB_LIST_MAX_PAGES) {
+      warnings.push(
+        `GitHub GraphQL open-pull-requests supplement reached local page cap of ${GITHUB_LIST_MAX_PAGES}; stopping with ${supplemented} supplemented row(s).`,
+      );
+      break;
+    }
     after = `, after: ${JSON.stringify(pullRequests.pageInfo.endCursor)}`;
   }
   return supplemented;
-  /* v8 ignore stop */
 }
 
 // Terminal segment states that count as synced. `sampled` is the terminal state of the
@@ -2363,6 +2394,10 @@ async function fetchAndStorePullRequestDetails(
 // undefined (the caller can fall back to GraphQL); a later-page failure keeps the pages already fetched
 // rather than dropping a successful first page.
 const PR_DETAIL_MAX_PAGES = 10;
+// Shared bound for syncLabels + GraphQL open-issue/PR undercount supplements (#8890): every other pagination
+// walk in this file already caps at 10 pages so a pathological repo can't turn one sync into an unbounded
+// fetch loop. These three loops were the remaining unbounded `for (;;)` / `for (page = 1; ;)` outliers.
+const GITHUB_LIST_MAX_PAGES = 10;
 
 async function githubPaginatedList<T>(
   env: Env,
@@ -4488,20 +4523,35 @@ async function syncLabels(
   const startedAt = nowIso();
   await markSegmentRunning(env, repo, "labels", sourceKind, mode, startedAt);
   const items: GitHubLabelPayload[] = [];
+  const warnings: string[] = [];
   const admissionKey = repoAdmissionKeyForToken(env, repo, token);
   try {
-    for (let page = 1; ; page += 1) {
+    let status: RepoSyncSegmentRecord["status"] = "complete";
+    let nextCursor: string | undefined;
+    let pageCount = 0;
+    for (let page = 1; page <= GITHUB_LIST_MAX_PAGES; page += 1) {
       const result = await githubJsonWithHeaders<GitHubLabelPayload[]>(env, repo.fullName, `/labels?per_page=100&page=${page}`, token, githubRateLimitOptions(admissionKey));
       items.push(...result.data);
+      pageCount = page;
       if (!hasNextPage(result.link)) break;
+      if (page === GITHUB_LIST_MAX_PAGES) {
+        status = "capped";
+        nextCursor = String(page + 1);
+        warnings.push(
+          `Label sync reached local page cap of ${GITHUB_LIST_MAX_PAGES} (fetched ${items.length}); next page cursor is ${nextCursor}.`,
+        );
+        break;
+      }
     }
     const segment = await completeSegment(env, repo, "labels", sourceKind, mode, startedAt, {
-      status: "complete",
+      status,
       fetchedCount: items.length,
-      expectedCount: items.length,
-      warnings: [],
+      expectedCount: status === "complete" ? items.length : undefined,
+      pageCount,
+      nextCursor,
+      warnings,
     });
-    return { items, warnings: [], segment };
+    return { items, warnings, segment };
   } catch (error) {
     const warning = `Label sync failed: ${errorMessage(error)}`;
     const segment = await completeSegment(env, repo, "labels", sourceKind, mode, startedAt, {

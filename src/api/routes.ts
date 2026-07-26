@@ -297,7 +297,7 @@ import { buildAutomationState } from "../services/automation-state";
 import { loadGatePrecisionReport } from "../services/gate-precision";
 import { computeOpsStats, isOpsEnabled, resolveOpsManifestOverride } from "../review/ops-wire";
   import { deleteLiveOverride, listOverrideAudit, loadOverride, loadShadowOverride, sanitizeOverridePayload, authoritativeGateOverride, toLiveGateThresholdFields, type StorageEnv } from "../review/auto-apply";
-import { handleInternalCalibration, handleInternalDecision, type OpsAgentConfig } from "../review/ops";
+import { handleInternalCalibration, handleInternalDecision, handleInternalStatus, type OpsAgentConfig } from "../review/ops";
 import { computeParityReadiness, isParityAuditEnabled } from "../review/parity-wire";
 import { computePredictedGateAgreement } from "../review/predicted-gate-agreement";
 import { computeContributorGateEval, contributorFairnessFlags, computeBlendedContributorGateEval, contributorGlobalFairnessFlags } from "../review/contributor-gate-eval";
@@ -4690,6 +4690,12 @@ export function createApp() {
   // Fails safe to an empty-but-shaped report when there is no review signal yet. Aggregate counts only.
   app.get("/v1/internal/calibration", (c) => handleInternalCalibration(c.req.raw, c.env, internalOpsAgentConfig(c.env)));
 
+  // Operator per-agent health/verdict breakdown, manual-rate, stuck targets, config-invariant violations, and
+  // recent decisions (#8904 — the handler existed and was unit-tested but its route was never registered, unlike
+  // its two siblings above). Bearer-gated by the `/v1/internal/*` middleware (INTERNAL_JOB_TOKEN);
+  // handleInternalStatus re-checks that same token. Aggregate review state only — no PR content.
+  app.get("/v1/internal/status", (c) => handleInternalStatus(c.req.raw, c.env, internalOpsAgentConfig(c.env)));
+
   // Operator calibration trend (#8113): weekly per-rule fired/decided/precision plus backtest-run verdict
   // counts, re-bucketed live from audit_events (no cron rollup — see rule-calibration-trend.ts's header). Sibling
   // of /v1/internal/calibration above, same INTERNAL_JOB_TOKEN gate via the /v1/internal/* middleware.
@@ -4747,6 +4753,33 @@ export function createApp() {
 
   app.post("/v1/internal/jobs/refresh-registry/run", async (c) => {
     return c.json(await refreshRegistry(c.env));
+  });
+
+  // Operator-only manual re-gate trigger (#8898): enqueue an `agent-regate-pr` job with `force: true` for one
+  // repo+PR. This is the FIRST production producer of that job's `force` field (threaded through
+  // src/queue/job-dispatch.ts into regatePullRequest) -- every scheduled/webhook producer leaves it unset, so
+  // the force plumbing (a fresh AI opinion that bypasses the durable review cache and the non-cacheable-reuse
+  // cooldown) was built and tested but unreachable from any real caller until now. Bearer-gated by the
+  // `/v1/internal/*` middleware (INTERNAL_JOB_TOKEN). 400s a missing/blank repo or a non-positive-integer PR
+  // number; 404s a repo with no known installation (nothing to authenticate the re-gate against).
+  app.post("/v1/internal/jobs/regate-pr", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { repoFullName?: unknown; prNumber?: unknown };
+    const repoFullName = typeof body?.repoFullName === "string" ? body.repoFullName.trim() : "";
+    if (!repoFullName) return c.json({ error: "repoFullName required" }, 400);
+    const prNumber = Number(body?.prNumber);
+    if (!Number.isInteger(prNumber) || prNumber <= 0) return c.json({ error: "prNumber required" }, 400);
+    const repo = await getRepository(c.env, repoFullName);
+    if (typeof repo?.installationId !== "number") return c.json({ error: "repo not installed" }, 404);
+    const message: JobMessage = {
+      type: "agent-regate-pr",
+      deliveryId: `manual-regate:${crypto.randomUUID()}`,
+      repoFullName: repo.fullName,
+      prNumber,
+      installationId: repo.installationId,
+      force: true,
+    };
+    await c.env.JOBS.send(message);
+    return c.json({ ok: true, status: "queued", repoFullName: repo.fullName, prNumber, force: true }, 202);
   });
 
   app.post("/v1/internal/jobs/backfill-registered-repos", async (c) => {

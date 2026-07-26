@@ -23,20 +23,6 @@ export const ISSUE_SLOP_WEIGHTS = {
   titleRestatement: 35,
 } as const;
 
-export const ISSUE_SLOP_RUBRIC_MARKDOWN = [
-  "# LoopOver issue slop triage rubric",
-  "",
-  "- `clean`: 0",
-  "- `low`: 1-30",
-  "- `elevated`: 31-59",
-  "- `high`: 60-100",
-  "",
-  "Advisory-only (issues never block). Current deterministic signals:",
-  "- empty issue body",
-  "- issue template opened but left unfilled",
-  "- issue body only restates the title (no added detail)",
-].join("\n");
-
 export function buildIssueSlopAssessment(input: IssueSlopAssessmentInput): SlopAssessment {
   const findings: SignalFinding[] = [];
   const emptyBodyFinding = buildEmptyIssueBodyFinding(input);

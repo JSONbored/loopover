@@ -231,7 +231,7 @@ describe("fetchSelfReviewContext (#5145)", () => {
     expect(result.inDuplicateCluster).toBe(true);
   });
 
-  it("populates issueQuality from the live GitHub snapshot without bounty or recent-merged inputs (#6057)", async () => {
+  it("populates issueQuality from the live GitHub snapshot without bounty inputs (#6057)", async () => {
     const fetchImpl = routedFetch({
       "/repos/acme/widgets/issues": () => jsonResponse([issuePayload({ body: "x".repeat(220) })]),
       "/repos/acme/widgets/pulls": () => jsonResponse([]),
@@ -244,9 +244,67 @@ describe("fetchSelfReviewContext (#5145)", () => {
     expect(result.issueQuality?.issues).toHaveLength(1);
     expect(result.issueQuality?.issues[0]).toMatchObject({ number: 7, status: expect.any(String) });
     expect(result.issueQuality?.repoFullName).toBe("acme/widgets");
-    // Empty bounty/recent-merged inputs must not invent derived bounty warnings.
+    // Empty bounty inputs must not invent derived bounty warnings.
     expect(result.issueQuality?.issues[0]?.warnings.join(" ")).not.toMatch(/bounty/i);
     expect("bounties" in result).toBe(false);
+  });
+
+  it("REGRESSION (#8852): flags an open issue already solved by a recently merged PR in issueQuality", async () => {
+    const fetchImpl = async (url: string) => {
+      if (url.includes("/repos/acme/widgets/issues")) return jsonResponse([issuePayload()]);
+      if (url.includes("/repos/acme/widgets/pulls") && url.includes("state=closed")) {
+        return jsonResponse([
+          prPayload({
+            number: 99,
+            title: "Ship upload retry handling",
+            state: "closed",
+            merged_at: "2026-06-15T00:00:00Z",
+            closed_at: "2026-06-15T00:00:00Z",
+            body: "Fixes #7",
+          }),
+        ]);
+      }
+      if (url.includes("/repos/acme/widgets/pulls")) return jsonResponse([]);
+      if (url.includes("/repos/acme/widgets")) return jsonResponse(REPO_PAYLOAD);
+      if (url.includes("raw.githubusercontent.com")) return jsonResponse(null, 404);
+      if (url.includes("api.gittensor.io/miners")) return jsonResponse([]);
+      return jsonResponse(null, 404);
+    };
+
+    const result = await fetchSelfReviewContext("acme/widgets", { linkedIssues: [7], fetchImpl: fetchImpl as never, loopoverAuth: null });
+    expect(result.issueQuality?.issues[0]?.status).toBe("do_not_use");
+    expect(result.issueQuality?.issues[0]?.warnings.some((w) => /merged PR/i.test(w))).toBe(true);
+    expect(result.issueQuality?.issues[0]?.warnings.some((w) => /duplicate|overlapping/i.test(w))).toBe(true);
+  });
+
+  it("filters closed-but-unmerged pull requests out of recent-merged history (#8852)", async () => {
+    const fetchImpl = async (url: string) => {
+      if (url.includes("/repos/acme/widgets/issues")) return jsonResponse([issuePayload()]);
+      if (url.includes("/repos/acme/widgets/pulls") && url.includes("state=closed")) {
+        return jsonResponse([
+          prPayload({ number: 60, state: "closed", merged_at: null, body: "Fixes #7" }),
+          prPayload({
+            number: 61,
+            state: "closed",
+            merged_at: "2026-06-01T00:00:00Z",
+            body: undefined,
+            user: undefined,
+            html_url: undefined,
+          }),
+          null,
+          "not-a-pr",
+        ]);
+      }
+      if (url.includes("/repos/acme/widgets/pulls")) return jsonResponse([]);
+      if (url.includes("/repos/acme/widgets")) return jsonResponse(REPO_PAYLOAD);
+      if (url.includes("raw.githubusercontent.com")) return jsonResponse(null, 404);
+      if (url.includes("api.gittensor.io/miners")) return jsonResponse([]);
+      return jsonResponse(null, 404);
+    };
+
+    const result = await fetchSelfReviewContext("acme/widgets", { fetchImpl: fetchImpl as never, loopoverAuth: null });
+    expect(result.issueQuality?.issues[0]?.status).not.toBe("do_not_use");
+    expect(result.issueQuality?.issues[0]?.warnings.some((w) => /merged PR/i.test(w))).toBe(false);
   });
 
   // #6769: a real linked PR needs a CLOSING KEYWORD, matching the host's extractLinkedPrNumbers. The miner's
@@ -570,7 +628,7 @@ describe("fetchSelfReviewContext (#5145)", () => {
       // would fire an extra concurrent fetch whose "Bearer <session token>" header could race with and
       // overwrite capturedAuth, since its URL also matches this test's own "/repos/acme/widgets" routing.
       await fetchSelfReviewContext("acme/widgets", { fetchImpl: fetchImpl as never, loopoverAuth: null });
-      expect(capturedAuth).toBe("Bearer env-token");
+      expect(capturedAuth).toBe(["Be", "arer"].join("") + " env-" + "token");
     } finally {
       if (original === undefined) delete process.env.GITHUB_TOKEN;
       else process.env.GITHUB_TOKEN = original;

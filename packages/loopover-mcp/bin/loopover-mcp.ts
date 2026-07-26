@@ -5462,6 +5462,12 @@ Use --profile <name> or LOOPOVER_PROFILE to run login, logout, whoami, status, d
 function parseOptions(args: any) {
   const options: any = {};
   const repeatable = new Set(["label", "issue", "id", "commit", "changedFile", "test", "testFile", "validation", "validationCommand", "validationStatus", "validationSummary", "validationDuration", "scenarioNote"]);
+  // Boolean flags that must parse their inline `--key=value` form to a REAL boolean (#8689): the
+  // generic inline-equals handler below stores the raw string, so `--json=false` became the truthy
+  // string "false" and ENABLED JSON output — the opposite of what the flag says. Parsing here keeps
+  // every consumer's check an explicit boolean comparison (the `--refresh`/`--help` `=== true`
+  // convention already established at every other boolean flag's consumer, e.g. line ~4033).
+  const booleanFlags = new Set(["json", "exitCode"]);
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--json") {
@@ -5484,6 +5490,10 @@ function parseOptions(args: any) {
       const inlineKey = camel(arg.slice(2, equals));
       const inlineValue = arg.slice(equals + 1);
       if (repeatable.has(inlineKey)) options[inlineKey] = [...(options[inlineKey] ?? []), inlineValue];
+      // Only the exact strings "false" and "" disable a boolean flag (`--json=false`,
+      // `--exit-code=false`); any other value (`--json=true`, bare `--json` elsewhere) keeps the
+      // flag's previous enabling behavior, so ONLY the `=false` form changes meaning.
+      else if (booleanFlags.has(inlineKey)) options[inlineKey] = inlineValue !== "false" && inlineValue !== "";
       else options[inlineKey] = inlineValue;
       continue;
     }
@@ -5937,7 +5947,9 @@ async function doctor(options: any) {
   }
   // Opt-in: let `doctor` gate CI/pre-commit by exiting non-zero when a check fails. The default
   // stays exit 0 so existing scripts that ignore the exit code keep working.
-  return options.exitCode && payload.status === "needs_attention" ? 1 : 0;
+  // Explicit `=== true` (the `--refresh`/`--help` convention): parseOptions maps `--exit-code=false`
+  // to boolean false, which must keep the exit code at 0 even when checks need attention (#8689).
+  return options.exitCode === true && payload.status === "needs_attention" ? 1 : 0;
 }
 
 function doctorStatus(checks: any) {

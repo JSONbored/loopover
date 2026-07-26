@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import {
   acquireWorktree,
+  reclaimOrphanedAllocations,
   closeDefaultWorktreeAllocator,
   isProcessAlive,
   openWorktreeAllocator,
@@ -229,5 +230,33 @@ describe("loopover-miner worktree allocator scaffolding (#4298)", () => {
       expect(() => allocator.purgeByRepo("bad")).toThrow("invalid_repo_full_name");
       expect(() => allocator.purgeByRepo("../widgets")).toThrow("invalid_repo_full_name");
     });
+  });
+});
+
+describe("reclaim compare-and-set (#8918 follow-up: the duplicate-path race)", () => {
+  it("a stale probe snapshot must NOT free a slot a peer re-acquired between probe and apply", () => {
+    const dir = mkdtempSync(join(tmpdir(), "worktree-cas-"));
+    const dbPath = join(dir, "worktree-allocator.sqlite3");
+    const nowMs = Date.parse("2026-01-02T00:00:00.000Z");
+    const allocator = openWorktreeAllocator({ dbPath, worktreeBaseDir: join(dir, "wt"), maxConcurrency: 2, maxLeaseMs: 100, nowMs });
+    // An ancient lease: genuinely orphaned (a day past a 100ms lease) at probe time.
+    const db = new DatabaseSync(dbPath);
+    db.prepare("UPDATE worktree_slots SET status='active', attempt_id='ghost', owner_pid=999999, owner_host='other-host', allocated_at='2026-01-01T00:00:00.000Z' WHERE slot_index = 0").run();
+    const staleProbe = db.prepare("SELECT slot_index, owner_pid, owner_host, allocated_at FROM worktree_slots WHERE status = 'active'").all() as never;
+    // Between the probe and the apply, a PEER frees and re-acquires slot 0 — a fresh, live lease.
+    db.prepare("UPDATE worktree_slots SET attempt_id='live-peer', owner_pid=4242, owner_host='peer-host', allocated_at='2026-01-01T23:59:59.999Z' WHERE slot_index = 0").run();
+    // Applying the STALE snapshot must be a no-op: the lease evidence no longer matches.
+    reclaimOrphanedAllocations(db, nowMs, 100, "this-host", staleProbe);
+    const row = db.prepare("SELECT status, attempt_id FROM worktree_slots WHERE slot_index = 0").get() as { status: string; attempt_id: string };
+    expect(row.status).toBe("active");
+    expect(row.attempt_id).toBe("live-peer");
+    // And when the CURRENT row really is the aged-out lease (probe evidence matches), it frees.
+    db.prepare("UPDATE worktree_slots SET allocated_at='2026-01-01T00:00:00.000Z' WHERE slot_index = 0").run();
+    reclaimOrphanedAllocations(db, nowMs, 100, "this-host");
+    const freed = db.prepare("SELECT status FROM worktree_slots WHERE slot_index = 0").get() as { status: string };
+    expect(freed.status).toBe("free");
+    db.close();
+    allocator.close();
+    rmSync(dir, { recursive: true, force: true });
   });
 });

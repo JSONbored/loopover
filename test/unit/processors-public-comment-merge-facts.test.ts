@@ -174,6 +174,12 @@ describe("derivePublicCommentMergeFacts() — neverClosed (#8/#9, #4607)", () =>
     expect(facts({ authorLogin: "github-actions[bot]" }).neverClosed).toBe(true);
   });
 
+  it("is true for a PROTECTED_AUTOCLOSE_AUTHORS_EXTRA bot only when env is passed (#8645)", () => {
+    const env = { PROTECTED_AUTOCLOSE_AUTHORS_EXTRA: "mergify[bot]" } as Env;
+    expect(facts({ authorLogin: "mergify[bot]" }).neverClosed).toBe(false);
+    expect(facts({ authorLogin: "mergify[bot]", env }).neverClosed).toBe(true);
+  });
+
   it("is false for an ordinary contributor", () => {
     expect(facts({ authorLogin: "contributor" }).neverClosed).toBe(false);
   });

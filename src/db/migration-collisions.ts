@@ -26,7 +26,6 @@ export const KNOWN_MIGRATION_DUPLICATES: ReadonlyMap<number, ReadonlySet<string>
   [15, new Set(["0015_github_agent_command_feedback.sql", "0015_product_usage_events.sql"])],
   [17, new Set(["0017_agent_recommendation_outcomes.sql", "0017_product_usage_role_retention_rollups.sql"])],
   [74, new Set(["0074_ai_review_cache.sql", "0074_orb_self_enrollment_disabled.sql"])],
-  [90, new Set(["0090_contributor_cap_label.sql", "0090_pull_request_detail_sync_head_sha.sql"])],
   [156, new Set(["0156_draft_pr_close_policy.sql", "0156_pull_request_screenshot_table_presence_satisfied.sql"])],
 ]);
 

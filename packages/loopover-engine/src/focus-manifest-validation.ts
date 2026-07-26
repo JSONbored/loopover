@@ -16,6 +16,8 @@ import {
   activeReviewReconciliationConfigToJson,
   loopEscalationConfigToJson,
   federatedIntelligenceConfigToJson,
+  experimentalConfigToJson,
+  fairnessAnalyticsConfigToJson,
   settingsOverrideToJson,
   type FocusManifest,
   type FocusManifestSource,
@@ -103,6 +105,10 @@ function focusManifestToNormalizedJson(manifest: FocusManifest): Record<string, 
   if (loopEscalation !== null) normalized.loopEscalation = loopEscalation;
   const federatedIntelligence = federatedIntelligenceConfigToJson(manifest.federatedIntelligence);
   if (federatedIntelligence !== null) normalized.federatedIntelligence = federatedIntelligence;
+  const experimental = experimentalConfigToJson(manifest.experimental);
+  if (experimental !== null) normalized.experimental = experimental;
+  const fairnessAnalytics = fairnessAnalyticsConfigToJson(manifest.fairnessAnalytics);
+  if (fairnessAnalytics !== null) normalized.fairnessAnalytics = fairnessAnalytics;
 
   return normalized;
 }

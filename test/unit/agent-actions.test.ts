@@ -2522,12 +2522,29 @@ describe("screenshot-table gate short-circuit (#2006)", () => {
     expect(classes(planAgentMaintenanceActions(missingTable({ autonomy: { close: "auto" } })))).toEqual(["close"]);
   });
 
-  it("is exempt from the close-precision breaker (no closeKind: 'heuristic', mirroring blacklist/contributor-cap/review-nag)", () => {
+  // #9086 POLICY REVERSAL. This previously asserted that a screenshot-table close was EXEMPT from the
+  // close-precision breaker, on the same "deterministic ⇒ zero-hallucination" reasoning as blacklist and
+  // contributor_cap. That reasoning does not transfer: those two read facts about an ACCOUNT, whereas this
+  // gate's "determinism" is a regex heuristic over free-text markdown — and it is our single top close reason
+  // all-time. A deterministic rule can still be systematically wrong, which is exactly what the breaker exists
+  // to catch. Identity-based closes keep their exemption; content-inspection ones no longer do.
+  it("#9086: is subject to the close-precision breaker (content inspection, not identity)", () => {
     const plan = planAgentMaintenanceActions(missingTable());
     const closeAction = plan.find((a) => a.actionClass === "close");
+    expect(closeAction?.closeKind).toBe("screenshot_table");
     const downgraded = downgradeCloseToHold(plan, true, {});
-    expect(downgraded).toEqual(plan);
-    expect(closeAction?.closeKind).not.toBe("heuristic");
+    // The close is downgraded to a hold rather than executing while the breaker is engaged.
+    expect(downgraded.some((a) => a.actionClass === "close")).toBe(false);
+  });
+
+  it("#9086: identity-based closes (blacklist, contributor_cap) KEEP their breaker exemption", () => {
+    for (const kind of ["blacklist", "contributor_cap"] as const) {
+      const plan: PlannedAgentAction[] = [
+        { actionClass: "close", autonomyClass: "close", requiresApproval: false, reason: `${kind} close`, closeKind: kind },
+      ];
+      // Unchanged: a fact about the ACCOUNT, so the precision breaker has nothing to add.
+      expect(downgradeCloseToHold(plan, true, {})).toEqual(plan);
+    }
   });
 
   it("is independent of the blacklist short-circuit — a matched blacklist entry still wins when both are present", () => {

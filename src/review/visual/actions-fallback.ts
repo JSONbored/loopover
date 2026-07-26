@@ -1,3 +1,4 @@
+import type { AgentActionMode } from "../../settings/agent-execution";
 // GitHub-Actions build-and-serve FALLBACK for a repo with no CI-produced preview deploy (#4112, part of the
 // #3607 visual-capture convergence epic).
 //
@@ -91,7 +92,17 @@ export async function dispatchVisualCaptureFallback(params: {
   headSha: string;
   routes: readonly string[];
   rateLimitAdmissionKey?: GitHubRateLimitAdmissionKey | undefined;
+  /** #9067: the pass's resolved AgentActionMode. See the refusal below. */
+  mode?: AgentActionMode | undefined;
 }): Promise<boolean> {
+  // #9067: this is a real GitHub WRITE -- it starts an Actions run and burns CI minutes in the target repo --
+  // issued through raw timeoutFetch, so it never passes makeInstallationOctokit's request hook, the structural
+  // check that suppresses every OTHER installation mutation when mode !== "live". runVisualCapture only
+  // short-circuited on `paused`, so under `dry_run` this fired for real, contradicting the documented dry-run
+  // contract ("suppresses the terminal GitHub-side write only"). Refusing HERE rather than at the call site
+  // makes the guarantee structural: a future caller cannot reintroduce the bypass by forgetting a check,
+  // because an absent mode is treated as non-live.
+  if (params.mode !== "live") return false;
   const base = `https://api.github.com/repos/${params.repo.owner}/${params.repo.repo}`;
   try {
     const headers = new Headers();

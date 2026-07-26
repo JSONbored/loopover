@@ -568,9 +568,25 @@ export function resolveEffectiveSettings(
     unlinkedIssueGuardrail: unlinkedIssueGuardrailOverride,
     screenshotTableGate: screenshotTableGateOverride,
     advisoryAiRouting: advisoryAiRoutingOverride,
+    // #9049: the two KILL-SWITCH flags are pulled out of the wholesale spread and merged as RATCHETS below --
+    // config-as-code may TIGHTEN safety but must never LOOSEN it.
+    agentPaused: agentPausedOverride,
+    agentDryRun: agentDryRunOverride,
     ...restManifestSettings
   } = manifest.settings;
   const effective: RepositorySettings = { ...dbSettings, ...restManifestSettings };
+  // #9049: verified live -- the global default private-config layer carried `agentDryRun: false`, and because
+  // the manifest wins a plain spread, that silently discarded `agent_dry_run=1` on EVERY read for EVERY repo.
+  // An operator flipping dry-run from the dashboard, `PUT /settings`, `loopover-mcp maintain`, or the
+  // `loopover_set_agent_dry_run` MCP tool got a success message while ORB kept making real GitHub writes --
+  // the tool writes the raw row back and never re-resolves effective settings, so nothing surfaced the
+  // discard. A kill switch that reports success and does nothing is worse than one that does not exist.
+  //
+  // Both flags are therefore RATCHETS: `true` from EITHER layer wins. A repo's `.loopover.yml` can still pause
+  // or dry-run itself (tightening), which is the whole point of config-as-code here; it simply cannot un-pause
+  // or un-dry-run what an operator set in the DB. Every other setting keeps manifest-wins semantics unchanged.
+  effective.agentPaused = dbSettings.agentPaused === true || agentPausedOverride === true;
+  effective.agentDryRun = dbSettings.agentDryRun === true || agentDryRunOverride === true;
   if (typeLabelsOverride !== undefined) {
     // `null` is parseFocusManifest's distinct signal for a literal `typeLabels: {}` -- a deliberate
     // "zero configured categories for this repo" that REPLACES the DB value wholesale, rather than a

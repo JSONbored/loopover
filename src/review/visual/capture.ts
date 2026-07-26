@@ -1,3 +1,4 @@
+import type { AgentActionMode } from "../../settings/agent-execution";
 // Realtime visual capture (reviewbot→loopover convergence — visual port). taopedia-style before/after.
 //
 // before = production (review.visual.production_url, falling back to the global PUBLIC_SITE_ORIGIN env var);
@@ -236,6 +237,13 @@ export interface CaptureTarget {
    *  trusted ref rather than the PR's own branch. Absent ⇒ the fallback is never dispatched (fail-safe: no
    *  ref to pin to means no dispatch, not a guess at "main"). */
   defaultBranchRef?: string | undefined;
+  /** #9067: the pass's resolved AgentActionMode. REQUIRED to dispatch the actions_fallback workflow -- that
+   *  dispatch is a real GitHub WRITE (it starts an Actions run and burns CI minutes in the target repo), but
+   *  it goes out via raw timeoutFetch and so bypasses makeInstallationOctokit's mutation-suppression hook,
+   *  which is the structural invariant every other installation write relies on. runVisualCapture only ever
+   *  short-circuited on `paused`, so under `dry_run` this fired for real -- directly contradicting the
+   *  documented dry-run contract. Absent ⇒ treated as non-live and the dispatch never fires (fail-safe). */
+  mode?: AgentActionMode | undefined;
 }
 
 function joinUrl(base: string, path: string): string {
@@ -754,6 +762,8 @@ export async function buildCapture(
         headSha: target.headSha,
         routes,
         rateLimitAdmissionKey,
+        // #9067: threaded so the writer itself can refuse under dry_run/paused (see its own doc comment).
+        mode: target.mode,
       });
       if (dispatched) await markFallbackDispatched(env, target.headSha);
     }

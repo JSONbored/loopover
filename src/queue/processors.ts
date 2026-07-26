@@ -11573,6 +11573,8 @@ async function maybePublishPrPublicSurface(
             // Pins the actions_fallback dispatch (#4112) to a trusted ref -- see buildCapture. Absent (no
             // stored default branch yet) ⇒ that dispatch just never fires, same as leaving it unconfigured.
             ...(repo?.defaultBranch ? { defaultBranchRef: repo.defaultBranch } : {}),
+            // #9067: the actions_fallback dispatch is a real GitHub write and must obey dry_run/paused.
+            mode,
           };
           // review.visual.enabled (#4083): a config-as-code override layered on top of the screenshotsAllowed
           // env-var gate above, not a replacement for it. Unset/true ⇒ defer to that gate's decision (buildCapture

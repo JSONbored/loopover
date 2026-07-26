@@ -27,6 +27,9 @@ describe("gateCheckPolicy — #8176 global close-confidence default-override", (
     expect(gateCheckPolicy(settings(), null, undefined, null, undefined, undefined, 0.9).aiReviewCloseConfidence).toBe(0.9);
     // Explicit per-repo setting: the override must NEVER displace it.
     expect(gateCheckPolicy(settings({ aiReviewCloseConfidence: 0.97 }), null, undefined, null, undefined, undefined, 0.9).aiReviewCloseConfidence).toBe(0.97);
+    // #8962: the salvageability floor passes through verbatim; absent stays null (axis off).
+    expect(gateCheckPolicy(settings({ aiReviewSalvageabilityMinScore: 60 }), null, undefined, null, undefined, undefined, 0.9).aiReviewSalvageabilityMinScore).toBe(60);
+    expect(gateCheckPolicy(settings(), null, undefined, null, undefined, undefined, 0.9).aiReviewSalvageabilityMinScore).toBeNull();
     // Neither: null, so advisory.ts applies its shipped default.
     expect(gateCheckPolicy(settings(), null, undefined, null, undefined, undefined, null).aiReviewCloseConfidence).toBeNull();
     // #8849: the provenance-carrying shape — a calibrated λ̂ sets the floor AND flags its source; an

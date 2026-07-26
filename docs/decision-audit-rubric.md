@@ -34,6 +34,9 @@ would have made, given only what was knowable at decision time?**
 - `stale_signal` — decided on out-of-date CI/conflict/issue state.
 - `scope_misread` — misjudged linked-issue scope or requirements.
 - `policy_misapplied` — an enforcement rule fired on a case it should not cover.
+- `salvageable_close` — the defect was real but the PR was salvageable (fixable class, responsive author);
+  closing denied a contribution a hold-with-guidance would have landed (#8962). Additive category — the
+  correct/incorrect question is unchanged, so rubric version 1 labels remain comparable.
 - `other` — anything else; describe in the adjudication notes if used.
 
 ## Workflow

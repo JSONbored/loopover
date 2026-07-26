@@ -785,6 +785,7 @@ export const RepositorySettingsSchema = z
     aiReviewAllAuthors: z.boolean(),
     aiReviewConfirmedContributorsOnly: z.boolean().nullable().optional(),
     aiReviewCloseConfidence: z.number().nullable().optional(),
+    aiReviewSalvageabilityMinScore: z.number().nullable().optional(),
     aiReviewLowConfidenceDisposition: z.enum(["one_shot", "hold_for_review", "advisory_only"]).nullable().optional(),
     aiReviewCombine: z.enum(["single", "consensus", "synthesis"]).nullable().optional(),
     aiReviewOnMerge: z.enum(["either", "both"]).nullable().optional(),

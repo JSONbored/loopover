@@ -224,6 +224,25 @@ describe("MinerGoalSpec parser (#2301)", () => {
     expect(arrayValue.warnings.join(" ")).toMatch(/selfPlagiarism.*must be a mapping/i);
   });
 
+  it("warns and falls back for an out-of-range or non-finite similarityThreshold instead of silently clamping (#8862)", () => {
+    // A numeric value outside [0, 1] used to fall through to self-plagiarism.ts's Math.min(1, Math.max(0, value)),
+    // silently clamping (e.g. 5 -> 1) with zero warnings and the field marked "present" -- unlike every sibling
+    // numeric normalizer. Each of these must now warn AND fall back to the documented default of 0.85.
+    for (const badThreshold of [5, -1, Number.POSITIVE_INFINITY, Number.NaN]) {
+      const parsed = parseMinerGoalSpec({
+        wantedPaths: ["src/**"],
+        selfPlagiarism: { similarityThreshold: badThreshold },
+      });
+      expect(parsed.spec.selfPlagiarism).toEqual({ similarityThreshold: 0.85 });
+      expect(parsed.warnings.join(" ")).toMatch(/selfPlagiarism\.similarityThreshold.*must be a number in \[0, 1\]/i);
+    }
+
+    // An in-range value is still accepted verbatim with no warning.
+    const valid = parseMinerGoalSpec({ selfPlagiarism: { similarityThreshold: 0.42 } });
+    expect(valid.spec.selfPlagiarism).toEqual({ similarityThreshold: 0.42 });
+    expect(valid.warnings.join(" ")).not.toMatch(/similarityThreshold/i);
+  });
+
   it("a killSwitch policy alone (all other fields default) marks the spec present", () => {
     const parsed = parseMinerGoalSpec({ killSwitch: { paused: true } });
     expect(parsed.present).toBe(true);

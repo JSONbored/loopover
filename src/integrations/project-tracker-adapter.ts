@@ -55,6 +55,11 @@ type GitHubMilestone = {
 // (mirrors src/github/comments.ts's COMMENT_SEARCH_PAGE_LIMIT): 3 pages * 100 = 300 items is generously above
 // any realistic open-milestone/open-project/PR-comment count, while still bounding worst-case API calls.
 const GITHUB_LIST_PAGE_LIMIT = 3;
+// #8889: the comment-MARKER search specifically must match comments.ts's COMMENT_SEARCH_PAGE_LIMIT, which was
+// bumped 3 -> 10 (#7232, commit 18fe74628) because a >300-comment thread let the marker hide and caused a
+// duplicate post. The milestone/project LIST searches keep the 3-page bound; only marker detection needs the
+// deeper scan to stay double-post-safe.
+const COMMENT_MARKER_SEARCH_PAGE_LIMIT = 10;
 
 /** A positive-integer milestone/issue number as a string, or null if `value` isn't one. Guards against a
  *  malformed/forged `milestoneId` reaching GitHub's PATCH as `NaN` or a negative/zero number. */
@@ -399,7 +404,7 @@ export async function maybeSuggestProjectOrMilestoneMatch(
   const octokit = makeInstallationOctokit(ctx.env, token, "live", githubRateLimitAdmissionKeyForInstallation(ctx.installationId));
   const botLogin = `${ctx.env.GITHUB_APP_SLUG}[bot]`;
   let alreadyPosted = false;
-  for (let page = 1; page <= GITHUB_LIST_PAGE_LIMIT && !alreadyPosted; page += 1) {
+  for (let page = 1; page <= COMMENT_MARKER_SEARCH_PAGE_LIMIT && !alreadyPosted; page += 1) {
     const existing = await octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}/comments", {
       owner,
       repo,

@@ -9,8 +9,9 @@ test("isMinerRepoTargetable respects minerEnabled opt-out", () => {
   assert.equal(isMinerRepoTargetable({ ...DEFAULT_MINER_GOAL_SPEC, minerEnabled: false }), false);
 });
 
-test("computeMinerGoalLaneFit returns 1 when no preferred labels are configured", () => {
-  assert.equal(computeMinerGoalLaneFit({ labels: ["docs"] }, DEFAULT_MINER_GOAL_SPEC), 1);
+test("computeMinerGoalLaneFit returns 0.5 when no preferred labels are configured (#8870)", () => {
+  // Aligns with computeLaneFit's documented neutral (goal-model.ts): no preference → 0.5, never 0 or 1.
+  assert.equal(computeMinerGoalLaneFit({ labels: ["docs"] }, DEFAULT_MINER_GOAL_SPEC), 0.5);
 });
 
 test("computeMinerGoalLaneFit matches preferred labels case-insensitively", () => {
@@ -39,7 +40,7 @@ test("computeMinerGoalLaneFit applies issueDiscoveryPolicy modifiers", () => {
 test("computeMinerGoalLaneFit returns 0 when a blocked label matches case-insensitively", () => {
   const spec = { ...DEFAULT_MINER_GOAL_SPEC, blockedLabels: ["wontfix"] };
   assert.equal(computeMinerGoalLaneFit({ labels: ["WontFix"] }, spec), 0);
-  assert.equal(computeMinerGoalLaneFit({ labels: ["bug"] }, spec), 1);
+  assert.equal(computeMinerGoalLaneFit({ labels: ["bug"] }, spec), 0.5);
 });
 
 test("computeMinerGoalLaneFit ignores malformed label entries safely", () => {

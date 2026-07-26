@@ -36,7 +36,8 @@ export function computeMinerGoalLaneFit(
 
   let score: number;
   if (preferred.length === 0) {
-    score = 1;
+    // Match computeLaneFit's documented neutral: no preference configured → fixed 0.5, never 0 or 1 (#8870).
+    score = 0.5;
   } else {
     const preferredMatch = preferred.some((want) => issueLabels.includes(want));
     if (preferredMatch) {

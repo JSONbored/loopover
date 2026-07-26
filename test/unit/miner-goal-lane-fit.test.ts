@@ -89,7 +89,14 @@ describe("computeMinerGoalLaneFit", () => {
     expect(computeMinerGoalLaneFit({ labels: ["feature"] }, spec)).toBe(0.25);
   });
 
+  it("returns 0.5 when no preferred labels are configured (#8870)", () => {
+    // Aligns with computeLaneFit's documented neutral: no preference → 0.5, never 0 or 1.
+    expect(computeMinerGoalLaneFit({ labels: ["docs"] }, DEFAULT_MINER_GOAL_SPEC)).toBe(0.5);
+    expect(computeMetadataLaneFit({ labels: ["docs"] }, DEFAULT_MINER_GOAL_SPEC)).toBe(0.5);
+  });
+
   it("scores normally when no blocked labels are configured", () => {
-    expect(computeMinerGoalLaneFit({ labels: ["docs"] }, DEFAULT_MINER_GOAL_SPEC)).toBe(1);
+    // No preferredLabels → neutral 0.5, matching computeLaneFit (#8870).
+    expect(computeMinerGoalLaneFit({ labels: ["docs"] }, DEFAULT_MINER_GOAL_SPEC)).toBe(0.5);
   });
 });

@@ -364,6 +364,13 @@ describe("queue processors", () => {
     // two-pass test), so the disposition planner's own audit record is the observable proof instead.
     const close = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? order by rowid desc limit 1").bind("agent.action.close").first<{ outcome: string; detail: string }>();
     expect(close?.outcome).toBe("completed");
+    // #8834: an AI-judgment-shaped decision persists its confidence + prompt-template commitment in the
+    // decision record — the row every future calibration read keys on.
+    const record = await env.DB.prepare("select record_json from decision_records where repo_full_name = 'owner/agent-repo' and pull_number = 9 order by created_at desc limit 1").first<{ record_json: string }>();
+    const parsedRecord = JSON.parse(record!.record_json) as { aiConfidence: number | null; promptDigest: string | null; schemaVersion: string };
+    expect(parsedRecord.schemaVersion).toBe("2");
+    expect(parsedRecord.aiConfidence).toBe(0.3); // the cached sub-floor defect's calibrated confidence
+    expect(typeof parsedRecord.promptDigest).toBe("string");
   });
 
   it("posts the 🟪 reviewing placeholder before the AI review runs, then overwrites it with the verdict (#reviewing-placeholder)", async () => {

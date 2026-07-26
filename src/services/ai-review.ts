@@ -72,7 +72,9 @@ export const SCOPE_MISMATCH_ASSESSMENT =
  *  live reclassifiable case (PR #8735) carried a ~300-char rationale naming specific call sites. */
 export const SCOPE_RECLASSIFY_MIN_RATIONALE_CHARS = 40;
 
-const REVIEW_SYSTEM_PROMPT = [
+// Exported for the decision record (#8834): the template commitment digest is computed over this constant
+// plus REVIEW_PROMPT_VERSION, so a silent template edit changes every subsequent record digest.
+export const REVIEW_SYSTEM_PROMPT = [
   "You are a senior open-source maintainer giving a FOCUSED, high-signal code review of a single pull request diff.",
   "Read each meaningful hunk and review like a careful human; judge ONLY the diff and the context provided.",
   "Respond with ONLY a JSON object of this exact shape (no prose, no code fence):",

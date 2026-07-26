@@ -2,12 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../../src/orb/relay", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/orb/relay")>();
-  return { ...actual, pruneRelayPending: vi.fn(actual.pruneRelayPending) };
+  return { ...actual, pruneRelayPending: vi.fn(actual.pruneRelayPending), enqueueConfigPushRelay: vi.fn(actual.enqueueConfigPushRelay) };
 });
 
 import { createApp } from "../../src/api/routes";
 import { createSessionForGitHubUser } from "../../src/auth/security";
-import { pruneRelayPending } from "../../src/orb/relay";
+import { enqueueConfigPushRelay, pruneRelayPending } from "../../src/orb/relay";
 import { createTestEnv } from "../helpers/d1";
 
 // #7522 (piece 1 of #4902's 3-piece design): the config-push write path. Mirrors routes-kill-switch.test.ts's
@@ -63,7 +63,7 @@ describe("config-push operator route (#7522)", () => {
       env,
     );
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ ok: true, pushId: "push-1", installationCount: 2 });
+    await expect(res.json()).resolves.toEqual({ ok: true, pushId: "push-1", installationCount: 2, succeededCount: 2, failedInstallationIds: [] });
 
     const rows = await relayRows(env);
     expect(rows).toHaveLength(2);
@@ -164,6 +164,58 @@ describe("config-push operator route (#7522)", () => {
       .first()) as { actor: string; outcome: string; metadata_json: string } | null;
     expect(audit?.actor).toBe("jsonbored");
     expect(audit?.outcome).toBe("completed");
-    expect(JSON.parse(audit?.metadata_json ?? "{}")).toEqual({ installationCount: 1, capability: null });
+    expect(JSON.parse(audit?.metadata_json ?? "{}")).toEqual({ installationCount: 1, succeededCount: 1, failedCount: 0, capability: null });
+  });
+
+  it("isolates a per-installation failure (#8880): the other targets still enqueue and the response + audit report the partial failure", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    const relay = await vi.importActual<typeof import("../../src/orb/relay")>("../../src/orb/relay");
+    // One target's DB write throws; every other target must still land, and the failure must be audited, not
+    // swallowed. Restore the real implementation afterwards so later tests keep exercising the genuine enqueue.
+    vi.mocked(enqueueConfigPushRelay).mockImplementation(async (e, installationId, p) => {
+      if (installationId === 222) throw new Error("simulated D1 write failure for 222");
+      await relay.enqueueConfigPushRelay(e, installationId, p);
+    });
+    try {
+      const res = await app.request(
+        "/v1/app/fleet/config-push",
+        {
+          method: "POST",
+          headers: apiHeaders(env),
+          body: JSON.stringify({ installationIds: [111, 222, 333], pushId: "push-fail", message: "x", capability: "y" }),
+        },
+        env,
+      );
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({
+        ok: true,
+        pushId: "push-fail",
+        installationCount: 3,
+        succeededCount: 2,
+        failedInstallationIds: [222],
+      });
+
+      // The two healthy targets still landed their rows -- one bad installation didn't sink the batch.
+      const rows = await relayRows(env);
+      expect(rows.map((r) => r.installation_id)).toEqual([111, 333]);
+
+      // The failing target was audited per-installation rather than silently dropped.
+      const failAudit = (await env.DB
+        .prepare("select target_key, outcome, metadata_json from audit_events where event_type = 'operator.config_push_target_failed'")
+        .first()) as { target_key: string; outcome: string; metadata_json: string } | null;
+      expect(failAudit?.outcome).toBe("error");
+      expect(failAudit?.target_key).toBe("config_push#push-fail#222");
+      expect(JSON.parse(failAudit?.metadata_json ?? "{}")).toEqual({ installationId: 222, pushId: "push-fail", message: "simulated D1 write failure for 222" });
+
+      // The whole-push summary audit still fired and reports the partial failure (outcome 'error', counts split).
+      const summary = (await env.DB
+        .prepare("select outcome, metadata_json from audit_events where event_type = 'operator.config_push_enqueued'")
+        .first()) as { outcome: string; metadata_json: string } | null;
+      expect(summary?.outcome).toBe("error");
+      expect(JSON.parse(summary?.metadata_json ?? "{}")).toEqual({ installationCount: 3, succeededCount: 2, failedCount: 1, capability: "y" });
+    } finally {
+      vi.mocked(enqueueConfigPushRelay).mockImplementation(relay.enqueueConfigPushRelay);
+    }
   });
 });

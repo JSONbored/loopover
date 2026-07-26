@@ -179,6 +179,72 @@ describe("small adapters and normalizers", () => {
     expect(profile.topLanguages).toContain("Go");
   });
 
+  it("REGRESSION (#8891): a repos-list JSON-parse failure keeps the fetched user and only clears topLanguages", async () => {
+    // HTTP non-ok already degraded this way; a truncated/invalid JSON body after reposResponse.ok previously
+    // discarded the whole profile as source: "unavailable".
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/users/parsefail")) {
+        return Response.json({
+          login: "parsefail",
+          name: "Parse Fail",
+          bio: "still here",
+          company: "Acme",
+          public_repos: 4,
+          followers: 2,
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-02-01T00:00:00Z",
+        });
+      }
+      if (url.includes("/users/parsefail/repos?")) {
+        return new Response("{not-json", {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const profile = await fetchPublicContributorProfile("parsefail");
+    expect(profile).toMatchObject({
+      login: "parsefail",
+      name: "Parse Fail",
+      bio: "still here",
+      company: "Acme",
+      publicRepos: 4,
+      followers: 2,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-02-01T00:00:00Z",
+      topLanguages: [],
+      source: "github",
+    });
+    expect(profile.source).not.toBe("unavailable");
+  });
+
+  it("stops paginating when a later repos page returns unparseable JSON (#8891)", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/users/pageparse")) return Response.json({ login: "pageparse", public_repos: 200 });
+      if (url.includes("/pageparse/repos?") && !url.includes("page=2")) {
+        return Response.json(
+          Array.from({ length: 100 }, () => ({ language: "Go" })),
+          { headers: { link: '<https://api.github.com/users/pageparse/repos?page=2>; rel="next"' } },
+        );
+      }
+      if (url.includes("/pageparse/repos?") && url.includes("page=2")) {
+        return new Response("{truncated", {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const profile = await fetchPublicContributorProfile("pageparse");
+    expect(profile.source).toBe("github");
+    expect(profile.topLanguages).toContain("Go");
+  });
+
   it("authenticates public profile requests with GITHUB_PUBLIC_TOKEN to lift the rate ceiling (#790)", async () => {
     const authHeaders: Array<string | null> = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {

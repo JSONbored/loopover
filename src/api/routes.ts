@@ -155,6 +155,7 @@ import { requestAprRepoTransfer } from "../orb/apr-repo-transfer";
 import { handleOrbIngest, readOrbIngestBody } from "../orb/ingest";
 import { handleAmsIngest } from "../ams/ingest";
 import { handleOrbWebhook } from "../orb/webhook";
+import { backfillOrbInstallations } from "../orb/installations";
 import { handleOrbOAuthCallback } from "../orb/oauth";
 import {
   brokerOrbToken,
@@ -1986,15 +1987,44 @@ export function createApp() {
     // longer prunes itself (see its own doc comment) precisely so a 500-installation fan-out below can't turn
     // into 500 redundant global TTL-prune scans/deletes against the shared orb_relay_pending table.
     await pruneRelayPending(c.env);
-    await Promise.all(installationIds.map((installationId) => enqueueConfigPushRelay(c.env, installationId, payload)));
+    // #8880: isolate each per-installation enqueue. A bare Promise.all let one target's throw abort the whole
+    // fan-out -- the audit event AND the response for the other ~499 installations were silently dropped, and
+    // there was no route-level try/catch to salvage them. Catch each target's failure inside its own fan-out
+    // task (mirroring pollPendingAprRepoTransfers' per-item isolation in src/orb/apr-repo-transfer.ts) so one
+    // bad row can't sink the batch, audit each failure so it is never silently swallowed, and still report the
+    // successful targets plus the partial failure to the caller.
+    const settled = await Promise.all(
+      installationIds.map(async (installationId): Promise<{ installationId: number; error?: string }> => {
+        try {
+          await enqueueConfigPushRelay(c.env, installationId, payload);
+          return { installationId };
+        } catch (error) {
+          return { installationId, error: errorMessage(error) };
+        }
+      }),
+    );
+    const failedInstallationIds: number[] = [];
+    for (const result of settled) {
+      if (result.error !== undefined) {
+        failedInstallationIds.push(result.installationId);
+        await recordAuditEvent(c.env, {
+          eventType: "operator.config_push_target_failed",
+          actor: identity.actor,
+          targetKey: `config_push#${parsed.data.pushId}#${result.installationId}`,
+          outcome: "error",
+          metadata: { installationId: result.installationId, pushId: parsed.data.pushId, message: result.error },
+        });
+      }
+    }
+    const succeededCount = installationIds.length - failedInstallationIds.length;
     await recordAuditEvent(c.env, {
       eventType: "operator.config_push_enqueued",
       actor: identity.actor,
       targetKey: `config_push#${parsed.data.pushId}`,
-      outcome: "completed",
-      metadata: { installationCount: installationIds.length, capability: payload.capability ?? null },
+      outcome: failedInstallationIds.length > 0 ? "error" : "completed",
+      metadata: { installationCount: installationIds.length, succeededCount, failedCount: failedInstallationIds.length, capability: payload.capability ?? null },
     });
-    return c.json({ ok: true, pushId: parsed.data.pushId, installationCount: installationIds.length });
+    return c.json({ ok: true, pushId: parsed.data.pushId, installationCount: installationIds.length, succeededCount, failedInstallationIds });
   });
 
   // #5672 post-merge incident report, internal-operator side: same reporting path as the repo-scoped customer
@@ -4510,6 +4540,15 @@ export function createApp() {
     const registered = payload?.registered === false ? 0 : 1;
     await c.env.DB.prepare("UPDATE orb_github_installations SET registered = ?, self_enrollment_disabled = ? WHERE installation_id = ?").bind(registered, registered === 1 ? 0 : 1, installationId).run();
     return c.json({ installationId, registered: registered === 1 });
+  });
+
+  // Operator-triggered reconciliation of the installation registry against GitHub's authoritative install list —
+  // recovers installs whose `installation` webhook fired before the receiver's secret was configured (so they were
+  // never recorded). Upserts each install WITHOUT touching `registered`, so a re-run never re-trusts an opted-out
+  // install and new rows land at registered=0 (the manual-onboarding gate). Bearer-gated by the `/v1/internal/*`
+  // middleware (INTERNAL_JOB_TOKEN). Returns { backfilled } — the count of installs GitHub reported.
+  app.post("/v1/internal/orb/installations/backfill", async (c) => {
+    return c.json(await backfillOrbInstallations(c.env));
   });
 
   // Operator-only: issue a one-time token-broker enrollment secret for a REGISTERED install, to hand to that

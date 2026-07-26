@@ -138,6 +138,25 @@ describe("pg-dialect (#977 SQLite → Postgres)", () => {
     expect(translated).not.toContain("pr_hash=excluded.pr_hash");
   });
 
+  // #8893: src/orb/ingest.ts's hourly ORB export issues this INSERT OR REPLACE; without a
+  // REPLACE_CONFLICT_KEYS entry, translateInsertOr threw "no known conflict key" on the first
+  // orb_reuse_counters write on every self-host Postgres deployment. The statement below is verbatim.
+  it("REGRESSION (#8893): translates the real orb_reuse_counters ingest INSERT OR REPLACE without throwing", () => {
+    const translated = translateInsertOr(
+      `INSERT OR REPLACE INTO orb_reuse_counters (instance_id, day, hits, misses, received_at)
+           VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+    );
+    expect(translated).toContain("INSERT INTO orb_reuse_counters");
+    // PRIMARY KEY (instance_id, day) — migration 0177 — is the conflict target.
+    expect(translated).toContain("ON CONFLICT (instance_id, day) DO UPDATE SET");
+    // Non-key columns are upserted; the key columns are excluded from the SET list.
+    expect(translated).toContain("hits=excluded.hits");
+    expect(translated).toContain("misses=excluded.misses");
+    expect(translated).toContain("received_at=excluded.received_at");
+    expect(translated).not.toContain("instance_id=excluded.instance_id");
+    expect(translated).not.toContain("day=excluded.day");
+  });
+
   it("translateSql composes all passes; translateDdl handles the ISO-now default", () => {
     expect(translateSql("SELECT * FROM t WHERE updated_at > datetime('now', ?)")).toMatch(/\$1/);
     expect(translateDdl("created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))")).toContain("to_char(now() AT TIME ZONE 'UTC'");

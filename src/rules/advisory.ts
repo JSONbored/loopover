@@ -197,6 +197,9 @@ export const CONFIGURED_GATE_BLOCKER_SIGNAL_CODES: readonly string[] = Object.fr
   "manifest_linked_issue_required",
   "self_authored_linked_issue",
   "content_lane_deliverable_missing",
+  // #8761 drift fix: backtest_regression (#8138) was added to the gate switch but never to this list, so its
+  // reversals silently never recorded — exactly the drift this list's own doc comment promises against.
+  "backtest_regression",
   "lockfile_tamper_risk",
   CLA_CONSENT_MISSING_CODE,
   ...GATE_SCORE_SIGNAL_CODES,

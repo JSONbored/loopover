@@ -416,6 +416,22 @@ describe("getSubmitterCadence (D1, fail-safe) (#4514)", () => {
     expect(await getSubmitterCadence({} as Env, "p", undefined)).toEqual({ count: 0, medianGapMs: null });
   });
 
+  it("#9015: queries the LIVE pull_requests ledger, not the frozen review_targets table", async () => {
+    let sql = "";
+    const env = {
+      DB: {
+        prepare: (query: string) => {
+          sql = query;
+          return { bind: () => ({ all: async () => ({ results: [] }) }) };
+        },
+      },
+    } as unknown as Env;
+    await getSubmitterCadence(env, "acme/widgets", "farmer99");
+    expect(sql).toContain("FROM pull_requests");
+    expect(sql).not.toContain("review_targets");
+    expect(sql).toContain("author_login");
+  });
+
   it("derives cadence from the queried created_at timestamps", async () => {
     const t0 = new Date("2026-01-01T00:00:00.000Z").getTime();
     const env = makeCadenceEnv([t0, t0 + 5 * 60_000, t0 + 10 * 60_000, t0 + 15 * 60_000, t0 + 20 * 60_000].map((ms) => new Date(ms).toISOString()));

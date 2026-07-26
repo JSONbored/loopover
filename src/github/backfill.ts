@@ -73,6 +73,7 @@ import {
   shouldPublishReviewCheck,
 } from "../review/check-names";
 import { buildReviewThreadBlocker, unreadableReviewThreadBlocker, type ReviewThreadBlocker } from "../review/review-thread-findings";
+import { GUARDRAIL_UNVERIFIABLE_FILE_COUNT } from "../signals/change-guardrail";
 import { delayUntil, HISTORICAL_BACKFILL_RESERVED_HEADROOM, LOW_REST_RATE_LIMIT_REMAINING, shouldWaitForGitHubRateLimit } from "./rate-limit";
 import {
   githubRateLimitAdmissionKeyForPublicToken,
@@ -2428,7 +2429,17 @@ async function fetchPullRequestFiles(
 ): Promise<GitHubFilePayload[]> {
   incr(PULL_REQUEST_FILES_FETCH_METRIC, { caller });
   const files = await githubPaginatedList<GitHubFilePayload>(env, repoFullName, `/pulls/${pullNumber}/files`, token, admissionKey);
-  if (files) return files;
+  if (files) {
+    // #9017 (GHSA-rjhf-3xrf-j72w): githubPaginatedList stops silently at its page cap and returns a TRUNCATED
+    // list with no flag, so a padded PR could hide a guarded file from the hard guardrail. isGuardrailHit now
+    // fails safe on a list at/above GUARDRAIL_UNVERIFIABLE_FILE_COUNT (the decision that actually protects the
+    // merge); this warning makes the truncation visible to an operator rather than silent, matching what the
+    // GraphQL supplement paths in this file already do at their own caps.
+    if (files.length >= GUARDRAIL_UNVERIFIABLE_FILE_COUNT) {
+      warnings.push(`File list for #${pullNumber} hit the pagination cap (${files.length} files); the changed-file set may be truncated and the PR is held for human review.`);
+    }
+    return files;
+  }
   const fallback = token ? await fetchPullRequestDetailsFromGraphQl(env, repoFullName, pullNumber, token, admissionKey).catch(() => undefined) : undefined;
   if (fallback) return fallback.files;
   warnings.push(`File sync failed for #${pullNumber}: GitHub REST and GraphQL detail fetches failed.`);

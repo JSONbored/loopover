@@ -162,7 +162,26 @@ export function guardrailPathMatches(changedPaths: string[], hardGuardrailGlobs:
  * longer populated), we cannot prove the PR avoids a guarded path, so treat it as a hit. No guardrails
  * configured ⇒ never a hit. Pure.
  */
+/**
+ * #9017 (GHSA-rjhf-3xrf-j72w): the REST file-list walk that produces `changedPaths` stops silently at its own
+ * 10-page x 100-file cap and returns the TRUNCATED list with no truncation flag. `isGuardrailHit` used to fail
+ * safe only on an EMPTY list, so a truncated NON-empty list that happened to omit the guarded file read as
+ * "no guardrail hit" — meaning a PR padded past 1000 files could hide a `.github/workflows/**` or config edit
+ * from the hard guardrail and auto-merge it, i.e. arbitrary CI execution, the highest-value target here.
+ *
+ * A list at or above the cap is therefore treated as UNVERIFIABLE (same posture as the empty list): we cannot
+ * prove the PR avoids a guarded path, so a human decides. This deliberately doubles as the hard changed-file
+ * ceiling the advisory also asks for — a legitimate contributor PR to these repos is never 1000 files, so the
+ * two remedies collapse into one rule with no extra plumbing through the fetch layer (and therefore no way for
+ * a future caller to obtain paths from some other source and forget to pass a truncation flag along).
+ */
+export const GUARDRAIL_UNVERIFIABLE_FILE_COUNT = 1000;
+
 export function isGuardrailHit(changedPaths: string[], hardGuardrailGlobs: string[]): boolean {
   if (hardGuardrailGlobs.length === 0) return false;
-  return changedPaths.length === 0 || changedPathsHittingGuardrail(changedPaths, hardGuardrailGlobs).length > 0;
+  return (
+    changedPaths.length === 0 ||
+    changedPaths.length >= GUARDRAIL_UNVERIFIABLE_FILE_COUNT ||
+    changedPathsHittingGuardrail(changedPaths, hardGuardrailGlobs).length > 0
+  );
 }

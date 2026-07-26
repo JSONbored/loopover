@@ -123,6 +123,9 @@ export function routeClassForPath(path: string): RateLimitClass {
   // Orb telemetry ingest: unauthenticated + write, accepting anonymized batches from untrusted
   // self-host instances. Strict (10/min per IP) caps abuse — legitimate instances export hourly.
   if (path === "/v1/orb/ingest") return "strict";
+  // #9046: the AMS collector is the same shape as the Orb one above (unauthenticated-by-default
+  // write surface, hard body ceiling) but was landing in the looser `normal` class purely by omission.
+  if (path === "/v1/ams/ingest") return "strict";
   if (path === "/v1/auth/session" || path === "/v1/auth/logout") return "normal";
   // GitHub's OAuth Device Authorization Grant (RFC 8628) is polling-by-design: a client polls
   // /device/poll at a server-specified interval (this repo's own default is 5s) for up to the device

@@ -51,3 +51,23 @@ test("null discipline: no fail votes -> null precision; no shared targets -> nul
   assert.equal(overall.splitRate, null);
   assert.equal(overall.agreementRate, 1);
 });
+
+test("computeProviderTrackRecords counts a provider's repeated votes on one target once, latest-vote-wins (#8876)", () => {
+  const cases = [labeled("acme/widgets#1", "confirmed"), labeled("acme/widgets#2", "confirmed")];
+  const signals = [
+    signal("provider-a", "acme/widgets#1", "pass"),
+    signal("provider-a", "acme/widgets#1", "fail"),
+    signal("provider-b", "acme/widgets#1", "fail"),
+    signal("provider-a", "acme/widgets#2", "fail"),
+  ];
+  const records = computeProviderTrackRecords(signals, cases);
+  const aOverall = records.find((r) => r.provider === "provider-a" && r.repoFullName === null)!;
+  // Without dedup this would be signals:3 (the stale pass on #1 counted); deduped it is 2 distinct targets,
+  // #1 resolving to the latest fail so precision stays 1.
+  assert.equal(aOverall.signals, 2);
+  assert.equal(aOverall.decided, 2);
+  assert.equal(aOverall.precision, 1);
+  assert.equal(aOverall.consensusRate, 1);
+  const bOverall = records.find((r) => r.provider === "provider-b" && r.repoFullName === null)!;
+  assert.equal(bOverall.signals, 1);
+});

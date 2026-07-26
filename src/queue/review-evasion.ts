@@ -32,6 +32,36 @@ import { applyModerationEscalationForRule } from "../services/agent-action-execu
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { claimPrActuationLock, PrActuationLockContendedError, releasePrActuationLock } from "./transient-locks";
 import { errorMessage } from "../utils/json";
+
+// #8802: a one-shot-closed PR's ONLY explanation is the guard's comment — a swallowed transient failure
+// (secondary rate limit, 5xx) previously left the contributor with a permanently closed PR and no visible
+// reason, forever: no sweep backfills a missing explanation on an already-closed PR. Bounded in-handler
+// retry (three spaced attempts — a transient window rarely spans them), still fail-safe toward the close
+// (an exhausted retry never blocks or reorders the guard), but the residue is LOUD (level:error reaches
+// the structured-log Sentry forwarder) and every guard's audit row now records `explanationPosted`, so an
+// operator can enumerate any unexplained close directly from the audit trail. Exported for its own tests.
+export const CLOSE_EXPLANATION_RETRY_DELAYS_MS: readonly number[] = [0, 400, 1600];
+
+export async function postCloseExplanation(
+  env: Env,
+  installationId: number,
+  repoFullName: string,
+  prNumber: number,
+  body: string,
+): Promise<boolean> {
+  for (const delayMs of CLOSE_EXPLANATION_RETRY_DELAYS_MS) {
+    if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    const posted = await createIssueComment(env, installationId, repoFullName, prNumber, body)
+      .then(() => true)
+      .catch(() => false);
+    if (posted) return true;
+  }
+  console.log(
+    JSON.stringify({ level: "error", event: "close_explanation_post_failed", repoFullName, prNumber }),
+  );
+  return false;
+}
+
 import type { GitHubWebhookPayload, JsonValue, PullRequestRecord, RepositorySettings } from "../types";
 
 /** Claims the per-PR actuation lock, runs `action`, and always releases it -- the byte-identical
@@ -304,13 +334,13 @@ async function closeDraftDodgeAttemptIfBlocked(
     if (!gate.proceed) return;
 
     const codes = block.blockerCodes.join(", ");
-    await createIssueComment(
+    const explanationPosted = await postCloseExplanation(
       env,
       installationId,
       repoFullName,
       pr.number,
       `Gate verdict stands for this commit — converting to draft does not reset the review. Re-submit a new PR with the issues addressed${codes ? ` (${codes})` : ""}.`,
-    ).catch(() => undefined);
+    );
     // #2260/#8801: the audit outcome must reflect whether the close actually happened on GitHub, not just
     // whether this handler ran. This guard was the ONE sibling in this file still swallowing the close
     // error and unconditionally recording "completed" — a transient 403/5xx left the PR open on GitHub
@@ -327,7 +357,8 @@ async function closeDraftDodgeAttemptIfBlocked(
         closeError === null
           ? `closed draft-dodge attempt by ${pr.authorLogin ?? "unknown"} — prior gate failure on headSha ${pr.headSha} stands`
           : `FAILED to close draft-dodge attempt by ${pr.authorLogin ?? "unknown"} — the close API call did not succeed; the PR may still be open`,
-      metadata: closeError === null ? gateMetadata : { ...gateMetadata, error: errorMessage(closeError) },
+      // #8801 + #8802 compose: the close's real outcome AND whether the explanation landed, both in one row.
+      metadata: closeError === null ? { explanationPosted, ...gateMetadata } : { explanationPosted, ...gateMetadata, error: errorMessage(closeError) },
     }).catch(() => undefined);
   }
 }
@@ -505,13 +536,7 @@ async function recloseDisallowedReopenIfNeeded(
   }
   // The comment is a courtesy notice; its failure must not mask whether the close itself succeeded (below).
   /* v8 ignore next -- fail-safe: a courtesy-comment failure never blocks the handler. */
-  await createIssueComment(
-    env,
-    installationId,
-    repoFullName,
-    pr.number,
-    "This pull request was closed by LoopOver and can't be reopened — reviews are one-shot. Please open a new pull request with the issues resolved.",
-  ).catch(() => undefined);
+  const explanationPosted = await postCloseExplanation(env, installationId, repoFullName, pr.number, "This pull request was closed by LoopOver and can't be reopened — reviews are one-shot. Please open a new pull request with the issues resolved.");
   // #2260: the audit outcome must reflect whether the close actually happened on GitHub, not just whether this
   // handler ran. A swallowed 403/404/5xx here previously still recorded outcome:"completed", so an operator
   // trusting the audit trail believed a one-shot close was enforced when it may not have been.
@@ -529,7 +554,7 @@ async function recloseDisallowedReopenIfNeeded(
       closeError === null
         ? `re-closed a disallowed reopen by ${reopener} (originally closed by ${originallyClosedBy}) — one-shot; resubmit a new PR`
         : `FAILED to re-close a disallowed reopen by ${reopener} (originally closed by ${originallyClosedBy}) — the close API call did not succeed; the PR may still be open`,
-    metadata: closeError === null ? { deliveryId, repoFullName } : { deliveryId, repoFullName, error: errorMessage(closeError) },
+    metadata: { explanationPosted, ...(closeError === null ? { deliveryId, repoFullName } : { deliveryId, repoFullName, error: errorMessage(closeError) }) },
   }).catch(() => undefined);
   return true;
 }
@@ -733,17 +758,11 @@ async function closeReviewEvasionSelfCloseIfReviewed(
   // The close succeeded: post the public explanation, apply the configured label, record the strike -- in
   // that order, after the enforcement close is confirmed (never before).
   const shouldPostSelfCloseComment = settings.reviewEvasionComment ?? true;
+  // #8802: null = the repo opted out of the explanation comment (never attempted) — distinct in the
+  // audit row from a delivery failure (false) and a successful post (true).
+  let explanationPosted: boolean | null = null;
   if (shouldPostSelfCloseComment) {
-    await createIssueComment(
-      env,
-      installationId,
-      repoFullName,
-      pr.number,
-      "LoopOver had already started reviewing this pull request — closing it to dodge the one-shot review process is not allowed. Please open a new pull request with the issues addressed.",
-    ).catch(
-      /* v8 ignore next -- fail-safe: a courtesy-comment failure never blocks the handler. */
-      () => undefined,
-    );
+    explanationPosted = await postCloseExplanation(env, installationId, repoFullName, pr.number, "LoopOver had already started reviewing this pull request — closing it to dodge the one-shot review process is not allowed. Please open a new pull request with the issues addressed.");
   }
   const label = resolveNullableLabel(settings.reviewEvasionLabel, DEFAULT_REVIEW_EVASION_LABEL);
   if (label !== null) {
@@ -756,7 +775,7 @@ async function closeReviewEvasionSelfCloseIfReviewed(
     targetKey,
     outcome: "completed",
     detail: `re-closed a review-evasion self-close by ${pr.authorLogin} -- active review on headSha ${pr.headSha} was in progress`,
-    metadata: { deliveryId, repoFullName, headSha: pr.headSha },
+    metadata: { explanationPosted,  deliveryId, repoFullName, headSha: pr.headSha },
   }).catch(
     /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
     () => undefined,
@@ -893,17 +912,11 @@ async function closeReviewEvasionDraftConversionIfReviewed(
   }
 
   const shouldPostDraftConversionComment = settings.reviewEvasionComment ?? true;
+  // #8802: null = the repo opted out of the explanation comment (never attempted) — distinct in the
+  // audit row from a delivery failure (false) and a successful post (true).
+  let explanationPosted: boolean | null = null;
   if (shouldPostDraftConversionComment) {
-    await createIssueComment(
-      env,
-      installationId,
-      repoFullName,
-      pr.number,
-      "LoopOver had already started reviewing this pull request — converting it to draft to dodge the one-shot review process is not allowed. Please open a new pull request with the issues addressed.",
-    ).catch(
-      /* v8 ignore next -- fail-safe: a courtesy-comment failure never blocks the handler. */
-      () => undefined,
-    );
+    explanationPosted = await postCloseExplanation(env, installationId, repoFullName, pr.number, "LoopOver had already started reviewing this pull request — converting it to draft to dodge the one-shot review process is not allowed. Please open a new pull request with the issues addressed.");
   }
   const label = resolveNullableLabel(settings.reviewEvasionLabel, DEFAULT_REVIEW_EVASION_LABEL);
   if (label !== null) {
@@ -916,7 +929,7 @@ async function closeReviewEvasionDraftConversionIfReviewed(
     targetKey,
     outcome: "completed",
     detail: `closed a review-evasion draft-conversion by ${pr.authorLogin} -- headSha ${pr.headSha} had already been reviewed`,
-    metadata: { deliveryId, repoFullName, headSha: pr.headSha },
+    metadata: { explanationPosted,  deliveryId, repoFullName, headSha: pr.headSha },
   }).catch(
     /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
     () => undefined,
@@ -1062,17 +1075,11 @@ async function closeRepeatedDraftCyclingIfDetected(
   }
 
   const shouldPostComment = settings.reviewEvasionComment ?? true;
+  // #8802: null = the repo opted out of the explanation comment (never attempted) — distinct in the
+  // audit row from a delivery failure (false) and a successful post (true).
+  let explanationPosted: boolean | null = null;
   if (shouldPostComment) {
-    await createIssueComment(
-      env,
-      installationId,
-      repoFullName,
-      pr.number,
-      `LoopOver detected this pull request has been converted to draft ${draftConversionCount} times — repeatedly cycling between ready and draft to solicit review feedback without a real one-shot attempt is not allowed. Please open a new pull request with the issues addressed.`,
-    ).catch(
-      /* v8 ignore next -- fail-safe: a courtesy-comment failure never blocks the handler. */
-      () => undefined,
-    );
+    explanationPosted = await postCloseExplanation(env, installationId, repoFullName, pr.number, `LoopOver detected this pull request has been converted to draft ${draftConversionCount} times — repeatedly cycling between ready and draft to solicit review feedback without a real one-shot attempt is not allowed. Please open a new pull request with the issues addressed.`);
   }
   const label = resolveNullableLabel(settings.reviewEvasionLabel, DEFAULT_REVIEW_EVASION_LABEL);
   if (label !== null) {
@@ -1085,7 +1092,7 @@ async function closeRepeatedDraftCyclingIfDetected(
     targetKey,
     outcome: "completed",
     detail: `closed repeated draft-cycling by ${pr.authorLogin} -- conversion #${draftConversionCount} on this PR`,
-    metadata: { deliveryId, repoFullName, headSha: pr.headSha, draftConversionCount },
+    metadata: { explanationPosted,  deliveryId, repoFullName, headSha: pr.headSha, draftConversionCount },
   }).catch(
     /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
     () => undefined,
@@ -1219,17 +1226,11 @@ async function closeDraftPrIfPolicyEnabled(
   }
 
   const shouldPostComment = settings.reviewEvasionComment ?? true;
+  // #8802: null = the repo opted out of the explanation comment (never attempted) — distinct in the
+  // audit row from a delivery failure (false) and a successful post (true).
+  let explanationPosted: boolean | null = null;
   if (shouldPostComment) {
-    await createIssueComment(
-      env,
-      installationId,
-      repoFullName,
-      pr.number,
-      "This repository closes pull requests automatically while they're in draft, to keep CI capacity and review bandwidth available for work that's ready to review. Reopen (or open a fresh pull request) once your changes are ready — LoopOver will pick it up from there.",
-    ).catch(
-      /* v8 ignore next -- fail-safe: a courtesy-comment failure never blocks the handler. */
-      () => undefined,
-    );
+    explanationPosted = await postCloseExplanation(env, installationId, repoFullName, pr.number, "This repository closes pull requests automatically while they're in draft, to keep CI capacity and review bandwidth available for work that's ready to review. Reopen (or open a fresh pull request) once your changes are ready — LoopOver will pick it up from there.");
   }
   const label = resolveNullableLabel(settings.reviewEvasionLabel, DEFAULT_REVIEW_EVASION_LABEL);
   if (label !== null) {
@@ -1242,7 +1243,7 @@ async function closeDraftPrIfPolicyEnabled(
     targetKey,
     outcome: "completed",
     detail: `closed draft PR by ${pr.authorLogin} -- draftPrClosePolicy is "close"`,
-    metadata: gateMetadata,
+    metadata: { explanationPosted, ...(gateMetadata) },
   }).catch(
     /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
     () => undefined,
@@ -1350,17 +1351,11 @@ async function closeSynchronizeAmendmentIfPolicyEnabled(
   }
 
   const shouldPostComment = settings.reviewEvasionComment ?? true;
+  // #8802: null = the repo opted out of the explanation comment (never attempted) — distinct in the
+  // audit row from a delivery failure (false) and a successful post (true).
+  let explanationPosted: boolean | null = null;
   if (shouldPostComment) {
-    await createIssueComment(
-      env,
-      installationId,
-      repoFullName,
-      pr.number,
-      "This repository reviews pull requests one-shot: the PR must be correct as originally opened. Pushing an additional commit closes it automatically instead of restarting review — open a fresh pull request with every fix included.",
-    ).catch(
-      /* v8 ignore next -- fail-safe: a courtesy-comment failure never blocks the handler. */
-      () => undefined,
-    );
+    explanationPosted = await postCloseExplanation(env, installationId, repoFullName, pr.number, "This repository reviews pull requests one-shot: the PR must be correct as originally opened. Pushing an additional commit closes it automatically instead of restarting review — open a fresh pull request with every fix included.");
   }
   const label = resolveNullableLabel(settings.reviewEvasionLabel, DEFAULT_REVIEW_EVASION_LABEL);
   if (label !== null) {
@@ -1373,7 +1368,7 @@ async function closeSynchronizeAmendmentIfPolicyEnabled(
     targetKey,
     outcome: "completed",
     detail: `closed PR by ${pr.authorLogin} for pushing an additional commit after opening -- synchronizeClosePolicy is "close"`,
-    metadata: gateMetadata,
+    metadata: { explanationPosted, ...(gateMetadata) },
   }).catch(
     /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
     () => undefined,

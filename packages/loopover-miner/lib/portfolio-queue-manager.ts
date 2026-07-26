@@ -48,11 +48,13 @@ export function parseQueueItemId(id: unknown): PortfolioQueueClaimTarget {
   return { apiBaseUrl, repoFullName, identifier };
 }
 
-/** Coerce caps to finite non-negative integers (mirrors the engine's normalizeCaps posture). */
+/** Coerce caps to finite non-negative integers (mirrors the engine's normalizeCaps posture), preserving an
+ *  explicit `Infinity` as "uncapped" -- the codebase convention portfolio-queue-cli.ts documents -- rather than
+ *  collapsing it to 0 (which the engine would read as a full-exclusion cap; #8861). */
 export function normalizePortfolioCaps(caps: Partial<PortfolioCaps> = {}): PortfolioCaps {
-  const globalWipCap = Number.isFinite(caps.globalWipCap) ? Math.max(0, Math.trunc(caps.globalWipCap as number)) : 0;
-  const perRepoWipCap = Number.isFinite(caps.perRepoWipCap) ? Math.max(0, Math.trunc(caps.perRepoWipCap as number)) : 0;
-  return { globalWipCap, perRepoWipCap };
+  const normalize = (value: number | undefined): number =>
+    value === Number.POSITIVE_INFINITY ? Number.POSITIVE_INFINITY : Number.isFinite(value) ? Math.max(0, Math.trunc(value as number)) : 0;
+  return { globalWipCap: normalize(caps.globalWipCap), perRepoWipCap: normalize(caps.perRepoWipCap) };
 }
 
 /** Project persisted queue rows into the engine's in-memory PortfolioQueue (done rows omitted). Pure. */

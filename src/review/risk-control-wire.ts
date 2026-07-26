@@ -31,14 +31,41 @@ export function parseBudget(raw: string | undefined, fallback: number, max: numb
 }
 
 /** Per-arm error budgets (#8835's Neyman–Pearson requirement) and the calibration confidence level.
- *  Defaults: close α=0.015 (~199-label floor), merge α=0.005 (~598 — stricter than close by 3x; the earlier
- *  0.002 draft needed ~1,497 labels, a year of adjudication for the last 3x of strictness, which contradicts
- *  the minimal-human-involvement objective this instrument serves). */
-export function riskControlArms(env: Env): Array<{ arm: "close" | "merge"; verdict: "close" | "merge"; alpha: number }> {
+ *  An explicit env α pins the arm; when unset, the CLOSE arm follows the pre-registered α(n) schedule below
+ *  and the merge arm stays at 0.005 (~598-label floor — stricter than close by design; the earlier 0.002
+ *  draft needed ~1,497 labels, a year of adjudication for the last 3x of strictness, which contradicts the
+ *  minimal-human-involvement objective this instrument serves). */
+export function riskControlArms(env: Env): Array<{ arm: "close" | "merge"; verdict: "close" | "merge"; alpha: number | null }> {
   return [
-    { arm: "close", verdict: "close", alpha: parseBudget(env.LOOPOVER_RISK_CONTROL_CLOSE_ALPHA, 0.015, 0.05) },
-    { arm: "merge", verdict: "merge", alpha: parseBudget(env.LOOPOVER_RISK_CONTROL_MERGE_ALPHA, 0.005, 0.05) },
+    { arm: "close", verdict: "close", alpha: parseBudgetOrNull(env.LOOPOVER_RISK_CONTROL_CLOSE_ALPHA, 0.05) },
+    { arm: "merge", verdict: "merge", alpha: parseBudgetOrNull(env.LOOPOVER_RISK_CONTROL_MERGE_ALPHA, 0.05) },
   ];
+}
+
+/** Like parseBudget but with no fallback: null when absent/garbage/outside (0, max] — "use the schedule". */
+export function parseBudgetOrNull(raw: string | undefined, max: number): number | null {
+  const value = Number((raw ?? "").trim());
+  if (!Number.isFinite(value) || value <= 0 || value > max) return null;
+  return value;
+}
+
+/**
+ * The PRE-REGISTERED α(n) tightening schedule: the strongest error budget the arm's usable label count can
+ * power, chosen as a deterministic function of SAMPLE SIZE alone. Because n is information size, not the
+ * test statistic, walking this schedule as labels accrue is not outcome-snooping and needs no multiplicity
+ * correction — each daily recalibration still runs exactly ONE level-δ test. The alternative (testing an
+ * α-grid each day and publishing the strongest pass) would need a Bonferroni δ-split that raises every
+ * floor by ~35% and, at today's label volume, certifies nothing at all.
+ *
+ * Tiers (close): α=0.05 under 350 usable pairs (guarantee arrives at the honest floor of ~59 clean at-λ
+ * labels), 0.025 from 350, 0.015 from 700 — the homepage claim self-tightens 95% → 97.5% → 98.5% with zero
+ * human steps. Merge: fixed 0.005 until its own volume justifies a schedule (tracked on #8828's epic).
+ */
+export function scheduledAlpha(arm: "close" | "merge", usablePairs: number): number {
+  if (arm === "merge") return 0.005;
+  if (usablePairs >= 700) return 0.015;
+  if (usablePairs >= 350) return 0.025;
+  return 0.05;
 }
 export function riskControlDelta(env: Env): number {
   return parseBudget(env.LOOPOVER_RISK_CONTROL_DELTA, 0.05, 0.2);
@@ -86,9 +113,10 @@ export async function loadCalibrationPairs(env: Env, verdict: "close" | "merge",
 
 /** One arm's recalibration (global when `project` is null, else that repo's own labels): calibrate →
  *  publish or retract. Best-effort per arm. */
-async function recalibrateArm(env: Env, arm: string, verdict: "close" | "merge", alpha: number, project: string | null): Promise<CalibrationResult> {
+async function recalibrateArm(env: Env, arm: "close" | "merge", verdict: "close" | "merge", envAlpha: number | null, project: string | null): Promise<CalibrationResult> {
   const delta = riskControlDelta(env);
   const pairs = await loadCalibrationPairs(env, verdict, project);
+  const alpha = envAlpha ?? scheduledAlpha(arm, pairs.length);
   const result = calibrateActThreshold(pairs, alpha, delta);
   const scope = project === null ? arm : `${arm}:${project}`;
   if (result.status === "calibrated") {

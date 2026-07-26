@@ -82,7 +82,16 @@ export async function handleOrbWebhook(c: Context<{ Bindings: Env }>): Promise<R
     return c.json({ error: "processing_failed", deliveryId }, 500);
   }
 
-  await recordOrbWebhookEvent(c.env, { ...eventMeta, status: "received" });
+  try {
+    await recordOrbWebhookEvent(c.env, { ...eventMeta, status: "received" });
+  } catch (error) {
+    // Distinct from orb_webhook_processing_failed above: the upsert/outcome writes DID succeed, only the
+    // webhook-event row failed to persist. Left unguarded this threw past the 202 below, leaving the delivery
+    // unrecorded (so a GitHub redelivery re-runs the already-successful processing) with no structured log for
+    // this specific mode. Return 500 so GitHub redelivers and the row is retried, with its own error event (#8883).
+    console.error(JSON.stringify({ level: "error", event: "orb_webhook_event_record_failed", ...eventMeta, message: String(error).slice(0, 200) }));
+    return c.json({ error: "event_record_failed", deliveryId }, 500);
+  }
   // Forward to a brokered self-host registered for this installation — but NEVER block the 202 we owe GitHub on it.
   // A push-mode forward POSTs to the container's relay URL with a 10s timeout; a slow (e.g. tailnet) container would
   // otherwise delay our response past GitHub's ~10s delivery deadline, so GitHub marks the delivery FAILED even

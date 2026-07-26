@@ -3311,6 +3311,122 @@ describe("GitHub backfill", () => {
     expect(result.warnings).toEqual(expect.arrayContaining([expect.stringContaining("met the expected total after a late page error")]));
   });
 
+  it("REGRESSION (#8890): syncLabels stops at the 10-page cap and surfaces a capped segment/warning", async () => {
+    // Asserts termination at the local page cap (not a mocked hasNextPage:false). syncLabels lives on the
+    // monolithic backfillRegisteredRepositories path, not backfillRepositorySegment's githubPaged walker.
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedInstalledAndRegisteredRepo(env);
+    const labelPages: number[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/repos/JSONbored/gittensory")) {
+        return Response.json({
+          name: "gittensory",
+          full_name: "JSONbored/gittensory",
+          private: false,
+          default_branch: "main",
+          language: "TypeScript",
+          owner: { login: "JSONbored" },
+        });
+      }
+      if (url === "https://api.github.com/graphql") {
+        return githubTotalsResponse({ openIssues: 0, openPullRequests: 0, mergedPullRequests: 0, closedPullRequests: 0, labels: 2000 });
+      }
+      if (url.includes("/labels?")) {
+        const page = Number(new URL(url).searchParams.get("page") ?? "1");
+        labelPages.push(page);
+        return Response.json([{ name: `label-${page}`, color: "cc0000", description: `Label ${page}` }], {
+          headers: { link: `<https://api.github.com/repositories/1/labels?page=${page + 1}>; rel="next"` },
+        });
+      }
+      if (url.includes("/issues?") || url.includes("/pulls?")) return Response.json([]);
+      return new Response(`unexpected ${url}`, { status: 404 });
+    });
+
+    const result = await backfillRegisteredRepositories(env, {
+      force: true,
+      limits: { issues: 0, pullRequests: 0, recentMergedPullRequests: 0, pullRequestDetails: 0 },
+    });
+
+    expect(labelPages).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(result.repos[0]?.dataQuality).toMatchObject({ capped: true });
+    expect(result.repos[0]?.warnings.join("\n")).toMatch(/Label sync reached local page cap of 10/);
+    expect(await listRepoSyncSegments(env, "JSONbored/gittensory")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ segment: "labels", status: "capped", fetchedCount: 10, nextCursor: "11", pageCount: 10 }),
+      ]),
+    );
+  });
+
+  it("REGRESSION (#8890): GraphQL open-issues/PR supplements stop at the 10-page cap with a capped warning", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    let issueSupplementPages = 0;
+    let prSupplementPages = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url === "https://api.github.com/graphql") {
+        const query = JSON.parse(String(init?.body ?? "{}")).query as string;
+        if (query.includes("LoopOverRepoTotals")) {
+          return githubTotalsResponse({ openIssues: 2000, openPullRequests: 2000, mergedPullRequests: 0, closedPullRequests: 0, labels: 0 });
+        }
+        if (query.includes("LoopOverOpenIssuesSupplement")) {
+          issueSupplementPages += 1;
+          return Response.json({
+            data: {
+              repository: {
+                issues: {
+                  pageInfo: { hasNextPage: true, endCursor: `issue-cursor-${issueSupplementPages}` },
+                  nodes: [{ number: 1000 + issueSupplementPages, title: `Issue ${issueSupplementPages}`, state: "OPEN", labels: { nodes: [] } }],
+                },
+              },
+            },
+          });
+        }
+        if (query.includes("LoopOverOpenPullRequestsSupplement")) {
+          prSupplementPages += 1;
+          return Response.json({
+            data: {
+              repository: {
+                pullRequests: {
+                  pageInfo: { hasNextPage: true, endCursor: `pr-cursor-${prSupplementPages}` },
+                  nodes: [
+                    {
+                      number: 2000 + prSupplementPages,
+                      title: `PR ${prSupplementPages}`,
+                      state: "OPEN",
+                      labels: { nodes: [] },
+                      head: {},
+                      base: {},
+                    },
+                  ],
+                },
+              },
+            },
+          });
+        }
+      }
+      if (url.includes("/issues?") || url.includes("/pulls?state=open")) return Response.json([]);
+      return Response.json([]);
+    });
+
+    const issuesResult = await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "open_issues", mode: "full", force: true });
+    const pullRequestsResult = await backfillRepositorySegment(env, {
+      repoFullName: "JSONbored/gittensory",
+      segment: "open_pull_requests",
+      mode: "full",
+      force: true,
+    });
+
+    expect(issueSupplementPages).toBe(10);
+    expect(prSupplementPages).toBe(10);
+    expect(issuesResult.warnings.join("\n")).toMatch(/open-issues supplement reached local page cap of 10/);
+    expect(pullRequestsResult.warnings.join("\n")).toMatch(/open-pull-requests supplement reached local page cap of 10/);
+    expect(issuesResult.warnings.join("\n")).toMatch(/cap/i);
+    expect(pullRequestsResult.warnings.join("\n")).toMatch(/cap/i);
+  });
+
   it("marks a current open-data segment partial when reconciliation removes stale rows below expected totals", async () => {
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
     await seedRegisteredRepo(env);

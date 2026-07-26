@@ -27,6 +27,8 @@ export const RETENTION_POLICY: readonly RetentionRule[] = [
   // One row per inbound webhook delivery (#8381 / unfinished #3896); short-lived idempotency lookups,
   // not durable history — same 90d window as audit/ai_usage logs.
   { table: "webhook_events", column: "received_at", days: 90 },
+  // One row per outbound notification delivery (#8899); same append-only log shape as webhook_events.
+  { table: "notification_deliveries", column: "created_at", days: 90 },
 ];
 
 export type PruneResult = { table: string; column: string; cutoff: string; deleted: number };
@@ -39,7 +41,8 @@ const MAX_DELETED_PER_TABLE = 50_000;
 const MS_PER_DAY = 86_400_000;
 
 function retentionWhere(rule: RetentionRule): string {
-  const base = `${rule.column} < ?1`;
+  // Anonymous `?` — node:sqlite DatabaseSync rejects numbered `?1` binds with "column index out of range".
+  const base = `${rule.column} < ?`;
   if (rule.table === "audit_events") {
     const durableTypes = DURABLE_AUDIT_EVENT_TYPES.map((type) => `'${type}'`).join(", ");
     return `${base} AND event_type NOT IN (${durableTypes})`;

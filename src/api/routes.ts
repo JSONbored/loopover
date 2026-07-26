@@ -4749,6 +4749,33 @@ export function createApp() {
     return c.json(await refreshRegistry(c.env));
   });
 
+  // Operator-only manual re-gate trigger (#8898): enqueue an `agent-regate-pr` job with `force: true` for one
+  // repo+PR. This is the FIRST production producer of that job's `force` field (threaded through
+  // src/queue/job-dispatch.ts into regatePullRequest) -- every scheduled/webhook producer leaves it unset, so
+  // the force plumbing (a fresh AI opinion that bypasses the durable review cache and the non-cacheable-reuse
+  // cooldown) was built and tested but unreachable from any real caller until now. Bearer-gated by the
+  // `/v1/internal/*` middleware (INTERNAL_JOB_TOKEN). 400s a missing/blank repo or a non-positive-integer PR
+  // number; 404s a repo with no known installation (nothing to authenticate the re-gate against).
+  app.post("/v1/internal/jobs/regate-pr", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { repoFullName?: unknown; prNumber?: unknown };
+    const repoFullName = typeof body?.repoFullName === "string" ? body.repoFullName.trim() : "";
+    if (!repoFullName) return c.json({ error: "repoFullName required" }, 400);
+    const prNumber = Number(body?.prNumber);
+    if (!Number.isInteger(prNumber) || prNumber <= 0) return c.json({ error: "prNumber required" }, 400);
+    const repo = await getRepository(c.env, repoFullName);
+    if (typeof repo?.installationId !== "number") return c.json({ error: "repo not installed" }, 404);
+    const message: JobMessage = {
+      type: "agent-regate-pr",
+      deliveryId: `manual-regate:${crypto.randomUUID()}`,
+      repoFullName: repo.fullName,
+      prNumber,
+      installationId: repo.installationId,
+      force: true,
+    };
+    await c.env.JOBS.send(message);
+    return c.json({ ok: true, status: "queued", repoFullName: repo.fullName, prNumber, force: true }, 202);
+  });
+
   app.post("/v1/internal/jobs/backfill-registered-repos", async (c) => {
     const body = await c.req.json().catch(() => ({}));
     const repoFullName = typeof body?.repoFullName === "string" ? body.repoFullName : undefined;

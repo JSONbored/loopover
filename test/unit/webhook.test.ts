@@ -691,6 +691,38 @@ describe("handleOrbRelay (brokered self-host relay receiver)", () => {
     await expect(resp.json()).resolves.toMatchObject({ ok: true, status: "queued", deliveryId: "relay-ok-1" });
     expect(sent).toBe(1); // routed to the WEBHOOKS queue
   });
+
+  it("returns 413 from the Content-Length pre-check before the body is read/verified (#8888)", async () => {
+    const env = createTestEnv({ ORB_ENROLLMENT_SECRET: "orbenr_testsecret", GITHUB_WEBHOOK_MAX_BODY_BYTES: "1024" });
+    // content-length exceeds the cap; a deliberately-bad signature would produce 401 IF the body were read and
+    // verified. Getting 413 (not 401) proves the header pre-check short-circuited before any body handling.
+    const ctx = makeRelayContext(env, '{"action":"opened"}', {
+      "x-github-delivery": "relay-big-1",
+      "x-github-event": "pull_request",
+      "x-orb-signature-256": "sha256=badbadbad",
+      "content-length": "2048",
+    });
+    const resp = await handleOrbRelay(ctx);
+    expect(resp.status).toBe(413);
+    await expect(resp.json()).resolves.toMatchObject({ error: "payload_too_large", maxBytes: 1024 });
+  });
+
+  it("still accepts a request whose Content-Length is within the cap (#8888)", async () => {
+    const env = createTestEnv({ ORB_ENROLLMENT_SECRET: "orbenr_testsecret" });
+    let sent = 0;
+    env.WEBHOOKS = { send: async () => void (sent += 1) } as unknown as Queue;
+    const body = JSON.stringify({ action: "opened", repository: { full_name: "acme/widgets" }, installation: { id: 99 } });
+    const sig = `sha256=${await relaySignature("orbenr_testsecret", body)}`;
+    const ctx = makeRelayContext(env, body, {
+      "x-github-delivery": "relay-ok-cl",
+      "x-github-event": "pull_request",
+      "x-orb-signature-256": sig,
+      "content-length": String(body.length),
+    });
+    const resp = await handleOrbRelay(ctx);
+    expect(resp.status).toBe(202); // within-cap content-length must not trip the pre-check
+    expect(sent).toBe(1);
+  });
 });
 
 async function signWebhook(body: string, secret: string | undefined): Promise<string> {

@@ -57,7 +57,8 @@ describe("derivePublicCommentMergeFacts() — ciState (#4607)", () => {
 describe("derivePublicCommentMergeFacts() — failing-check projection (#4607)", () => {
   it("omits the failing keys entirely when nothing is red", () => {
     const { mergeReadiness } = facts();
-    expect(mergeReadiness).toEqual({ ciState: "passed", mergeStateLabel: "clean" });
+    // #8759: mergeStateHeld is the bridge-resolved shared interpretation — false for a clean state.
+    expect(mergeReadiness).toEqual({ ciState: "passed", mergeStateLabel: "clean", mergeStateHeld: false });
   });
 
   it("projects name + optional summary/detailsUrl, dropping absent optionals", () => {

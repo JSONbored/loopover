@@ -259,10 +259,16 @@ function normalizeSelfPlagiarismPolicy(
   const record = value as Record<string, unknown>;
   if (
     record.similarityThreshold !== undefined &&
-    typeof record.similarityThreshold !== "number"
+    (typeof record.similarityThreshold !== "number" ||
+      !Number.isFinite(record.similarityThreshold) ||
+      record.similarityThreshold < 0 ||
+      record.similarityThreshold > 1)
   ) {
+    // An out-of-range or non-finite value previously fell through to self-plagiarism.ts's Math.min(1, Math.max(0, ...))
+    // and was silently clamped with no warning, marked "present" -- unlike every sibling numeric normalizer here.
+    // Warn and fall back to the default instead (#8862).
     warnings.push(
-      `MinerGoalSpec field "${field}.similarityThreshold" must be a number; falling back to ${fallback.similarityThreshold}.`,
+      `MinerGoalSpec field "${field}.similarityThreshold" must be a number in [0, 1]; falling back to ${fallback.similarityThreshold}.`,
     );
     return fallback;
   }

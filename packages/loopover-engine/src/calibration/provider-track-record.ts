@@ -100,9 +100,16 @@ export function computeProviderTrackRecords(
     stances.set(signal.provider, signal.vote === "fail");
   }
 
+  // Dedupe to one signal per (provider, targetKey) pair, latest-vote-wins — matching stancesByTarget's
+  // last-write semantics above. loadLiveProviderTrackRecords reads raw audit rows with no dedup, so a provider
+  // re-reviewing the same PR (e.g. after a new push) would otherwise inflate its signals/decided/shared/consensus
+  // counters proportionally to its revote count while its stance reflects only the last vote (#8876).
+  const dedupedByProviderTarget = new Map<string, ProviderReviewSignal>();
+  for (const signal of signals) dedupedByProviderTarget.set(`${signal.provider} ${signal.targetKey}`, signal);
+
   const perRepo = new Map<string, Map<string, MutableStats>>(); // provider → repo → stats
   const overall = new Map<string, MutableStats>();
-  for (const signal of signals) {
+  for (const signal of dedupedByProviderTarget.values()) {
     let repos = perRepo.get(signal.provider);
     if (repos === undefined) {
       repos = new Map();

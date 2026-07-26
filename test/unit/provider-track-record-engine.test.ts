@@ -127,4 +127,27 @@ describe("computeProviderTrackRecords (#8228)", () => {
   it("returns an empty list for empty inputs", () => {
     expect(computeProviderTrackRecords([], [])).toEqual([]);
   });
+
+  it("counts a provider's repeated votes on one target exactly once, latest-vote-wins (#8876)", () => {
+    const cases = [labeled("acme/widgets#1", "confirmed"), labeled("acme/widgets#2", "confirmed")];
+    const signals = [
+      // provider-a re-reviews #1: an earlier pass then a later fail. Only the latest (fail) should count, once.
+      signal("provider-a", "acme/widgets#1", "pass"),
+      signal("provider-a", "acme/widgets#1", "fail"),
+      // provider-b reviews #1 once (fail) so #1 is a shared target with a consensus stance.
+      signal("provider-b", "acme/widgets#1", "fail"),
+      // provider-a also reviews #2 once, to prove distinct (provider, target) pairs still each count.
+      signal("provider-a", "acme/widgets#2", "fail"),
+    ];
+    const records = computeProviderTrackRecords(signals, cases);
+
+    const aOverall = records.find((r) => r.provider === "provider-a" && r.repoFullName === null)!;
+    // Without dedup this would be signals:3/decided:3 (the pass+fail on #1 both counted). Deduped: 2 distinct
+    // targets, and #1 resolves to the latest fail vote (so precision stays 1, not diluted by the stale pass).
+    expect(aOverall).toMatchObject({ signals: 2, decided: 2, confirmed: 2, precision: 1, agreementRate: 1 });
+    const bOverall = records.find((r) => r.provider === "provider-b" && r.repoFullName === null)!;
+    // #1 is shared by a (latest fail) and b (fail): a genuine consensus, counted once for each provider.
+    expect(bOverall).toMatchObject({ signals: 1, decided: 1, consensusRate: 1 });
+    expect(aOverall.consensusRate).toBe(1);
+  });
 });

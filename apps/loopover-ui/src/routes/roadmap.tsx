@@ -100,7 +100,7 @@ const LINK_MAP: Record<string, { to: string; label: string }> = {
     to: "/app/maintainer",
     label: "Open maintainer console",
   },
-  "Phase 3: repo owner intake console": { to: "/app/repos", label: "Open repos console" },
+  "Phase 3: repo owner intake console": { to: "/app/owner", label: "Open repos console" },
   "Phase 4: adoption analytics and launch system": {
     to: "/app/analytics",
     label: "Open analytics",
@@ -108,7 +108,7 @@ const LINK_MAP: Record<string, { to: string; label: string }> = {
   "Phase 5: ecosystem distribution": { to: "/app/digest", label: "Preview the digest" },
 };
 
-function RoadmapPage() {
+export function RoadmapPage() {
   const grouped = COLUMNS.map((c) => ({
     ...c,
     items: ROADMAP_ITEMS.filter((r) => r.status === c.key),

@@ -520,6 +520,25 @@ function evaluateGateCheckCore(advisoryResult: Advisory, policy: GateCheckPolicy
         warnings: gateWarnings,
       };
     }
+    // Incomplete secret scan (#9082): mirrors the ai_review_inconclusive hold immediately above -- checked only
+    // once NO deterministic blocker fired (blockers.length === 0), so a REAL secret_leak match (or any other
+    // configured blocker) on a DIFFERENT file in the same PR still hard-blocks; this can never bury a genuine
+    // leak in a hold. A patch-less file's content couldn't be fetched/verified within the scan cap -- absence
+    // of evidence, not evidence of a leak -- so it HOLDS (never closes) and re-evaluates automatically once the
+    // content becomes retrievable. Explicitly appended to `warnings` (not merged into the severity-filtered
+    // `gateWarnings`) because the finding is `critical` severity by design (still worth a prominent panel
+    // signal) rather than `warning`, mirroring the size/guardrail hold shape below.
+    const secretScanIncompleteFindings = advisoryResult.findings.filter((finding) => finding.code === "secret_scan_incomplete");
+    if (secretScanIncompleteFindings.length > 0) {
+      return {
+        enabled: true,
+        conclusion: "neutral",
+        title: `${LOOPOVER_GATE_CHECK_NAME} — held for human review`,
+        summary: secretScanIncompleteFindings.map((finding) => sanitizeForCheckRun(finding.title)).join("; "),
+        blockers: [],
+        warnings: [...gateWarnings, ...secretScanIncompleteFindings],
+      };
+    }
     // Manual-review HOLD (#gate-size / #gate-guardrail): a PR that would otherwise PASS but is oversized or touches
     // a guarded path is HELD for a human (neutral → "manual" verdict) rather than auto-approved — never a failure,
     // so neutral never blocks the merge (dry-run/advisory friendly) and a contributor PR is never auto-closed for size.
@@ -608,9 +627,14 @@ function isConfiguredGateBlocker(finding: AdvisoryFinding, policy: GateCheckPoli
   }
   if (code === REVIEW_THREAD_BLOCKER_CODE) return true;
   // A leaked-secret finding (`secret_leak`) ALWAYS hard-blocks: a committed credential must be removed and
-  // rotated before merge, with no opt-in. This finding is produced ONLY by the flag-gated safety scan
-  // (LOOPOVER_REVIEW_SAFETY); when the flag is off the finding never exists, so this branch is unreachable and the
-  // gate verdict is byte-identical to today.
+  // rotated before merge, with no opt-in. Two independent producers feed this exact code: the flag-gated
+  // safety scan (LOOPOVER_REVIEW_SAFETY, off by default) over the reviewed diff, and the UNCONDITIONAL
+  // patch-less scan (maybeAddSecretLeakFinding, #audit-3.4) that runs for every repo regardless of that flag.
+  // Either way this code means a CONCRETE match was found. `secret_scan_incomplete` (#9082) is the sibling
+  // finding from that same patch-less scan for the OPPOSITE case -- verification could not complete, not a
+  // match -- and is deliberately never routed here: it never reaches this function at all (it resolves via
+  // the default "off" case below), because it's handled earlier, in evaluateGateCheckCore's
+  // no-deterministic-blocker branch, as a neutral hold rather than a configured gate blocker.
   if (code === "secret_leak") return true;
   // A maintainer pre-merge check (#review-pre-merge-checks) marked `enforce: true` produces this DETERMINISTIC
   // finding when it fails (a required title/description phrase or label is missing). It always blocks: the

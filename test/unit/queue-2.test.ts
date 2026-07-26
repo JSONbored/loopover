@@ -380,6 +380,187 @@ describe("queue processors", () => {
     expect(outcome.verdict).toBe("match");
   });
 
+  it("#9009: auto-clears manual-review once AI-review lock contention (the pass that applied it) resolves on a later pass", async () => {
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      AI: { run: async () => ({ response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) }) } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { close: "auto", merge: "auto" }, gatePack: "oss-anti-slop" });
+    await upsertRepoFocusManifest(env, "owner/agent-repo", { settings: { checkRunMode: "off", commentMode: "off", publicSurface: "off", reviewCheckMode: "required", aiReviewMode: "block", autoMaintain: { requireApprovals: 0, mergeMethod: "squash" } } });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 91, title: "Contention label autoclear", state: "open", user: { login: "contributor" }, head: { sha: "s91" }, labels: [], body: "Closes #1" });
+    await upsertPullRequestFile(env, { repoFullName: "owner/agent-repo", pullNumber: 91, path: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, payload: { patch: "@@\n+export const ok = true;" } });
+    vi.spyOn(backfillModule, "fetchRequiredStatusContexts").mockResolvedValue(null);
+    vi.spyOn(backfillModule, "fetchLiveCiAggregatePreferGraphQl").mockResolvedValue({
+      ciState: "passed",
+      hasPending: false,
+      hasVisiblePending: false,
+      hasMissingRequiredContext: false,
+      failingDetails: [],
+      nonRequiredFailingDetails: [],
+      advisoryHoldDetails: [],
+      ciCompletenessWarning: null,
+    });
+
+    // Stateful label list, mutated by the real ensurePullRequestLabel/removePullRequestLabel POST/DELETE calls --
+    // mirrors the linked-issue-hard-rule scaffold above -- so pass 2's live re-sync of the PR sees whatever
+    // pass 1 actually applied, exactly like a real GitHub repo persists label state between two separate passes.
+    let mergeCalls = 0;
+    const liveLabels: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/91/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/pulls/91/merge")) {
+        mergeCalls += 1;
+        return new Response(null, { status: 204 });
+      }
+      if (url.includes("/pulls/91/reviews") && method === "POST") return Response.json({ id: 1 });
+      if (url.includes("/pulls/91/reviews")) return Response.json([]);
+      if (/\/pulls\/91(?:\?|$)/.test(url)) return Response.json({ number: 91, title: "Contention label autoclear", state: "open", user: { login: "contributor" }, head: { sha: "s91" }, labels: liveLabels.map((name) => ({ name })), body: "Closes #1", mergeable_state: "clean" });
+      if (url.includes("/commits/s91/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/s91/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/commits/s91/check-suites")) return Response.json({ check_suites: [] });
+      if (url.includes("/issues/1") && !url.includes("/issues/91")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      if (url.includes(".loopover.yml")) return new Response("Not Found", { status: 404 });
+      if (url.endsWith("/check-runs") && method === "POST") return Response.json({ id: 1 });
+      if (url.endsWith("/graphql")) return Response.json({ data: {} });
+      if (url.includes("/issues/91/labels") && method === "GET") return Response.json(liveLabels.map((name) => ({ name })));
+      if (url.includes("/issues/91/labels") && method === "POST") {
+        const body = init?.body ? (JSON.parse(String(init.body)) as { labels?: string[] }) : {};
+        for (const label of body.labels ?? []) if (!liveLabels.includes(label)) liveLabels.push(label);
+        return Response.json(liveLabels.map((name) => ({ name })), { status: 200 });
+      }
+      if (url.includes("/labels/") && method === "DELETE") {
+        const removed = decodeURIComponent(url.slice(url.lastIndexOf("/labels/") + "/labels/".length));
+        const index = liveLabels.indexOf(removed);
+        if (index >= 0) liveLabels.splice(index, 1);
+        return new Response(null, { status: 204 });
+      }
+      return Response.json({});
+    });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    const markerKey = "manual-review-lock-contention:owner/agent-repo#91";
+
+    // Pass 1: a DIFFERENT holder wins the AI-review lock race for this exact (repo, PR, head, mode) first --
+    // this pass's own claim inside runAgentMaintenancePlanAndExecute loses, producing the
+    // ai_review_inconclusive / "AI review already in progress" finding (aiReviewLockContendedResult).
+    const contender = await claimAiReviewLock(env, "owner/agent-repo", 91, "s91", "block");
+    expect(contender.acquired).toBe(true);
+
+    await processJob(env, { type: "agent-regate-pr", deliveryId: "pass-1-contended", repoFullName: "owner/agent-repo", prNumber: 91, installationId: 9001 });
+
+    expect(mergeCalls).toBe(0); // held (neutral), never merged
+    expect(liveLabels).toContain("manual-review");
+    expect(await env.SELFHOST_TRANSIENT_CACHE?.get?.(markerKey)).toBe("1");
+
+    // The contending pass finishes and releases its claim -- the lock is free again for pass 2.
+    await releaseAiReviewLock(env, "owner/agent-repo", 91, "s91", "block", contender.ownerToken);
+
+    // Pass 2: SAME head SHA, no push in between. This pass now wins the lock itself, runs a clean AI review
+    // (the stubbed AI.run above returns no blockers), and the gate passes outright -- contention has resolved
+    // AND nothing else this pass justifies the hold, so planAgentMaintenanceActions clears the stale label.
+    await processJob(env, { type: "agent-regate-pr", deliveryId: "pass-2-resolved", repoFullName: "owner/agent-repo", prNumber: 91, installationId: 9001 });
+
+    expect(liveLabels).not.toContain("manual-review");
+    expect(await env.SELFHOST_TRANSIENT_CACHE?.get?.(markerKey)).toBeNull();
+  });
+
+  it("#9009: does NOT clear manual-review across passes when a DIFFERENT reason (a guardrail hit) still holds the PR", async () => {
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      AI: { run: async () => ({ response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) }) } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    // A hard-guardrail glob match on the changed path (below) HOLDS the gate independent of AI-review lock
+    // contention -- the marker's provenance must never suppress THIS reason once contention itself clears.
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { close: "auto", merge: "auto" }, gatePack: "oss-anti-slop" });
+    await upsertRepoFocusManifest(env, "owner/agent-repo", { settings: { checkRunMode: "off", commentMode: "off", publicSurface: "off", reviewCheckMode: "required", aiReviewMode: "block", hardGuardrailGlobs: ["src/guarded/**"], autoMaintain: { requireApprovals: 0, mergeMethod: "squash" } } });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 92, title: "Contention + guardrail", state: "open", user: { login: "contributor" }, head: { sha: "s92" }, labels: [], body: "Closes #1" });
+    await upsertPullRequestFile(env, { repoFullName: "owner/agent-repo", pullNumber: 92, path: "src/guarded/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, payload: { patch: "@@\n+export const ok = true;" } });
+    vi.spyOn(backfillModule, "fetchRequiredStatusContexts").mockResolvedValue(null);
+    vi.spyOn(backfillModule, "fetchLiveCiAggregatePreferGraphQl").mockResolvedValue({
+      ciState: "passed",
+      hasPending: false,
+      hasVisiblePending: false,
+      hasMissingRequiredContext: false,
+      failingDetails: [],
+      nonRequiredFailingDetails: [],
+      advisoryHoldDetails: [],
+      ciCompletenessWarning: null,
+    });
+
+    let mergeCalls = 0;
+    const liveLabels: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/92/files")) return Response.json([{ filename: "src/guarded/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/pulls/92/merge")) {
+        mergeCalls += 1;
+        return new Response(null, { status: 204 });
+      }
+      if (url.includes("/pulls/92/reviews") && method === "POST") return Response.json({ id: 1 });
+      if (url.includes("/pulls/92/reviews")) return Response.json([]);
+      if (/\/pulls\/92(?:\?|$)/.test(url)) return Response.json({ number: 92, title: "Contention + guardrail", state: "open", user: { login: "contributor" }, head: { sha: "s92" }, labels: liveLabels.map((name) => ({ name })), body: "Closes #1", mergeable_state: "clean" });
+      if (url.includes("/commits/s92/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/s92/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/commits/s92/check-suites")) return Response.json({ check_suites: [] });
+      if (url.includes("/issues/1") && !url.includes("/issues/92")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      if (url.includes(".loopover.yml")) return new Response("Not Found", { status: 404 });
+      if (url.endsWith("/check-runs") && method === "POST") return Response.json({ id: 1 });
+      if (url.endsWith("/graphql")) return Response.json({ data: {} });
+      if (url.includes("/issues/92/labels") && method === "GET") return Response.json(liveLabels.map((name) => ({ name })));
+      if (url.includes("/issues/92/labels") && method === "POST") {
+        const body = init?.body ? (JSON.parse(String(init.body)) as { labels?: string[] }) : {};
+        for (const label of body.labels ?? []) if (!liveLabels.includes(label)) liveLabels.push(label);
+        return Response.json(liveLabels.map((name) => ({ name })), { status: 200 });
+      }
+      if (url.includes("/labels/") && method === "DELETE") {
+        const removed = decodeURIComponent(url.slice(url.lastIndexOf("/labels/") + "/labels/".length));
+        const index = liveLabels.indexOf(removed);
+        if (index >= 0) liveLabels.splice(index, 1);
+        return new Response(null, { status: 204 });
+      }
+      return Response.json({});
+    });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    const markerKey = "manual-review-lock-contention:owner/agent-repo#92";
+    const contender = await claimAiReviewLock(env, "owner/agent-repo", 92, "s92", "block");
+    expect(contender.acquired).toBe(true);
+
+    await processJob(env, { type: "agent-regate-pr", deliveryId: "pass-1-contended", repoFullName: "owner/agent-repo", prNumber: 92, installationId: 9001 });
+    expect(liveLabels).toContain("manual-review");
+    expect(await env.SELFHOST_TRANSIENT_CACHE?.get?.(markerKey)).toBe("1");
+
+    await releaseAiReviewLock(env, "owner/agent-repo", 92, "s92", "block", contender.ownerToken);
+
+    // Pass 2: the lock is free and the AI review comes back clean -- contention itself has resolved -- but the
+    // guardrail hit on src/guarded/a.ts is untouched and still independently justifies the hold. The label must
+    // stay.
+    await processJob(env, { type: "agent-regate-pr", deliveryId: "pass-2-guardrail-still-hits", repoFullName: "owner/agent-repo", prNumber: 92, installationId: 9001 });
+
+    expect(mergeCalls).toBe(0);
+    expect(liveLabels).toContain("manual-review"); // still held, for the OTHER reason
+    expect(await env.SELFHOST_TRANSIENT_CACHE?.get?.(markerKey)).toBeNull(); // contention's OWN marker still consumed
+  });
+
   it("#4603: the SAME sub-floor defect one-shot-closes when aiReviewLowConfidenceDisposition is explicitly one_shot", async () => {
     let aiCalls = 0;
     const env = createTestEnv({

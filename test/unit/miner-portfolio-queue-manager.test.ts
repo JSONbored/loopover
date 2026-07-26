@@ -30,6 +30,18 @@ describe("normalizePortfolioCaps() (#4285)", () => {
     });
     expect(normalizePortfolioCaps()).toEqual({ globalWipCap: 0, perRepoWipCap: 0 });
   });
+
+  it("preserves an explicit Infinity cap as uncapped, not collapsed to 0 (#8861)", () => {
+    // The engine's nextEligibleItems reads globalWipCap: 0 as a full-exclusion cap; collapsing Infinity to 0
+    // here would silently exclude everything. Infinity must survive as "uncapped" (the engine-side behavior is
+    // pinned in test/unit/portfolio-queue.test.ts).
+    expect(normalizePortfolioCaps({ globalWipCap: Number.POSITIVE_INFINITY, perRepoWipCap: 3 })).toEqual({
+      globalWipCap: Number.POSITIVE_INFINITY,
+      perRepoWipCap: 3,
+    });
+    // A finite/absent cap is still coerced exactly as before.
+    expect(normalizePortfolioCaps({ globalWipCap: 4.9, perRepoWipCap: -2 })).toEqual({ globalWipCap: 4, perRepoWipCap: 0 });
+  });
 });
 
 describe("entriesToPortfolioQueue() / selectEligibleBatch() (#4285)", () => {

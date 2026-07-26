@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { closeExplanationMarker, createOrUpdateCloseExplanationComment, createOrUpdatePrIntelligenceComment, createOrUpdateVisualFollowupComment, PR_INTELLIGENCE_COMMENT_MARKER, VISUAL_FOLLOWUP_COMMENT_MARKER } from "../../src/github/comments";
+import { closeExplanationMarker, comparableCommentBody, createOrUpdateCloseExplanationComment, createOrUpdatePrIntelligenceComment, createOrUpdateVisualFollowupComment, PR_INTELLIGENCE_COMMENT_MARKER, VISUAL_FOLLOWUP_COMMENT_MARKER } from "../../src/github/comments";
 import { createTestEnv } from "../helpers/d1";
 import { generatePrivateKeyPem } from "../helpers/github-app-key";
 
@@ -418,6 +418,78 @@ describe("GitHub PR intelligence comments", () => {
 
     expect(result).toEqual({ id: 202, changed: false }); // html_url-absent branch → no html_url key; changed:false is the #6724 no-op signal
     expect(calls.some((call) => call.startsWith("PATCH "))).toBe(false);
+  });
+
+  it("skips the PATCH when only the panel's per-pass 'Review updated' timestamp differs (#9069)", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    const posted = `${PR_INTELLIGENCE_COMMENT_MARKER}\n### result\n<sub>Review updated: 2026-07-26 15:15:11 UTC</sub>\nunchanged verdict`;
+    const rerendered = `${PR_INTELLIGENCE_COMMENT_MARKER}\n### result\n<sub>Review updated: 2026-07-26 16:41:02 UTC</sub>\nunchanged verdict`;
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/issues/12/comments") && (init?.method ?? "GET") === "GET") {
+        return Response.json([{ id: 303, body: posted, html_url: "https://github.com/comment/303", user: { login: "loopover-orb[bot]", type: "Bot" } }]);
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const result = await createOrUpdatePrIntelligenceComment(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "JSONbored/gittensory", 12, rerendered);
+
+    // The whole point of #9069: a clock-only delta is NOT a content change, so no GitHub write and no
+    // self-inflicted issue_comment.edited delivery. changed:false also keeps the #6724 no-op accounting honest.
+    expect(result).toEqual({ id: 303, html_url: "https://github.com/comment/303", changed: false });
+    expect(calls.some((call) => call.startsWith("PATCH "))).toBe(false);
+  });
+
+  it("still PATCHes when real content changes alongside the timestamp (#9069 does not suppress real updates)", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    const posted = `${PR_INTELLIGENCE_COMMENT_MARKER}\n### result\n<sub>Review updated: 2026-07-26 15:15:11 UTC</sub>\nCI failing`;
+    const rerendered = `${PR_INTELLIGENCE_COMMENT_MARKER}\n### result\n<sub>Review updated: 2026-07-26 16:41:02 UTC</sub>\nCI green`;
+    const calls: string[] = [];
+    let patchedBody = "";
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/issues/12/comments") && (init?.method ?? "GET") === "GET") {
+        return Response.json([{ id: 404, body: posted, user: { login: "loopover-orb[bot]", type: "Bot" } }]);
+      }
+      if (url.includes("/issues/comments/404") && init?.method === "PATCH") {
+        patchedBody = (JSON.parse(String(init.body)) as { body: string }).body;
+        return Response.json({ id: 404 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const result = await createOrUpdatePrIntelligenceComment(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "JSONbored/gittensory", 12, rerendered);
+
+    expect(result?.changed).toBe(true);
+    expect(calls.some((call) => call.startsWith("PATCH "))).toBe(true);
+    // Compare-only normalization: the body actually posted carries the REAL fresh timestamp, not the placeholder.
+    expect(patchedBody).toContain("Review updated: 2026-07-26 16:41:02 UTC");
+  });
+
+  it("INVARIANT (#9069): normalization is compare-only and confined to the generated timestamp line", () => {
+    // Regression guard for the exact loop that produced ~26% of lifetime webhook traffic: two renders of one
+    // unchanged panel must compare equal, while any real content delta must not.
+    const at = (stamp: string) => `${PR_INTELLIGENCE_COMMENT_MARKER}\n### result\n<sub>Review updated: ${stamp}</sub>\nverdict`;
+    expect(comparableCommentBody(at("2026-07-26 15:15:11 UTC"))).toBe(comparableCommentBody(at("2027-01-01 00:00:00 UTC")));
+    expect(comparableCommentBody(at("x"))).not.toBe(comparableCommentBody(`${PR_INTELLIGENCE_COMMENT_MARKER}\n### result\n<sub>Review updated: x</sub>\nDIFFERENT`));
+
+    // Bodies without the line (close explanations, visual follow-ups) stay byte-exact — no accidental widening.
+    const plain = `${PR_INTELLIGENCE_COMMENT_MARKER}\nclose explanation`;
+    expect(comparableCommentBody(plain)).toBe(plain);
+
+    // Must not swallow a same-named line carrying different surrounding text, and must not match across a
+    // forged `<` (contributor text is angle-escaped upstream, so `[^<]*` can only ever span the real stamp).
+    const forged = `${PR_INTELLIGENCE_COMMENT_MARKER}\n<sub>Review updated: a</sub>injected<sub>Review updated: b</sub>`;
+    expect(comparableCommentBody(forged)).toBe(forged); // neither line is on its own line → untouched
+
+    // Multi-occurrence safety: the /g regex must normalize every standalone occurrence, not just the first.
+    const twice = `<sub>Review updated: one</sub>\nmid\n<sub>Review updated: two</sub>`;
+    expect(comparableCommentBody(twice)).toBe("<sub>Review updated:</sub>\nmid\n<sub>Review updated:</sub>");
   });
 
   it("rejects invalid repository names before calling GitHub", async () => {

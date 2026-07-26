@@ -11,7 +11,8 @@ CREATE TABLE IF NOT EXISTS decision_audit_labels (
   target_id       TEXT NOT NULL,                       -- owner/repo#N
   verdict         TEXT NOT NULL CHECK (verdict IN ('merge', 'close')),   -- the gate's decision at sample time
   outcome         TEXT NOT NULL CHECK (outcome IN ('merged', 'closed')), -- realized outcome at sample time
-  stratum         TEXT NOT NULL CHECK (stratum IN ('merge_arm', 'close_arm', 'first_time_author')),
+  -- holdout_close (#8831): rows sourced by the randomized close-holdout rather than the weekly draw.
+  stratum         TEXT NOT NULL CHECK (stratum IN ('merge_arm', 'close_arm', 'first_time_author', 'holdout_close')),
   rubric_version  TEXT NOT NULL,                       -- adjudications are only comparable within a version
   sampled_at      TEXT NOT NULL,
   status          TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'adjudicated')),

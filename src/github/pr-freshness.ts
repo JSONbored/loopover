@@ -108,11 +108,11 @@ export async function fetchPullRequestFreshness(
   const options: PullRequestFreshnessOptions =
     args.requireDraft !== undefined ? { requireDraft: args.requireDraft } : {};
   let tokenError: unknown;
-  const token =
-    (await createInstallationToken(env, args.installationId).catch((error) => {
-      tokenError = error;
-      return undefined;
-    })) ?? env.GITHUB_PUBLIC_TOKEN;
+  const installationToken = await createInstallationToken(env, args.installationId).catch((error) => {
+    tokenError = error;
+    return undefined;
+  });
+  const token = installationToken ?? env.GITHUB_PUBLIC_TOKEN;
   if (!token) {
     return classifyPullRequestFreshness(undefined, args.expectedHeadSha, {
       ...options,
@@ -121,7 +121,17 @@ export async function fetchPullRequestFreshness(
     });
   }
   const admissionKey = githubRateLimitAdmissionKeyForToken(env, token, args.installationId);
-  const live = await fetchLivePullRequestResult(env, args.repoFullName, args.pullNumber, token, admissionKey);
+  // Route through the read helper's self-heal ONLY when we hold an installation token: a stale cached one then
+  // re-mints once on a 401 (#6191) instead of failing the freshness check closed. A public-token fallback has no
+  // installation to re-mint, so it fetches with the token as before.
+  const live = await fetchLivePullRequestResult(
+    env,
+    args.repoFullName,
+    args.pullNumber,
+    token,
+    admissionKey,
+    installationToken !== undefined ? args.installationId : undefined,
+  );
   if (live.status === "error") {
     return classifyPullRequestFreshness(undefined, args.expectedHeadSha, {
       ...options,

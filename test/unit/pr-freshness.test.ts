@@ -5,11 +5,17 @@ import {
   pullRequestFreshnessDetail,
   reviewedPullRequestHeadSha,
 } from "../../src/github/pr-freshness";
+import {
+  clearInstallationTokenCacheForTest,
+  setInstallationTokenStore,
+} from "../../src/github/app";
 import { createTestEnv } from "../helpers/d1";
 
 describe("PR freshness guards", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    setInstallationTokenStore(null);
+    clearInstallationTokenCacheForTest();
   });
 
   it("classifies a matching open head as current", () => {
@@ -218,6 +224,37 @@ describe("PR freshness guards", () => {
       unavailableSource: "pull_request_fetch",
       unavailableDetail: expect.stringContaining("503"),
     });
+  });
+
+  it("self-heals a stale cached installation token on the live PR-freshness read (401 -> re-mint -> current)", async () => {
+    // Regression for the read-path fail-closed bug: fetchPullRequestFreshness fed a stale cached installation
+    // token straight into the live PR fetch with no retry, so a single 401 was classified `status: "stale",
+    // reason: "unavailable"` -- failing the reopen-guard/gate-override re-check closed for what the write path
+    // would have transparently retried. It now routes through withInstallationTokenRetry (#6191).
+    const env = createTestEnv();
+    let rejected = false;
+    setInstallationTokenStore({
+      get: async () => ({ token: rejected ? "fresh-token" : "stale-token", expiresAtMs: Date.now() + 60 * 60_000 }),
+      set: async () => {},
+    });
+    const seenTokens: string[] = [];
+    vi.stubGlobal("fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const token = (new Headers(init?.headers).get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+      seenTokens.push(token);
+      if (token === "stale-token") {
+        rejected = true;
+        return new Response(JSON.stringify({ message: "Bad credentials" }), { status: 401 });
+      }
+      return Response.json({ state: "open", head: { sha: "sha7" } });
+    });
+    const result = await fetchPullRequestFreshness(env, {
+      installationId: 123,
+      repoFullName: "owner/repo",
+      pullNumber: 7,
+      expectedHeadSha: "sha7",
+    });
+    expect(result).toMatchObject({ status: "current", liveHeadSha: "sha7", liveState: "open" });
+    expect(seenTokens).toEqual(["stale-token", "fresh-token"]);
   });
 
   it("fails closed when no token can verify live PR state", async () => {

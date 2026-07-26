@@ -63,7 +63,7 @@ import type {
   RepositorySettings,
 } from "../types";
 import { errorMessage, nowIso, repoParts, strippedErrorMessage } from "../utils/json";
-import { createInstallationToken, getAppInstallation } from "./app";
+import { createInstallationToken, getAppInstallation, withInstallationTokenRetry } from "./app";
 import {
   GITTENSORY_LEGACY_CONTEXT_CHECK_NAME,
   GITTENSORY_LEGACY_GATE_CHECK_NAME,
@@ -3456,8 +3456,17 @@ export async function fetchLiveIssueState(
   issueNumber: number,
   token: string | undefined,
   admissionKey?: GitHubRateLimitAdmissionKey,
+  // When supplied, the read self-heals a stale cached installation token by re-minting once on a 401, matching
+  // the write-path convention (#6191) — the token argument is then owned by withInstallationTokenRetry. Omit it
+  // (public-token / no-installation reads) to fetch with the passed token exactly as before.
+  installationId?: number,
 ): Promise<string | undefined> {
-  const result = await githubJsonWithHeaders<{ state?: string | null }>(env, repoFullName, `/issues/${issueNumber}`, token, githubRateLimitOptions(admissionKey)).catch(() => undefined);
+  const run = (accessToken: string | undefined) =>
+    githubJsonWithHeaders<{ state?: string | null }>(env, repoFullName, `/issues/${issueNumber}`, accessToken, githubRateLimitOptions(admissionKey));
+  const result = await (installationId === undefined
+    ? run(token)
+    : withInstallationTokenRetry(env, installationId, run)
+  ).catch(() => undefined);
   return result?.data.state ?? undefined;
 }
 
@@ -3471,8 +3480,15 @@ export async function fetchLivePullRequestHeadSha(
   prNumber: number,
   token: string | undefined,
   admissionKey?: GitHubRateLimitAdmissionKey,
+  // See fetchLiveIssueState: when supplied, a stale cached installation token self-heals via one re-mint (#6191).
+  installationId?: number,
 ): Promise<string | undefined> {
-  const result = await githubJsonWithHeaders<{ head?: { sha?: string | null } | null }>(env, repoFullName, `/pulls/${prNumber}`, token, githubRateLimitOptions(admissionKey)).catch(() => undefined);
+  const run = (accessToken: string | undefined) =>
+    githubJsonWithHeaders<{ head?: { sha?: string | null } | null }>(env, repoFullName, `/pulls/${prNumber}`, accessToken, githubRateLimitOptions(admissionKey));
+  const result = await (installationId === undefined
+    ? run(token)
+    : withInstallationTokenRetry(env, installationId, run)
+  ).catch(() => undefined);
   return result?.data.head?.sha ?? undefined;
 }
 
@@ -3486,9 +3502,16 @@ export async function fetchLivePullRequestResult(
   prNumber: number,
   token: string | undefined,
   admissionKey?: GitHubRateLimitAdmissionKey,
+  // See fetchLiveIssueState: when supplied, a stale cached installation token self-heals via one re-mint (#6191),
+  // so a transient 401 is retried rather than surfaced as an "error" the freshness check fails closed on.
+  installationId?: number,
 ): Promise<LivePullRequestFetchResult> {
+  const run = (accessToken: string | undefined) =>
+    githubJsonWithHeaders<GitHubPullRequestPayload>(env, repoFullName, `/pulls/${prNumber}`, accessToken, githubRateLimitOptions(admissionKey));
   try {
-    const result = await githubJsonWithHeaders<GitHubPullRequestPayload>(env, repoFullName, `/pulls/${prNumber}`, token, githubRateLimitOptions(admissionKey));
+    const result = installationId === undefined
+      ? await run(token)
+      : await withInstallationTokenRetry(env, installationId, run);
     return { status: "ok", data: result.data };
   } catch (error) {
     return { status: "error", error: strippedErrorMessage(error, "GitHub live PR fetch failed").slice(0, 240) };

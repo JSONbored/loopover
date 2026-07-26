@@ -230,7 +230,7 @@ export async function runAnomalyAlerts(env: Env, config: AlertAgentConfig, deps:
   // computes + maybe alerts; the other 59 short-circuit here before touching D1.
   const hourBucket = new Date().toISOString().slice(0, 13); // YYYY-MM-DDTHH
   const checkClaim = await storage(env).prepare(
-    `INSERT INTO notification_deliveries (id, project, target_id, notification_key, status)
+    `INSERT INTO alert_dedup_claims (id, project, target_id, notification_key, status)
      VALUES (?, ?, '__healthcheck__', ?, 'sent')
      ON CONFLICT(project, target_id, notification_key) DO NOTHING`,
   )
@@ -246,7 +246,7 @@ export async function runAnomalyAlerts(env: Env, config: AlertAgentConfig, deps:
   // Throttle: claim a per-(condition-set, hour) key so a repeated condition alerts at most hourly.
   const key = await sha256Hex(`anomaly:${anomalies.join("|")}:${hourBucket}`);
   const claim = await storage(env).prepare(
-    `INSERT INTO notification_deliveries (id, project, target_id, notification_key, status)
+    `INSERT INTO alert_dedup_claims (id, project, target_id, notification_key, status)
      VALUES (?, ?, '__anomaly__', ?, 'sent')
      ON CONFLICT(project, target_id, notification_key) DO NOTHING`,
   )

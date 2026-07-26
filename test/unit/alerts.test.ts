@@ -7,6 +7,7 @@ import {
   detectAnomalies,
   runAnomalyAlerts,
 } from "../../src/review/alerts";
+import { createTestEnv } from "../helpers/d1";
 
 const healthy: AgentHealth = {
   byStatus: {},
@@ -227,6 +228,32 @@ describe("runAnomalyAlerts — send path", () => {
     expect(body.username).toBe("Awesome"); // config.name preferred over slug
     expect(body.embeds[0]?.title).toContain("ac: health anomaly");
     expect(body.embeds[0]?.description).toMatch(/calibration drift|DEAD-LETTERED|permanently failed/);
+  });
+
+  it("REGRESSION (#8901): the dedup-claim inserts succeed against the REAL migrated schema (alert_dedup_claims)", async () => {
+    // The other send-path tests use a mocked claim store (claimEnv), which is exactly why the
+    // notification_deliveries collision stayed latent. Against a REAL migrated D1, the old code's
+    // `INSERT INTO notification_deliveries (id, project, target_id, notification_key, status)` threw
+    // "no column named project"; alert_dedup_claims (migration 0181) has those columns + the unique index.
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const env = createTestEnv();
+    const config = { slug: "anomaly-agent", features: { discordNotify: true }, secrets: {}, discordWebhookUrl: WEBHOOK } as AlertAgentConfig;
+    const deps: AnomalyAlertDeps = { computeAgentHealth: async () => anomalousHealth, computeCalibration: async () => driftCal };
+
+    await runAnomalyAlerts(env, config, deps);
+    expect(fetchSpy).toHaveBeenCalledTimes(1); // reached the send path => both claim inserts succeeded
+
+    // Both claims landed in the new table, and its unique constraint powers the throttle: a second run in the
+    // same hour loses the healthcheck claim (ON CONFLICT DO NOTHING => changes=0) and short-circuits, so no
+    // second Discord POST fires.
+    const rows = await env.DB.prepare("SELECT target_id FROM alert_dedup_claims WHERE project = ? ORDER BY target_id")
+      .bind("anomaly-agent")
+      .all<{ target_id: string }>();
+    expect((rows.results ?? []).map((r) => r.target_id)).toEqual(["__anomaly__", "__healthcheck__"]);
+
+    await runAnomalyAlerts(env, config, deps);
+    expect(fetchSpy).toHaveBeenCalledTimes(1); // still once: this hour's healthcheck claim was already taken
   });
 
   it("resolves the webhook from a named secret (config.secrets.discordWebhook → env[name])", async () => {

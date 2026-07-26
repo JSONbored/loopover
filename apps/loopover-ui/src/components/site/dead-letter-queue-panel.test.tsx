@@ -159,6 +159,22 @@ describe("DeadLetterQueuePanel", () => {
     ).toBeTruthy();
   });
 
+  it("REGRESSION (#8668): shows the WifiOff icon, not the generic AlertTriangle, when the fetch fails with a network errorKind", async () => {
+    apiFetch.mockResolvedValue({ ok: false, kind: "network", message: "fetch failed" });
+    const { container } = render(<DeadLetterQueuePanel />);
+    await screen.findByText("Couldn't load the dead-letter queue");
+    expect(container.querySelector(".lucide-wifi-off")).toBeTruthy();
+    expect(container.querySelector(".lucide-triangle-alert")).toBeNull();
+  });
+
+  it("keeps the generic AlertTriangle icon for a non-network (e.g. http) errorKind", async () => {
+    apiFetch.mockResolvedValue({ ok: false, kind: "http", message: "insufficient_role" });
+    const { container } = render(<DeadLetterQueuePanel />);
+    await screen.findByText("Couldn't load the dead-letter queue");
+    expect(container.querySelector(".lucide-triangle-alert")).toBeTruthy();
+    expect(container.querySelector(".lucide-wifi-off")).toBeNull();
+  });
+
   it("expands and collapses a truncated error message", async () => {
     const longError = "x".repeat(120);
     apiFetch.mockResolvedValue({

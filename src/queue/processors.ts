@@ -645,6 +645,7 @@ import {
   recordReversalSignals,
 } from "../review/outcomes-wire";
 import { maybeApplyCloseAuditHoldout } from "../review/close-audit-holdout";
+import { buildDecisionRecord, contentDigest, loadDecisionRecordCollapsible, persistDecisionRecord } from "../review/decision-record";
 import { neutralHoldReasonCode, nativeGateActionFromConclusion, recordNativeGateDecision } from "../review/parity-wire";
 import { recordContributorGateDecision } from "../review/contributor-calibration";
 import { recordGateBlockersAndCheckRepeatAlarm } from "../review/rule-repeat-alarm-wire";
@@ -3321,6 +3322,32 @@ async function runAgentMaintenancePlanAndExecute(
     // erase a prior miner-authored prediction for the same head.
     minerAuthored: breakerMinerAuthored,
   });
+  // #8836: the content-addressed decision record — the public commitment that lets a contributor argue
+  // "clause X of config abc123 decided this". Persist-only here (best-effort inside); the same reasonCode
+  // expression as recordNativeGateDecision above so the record and the calibration row can never disagree
+  // about WHY. Model/prompt commitments are wired when the AI-review contribution lands (tracked on #8836's
+  // follow-up note); rule-only decisions carry null there by design.
+  {
+    const { record, recordDigest } = await buildDecisionRecord({
+      repoFullName,
+      pullNumber: pr.number,
+      headSha: pr.headSha ?? "unknown",
+      baseSha: null,
+      action: disposition.actionClass,
+      reasonCode:
+        disposition.blockerClass !== "none"
+          ? disposition.blockerClass
+          : policyCloseKind !== undefined
+            ? `policy_close:${policyCloseKind}`
+            : gate.conclusion,
+      configDigest: await contentDigest(settings),
+      gatePack: settings.gatePack,
+      ciState: null,
+      modelId: null,
+      promptDigest: null,
+    });
+    await persistDecisionRecord(env, record, recordDigest);
+  }
   // #2349 (PR 1): additive per-contributor calibration data, gated identically to recordNativeGateDecision
   // above -- see src/review/contributor-calibration.ts's doc comment. Currently write-only; nothing reads
   // contributor_gate_history yet.
@@ -11462,6 +11489,10 @@ async function maybePublishPrPublicSurface(
       // a few hundred lines up for the identical reason.
       const missingTestsFinding = advisory.findings.find((finding) => finding.code === "manifest_missing_tests");
       const e2eTestGenAvailable = missingTestsFinding ? await convergedFeatureActive(env, repoFullName, "e2eTests") : false;
+      // #8836: append the persisted decision record (when one exists) so the public surface carries the
+      // content-addressed commitment — clause + config/model digests. Null on first publish (finalize runs
+      // after) and on any read hiccup; the section rides the NEXT republish, never blocks this one.
+      const decisionRecordCollapsible = await loadDecisionRecordCollapsible(env, repoFullName, pr.number);
       deterministicBody = buildUnifiedCommentBody({
         gate: renderedGate,
         ...(aiReview !== undefined ? { aiReview } : {}),
@@ -11498,7 +11529,7 @@ async function maybePublishPrPublicSurface(
         // A preflight HOLD (e.g. the review lane is unavailable → the review is incomplete) must never render as
         // "safe to merge"; the renderer downgrades an otherwise-ready status to a manual-review hold. (#2002)
         preflightHeld: preflight.status === "hold",
-        extraCollapsibles: buildPublicSafeCollapsibles({
+        extraCollapsibles: [...buildPublicSafeCollapsibles({
           repo,
           pr,
           profile,
@@ -11514,7 +11545,7 @@ async function maybePublishPrPublicSurface(
           ...(missingTestsFinding !== undefined ? { missingTestsFinding } : {}),
           e2eTestGenAvailable,
           env,
-        }),
+        }), ...(decisionRecordCollapsible !== null ? [decisionRecordCollapsible] : [])],
         footerMarkdown: loopoverFooter(env, {
           earnUrl: repo?.isRegistered
             ? gittensorRepoEarnUrl(repoFullName)

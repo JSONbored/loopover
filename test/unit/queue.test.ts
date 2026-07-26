@@ -4572,6 +4572,57 @@ describe("queue processors", () => {
     expect(commentBody).not.toContain("the review lane is unavailable");
   });
 
+  it("#8836: a republish AFTER a decision record exists appends the Decision record collapsible", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autoLabelEnabled: false, gatePack: "oss-anti-slop" });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { commentMode: "all_prs", publicSurface: "comment_only", checkRunMode: "off", reviewCheckMode: "required", aiReviewMode: "off" } });
+    // The finalize of a PRIOR pass persisted the record; this publish must surface it.
+    await env.DB.prepare(
+      `INSERT INTO decision_records (id, repo_full_name, pull_number, head_sha, action, reason_code, record_digest, record_json, created_at)
+       VALUES ('record:JSONbored/gittensory#95@a95', 'JSONbored/gittensory', 95, 'a95', 'hold', 'guardrail_hold', ?, ?, ?)`,
+    )
+      .bind(
+        "d".repeat(64),
+        JSON.stringify({ schemaVersion: "1", repoFullName: "JSONbored/gittensory", pullNumber: 95, headSha: "a95", baseSha: null, action: "hold", reasonCode: "guardrail_hold", configDigest: "e".repeat(64), gatePack: "oss-anti-slop", ciState: null, modelId: null, promptDigest: null, decidedAt: "2026-07-26T00:00:00Z" }),
+        "2026-07-26T00:00:00Z",
+      )
+      .run();
+    let commentBody = "";
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/pulls/95/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.endsWith("/pulls/95")) return Response.json({ number: 95, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a95" }, labels: [], body: "Closes #1" });
+      if (url.includes("/commits/a95/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/a95/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/issues/95/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/95/comments") && method === "POST") {
+        commentBody = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? "");
+        return Response.json({ id: 1 }, { status: 201 });
+      }
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "record-republish",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 95, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a95" }, labels: [], body: "Closes #1" },
+      },
+    });
+    expect(commentBody).toContain("Decision record");
+    expect(commentBody).toContain("`guardrail_hold`");
+    expect(commentBody).toContain("dddddddddddd"); // the truncated record digest
+  });
+
   it("REGRESSION (registry-never-synced lane fix): the SAME setup still shows the lane-unavailable hold once a registry snapshot has synced at least once", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     // A real snapshot exists, but it does not list THIS repo -- a genuine "unregistered" signal, unlike the

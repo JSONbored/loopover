@@ -10,8 +10,11 @@
 //   • ACTED CLOSES (stratum close_arm): the decision the guarantee governs. A realized outcome of `merged`
 //     on a target the gate CLOSED means the PR was later reopened and merged — the definitive incorrect-close
 //     class — so those candidates carry `definitiveAdjudication: "incorrect"` (no judgment needed).
-//   • HOLDS whose ONLY blockers were AI-judgment findings (stratum holdout_close): the would-have-closed-at-
-//     a-lower-threshold population. These are the pairs that let the sweep certify a λ̂ BELOW today's static
+//   • HOLDS whose ONLY blockers were AI-judgment findings (stratum holdout_close): staged for ANALYSIS, not
+//     for calibration — apply must skip them. Adjudicating the 2026-07 backfill proved they are NOT valid
+//     close counterfactuals: a hold that survived means some non-confidence criterion (split vs consensus,
+//     author tier) blocked the close, so "would close have been right" samples a different population than
+//     the acted-close guarantee governs. The LIVE ε-holdout (#8831) samples would-close PRs and stays valid. These are the pairs that let the sweep certify a λ̂ BELOW today's static
 //     floor — pairs at/above the floor alone can only re-bless the status quo. Holds with any non-AI blocker
 //     (CI red, conflicts, policy) are EXCLUDED: "would closing have been right" is unanswerable when the
 //     hold was about something other than the finding.

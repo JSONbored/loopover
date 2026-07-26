@@ -33,7 +33,8 @@
 // STAGE:
 //   node --experimental-strip-types scripts/backfill-decision-labels.ts < candidates.json > bundle.json
 //
-// APPLY (after adjudication sign-off; both idempotent via ON CONFLICT DO NOTHING):
+// APPLY (after adjudication sign-off; both idempotent via ON CONFLICT DO NOTHING). CLOSE_ARM LABELS ONLY —
+// holdout_close rows are analysis output, not calibration rows (see the core header's population note):
 //   \set records `jq -c .records bundle.json`
 //   INSERT INTO decision_records SELECT * FROM jsonb_populate_recordset(NULL::decision_records, :'records'::jsonb)
 //   ON CONFLICT (id) DO NOTHING;

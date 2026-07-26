@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("../../src/github/comments", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/github/comments")>()),
+  // #8803: the close-explanation comment routes through the marker helper; mock it like the pr-actions
+  // primitives below so no real fetch (marker search) happens in these suites.
+  createOrUpdateCloseExplanationComment: vi.fn(async () => ({ id: 2, changed: true })),
+}));
 vi.mock("../../src/github/pr-actions", () => ({
   createPullRequestReview: vi.fn(async () => ({ id: 1 })),
   mergePullRequest: vi.fn(async () => ({ merged: true, sha: "merged-sha" })),

@@ -150,6 +150,26 @@ describe("DeadLetterQueuePanel", () => {
     expect(screen.getByText("insufficient_role")).toBeTruthy();
   });
 
+  // #8668: the panel's own errorTitle/errorDescription are fixed strings that always win over
+  // ErrorState's network-aware copy defaults, so a network-kind failure is only observable via the
+  // icon swap (WifiOff vs AlertTriangle) -- errorKind previously wasn't threaded through at all, so
+  // this rendered the generic icon even when the API was completely unreachable.
+  it("shows the offline (WifiOff) icon for a network-kind failure, not the generic one", async () => {
+    apiFetch.mockResolvedValue({ ok: false, message: "fetch failed", kind: "network" });
+    const { container } = render(<DeadLetterQueuePanel />);
+    await screen.findByText("Couldn't load the dead-letter queue");
+    expect(container.querySelector(".lucide-wifi-off")).toBeTruthy();
+    expect(container.querySelector(".lucide-triangle-alert")).toBeNull();
+  });
+
+  it("keeps the generic (AlertTriangle) icon for a non-network failure", async () => {
+    apiFetch.mockResolvedValue({ ok: false, message: "insufficient_role", kind: "http" });
+    const { container } = render(<DeadLetterQueuePanel />);
+    await screen.findByText("Couldn't load the dead-letter queue");
+    expect(container.querySelector(".lucide-triangle-alert")).toBeTruthy();
+    expect(container.querySelector(".lucide-wifi-off")).toBeNull();
+  });
+
   it("shows an error state when the response is malformed", async () => {
     apiFetch.mockResolvedValue({ ok: true, data: { generatedAt: "x" } });
     render(<DeadLetterQueuePanel />);

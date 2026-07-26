@@ -280,6 +280,7 @@ import {
   type AgentDispositionLabelSettings,
   type PlannedAgentAction,
 } from "../settings/agent-actions";
+import { isCommentMergeStateHeld } from "../settings/pr-disposition";
 import { isAutoCloseExempt } from "../settings/auto-close-exempt";
 import {
   isSkipAutomationBotPullRequestsEnabledGlobally,
@@ -2063,6 +2064,10 @@ export function derivePublicCommentMergeFacts(args: {
   const mergeReadiness: MergeReadiness = {
     ciState,
     ...(mergeStateLabel ? { mergeStateLabel } : {}),
+    // #8759: the SHARED interpretation of the merge state (pr-disposition.ts) — the same one the
+    // disposition planner reads — resolved here so the self-contained renderer consumes a boolean
+    // instead of re-deriving meaning from the raw string (the #8711 four-surfaces-disagree class).
+    ...(mergeStateLabel ? { mergeStateHeld: isCommentMergeStateHeld(mergeStateLabel) } : {}),
     ...(failingDetails.length > 0 ? { failingChecks: failingDetails.map((detail) => detail.name) } : {}),
     ...(failingDetails.length > 0 ? { failingDetails } : {}),
     ...(nonRequiredFailingDetails.length > 0 ? { nonRequiredFailingDetails } : {}),
@@ -2800,6 +2805,16 @@ async function maybeCloseForContributorCapOnOpen(
       pr: { headSha: pr.headSha },
     });
     if (planned === null || planned.length === 0) return false;
+    // #8805: ALSO claim the per-PR actuation lock before executing — this early cap-close previously ran
+    // outside the "one shared lock namespace covering every mutating PR pass" (transient-locks.ts), so a
+    // sweep-fanned agent-regate-pr job could plan/execute a DIFFERENT action for this same PR concurrently.
+    // Nesting order here is author-outer → PR-inner, the OPPOSITE of the executor's pre-merge cap re-check
+    // (PR-outer → author-inner, #7284): safe regardless, because both locks are non-blocking TRY-claims —
+    // a cross-order contention degrades to both passes deferring cleanly (return false; the end-of-pipeline
+    // cap check and the next webhook/sweep tick are the backstops), never a blocking-wait deadlock.
+    const actuationLock = await claimPrActuationLock(env, repoFullName, pr.number);
+    if (!actuationLock.acquired) return false;
+    try {
     const installation = await getInstallation(env, installationId);
     const outcomes = await executeAgentMaintenanceActions(
       env,
@@ -2826,6 +2841,9 @@ async function maybeCloseForContributorCapOnOpen(
       planned,
     );
     return outcomes.some((outcome) => outcome.actionClass === "close" && outcome.outcome === "completed");
+    } finally {
+      await releasePrActuationLock(env, repoFullName, pr.number, actuationLock.ownerToken);
+    }
   } finally {
     await releaseContributorCapLock(env, repoFullName, pr.authorLogin, ownerToken);
   }
@@ -3555,7 +3573,15 @@ export async function reReviewStoredPullRequest(
     }
     return false;
   }
-  if (live?.head?.sha && live.head.sha !== pr.headSha) {
+  // #8804: resync on a LABEL mismatch too, not just head drift. A label-only change — exactly what Pass 1 of
+  // the flag-then-close machine produces (pending-closure), or a maintainer applying/removing manual-review —
+  // arrives via a `labeled` webhook that can still be queued behind this sweep pass; the live fetch already
+  // carries the current labels, so discarding them meant Pass 2 could misread the stored stale label set and
+  // re-run Pass 1 (duplicate warning comment, delayed enforcement). Sorted-set comparison: order is not signal.
+  const liveLabelNames = (live?.labels ?? []).map((label) => label.name ?? "").filter(Boolean).sort();
+  const storedLabelNames = [...pr.labels].sort();
+  const labelsDrifted = live !== undefined && JSON.stringify(liveLabelNames) !== JSON.stringify(storedLabelNames);
+  if (live?.head?.sha && (live.head.sha !== pr.headSha || labelsDrifted)) {
     await upsertPullRequestFromGitHub(env, repoFullName, live).catch(
       () => undefined,
     );

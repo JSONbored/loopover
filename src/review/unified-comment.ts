@@ -89,6 +89,11 @@ export interface CheckFailureDetail {
  *  Canonical home (#288): was duplicated identically in the awesome-claude + metagraphed agents. */
 export interface MergeReadiness {
   mergeStateLabel?: string;
+  /** #8759: the SHARED interpretation of mergeStateLabel, resolved by the bridge via
+   *  pr-disposition.ts's isCommentMergeStateHeld so this self-contained file never re-derives meaning
+   *  from the raw string. When present it is authoritative; absent (older callers) the legacy raw-string
+   *  check below applies, byte-identical to the pre-#8759 behavior. */
+  mergeStateHeld?: boolean;
   ciState: "passed" | "failed" | "unverified";
   failingChecks?: string[];
   failingDetails?: CheckFailureDetail[];
@@ -378,7 +383,10 @@ export function deriveUnifiedStatus(input: UnifiedReviewInput, ctx: UnifiedComme
   // merge" on the SAME PR the disposition planner is actively holding, which is the contradiction #5288 reported.
   // Other states — clean, a not-yet-computed `unknown`, or a `blocked` that the bot's own pending approval will
   // clear — do not downgrade. (#ready-needs-mergeable)
-  if (status === "ready" && input.readiness?.mergeStateLabel) {
+  if (status === "ready" && input.readiness?.mergeStateHeld !== undefined) {
+    // #8759: the bridge resolved the shared interpretation (pr-disposition.ts) — authoritative when present.
+    if (input.readiness.mergeStateHeld) return "held";
+  } else if (status === "ready" && input.readiness?.mergeStateLabel) {
     const mergeState = input.readiness.mergeStateLabel.toLowerCase();
     if (mergeState === "dirty" || mergeState === "behind" || mergeState === "unstable") return "held";
   }

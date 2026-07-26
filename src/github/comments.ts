@@ -11,6 +11,14 @@ const LEGACY_AGENT_COMMAND_COMMENT_MARKER = "<!-- gittensory-agent-command -->";
  *  thread from the sticky PR panel above (that comment stops being useful the moment the PR closes), so this
  *  must never collapse into `PR_PANEL_COMMENT_MARKER`'s aliases the way the two constants above do. */
 export const VISUAL_FOLLOWUP_COMMENT_MARKER = "<!-- loopover:visual-unrelated-followup -->";
+// #8803: the close-explanation comment's idempotency marker, parameterized by closeKind so distinct close
+// reasons on one PR (rare, but e.g. a hard-rule close after an earlier heuristic close attempt) keep their
+// own canonical comments. Routing the executor's closeComment through the marker helper means a
+// comment-succeeded-close-failed retry PATCHes/skips the canonical comment instead of stacking an
+// identical duplicate every failed cycle.
+export function closeExplanationMarker(closeKind: string | undefined): string {
+  return `<!-- loopover:close-explanation:${closeKind ?? "close"} -->`;
+}
 // Bound the marker-comment search at 10 pages (up to 1,000 comments), matching src/github's other pagination
 // caps (app.ts's MAX_WORKFLOW_RUN_LIST_PAGES, pr-actions.ts's REVIEW_PAGE_LIMIT). The old cap of 3 (300 comments)
 // let a PR/issue that accrued >300 comments before LoopOver's own marker comment hide it from this search, so
@@ -45,6 +53,24 @@ export async function createOrUpdatePrIntelligenceComment(
  *  updates the same comment instead of posting a confusing duplicate; a same-body repeat (a retried `closed`
  *  webhook delivery) is a genuine no-op via the same byte-identical-body skip every other marker comment here
  *  already gets. */
+/** #8803: idempotent close-explanation comment — the executor's close path routes here so a retry after a
+ *  failed close never re-posts the identical "why we closed you" body (byte-identical → skip; changed →
+ *  PATCH the canonical comment). createIfMissing stays true: the first attempt must always post. */
+export async function createOrUpdateCloseExplanationComment(
+  env: Env,
+  installationId: number,
+  repoFullName: string,
+  pullNumber: number,
+  body: string,
+  closeKind: string | undefined,
+): Promise<{ id: number; html_url?: string; changed: boolean } | null> {
+  const marker = closeExplanationMarker(closeKind);
+  // The marker MUST live in the posted body — the search-side helper only finds comments whose body contains
+  // it (the intelligence/visual callers embed theirs the same way). An HTML comment renders invisibly, so the
+  // contributor-facing text is unchanged; a byte-identical replan skips, a reworded one PATCHes.
+  return createOrUpdateIssueCommentWithMarker(env, installationId, repoFullName, pullNumber, `${marker}\n${body}`, marker);
+}
+
 export async function createOrUpdateVisualFollowupComment(
   env: Env,
   installationId: number,

@@ -364,6 +364,7 @@ export async function upsertPullRequestFromGitHub(
       state: pullRequests.state,
       mergedAt: pullRequests.mergedAt,
       githubUpdatedAt: pullRequests.githubUpdatedAt,
+      labelsJson: pullRequests.labelsJson,
     })
     .from(pullRequests)
     .where(and(eq(pullRequests.repoFullName, repoFullName), eq(pullRequests.number, pr.number)))
@@ -402,6 +403,10 @@ export async function upsertPullRequestFromGitHub(
   // No `?? undefined` fallback on the stale branch (unlike headSha/mergedAt above): isStalePayload's own
   // definition already requires existingClaimRow.githubUpdatedAt to be non-null, so that branch is unreachable.
   const resolvedGithubUpdatedAt = isStalePayload ? existingClaimRow!.githubUpdatedAt : (incomingGithubUpdatedAt ?? undefined);
+  // #8804: labels join the protected set. A reordered stale snapshot could silently wipe a JUST-applied
+  // disposition label (pending-closure, manual-review) even while state/headSha stayed correctly protected —
+  // breaking the flag-then-close two-pass machine, whose Pass 2 keys on the label's presence.
+  const resolvedLabelsJson = isStalePayload ? existingClaimRow!.labelsJson : jsonString(record.labels);
   const lastSeenOpenAt = resolvedState === "open" ? (options.seenOpenAt ?? syncedAt) : null;
   const preserveSparseBody = pr.body === undefined && existingClaimRow !== undefined;
   const existingPayload = preserveSparseBody ? parseJson<{ body?: string | null }>(existingClaimRow.payloadJson, {}) : undefined;
@@ -453,7 +458,7 @@ export async function upsertPullRequestFromGitHub(
       baseRef: pr.base?.ref,
       mergedAt: resolvedMergedAt,
       htmlUrl: pr.html_url,
-      labelsJson: jsonString(record.labels),
+      labelsJson: resolvedLabelsJson,
       linkedIssuesJson,
       linkedIssueClaimedAt,
       bodyObservedAt,
@@ -480,7 +485,7 @@ export async function upsertPullRequestFromGitHub(
         baseRef: pr.base?.ref,
         mergedAt: resolvedMergedAt,
         htmlUrl: pr.html_url,
-        labelsJson: jsonString(record.labels),
+        labelsJson: resolvedLabelsJson,
         linkedIssuesJson,
         linkedIssueClaimedAt,
         bodyObservedAt,
@@ -491,7 +496,7 @@ export async function upsertPullRequestFromGitHub(
         updatedAt: syncedAt,
       },
     });
-  return { ...record, state: resolvedState, headSha: resolvedHeadSha, mergedAt: resolvedMergedAt ?? null, body, linkedIssues, linkedIssueClaimedAt, bodyObservedAt, headShaObservedAt };
+  return { ...record, state: resolvedState, headSha: resolvedHeadSha, mergedAt: resolvedMergedAt ?? null, labels: parseJson<string[]>(resolvedLabelsJson, []), body, linkedIssues, linkedIssueClaimedAt, bodyObservedAt, headShaObservedAt };
 }
 
 function resolveLinkedIssueClaimedAt(
@@ -540,7 +545,23 @@ function linkedIssueSetsOverlap(left: number[], right: number[]): boolean {
 export async function upsertIssueFromGitHub(env: Env, repoFullName: string, issue: GitHubIssuePayload, options: { seenOpenAt?: string } = {}): Promise<IssueRecord> {
   const record = toIssueRecord(repoFullName, issue);
   const db = getDb(env.DB);
-  const lastSeenOpenAt = issue.state === "open" ? (options.seenOpenAt ?? nowIso()) : null;
+  // #8804: the same out-of-order webhook guard upsertPullRequestFromGitHub carries (#webhook-reorder-clobber),
+  // previously absent here entirely — a delayed issue webhook's stale snapshot could regress state and wipe a
+  // just-applied label. Same fail-open contract: a sparse payload (no updated_at) or a pre-migration row
+  // (githubUpdatedAt NULL) applies the write exactly as before.
+  const existingRows = await db
+    .select({ state: issues.state, labelsJson: issues.labelsJson, githubUpdatedAt: issues.githubUpdatedAt })
+    .from(issues)
+    .where(and(eq(issues.repoFullName, repoFullName), eq(issues.number, issue.number)))
+    .limit(1);
+  const existingRow = existingRows[0];
+  const incomingGithubUpdatedAt = issue.updated_at ?? null;
+  const isStalePayload =
+    incomingGithubUpdatedAt !== null && existingRow?.githubUpdatedAt != null && incomingGithubUpdatedAt < existingRow.githubUpdatedAt;
+  const resolvedState = isStalePayload ? existingRow!.state : issue.state;
+  const resolvedLabelsJson = isStalePayload ? existingRow!.labelsJson : jsonString(record.labels);
+  const resolvedGithubUpdatedAt = isStalePayload ? existingRow!.githubUpdatedAt : (incomingGithubUpdatedAt ?? undefined);
+  const lastSeenOpenAt = resolvedState === "open" ? (options.seenOpenAt ?? nowIso()) : null;
   logIfBodyTruncated("issue", repoFullName, issue.number, issue.body);
   await db
     .insert(issues)
@@ -549,32 +570,36 @@ export async function upsertIssueFromGitHub(env: Env, repoFullName: string, issu
       repoFullName,
       number: issue.number,
       title: issue.title,
-      state: issue.state,
+      state: resolvedState,
       authorLogin: issue.user?.login,
       authorAssociation: issue.author_association,
       htmlUrl: issue.html_url,
-      labelsJson: jsonString(record.labels),
+      labelsJson: resolvedLabelsJson,
       linkedPrsJson: jsonString(record.linkedPrs),
       lastSeenOpenAt,
       payloadJson: jsonString(compactGitHubPayload(issue)),
+      githubUpdatedAt: resolvedGithubUpdatedAt,
       updatedAt: nowIso(),
     })
     .onConflictDoUpdate({
       target: [issues.repoFullName, issues.number],
       set: {
         title: issue.title,
-        state: issue.state,
+        state: resolvedState,
         authorLogin: issue.user?.login,
         authorAssociation: issue.author_association,
         htmlUrl: issue.html_url,
-        labelsJson: jsonString(record.labels),
+        labelsJson: resolvedLabelsJson,
         linkedPrsJson: jsonString(record.linkedPrs),
         lastSeenOpenAt,
         payloadJson: jsonString(compactGitHubPayload(issue)),
+        githubUpdatedAt: resolvedGithubUpdatedAt,
         updatedAt: nowIso(),
       },
     });
-  return record;
+  // The returned record reflects what was actually PERSISTED (matching upsertPullRequestFromGitHub's own
+  // contract) — a delayed job must not keep acting on its stale in-process snapshot.
+  return { ...record, state: resolvedState, labels: parseJson<string[]>(resolvedLabelsJson, []) };
 }
 
 export async function getRepository(env: Env, fullName: string): Promise<RepositoryRecord | null> {

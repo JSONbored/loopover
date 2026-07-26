@@ -10,6 +10,12 @@ vi.mock("../../src/github/pr-actions", () => ({
   updatePullRequestBranch: vi.fn(async () => undefined),
   dismissLatestBotApproval: vi.fn(async () => ({ dismissed: true })),
 }));
+vi.mock("../../src/github/comments", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/github/comments")>()),
+  // #8803: the close-explanation comment now routes through the marker helper; mock it like the sibling
+  // pr-actions primitives so no real fetch happens and call sites can assert on it.
+  createOrUpdateCloseExplanationComment: vi.fn(async () => ({ id: 2, changed: true })),
+}));
 vi.mock("../../src/github/labels", () => ({
   ensurePullRequestLabel: vi.fn(async () => ({ applied: true, created: false })),
   removePullRequestLabel: vi.fn(async () => undefined),
@@ -58,6 +64,7 @@ import { ensurePullRequestAssignee } from "../../src/github/assignees";
 import { fetchPullRequestFreshness } from "../../src/github/pr-freshness";
 import { createInstallationToken } from "../../src/github/app";
 import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestState, fetchLiveReviewThreadBlockers, refreshInstallationHealthForInstallation } from "../../src/github/backfill";
+import { createOrUpdateCloseExplanationComment } from "../../src/github/comments";
 import {
   actionParams,
   applyModerationEscalationForRule,
@@ -192,7 +199,8 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     // its own — a live sweep's approve plans no explicit pin, so this is the unpinned/live-sweep case (#2262).
     expect(createPullRequestReview).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "APPROVE", "lgtm", "sha7");
     expect(mergePullRequest).toHaveBeenCalledWith(env, 123, "owner/repo", 7, { mergeMethod: "squash", sha: "sha7" });
-    expect(createIssueComment).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "closing");
+    // #8803: the close explanation routes through the idempotent marker helper (closeKind-scoped marker).
+    expect(createOrUpdateCloseExplanationComment).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "closing", undefined);
     expect(closePullRequest).toHaveBeenCalledWith(env, 123, "owner/repo", 7);
     expect(updatePullRequestBranch).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "sha7");
     expect(fetchPullRequestFreshness).toHaveBeenCalledTimes(6);

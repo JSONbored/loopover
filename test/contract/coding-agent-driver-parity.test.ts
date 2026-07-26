@@ -245,4 +245,20 @@ describe("documented divergences, locked in explicitly", () => {
     const result = await driver.run(task);
     expect(result.costUsd).toBe(0.15);
   });
+
+  it("CLI driver captures cost/token usage on a failed-but-billed attempt, symmetric with the Agent-SDK driver (#8871)", async () => {
+    // A non-zero exit whose JSON envelope still carries real spend (e.g. a mid-session API error) must report
+    // that cost so attempt-metering's budget ceiling is not undercounted — matching agent-sdk-driver.ts.
+    const driver = createCliSubprocessCodingAgentDriver({
+      command: "claude",
+      spawn: async () => ({
+        stdout: JSON.stringify({ type: "result", is_error: true, total_cost_usd: 0.09, input_tokens: 80, output_tokens: 20 }),
+        code: 1,
+      }),
+    });
+    const result = await driver.run(task);
+    expect(result.ok).toBe(false);
+    expect(result.costUsd).toBe(0.09);
+    expect(result.tokensUsed).toBe(100);
+  });
 });

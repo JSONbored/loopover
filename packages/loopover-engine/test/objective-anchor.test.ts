@@ -383,3 +383,18 @@ test("renderObjectiveAnchorAuditMarkdown escapes markdown controls and collapses
   assert.ok(markdown.includes("- src/review/\\[unsafe\\].ts"));
   assert.ok(markdown.includes("- src/review/\\<unsafe\\>.ts"));
 });
+
+test("extractObjectiveAnchorFeatures does not classify non-CI YAML as ci (#8873)", () => {
+  const features = extractObjectiveAnchorFeatures({
+    paths: [".loopover.yml", "docs/mkdocs.yml", "config/app.yaml"],
+  });
+
+  assert.equal(features.changeKinds.includes("ci"), false);
+  assert.ok(features.changeKinds.includes("config"));
+  assert.ok(features.changeKinds.includes("docs"));
+
+  const ciWorkflow = extractObjectiveAnchorFeatures({
+    paths: [".github/workflows/ci.yml"],
+  });
+  assert.ok(ciWorkflow.changeKinds.includes("ci"));
+});

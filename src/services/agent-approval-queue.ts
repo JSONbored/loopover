@@ -6,7 +6,7 @@ import { executeAgentMaintenanceActions, pendingActionToPlanned } from "./agent-
 import { downgradeCloseToHold, downgradeMergeToHold, isProtectedAutomationAuthor, type PlannedAgentAction } from "../settings/agent-actions";
 import { findBlacklistEntry } from "../settings/contributor-blacklist";
 import { isCloseHoldOnly, isHoldOnly, readUntrustworthyRuleCodes } from "../review/outcomes-wire";
-import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestReviewDecision, fetchLivePullRequestState, fetchLiveReviewThreadBlockers, fetchRequiredStatusContexts, mergeRequiredCiContexts } from "../github/backfill";
+import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestReviewDecision, fetchLivePullRequestState, fetchLiveReviewThreadBlockers, fetchRequiredStatusContexts, mergeRequiredCiContexts, REVIEW_DECISION_UNREADABLE } from "../github/backfill";
 import { githubRateLimitAdmissionKeyForToken } from "../github/client";
 import type { AgentPendingActionParams, AgentPendingActionRecord } from "../types";
 
@@ -264,7 +264,15 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
     // default -- without this gate, a thread- or duplicate-only close would be wrongly superseded as if it were
     // conflict-justified merely because mergeability happens to read clean (the SAME over-broad-predicate class
     // the #2478 gate review already caught once for closeRequiresMergeableState).
-    const mergeableNowCleared = isMergeableRecheck && reviewFetchSucceeded && mergeableState === "clean" && reviewDecision !== "CHANGES_REQUESTED";
+    // #9052: an UNREADABLE decision (200-with-errors) is not "confirmed no changes requested" -- without this
+    // it would satisfy the `!== "CHANGES_REQUESTED"` test and wrongly clear a conflict-justified close on a
+    // read we know failed, the same fail-open shape reviewFetchSucceeded already guards for a rejected fetch.
+    const mergeableNowCleared =
+      isMergeableRecheck &&
+      reviewFetchSucceeded &&
+      mergeableState === "clean" &&
+      reviewDecision !== "CHANGES_REQUESTED" &&
+      reviewDecision !== REVIEW_DECISION_UNREADABLE;
     // Only a CONFIRMED non-"open" clears a duplicate-justified close -- a rejected/failed fetch (undefined)
     // fails open exactly like every other live re-check in this function, so a transient GitHub hiccup never
     // wrongly spares a close that is, in fact, still justified.

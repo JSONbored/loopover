@@ -1980,6 +1980,18 @@ describe("local MCP git metadata collection", () => {
     expect(() => collectLocalBranchMetadata({ cwd: tempDir, baseRef: "HEAD", login: "oktofeesh1" })).toThrow(/not supported/);
   });
 
+  it("refuses forbidden source-upload fields and oversized changedFiles on the production collector (#8884)", async () => {
+    const { collectLocalBranchMetadata } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    delete process.env.LOOPOVER_UPLOAD_SOURCE;
+    // The scan runs before any git access, so a bare forbidden-key input is rejected outright -- no repo needed.
+    expect(() => collectLocalBranchMetadata({ login: "oktofeesh1", sourceContent: "secret source" } as never)).toThrow(/never uploaded/i);
+    expect(() => collectLocalBranchMetadata({ login: "oktofeesh1", changedFiles: [{ path: "a.ts", diff: "code" }] } as never)).toThrow(/never uploaded/i);
+    expect(() => collectLocalBranchMetadata({ login: "oktofeesh1", changedFiles: [{ path: "a.ts", body: "x".repeat(5000) }] } as never)).toThrow(
+      /oversized changedFiles/i,
+    );
+    expect(() => collectLocalBranchMetadata({ login: "oktofeesh1", changedFiles: { diff: "x".repeat(5000) } } as never)).toThrow(/non-array changedFiles/i);
+  });
+
   it("selects and validates cwd from MCP roots without leaking local paths", async () => {
     const { collectLocalBranchMetadata, normalizeMcpWorkspaceRoots, resolveWorkspaceCwd } = await import("../../packages/loopover-mcp/lib/local-branch.js");
     tempDir = mkdtempSync(join(tmpdir(), "loopover-local-"));

@@ -172,6 +172,46 @@ describe("reward-risk freshness parity with loopover-engine", () => {
     // 2 days old -> round4(exp(-2/20)) -- a concrete pin so a formula drift can't slip through as "still equal".
     expect(first.rewardUpside.opportunityFactors.freshnessFactor).toBe(0.9048);
   });
+
+  it("scopes a repo's open-PR risk count to that repo, not the contributor's portfolio-wide total (#8865)", () => {
+    const repoA = repo("owner/repo-a");
+    const repoB = repo("owner/repo-b");
+    // dev has 2 open PRs in repoA and 3 in repoB: the portfolio-wide total is 5, but repoA's own is 2.
+    const pullRequests = [
+      pr(repoA.fullName, 101, "A-1"),
+      pr(repoA.fullName, 102, "A-2"),
+      pr(repoB.fullName, 201, "B-1"),
+      pr(repoB.fullName, 202, "B-2"),
+      pr(repoB.fullName, 203, "B-3"),
+    ];
+    const twoRepoHistory = buildContributorOutcomeHistory({
+      login: "dev",
+      profile,
+      repositories: [repoA, repoB],
+      pullRequests,
+      issues: [],
+      repoStats: [],
+    });
+    // Guard the fixture's own premise so the assertion below can't pass for the wrong reason.
+    expect(twoRepoHistory.totals.openPullRequests).toBe(5);
+    expect(twoRepoHistory.repoOutcomes.find((outcome) => outcome.repoFullName === repoA.fullName)?.openPullRequests).toBe(2);
+
+    const report = buildRepoRewardRisk({
+      login: "dev",
+      repo: repoA,
+      repoFullName: repoA.fullName,
+      profile,
+      outcomeHistory: twoRepoHistory,
+      scoringSnapshot: scoringSnapshot(),
+      issues: [],
+      pullRequests: [],
+      nowMs: Date.parse("2026-07-10T00:00:00.000Z"),
+    });
+
+    // Before the fix currentOpenPrCount read the portfolio-wide total (5); it must reflect repoA's own
+    // open-PR count (2), matching how the same report already scopes open issues and offered actions.
+    expect(report.riskBreakdown.openPullRequests).toBe(2);
+  });
 });
 
 describe("bestFitLabels keyword anchoring", () => {

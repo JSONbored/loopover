@@ -125,8 +125,10 @@ See [`docs/env-reference.md`](docs/env-reference.md) for the full `LOOPOVER_MINE
 | Deny-hook synthesis | `deny-hook-synthesis.sqlite3` | `deny_rule_proposals` | `deny-hook-synthesis.js` | `LOOPOVER_MINER_DENY_HOOK_SYNTHESIS_DB` |
 | Worktree allocator | `worktree-allocator.sqlite3` | `worktree_slots` | `worktree-allocator.js` | `LOOPOVER_MINER_WORKTREE_ALLOCATOR_DB` |
 | Orb export | `orb-export.sqlite3` | `orb_export_meta` | `orb-export.js` | `LOOPOVER_MINER_ORB_EXPORT_DB` |
+| Contribution profile cache | `contribution-profile-cache.sqlite3` | `miner_contribution_profile` | `contribution-profile-cache.js` | `LOOPOVER_MINER_CONTRIBUTION_PROFILE_CACHE_DB` |
 | Policy-doc cache | `policy-doc-cache.sqlite3` | `policy_doc_cache` | `policy-doc-cache.js` | `LOOPOVER_MINER_POLICY_DOC_CACHE_DB` |
 | Policy-verdict cache | `policy-verdict-cache.sqlite3` | `policy_verdict_cache` | `policy-verdict-cache.js` | `LOOPOVER_MINER_POLICY_VERDICT_CACHE_DB` |
+| Ranked candidates | `ranked-candidates.sqlite3` | `miner_ranked_candidates` | `ranked-candidates.js` | `LOOPOVER_MINER_RANKED_CANDIDATES_DB` |
 
 The policy-doc and policy-verdict caches are the only stores above that hold no miner state of their own — both are
 pure optimization, and deleting either file only forces the next run to redo the work it would have skipped. The

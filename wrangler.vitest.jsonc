@@ -18,6 +18,10 @@
       {
         "name": "RATE_LIMITER",
         "class_name": "RateLimiter"
+      },
+      {
+        "name": "SUBMISSION_LOCK",
+        "class_name": "SubmissionLock"
       }
     ]
   },
@@ -25,6 +29,10 @@
     {
       "tag": "v1-rate-limiter",
       "new_sqlite_classes": ["RateLimiter"]
+    },
+    {
+      "tag": "v2-submission-lock",
+      "new_sqlite_classes": ["SubmissionLock"]
     }
   ]
 }

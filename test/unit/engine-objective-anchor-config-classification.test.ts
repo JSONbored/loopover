@@ -16,4 +16,25 @@ describe("loopover-engine objective-anchor config-filename classification", () =
     expect(features.changeKinds).toContain("config");
     expect(features.paths).toEqual([".loopover.yml"]);
   });
+
+  // The dependency check must use the same exact-match discipline as the adjacent CONFIG_FILENAMES
+  // check: an anchored /^package(?:-lock)?\.json$/ so a differently-prefixed sibling is NOT tagged
+  // "dependency" (#8874). Exercised on the vitest side because Codecov grades this file via vitest.
+  it("tags only exact package(.-lock).json as a 'dependency' change kind, not a prefixed sibling (#8874)", () => {
+    const dependency = extractObjectiveAnchorFeatures({
+      paths: ["package.json", "package-lock.json"],
+      labels: [],
+      titles: [],
+      notes: [],
+    });
+    expect(dependency.changeKinds).toContain("dependency");
+
+    const notDependency = extractObjectiveAnchorFeatures({
+      paths: ["sub-package.json", "mock-package.json"],
+      labels: [],
+      titles: [],
+      notes: [],
+    });
+    expect(notDependency.changeKinds).not.toContain("dependency");
+  });
 });

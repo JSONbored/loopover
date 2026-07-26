@@ -1,31 +1,23 @@
-// Best-effort exclusive locking against the self-host transient cache (#4013 step 1 -- extracted from
-// processors.ts, first step of the file's own module-split sequence). Two lock domains are built on the same
-// generic primitive here: the per-PR actuation mutex (below) and the per-(repo, PR, head SHA, mode) AI-review
-// lock, which stays in processors.ts (its own extraction is a later step in the split sequence) and imports
-// claimTransientLock/releaseTransientLockIfOwner/TransientLockClaim back from this module.
+// Best-effort exclusive locking (#4013 step 1 -- extracted from processors.ts). Two lock domains share the
+// same generic primitive: the per-PR actuation mutex and the per-(repo, PR, head SHA, mode) AI-review lock
+// (still wrapped in processors.ts / ai-review-orchestration.ts).
 //
-// ONE shared per-PR actuation mutex (#2129/#2135) for every mutating PR pass: the sweep/webhook-driven
-// maintenance plan-and-execute, the draft-dodge close, and the reopen-reclose. These are three INDEPENDENTLY
-// triggered webhook/sweep paths for the SAME PR (e.g. a `reopened` event and a concurrent `check_suite
-// completed` event, or a sweep tick racing either) that can be dequeued by separate workers at nearly the same
-// time; each would read its own stale-but-still-"current" state, each would pass its own freshness checks, and
-// each could independently fire a mutating call for the same PR. A single lock namespace is deliberate: separate
-// per-path locks (the original design) do not exclude each other, so a maintenance pass and a draft-dodge close
-// could still race — the whole point of this mutex is to make "does something else already own this PR" one
-// question with one answer, not one question per code path (review round 4). This is a lightweight interim
-// mutex (a full per-PR Durable Object / SubmissionLock is a separate, more-involved follow-up — see the TODO in
-// env.d.ts) built on the SAME transient cache used for CI-completion coalescing in processors.ts, claimed
-// ATOMICALLY (see claimTransientLock) so two racing deliveries can never both win the claim — a short TTL,
-// best-effort release. A lock-contended caller fails OPEN (returns false / skips this pass) rather than
-// blocking — the delivery holding the lock is evaluating the SAME PR, and the periodic sweep is the backstop
-// if this specific trigger is dropped. A cache adapter with no claim() primitive gets NO exclusivity at all
-// (every call proceeds) rather than a get-then-set pair that only *looks* atomic — see claimTransientLock's
-// doc comment for why that fallback was removed.
+// ONE shared per-PR actuation mutex (#2129/#2135) for every mutating PR pass: maintenance plan-and-execute,
+// draft-dodge close, and reopen-reclose. Independently triggered webhook/sweep paths for the SAME PR can be
+// dequeued by separate workers at nearly the same time; a single lock namespace makes "does something else
+// already own this PR" one question with one answer.
 //
-// Per-holder ownership tokens + releaseIfValue (atomic compare-and-delete) close the race a shared constant
+// Prefer the SubmissionLock Durable Object when `env.SUBMISSION_LOCK` is bound (#8896) — strongly consistent
+// per-key serialization on hosted Workers. Self-host installs without Durable Objects keep the transient-cache
+// mutex (Redis SET NX via claim()/releaseIfValue). A short TTL, best-effort release. Lock-contended callers
+// fail closed at the call site (PrActuationLockContendedError); missing DO/cache or a thrown claim fails OPEN
+// (returns acquired: true / skips exclusivity) so the lock stays defense-in-depth, never the primary safety
+// gate. A cache adapter with no claim() primitive gets NO exclusivity (every call proceeds) — see
+// claimTransientLock's doc comment.
+//
+// Per-holder ownership tokens + releaseIfValue (or DO compare-and-delete) close the race a shared constant
 // lock value used to leave open: a holder that ran past the TTL can never have its stale `finally` release
-// delete a later claimer's live lock (#2129/#2135) — release only succeeds when the caller's own token still
-// matches what's stored.
+// delete a later claimer's live lock (#2129/#2135).
 
 import { randomUUID } from "node:crypto";
 import { RetryableJobError } from "./retryable";
@@ -39,30 +31,23 @@ export type TransientLockClaim = {
 };
 
 /**
- * Best-effort exclusive claim against the self-host transient cache, shared by every per-PR/per-review advisory
- * lock below. Requires the store's native atomic claim() (Redis SET NX) to provide any real exclusivity — it is
- * the only way to close the race between two concurrent callers each observing an absent key. A plain
- * get-then-set pair CANNOT close that race in general, even with an extra write-then-verify re-read: caller A
- * can write its own token, read it straight back, and return true entirely BEFORE caller B's later write/read
- * also completes and also returns true — both callers "win" (#confirmed-bug). Rather than pretend to serialize
- * via a check that silently fails under exactly the concurrent load this lock exists to guard against, an
- * adapter without claim() gets NO exclusivity from this helper: every caller proceeds. This is honest about the
- * limitation rather than a false guarantee, and costs nothing in practice — self-host's Redis-backed cache (the
- * only cache adapter this codebase ships) always implements claim(), so this is a documented limitation for a
- * hypothetical future adapter, not a live gap. A missing cache or a thrown claim() also fails OPEN (returns
- * acquired: true) — every lock built on this helper is defense-in-depth, never the primary safety gate, and
- * must never itself block real work from running.
+ * Exclusive claim preferring SubmissionLock when bound (#8896), else the self-host transient cache.
+ * Requires the store's native atomic claim() (Redis SET NX) on the cache path to provide real exclusivity —
+ * a plain get-then-set pair cannot close the race. An adapter without claim() gets NO exclusivity from this
+ * helper: every caller proceeds. A missing cache/DO or a thrown claim() also fails OPEN (acquired: true) —
+ * every lock built on this helper is defense-in-depth and must never itself block real work from running.
  *
- * The claimed value is a fresh random token per call, not a shared constant (#2129/#2135): release then
- * verifies this exact token still owns the key (see releaseTransientLockIfOwner) before deleting it, so a
- * holder that runs past its TTL can never have its stale `finally` release delete a DIFFERENT, live holder's
- * claim on the same key — the race this mutex exists to close in the first place.
+ * The claimed value is a fresh random token per call (#2129/#2135): release verifies this exact token still
+ * owns the key before deleting it.
  */
 export async function claimTransientLock(
   env: Env,
   key: string,
   ttlSeconds: number,
 ): Promise<TransientLockClaim> {
+  const viaDo = await claimSubmissionLockIfBound(env, key, ttlSeconds);
+  if (viaDo !== null) return viaDo;
+
   const cache = env.SELFHOST_TRANSIENT_CACHE;
   if (!cache?.claim) return { acquired: true, ownerToken: null }; // no atomic primitive — nothing to serialize against.
   // A claim()-only adapter without releaseIfValue would pin locks until TTL after normal work — reject that
@@ -80,9 +65,12 @@ export async function claimTransientLock(
 
 /** Releases a transient lock ONLY when `ownerToken` still matches the stored value (atomic compare-and-delete),
  *  so a stale holder can never delete a different, live holder's claim on the same key. `ownerToken` is null
- *  on every fail-open claim path (nothing was actually claimed, so nothing to release). */
+ *  on every fail-open claim path (nothing was actually claimed, so nothing to release). Prefers SubmissionLock
+ *  when bound (#8896); otherwise the cache path. */
 export async function releaseTransientLockIfOwner(env: Env, key: string, ownerToken: string | null): Promise<void> {
   if (!ownerToken) return;
+  if (await releaseSubmissionLockIfBound(env, key, ownerToken)) return;
+
   const cache = env.SELFHOST_TRANSIENT_CACHE;
   if (!cache?.releaseIfValue) return;
   try {
@@ -90,6 +78,47 @@ export async function releaseTransientLockIfOwner(env: Env, key: string, ownerTo
   } catch {
     // best-effort; the TTL is the backstop if release fails
   }
+}
+
+/** Returns a claim result when SUBMISSION_LOCK is bound; `null` means "use the cache fallback". */
+async function claimSubmissionLockIfBound(
+  env: Env,
+  key: string,
+  ttlSeconds: number,
+): Promise<TransientLockClaim | null> {
+  const ns = env.SUBMISSION_LOCK;
+  if (!ns) return null;
+  const ownerToken = randomUUID();
+  try {
+    const id = ns.idFromName(key);
+    const response = await ns.get(id).fetch("https://submission-lock/claim", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ownerToken, ttlSeconds }),
+    });
+    const body = (await response.json().catch(() => null)) as { acquired?: unknown } | null;
+    if (typeof body?.acquired !== "boolean") return { acquired: true, ownerToken: null }; // fail open
+    return { acquired: body.acquired, ownerToken: body.acquired ? ownerToken : null };
+  } catch {
+    return { acquired: true, ownerToken: null }; // fail open — same posture as the cache path
+  }
+}
+
+/** Returns true when the DO path handled the release (binding present); false means fall through to cache. */
+async function releaseSubmissionLockIfBound(env: Env, key: string, ownerToken: string): Promise<boolean> {
+  const ns = env.SUBMISSION_LOCK;
+  if (!ns) return false;
+  try {
+    const id = ns.idFromName(key);
+    await ns.get(id).fetch("https://submission-lock/release", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ownerToken }),
+    });
+  } catch {
+    // best-effort; the TTL is the backstop if release fails
+  }
+  return true;
 }
 
 const PR_ACTUATION_LOCK_TTL_SECONDS = 600;

@@ -1,0 +1,14 @@
+-- #9029: the linked-issue hard-rule violation marker (linked_issue_hard_rule_violated_at) is written the first
+-- time ANY pass observes a violation and is then NEVER cleared, so an ephemeral, benign issue state condemns a
+-- PR for its entire lifetime. Concrete case from the audit: a maintainer momentarily self-assigns the linked
+-- issue to triage it, the next pass stamps "issue assigned to someone else", and the PR is permanently marked
+-- for a one-shot close -- removing the assignment does not exonerate it. That punishes a contributor for the
+-- maintainer's own action, with no recourse short of disabling every hard rule repo-wide.
+--
+-- The persistence itself is deliberate and must stay: it exists so a contributor cannot stamp-then-dodge by
+-- editing the PR body to unlink the ineligible issue after the violation was observed. The missing piece is the
+-- ability to tell those two situations apart. Recording WHICH linked issues were observed at violation time
+-- makes that a decidable question: if the PR still links the SAME issue set and the live rules now pass, the
+-- change happened on the ISSUE side (assignee removed, label added, reopened) and the PR is exonerated; if the
+-- linked set CHANGED, the author edited the link and the remembered violation stands.
+ALTER TABLE pull_requests ADD COLUMN linked_issue_hard_rule_violation_issues_json TEXT;

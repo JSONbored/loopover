@@ -2878,6 +2878,54 @@ function dedupeLatestCheckRunsByIdentity(checkRuns: ReadonlyArray<LiveCiCheckRun
 }
 
 /**
+ * #9053: drop a `cancelled` check-run that a NEWER check suite has already superseded with the same check name.
+ *
+ * CONFIRMED live, not theoretical: `GET /commits/{sha}/check-runs` (even with GitHub's default `filter=latest`)
+ * returns runs from MULTIPLE suites for one SHA — measured 11 runs across 6 suites on a real PR head, 10 of them
+ * from older suites. A same-SHA workflow re-trigger (`reopened`, `ready_for_review`, `labeled` — and ORB ITSELF
+ * applies labels) starts a new suite; `.github/workflows/ci.yml` sets `concurrency: cancel-in-progress: true`,
+ * so the first run is cancelled and its `conclusion: "cancelled"` runs stay attached to the same head SHA in the
+ * OLD suite. Because `cancelled` is in CI_FAILING_CONCLUSIONS and the dedupe key deliberately includes the suite
+ * id (so a genuine failure can never be hidden by a later success), those stale cancelled runs landed in
+ * `failingDetails` alongside the new suite's passing ones → ciState "failed" → `willClose` on ciFailed →
+ * one-shot auto-close of a PR whose CI is actually green. The executor's recheck re-derives the same verdict,
+ * so it confirmed rather than caught it. "CI is failing" is the single most common close reason in the ledger,
+ * which makes any false-positive rate here expensive.
+ *
+ * Scoped as narrowly as possible: ONLY `cancelled` conclusions, and ONLY when a strictly newer suite carries the
+ * same (name, app) — a cancellation with no superseding attempt still counts as failing, and genuine `failure` /
+ * `timed_out` / `startup_failure` conclusions are never dropped, so the cross-suite non-collapse this function
+ * sits beside keeps doing its job. Suite ids are compared numerically (GitHub's are monotonically increasing);
+ * a non-numeric or absent id is not comparable, so such a run is conservatively KEPT.
+ */
+function dropSupersededCancelledCheckRuns(checkRuns: ReadonlyArray<LiveCiCheckRun>): LiveCiCheckRun[] {
+  const suiteIdOf = (run: LiveCiCheckRun): number | null => {
+    const raw = run.check_suite?.id ?? run.check_suite?.databaseId ?? null;
+    if (raw == null || raw === "") return null;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const identityOf = (run: LiveCiCheckRun): string => `${run.name}\0${(run.app?.slug ?? "").toLowerCase()}`;
+  // Highest suite id observed per (name, app), across every conclusion — a later suite supersedes an earlier
+  // attempt at the same check regardless of how that later attempt turned out.
+  const newestSuiteByIdentity = new Map<string, number>();
+  for (const run of checkRuns) {
+    const suiteId = suiteIdOf(run);
+    if (suiteId == null) continue;
+    const identity = identityOf(run);
+    const seen = newestSuiteByIdentity.get(identity);
+    if (seen == null || suiteId > seen) newestSuiteByIdentity.set(identity, suiteId);
+  }
+  return checkRuns.filter((run) => {
+    if ((run.conclusion ?? "").toLowerCase() !== "cancelled") return true;
+    const suiteId = suiteIdOf(run);
+    if (suiteId == null) return true; // not comparable → keep (conservative)
+    const newest = newestSuiteByIdentity.get(identityOf(run));
+    return newest == null || suiteId >= newest;
+  });
+}
+
+/**
  * Pure reduction of a head SHA's check-runs + classic statuses (+ a lazily-fetched check-suite backstop) into the
  * gate's LiveCiAggregate. Extracted so the REST fetch path (fetchLiveCiAggregate) and the GraphQL rollup path
  * (fetchLiveCiAggregateViaGraphQl) produce BYTE-IDENTICAL verdicts from ONE set of rules — only the data source
@@ -2934,7 +2982,7 @@ async function reduceLiveCiAggregate(
   // current one, without collapsing unrelated checks that merely share a display name.
   const checkRunSummary = (run: LiveCiCheckRun): string | undefined =>
     [run.output?.title, run.output?.summary].find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim().slice(0, 200);
-  for (const run of dedupeLatestCheckRunsByIdentity(checkRuns)) {
+  for (const run of dropSupersededCancelledCheckRuns(dedupeLatestCheckRunsByIdentity(checkRuns))) {
     seenContextNames.add(run.name); // mark BEFORE bot-check skip: a bot-owned required context is "seen"
     const appSlug = (run.app?.slug ?? "").toLowerCase();
     if (appSlug === "github-actions") sawFirstPartyCheckRun = true;

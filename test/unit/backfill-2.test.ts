@@ -338,6 +338,109 @@ describe("GitHub backfill", () => {
       expect(aggregate.ciState).toBe("pending"); // unreadable backstop => not certified settled
     });
 
+    // #9053 — CONFIRMED live, not theoretical. Verified on a real PR head: GET /commits/{sha}/check-runs (even
+    // with GitHub's default filter=latest) returned 11 runs across 6 SUITES, 10 of them from older suites. A
+    // same-SHA re-trigger (reopened / ready_for_review / labeled — and ORB ITSELF applies labels) starts a new
+    // suite, and ci.yml sets `concurrency: cancel-in-progress: true`, so the first run's check-runs stay on the
+    // head SHA with conclusion "cancelled". Because "cancelled" is a FAILING conclusion and the dedupe key
+    // includes the suite id (so a genuine failure is never hidden by a later success), those stale runs landed
+    // in failingDetails next to the new suite's green ones -> ciState "failed" -> one-shot auto-close of a PR
+    // whose CI is green. "CI is failing" is the most common close reason in the ledger.
+    it("#9053: a cancelled run from a SUPERSEDED suite does not fail CI when a newer suite ran the same check green", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) {
+          return Response.json({
+            check_runs: [
+              // New suite FIRST in array order, old (cancelled) suite second — GitHub documents no stable
+              // ordering for /check-runs, so supersession must be decided by suite id, not array position.
+              { name: "validate", status: "completed", conclusion: "success", check_suite: { id: 200 }, app: { slug: "github-actions" } },
+              { name: "validate", status: "completed", conclusion: "cancelled", check_suite: { id: 100 }, app: { slug: "github-actions" } },
+            ],
+          });
+        }
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        if (url.includes("/check-suites")) return Response.json({ check_suites: [{ status: "completed", app: { slug: "github-actions" } }] });
+        return new Response("not found", { status: 404 });
+      });
+
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "resha", "public-token", new Set(["validate"]));
+
+      expect(aggregate.ciState).toBe("passed");
+      expect(aggregate.failingDetails).toEqual([]);
+    });
+
+    it("#9053: a cancelled run is STILL failing when no newer suite superseded it", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) {
+          return Response.json({
+            check_runs: [{ name: "validate", status: "completed", conclusion: "cancelled", check_suite: { id: 100 }, app: { slug: "github-actions" } }],
+          });
+        }
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        if (url.includes("/check-suites")) return Response.json({ check_suites: [] });
+        return new Response("not found", { status: 404 });
+      });
+
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "solo", "public-token", new Set(["validate"]));
+
+      expect(aggregate.ciState).toBe("failed");
+      expect(aggregate.failingDetails.map((d) => d.name)).toEqual(["validate"]);
+    });
+
+    it("#9053: a genuine FAILURE in an older suite is still reported — only `cancelled` is superseded-scoped", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) {
+          return Response.json({
+            check_runs: [
+              { name: "validate", status: "completed", conclusion: "failure", check_suite: { id: 100 }, app: { slug: "github-actions" } },
+              { name: "validate", status: "completed", conclusion: "success", check_suite: { id: 200 }, app: { slug: "github-actions" } },
+            ],
+          });
+        }
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        if (url.includes("/check-suites")) return Response.json({ check_suites: [] });
+        return new Response("not found", { status: 404 });
+      });
+
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "realfail", "public-token", new Set(["validate"]));
+
+      // The cross-suite non-collapse this fix sits beside must keep doing its job for real failures.
+      expect(aggregate.ciState).toBe("failed");
+      expect(aggregate.failingDetails.map((d) => d.name)).toEqual(["validate"]);
+    });
+
+    it("#9053: a cancelled run with an ABSENT or non-numeric suite id is kept (not comparable ⇒ conservative)", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) {
+          return Response.json({
+            check_runs: [
+              // No suite at all — supersession is undecidable, so this must still count as failing.
+              { name: "nosuite", status: "completed", conclusion: "cancelled", app: { slug: "github-actions" } },
+              // A non-numeric suite id is equally undecidable.
+              { name: "weirdsuite", status: "completed", conclusion: "cancelled", check_suite: { id: "not-a-number" }, app: { slug: "github-actions" } },
+              { name: "weirdsuite", status: "completed", conclusion: "success", check_suite: { id: "also-not-a-number" }, app: { slug: "github-actions" } },
+            ],
+          });
+        }
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        if (url.includes("/check-suites")) return Response.json({ check_suites: [] });
+        return new Response("not found", { status: 404 });
+      });
+
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "weird", "public-token", new Set(["nosuite", "weirdsuite"]));
+
+      expect(aggregate.ciState).toBe("failed");
+      expect(aggregate.failingDetails.map((d) => d.name).sort()).toEqual(["nosuite", "weirdsuite"]);
+    });
+
     it("fails completed non-required red checks while still reporting optional pending visibility", async () => {
       const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {

@@ -170,13 +170,44 @@ export function evaluateLinkedIssueHardRules(input: {
  */
 export function mergeLinkedIssueHardRuleWithPersistedViolation(
   live: LinkedIssueHardRuleResult | undefined,
-  persisted: { violatedAt: string | null | undefined; reason: string | null | undefined },
+  persisted: {
+    violatedAt: string | null | undefined;
+    reason: string | null | undefined;
+    // #9029: the linked-issue set observed when the violation was first recorded, and the set linked NOW.
+    // Both absent ⇒ pre-#9029 rows and every caller that has no snapshot behave exactly as before.
+    issuesAtViolation?: readonly number[] | null | undefined;
+    currentIssues?: readonly number[] | null | undefined;
+  },
   anyRuleOn: boolean,
 ): LinkedIssueHardRuleResult | undefined {
   if (live?.violated === true) return live;
   if (!anyRuleOn) return live;
   if (persisted.violatedAt == null) return live;
+  // #9029: the live rules now PASS. Persisting regardless is what let an ephemeral, benign issue state condemn
+  // a PR forever -- a maintainer momentarily self-assigning the linked issue to triage it stamped the violation,
+  // and un-assigning did not exonerate it. The persistence exists to stop a stamp-then-dodge (edit the body to
+  // unlink the ineligible issue AFTER being caught), so the question that actually matters is WHICH SIDE moved:
+  // if the PR still links exactly the issues that were linked at violation time, nothing the author controls
+  // changed and the improvement came from the issue itself ⇒ exonerate. If the linked set changed, the author
+  // edited the link and the remembered violation stands, unchanged from before.
+  if (linkedIssueSetsMatch(persisted.issuesAtViolation, persisted.currentIssues)) return live;
   return { violated: true, reason: persisted.reason ?? "the linked issue is not eligible for a community PR" };
+}
+
+/** True only when BOTH sides are present and describe the same set of issue numbers (order-insensitive). A
+ *  missing/empty snapshot (pre-#9029 rows) is deliberately NOT a match: without knowing what was linked at
+ *  violation time we cannot rule out a dodge, so those rows keep the original permanent-violation behavior. */
+function linkedIssueSetsMatch(
+  atViolation: readonly number[] | null | undefined,
+  current: readonly number[] | null | undefined,
+): boolean {
+  if (!atViolation || atViolation.length === 0) return false;
+  if (!current || current.length === 0) return false;
+  const a = new Set(atViolation);
+  const b = new Set(current);
+  if (a.size !== b.size) return false;
+  for (const value of a) if (!b.has(value)) return false;
+  return true;
 }
 
 /**

@@ -1,3 +1,4 @@
+import { clearPullRequestLinkedIssueHardRuleViolation, getPullRequest, markPullRequestLinkedIssueHardRuleViolated, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTestEnv } from "../helpers/d1";
 import * as backfillModule from "../../src/github/backfill";
@@ -747,6 +748,65 @@ describe("hasVerifiableOpenLinkedIssueReference (#unlinked-issue-guardrail-follo
   });
 });
 
+// #9029: the persisted violation used to be permanent, so an ephemeral, benign issue state condemned a PR for
+// its whole lifetime — a maintainer momentarily self-assigning the linked issue to triage it stamped a one-shot
+// close on every PR linking it, and un-assigning did not exonerate. The persistence still exists to stop a
+// stamp-then-dodge; the snapshot is what makes "the author edited the link" and "the issue's state changed
+// underneath them" separable.
+describe("mergeLinkedIssueHardRuleWithPersistedViolation — issue-side change exonerates, author link edit does not (#9029)", () => {
+  const persistedBase = { violatedAt: "2026-07-26T00:00:00.000Z", reason: "issue assigned to the maintainer" };
+
+  it("EXONERATES when the same issue set is still linked and the live rules now pass", () => {
+    expect(
+      mergeLinkedIssueHardRuleWithPersistedViolation(
+        { violated: false, reason: null },
+        { ...persistedBase, issuesAtViolation: [9], currentIssues: [9] },
+        true,
+      ),
+    ).toEqual({ violated: false, reason: null });
+  });
+
+  it("is order-insensitive about the issue set (a re-ordered body is not an edit)", () => {
+    expect(
+      mergeLinkedIssueHardRuleWithPersistedViolation(
+        { violated: false, reason: null },
+        { ...persistedBase, issuesAtViolation: [9, 12], currentIssues: [12, 9] },
+        true,
+      )?.violated,
+    ).toBe(false);
+  });
+
+  it("KEEPS the violation when the author changed the linked set — the dodge this persistence exists for", () => {
+    // Swapped to a different issue...
+    expect(
+      mergeLinkedIssueHardRuleWithPersistedViolation({ violated: false, reason: null }, { ...persistedBase, issuesAtViolation: [9], currentIssues: [10] }, true)?.violated,
+    ).toBe(true);
+    // ...unlinked entirely...
+    expect(
+      mergeLinkedIssueHardRuleWithPersistedViolation({ violated: false, reason: null }, { ...persistedBase, issuesAtViolation: [9], currentIssues: [] }, true)?.violated,
+    ).toBe(true);
+    // ...or added a second, eligible issue alongside the ineligible one.
+    expect(
+      mergeLinkedIssueHardRuleWithPersistedViolation({ violated: false, reason: null }, { ...persistedBase, issuesAtViolation: [9], currentIssues: [9, 10] }, true)?.violated,
+    ).toBe(true);
+  });
+
+  it("keeps the pre-#9029 permanent behavior for rows with no snapshot (we cannot rule out a dodge)", () => {
+    expect(
+      mergeLinkedIssueHardRuleWithPersistedViolation({ violated: false, reason: null }, { ...persistedBase, currentIssues: [9] }, true)?.violated,
+    ).toBe(true);
+    expect(
+      mergeLinkedIssueHardRuleWithPersistedViolation({ violated: false, reason: null }, { ...persistedBase, issuesAtViolation: [], currentIssues: [9] }, true)?.violated,
+    ).toBe(true);
+  });
+
+  it("never resurrects a violation while the LIVE rules still fail, snapshot or not", () => {
+    expect(
+      mergeLinkedIssueHardRuleWithPersistedViolation({ violated: true, reason: "still bad" }, { ...persistedBase, issuesAtViolation: [9], currentIssues: [9] }, true),
+    ).toEqual({ violated: true, reason: "still bad" });
+  });
+});
+
 describe("resolveLinkedIssueHasOpenReference (#unlinked-issue-guardrail-followup — live orchestration)", () => {
   afterEach(() => vi.unstubAllGlobals());
 
@@ -823,5 +883,49 @@ describe("resolveLinkedIssueHasOpenReference (#unlinked-issue-guardrail-followup
     });
     const result = await resolveLinkedIssueHasOpenReference({ env: createTestEnv({}), repoFullName: "owner/repo", linkedIssues: [1, 2] });
     expect(result).toBe(true);
+  });
+});
+
+// #9029: the persisted-violation writer/clearer, exercised directly against the real schema.
+describe("markPullRequestLinkedIssueHardRuleViolated / clear (#9029)", () => {
+  async function seedPr(env: Env) {
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "o/r", private: false, owner: { login: "o" } }, 1);
+    await upsertPullRequestFromGitHub(env, "o/r", { number: 3, title: "PR", state: "open", user: { login: "c" }, head: { sha: "h" }, labels: [], body: "Closes #9" });
+  }
+
+  it("records the issue snapshot (deduped + sorted) and never overwrites the FIRST violation", async () => {
+    const env = createTestEnv();
+    await seedPr(env);
+    await markPullRequestLinkedIssueHardRuleViolated(env, "o/r", 3, "first reason", [12, 9, 9]);
+    const first = await getPullRequest(env, "o/r", 3);
+    expect(first?.linkedIssueHardRuleViolationIssues).toEqual([9, 12]);
+    expect(first?.linkedIssueHardRuleViolationReason).toBe("first reason");
+
+    // A second violation must not clobber the original snapshot or reason (COALESCE semantics).
+    await markPullRequestLinkedIssueHardRuleViolated(env, "o/r", 3, "second reason", [77]);
+    const second = await getPullRequest(env, "o/r", 3);
+    expect(second?.linkedIssueHardRuleViolationIssues).toEqual([9, 12]);
+    expect(second?.linkedIssueHardRuleViolationReason).toBe("first reason");
+    expect(second?.linkedIssueHardRuleViolatedAt).toBe(first?.linkedIssueHardRuleViolatedAt);
+  });
+
+  it("applies the default reason when the evaluator supplies none, and tolerates an absent issue list", async () => {
+    const env = createTestEnv();
+    await seedPr(env);
+    await markPullRequestLinkedIssueHardRuleViolated(env, "o/r", 3, null, undefined);
+    const row = await getPullRequest(env, "o/r", 3);
+    expect(row?.linkedIssueHardRuleViolationReason).toContain("not eligible for a community PR");
+    expect(row?.linkedIssueHardRuleViolationIssues).toEqual([]);
+  });
+
+  it("clear removes the marker, the reason, and the snapshot together", async () => {
+    const env = createTestEnv();
+    await seedPr(env);
+    await markPullRequestLinkedIssueHardRuleViolated(env, "o/r", 3, "reason", [9]);
+    await clearPullRequestLinkedIssueHardRuleViolation(env, "o/r", 3);
+    const row = await getPullRequest(env, "o/r", 3);
+    expect(row?.linkedIssueHardRuleViolatedAt).toBeNull();
+    expect(row?.linkedIssueHardRuleViolationReason).toBeNull();
+    expect(row?.linkedIssueHardRuleViolationIssues).toEqual([]);
   });
 });

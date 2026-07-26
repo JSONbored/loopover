@@ -694,6 +694,8 @@ export type PullRequestRecord = {
    *  pairing with mergeBlockedSha) — so a later close can still cite the concrete rule even when the live re-parse
    *  can no longer reproduce it. */
   linkedIssueHardRuleViolationReason?: string | null | undefined;
+  /** #9029: linked-issue numbers observed when the violation was first recorded. */
+  linkedIssueHardRuleViolationIssues?: number[] | undefined;
   /** Visual-capture gate satisfaction (#4110): the head SHA at which the bot's before/after capture pipeline
    *  last produced a REAL before+after render pair (not a placeholder/failed/pending shot) for this PR. The
    *  screenshotTableGate treats visualCaptureSatisfiedSha === headSha as evidence equivalent to a hand-authored

@@ -2813,7 +2813,17 @@ describe("queue processors", () => {
       }
     });
 
-    it("REGRESSION (live-issue-state-change-before-re-evaluation): Pass 1 flags a real violation; Pass 2's live re-parse re-evaluates the SAME issue as clean (assignee removed) but the persisted violation still closes the PR", async () => {
+    // #9029 POLICY REVERSAL. This test previously asserted the opposite: that an unchanged PR body whose linked
+    // issue merely had its assignee removed STILL closed, because the persisted violation was permanent. That
+    // punished a contributor for the maintainer's own triage action — a maintainer who momentarily self-assigns
+    // an issue to look at it stamped a permanent one-shot-close marker on every PR linking it, and un-assigning
+    // did not exonerate them. There was no recourse short of disabling every hard rule repo-wide.
+    //
+    // The persistence exists to stop a stamp-then-dodge, so #9029's fix keeps it and narrows it to the case it
+    // was actually built for: the violation stands when the AUTHOR changes the linked-issue set (see the sibling
+    // test above, where the body is edited to unlink the issue — still closes), and is lifted only when the SAME
+    // issues are still linked and the improvement came from the issue side, which is nothing the author controls.
+    it("#9029: Pass 1 flags a real violation; Pass 2 EXONERATES when the same issue is still linked and its state improved (assignee removed)", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
       await seedHardRuleRepoAndPr(env);
       const requiredContextsSpy = requiredContextsMock();
@@ -2843,13 +2853,47 @@ describe("queue processors", () => {
         stubHardRuleFetch(liveLabels, { prBody: "Closes #9", issueState: "open", issueAssignees: [], ruleEnabled: true });
         await processJob(env, { type: "agent-regate-pr", deliveryId: "hard-rule-live-pass-2-unassigned", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
 
-        // See the sibling test's identical comment: the `close` action's own audit outcome is the observable
-        // proof (the PR row's `state` column only flips once GitHub's `closed` webhook round-trips back).
-        const close = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? order by rowid desc limit 1").bind("agent.action.close").first<{ outcome: string; detail: string }>();
-        expect(close?.outcome).toBe("completed");
-        expect(close?.detail).toContain("#9");
-        const clearedFlag = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and detail like ?").bind("agent.action.label", "%resolved%").first<{ n: number }>();
-        expect(clearedFlag?.n).toBe(0);
+        // The PR is NOT closed: the same issue is still linked, so the only thing that changed is the issue's
+        // own state, and the contributor is exonerated.
+        const close = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("agent.action.close").first<{ n: number }>();
+        expect(close?.n).toBe(0);
+        // ...and the remembered violation is actually cleared from the row, so this is decided once rather than
+        // re-derived identically on every future pass.
+        const afterPass2 = await getPullRequest(env, "owner/agent-repo", 7);
+        expect(afterPass2?.state).toBe("open");
+        expect(afterPass2?.linkedIssueHardRuleViolatedAt).toBeNull();
+      } finally {
+        liveCiSpy.mockRestore();
+        requiredContextsSpy.mockRestore();
+      }
+    });
+
+    // #9029: the exoneration CLEAR is best-effort — a failed D1 write must never turn into a wrong close (the
+    // next pass simply re-derives the same exoneration from the unchanged row).
+    it("#9029: a failing exoneration clear does not close the PR — the pass still treats it as exonerated", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await seedHardRuleRepoAndPr(env);
+      const requiredContextsSpy = requiredContextsMock();
+      const liveCiSpy = liveCiMock();
+      const liveLabels: string[] = [];
+      try {
+        stubHardRuleFetch(liveLabels, { prBody: "Closes #9", issueState: "open", issueAssignees: ["owner"], ruleEnabled: true });
+        await processJob(env, { type: "agent-regate-pr", deliveryId: "clear-fail-pass-1", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+        expect((await getPullRequest(env, "owner/agent-repo", 7))?.linkedIssueHardRuleViolatedAt).toEqual(expect.any(String));
+
+        await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Ineligible linked issue", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, base: { ref: "main" }, labels: liveLabels.map((name) => ({ name })), body: "Closes #9" });
+
+        const clearSpy = vi
+          .spyOn(repositoriesModule, "clearPullRequestLinkedIssueHardRuleViolation")
+          .mockRejectedValue(new Error("D1 unavailable"));
+        stubHardRuleFetch(liveLabels, { prBody: "Closes #9", issueState: "open", issueAssignees: [], ruleEnabled: true });
+        await expect(
+          processJob(env, { type: "agent-regate-pr", deliveryId: "clear-fail-pass-2", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 }),
+        ).resolves.toBeUndefined();
+        clearSpy.mockRestore();
+
+        const close = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("agent.action.close").first<{ n: number }>();
+        expect(close?.n).toBe(0);
       } finally {
         liveCiSpy.mockRestore();
         requiredContextsSpy.mockRestore();

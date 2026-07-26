@@ -10,7 +10,9 @@ CREATE TABLE IF NOT EXISTS decision_audit_labels (
   project         TEXT NOT NULL,                       -- owner/repo
   target_id       TEXT NOT NULL,                       -- owner/repo#N
   verdict         TEXT NOT NULL CHECK (verdict IN ('merge', 'close')),   -- the gate's decision at sample time
-  outcome         TEXT NOT NULL CHECK (outcome IN ('merged', 'closed')), -- realized outcome at sample time
+  -- Nullable: a holdout_close row (#8831) is created while the PR is still HELD -- there is no realized
+  -- outcome yet; the human adjudication IS its ground truth. The weekly sampler always supplies one.
+  outcome         TEXT CHECK (outcome IN ('merged', 'closed')),
   -- holdout_close (#8831): rows sourced by the randomized close-holdout rather than the weekly draw.
   stratum         TEXT NOT NULL CHECK (stratum IN ('merge_arm', 'close_arm', 'first_time_author', 'holdout_close')),
   rubric_version  TEXT NOT NULL,                       -- adjudications are only comparable within a version

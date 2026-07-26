@@ -2946,6 +2946,63 @@ describe("queue processors", () => {
     expect(aiCalls).toBeGreaterThan(0);
   });
 
+  it("early cap short-circuit (#8805): a contended PER-PR actuation lock defers the close cleanly — no cross-namespace race with a sibling mutating pass", async () => {
+    let aiCalls = 0;
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ assessment: "n/a", blockers: [], nits: [], suggestions: [] }) }; } } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 53, title: "Farmer PR one", state: "open", user: { login: "farmer99" }, head: { sha: "f53" }, labels: [], body: "x" });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 54, title: "Farmer PR two", state: "open", user: { login: "farmer99" }, head: { sha: "f54" }, labels: [], body: "y" });
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { close: "auto", label: "auto" } });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { commentMode: "all_prs", publicSurface: "comment_only", checkRunMode: "off", contributorCapLabel: "spam-cap", reviewCheckMode: "required", aiReviewMode: "advisory", contributorOpenPrCap: 2 } }, "repo_file");
+    // A sibling mutating pass (e.g. a sweep-fanned agent-regate-pr) already holds THIS PR's actuation lock —
+    // pre-#8805 the early cap close executed anyway, outside the shared namespace. Now it must defer.
+    await env.SELFHOST_TRANSIENT_CACHE?.claim?.("pr-actuation-lock:jsonbored/gittensory#56", "sibling-pass-token", 30);
+    const seen = { closed: false };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/56/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+const ok = true;" }]);
+      if (url.includes("/pulls/56/reviews")) return Response.json([]);
+      if (url.includes("/pulls/56/commits")) return Response.json([]);
+      if ((url.endsWith("/pulls/53") || url.endsWith("/pulls/54")) && method === "GET") return Response.json({ state: "open" });
+      if (url.endsWith("/pulls/56") && method === "PATCH") { seen.closed = JSON.parse(String(init?.body ?? "{}")).state === "closed"; return Response.json({ number: 56, state: "closed" }); }
+      if (url.endsWith("/pulls/56")) return Response.json({ number: 56, state: "open", user: { login: "farmer99" }, head: { sha: "f56" }, mergeable_state: "clean" });
+      if (url.includes("/commits/f56/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/f56/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/56/labels")) return Response.json([]);
+      if (url.includes("/issues/56/comments")) return Response.json([]);
+      return Response.json({});
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "contributor-cap-pr-lock-contended",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 56, title: "Farmer's 3rd PR", state: "open", user: { login: "farmer99" }, head: { sha: "f56" }, labels: [], body: "x", mergeable_state: "clean", reviewDecision: "APPROVED" },
+      },
+    });
+
+    // The early close DEFERRED (no PATCH close fired from it) and the pipeline fell through, mirroring the
+    // author-lock contention semantics one namespace over.
+    expect(seen.closed).toBe(false);
+    expect(aiCalls).toBeGreaterThan(0);
+  });
+
   it("early cap short-circuit (#7284-fix): close autonomy not granted (observe) plans nothing early -- no crash, falls through to the normal pipeline", async () => {
     let aiCalls = 0;
     const env = createTestEnv({

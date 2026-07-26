@@ -52,6 +52,22 @@ function labelNames(labels: unknown): string[] {
     .filter((name) => name.length > 0);
 }
 
+/** Extract assignee logins from a GitHub issue payload (#8655). Returns `undefined` when the field is
+ *  absent or yields no usable logins, so `buildCandidate` can omit `assignees` entirely (contract:
+ *  absent ≠ empty array). */
+function assigneeLogins(assignees: unknown): string[] | undefined {
+  if (!Array.isArray(assignees)) return undefined;
+  const logins = assignees
+    .map((assignee) => {
+      if (assignee && typeof assignee === "object" && typeof (assignee as { login?: unknown }).login === "string") {
+        return (assignee as { login: string }).login.trim();
+      }
+      return "";
+    })
+    .filter((login) => login.length > 0);
+  return logins.length > 0 ? logins : undefined;
+}
+
 /** `https://api.github.com/repos/{owner}/{repo}` (present on `/search/issues` items) → `owner/repo`, or null
  *  if the field is absent/malformed. */
 function extractRepoFullNameFromIssue(issue: GitHubIssue): string | null {
@@ -74,6 +90,7 @@ function buildCandidate(repoFullName: string, issue: GitHubIssue, verdict: AiPol
   // from extractRepoFullNameFromIssue's regex, which requires a non-empty segment on each side) — the split
   // below can never produce an empty half.
   const slashIndex = repoFullName.indexOf("/");
+  const assignees = assigneeLogins(issue.assignees);
   return {
     owner: repoFullName.slice(0, slashIndex),
     repo: repoFullName.slice(slashIndex + 1),
@@ -81,6 +98,7 @@ function buildCandidate(repoFullName: string, issue: GitHubIssue, verdict: AiPol
     issueNumber,
     title,
     labels: labelNames(issue.labels),
+    ...(assignees ? { assignees } : {}),
     commentsCount: typeof issue.comments === "number" && Number.isFinite(issue.comments) ? issue.comments : 0,
     createdAt: typeof issue.created_at === "string" ? issue.created_at : null,
     updatedAt: typeof issue.updated_at === "string" ? issue.updated_at : null,

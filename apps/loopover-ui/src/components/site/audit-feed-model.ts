@@ -125,5 +125,8 @@ export function skipReasonTone(reason: string): "ready" | "info" | "warn" | "deg
   if (reason === "bot_author" || reason === "not_official_gittensor_miner") return "info";
   if (reason === "surface_off" || reason === "maintainer_author") return "warn";
   if (reason === "miner_detection_unavailable" || reason === "missing_author") return "degraded";
-  return "ready";
+  // `reason` is a plain string at the API boundary (same widening as contributor-quality-table-model's
+  // `band: string`), so an unrecognized/legacy value can reach here. Degrade it to the neutral "info"
+  // pill — never "ready", which would render an unclassified skip as green/healthy.
+  return "info";
 }

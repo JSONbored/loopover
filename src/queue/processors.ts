@@ -2045,6 +2045,9 @@ export function derivePublicCommentMergeFacts(args: {
   unifiedFiles: Awaited<ReturnType<typeof listPullRequestFiles>>;
   repoFullName: string;
   prLabels: readonly string[];
+  // Optional so a self-hoster's PROTECTED_AUTOCLOSE_AUTHORS_EXTRA allowlist extension reaches neverClosed
+  // (#8645). Callers that already hold `env` MUST pass it; omitted only keeps the built-in bot set.
+  env?: Env;
 }): PublicCommentMergeFacts {
   const mergeStateLabel = args.liveMergeState ?? args.mergeableState ?? undefined; // fail-safe to the stored value
   const ciState: MergeReadiness["ciState"] =
@@ -2069,7 +2072,8 @@ export function derivePublicCommentMergeFacts(args: {
   const repoOwner = args.repoFullName.includes("/") ? args.repoFullName.slice(0, args.repoFullName.indexOf("/")) : "";
   const authorLogin = args.authorLogin ?? "";
   const neverClosed =
-    (authorLogin.length > 0 && authorLogin.toLowerCase() === repoOwner.toLowerCase()) || isProtectedAutomationAuthor(args.authorLogin);
+    (authorLogin.length > 0 && authorLogin.toLowerCase() === repoOwner.toLowerCase()) ||
+    isProtectedAutomationAuthor(args.authorLogin, args.env);
   return { ciState, mergeStateLabel, mergeReadiness, heldForReview, neverClosed };
 }
 
@@ -2525,6 +2529,11 @@ function buildAgentMaintenancePlanInput(args: {
     // aggregate's field is always an array, [] when none); the planner applies its own length>0 gate, matching
     // how failingCheckNames above is likewise threaded unconditionally.
     advisoryCheckHold: ciAggregate.advisoryHoldDetails,
+    // #8758: non-required red checks (neither branch-protection-required nor declared advisory). They never gate
+    // ciState, but GitHub folds them into mergeable_state "unstable" — the state whose merge-suppression used to
+    // be silent (#8711). Threaded so the planner's unstable hold can NAME the culprit check(s) in its
+    // reason/comment; the hold itself keys on pr.mergeableState, so an empty list still holds with generic wording.
+    nonRequiredCheckFailures: ciAggregate.nonRequiredFailingDetails,
     ...(blacklistEntry !== null
       ? { blacklistMatch: { matched: true, reason: blacklistEntry.reason } }
       : {}),
@@ -2721,7 +2730,7 @@ async function maybeCloseForContributorCapOnOpen(
   const authorIsOwner = pr.authorLogin.toLowerCase() === repoOwner.toLowerCase();
   // #4889: per-repo admin mode swaps the global-allowlist grant for the live per-repo permission.
   const authorIsAdmin = await isPerTenantAdmin(env, installationId, repoFullName, pr.authorLogin);
-  const authorIsAutomationBot = isProtectedAutomationAuthor(pr.authorLogin);
+  const authorIsAutomationBot = isProtectedAutomationAuthor(pr.authorLogin, env);
   if (authorIsOwner || authorIsAdmin || authorIsAutomationBot) return false;
   // #ignore-authors-parity: a manifest ignore_authors match (e.g. "release-please*") means the bot treats
   // this author as entirely invisible -- maybePublishPrPublicSurface's own reviewEligibility check (deep
@@ -2975,7 +2984,7 @@ async function runAgentMaintenancePlanAndExecute(
     authorLogin.length > 0 &&
     // #4889: per-repo admin mode swaps the global-allowlist grant for the live per-repo permission.
     (await isPerTenantAdmin(env, installationId, repoFullName, authorLogin));
-  const authorIsAutomationBot = isProtectedAutomationAuthor(pr.authorLogin);
+  const authorIsAutomationBot = isProtectedAutomationAuthor(pr.authorLogin, env);
 
   // Linked-issue HARD-RULE close (#linked-issue-hard-rules): when the repo enabled any rule, a body that links
   // MORE closing references than we can safely verify (overflow) is itself a violation; otherwise evaluate the
@@ -3550,7 +3559,7 @@ export async function reReviewStoredPullRequest(
   // this resync exists to recover), fail open into the full review/gate instead of trusting the immutable author.
   if (
     automationBotSkipEnabled &&
-    isTrustedAutomationBotAuthor(pr.authorLogin) &&
+    isTrustedAutomationBotAuthor(pr.authorLogin, env) &&
     live?.head?.sha === storedHeadShaBeforeResync
   )
     return false;
@@ -4572,12 +4581,25 @@ async function maybeReReviewOnCiCompletion(
   const headSha = ciCompletionHeadSha(eventName, payload);
   if (isConvergenceRepoAllowed(env, repoFullName)) {
     // GitHub can emit many empty-pull_requests CI completions for the same fork head SHA. Claim a head-SHA
-    // window before the fallback resolver so duplicate events do not repeat DB scans or commits/{sha}/pulls calls.
+    // window before the fallback resolver so duplicate events skip the re-review dispatch and its live
+    // commits/{sha}/pulls round-trip (the cheap stored-DB invalidation still runs -- see the branch below).
     if (
       populatedPrNumbers.length === 0 &&
       headSha &&
       (await ciHeadShaResolutionCoalesced(env, repoFullName, headSha))
     ) {
+      // The re-review DISPATCH is coalesced away here, but the durable CI-state cache invalidation is NOT
+      // meant to be -- the loop below invalidates "for EVERY resolved PR, regardless of whether the re-review
+      // actually fires", and a fork PR must get that same unconditional guarantee same-repo PRs already do
+      // (a coalesced completion in a burst carries a newer settled CI state that a reader must not miss).
+      // Resolve via the fast STORED-DB head-SHA lookup only -- no live fork fallback (that's the round-trip the
+      // coalesce exists to avoid): a durable cache entry exists only for a PR this process already tracks, so an
+      // untracked fork the DB lookup misses has nothing stale to clear (mirrors maybeInvalidateCiCacheOnLegacyCiEvent).
+      const openPullRequests = await listOpenPullRequests(env, repoFullName).catch(() => []);
+      for (const pr of openPullRequests) {
+        if (pr.headSha !== headSha) continue;
+        await invalidateCiStateCache(env, repoFullName, pr.number).catch(() => undefined);
+      }
       await recordWebhookEvent(env, {
         deliveryId,
         eventName,
@@ -5463,7 +5485,7 @@ async function maybeCloseIssueOverContributorCap(
   const authorIsOwner = authorLogin.toLowerCase() === repoOwner.toLowerCase();
   // #4889: per-repo admin mode swaps the global-allowlist grant for the live per-repo permission.
   const authorIsAdmin = await isPerTenantAdmin(env, args.installationId, repoFullName, authorLogin);
-  const authorIsAutomationBot = isProtectedAutomationAuthor(authorLogin);
+  const authorIsAutomationBot = isProtectedAutomationAuthor(authorLogin, env);
   if (authorIsOwner || authorIsAdmin || authorIsAutomationBot) return;
 
   // Account-age throttle (#2561): mirror the PR-path cap tightening — a below-threshold author gets half
@@ -6218,7 +6240,7 @@ async function handlePullRequestWebhookEvent(
     // bot PR's branch still gets full review of their own commits.
     if (
       resolveSkipAutomationBotPullRequests(isSkipAutomationBotPullRequestsEnabledGlobally(env), settings.skipAutomationBotAuthors) &&
-      isTrustedAutomationBotWebhookActor(payload.sender, pr.authorLogin)
+      isTrustedAutomationBotWebhookActor(payload.sender, pr.authorLogin, env)
     ) {
       await recordAuditEvent(env, {
         eventType: "github_app.automation_bot_pr_skipped",
@@ -6352,7 +6374,7 @@ async function handlePullRequestWebhookEvent(
       pr.headSha &&
       pr.state === "open" &&
       isAgentConfigured(settings.autonomy) &&
-      !isProtectedAutomationAuthor(pr.authorLogin)
+      !isProtectedAutomationAuthor(pr.authorLogin, env)
     ) {
       // Deliberately UNCAUGHT here: closeDraftDodgeAttemptIfBlocked catches every operation that should
       // fail safely, but leaves the write-permission-readiness getInstallation read (#2134) uncaught on
@@ -6719,7 +6741,7 @@ async function handleIssueWebhookEvent(
       const authorIsOwner = authorLogin.toLowerCase() === repoOwner.toLowerCase();
       // #4889: per-repo admin mode swaps the global-allowlist grant for the live per-repo permission.
       const authorIsAdmin = await isPerTenantAdmin(env, installationId, payload.repository.full_name, authorLogin);
-      const authorIsAutomationBot = isProtectedAutomationAuthor(authorLogin);
+      const authorIsAutomationBot = isProtectedAutomationAuthor(authorLogin, env);
       const accountAgeThresholdDays = issueSettings.accountAgeThresholdDays;
       if (
         !authorIsOwner &&
@@ -9714,7 +9736,7 @@ async function maybePublishPrPublicSurface(
       (author.toLowerCase() === repoOwnerLoginFromFullName(repoFullName).toLowerCase() ||
         // #4889: per-repo admin mode swaps the global-allowlist grant for the live per-repo permission.
         (await isPerTenantAdmin(env, installationId, repoFullName, author)) ||
-        isProtectedAutomationAuthor(author));
+        isProtectedAutomationAuthor(author, env));
     const isFrozenForManualReview =
       webhook.forceAiReview !== true &&
       !authorIsExemptFromFreeze &&
@@ -10807,6 +10829,17 @@ async function maybePublishPrPublicSurface(
               });
             }
           }
+          // #8686: when both the primary publish and its fallback fail (or there was no pending id to fall
+          // back on), record the same failedOutputs entry check_run/comment/label already push — otherwise a
+          // gate-only repo silently leaves publishedOutputs+failedOutputs empty and finishPublicSurfacePublication
+          // skips pr_public_surface_failed / PostHog escalation / transient retry entirely.
+          if (!gateFinalized) {
+            failedOutputs.push({
+              output: "gate_check_run",
+              error: gateCheckResult.warning,
+              transient: false,
+            });
+          }
         }
       } catch (checkError) {
         if (isGitHubRateLimitedError(checkError)) throw checkError;
@@ -10848,6 +10881,16 @@ async function maybePublishPrPublicSurface(
               );
             });
           }
+        }
+        // #8686: final failure after fallback also failed (or was unavailable) — same failedOutputs contract
+        // as check_run so gate-only repos get operator-visible failure + transient retry when applicable.
+        if (!gateFinalized) {
+          const message = errorMessage(checkError);
+          failedOutputs.push({
+            output: "gate_check_run",
+            error: message,
+            transient: isGitHubTransientPublishError(checkError),
+          });
         }
         await recordAuditEvent(env, {
           eventType: "github_app.gate_check_failed_nonfatal",
@@ -11120,6 +11163,7 @@ async function maybePublishPrPublicSurface(
         unifiedFiles,
         repoFullName,
         prLabels: pr.labels,
+        env,
       });
       // The public comment must match the authoritative Gate check-run conclusion.
       const commentGate = commentGateEvaluation;
@@ -11757,6 +11801,7 @@ async function maybeProcessGateOverrideCommand(
     commandName: "gate-override" as LoopOverMentionCommandName,
     settings,
     pr,
+    needsMinerDetection: true,
   });
   if (!authorization.authorized) {
     await recordAuditEvent(env, {
@@ -11952,7 +11997,7 @@ async function maybeProcessResolveCommand(env: Env, deliveryId: string, payload:
   const [pr, settings] = await Promise.all([getPullRequest(env, req.repoFullName, req.pr.number), resolveRepositorySettings(env, req.repoFullName)]);
   const targetKey = `${req.repoFullName}#${req.pr.number}`;
   if (!pr) { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_skipped", actor: req.actor, targetKey, outcome: "completed", detail: "cached_pr_missing", metadata: { deliveryId, repoFullName: req.repoFullName, reason: "cached_pr_missing" } }); await recordGithubProductUsage(env, "finding_resolved_skipped", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "skipped", metadata: { reason: "cached_pr_missing" } }); return true; }
-  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "resolve" as LoopOverMentionCommandName, settings, pr });
+  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "resolve" as LoopOverMentionCommandName, settings, pr, needsMinerDetection: true });
   if (!authorization.authorized) { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_denied", actor: req.actor, targetKey, outcome: "denied", detail: authorization.reason, metadata: { deliveryId, repoFullName: req.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "resolve") } }); await recordGithubProductUsage(env, "finding_resolved_denied", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "denied", metadata: { reason: authorization.reason, actorKind: authorization.actorKind, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "resolve") } }); return true; }
   const findingRef = normalizeResolveFindingRef(command.reason);
   if (!findingRef.ok) { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_skipped", actor: req.actor, targetKey, outcome: "completed", detail: findingRef.reason, metadata: { deliveryId, repoFullName: req.repoFullName, reason: findingRef.reason } }); await recordGithubProductUsage(env, "finding_resolved_skipped", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "skipped", metadata: { reason: findingRef.reason } }); return true; }
@@ -12061,7 +12106,7 @@ async function maybeProcessPauseCommand(env: Env, deliveryId: string, payload: G
     await recordAutoreviewPausedSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "cached_pr_missing");
     return true;
   }
-  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "pause" as LoopOverMentionCommandName, settings, pr });
+  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "pause" as LoopOverMentionCommandName, settings, pr, needsMinerDetection: true });
   if (!authorization.authorized) {
     await recordAuditEvent(env, { eventType: "github_app.autoreview_paused_denied", actor: req.actor, targetKey, outcome: "denied", detail: authorization.reason, metadata: { deliveryId, repoFullName: req.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "pause") } });
     await recordGithubProductUsage(env, "autoreview_paused_denied", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "denied", metadata: { reason: authorization.reason, actorKind: authorization.actorKind, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "pause") } });
@@ -12104,7 +12149,7 @@ async function maybeProcessResumeCommand(env: Env, deliveryId: string, payload: 
     await recordAutoreviewResumedSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "cached_pr_missing");
     return true;
   }
-  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "resume" as LoopOverMentionCommandName, settings, pr });
+  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "resume" as LoopOverMentionCommandName, settings, pr, needsMinerDetection: true });
   if (!authorization.authorized) {
     await recordAuditEvent(env, { eventType: "github_app.autoreview_resumed_denied", actor: req.actor, targetKey, outcome: "denied", detail: authorization.reason, metadata: { deliveryId, repoFullName: req.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "resume") } });
     await recordGithubProductUsage(env, "autoreview_resumed_denied", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "denied", metadata: { reason: authorization.reason, actorKind: authorization.actorKind, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "resume") } });
@@ -12171,7 +12216,7 @@ async function maybeProcessExplainCommand(env: Env, deliveryId: string, payload:
     await recordFindingExplainedSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "cached_pr_missing");
     return true;
   }
-  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "explain" as LoopOverMentionCommandName, settings, pr });
+  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "explain" as LoopOverMentionCommandName, settings, pr, needsMinerDetection: true });
   if (!authorization.authorized) {
     await recordAuditEvent(env, { eventType: "github_app.finding_explained_denied", actor: req.actor, targetKey, outcome: "denied", detail: authorization.reason, metadata: { deliveryId, repoFullName: req.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "explain") } });
     await recordGithubProductUsage(env, "finding_explained_denied", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "denied", metadata: { reason: authorization.reason, actorKind: authorization.actorKind, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "explain") } });
@@ -12252,7 +12297,7 @@ async function maybeProcessGenerateTestsCommand(env: Env, deliveryId: string, pa
     await recordGenerateTestsSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "cached_pr_missing");
     return true;
   }
-  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "generate-tests" as LoopOverMentionCommandName, settings, pr });
+  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "generate-tests" as LoopOverMentionCommandName, settings, pr, needsMinerDetection: true });
   if (!authorization.authorized) {
     await recordAuditEvent(env, { eventType: "github_app.e2e_tests_generation_denied", actor: req.actor, targetKey, outcome: "denied", detail: authorization.reason, metadata: { deliveryId, repoFullName: req.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "generate-tests") } });
     await recordGithubProductUsage(env, "e2e_tests_generation_denied", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "denied", metadata: { reason: authorization.reason, actorKind: authorization.actorKind, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "generate-tests") } });
@@ -12973,7 +13018,7 @@ async function maybeProcessPrPanelGenerateTests(
     commandName: "generate-tests" as LoopOverMentionCommandName,
     settings,
     pr,
-    needsMinerDetection: false,
+    needsMinerDetection: true,
   });
   if (!authorization.authorized) {
     await recordAuditEvent(env, {
@@ -13314,6 +13359,12 @@ async function maybeThrottleReviewNagPing(
   if (isAutoCloseExempt(commenter, settings.autoCloseExemptLogins)) return false;
 
   const targetKey = `${repoFullName}#${issue.number}`;
+  // #8681: webhook-redelivery guard, backported from maybeThrottleLoopOverCommand/maybeThrottleIntentRouting.
+  // GitHub can redeliver the same issue_comment event; without this, a redelivery re-counts this ping toward
+  // the threshold (and can re-post the cooldown/close). The original delivery already recorded its ping under
+  // this deliveryId, so short-circuit the replay entirely.
+  const redeliverySinceIso = new Date(Date.now() - COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS).toISOString();
+  if (await hasAuditEventForDelivery(env, commenter, REVIEW_NAG_PING_EVENT_TYPE, targetKey, deliveryId, redeliverySinceIso)) return true;
   /* v8 ignore next -- resolveRepositorySettings always resolves a concrete positive integer (NOT NULL DEFAULT 3); the undefined side is defensive against the field's optional TS type. */
   const maxPings = settings.reviewNagMaxPings ?? 3;
   /* v8 ignore next -- resolveRepositorySettings always resolves a concrete positive integer (NOT NULL DEFAULT 5); the undefined side is defensive against the field's optional TS type. */
@@ -13503,6 +13554,11 @@ async function maybeThrottleMonitoredMentions(
   // the repo-wide count's suffix filter, so a naming drift between the two can never silently under/over-count.
   const mentionTargetSuffix = `mention:${mentionedLogin.toLowerCase()}`;
   const targetKey = `${repoFullName}#${issue.number}#${mentionTargetSuffix}`;
+  // #8681: webhook-redelivery guard, backported from maybeThrottleLoopOverCommand/maybeThrottleIntentRouting.
+  // A redelivered issue_comment event must not re-count this mention toward the threshold; the original
+  // delivery already recorded it under this deliveryId + per-login targetKey, so short-circuit the replay.
+  const redeliverySinceIso = new Date(Date.now() - COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS).toISOString();
+  if (await hasAuditEventForDelivery(env, commenter, MONITORED_MENTION_PING_EVENT_TYPE, targetKey, deliveryId, redeliverySinceIso)) return true;
   /* v8 ignore next -- resolveRepositorySettings always resolves a concrete positive integer (NOT NULL DEFAULT 3); the undefined side is defensive against the field's optional TS type. */
   const maxPings = settings.reviewNagMaxPings ?? 3;
   /* v8 ignore next -- resolveRepositorySettings always resolves a concrete positive integer (NOT NULL DEFAULT 5); the undefined side is defensive against the field's optional TS type. */
@@ -14580,12 +14636,20 @@ async function maybeProcessAgentCommandFeedbackReaction(
           deliveryId,
         })
       : undefined;
+  // #8682: feedback votes must be authorized against the SAME command policy that authorized the answer,
+  // not isAuthorizedCommandActor's `"preflight"` default. Load live settings so commandAuthorization /
+  // commandRateLimitPolicy overrides reach the check; PR open/non-draft mirrors the chat call site (#5092).
+  const settings = await resolveRepositorySettings(env, repoFullName);
   const authorization = await authorizeFeedbackActor(env, {
     installationId: getInstallationId(payload),
     actor,
     repoFullName,
     pullRequestAuthor,
     officialAuthorDetection: official,
+    commandName: command as LoopOverMentionCommandName,
+    commandAuthorizationPolicy: settings.commandAuthorization,
+    commandRateLimitPolicy: settings.commandRateLimitPolicy,
+    pullRequestOpenAndNotDraft: cachedPullRequest?.state === "open" && cachedPullRequest?.isDraft !== true,
   });
   if (!authorization.authorized) {
     await recordAuditEvent(env, {
@@ -14646,6 +14710,13 @@ async function authorizeFeedbackActor(
     installationId: number | null;
     pullRequestAuthor?: string | null | undefined;
     officialAuthorDetection?: OfficialGittensorMinerDetection | undefined;
+    // #8682: the command whose answer is being voted on, plus the live policy/rate-limit/PR-state context
+    // every other isAuthorizedCommandActor call site in this file already threads through. Omitting these
+    // silently falls back to `"preflight"` and ignores repo commandAuthorization overrides.
+    commandName?: LoopOverMentionCommandName | undefined;
+    commandAuthorizationPolicy?: RepositorySettings["commandAuthorization"] | undefined;
+    commandRateLimitPolicy?: RepositorySettings["commandRateLimitPolicy"] | undefined;
+    pullRequestOpenAndNotDraft?: boolean | undefined;
   },
 ): Promise<{ authorized: boolean; reason: string; actorKind: "maintainer" | "author" }> {
   const [owner] = args.repoFullName.split("/");
@@ -14665,10 +14736,14 @@ async function authorizeFeedbackActor(
     };
   }
   const authorAuthorization = isAuthorizedCommandActor({
+    commandName: args.commandName,
     commenterLogin: args.actor,
     commenterAssociation: null,
     pullRequestAuthorLogin: args.pullRequestAuthor,
     officialAuthorDetection: args.officialAuthorDetection,
+    commandAuthorizationPolicy: args.commandAuthorizationPolicy,
+    commandRateLimitPolicy: args.commandRateLimitPolicy,
+    pullRequestOpenAndNotDraft: args.pullRequestOpenAndNotDraft,
   });
   return {
     authorized: authorAuthorization.authorized,

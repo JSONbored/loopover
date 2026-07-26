@@ -1496,16 +1496,10 @@ describe("queue processors", () => {
     });
   });
 
-  it("does not stamp a gate-only surface when the incomplete-surface audit write fails", async () => {
-    const originalRecordAuditEvent = repositoriesModule.recordAuditEvent;
-    let incompleteAuditWrites = 0;
-    const auditSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockImplementation(async (auditEnv, event) => {
-      if (event.eventType === "github_app.pr_public_surface_incomplete") {
-        incompleteAuditWrites += 1;
-        throw new Error("audit failed");
-      }
-      await originalRecordAuditEvent(auditEnv, event);
-    });
+  it("does not stamp a gate-only surface when gate publish fails transiently (#8686)", async () => {
+    // Gate-only repo: pending POST succeeds, completed PATCH + errored fallback both 500 → failedOutputs
+    // gets a transient gate_check_run entry and finishPublicSurfacePublication retries (no surface stamp).
+    // Pre-#8686 this path left failedOutputs empty and only wrote pr_public_surface_incomplete.
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await persistRegistrySnapshot(
       asCloudEnv(env),
@@ -1531,23 +1525,36 @@ describe("queue processors", () => {
       if (url.includes("/check-runs/973") && method === "PATCH") return new Response("check update failed", { status: 500 });
       return new Response("not found", { status: 404 });
     });
+    const captureSpy = vi.spyOn(posthogModule, "capturePostHogReviewFailure");
 
-    await processJob(env, {
-      type: "github-webhook",
-      deliveryId: "gate-missing-zero-output",
-      eventName: "pull_request",
-      payload: {
-        action: "opened",
-        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
-        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
-        pull_request: { number: 83, title: "Gate only missing", state: "open", user: { login: "contributor" }, head: { sha: "gate-zero-missing" }, labels: [], body: "No issue link." },
-      },
-    });
+    await expect(
+      processJob(env, {
+        type: "github-webhook",
+        deliveryId: "gate-missing-zero-output",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 83, title: "Gate only missing", state: "open", user: { login: "contributor" }, head: { sha: "gate-zero-missing" }, labels: [], body: "No issue link." },
+        },
+      }),
+    ).rejects.toMatchObject({ retryKind: "public_surface_publish_transient" });
 
-    expect(incompleteAuditWrites).toBe(1);
+    const aggregate = await env.DB.prepare("select detail, metadata_json from audit_events where event_type = ?")
+      .bind("github_app.pr_public_surface_failed")
+      .first<{ detail: string; metadata_json: string }>();
+    expect(aggregate).toMatchObject({ detail: "gate_check_run" });
+    expect(aggregate?.metadata_json).toContain('"output":"gate_check_run"');
+    expect(aggregate?.metadata_json).toContain('"transient":true');
+    expect(captureSpy).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({ kind: "publish", repo: "JSONbored/gittensory", failedOutputs: ["gate_check_run"] }),
+      "pr_public_surface_publish_failed",
+    );
     const stored = await getPullRequest(env, "JSONbored/gittensory", 83);
     expect(stored?.lastPublishedSurfaceSha ?? null).toBeNull();
-    auditSpy.mockRestore();
+    captureSpy.mockRestore();
   });
 
   it("does not stamp a comment surface when the incomplete-surface audit write fails", async () => {
@@ -1749,6 +1756,142 @@ describe("queue processors", () => {
       outcome: "error",
     });
     expect(audit?.detail).toMatch(/Checks: write permission is missing/i);
+  });
+
+  it("records gate_check_run in failedOutputs when primary and fallback both fail with permission_missing (#8686)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await persistRegistrySnapshot(
+      asCloudEnv(env),
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      autoLabelEnabled: false,
+      requireLinkedIssue: true,
+    });
+    // Gate-only surface: no comment/label/check_run sibling can mask an empty failedOutputs.
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewCheckMode: "required", commentMode: "off", publicSurface: "off", checkRunMode: "off" } });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/gateDoubleFail/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs") && method === "POST") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { status?: string };
+        // Pending in_progress succeeds so the permission_missing finalize path has a check id to fall back on.
+        if (body.status === "in_progress") {
+          return Response.json({ id: 501, html_url: "https://example.test/check/501" }, { status: 201 });
+        }
+        // Primary completed publish → permission_missing (createOrUpdateGateCheckRun).
+        return new Response(JSON.stringify({ message: "Resource not accessible by integration" }), { status: 403 });
+      }
+      // Fallback createOrUpdateErroredGateCheckRun PATCHes the pending id — also permission_missing.
+      if (url.includes("/check-runs/") && method === "PATCH") {
+        return new Response(JSON.stringify({ message: "Resource not accessible by integration" }), { status: 403 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    const captureSpy = vi.spyOn(posthogModule, "capturePostHogReviewFailure");
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-double-fail-permission",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 86, title: "Gate without issue", state: "open", user: { login: "contributor" }, head: { sha: "gateDoubleFail" }, labels: [], body: "No issue link." },
+      },
+    });
+
+    const permissionAudit = await env.DB.prepare("select event_type from audit_events where event_type = ?")
+      .bind("github_app.gate_check_permission_missing")
+      .first<{ event_type: string }>();
+    expect(permissionAudit?.event_type).toBe("github_app.gate_check_permission_missing");
+
+    const aggregate = await env.DB.prepare("select detail, metadata_json from audit_events where event_type = ?")
+      .bind("github_app.pr_public_surface_failed")
+      .first<{ detail: string; metadata_json: string }>();
+    expect(aggregate).toMatchObject({ detail: "gate_check_run" });
+    expect(aggregate?.metadata_json).toContain('"output":"gate_check_run"');
+    expect(aggregate?.metadata_json).toContain('"transient":false');
+    expect(captureSpy).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({ kind: "publish", repo: "JSONbored/gittensory", failedOutputs: ["gate_check_run"] }),
+      "pr_public_surface_publish_failed",
+    );
+    captureSpy.mockRestore();
+  });
+
+  it("retries when gate_check_run primary throw and fallback both fail transiently (#8686)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await persistRegistrySnapshot(
+      asCloudEnv(env),
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      autoLabelEnabled: false,
+      requireLinkedIssue: true,
+    });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewCheckMode: "required", commentMode: "off", publicSurface: "off", checkRunMode: "off" } });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/gateTransientFail/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs") && method === "POST") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { status?: string };
+        if (body.status === "in_progress") {
+          return Response.json({ id: 502, html_url: "https://example.test/check/502" }, { status: 201 });
+        }
+        // Primary completed publish throws (octokit path) → catch + fallback.
+        return new Response("GitHub gate check API failed", { status: 500 });
+      }
+      if (url.includes("/check-runs/") && method === "PATCH") {
+        return new Response("GitHub gate check fallback failed", { status: 500 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    const captureSpy = vi.spyOn(posthogModule, "capturePostHogReviewFailure");
+
+    await expect(
+      processJob(env, {
+        type: "github-webhook",
+        deliveryId: "gate-double-fail-transient",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 87, title: "Gate without issue", state: "open", user: { login: "contributor" }, head: { sha: "gateTransientFail" }, labels: [], body: "No issue link." },
+        },
+      }),
+    ).rejects.toMatchObject({ retryKind: "public_surface_publish_transient" });
+
+    const aggregate = await env.DB.prepare("select detail, metadata_json from audit_events where event_type = ?")
+      .bind("github_app.pr_public_surface_failed")
+      .first<{ detail: string; metadata_json: string }>();
+    expect(aggregate).toMatchObject({ detail: "gate_check_run" });
+    expect(aggregate?.metadata_json).toContain('"output":"gate_check_run"');
+    expect(aggregate?.metadata_json).toContain('"transient":true');
+    expect(captureSpy).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({ kind: "publish", repo: "JSONbored/gittensory", failedOutputs: ["gate_check_run"] }),
+      "pr_public_surface_publish_failed",
+    );
+    captureSpy.mockRestore();
   });
 
   it("marks closed PR gates skipped without creating late first comments", async () => {
@@ -7886,6 +8029,108 @@ describe("queue processors", () => {
     const summary = await getCommandUsefulnessSummary(env, { now: "2026-05-29T00:00:00.000Z", windowDays: 30 });
     expect(summary.totals).toMatchObject({ feedbackCount: 1, usefulCount: 1, answerCount: 1 });
     expect(summary.commands).toEqual([expect.objectContaining({ command: "blockers", usefulnessRate: 1 })]);
+  });
+
+  it("#8682: a non-miner PR author can vote on their own chat answer when commandRateLimitPolicy is hold", async () => {
+    // Without command context, authorizeFeedbackActor defaults to "preflight" (confirmed_miner in the
+    // default roles) and denies with pr_author_not_confirmed_miner. Wiring commandName:"chat" + hold
+    // rate-limit + open non-draft PR must authorize via chat's pr_author role.
+    const env = createTestEnv();
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 77,
+      title: "Contributor chat",
+      state: "open",
+      draft: false,
+      user: { login: "contributor1" },
+      author_association: "NONE",
+      head: { sha: "chatsha" },
+      labels: [],
+      body: "x",
+    });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", {
+      settings: { commandRateLimitPolicy: "hold" },
+    });
+    await upsertAgentCommandAnswer(env, commandAnswer("answer-chat-author", "chat", { responseCommentId: 9101 }));
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "feedback-chat-pr-author",
+      eventName: "reaction",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 77, title: "Contributor chat", state: "open", pull_request: {}, user: { login: "contributor1" }, author_association: "NONE" },
+        comment: { id: 9101, body: commandAnswerBody("answer-chat-author", "chat"), user: { login: "loopover-orb[bot]", type: "Bot" } },
+        reaction: { id: 41, content: "+1", user: { login: "contributor1", type: "User" } },
+      },
+    });
+
+    const feedbackAudit = await env.DB.prepare(
+      "select event_type, detail from audit_events where event_type in (?, ?) order by created_at",
+    )
+      .bind("github_app.agent_command_feedback_recorded", "github_app.agent_command_feedback_denied")
+      .all<{ event_type: string; detail: string | null }>();
+    expect(feedbackAudit.results).toEqual([
+      expect.objectContaining({ event_type: "github_app.agent_command_feedback_recorded" }),
+    ]);
+    expect(feedbackAudit.results.some((row) => row.detail === "pr_author_not_confirmed_miner")).toBe(false);
+    const stored = await env.DB.prepare("select count(*) as n from github_agent_command_feedback where answer_id = ?").bind("answer-chat-author").first<{ n: number }>();
+    expect(stored?.n).toBe(1);
+  });
+
+  it("#8682: a custom commandAuthorization override for the answer's command is honored on feedback votes", async () => {
+    // next-action's shipped default has no pr_author role (falls through to confirmed_miner). A repo that
+    // explicitly widens next-action to include pr_author must have that override applied to feedback too —
+    // previously ignored because authorizeFeedbackActor never threaded the policy object.
+    const env = createTestEnv();
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 77,
+      title: "Override feedback",
+      state: "open",
+      draft: false,
+      user: { login: "contributor2" },
+      author_association: "NONE",
+      head: { sha: "ovsha" },
+      labels: [],
+      body: "x",
+    });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", {
+      settings: {
+        commandAuthorization: {
+          default: ["maintainer", "collaborator", "confirmed_miner"],
+          commands: { "next-action": ["maintainer", "collaborator", "pr_author"] },
+        },
+      },
+    });
+    await upsertAgentCommandAnswer(env, commandAnswer("answer-next-override", "next-action", { responseCommentId: 9102 }));
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "feedback-next-override",
+      eventName: "reaction",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 77, title: "Override feedback", state: "open", pull_request: {}, user: { login: "contributor2" }, author_association: "NONE" },
+        comment: { id: 9102, body: commandAnswerBody("answer-next-override", "next-action"), user: { login: "loopover-orb[bot]", type: "Bot" } },
+        reaction: { id: 42, content: "-1", user: { login: "contributor2", type: "User" } },
+      },
+    });
+
+    const feedbackAudit = await env.DB.prepare(
+      "select event_type, detail from audit_events where event_type in (?, ?) order by created_at",
+    )
+      .bind("github_app.agent_command_feedback_recorded", "github_app.agent_command_feedback_denied")
+      .all<{ event_type: string; detail: string | null }>();
+    expect(feedbackAudit.results).toEqual([
+      expect.objectContaining({ event_type: "github_app.agent_command_feedback_recorded" }),
+    ]);
+    const stored = await env.DB.prepare("select count(*) as n from github_agent_command_feedback where answer_id = ?")
+      .bind("answer-next-override")
+      .first<{ n: number }>();
+    expect(stored?.n).toBe(1);
   });
 
   it("rejects copied feedback markers that do not match the stored answer context", async () => {

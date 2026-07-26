@@ -130,7 +130,7 @@ function denyResult(input: {
       eventType: input.eventType,
       repoFullName: input.repoFullName,
       actionClass: input.actionClass,
-      decision: input.stage === "kill_switch" ? "paused" : input.eventType === "throttled" ? "throttle" : "deny",
+      decision: input.eventType === "kill_switch" ? "paused" : input.eventType === "throttled" ? "throttle" : "deny",
       reason: input.reason,
       payload: { stage: input.stage, ...input.extraPayload },
     },

@@ -172,6 +172,9 @@ export function ProductAnalytics() {
   const [windowDays, setWindowDays, windowHydrated] = useLocalStorage<AnalyticsWindowDays>(
     ANALYTICS_WINDOW_STORAGE_KEY,
     DEFAULT_ANALYTICS_WINDOW_DAYS,
+    // Pre-rebrand key (#8699): read once as a fallback and migrate forward, mirroring
+    // app.runs.tsx / app.workbench.tsx, so a returning user's window choice survives the rename.
+    "gittensory.analytics.windowDays",
   );
   const selectedWindow = parseAnalyticsWindowDays(windowDays);
   const dashboard = useApiResource<OperatorDashboard>(

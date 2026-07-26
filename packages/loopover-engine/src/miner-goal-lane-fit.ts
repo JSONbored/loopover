@@ -21,6 +21,10 @@ function normalizeLabels(labels: readonly string[]): string[] {
 /**
  * Compute a [0, 1] lane-fit score from issue labels and a parsed {@link MinerGoalSpec}. Path-based fit is
  * intentionally omitted — discovery metadata has labels only; path gating belongs in the analyze phase.
+ *
+ * The no-preference neutral score matches {@link computeLaneFit}'s rule 2 (`0.5`, unopinionated) rather
+ * than `1`: an unconfigured `preferredLabels` means the operator has no opinion, not that every issue is
+ * a perfect fit (#8870).
  */
 export function computeMinerGoalLaneFit(
   issue: { labels: readonly string[] },
@@ -36,7 +40,7 @@ export function computeMinerGoalLaneFit(
 
   let score: number;
   if (preferred.length === 0) {
-    score = 1;
+    score = 0.5;
   } else {
     const preferredMatch = preferred.some((want) => issueLabels.includes(want));
     if (preferredMatch) {

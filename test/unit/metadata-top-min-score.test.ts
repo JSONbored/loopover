@@ -24,14 +24,14 @@ describe("pickTopMetadataOpportunitiesAtOrAboveScore", () => {
   ];
 
   it("returns the top survivors after applying the score threshold", () => {
-    const topTwo = pickTopMetadataOpportunitiesAtOrAboveScore(candidates, { nowMs: NOW }, 0.1, 2);
+    const topTwo = pickTopMetadataOpportunitiesAtOrAboveScore(candidates, { nowMs: NOW }, 0.05, 2);
     expect(topTwo.map((entry) => entry.issueNumber)).toEqual([3, 2]);
-    expect(topTwo.every((entry) => entry.rankScore >= 0.1)).toBe(true);
+    expect(topTwo.every((entry) => entry.rankScore >= 0.05)).toBe(true);
   });
 
   it("returns every qualifying candidate when the limit exceeds the filtered list", () => {
     expect(
-      pickTopMetadataOpportunitiesAtOrAboveScore(candidates, { nowMs: NOW }, 0.1, 10).map(
+      pickTopMetadataOpportunitiesAtOrAboveScore(candidates, { nowMs: NOW }, 0.05, 10).map(
         (entry) => entry.issueNumber,
       ),
     ).toEqual([3, 2, 4]);

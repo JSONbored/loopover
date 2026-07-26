@@ -89,7 +89,7 @@ describe("computeMinerGoalLaneFit", () => {
     expect(computeMinerGoalLaneFit({ labels: ["feature"] }, spec)).toBe(0.25);
   });
 
-  it("scores normally when no blocked labels are configured", () => {
-    expect(computeMinerGoalLaneFit({ labels: ["docs"] }, DEFAULT_MINER_GOAL_SPEC)).toBe(1);
+  it("returns the neutral 0.5 when no preferred labels are configured", () => {
+    expect(computeMinerGoalLaneFit({ labels: ["docs"] }, DEFAULT_MINER_GOAL_SPEC)).toBe(0.5);
   });
 });

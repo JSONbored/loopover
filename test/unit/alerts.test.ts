@@ -7,6 +7,7 @@ import {
   detectAnomalies,
   runAnomalyAlerts,
 } from "../../src/review/alerts";
+import { createTestEnv } from "../helpers/d1";
 
 const healthy: AgentHealth = {
   byStatus: {},
@@ -174,10 +175,11 @@ describe("runAnomalyAlerts guards", () => {
 });
 
 // ── runAnomalyAlerts send path ───────────────────────────────────────────────────────────────────────
-// loopover's migrated `notification_deliveries` table is the badge read-model — a DIFFERENT schema than
-// the native port's claim SQL (project/target_id/notification_key). So we emulate the claim store: the
-// INSERT ... ON CONFLICT(project, target_id, notification_key) DO NOTHING returns changes=1 the first time a
-// (project, target_id, notification_key) tuple is seen and changes=0 on a repeat (the per-hour throttle).
+// The port claims dedup slots in `alert_dedup_claims` (its own (project, target_id, notification_key)
+// table — #8901), so we emulate the claim store: the INSERT ... ON CONFLICT(project, target_id,
+// notification_key) DO NOTHING returns changes=1 the first time a (project, target_id, notification_key)
+// tuple is seen and changes=0 on a repeat (the per-hour throttle). The real-schema test at the bottom of
+// this file exercises the same INSERTs against the actual migrated table.
 function claimEnv(extra: Record<string, unknown> = {}): Env {
   const seen = new Set<string>();
   return {
@@ -359,5 +361,37 @@ describe("runAnomalyAlerts — send path", () => {
     await runAnomalyAlerts(env, config, deps);
     expect(computed).toBe(true); // health WAS computed (healthcheck claim succeeded)
     expect(fetchSpy).not.toHaveBeenCalled(); // but the anomaly claim conflicted → no POST
+  });
+});
+
+// ── real alert_dedup_claims schema (#8901) ─────────────────────────────────────────────────────────────
+// Regression guard for the latent schema collision: alerts.ts used to INSERT into `notification_deliveries`
+// (project/target_id/notification_key columns + ON CONFLICT on that tuple), but the migrated
+// `notification_deliveries` is the badge read-model with a totally different shape, so the first real INSERT
+// would throw. These run the ACTUAL INSERT ... ON CONFLICT against a fully-migrated DB (createTestEnv applies
+// migrations/**, including 0181_alert_dedup_claims.sql) to prove the write path now succeeds end-to-end.
+describe("runAnomalyAlerts — real alert_dedup_claims schema (#8901)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("lands both dedup claims in the real migrated table and POSTs once, then throttles the repeat", async () => {
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const env = createTestEnv();
+    const config = { slug: "ac", features: { discordNotify: true }, secrets: {}, discordWebhookUrl: WEBHOOK } as AlertAgentConfig;
+    const deps: AnomalyAlertDeps = { computeAgentHealth: async () => anomalousHealth, computeCalibration: async () => driftCal };
+
+    await runAnomalyAlerts(env, config, deps);
+    expect(fetchSpy).toHaveBeenCalledTimes(1); // the INSERTs succeeded against the real (project, target_id, notification_key) schema
+
+    const rows = await env.DB.prepare("SELECT project, target_id, status FROM alert_dedup_claims ORDER BY target_id")
+      .all<{ project: string; target_id: string; status: string }>();
+    expect(rows.results.map((r) => r.target_id)).toEqual(["__anomaly__", "__healthcheck__"]);
+    expect(rows.results.every((r) => r.project === "ac" && r.status === "sent")).toBe(true);
+
+    // A second run the same hour re-hits the per-hour healthcheck claim → ON CONFLICT DO NOTHING → no new POST.
+    await runAnomalyAlerts(env, config, deps);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const after = await env.DB.prepare("SELECT count(*) AS n FROM alert_dedup_claims").first<{ n: number }>();
+    expect(after?.n).toBe(2); // still exactly the two claims — the conflicting re-insert added nothing
   });
 });

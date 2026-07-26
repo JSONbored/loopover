@@ -278,12 +278,15 @@ describe("shouldSkipAiForReputation (helper)", () => {
   });
 
   describe("submission-cadence signal (#4514)", () => {
-    async function seedReviewTarget(env: Env, args: { number: number; submitter: string; createdAt: string }) {
+    // #9041 repointed getSubmitterCadence from the frozen review_targets table to the live pull_requests
+    // ledger (repo_full_name + author_login, not project + submitter) -- this seed helper follows suit so
+    // these tests exercise the query the code actually runs today, not the dead one it used to.
+    async function seedCadencePullRequest(env: Env, args: { number: number; submitter: string; createdAt: string }) {
       await env.DB.prepare(
-        `INSERT INTO review_targets (id, project, kind, repo, number, submitter, status, decision_json, terminal_at, created_at)
-         VALUES (?, 'acme/widgets', 'pull_request', 'acme/widgets', ?, ?, 'merged', ?, ?, ?)`,
+        `INSERT INTO pull_requests (id, repo_full_name, number, title, state, author_login, created_at)
+         VALUES (?, 'acme/widgets', ?, ?, 'open', ?, ?)`,
       )
-        .bind(`acme/widgets:pull_request:acme/widgets#${args.number}`, args.number, args.submitter, JSON.stringify({ reasonCode: "dual_review_approved" }), args.createdAt, args.createdAt)
+        .bind(`acme/widgets#${args.number}`, args.number, `cadence probe #${args.number}`, args.submitter, args.createdAt)
         .run();
     }
 
@@ -294,7 +297,7 @@ describe("shouldSkipAiForReputation (helper)", () => {
       const t0 = Date.now() - 2 * 60 * 60_000;
       for (let i = 0; i < 5; i++) {
         // All merged/approved -- the QUALITY signal alone stays neutral/trusted; only cadence should trip this.
-        await seedReviewTarget(env, { number: i, submitter: "speedster", createdAt: new Date(t0 + i * 5 * 60_000).toISOString() });
+        await seedCadencePullRequest(env, { number: i, submitter: "speedster", createdAt: new Date(t0 + i * 5 * 60_000).toISOString() });
       }
       expect(await shouldSkipAiForReputation(env, { project: "acme/widgets", submitter: "speedster" })).toBe(true);
     });
@@ -303,7 +306,7 @@ describe("shouldSkipAiForReputation (helper)", () => {
       const env = createTestEnv({ LOOPOVER_REVIEW_REPUTATION: "true" });
       const t0 = Date.now() - 20 * 60 * 60_000;
       for (let i = 0; i < 5; i++) {
-        await seedReviewTarget(env, { number: i + 100, submitter: "steady", createdAt: new Date(t0 + i * 3 * 60 * 60_000).toISOString() });
+        await seedCadencePullRequest(env, { number: i + 100, submitter: "steady", createdAt: new Date(t0 + i * 3 * 60 * 60_000).toISOString() });
       }
       expect(await shouldSkipAiForReputation(env, { project: "acme/widgets", submitter: "steady" })).toBe(false);
     });

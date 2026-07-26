@@ -545,10 +545,12 @@ describe("review-grounding: fetchFullFileContents (injected FileFetcher, fail-sa
     expect(after).toEqual({ path: "src/after.ts", text: "ok" });
   });
 
-  it("falls all the way back to full omission when the remaining share is too thin for even a sample", async () => {
-    // Two fillers each just under MAX_SINGLE_FILE leave only 200 chars of the 96k budget for the third file
-    // -- below MIN_SAMPLE_CHARS, so sampleHeadAndTail itself declines rather than rendering a garbled sliver,
-    // and fetchFullFileContents degrades that to the same full-omission shape as an unreadable file.
+  it("still yields a minimal distinguishing sample for a genuinely-fetched file under extreme budget pressure (#8646)", async () => {
+    // Two fillers each just under MAX_SINGLE_FILE leave only ~200 chars of the 96k budget for the third file --
+    // below MIN_SAMPLE_CHARS. Previously fetchFullFileContents degraded that fetched file to the same empty
+    // { text: "", truncated: true } shape a NEVER-fetched file uses, breaking the module's "never rendered as
+    // omitted again" guarantee. It must now sample at the MIN_SAMPLE_CHARS floor so a fetched file always
+    // carries at least some distinguishing real content.
     const filler = "f".repeat(MAX_SINGLE_FILE - 100);
     const map: Record<string, string> = { "src/a.ts": filler, "src/b.ts": filler, "src/huge.ts": "z".repeat(1_000_000) };
     const fetcher: FileFetcher = { getFileContent: async (path) => map[path] ?? null };
@@ -559,7 +561,12 @@ describe("review-grounding: fetchFullFileContents (injected FileFetcher, fail-sa
       fetcher,
     );
     const huge = out?.find((f) => f.path === "src/huge.ts");
-    expect(huge).toEqual({ path: "src/huge.ts", text: "", truncated: true });
+    // The fetched file is truncated but NOT empty -- it carries real sampled bytes + the omission marker, so
+    // its rendered output is distinguishable from a never-fetched file's empty placeholder.
+    expect(huge?.truncated).toBe(true);
+    expect(huge?.text.length).toBeGreaterThan(0);
+    expect(huge?.text).toContain("omitted from the middle of this file");
+    expect(huge?.text).toContain("z"); // genuine content from the fetched file, not just the marker
   });
 
   it("returns undefined when nothing readable was inlined", async () => {

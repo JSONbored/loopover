@@ -307,13 +307,12 @@ export async function fetchFullFileContents(
       used += text.length;
       continue;
     }
-    const sampled = sampleHeadAndTail(text, share);
-    if (!sampled) {
-      // The remaining share was too thin for even a head+tail sample to carry signal — same as unreadable.
-      out.push({ path: file.filename, text: "", truncated: true });
-      used = FILE_CONTENT_BUDGET;
-      continue;
-    }
+    // This file WAS genuinely fetched, so it must never render as the empty "(no content available)"
+    // placeholder a never-fetched file uses -- that breaks the module's own "never omitted again"
+    // guarantee (#8646). When the remaining share is thinner than MIN_SAMPLE_CHARS, sample at that floor so
+    // a fetched file always yields at least a minimal, distinguishing head+tail (a small, bounded overrun of
+    // the overall budget on the very last thin file, not a per-file unbounded cost).
+    const sampled = sampleHeadAndTail(text, Math.max(share, MIN_SAMPLE_CHARS));
     out.push({ path: file.filename, text: sampled, truncated: true });
     used += sampled.length;
   }

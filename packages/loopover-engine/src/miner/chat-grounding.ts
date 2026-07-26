@@ -227,7 +227,12 @@ function* foldAssistantMessage(message: Record<string, unknown>): Generator<Chat
   }
 }
 
-/** Folds one user message's tool-result blocks (the SDK reports tool output on a `user`-role message). */
+/**
+ * Folds one user message's tool-result blocks (the SDK reports tool output on a `user`-role message). String tool
+ * output is a public-facing leak vector the same way an assistant `text` chunk is — an MCP tool's own output could
+ * echo a blocklisted field — so it passes through the same PUBLIC_FIELD_BLOCKLIST backstop `foldAssistantMessage`
+ * applies. Non-string content (structured blocks) is forwarded unchanged.
+ */
 function* foldToolResultMessage(message: Record<string, unknown>): Generator<ChatGroundingEvent> {
   const content = asRecord(message.message)?.content;
   if (!Array.isArray(content)) return;
@@ -235,7 +240,8 @@ function* foldToolResultMessage(message: Record<string, unknown>): Generator<Cha
     const block = asRecord(rawBlock);
     if (!block || block.type !== "tool_result") continue;
     const tool = typeof block.tool_use_id === "string" ? block.tool_use_id : "";
-    yield { type: "tool_result", tool, output: block.content };
+    const output = typeof block.content === "string" ? redactBlockedText(block.content) : block.content;
+    yield { type: "tool_result", tool, output };
   }
 }
 

@@ -2525,6 +2525,11 @@ function buildAgentMaintenancePlanInput(args: {
     // aggregate's field is always an array, [] when none); the planner applies its own length>0 gate, matching
     // how failingCheckNames above is likewise threaded unconditionally.
     advisoryCheckHold: ciAggregate.advisoryHoldDetails,
+    // #8758: non-required red checks (neither branch-protection-required nor declared advisory). They never gate
+    // ciState, but GitHub folds them into mergeable_state "unstable" — the state whose merge-suppression used to
+    // be silent (#8711). Threaded so the planner's unstable hold can NAME the culprit check(s) in its
+    // reason/comment; the hold itself keys on pr.mergeableState, so an empty list still holds with generic wording.
+    nonRequiredCheckFailures: ciAggregate.nonRequiredFailingDetails,
     ...(blacklistEntry !== null
       ? { blacklistMatch: { matched: true, reason: blacklistEntry.reason } }
       : {}),

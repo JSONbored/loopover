@@ -35,8 +35,10 @@ vi.mock("../../src/github/app", async (importOriginal) => ({
 }));
 // The actuation-time live CI re-check (#2128) defaults to "still passing" so the existing merge tests stay
 // deterministic; individual tests below override this to exercise the staleness-denial path.
-// The actuation-time live mergeable-state re-check (#3863) defaults to "dirty" (conflict still present) so no
-// existing test needs to override it; the tests below explicitly set it to exercise the staleness-denial path.
+// The actuation-time live mergeable-state re-check defaults to "clean": since #8758, EVERY approve action
+// consults this fetch (denied on live "dirty"/"unstable"), so a non-clean default would wrongly deny the many
+// approve-executing tests that never think about mergeable state. The #3863 conflict-close tests all set their
+// state explicitly (mockResolvedValueOnce) and never relied on the old "dirty" default.
 // The actuation-time live review-thread re-check (#review-thread-staleness) defaults to a single still-unresolved
 // blocker for the same reason -- individual tests below override it to exercise the staleness-denial path.
 // The actuation-time live duplicate-winner-still-open re-check (#dup-winner-staleness) defaults to "open" (the
@@ -44,7 +46,7 @@ vi.mock("../../src/github/app", async (importOriginal) => ({
 vi.mock("../../src/github/backfill", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/github/backfill")>()),
   fetchLiveCiAggregate: vi.fn(async () => ({ ciState: "passed" as const, hasPending: false, hasVisiblePending: false, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], advisoryHoldDetails: [], ciCompletenessWarning: null })),
-  fetchLivePullRequestMergeState: vi.fn(async () => "dirty" as const),
+  fetchLivePullRequestMergeState: vi.fn(async () => "clean" as const),
   fetchLiveReviewThreadBlockers: vi.fn(async () => [{ title: "still unresolved", scannerFinding: false }]),
   fetchLivePullRequestState: vi.fn(async () => "open" as const),
   refreshInstallationHealthForInstallation: vi.fn(async () => null),
@@ -590,6 +592,34 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     const outcomes = await executeAgentMaintenanceActions(env, ctx(), [gateClose]);
     expect(outcomes[0]?.outcome).toBe("completed");
     expect(fetchLivePullRequestMergeState).not.toHaveBeenCalled();
+  });
+
+  it("REGRESSION (#8758): an approve is DENIED when the live mergeable_state is unstable — no approval claiming green on a PR the merge arm refuses", async () => {
+    const env = createTestEnv({});
+    const approve: PlannedAgentAction = { actionClass: "approve", requiresApproval: false, reason: "gate passed, CI green", reviewBody: "LoopOver approves." };
+    vi.mocked(fetchLivePullRequestMergeState).mockResolvedValueOnce("unstable");
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [approve]);
+    expect(outcomes[0]?.outcome).toBe("denied");
+    expect(outcomes[0]?.detail).toContain("unstable");
+    expect(createPullRequestReview).not.toHaveBeenCalled();
+  });
+
+  it("REGRESSION (#8758): an approve is DENIED when the live mergeable_state is dirty (about to be conflict-closed)", async () => {
+    const env = createTestEnv({});
+    const approve: PlannedAgentAction = { actionClass: "approve", requiresApproval: false, reason: "gate passed, CI green", reviewBody: "LoopOver approves." };
+    vi.mocked(fetchLivePullRequestMergeState).mockResolvedValueOnce("dirty");
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [approve]);
+    expect(outcomes[0]?.outcome).toBe("denied");
+    expect(createPullRequestReview).not.toHaveBeenCalled();
+  });
+
+  it("an approve FAILS OPEN (still executes) when the live mergeable-state read is ambiguous — a transient fetch hiccup must not strand approval-required repos (#8758)", async () => {
+    const env = createTestEnv({});
+    const approve: PlannedAgentAction = { actionClass: "approve", requiresApproval: false, reason: "gate passed, CI green", reviewBody: "LoopOver approves." };
+    vi.mocked(fetchLivePullRequestMergeState).mockResolvedValueOnce("unknown");
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [approve]);
+    expect(outcomes[0]?.outcome).toBe("completed");
+    expect(createPullRequestReview).toHaveBeenCalled();
   });
 
   it("REGRESSION (#3863): closeRequiresMergeableState round-trips through the persist/replay round trip so a staged conflict close still re-checks live mergeable-state", async () => {

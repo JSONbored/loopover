@@ -8,6 +8,7 @@ import { initPortfolioQueueStore, resolvePortfolioQueueDbPath } from "../../pack
 import { resolveEventLedgerDbPath } from "../../packages/loopover-miner/lib/event-ledger.js";
 import { applySchemaMigrations, BASELINE_SCHEMA_VERSION } from "../../packages/loopover-miner/lib/schema-version.js";
 import { openWorktreeAllocator, resolveWorktreeAllocatorDbPath } from "../../packages/loopover-miner/lib/worktree-allocator.js";
+import { openLaptopStateStore, resolveLaptopStateDbPath } from "../../packages/loopover-miner/lib/laptop-init.js";
 
 const roots: string[] = [];
 
@@ -35,6 +36,7 @@ const STORE_NAMES = [
   "ranked-candidates",
   "deny-hook-synthesis",
   "orb-export",
+  "laptop-state",
 ];
 
 afterEach(() => {
@@ -43,7 +45,7 @@ afterEach(() => {
 });
 
 describe("loopover-miner migrate (#4871)", () => {
-  it("covers the exact same seventeen stores doctor's store-integrity sweep covers, in the same order, and skips every one when nothing has been created yet", () => {
+  it("covers the exact same eighteen stores doctor's store-integrity sweep covers, in the same order, and skips every one when nothing has been created yet", () => {
     const env = tempEnv();
     const results = runMigrateChecks(env);
 
@@ -55,6 +57,9 @@ describe("loopover-miner migrate (#4871)", () => {
     // REGRESSION (#8318): orb-export.sqlite3 (the opt-in Orb telemetry export's HMAC secret + cursor) was
     // never added to either list when it shipped, so a corrupted store was invisible to doctor and migrate.
     expect(STORE_NAMES).toEqual(expect.arrayContaining(["orb-export"]));
+    // REGRESSION (#8641): laptop-state.sqlite3 used the same resolveLocalStoreDbPath pattern but was never
+    // added to either twin list, so doctor only ran a shallow SELECT 1 and migrate never touched it.
+    expect(STORE_NAMES).toEqual(expect.arrayContaining(["laptop-state"]));
     for (const result of results) {
       expect(result.ok).toBe(true);
       expect(result.status).toBe("skipped");
@@ -91,6 +96,27 @@ describe("loopover-miner migrate (#4871)", () => {
     expect(row).toMatchObject({ ok: true, status: "up-to-date" });
     expect(row?.versionBefore).toBe(row?.versionAfter);
     expect(row?.versionBefore).toEqual(expect.any(Number));
+  });
+
+  it("REGRESSION (#8641): opens laptop-state through migrate's open adapter and migrates a pre-baseline file", () => {
+    const env = tempEnv();
+    const dbPath = resolveLaptopStateDbPath(env);
+    mkdirSync(dirname(dbPath), { recursive: true });
+    // Pre-baseline on-disk file (user_version 0, empty) — openLaptopStateStore stamps the baseline.
+    new DatabaseSync(dbPath).close();
+
+    const row = runMigrateChecks(env).find((result) => result.name === "laptop-state");
+    expect(row).toMatchObject({
+      ok: true,
+      status: "migrated",
+      versionBefore: 0,
+      versionAfter: BASELINE_SCHEMA_VERSION,
+    });
+
+    // Freshly-migrated file is then reported up-to-date on a second pass (open adapter still runs).
+    openLaptopStateStore(dbPath).close();
+    const again = runMigrateChecks(env).find((result) => result.name === "laptop-state");
+    expect(again).toMatchObject({ ok: true, status: "up-to-date", versionBefore: BASELINE_SCHEMA_VERSION });
   });
 
   it("actually migrates a pre-existing older-schema portfolio-queue file, bumping its stamped version and adding the missing column", () => {

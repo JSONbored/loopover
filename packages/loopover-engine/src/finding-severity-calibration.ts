@@ -148,6 +148,10 @@ function finiteNonNegativeInt(value: number | undefined): number {
   return Math.floor(value);
 }
 
+function isInvalidWeight(value: number | undefined): boolean {
+  return value !== undefined && (!Number.isFinite(value) || value < 0);
+}
+
 function roundScore(value: number): number {
   return Math.round(Math.min(1, Math.max(0, value)) * 1_000_000) / 1_000_000;
 }
@@ -366,7 +370,19 @@ function normalizeCompositeWeights(weights: FindingSeverityCalibrationWeights | 
   // Preserve explicitly-zeroed weights rather than substituting the defaults: a caller that zeroes every component
   // must reach the objective-only fallback in the composite scorer, not silently get the default 45/35/20 blend
   // (converges with reviewer-consensus-calibration.ts's already-correct behavior; #6170).
-  if (total <= 0) return { objectiveAnchor: 0, pairwiseJudge: 0, structuredFindingSeverity: 0 };
+  // NaN/negative inputs still recover to DEFAULT_COMPOSITE_WEIGHTS when the clamped total is empty rather than
+  // collapsing to a 100%-objective-anchor composite, mirroring pairwise-calibration.ts's invalid-weight
+  // distinction (#7443; #8643).
+  if (total <= 0) {
+    if (
+      isInvalidWeight(weights?.objectiveAnchor) ||
+      isInvalidWeight(weights?.pairwiseJudge) ||
+      isInvalidWeight(weights?.structuredFindingSeverity)
+    ) {
+      return DEFAULT_COMPOSITE_WEIGHTS;
+    }
+    return { objectiveAnchor: 0, pairwiseJudge: 0, structuredFindingSeverity: 0 };
+  }
   return {
     objectiveAnchor: raw.objectiveAnchor / total,
     pairwiseJudge: raw.pairwiseJudge / total,

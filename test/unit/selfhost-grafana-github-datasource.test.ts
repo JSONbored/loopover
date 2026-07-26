@@ -2,15 +2,12 @@ import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-// scripts/setup-github-datasource.sh had no dedicated coverage before this (only referenced in passing by
-// selfhost-grafana-sentry-datasource.test.ts's own comparison assertions). Mirrors that file's credential-safety
-// test: this script shares the exact same GRAFANA_ADMIN_PASSWORD-via-curl-argv/env leak this PR fixes.
 describe("scripts/setup-github-datasource.sh", () => {
   function readScript(): string {
     return readFileSync(join(process.cwd(), "scripts/setup-github-datasource.sh"), "utf8");
   }
 
-  it("is idempotent (update-vs-create) and ships a health check, matching setup-sentry-datasource.sh's own shape", () => {
+  it("is idempotent (update-vs-create) and ships a health check", () => {
     const script = readScript();
 
     expect(script).toContain("GITHUB_TOKEN");

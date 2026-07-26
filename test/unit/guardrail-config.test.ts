@@ -37,6 +37,31 @@ describe("ENGINE_DECISION_GUARDRAIL_GLOBS — post-#6203-migration real paths (#
   });
 });
 
+// #8698: the guardrail-matching engine itself (change-guardrail.ts), the gate-decision advisory core
+// (gate-advisory.ts), and the predicted-gate orchestrator were never listed -- a self-referential blind spot,
+// since a PR weakening exactly those files would not itself trip the hard guardrail. Each must now be a hit.
+describe("ENGINE_DECISION_GUARDRAIL_GLOBS — guardrail engine + gate-advisory/predicted-gate self-protection (#8698)", () => {
+  it("lists the guardrail-matching engine, the gate-advisory core, and the predicted-gate orchestrator", () => {
+    expect(ENGINE_DECISION_GUARDRAIL_GLOBS).toContain("packages/loopover-engine/src/signals/change-guardrail.ts");
+    expect(ENGINE_DECISION_GUARDRAIL_GLOBS).toContain("packages/loopover-engine/src/advisory/gate-advisory.ts");
+    expect(ENGINE_DECISION_GUARDRAIL_GLOBS).toContain("packages/loopover-engine/src/predicted-gate.ts");
+  });
+
+  it("a PR touching only the guardrail-matching engine trips the hard guardrail", () => {
+    expect(isGuardrailHit(["packages/loopover-engine/src/signals/change-guardrail.ts"], resolveHardGuardrailGlobs(null))).toBe(
+      true,
+    );
+  });
+
+  it("a PR touching only the gate-advisory core trips the hard guardrail", () => {
+    expect(isGuardrailHit(["packages/loopover-engine/src/advisory/gate-advisory.ts"], resolveHardGuardrailGlobs(null))).toBe(true);
+  });
+
+  it("a PR touching only the predicted-gate orchestrator trips the hard guardrail", () => {
+    expect(isGuardrailHit(["packages/loopover-engine/src/predicted-gate.ts"], resolveHardGuardrailGlobs(null))).toBe(true);
+  });
+});
+
 describe("resolveHardGuardrailGlobs", () => {
   it("uses invariant guardrails when effective settings omit hardGuardrailGlobs", () => {
     expect(resolveHardGuardrailGlobs(undefined)).toEqual(DEFAULT_HARD_GUARDRAIL_GLOBS);

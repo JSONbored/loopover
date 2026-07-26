@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   checkDocsDrift,
@@ -215,6 +216,53 @@ describe("check-docs-drift script", () => {
 
     it("returns [] when FocusManifest has no declaration in the text", () => {
       expect(extractFocusManifestFields("export type SomethingElse = { x: string };")).toEqual([]);
+    });
+
+    it("resolves a `{ ... } & Record<K, V>` intersection half's keys to their own leaves (#8656)", () => {
+      const fixture = `
+        export type FocusManifest = {
+          present: boolean;
+          features: FeaturesConfig;
+          experimental: ExperimentalConfig;
+          named: NamedConfig;
+          numeric: NumericConfig;
+          loose: LooseConfig;
+          missing: MissingConfig;
+          broken: BrokenConfig;
+        };
+        export type FeaturesConfig = { present: boolean } & Record<"newKey", boolean | null>;
+        export const ARR_KEYS = ["gamma", "delta"] as const;
+        export type ArrKey = (typeof ARR_KEYS)[number];
+        export type ExperimentalConfig = { present: boolean } & Record<ArrKey, boolean | null>;
+        export type NamedKeys = "alpha" | "beta";
+        export type NamedConfig = { present: boolean } & Record<NamedKeys, boolean | null>;
+        export type NumKey = number;
+        export type NumericConfig = { present: boolean } & Record<NumKey, boolean | null>;
+        export type LooseConfig = { present: boolean } & Record<string, boolean | null>;
+        export type MissingArrKey = (typeof MISSING_ARR)[number];
+        export type MissingConfig = { present: boolean } & Record<MissingArrKey, boolean | null>;
+        export type BrokenConfig = { present: boolean } & Record<123, boolean | null>;
+      `;
+      // Inline literal (features.newKey), a locally-declared `(typeof ARR)[number]` const-array union
+      // (experimental.gamma/delta), and a direct string-literal union (named.alpha/beta) each resolve to leaves.
+      // A `Record<number|string>` or an unresolvable key (NumKey/LooseConfig/MissingConfig/BrokenConfig) invents
+      // no field names.
+      expect(extractFocusManifestFields(fixture)).toEqual([
+        "features.newKey",
+        "experimental.gamma",
+        "experimental.delta",
+        "named.alpha",
+        "named.beta",
+      ]);
+    });
+
+    it("surfaces the real FocusManifestFeaturesConfig / FocusManifestExperimentalConfig Record keys against the live source (#8656)", () => {
+      const source = readFileSync("packages/loopover-engine/src/focus-manifest.ts", "utf8");
+      const fields = extractFocusManifestFields(source);
+      for (const key of ["rag", "reputation", "safety", "grounding", "e2eTests", "screenshots", "improvementSignal", "amsReputationBridge"]) {
+        expect(fields, `features.${key}`).toContain(`features.${key}`);
+      }
+      expect(fields).toContain("experimental.gittensor");
     });
   });
 

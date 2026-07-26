@@ -1,11 +1,24 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Mock the toast layer so the copy handlers' user-facing signal can be asserted directly.
-const { success, error } = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
-vi.mock("sonner", () => ({ toast: { success, error } }));
+// Mock the toast layer so the copy handlers' user-facing signal can be asserted directly. The base
+// export is itself callable (SavedViews' remove flow uses bare toast(...)) while keeping the
+// success/error channels the existing copy-button tests assert on.
+const { toastBase, success, error } = vi.hoisted(() => {
+  const success = vi.fn();
+  const error = vi.fn();
+  return { toastBase: Object.assign(vi.fn(), { success, error }), success, error };
+});
+vi.mock("sonner", () => ({ toast: toastBase }));
 
-import { DrawerSurface, RunsFilterBar } from "./app.runs";
+import {
+  DrawerSurface,
+  mapAgentRunBundle,
+  mapAgentRunKind,
+  mapSignalFidelity,
+  RunsFilterBar,
+  SavedViews,
+} from "./app.runs";
 
 const run = {
   id: "run_1",
@@ -165,5 +178,249 @@ describe("Agent Runs filter bar persistent reset (#6818)", () => {
     renderBar({ hasActiveFilters: true, status: "ready", onReset });
     fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
     expect(onReset).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// #8701: app.runs.tsx's pure mapping helpers (mapSignalFidelity, mapAgentRunKind, mapAgentRunBundle)
+// and the SavedViews save/apply/remove flow previously had zero direct test coverage.
+// ---------------------------------------------------------------------------------------------------
+
+describe("mapSignalFidelity (#8701)", () => {
+  it("maps every data-quality status, including the unknown fallthrough", () => {
+    expect(mapSignalFidelity("complete")).toBe("ready");
+    expect(mapSignalFidelity("degraded")).toBe("degraded");
+    expect(mapSignalFidelity("blocked")).toBe("blocked");
+    expect(mapSignalFidelity("unknown")).toBe("stale");
+  });
+});
+
+describe("mapAgentRunKind (#8701)", () => {
+  it("maps each backend kind to its UI kind", () => {
+    expect(mapAgentRunKind("preflight_branch")).toBe("preflight-branch");
+    expect(mapAgentRunKind("prepare_pr_packet")).toBe("prepare-pr-packet");
+    expect(mapAgentRunKind("explain_blockers")).toBe("explain-blockers");
+    expect(mapAgentRunKind("explain_branch_blockers")).toBe("explain-blockers");
+  });
+
+  it("defaults everything else — including null — to plan-next-work", () => {
+    expect(mapAgentRunKind(null)).toBe("plan-next-work");
+    expect(mapAgentRunKind("something_new")).toBe("plan-next-work");
+  });
+});
+
+type Bundle = Parameters<typeof mapAgentRunBundle>[0];
+
+function buildBundle(overrides?: {
+  run?: Partial<Bundle["run"]>;
+  actions?: Bundle["actions"];
+  contextSnapshots?: Bundle["contextSnapshots"];
+}): Bundle {
+  return {
+    run: {
+      id: "run_9",
+      objective: "triage",
+      actorLogin: "octocat",
+      surface: "mcp",
+      status: "completed",
+      dataQualityStatus: "complete",
+      payload: {
+        kind: "preflight_branch",
+        repoFullName: "payload/repo",
+        input: { repoFullName: "input/repo" },
+      },
+      createdAt: "2026-07-20T00:00:00.000Z",
+      updatedAt: "2026-07-21T00:00:00.000Z",
+      ...overrides?.run,
+    },
+    actions: overrides?.actions ?? [
+      {
+        actionType: "recommend",
+        targetRepoFullName: "target/repo",
+        recommendation: "Open the preflight branch",
+        payload: { recommendationSnapshot: { decision: "approve" } },
+      },
+    ],
+    contextSnapshots: overrides?.contextSnapshots ?? [
+      {
+        scoringModelId: "model-1",
+        decisionPackVersion: "dp-2",
+        payload: { counterfactualReasons: [] },
+      },
+    ],
+    summary: "one ranked action",
+  };
+}
+
+describe("mapAgentRunBundle (#8701)", () => {
+  it("prefers the first action's targetRepoFullName for the repo", () => {
+    expect(mapAgentRunBundle(buildBundle()).repo).toBe("target/repo");
+  });
+
+  it("falls back to payload.repoFullName when the action repo is absent or blank", () => {
+    const bundle = buildBundle({
+      actions: [{ actionType: "recommend", targetRepoFullName: "   " }],
+    });
+    expect(mapAgentRunBundle(bundle).repo).toBe("payload/repo");
+  });
+
+  it("falls back to payload.input.repoFullName when the payload repo is also absent", () => {
+    const bundle = buildBundle({
+      run: { payload: { input: { repoFullName: "input/repo" } } },
+      actions: [{ actionType: "recommend" }],
+    });
+    expect(mapAgentRunBundle(bundle).repo).toBe("input/repo");
+  });
+
+  it('resolves "unknown" when every level of the repo fallback chain is absent', () => {
+    const bundle = buildBundle({
+      run: { payload: { input: "not-a-record" } },
+      actions: [],
+    });
+    expect(mapAgentRunBundle(bundle).repo).toBe("unknown");
+  });
+
+  it("maps surface to source and boundary for each surface", () => {
+    expect(mapAgentRunBundle(buildBundle())).toMatchObject({
+      source: "mcp",
+      boundary: "private-mcp",
+    });
+    expect(mapAgentRunBundle(buildBundle({ run: { surface: "github_comment" } }))).toMatchObject({
+      source: "github-command",
+      boundary: "public",
+    });
+    expect(mapAgentRunBundle(buildBundle({ run: { surface: "api" } }))).toMatchObject({
+      source: "api",
+      boundary: "private-api",
+    });
+  });
+
+  it("routes kind and data quality through the mapping helpers", () => {
+    const mapped = mapAgentRunBundle(buildBundle({ run: { dataQualityStatus: "degraded" } }));
+    expect(mapped.kind).toBe("preflight-branch");
+    expect(mapped.signal_fidelity).toBe("degraded");
+  });
+
+  it("resolves the ruleset snapshot from scoringModelId, then decisionPackVersion, then live", () => {
+    expect(mapAgentRunBundle(buildBundle()).ruleset_snapshot).toBe("model-1");
+    expect(
+      mapAgentRunBundle(
+        buildBundle({
+          contextSnapshots: [{ scoringModelId: null, decisionPackVersion: "dp-2" }],
+        }),
+      ).ruleset_snapshot,
+    ).toBe("dp-2");
+    expect(mapAgentRunBundle(buildBundle({ contextSnapshots: [] })).ruleset_snapshot).toBe("live");
+  });
+
+  it("falls back from createdAt to updatedAt to a fresh timestamp for created_at", () => {
+    expect(mapAgentRunBundle(buildBundle()).created_at).toBe("2026-07-20T00:00:00.000Z");
+    expect(mapAgentRunBundle(buildBundle({ run: { createdAt: null } })).created_at).toBe(
+      "2026-07-21T00:00:00.000Z",
+    );
+    const nowIso = mapAgentRunBundle(
+      buildBundle({ run: { createdAt: null, updatedAt: null } }),
+    ).created_at;
+    expect(Number.isNaN(Date.parse(nowIso))).toBe(false);
+  });
+
+  it("keeps only string recommendations and counts ranked actions", () => {
+    const bundle = buildBundle({
+      actions: [
+        { actionType: "recommend", targetRepoFullName: "target/repo", recommendation: "Do X" },
+        { actionType: "recommend", recommendation: null },
+        { actionType: "recommend", recommendation: "   " },
+      ],
+    });
+    const mapped = mapAgentRunBundle(bundle);
+    expect(mapped.ranked_actions).toBe(3);
+    expect(mapped.recommendations).toEqual(["Do X"]);
+  });
+
+  it("builds an authenticated and public-safe replay pair per object recommendationSnapshot only", () => {
+    const bundle = buildBundle({
+      actions: [
+        {
+          actionType: "recommend",
+          targetRepoFullName: "target/repo",
+          payload: { recommendationSnapshot: { decision: "approve" } },
+        },
+        { actionType: "recommend", payload: { recommendationSnapshot: "not-an-object" } },
+        { actionType: "recommend", payload: { recommendationSnapshot: ["array"] } },
+        { actionType: "recommend", payload: {} },
+      ],
+      contextSnapshots: [
+        // A non-array counterfactualReasons payload is ignored rather than crashing the pooling.
+        { scoringModelId: "model-1", payload: { counterfactualReasons: "not-an-array" } },
+      ],
+    });
+    const mapped = mapAgentRunBundle(bundle);
+    expect(mapped.snapshotReplays).toHaveLength(1);
+    expect(mapped.snapshotReplays[0]?.authenticated).toBeTruthy();
+    expect(mapped.snapshotReplays[0]?.publicSafe).toBeTruthy();
+  });
+});
+
+describe("SavedViews save/apply/remove flow (#8701)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    window.localStorage.clear();
+  });
+
+  const current = { status: "ready" as const, kind: "all" as const, q: "" };
+
+  it("saves the current filters as a named view, lists it, applies it, and removes it", async () => {
+    const onApply = vi.fn();
+    render(<SavedViews current={current} onApply={onApply} />);
+
+    // Empty state first: no saved views yet.
+    expect(screen.getByText("Save current filters as a named view.")).toBeTruthy();
+
+    // Save: open the naming form, type a name, submit.
+    fireEvent.click(screen.getByRole("button", { name: /save view/i }));
+    fireEvent.change(screen.getByPlaceholderText("View name"), {
+      target: { value: "Ready runs" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    // The view chip appears, the empty state is gone, and the save is announced + persisted.
+    const viewButton = await screen.findByRole("button", { name: "Ready runs" });
+    expect(screen.queryByText("Save current filters as a named view.")).toBeNull();
+    expect(success).toHaveBeenCalledWith("View saved", {
+      description: "“Ready runs” pinned to your filters.",
+    });
+    const stored = JSON.parse(window.localStorage.getItem("loopover.runs.views") ?? "[]");
+    expect(stored).toHaveLength(1);
+    expect(stored[0]).toMatchObject({ name: "Ready runs", status: "ready", kind: "all", q: "" });
+
+    // Apply: clicking the chip hands the saved filters back to the parent.
+    fireEvent.click(viewButton);
+    expect(onApply).toHaveBeenCalledTimes(1);
+    expect(onApply.mock.calls[0]?.[0]).toMatchObject({ status: "ready", kind: "all", q: "" });
+
+    // Remove: the chip disappears, the removal is announced, and storage is emptied.
+    fireEvent.click(screen.getByRole("button", { name: "Remove Ready runs" }));
+    expect(screen.queryByRole("button", { name: "Ready runs" })).toBeNull();
+    expect(toastBase).toHaveBeenCalledWith("Removed “Ready runs”");
+    expect(JSON.parse(window.localStorage.getItem("loopover.runs.views") ?? "[]")).toEqual([]);
+  });
+
+  it("ignores a whitespace-only name and disables saving when no filter is active", () => {
+    render(
+      <SavedViews current={{ status: "all", kind: "all", q: "" }} onApply={() => undefined} />,
+    );
+    // No active filters — the save affordance is disabled.
+    expect((screen.getByRole("button", { name: /save view/i }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+
+  it("does not save a blank name", () => {
+    render(<SavedViews current={current} onApply={() => undefined} />);
+    fireEvent.click(screen.getByRole("button", { name: /save view/i }));
+    fireEvent.change(screen.getByPlaceholderText("View name"), { target: { value: "   " } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(success).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem("loopover.runs.views")).toBeNull();
   });
 });

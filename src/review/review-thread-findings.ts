@@ -46,6 +46,19 @@ export function buildReviewThreadBlocker(input: {
   };
 }
 
+/** #9052: the blocker returned when GitHub answered 200 but with a top-level `errors` array, so the review-thread
+ *  set could not actually be read. Fails CLOSED on purpose: an unreadable thread list is NOT evidence of zero
+ *  threads, and treating it as such let an unresolved maintainer objection be merged over. `scannerFinding: false`
+ *  keeps it out of the scanner-specific reporting paths — it is an infrastructure signal, not a code finding. */
+export function unreadableReviewThreadBlocker(): ReviewThreadBlocker {
+  return {
+    title: "review threads could not be read from GitHub (partial GraphQL response)",
+    path: null,
+    line: null,
+    scannerFinding: false,
+  };
+}
+
 export function reviewThreadBlockerFinding(blocker: ReviewThreadBlocker): AdvisoryFinding {
   const location = reviewThreadLocation(blocker);
   const actor = blocker.authorLogin ? `${blocker.authorLogin} ` : "";

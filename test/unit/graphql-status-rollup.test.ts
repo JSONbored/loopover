@@ -88,6 +88,23 @@ describe("fetchLiveCiAggregateViaGraphQl — verdicts", () => {
     expect(await fetchLiveCiAggregateViaGraphQl(env, REPO, SHA, TOKEN)).toBeNull();
   });
 
+  // #9051: `contexts` had this guard from the start; `checkSuites` did not, despite being the settled-commit
+  // backstop -- a truncated suites read (>100) could hide a still-running first-party suite and certify the
+  // commit as settled. Falls back to REST, which now paginates the suites read too.
+  it("#9051: returns null when checkSuites reports another page (a truncated backstop cannot certify settled)", async () => {
+    stubGraphql({
+      data: {
+        repository: {
+          object: {
+            statusCheckRollup: { contexts: { nodes: [runNode({ name: "build", conclusion: "SUCCESS", status: "COMPLETED" })], pageInfo: { hasNextPage: false } } },
+            checkSuites: { nodes: [{ status: "COMPLETED", app: { slug: "github-actions" } }], pageInfo: { hasNextPage: true } },
+          },
+        },
+      },
+    });
+    expect(await fetchLiveCiAggregateViaGraphQl(env, REPO, SHA, TOKEN)).toBeNull();
+  });
+
   it("passes when a required check-run and status are green", async () => {
     stubGraphql(graphqlBody({ runs: [{ name: "build", conclusion: "SUCCESS", status: "COMPLETED", appSlug: "github-actions" }], statuses: [{ context: "codecov/patch", state: "SUCCESS" }], suites: [{ status: "COMPLETED", appSlug: "github-actions" }] }));
     expect(await fetchLiveCiAggregateViaGraphQl(env, REPO, SHA, TOKEN, new Set(["build"]))).toMatchObject({ ciState: "passed", hasPending: false, failingDetails: [] });

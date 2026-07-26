@@ -63,6 +63,7 @@ import { createPullRequestReview, mergePullRequest } from "../../src/github/pr-a
 import { ensurePullRequestLabel } from "../../src/github/labels";
 import { createInstallationToken } from "../../src/github/app";
 import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestReviewDecision, fetchLivePullRequestState, fetchLiveReviewThreadBlockers, fetchRequiredStatusContexts } from "../../src/github/backfill";
+import { REVIEW_DECISION_UNREADABLE } from "../../src/github/backfill";
 import { resolveLinkedIssueHardRule } from "../../src/review/linked-issue-hard-rules";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { actionParams, executeAgentMaintenanceActions, pendingActionToPlanned, type AgentActionExecutionContext } from "../../src/services/agent-action-executor";
@@ -803,6 +804,35 @@ describe("agent approval queue (#779)", () => {
     expect(result.status).toBe("rejected");
     expect(result.executionOutcome).toBe("stale_disposition");
     expect(mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  // #9052: an UNREADABLE live review decision (GitHub 200-with-errors) is not "confirmed no changes requested".
+  // Without the explicit sentinel check it satisfied `!== "CHANGES_REQUESTED"` and wrongly cleared a
+  // conflict-justified close on a read we know failed -- the same fail-open shape reviewFetchSucceeded already
+  // guards for a rejected fetch. The close must STAND (execute), not be superseded.
+  it("#9052: an unreadable live review decision does NOT clear a conflict-justified close", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { close: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, {
+      repoFullName: "owner/repo",
+      pullNumber: 7,
+      installationId: 5,
+      actionClass: "close",
+      autonomyLevel: "auto_with_approval",
+      params: { closeComment: "base conflict", closeKind: "heuristic", closeRequiresCiState: "not_required", closeRequiresMergeableState: true, expectedHeadSha: "h7" },
+      reason: "base branch now conflicts",
+    });
+    vi.mocked(fetchLivePullRequestReviewDecision).mockResolvedValueOnce(REVIEW_DECISION_UNREADABLE);
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+
+    // NOT superseded: the same setup with a readable decision supersedes (the #2478 test directly below).
+    expect(result.status).not.toBe("rejected");
+    // toBeFalsy, not toBeNull: the D1 test double resolves a no-row .first() to undefined.
+    const audit = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("agent.pending_action.superseded").first<{ detail: string }>();
+    expect(audit).toBeFalsy();
   });
 
   it("REGRESSION (#2478): accept supersedes a conflict-justified heuristic close when the conflict cleared", async () => {

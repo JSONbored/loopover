@@ -41,6 +41,8 @@ import {
   fetchLiveBaseBranchAdvancedAt,
   fetchLiveCiAggregate,
   fetchLiveReviewThreadBlockers,
+  fetchLivePullRequestReviewDecision,
+  REVIEW_DECISION_UNREADABLE,
   fetchNamedCheckRunConclusion,
   fetchRequiredStatusContexts,
   isOwnReviewThreadAuthor,
@@ -253,6 +255,87 @@ describe("GitHub backfill", () => {
 
       expect(aggregate).toEqual({ ciState: "unverified", hasPending: false, hasVisiblePending: false, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], advisoryHoldDetails: [], ciCompletenessWarning: null });
       expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    // #9051: a FAILED page fetch already set checkRunsIncomplete, but exhausting the 10-page cap with
+    // `rel="next"` still present did not -- the loop just exited and the reducer treated a truncated set as
+    // complete. A red check on page 11+ was therefore invisible: ciState resolved to "passed", the planner saw
+    // reviewGood, and the PR MERGED. The executor's act-boundary recheck calls this same function, so it
+    // reproduced the wrong verdict rather than catching it, and "passed" was persisted to the durable CI cache.
+    it("#9051: exhausting the check-runs page cap with more pages left fails closed to pending, never passed", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      let checkRunPages = 0;
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) {
+          checkRunPages += 1;
+          // Every page reports another page after it — the cap is reached with `rel="next"` still present.
+          return Response.json(
+            { check_runs: [{ name: "green-check", status: "completed", conclusion: "success" }] },
+            { headers: { link: '<https://api.github.com/repositories/1/check-runs?page=99>; rel="next"' } },
+          );
+        }
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        if (url.includes("/check-suites")) return Response.json({ check_suites: [] });
+        return new Response("not found", { status: 404 });
+      });
+
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "capped", "public-token", null);
+
+      expect(checkRunPages).toBe(10); // the cap itself still bounds the walk
+      // Every check READ was green, so without the fix this would report "passed".
+      expect(aggregate.ciState).toBe("pending");
+      expect(aggregate.hasPending).toBe(true);
+      // A partial read must not be mistaken for a definitive missing-required-context verdict either.
+      expect(aggregate.hasMissingRequiredContext).toBe(false);
+    });
+
+    it("#9051: exhausting the classic-status page cap likewise fails closed to pending", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) return Response.json({ check_runs: [] });
+        if (url.includes("/status?")) {
+          return Response.json(
+            { statuses: [{ context: "green-status", state: "success" }] },
+            { headers: { link: '<https://api.github.com/repositories/1/status?page=99>; rel="next"' } },
+          );
+        }
+        if (url.includes("/check-suites")) return Response.json({ check_suites: [] });
+        return new Response("not found", { status: 404 });
+      });
+
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "capped-status", "public-token", null);
+
+      expect(aggregate.ciState).toBe("pending");
+      expect(aggregate.hasPending).toBe(true);
+    });
+
+    // #9051: the check-suites backstop is the LAST gate before a commit is certified settled, yet it read page 1
+    // only with no Link follow -- a first-party suite still running on page 2 was invisible, so anyPending was
+    // never set and the aggregate stayed "passed". Now paginated; an exhausted cap returns null, which the
+    // reducer already fails closed on.
+    it("#9051: the check-suites backstop follows Link pages and fails closed when its cap is exhausted", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      let suitePages = 0;
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) return Response.json({ check_runs: [{ name: "lint", status: "completed", conclusion: "success" }] });
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        if (url.includes("/check-suites")) {
+          suitePages += 1;
+          return Response.json(
+            { check_suites: [{ status: "completed", app: { slug: "github-actions" } }] },
+            { headers: { link: '<https://api.github.com/repositories/1/check-suites?page=99>; rel="next"' } },
+          );
+        }
+        return new Response("not found", { status: 404 });
+      });
+
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "capped-suites", "public-token", null);
+
+      expect(suitePages).toBe(10); // it paginates now, instead of reading page 1 and stopping
+      expect(aggregate.ciState).toBe("pending"); // unreadable backstop => not certified settled
     });
 
     it("fails completed non-required red checks while still reporting optional pending visibility", async () => {
@@ -1469,6 +1552,45 @@ describe("GitHub backfill", () => {
     });
   });
 
+  // #9052 (second instance, same class): fetchLivePullRequestReviewDecision had no top-level `errors` guard
+  // either. Returning plain `undefined` made the caller fall back to the STORED decision
+  // (`liveReviewDecision ?? pr.reviewDecision`), so a PR approved at backfill time and later flipped to
+  // CHANGES_REQUESTED still read as APPROVED -> approvalsSatisfied -> merge. The sentinel is a real VALUE
+  // precisely so it survives that `??` and the stale stored decision can never be substituted.
+  describe("fetchLivePullRequestReviewDecision — partial-response guard (#9052)", () => {
+    it("returns the unreadable sentinel on a 200-with-errors response, so the stale stored decision cannot win the ?? fallback", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        if (input.toString() !== "https://api.github.com/graphql") return new Response("not found", { status: 404 });
+        return Response.json({
+          data: { repository: { pullRequest: { reviewDecision: null } } },
+          errors: [{ message: "Something went wrong while executing your query." }],
+        });
+      });
+
+      const decision = await fetchLivePullRequestReviewDecision(env, "JSONbored/loopover", 7, "public-token");
+
+      expect(decision).toBe(REVIEW_DECISION_UNREADABLE);
+      // The whole point: it survives `?? stored` and is not APPROVED, so approvalsSatisfied stays false.
+      expect(decision ?? "APPROVED").not.toBe("APPROVED");
+      // ...and it is not mistaken for an explicit CHANGES_REQUESTED either.
+      expect(decision).not.toBe("CHANGES_REQUESTED");
+    });
+
+    it("still returns the real decision on a clean response, and undefined when the PR genuinely has none", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      let reviewDecision: string | null = "APPROVED";
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        if (input.toString() !== "https://api.github.com/graphql") return new Response("not found", { status: 404 });
+        return Response.json({ data: { repository: { pullRequest: { reviewDecision } } } });
+      });
+
+      expect(await fetchLivePullRequestReviewDecision(env, "JSONbored/loopover", 8, "public-token")).toBe("APPROVED");
+      reviewDecision = null;
+      expect(await fetchLivePullRequestReviewDecision(env, "JSONbored/loopover", 8, "public-token")).toBeUndefined();
+    });
+  });
+
   describe("fetchLiveReviewThreadBlockers", () => {
     it("returns unresolved non-outdated scanner review threads as blockers", async () => {
       const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
@@ -1546,6 +1668,27 @@ describe("GitHub backfill", () => {
       const blockers = await fetchLiveReviewThreadBlockers(env, "JSONbored/loopover", 1, "public-token");
       expect(fetchMock).toHaveBeenCalledTimes(3); // walked all three pages, stopped on hasNextPage:false (well under the cap)
       expect(blockers).toEqual([expect.objectContaining({ title: "blocker on the third page", priority: "P1", path: "src/paginated.ts" })]);
+    });
+
+    // #9052: GitHub's standard partial-failure shape under load is HTTP 200 with `reviewThreads: null` AND a
+    // top-level `errors` array. That yielded `[]` -- indistinguishable from a genuinely thread-free PR -- so a
+    // maintainer's unresolved blocking thread was silently dropped and the gate could conclude success and MERGE
+    // over the open objection. Unlike a transport error (nothing read at all -> fail open), a partial result
+    // means we KNOW the answer is unreliable, so it fails closed.
+    it("#9052: a 200-with-errors partial GraphQL response fails CLOSED with a blocker, not an empty thread list", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        if (input.toString() !== "https://api.github.com/graphql") return new Response("not found", { status: 404 });
+        return Response.json({
+          data: { repository: { pullRequest: { reviewThreads: null } } },
+          errors: [{ message: "Something went wrong while executing your query." }],
+        });
+      });
+
+      const blockers = await fetchLiveReviewThreadBlockers(env, "JSONbored/loopover", 3, "public-token");
+
+      expect(blockers).toHaveLength(1);
+      expect(blockers[0]).toMatchObject({ title: expect.stringContaining("could not be read"), scannerFinding: false });
     });
 
     it("is bounded: a pathological always-hasNextPage response stops at REVIEW_THREAD_MAX_PAGES instead of looping unboundedly (#7454)", async () => {

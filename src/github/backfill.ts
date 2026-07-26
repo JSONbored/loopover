@@ -72,7 +72,7 @@ import {
   LOOPOVER_GATE_CHECK_NAME,
   shouldPublishReviewCheck,
 } from "../review/check-names";
-import { buildReviewThreadBlocker, type ReviewThreadBlocker } from "../review/review-thread-findings";
+import { buildReviewThreadBlocker, unreadableReviewThreadBlocker, type ReviewThreadBlocker } from "../review/review-thread-findings";
 import { delayUntil, HISTORICAL_BACKFILL_RESERVED_HEADROOM, LOW_REST_RATE_LIMIT_REMAINING, shouldWaitForGitHubRateLimit } from "./rate-limit";
 import {
   githubRateLimitAdmissionKeyForPublicToken,
@@ -3109,6 +3109,14 @@ export async function fetchLiveCiAggregate(
     }
     checkRuns.push(...(result.data.check_runs ?? []));
     if (!hasNextPage(result.link)) break;
+    // #9051: exhausting the page cap with `rel="next"` STILL present leaves the set partially read -- exactly
+    // the state the failed-fetch branch above already fails closed on, and it must behave identically. Before
+    // this, the loop simply exited with checkRunsIncomplete=false, so reduceLiveCiAggregate treated a truncated
+    // set as complete: a red check on page 11+ was invisible, ciState resolved to "passed", the planner saw
+    // reviewGood, and the PR MERGED. The executor's act-boundary recheck calls this same function, so it
+    // reproduced the same wrong verdict rather than catching it, and the false "passed" was then persisted into
+    // the durable cross-job CI cache. Every other capped loop in this file already signals at its cap.
+    if (page === PR_DETAIL_MAX_PAGES) checkRunsIncomplete = true;
   }
   // The combined status endpoint caps at 100/page, so accumulate every page before the reducer processes them.
   const statuses: LiveCiStatus[] = [];
@@ -3127,6 +3135,9 @@ export async function fetchLiveCiAggregate(
     }
     statuses.push(...(statusResult.data.statuses ?? []));
     if (!hasNextPage(statusResult.link)) break;
+    // #9051: same cap-exhaustion hole as the check-runs loop above — a failing classic status past the cap
+    // would otherwise be invisible and read as "passed".
+    if (page === PR_DETAIL_MAX_PAGES) statusIncomplete = true;
   }
   return reduceLiveCiAggregate(env, {
     checkRuns,
@@ -3138,14 +3149,27 @@ export async function fetchLiveCiAggregate(
     // Lazily read the check-SUITES backstop only when the reducer finds the cheaper sources fully settled; a fetch
     // error returns null so the reducer fails closed exactly as the inline path did.
     fetchSuites: async () => {
-      const suitesResult = await githubJsonWithHeaders<{ check_suites?: Array<LiveCiSuite> }>(
-        env,
-        repoFullName,
-        `/commits/${headSha}/check-suites?per_page=100`,
-        token,
-        githubRateLimitOptions(admissionKey),
-      ).catch(() => undefined);
-      return suitesResult ? (suitesResult.data.check_suites ?? []) : null;
+      // #9051: this read used to be page-1-only with no Link follow, despite being the LAST gate before a
+      // commit is certified settled -- a first-party suite still running on page 2 was invisible, so anyPending
+      // was never set and the aggregate stayed "passed". Paginated like its check-runs/status siblings, and
+      // returning null (which the reducer already fails closed on) if the cap is exhausted with pages left.
+      const suites: LiveCiSuite[] = [];
+      for (let page = 1; page <= PR_DETAIL_MAX_PAGES; page += 1) {
+        const suitesResult = await githubJsonWithHeaders<{ check_suites?: Array<LiveCiSuite> }>(
+          env,
+          repoFullName,
+          `/commits/${headSha}/check-suites?per_page=100&page=${page}`,
+          token,
+          githubRateLimitOptions(admissionKey),
+        ).catch(() => undefined);
+        if (!suitesResult) return null;
+        suites.push(...(suitesResult.data.check_suites ?? []));
+        if (!hasNextPage(suitesResult.link)) return suites;
+        if (page === PR_DETAIL_MAX_PAGES) return null;
+      }
+      /* v8 ignore next -- unreachable: the loop always returns on the last iteration (either the no-next-page
+       * or the cap-exhausted branch above); this satisfies the compiler's return-path analysis. */
+      return null;
     },
   });
 }
@@ -3177,7 +3201,7 @@ export async function fetchLiveCiAggregateViaGraphQl(
   if (!headSha || !token) return null;
   const [owner, name] = repoFullName.split("/");
   if (!owner || !name) return null;
-  const query = `query LoopOverLiveCiRollup { repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { object(oid: ${JSON.stringify(headSha)}) { ... on Commit { statusCheckRollup { contexts(first: 100) { nodes { __typename ... on CheckRun { name conclusion status startedAt detailsUrl title summary checkSuite { databaseId app { slug } } } ... on StatusContext { context state description targetUrl } } pageInfo { hasNextPage } } } checkSuites(first: 100) { nodes { status app { slug } } } } } } }`;
+  const query = `query LoopOverLiveCiRollup { repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { object(oid: ${JSON.stringify(headSha)}) { ... on Commit { statusCheckRollup { contexts(first: 100) { nodes { __typename ... on CheckRun { name conclusion status startedAt detailsUrl title summary checkSuite { databaseId app { slug } } } ... on StatusContext { context state description targetUrl } } pageInfo { hasNextPage } } } checkSuites(first: 100) { nodes { status app { slug } } pageInfo { hasNextPage } } } } } }`;
   const result = await githubGraphQl<{
     data?: {
       repository?: {
@@ -3202,7 +3226,7 @@ export async function fetchLiveCiAggregateViaGraphQl(
               pageInfo?: { hasNextPage?: boolean };
             } | null;
           } | null;
-          checkSuites?: { nodes?: Array<{ status?: string | null; app?: { slug?: string | null } | null }> };
+          checkSuites?: { nodes?: Array<{ status?: string | null; app?: { slug?: string | null } | null }>; pageInfo?: { hasNextPage?: boolean } };
         } | null;
       } | null;
     };
@@ -3225,6 +3249,10 @@ export async function fetchLiveCiAggregateViaGraphQl(
   // must carry a well-formed `contexts.nodes` array; a present-but-malformed connection → fall back to REST.
   if (rollup && !Array.isArray(contexts?.nodes)) return null;
   if (contexts?.pageInfo?.hasNextPage) return null; // >100 contexts: not fully enumerated → let REST paginate
+  // #9051: checkSuites had no such guard, unlike its `contexts` sibling one line up. The suites list is the
+  // settled-commit backstop, so a truncated read (>100 suites) could hide a still-running first-party suite
+  // and certify the commit as settled. Fall back to REST, which now paginates this too.
+  if (commit.checkSuites?.pageInfo?.hasNextPage) return null;
   const checkRuns: LiveCiCheckRun[] = [];
   const statuses: LiveCiStatus[] = [];
   for (const node of contexts?.nodes ?? []) {
@@ -3913,6 +3941,14 @@ export async function fetchOpenPullRequestNumbersForCommit(
   return [...new Set(numbers)];
 }
 
+/** #9052: returned by {@link fetchLivePullRequestReviewDecision} when GitHub answered 200 but with a top-level
+ *  `errors` array, i.e. the decision could not actually be read. Distinct from `undefined` ("read fine, the PR
+ *  has no decision yet"), because only a real value survives the caller's `?? pr.reviewDecision` fallback --
+ *  which is what stops a stale stored APPROVED from standing in for a read we know failed. It equals no real
+ *  GitHub reviewDecision enum value, so every `=== "APPROVED"` / `=== "CHANGES_REQUESTED"` comparison is
+ *  correctly false; call sites that must fail closed on uncertainty check it by name. */
+export const REVIEW_DECISION_UNREADABLE = "__loopover_review_decision_unreadable__";
+
 /** RC1 (idempotent reviews): the PR's LIVE reviewDecision (APPROVED / CHANGES_REQUESTED / REVIEW_REQUIRED) via
  *  GraphQL. The STORED reviewDecision is only written by the open-PR backfill and goes stale, so the action
  *  planner's approve/request-changes dedup was blind and re-posted a review every cycle — the re-review loop.
@@ -3929,12 +3965,19 @@ export async function fetchLivePullRequestReviewDecision(
   const [owner, name] = repoFullName.split("/");
   if (!owner || !name) return undefined;
   const query = `query { repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { pullRequest(number: ${prNumber}) { reviewDecision } } }`;
-  const result = await githubGraphQl<{ data?: { repository?: { pullRequest?: { reviewDecision?: string | null } | null } | null } }>(
+  const result = await githubGraphQl<{ data?: { repository?: { pullRequest?: { reviewDecision?: string | null } | null } | null }; errors?: unknown[] }>(
     env,
     query,
     token,
     admissionKey,
   ).catch(() => undefined);
+  // #9052: a 200 carrying a top-level `errors` array is a PARTIAL result -- `reviewDecision` comes back null
+  // even when the PR genuinely has one. Returning plain `undefined` here made the caller fall back to the
+  // STORED decision (`liveReviewDecision ?? pr.reviewDecision`), so a PR approved at backfill time and later
+  // flipped to CHANGES_REQUESTED still read as APPROVED -> approvalsSatisfied -> merge over the objection.
+  // The sentinel is deliberately a VALUE rather than `undefined`: it must survive the `??` fallback so the
+  // stale stored decision can never be substituted for a read we know we could not complete.
+  if (Array.isArray(result?.errors) && result.errors.length > 0) return REVIEW_DECISION_UNREADABLE;
   return result?.data?.repository?.pullRequest?.reviewDecision ?? undefined;
 }
 
@@ -3969,6 +4012,7 @@ type GitHubReviewThreadResponse = {
       } | null;
     } | null;
   };
+  errors?: unknown[];
 };
 
 // Bound the reviewThreads GraphQL walk so a PR with a pathologically large number of review threads can't turn
@@ -4037,6 +4081,15 @@ export async function fetchLiveReviewThreadBlockers(
       token,
       admissionKey,
     ).catch(() => undefined);
+    // #9052: GitHub's standard partial-failure shape under load is HTTP 200 with `reviewThreads: null` AND a
+    // top-level `errors` array. Without this check that yielded `[]` -- indistinguishable from a genuinely
+    // thread-free PR -- so a maintainer's unresolved blocking thread was silently dropped from the findings and
+    // the gate could conclude success and MERGE over the open objection. Unlike this function's fail-OPEN
+    // posture for a transport error (where nothing at all was read), a partial result means we know the answer
+    // is unreliable, so it fails CLOSED: a synthetic blocker holds the gate for a human. The sibling GraphQL
+    // readers in this file (fetchLiveCiAggregateViaGraphQl, fetchLinkedIssueClosedByPullRequest) already guard
+    // this; this reader was the outlier.
+    if (Array.isArray(result?.errors) && result.errors.length > 0) return [unreadableReviewThreadBlocker()];
     const connection: GitHubReviewThreadConnection | null | undefined = result?.data?.repository?.pullRequest?.reviewThreads;
     if (!connection?.nodes) {
       if (threads.length === 0) return [];

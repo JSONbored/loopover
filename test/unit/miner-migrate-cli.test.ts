@@ -9,6 +9,7 @@ import { resolveEventLedgerDbPath } from "../../packages/loopover-miner/lib/even
 import { applySchemaMigrations, BASELINE_SCHEMA_VERSION } from "../../packages/loopover-miner/lib/schema-version.js";
 import { openWorktreeAllocator, resolveWorktreeAllocatorDbPath } from "../../packages/loopover-miner/lib/worktree-allocator.js";
 import { openLaptopStateStore, resolveLaptopStateDbPath } from "../../packages/loopover-miner/lib/laptop-init.js";
+import { openReplaySnapshotStore, resolveReplaySnapshotDbPath } from "../../packages/loopover-miner/lib/replay-snapshot.js";
 
 const roots: string[] = [];
 
@@ -117,6 +118,18 @@ describe("loopover-miner migrate (#4871)", () => {
     openLaptopStateStore(dbPath).close();
     const again = runMigrateChecks(env).find((result) => result.name === "laptop-state");
     expect(again).toMatchObject({ ok: true, status: "up-to-date", versionBefore: BASELINE_SCHEMA_VERSION });
+  });
+
+  // REGRESSION (#8642): migrate/status used to cast resolveReplaySnapshotDbPath's env as NodeJS.ProcessEnv
+  // behind a stale "not yet migrated" comment. The resolver already accepts Record<string, string | undefined>
+  // like every sibling — calling it without a cast must still open + report up-to-date for a fresh store.
+  it("REGRESSION (#8642): replay-snapshot migrate open adapter resolves env without a ProcessEnv cast", () => {
+    const env = tempEnv();
+    openReplaySnapshotStore(resolveReplaySnapshotDbPath(env)).close();
+    const row = runMigrateChecks(env).find((result) => result.name === "replay-snapshot");
+    expect(row).toMatchObject({ ok: true, status: "up-to-date" });
+    expect(row?.versionBefore).toBe(row?.versionAfter);
+    expect(row?.versionBefore).toEqual(expect.any(Number));
   });
 
   it("actually migrates a pre-existing older-schema portfolio-queue file, bumping its stamped version and adding the missing column", () => {

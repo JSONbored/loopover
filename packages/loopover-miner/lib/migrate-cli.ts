@@ -60,14 +60,7 @@ const STORES: MigrateStoreDescriptor[] = [
   { name: "plan-store", resolveDbPath: resolvePlanStoreDbPath, open: openPlanStore },
   { name: "governor-state", resolveDbPath: resolveGovernorStateDbPath, open: openGovernorState },
   { name: "attempt-log", resolveDbPath: resolveAttemptLogDbPath, open: initAttemptLog },
-  {
-    name: "replay-snapshot",
-    // resolveReplaySnapshotDbPath's own (not-yet-converted) .d.ts types `env` as `NodeJS.ProcessEnv`, unlike
-    // every sibling resolver here (`Record<string, string | undefined>`) -- a pre-existing inconsistency, not
-    // introduced by this batch. process.env genuinely satisfies both shapes at runtime, so this cast is safe.
-    resolveDbPath: resolveReplaySnapshotDbPath as (env?: Record<string, string | undefined>) => string,
-    open: openReplaySnapshotStore,
-  },
+  { name: "replay-snapshot", resolveDbPath: resolveReplaySnapshotDbPath, open: openReplaySnapshotStore },
   {
     name: "worktree-allocator",
     resolveDbPath: resolveWorktreeAllocatorDbPath,

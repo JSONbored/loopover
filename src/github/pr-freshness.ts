@@ -1,4 +1,4 @@
-import { createInstallationToken } from "./app";
+import { withInstallationTokenRetry } from "./app";
 import { fetchLivePullRequestResult } from "./backfill";
 import { githubRateLimitAdmissionKeyForToken } from "./client";
 import type { GitHubPullRequestPayload } from "../types";
@@ -107,29 +107,41 @@ export async function fetchPullRequestFreshness(
 ): Promise<PullRequestFreshness> {
   const options: PullRequestFreshnessOptions =
     args.requireDraft !== undefined ? { requireDraft: args.requireDraft } : {};
-  let tokenError: unknown;
-  const token =
-    (await createInstallationToken(env, args.installationId).catch((error) => {
-      tokenError = error;
-      return undefined;
-    })) ?? env.GITHUB_PUBLIC_TOKEN;
-  if (!token) {
-    return classifyPullRequestFreshness(undefined, args.expectedHeadSha, {
-      ...options,
-      unavailableSource: "token",
-      unavailableDetail: strippedErrorMessage(tokenError, "no token available").slice(0, 240),
+
+  const classifyLive = (live: Awaited<ReturnType<typeof fetchLivePullRequestResult>>): PullRequestFreshness => {
+    if (live.status === "error") {
+      return classifyPullRequestFreshness(undefined, args.expectedHeadSha, {
+        ...options,
+        unavailableSource: "pull_request_fetch",
+        unavailableDetail: live.error,
+      });
+    }
+    return classifyPullRequestFreshness(live.data, args.expectedHeadSha, options);
+  };
+
+  // Self-heal a stale cached installation token once before giving up (#8892 / #6191), matching write-path helpers.
+  try {
+    return await withInstallationTokenRetry(env, args.installationId, async (token) => {
+      const admissionKey = githubRateLimitAdmissionKeyForToken(env, token, args.installationId);
+      const live = await fetchLivePullRequestResult(env, args.repoFullName, args.pullNumber, token, admissionKey, {
+        rethrowAuth: true,
+      });
+      return classifyLive(live);
     });
+  } catch (tokenError) {
+    // Installation mint failed entirely — fall back to the public token path (pre-#8892 behavior).
+    const token = env.GITHUB_PUBLIC_TOKEN;
+    if (!token) {
+      return classifyPullRequestFreshness(undefined, args.expectedHeadSha, {
+        ...options,
+        unavailableSource: "token",
+        unavailableDetail: strippedErrorMessage(tokenError, "no token available").slice(0, 240),
+      });
+    }
+    const admissionKey = githubRateLimitAdmissionKeyForToken(env, token, args.installationId);
+    const live = await fetchLivePullRequestResult(env, args.repoFullName, args.pullNumber, token, admissionKey);
+    return classifyLive(live);
   }
-  const admissionKey = githubRateLimitAdmissionKeyForToken(env, token, args.installationId);
-  const live = await fetchLivePullRequestResult(env, args.repoFullName, args.pullNumber, token, admissionKey);
-  if (live.status === "error") {
-    return classifyPullRequestFreshness(undefined, args.expectedHeadSha, {
-      ...options,
-      unavailableSource: "pull_request_fetch",
-      unavailableDetail: live.error,
-    });
-  }
-  return classifyPullRequestFreshness(live.data, args.expectedHeadSha, options);
 }
 
 export function pullRequestFreshnessDetail(result: PullRequestFreshness): string {

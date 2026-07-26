@@ -235,4 +235,40 @@ describe("PR freshness guards", () => {
       unavailableDetail: expect.any(String),
     });
   });
+
+  it("retries once on a stale installation-token 401 and succeeds (#8892)", async () => {
+    const env = createTestEnv({ ORB_ENROLLMENT_SECRET: "orbsec_test" });
+    let brokerCalls = 0;
+    let prCalls = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/v1/orb/token")) {
+        brokerCalls += 1;
+        return Response.json({
+          token: brokerCalls === 1 ? "stale-token" : "fresh-token",
+          installationId: 123,
+          expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+          permissions: { contents: "read", pull_requests: "read" },
+        });
+      }
+      if (url.includes("/repos/owner/repo/pulls/7")) {
+        prCalls += 1;
+        if (prCalls === 1) return new Response("Bad credentials", { status: 401 });
+        return Response.json({ state: "open", head: { sha: "sha7" } });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await expect(
+      fetchPullRequestFreshness(env, {
+        installationId: 123,
+        repoFullName: "owner/repo",
+        pullNumber: 7,
+        expectedHeadSha: "sha7",
+      }),
+    ).resolves.toMatchObject({ status: "current", liveHeadSha: "sha7" });
+
+    expect(prCalls).toBe(2);
+    expect(brokerCalls).toBeGreaterThanOrEqual(2);
+  });
 });

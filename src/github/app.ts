@@ -154,9 +154,11 @@ export async function createInstallationToken(
 export function githubErrorStatus(error: unknown): number | null {
   const err = error as {
     status?: number;
+    statusCode?: number;
     response?: { status?: number } | null;
   };
-  return err.status ?? err.response?.status ?? null;
+  // GitHubApiError (backfill.ts) exposes `statusCode`; Octokit errors expose `status` / `response.status`.
+  return err.status ?? err.statusCode ?? err.response?.status ?? null;
 }
 
 export function isGitHubBadCredentialsError(error: unknown): boolean {
@@ -167,6 +169,8 @@ export function isGitHubBadCredentialsError(error: unknown): boolean {
 function isGitHubInstallationPermissionError(error: unknown): boolean {
   return githubErrorStatus(error) === 403 && /resource not accessible by integration|not have permission/i.test(errorMessage(error));
 }
+
+export { isGitHubInstallationPermissionError };
 
 async function expireCachedInstallationToken(
   installationId: number,

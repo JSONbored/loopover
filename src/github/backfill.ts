@@ -63,7 +63,7 @@ import type {
   RepositorySettings,
 } from "../types";
 import { errorMessage, nowIso, repoParts, strippedErrorMessage } from "../utils/json";
-import { createInstallationToken, getAppInstallation } from "./app";
+import { createInstallationToken, getAppInstallation, isGitHubBadCredentialsError, isGitHubInstallationPermissionError, withInstallationTokenRetry } from "./app";
 import {
   GITTENSORY_LEGACY_CONTEXT_CHECK_NAME,
   GITTENSORY_LEGACY_GATE_CHECK_NAME,
@@ -3456,9 +3456,26 @@ export async function fetchLiveIssueState(
   issueNumber: number,
   token: string | undefined,
   admissionKey?: GitHubRateLimitAdmissionKey,
+  options?: { installationId?: number },
 ): Promise<string | undefined> {
-  const result = await githubJsonWithHeaders<{ state?: string | null }>(env, repoFullName, `/issues/${issueNumber}`, token, githubRateLimitOptions(admissionKey)).catch(() => undefined);
-  return result?.data.state ?? undefined;
+  const run = async (activeToken: string | undefined): Promise<string | undefined> => {
+    try {
+      const result = await githubJsonWithHeaders<{ state?: string | null }>(env, repoFullName, `/issues/${issueNumber}`, activeToken, githubRateLimitOptions(admissionKey));
+      return result?.data.state ?? undefined;
+    } catch (error) {
+      // Auth failures must propagate so withInstallationTokenRetry can self-heal (#8892); other errors stay fail-open.
+      if (options?.installationId != null && (isGitHubBadCredentialsError(error) || isGitHubInstallationPermissionError(error))) throw error;
+      return undefined;
+    }
+  };
+  if (options?.installationId != null) {
+    try {
+      return await withInstallationTokenRetry(env, options.installationId, (freshToken) => run(freshToken));
+    } catch {
+      return undefined;
+    }
+  }
+  return run(token);
 }
 
 /** The PR's LIVE head commit SHA via REST `GET /pulls/{n}`. The stored `pr.headSha` lags GitHub when a commit
@@ -3471,9 +3488,25 @@ export async function fetchLivePullRequestHeadSha(
   prNumber: number,
   token: string | undefined,
   admissionKey?: GitHubRateLimitAdmissionKey,
+  options?: { installationId?: number },
 ): Promise<string | undefined> {
-  const result = await githubJsonWithHeaders<{ head?: { sha?: string | null } | null }>(env, repoFullName, `/pulls/${prNumber}`, token, githubRateLimitOptions(admissionKey)).catch(() => undefined);
-  return result?.data.head?.sha ?? undefined;
+  const run = async (activeToken: string | undefined): Promise<string | undefined> => {
+    try {
+      const result = await githubJsonWithHeaders<{ head?: { sha?: string | null } | null }>(env, repoFullName, `/pulls/${prNumber}`, activeToken, githubRateLimitOptions(admissionKey));
+      return result?.data.head?.sha ?? undefined;
+    } catch (error) {
+      if (options?.installationId != null && (isGitHubBadCredentialsError(error) || isGitHubInstallationPermissionError(error))) throw error;
+      return undefined;
+    }
+  };
+  if (options?.installationId != null) {
+    try {
+      return await withInstallationTokenRetry(env, options.installationId, (freshToken) => run(freshToken));
+    } catch {
+      return undefined;
+    }
+  }
+  return run(token);
 }
 
 export type LivePullRequestFetchResult =
@@ -3486,11 +3519,30 @@ export async function fetchLivePullRequestResult(
   prNumber: number,
   token: string | undefined,
   admissionKey?: GitHubRateLimitAdmissionKey,
+  options?: { installationId?: number; rethrowAuth?: boolean },
 ): Promise<LivePullRequestFetchResult> {
+  const run = async (activeToken: string | undefined): Promise<LivePullRequestFetchResult> => {
+    try {
+      const result = await githubJsonWithHeaders<GitHubPullRequestPayload>(env, repoFullName, `/pulls/${prNumber}`, activeToken, githubRateLimitOptions(admissionKey));
+      return { status: "ok", data: result.data };
+    } catch (error) {
+      // Propagate auth failures so withInstallationTokenRetry can mint a fresh token (#8892 / #6191).
+      if (isGitHubBadCredentialsError(error) || isGitHubInstallationPermissionError(error)) throw error;
+      return { status: "error", error: strippedErrorMessage(error, "GitHub live PR fetch failed").slice(0, 240) };
+    }
+  };
+  if (options?.installationId != null) {
+    try {
+      return await withInstallationTokenRetry(env, options.installationId, (freshToken) => run(freshToken));
+    } catch (error) {
+      return { status: "error", error: strippedErrorMessage(error, "GitHub live PR fetch failed").slice(0, 240) };
+    }
+  }
   try {
-    const result = await githubJsonWithHeaders<GitHubPullRequestPayload>(env, repoFullName, `/pulls/${prNumber}`, token, githubRateLimitOptions(admissionKey));
-    return { status: "ok", data: result.data };
+    return await run(token);
   } catch (error) {
+    // Optional rethrow so an outer withInstallationTokenRetry (e.g. fetchPullRequestFreshness) can self-heal.
+    if (options?.rethrowAuth) throw error;
     return { status: "error", error: strippedErrorMessage(error, "GitHub live PR fetch failed").slice(0, 240) };
   }
 }

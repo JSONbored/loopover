@@ -63,6 +63,11 @@ export type GovernorState = {
   savePauseState(pauseState: GovernorPauseInput): GovernorPauseState;
   loadReputationHistory(repoFullName: string, apiBaseUrl?: string): RepoOutcomeHistory;
   saveReputationHistory(repoFullName: string, history: RepoOutcomeHistory, apiBaseUrl?: string): RepoOutcomeHistory;
+  incrementReputationHistory(
+    repoFullName: string,
+    delta: { decided?: number; unfavorable?: number },
+    apiBaseUrl?: string,
+  ): RepoOutcomeHistory;
   recordOwnSubmission(record: OwnSubmissionRecord): OwnSubmissionRecord;
   listRecentOwnSubmissions(filter?: ListRecentOwnSubmissionsFilter): OwnSubmissionRecord[];
   /** Delete every repo-scoped row for one repo across both governor tables (#7091); returns total rows removed. */
@@ -394,6 +399,24 @@ export function openGovernorState(dbPath: string = resolveGovernorStateDbPath())
       upsertReputationStatement.run(normalizedForge, normalizedRepo, decided, unfavorable, new Date().toISOString());
       return { decided, unfavorable };
     },
+    incrementReputationHistory(
+      repoFullName: string,
+      delta: { decided?: number; unfavorable?: number },
+      apiBaseUrl?: string,
+    ): RepoOutcomeHistory {
+      const normalizedForge = normalizeApiBaseUrl(apiBaseUrl);
+      const normalizedRepo = normalizeRepoFullName(repoFullName);
+      const decidedDelta = Number.isInteger(delta?.decided) ? Number(delta.decided) : 0;
+      const unfavorableDelta = Number.isInteger(delta?.unfavorable) ? Number(delta.unfavorable) : 0;
+      return withTransaction(() => {
+        const row = getReputationStatement.get(normalizedForge, normalizedRepo) as ReputationHistoryRow | undefined;
+        const prior = row ? { decided: row.decided, unfavorable: row.unfavorable } : { ...DEFAULT_REPUTATION_HISTORY };
+        const decided = prior.decided + decidedDelta;
+        const unfavorable = prior.unfavorable + unfavorableDelta;
+        upsertReputationStatement.run(normalizedForge, normalizedRepo, decided, unfavorable, new Date().toISOString());
+        return { decided, unfavorable };
+      });
+    },
     recordOwnSubmission(record: OwnSubmissionRecord): OwnSubmissionRecord {
       const normalized = normalizeRepoFullName(record?.repoFullName);
       if (typeof record?.fingerprint !== "string" || !record.fingerprint.trim()) {
@@ -469,6 +492,14 @@ export function loadReputationHistory(repoFullName: string, apiBaseUrl?: string)
 
 export function saveReputationHistory(repoFullName: string, history: RepoOutcomeHistory, apiBaseUrl?: string): RepoOutcomeHistory {
   return getDefaultGovernorState().saveReputationHistory(repoFullName, history, apiBaseUrl);
+}
+
+export function incrementReputationHistory(
+  repoFullName: string,
+  delta: { decided?: number; unfavorable?: number },
+  apiBaseUrl?: string,
+): RepoOutcomeHistory {
+  return getDefaultGovernorState().incrementReputationHistory(repoFullName, delta, apiBaseUrl);
 }
 
 export function recordOwnSubmission(record: OwnSubmissionRecord): OwnSubmissionRecord {

@@ -9,7 +9,7 @@ const MAX_HASH_CHARS = 128;
 const MAX_BUCKET_CHARS = 64;
 const MAX_VERDICT_CHARS = 32;
 const VALID_OUTCOMES = new Set(["merged", "closed"]);
-const VALID_REVERSALS = new Set(["none", "reopened", "reverted"]);
+const VALID_REVERSALS = new Set(["none", "reopened", "reverted", "superseded"]);
 const MIN_CYCLE_MS = 1_000; // <1s is implausible
 const MAX_CYCLE_MS = 31_536_000_000; // >1y is implausible
 
@@ -75,6 +75,23 @@ interface OrbIngestPayload {
   // #4933: optional -- an older self-host build that hasn't upgraded yet simply omits this, and the
   // instance's stored health stays whatever it last was (or NULL/unknown on first contact).
   health?: { ok: boolean };
+  // #8820: optional day-bucketed cache hit/miss aggregates for the public "AI work reused" trend (counts
+  // only). A rolling window re-sent every tick; upserted per (instance, day). Absent from older builds.
+  reuse_counters?: Array<{ day?: unknown; hits?: unknown; misses?: unknown }>;
+}
+
+/** Rolling-window bound: the sender exports ~70 days (REUSE_COUNTER_WINDOW_DAYS); anything wildly larger is
+ *  a hostile payload padding the loop, not a real export. */
+const MAX_REUSE_COUNTER_DAYS = 400;
+const MAX_REUSE_COUNT = 10_000_000; // per-day per-instance ceiling — beyond this is fabrication, not telemetry
+const REUSE_DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Clamp a sender-supplied per-day counter to a plausible non-negative integer; null rejects the row. */
+function clampReuseCount(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const rounded = Math.round(value);
+  if (rounded < 0 || rounded > MAX_REUSE_COUNT) return null;
+  return rounded;
 }
 
 export type OrbIngestResult = { accepted: number } | { error: string };
@@ -188,6 +205,32 @@ export async function handleOrbIngest(body: string, db: D1Database): Promise<Orb
       if (result.meta.changes > 0) accepted++;
     } catch {
       // best-effort — skip rows that violate constraints or hit transient errors
+    }
+  }
+
+  // #8820: day-bucketed reuse counters (optional field; older builds omit it). Every row is
+  // whitelist-validated (strict YYYY-MM-DD day, clamped non-negative counts) and upserted on
+  // (instance_id, day) — the sender re-exports a rolling window each tick, so REPLACE keeps the freshest
+  // counts idempotently. Malformed rows are skipped one-by-one (same best-effort posture as events above);
+  // a malformed CONTAINER (non-array) is ignored rather than failing the outcome batch riding alongside.
+  const reuseCounters = (payload as OrbIngestPayload).reuse_counters;
+  if (Array.isArray(reuseCounters)) {
+    for (const counter of reuseCounters.slice(0, MAX_REUSE_COUNTER_DAYS)) {
+      const day = typeof counter?.day === "string" && REUSE_DAY_PATTERN.test(counter.day) ? counter.day : null;
+      const hits = clampReuseCount(counter?.hits);
+      const misses = clampReuseCount(counter?.misses);
+      if (day === null || hits === null || misses === null) continue;
+      try {
+        await db
+          .prepare(
+            `INSERT OR REPLACE INTO orb_reuse_counters (instance_id, day, hits, misses, received_at)
+             VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+          )
+          .bind(instance_id, day, hits, misses)
+          .run();
+      } catch {
+        // best-effort — a counter hiccup must never fail the outcome batch
+      }
     }
   }
 

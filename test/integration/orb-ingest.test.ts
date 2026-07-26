@@ -53,10 +53,14 @@ describe("handleOrbIngest()", () => {
       ev({ pr_hash: "r1", reversal_flag: "reverted" }),
       ev({ pr_hash: "r2", reversal_flag: "bogus" }),
       ev({ pr_hash: "r3" }),
+      // #8820: the successor-merge reversal (#8166) — previously rejected by the whitelist, silently
+      // downgraded to 'none' and pinning the fleet's published reversalRate at 0.
+      ev({ pr_hash: "r4", reversal_flag: "superseded" }),
     ]);
     expect(await col(db, "r1", "reversal_flag")).toBe("reverted");
     expect(await col(db, "r2", "reversal_flag")).toBe("none");
     expect(await col(db, "r3", "reversal_flag")).toBe("none");
+    expect(await col(db, "r4", "reversal_flag")).toBe("superseded");
   });
 
   it("stores gate_reasoncode_bucket string vs null", async () => {
@@ -94,6 +98,37 @@ describe("handleOrbIngest()", () => {
     expect(await col(db, "t1", "sent_at")).toBe("2026-01-01T01:00:00Z");
     expect(await col(db, "t2", "decision_timestamp")).toBeNull();
     expect(await col(db, "t2", "sent_at")).toBeNull();
+  });
+
+  it("stores reuse_counters (#8820): valid rows upserted per (instance, day); malformed rows skipped; malformed container ignored", async () => {
+    const db = makeDb();
+    const counterRow = async (day: string) =>
+      (await (db as unknown as TestD1Database).prepare("SELECT hits, misses FROM orb_reuse_counters WHERE instance_id='inst1' AND day=?").bind(day).first<{ hits: number; misses: number }>()) ?? null;
+    const send = (reuse_counters: unknown) => handleOrbIngest(JSON.stringify({ instance_id: "inst1", events: [ev({ pr_hash: `rc${seq++}` })], reuse_counters }), db);
+    let seq = 0;
+
+    await send([
+      { day: "2026-02-01", hits: 5, misses: 2 },
+      { day: "not-a-day", hits: 1, misses: 1 }, // bad day → skipped
+      { day: "2026-02-02", hits: -1, misses: 0 }, // negative → skipped
+      { day: "2026-02-03", hits: "many", misses: 0 }, // non-number → skipped
+      { day: "2026-02-04", hits: 4.6, misses: 10_000_001 }, // over the ceiling → skipped
+    ]);
+    expect(await counterRow("2026-02-01")).toEqual({ hits: 5, misses: 2 });
+    expect(await counterRow("2026-02-02")).toBeNull();
+    expect(await counterRow("2026-02-03")).toBeNull();
+    expect(await counterRow("2026-02-04")).toBeNull();
+
+    // The rolling window re-sends the same day with fresher counts → REPLACE, not a duplicate.
+    await send([{ day: "2026-02-01", hits: 9, misses: 3 }]);
+    expect(await counterRow("2026-02-01")).toEqual({ hits: 9, misses: 3 });
+    const n = await (db as unknown as TestD1Database).prepare("SELECT COUNT(*) AS n FROM orb_reuse_counters WHERE day='2026-02-01'").first<{ n: number }>();
+    expect(n?.n).toBe(1);
+
+    // A malformed container (not an array) is ignored; the outcome batch still lands.
+    expect(await send({ nope: true })).toEqual({ accepted: 1 });
+    // Absent field (older builds) — unchanged behavior.
+    expect(await ingest(db, [ev({ pr_hash: "plain" })])).toEqual({ accepted: 1 });
   });
 
   it("UPSERTs on (instance, repo_hash, pr_hash): a re-export updates the freshest outcome (e.g. a later reversal)", async () => {

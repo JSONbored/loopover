@@ -62,7 +62,7 @@ function spawnAcquireChild(
   attemptId: string,
   maxConcurrency: number,
 ): ChildProcessWithoutNullStreams {
-  return spawn(
+  const child = spawn(
     process.execPath,
     [
       acquireChildScript,
@@ -74,6 +74,10 @@ function spawnAcquireChild(
     ],
     { stdio: ["pipe", "pipe", "pipe"] },
   );
+  // The done-broadcast can race a child that already exited (a rejected acquire exits immediately) — an
+  // unhandled EPIPE on its stdin must not crash the test run.
+  child.stdin.on("error", () => {});
+  return child;
 }
 
 async function waitForReady(child: ChildProcessWithoutNullStreams): Promise<void> {
@@ -102,29 +106,49 @@ async function runBarrieredAcquires(
   const children = attemptIds.map((attemptId) => spawnAcquireChild(paths, attemptId, maxConcurrency));
   await Promise.all(children.map((child) => waitForReady(child)));
   for (const child of children) child.stdin.write("go\n");
-  return Promise.all(
+  // #8992: results resolve from STDOUT, not exit — a successful child HOLDS its lease (process alive) until
+  // every result is observed. The previous exit-after-acquire lifecycle let later children's on-acquire
+  // sweeps legitimately reclaim the dead winners' slots and re-issue the same paths (the CI 4-of-5 /
+  // 2-of-5-distinct flake), and could hand the capacity test a third success at a 2-slot cap.
+  const results = await Promise.all(
     children.map(
       (child) =>
         new Promise<AcquireChildResult>((resolve, reject) => {
           let stdout = "";
-          child.stdout.on("data", (chunk) => {
+          const onData = (chunk: Buffer | string) => {
             stdout += chunk.toString();
-          });
-          child.once("error", reject);
-          child.once("exit", () => {
             const line = stdout
               .split("\n")
               .map((entry) => entry.trim())
               .find((entry) => entry.startsWith("{"));
-            if (!line) {
-              reject(new Error(`child produced no JSON result: ${stdout}`));
-              return;
+            if (line) {
+              child.stdout.off("data", onData);
+              resolve(JSON.parse(line) as AcquireChildResult);
             }
-            resolve(JSON.parse(line) as AcquireChildResult);
+          };
+          child.stdout.on("data", onData);
+          child.once("error", reject);
+          child.once("exit", () => {
+            if (!stdout.includes("{")) reject(new Error(`child exited with no JSON result: ${stdout}`));
           });
         }),
     ),
   );
+  // Every lease observed — release the survivors and wait for them to exit cleanly.
+  await Promise.all(
+    children.map(
+      (child) =>
+        new Promise<void>((resolve) => {
+          if (child.exitCode !== null) {
+            resolve();
+            return;
+          }
+          child.once("exit", () => resolve());
+          child.stdin.write("done\n");
+        }),
+    ),
+  );
+  return results;
 }
 
 afterEach(() => {

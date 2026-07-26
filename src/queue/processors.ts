@@ -3555,7 +3555,15 @@ export async function reReviewStoredPullRequest(
     }
     return false;
   }
-  if (live?.head?.sha && live.head.sha !== pr.headSha) {
+  // #8804: resync on a LABEL mismatch too, not just head drift. A label-only change — exactly what Pass 1 of
+  // the flag-then-close machine produces (pending-closure), or a maintainer applying/removing manual-review —
+  // arrives via a `labeled` webhook that can still be queued behind this sweep pass; the live fetch already
+  // carries the current labels, so discarding them meant Pass 2 could misread the stored stale label set and
+  // re-run Pass 1 (duplicate warning comment, delayed enforcement). Sorted-set comparison: order is not signal.
+  const liveLabelNames = (live?.labels ?? []).map((label) => label.name ?? "").filter(Boolean).sort();
+  const storedLabelNames = [...pr.labels].sort();
+  const labelsDrifted = live !== undefined && JSON.stringify(liveLabelNames) !== JSON.stringify(storedLabelNames);
+  if (live?.head?.sha && (live.head.sha !== pr.headSha || labelsDrifted)) {
     await upsertPullRequestFromGitHub(env, repoFullName, live).catch(
       () => undefined,
     );

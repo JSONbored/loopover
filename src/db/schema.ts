@@ -542,6 +542,8 @@ export const issues = sqliteTable(
     linkedPrsJson: text("linked_prs_json").notNull().default("[]"),
     lastSeenOpenAt: text("last_seen_open_at"),
     payloadJson: text("payload_json").notNull().default("{}"),
+    // #8804: GitHub's OWN updated_at for the reorder guard (mirrors pull_requests.github_updated_at, 0172).
+    githubUpdatedAt: text("github_updated_at"),
     createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
     updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
   },

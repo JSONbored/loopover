@@ -389,3 +389,56 @@ describe("config-application deferred (documented seam)", () => {
     expect(SELFTUNE_BASE_CONFIDENCE_FLOOR).toBe(0);
   });
 });
+
+// ── #8763: loadBacktestTrackRecord — the cron-side track-record rollup ───────────────────────────────────────
+
+describe("loadBacktestTrackRecord (#8763)", () => {
+  function comparisonFor(ruleId: string, verdict: "improved" | "regressed" | "unchanged") {
+    const report = { ruleId, caseCount: 1, truePositives: 1, falsePositives: 0, trueNegatives: 0, falseNegatives: 0, precision: 1, recall: 1 };
+    return { ruleId, baseline: report, candidate: report, regressedAxes: [], improvedAxes: [], verdict };
+  }
+
+  async function seedRun(env: Env, eventType: string, comparison: unknown): Promise<void> {
+    const { recordAuditEvent } = await import("../../src/db/repositories");
+    await recordAuditEvent(env, {
+      eventType,
+      actor: "loopover",
+      targetKey: "owner/repo#1",
+      outcome: "completed",
+      detail: "backtest run",
+      metadata: JSON.parse(JSON.stringify(comparison === undefined ? {} : { comparison })),
+    });
+  }
+
+  it("aggregates persisted runs across ALL THREE event types via the shared engine aggregator", async () => {
+    const env = createTestEnv();
+    const { loadBacktestTrackRecord } = await import("../../src/review/selftune-wire");
+    await seedRun(env, "calibration.threshold_backtest_run", comparisonFor("linked_issue_scope_mismatch", "regressed"));
+    await seedRun(env, "calibration.logic_backtest_run", comparisonFor("linked_issue_scope_mismatch", "improved"));
+    await seedRun(env, "calibration.counterfactual_backtest_run", comparisonFor("counterfactual_judge_variant", "unchanged"));
+    // A run row without a parseable comparison is skipped, never counted or thrown on.
+    await seedRun(env, "calibration.threshold_backtest_run", undefined);
+
+    const record = await loadBacktestTrackRecord(env);
+    expect(record.totalRuns).toBe(3);
+    expect(record.regressedRuns).toBe(1);
+    expect(record.perRule.get("linked_issue_scope_mismatch")).toMatchObject({ total: 2, regressed: 1, improved: 1 });
+    expect(record.perRule.get("counterfactual_judge_variant")).toMatchObject({ total: 1, unchanged: 1 });
+  });
+
+  it("returns the empty record when nothing is persisted (the steady state for most ticks)", async () => {
+    const env = createTestEnv();
+    const { loadBacktestTrackRecord } = await import("../../src/review/selftune-wire");
+    const record = await loadBacktestTrackRecord(env);
+    expect(record.totalRuns).toBe(0);
+    expect(record.regressedRate).toBeNull();
+  });
+
+  it("FAIL-OPEN: a poisoned audit_events read degrades to the empty record instead of throwing", async () => {
+    const env = createTestEnv();
+    const { loadBacktestTrackRecord } = await import("../../src/review/selftune-wire");
+    poisonDbPrepare(env, /audit_events/);
+    const record = await loadBacktestTrackRecord(env);
+    expect(record.totalRuns).toBe(0);
+  });
+});

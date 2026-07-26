@@ -8,7 +8,7 @@ vi.mock("@loopover/engine", async () => {
 });
 
 import { DEFAULT_AMS_POLICY_SPEC } from "../../packages/loopover-engine/src/index";
-import { resolveAmsPolicy, resolveAmsPolicyConfigPath } from "../../packages/loopover-miner/lib/ams-policy.js";
+import { resolveAmsPolicy, resolveAmsPolicyConfigPath, amsPolicyWarningJsonFields, renderAmsPolicyWarnings } from "../../packages/loopover-miner/lib/ams-policy.js";
 
 const roots: string[] = [];
 
@@ -26,6 +26,29 @@ describe("resolveAmsPolicyConfigPath (#5132)", () => {
   it("resolves from explicit env, config dir, and XDG default, in precedence order", () => {
     expect(resolveAmsPolicyConfigPath({ LOOPOVER_MINER_AMS_POLICY_PATH: "/custom/policy.yml" })).toBe("/custom/policy.yml");
     expect(resolveAmsPolicyConfigPath({ LOOPOVER_MINER_CONFIG_DIR: "/cfg" })).toBe(join("/cfg", ".loopover-ams.yml"));
+  });
+});
+
+describe("amsPolicy warning surfacing helpers (#8853)", () => {
+  it("omits JSON fields and human lines when warnings are empty", () => {
+    expect(amsPolicyWarningJsonFields({ source: "default", warnings: [] })).toEqual({});
+    expect(renderAmsPolicyWarnings({ source: "default", warnings: [] })).toEqual([]);
+  });
+
+  it("surfaces source and warnings with discover-cli phrasing when warnings are non-empty", () => {
+    const resolved = {
+      source: "local" as const,
+      warnings: ['AmsPolicySpec field "capLimits" must be a mapping; falling back to defaults.'],
+    };
+    expect(amsPolicyWarningJsonFields(resolved)).toEqual({
+      amsPolicySource: "local",
+      amsPolicyWarnings: resolved.warnings,
+    });
+    expect(renderAmsPolicyWarnings(resolved)).toEqual([
+      "ams-policy warnings: 1",
+      '  AmsPolicySpec field "capLimits" must be a mapping; falling back to defaults.',
+      "ams-policy source: local",
+    ]);
   });
 });
 

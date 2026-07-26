@@ -21,6 +21,24 @@ export type ResolvedAmsPolicy = {
   warnings: string[];
 };
 
+/** JSON fields for a resolved policy, omitted entirely when there is nothing to surface (#8853). */
+export function amsPolicyWarningJsonFields(
+  resolved: { source: string; warnings: string[] },
+): { amsPolicySource: string; amsPolicyWarnings: string[] } | Record<string, never> {
+  if (resolved.warnings.length === 0) return {};
+  return { amsPolicySource: resolved.source, amsPolicyWarnings: [...resolved.warnings] };
+}
+
+/** Human-readable lines matching discover-cli's `ai-policy warnings` / note phrasing (#8853). */
+export function renderAmsPolicyWarnings(resolved: { source: string; warnings: string[] }): string[] {
+  if (resolved.warnings.length === 0) return [];
+  return [
+    `ams-policy warnings: ${resolved.warnings.length}`,
+    ...resolved.warnings.map((warning) => `  ${warning}`),
+    `ams-policy source: ${resolved.source}`,
+  ];
+}
+
 export type AmsPolicyOptions = {
   /** Accepted for forward/API compatibility with callers that pass a fetch override; unused today since this
    *  resolver never fetches (see the module doc comment above). */

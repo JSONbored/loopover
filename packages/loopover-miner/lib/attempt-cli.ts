@@ -59,7 +59,7 @@ import { fetchSelfReviewContext } from "./self-review-context.js";
 import type { SelfReviewContextFetch, fetchSelfReviewContext as FetchSelfReviewContextFn } from "./self-review-context.js";
 import { buildCodingTaskSpec } from "./coding-task-spec.js";
 import type { buildCodingTaskSpec as BuildCodingTaskSpecFn } from "./coding-task-spec.js";
-import { resolveAmsPolicy } from "./ams-policy.js";
+import { amsPolicyWarningJsonFields, renderAmsPolicyWarnings, resolveAmsPolicy } from "./ams-policy.js";
 import type { resolveAmsPolicy as ResolveAmsPolicyFn } from "./ams-policy.js";
 import {
   buildAmsAttemptFailedPayload,
@@ -203,15 +203,15 @@ export function parseAttemptArgs(args: string[]): ParsedAttemptArgs {
   const positional: string[] = [];
 
   for (let index = 0; index < args.length; index += 1) {
-    const token = args[index]!;
-    if (token === "--json") {
+    const arg = args[index]!;
+    if (arg === "--json") {
       options.json = true;
       continue;
     }
     // Opt-in only: resolveCodingAgentModeFromConfig's own default (no agentDryRun override) is "live", not
     // "dry_run" -- so #5132's "dry-run is default" acceptance criteria (#2342) has to be enforced HERE, by
     // requiring an explicit --live flag before this command will ever request live mode.
-    if (token === "--live") {
+    if (arg === "--live") {
       options.live = true;
       continue;
     }
@@ -219,26 +219,26 @@ export function parseAttemptArgs(args: string[]): ParsedAttemptArgs {
     // but a non---live run still opened every store and made real worktree/claim/ledger writes. --dry-run
     // short-circuits BEFORE any of that infrastructure is even opened, guaranteeing zero writes rather than
     // merely skipping the driver.
-    if (token === "--dry-run") {
+    if (arg === "--dry-run") {
       options.dryRun = true;
       continue;
     }
-    if (token === "--miner-login") {
+    if (arg === "--miner-login") {
       const value = args[index + 1];
       if (!value || value.startsWith("-")) return { error: ATTEMPT_USAGE };
       options.minerLogin = value;
       index += 1;
       continue;
     }
-    if (token === "--base") {
+    if (arg === "--base") {
       const value = args[index + 1];
       if (!value || value.startsWith("-")) return { error: ATTEMPT_USAGE };
       options.base = value;
       index += 1;
       continue;
     }
-    if (token.startsWith("-")) return { error: `Unknown option: ${token}` };
-    positional.push(token);
+    if (arg.startsWith("-")) return { error: `Unknown option: ${arg}` };
+    positional.push(arg);
   }
 
   if (positional.length !== 2) return { error: ATTEMPT_USAGE };
@@ -822,11 +822,15 @@ export async function runAttempt(args: string[], options: RunAttemptOptions = {}
         mode,
         attemptId,
       };
+      const blockedPayload = { ...blockedResult, ...amsPolicyWarningJsonFields(amsPolicy) };
       if (parsed.json) {
-        console.log(JSON.stringify(blockedResult, null, 2));
+        console.log(JSON.stringify(blockedPayload, null, 2));
       } else {
         console.error(
-          `Attempt for ${parsed.repoFullName}#${parsed.issueNumber} is blocked: this repo's maxConcurrentClaims cap (${minerGoalSpec.spec.maxConcurrentClaims}) is already met (${claimResult.activeClaimCount} active claim(s)).`,
+          [
+            ...renderAmsPolicyWarnings(amsPolicy),
+            `Attempt for ${parsed.repoFullName}#${parsed.issueNumber} is blocked: this repo's maxConcurrentClaims cap (${minerGoalSpec.spec.maxConcurrentClaims}) is already met (${claimResult.activeClaimCount} active claim(s)).`,
+          ].join("\n"),
         );
       }
       // blocked_max_concurrent_claims is a real runtime outcome omitted from AttemptCliResult (.d.ts drift).
@@ -992,6 +996,7 @@ export async function runAttempt(args: string[], options: RunAttemptOptions = {}
       base: parsed.base,
       mode,
       attemptId,
+      ...amsPolicyWarningJsonFields(amsPolicy),
       submissionMode: amsPolicy.spec.submissionMode,
       // Every runMinerAttempt outcome carries a real loopResult (#5135's loop needs its genuine turn-usage and
       // cost to save real GovernorCapUsage via governor-state.js's saveCapUsage -- nothing else in the codebase
@@ -1048,7 +1053,12 @@ export async function runAttempt(args: string[], options: RunAttemptOptions = {}
     if (parsed.json) {
       console.log(JSON.stringify(finalResult, null, 2));
     } else {
-      console.log(`Attempt for ${parsed.repoFullName}#${parsed.issueNumber} finished with outcome: ${result.outcome}.`);
+      console.log(
+        [
+          ...renderAmsPolicyWarnings(amsPolicy),
+          `Attempt for ${parsed.repoFullName}#${parsed.issueNumber} finished with outcome: ${result.outcome}.`,
+        ].join("\n"),
+      );
     }
     options.onResult?.(finalResult as AttemptCliResult);
 

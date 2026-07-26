@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -8,7 +8,7 @@ vi.mock("@loopover/engine", async () => {
 });
 
 import { DEFAULT_AMS_POLICY_SPEC } from "../../packages/loopover-engine/src/index";
-import { resolveAmsPolicy, resolveAmsPolicyConfigPath, amsPolicyWarningJsonFields, renderAmsPolicyWarnings } from "../../packages/loopover-miner/lib/ams-policy.js";
+import { resolveAmsPolicy, resolveAmsPolicyConfigPath, resolveAmsPolicyConfigDir, amsPolicyWarningJsonFields, renderAmsPolicyWarnings } from "../../packages/loopover-miner/lib/ams-policy.js";
 
 const roots: string[] = [];
 
@@ -26,6 +26,13 @@ describe("resolveAmsPolicyConfigPath (#5132)", () => {
   it("resolves from explicit env, config dir, and XDG default, in precedence order", () => {
     expect(resolveAmsPolicyConfigPath({ LOOPOVER_MINER_AMS_POLICY_PATH: "/custom/policy.yml" })).toBe("/custom/policy.yml");
     expect(resolveAmsPolicyConfigPath({ LOOPOVER_MINER_CONFIG_DIR: "/cfg" })).toBe(join("/cfg", ".loopover-ams.yml"));
+  });
+});
+
+describe("resolveAmsPolicyConfigDir (#8863)", () => {
+  it("resolves the operator config directory from LOOPOVER_MINER_CONFIG_DIR or XDG_CONFIG_HOME", () => {
+    expect(resolveAmsPolicyConfigDir({ LOOPOVER_MINER_CONFIG_DIR: "/cfg" })).toBe("/cfg");
+    expect(resolveAmsPolicyConfigDir({ XDG_CONFIG_HOME: "/xdg" })).toBe(join("/xdg", "loopover-miner"));
   });
 });
 
@@ -136,6 +143,61 @@ describe("resolveAmsPolicy (#5132)", () => {
     // process, so this exercises the real `options.env ?? process.env` default path and resolves to the real
     // (almost certainly absent, on a test machine) `~/.config/loopover-miner/.loopover-ams.yml`.
     const result = await resolveAmsPolicy("acme/widgets", { existsSync: () => false });
+    expect(result).toEqual({ spec: DEFAULT_AMS_POLICY_SPEC, source: "default", warnings: [] });
+  });
+
+  it.each([
+    [".github/loopover-ams.yml", "submissionMode: observe\n"],
+    [".loopover-ams.json", '{"submissionMode":"observe"}'],
+    [".github/loopover-ams.json", '{"submissionMode":"observe"}'],
+  ])("REGRESSION #8863: discovers operator policy at %s in the documented fallback order", async (relativePath, content) => {
+    const root = tempRoot();
+    const fullPath = join(root, relativePath);
+    mkdirSync(join(root, ".github"), { recursive: true });
+    writeFileSync(fullPath, content);
+    const result = await resolveAmsPolicy("acme/widgets", { env: { LOOPOVER_MINER_CONFIG_DIR: root } });
+    expect(result.source).toBe("local");
+    expect(result.spec.submissionMode).toBe("observe");
+  });
+
+  it("REGRESSION #8863: first match wins when multiple AMS_POLICY_SPEC_FILENAMES candidates exist", async () => {
+    const root = tempRoot();
+    mkdirSync(join(root, ".github"), { recursive: true });
+    writeFileSync(join(root, ".loopover-ams.yml"), "submissionMode: enforce\n");
+    writeFileSync(join(root, ".github/loopover-ams.yml"), "submissionMode: observe\n");
+    const result = await resolveAmsPolicy("acme/widgets", { env: { LOOPOVER_MINER_CONFIG_DIR: root } });
+    expect(result.source).toBe("local");
+    expect(result.spec.submissionMode).toBe("enforce");
+  });
+
+  it("REGRESSION #8863: explicit LOOPOVER_MINER_AMS_POLICY_PATH bypasses discovery order", async () => {
+    const root = tempRoot();
+    const explicitPath = join(root, "custom-policy.json");
+    writeFileSync(explicitPath, '{"submissionMode":"observe"}');
+    writeFileSync(join(root, ".loopover-ams.yml"), "submissionMode: enforce\n");
+    const result = await resolveAmsPolicy("acme/widgets", {
+      env: { LOOPOVER_MINER_CONFIG_DIR: root, LOOPOVER_MINER_AMS_POLICY_PATH: explicitPath },
+    });
+    expect(result.source).toBe("local");
+    expect(result.spec.submissionMode).toBe("observe");
+  });
+
+  it("REGRESSION #8863: treats a missing explicit LOOPOVER_MINER_AMS_POLICY_PATH as absent", async () => {
+    const result = await resolveAmsPolicy("acme/widgets", {
+      env: { LOOPOVER_MINER_AMS_POLICY_PATH: "/missing/policy.yml" },
+      existsSync: () => false,
+    });
+    expect(result).toEqual({ spec: DEFAULT_AMS_POLICY_SPEC, source: "default", warnings: [] });
+  });
+
+  it("REGRESSION #8863: treats an unreadable explicit LOOPOVER_MINER_AMS_POLICY_PATH as absent", async () => {
+    const result = await resolveAmsPolicy("acme/widgets", {
+      env: { LOOPOVER_MINER_AMS_POLICY_PATH: "/unreadable/policy.yml" },
+      existsSync: () => true,
+      readFileSync: () => {
+        throw new Error("EACCES: permission denied");
+      },
+    });
     expect(result).toEqual({ spec: DEFAULT_AMS_POLICY_SPEC, source: "default", warnings: [] });
   });
 });

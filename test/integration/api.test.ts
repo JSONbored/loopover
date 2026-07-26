@@ -4273,6 +4273,62 @@ describe("api routes", () => {
     expect((await app.request("/v1/internal/fairness/contributors", { headers }, offEnv)).status).toBe(404);
   });
 
+  it("GET /v1/internal/rule-gate-eval returns the per-(project, ruleCode) breakdown, not the blended view (#8906)", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    const now = new Date().toISOString();
+    // Same ruleCode ("surface_lane_reject"), two DIFFERENT projects — proves the response is
+    // genuinely per-project, not pooled/blended (which would collapse this to one row with
+    // projectCount: 2 instead of two rows each carrying its own `project`).
+    for (const [id, project] of [
+      ["gd-1", "owner/repo-a"],
+      ["gd-2", "owner/repo-b"],
+    ] as const) {
+      await env.DB.prepare(
+        `INSERT INTO review_audit (id, project, target_id, event_type, decision, summary, source, created_at) VALUES (?, ?, ?, 'gate_decision', 'close', 'surface_lane_reject', 'gittensory-native', ?)`,
+      )
+        .bind(id, project, `${project}#1`, now)
+        .run();
+      await env.DB.prepare(
+        `INSERT INTO review_audit (id, project, target_id, event_type, decision, source, created_at) VALUES (?, ?, ?, 'pr_outcome', 'merged', 'github', ?)`,
+      )
+        .bind(`po-${id}`, project, `${project}#1`, now)
+        .run();
+    }
+
+    const headers = { authorization: `Bearer ${env.INTERNAL_JOB_TOKEN}` };
+    const res = await app.request("/v1/internal/rule-gate-eval", { headers }, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      rows: Array<{ project: string; ruleCode: string; wouldClose: number; closeFalse: number }>;
+      hasSignal: boolean;
+    };
+    expect(body.rows).toHaveLength(2);
+    expect(body.rows.map((r) => r.project).sort()).toEqual(["owner/repo-a", "owner/repo-b"]);
+    expect(body.rows.every((r) => r.ruleCode === "surface_lane_reject" && r.wouldClose === 1 && r.closeFalse === 1)).toBe(true);
+    expect(body.hasSignal).toBe(false); // each row's `decided` is 1, below the signal floor
+  });
+
+  it("GET /v1/internal/rule-gate-eval honors ?days and defaults to a 90-day window when omitted", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    const headers = { authorization: `Bearer ${env.INTERNAL_JOB_TOKEN}` };
+
+    const withDays = await app.request("/v1/internal/rule-gate-eval?days=30", { headers }, env);
+    expect(withDays.status).toBe(200);
+    expect(await withDays.json()).toEqual({ rows: [], hasSignal: false });
+
+    const withoutDays = await app.request("/v1/internal/rule-gate-eval", { headers }, env);
+    expect(withoutDays.status).toBe(200);
+    expect(await withoutDays.json()).toEqual({ rows: [], hasSignal: false });
+  });
+
+  it("GET /v1/internal/rule-gate-eval 401s without the internal bearer token", async () => {
+    const app = createApp();
+    const res = await app.request("/v1/internal/rule-gate-eval", {}, createTestEnv());
+    expect(res.status).toBe(401);
+  });
+
   it("POST /v1/internal/jobs/backfill-contributor-gate-history/run backfills synchronously and honors `limit`; 404 when off (#fairness-analytics)", async () => {
     const app = createApp();
     const env = createTestEnv({ LOOPOVER_FAIRNESS_ANALYTICS: "true" });

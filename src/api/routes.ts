@@ -300,6 +300,7 @@ import { handleInternalCalibration, handleInternalDecision, type OpsAgentConfig 
 import { computeParityReadiness, isParityAuditEnabled } from "../review/parity-wire";
 import { computePredictedGateAgreement } from "../review/predicted-gate-agreement";
 import { computeContributorGateEval, contributorFairnessFlags, computeBlendedContributorGateEval, contributorGlobalFairnessFlags } from "../review/contributor-gate-eval";
+import { computeRuleGateEval } from "../review/rule-gate-eval";
 import { getContributorTrustProfile } from "../review/contributor-trust-profile";
 import { backfillContributorGateHistory } from "../review/contributor-gate-history-backfill";
 import { isFairnessAnalyticsEnabled, resolveFairnessAnalyticsManifestOverride } from "../review/contributor-trust-profile-wire";
@@ -4402,6 +4403,18 @@ export function createApp() {
   app.get("/v1/internal/fleet/analytics", async (c) => {
     const days = parsePositiveInt(c.req.query("days")) ?? 90;
     return c.json(await computeFleetAnalytics(c.env, { windowDays: days }));
+  });
+
+  // Per-(project, ruleCode) gate-decision accuracy (#8906): the finer-grained sibling of the blended
+  // view already wired into the operator-dashboard tile (rulesBelowClosePrecisionFloor) and the
+  // concrete-evidence breaker exemption cache (outcomes-wire.ts). No privacy concern — ruleCode isn't a
+  // contributor identity — so unlike the fairness/contributors split, this returns the full
+  // per-project report directly rather than a detail route + summary-only dashboard tile. Owner-only:
+  // bearer-gated by the `/v1/internal/*` middleware (INTERNAL_JOB_TOKEN). `?days=` windows the lookback
+  // (default 90, matching BREAKER_EVAL_WINDOW_DAYS and the fairness routes' hardcoded window).
+  app.get("/v1/internal/rule-gate-eval", async (c) => {
+    const days = parsePositiveInt(c.req.query("days")) ?? 90;
+    return c.json(await computeRuleGateEval(c.env, { days, nowMs: Date.now() }));
   });
 
   // Orb instance registry — the fleet trust gate. Every self-host instance that ingests is recorded here,

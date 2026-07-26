@@ -997,6 +997,15 @@ export function buildOpenApiSpec() {
     },
   });
   registry.registerPath({
+    method: "get",
+    path: "/v1/public/decision-ledger/verify",
+    summary: "Verify a window of the hash-chained decision ledger (resumable via afterSeq)",
+    responses: {
+      200: { description: "Window verified clean; nextAfterSeq is the resume cursor (null at the tip)" },
+      409: { description: "First break found: sequence_gap | predecessor_mismatch | row_hash_mismatch" },
+    },
+  });
+  registry.registerPath({
     method: "post",
     path: "/v1/orb/ingest",
     summary: "Ingest a batch of Orb events",

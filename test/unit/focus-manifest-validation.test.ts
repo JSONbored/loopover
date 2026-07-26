@@ -155,6 +155,8 @@ loopEscalation:
     expect(result.normalized).not.toHaveProperty("activeReviewReconciliation");
     expect(result.normalized).not.toHaveProperty("loopEscalation");
     expect(result.normalized).not.toHaveProperty("federatedIntelligence");
+    expect(result.normalized).not.toHaveProperty("experimental");
+    expect(result.normalized).not.toHaveProperty("fairnessAnalytics");
   });
 
   it("includes a configured activeReviewReconciliation block in the normalized settings-preview output (#webhook-reorder-clobber)", () => {
@@ -167,6 +169,18 @@ loopEscalation:
     const result = buildFocusManifestValidation({ content: "federatedIntelligence:\n  enabled: true\n" });
     expect(result.warnings).toEqual([]);
     expect(result.normalized).toMatchObject({ federatedIntelligence: { enabled: true } });
+  });
+
+  it("includes a configured experimental block in the normalized settings-preview output (#8867)", () => {
+    const result = buildFocusManifestValidation({ content: "experimental:\n  gittensor: true\n" });
+    expect(result.warnings).toEqual([]);
+    expect(result.normalized).toMatchObject({ experimental: { gittensor: true } });
+  });
+
+  it("includes a configured fairnessAnalytics block in the normalized settings-preview output (#8867)", () => {
+    const result = buildFocusManifestValidation({ content: "fairnessAnalytics:\n  enabled: true\n" });
+    expect(result.warnings).toEqual([]);
+    expect(result.normalized).toMatchObject({ fairnessAnalytics: { enabled: true } });
   });
 
   it("returns error when manifest content is not a mapping", () => {

@@ -28,6 +28,7 @@ import { initPolicyDocCacheStore, resolvePolicyDocCacheDbPath } from "./policy-d
 import { initRankedCandidatesStore, resolveRankedCandidatesDbPath } from "./ranked-candidates.js";
 import { initDenyHookSynthesisStore, resolveDenyHookSynthesisDbPath } from "./deny-hook-synthesis.js";
 import { openOrbExportStore, resolveOrbExportDbPath } from "./orb-export.js";
+import { openLaptopStateStore, resolveLaptopStateDbPath } from "./laptop-init.js";
 
 const MIGRATE_USAGE = "Usage: loopover-miner migrate [--json]";
 
@@ -84,6 +85,8 @@ const STORES: MigrateStoreDescriptor[] = [
   // #8318: orb-export.sqlite3 (the opt-in Orb telemetry export's HMAC secret + cursor, #4277/#5681) is a
   // durable local store like every entry above, but was never added when it shipped.
   { name: "orb-export", resolveDbPath: resolveOrbExportDbPath, open: openOrbExportStore },
+  // #8641: laptop-state.sqlite3 twin of the doctor store-integrity entry above.
+  { name: "laptop-state", resolveDbPath: resolveLaptopStateDbPath, open: openLaptopStateStore },
 ];
 
 /** Read a store file's stamped schema version without ever creating it -- matches checkStoreIntegrity's

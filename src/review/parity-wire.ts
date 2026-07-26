@@ -47,6 +47,7 @@ const NEUTRAL_HOLD_REASON_CODES = [
   "pr_not_cached",
   "pre_merge_check_unresolved",
   "cla_check_unresolved",
+  "secret_scan_incomplete",
 ];
 
 /** PURE: the bounded reason-class code for a NEUTRAL gate evaluation, derived from its `warnings` (never from

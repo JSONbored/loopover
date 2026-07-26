@@ -216,6 +216,45 @@ describe("AI fail-closed hold (#ai-fail-closed)", () => {
     expect(result.conclusion).toBe("neutral"); // held: not a pass (would auto-merge past the unverified check) nor a failure (would auto-close on a transient miss)
     expect(result.blockers).toEqual([]);
   });
+
+  it("REGRESSION (#9082): an incomplete secret scan HOLDS the gate (neutral), never one-shot-closes a PR ORB couldn't read", () => {
+    const held: Advisory = {
+      ...missingIssueAdvisory(),
+      findings: [
+        {
+          code: "secret_scan_incomplete",
+          title: "Patch-less file(s) could not be fully scanned for secrets (1)",
+          severity: "critical",
+          detail: "GitHub omitted inline diff for: secrets.env. Fetched content exceeded the scan cap or could not be retrieved completely, so leaked-secret verification is incomplete.",
+          action: "Ensure patch-less files are within scan limits or split the change so secrets can be verified.",
+        },
+      ],
+    };
+    const result = evaluateGateCheck(held, gateCheckPolicy(settings(), null, true));
+    // Held, not closed: an unreadable diff is absence of evidence, not evidence of a leak. Contrast the
+    // adjacent test above (secret_leak) and below (a REAL match alongside this one) which must still fail.
+    expect(result.conclusion).toBe("neutral");
+    expect(result.blockers).toEqual([]);
+  });
+
+  it("REGRESSION (#9082): a real secret_leak match still FAILS even when a DIFFERENT file's scan is merely incomplete", () => {
+    const adv: Advisory = {
+      ...missingIssueAdvisory(),
+      findings: [
+        { code: "secret_leak", title: "Possible leaked secret", severity: "critical", detail: "a committed token", action: "remove and rotate it" },
+        {
+          code: "secret_scan_incomplete",
+          title: "Patch-less file(s) could not be fully scanned for secrets (1)",
+          severity: "critical",
+          detail: "GitHub omitted inline diff for: other.bin. Fetched content exceeded the scan cap or could not be retrieved completely.",
+          action: "Ensure patch-less files are within scan limits or split the change so secrets can be verified.",
+        },
+      ],
+    };
+    const result = evaluateGateCheck(adv, gateCheckPolicy(settings(), null, true));
+    expect(result.conclusion).toBe("failure");
+    expect(result.blockers.map((blocker) => blocker.code)).toContain("secret_leak");
+  });
 });
 
 describe("CLA / license-compatibility gate (#2564)", () => {

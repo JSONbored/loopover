@@ -152,6 +152,12 @@ export type JobMessage =
       requestedBy: "schedule" | "api" | "test";
     }
   | {
+      // Risk-control recalibration (#8835, epic #8828): daily fixed-sequence calibration of the per-arm
+      // act/hold thresholds over the adjudicated labels. Flag-gated by LOOPOVER_RISK_CONTROL.
+      type: "risk-control-recalibrate";
+      requestedBy: "schedule" | "api" | "test";
+    }
+  | {
       type: "generate-weekly-value-report";
       requestedBy: "schedule" | "api" | "test";
       variant?: WeeklyValueReportVariant;

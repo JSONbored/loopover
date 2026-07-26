@@ -29,6 +29,17 @@ describe("gateCheckPolicy — #8176 global close-confidence default-override", (
     expect(gateCheckPolicy(settings({ aiReviewCloseConfidence: 0.97 }), null, undefined, null, undefined, undefined, 0.9).aiReviewCloseConfidence).toBe(0.97);
     // Neither: null, so advisory.ts applies its shipped default.
     expect(gateCheckPolicy(settings(), null, undefined, null, undefined, undefined, null).aiReviewCloseConfidence).toBeNull();
+    // #8849: the provenance-carrying shape — a calibrated λ̂ sets the floor AND flags its source; an
+    // explicit repo setting suppresses both (operator config-as-code outranks every automatic writer).
+    const calibrated = gateCheckPolicy(settings(), null, undefined, null, undefined, undefined, { value: 0.94, calibrated: true });
+    expect(calibrated.aiReviewCloseConfidence).toBe(0.94);
+    expect(calibrated.aiReviewCloseConfidenceCalibrated).toBe(true);
+    const loosened = gateCheckPolicy(settings(), null, undefined, null, undefined, undefined, { value: 0.9, calibrated: false });
+    expect(loosened.aiReviewCloseConfidence).toBe(0.9);
+    expect(loosened.aiReviewCloseConfidenceCalibrated).toBe(false);
+    const explicitWins = gateCheckPolicy(settings({ aiReviewCloseConfidence: 0.97 }), null, undefined, null, undefined, undefined, { value: 0.94, calibrated: true });
+    expect(explicitWins.aiReviewCloseConfidence).toBe(0.97);
+    expect(explicitWins.aiReviewCloseConfidenceCalibrated).toBe(false);
     expect(gateCheckPolicy(settings()).aiReviewCloseConfidence).toBeNull();
   });
 });

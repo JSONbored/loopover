@@ -631,6 +631,63 @@
               },
               "decidedCount": {
                 "type": "number"
+              },
+              "guaranteed": {
+                "type": "object",
+                "properties": {
+                  "close": {
+                    "type": "object",
+                    "nullable": true,
+                    "properties": {
+                      "alpha": {
+                        "type": "number"
+                      },
+                      "lambda": {
+                        "type": "number"
+                      },
+                      "coveragePct": {
+                        "type": "number"
+                      },
+                      "n": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "alpha",
+                      "lambda",
+                      "coveragePct",
+                      "n"
+                    ]
+                  },
+                  "merge": {
+                    "type": "object",
+                    "nullable": true,
+                    "properties": {
+                      "alpha": {
+                        "type": "number"
+                      },
+                      "lambda": {
+                        "type": "number"
+                      },
+                      "coveragePct": {
+                        "type": "number"
+                      },
+                      "n": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "alpha",
+                      "lambda",
+                      "coveragePct",
+                      "n"
+                    ]
+                  }
+                },
+                "required": [
+                  "close",
+                  "merge"
+                ]
               }
             },
             "required": [
@@ -642,6 +699,7 @@
               "closePrecisionCiPct",
               "coveragePct",
               "decidedCount",
+              "guaranteed",
               "instanceCount",
               "windowDays",
               "gamingFlagsCaught"

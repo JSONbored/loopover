@@ -38,7 +38,7 @@ import type { RunStateStore } from "./run-state.js";
 import { runDiscover } from "./discover-cli.js";
 import { runAttempt } from "./attempt-cli.js";
 import type { AttemptCliResult } from "./attempt-cli.js";
-import { resolveAmsPolicy } from "./ams-policy.js";
+import { amsPolicyWarningJsonFields, renderAmsPolicyWarnings, resolveAmsPolicy } from "./ams-policy.js";
 import { pollPrDisposition, classifyPrDisposition } from "./pr-disposition-poller.js";
 import type { PollPrDispositionOptions } from "./pr-disposition-poller.js";
 import { pollCheckRuns } from "./ci-poller.js";
@@ -79,6 +79,8 @@ export type LoopCycleSummary = {
   ciConclusion?: CheckRunConclusion | null;
   reentered?: boolean;
   reasons?: string[];
+  amsPolicySource?: string;
+  amsPolicyWarnings?: string[];
 };
 
 export type RunLoopOptions = {
@@ -150,43 +152,43 @@ export function parseLoopArgs(args: string[]): ParsedLoopArgs {
   const targets: string[] = [];
 
   for (let index = 0; index < args.length; index += 1) {
-    const token = args[index]!;
-    if (token === "--json") {
+    const arg = args[index]!;
+    if (arg === "--json") {
       options.json = true;
       continue;
     }
-    if (token === "--live") {
+    if (arg === "--live") {
       options.live = true;
       continue;
     }
     // #4847: see attempt-cli.js's own --dry-run comment -- distinct from --live's absence, this short-circuits
     // BEFORE governor state or any other store is opened, guaranteeing zero discovery/queue/ledger writes.
-    if (token === "--dry-run") {
+    if (arg === "--dry-run") {
       options.dryRun = true;
       continue;
     }
-    if (token === "--search") {
+    if (arg === "--search") {
       const value = args[index + 1];
       if (!value || value.startsWith("-")) return { error: LOOP_USAGE };
       options.search = value;
       index += 1;
       continue;
     }
-    if (token === "--miner-login") {
+    if (arg === "--miner-login") {
       const value = args[index + 1];
       if (!value || value.startsWith("-")) return { error: LOOP_USAGE };
       options.minerLogin = value;
       index += 1;
       continue;
     }
-    if (token === "--base") {
+    if (arg === "--base") {
       const value = args[index + 1];
       if (!value || value.startsWith("-")) return { error: LOOP_USAGE };
       options.base = value;
       index += 1;
       continue;
     }
-    if (token === "--max-cycles") {
+    if (arg === "--max-cycles") {
       const value = args[index + 1];
       if (!value || value.startsWith("-")) return { error: LOOP_USAGE };
       try {
@@ -197,7 +199,7 @@ export function parseLoopArgs(args: string[]): ParsedLoopArgs {
       index += 1;
       continue;
     }
-    if (token === "--cycle-delay-ms") {
+    if (arg === "--cycle-delay-ms") {
       const value = args[index + 1];
       if (!value || value.startsWith("-")) return { error: LOOP_USAGE };
       try {
@@ -208,9 +210,9 @@ export function parseLoopArgs(args: string[]): ParsedLoopArgs {
       index += 1;
       continue;
     }
-    if (token.startsWith("-")) return { error: `Unknown option: ${token}` };
-    const target = parseRepoTarget(token);
-    if (!target) return { error: `Repository must be in owner/repo form: ${token}` };
+    if (arg.startsWith("-")) return { error: `Unknown option: ${arg}` };
+    const target = parseRepoTarget(arg);
+    if (!target) return { error: `Repository must be in owner/repo form: ${arg}` };
     targets.push(target);
   }
 
@@ -337,6 +339,7 @@ export async function runLoop(args: string[], options: RunLoopOptions = {}): Pro
   const cycles: LoopCycleSummary[] = [];
   let sinceSeq = eventLedger.readEvents({}).at(-1)?.seq ?? 0;
   let haltReason: string | null = null;
+  let amsPolicyWithWarnings: { source: string; warnings: string[] } | null = null;
 
   try {
     // Checked BEFORE any work at all -- including the very first discovery call -- so an already-active kill
@@ -420,6 +423,9 @@ export async function runLoop(args: string[], options: RunLoopOptions = {}): Pro
       const claimedEntry = claimed;
 
       const amsPolicy = await resolveAmsPolicyFn(claimedEntry.repoFullName, { env });
+      if (amsPolicy.warnings.length > 0) {
+        amsPolicyWithWarnings = { source: amsPolicy.source, warnings: amsPolicy.warnings };
+      }
       // Real, SQLite-persisted per-item convergence history (#5677): the dequeueNext claim above already recorded
       // this attempt and the markDone/markFailed calls below record the outcome, so reading it back here shares one
       // source of truth with attempt-cli.js (#5654) and survives a loop-daemon restart instead of resetting.
@@ -613,6 +619,7 @@ export async function runLoop(args: string[], options: RunLoopOptions = {}): Pro
         ciConclusion,
         reentered: reentry.decision.reenter,
         reasons: reentry.decision.reasons,
+        ...amsPolicyWarningJsonFields(amsPolicy),
       });
 
       if (!reentry.decision.reenter) {
@@ -644,11 +651,21 @@ export async function runLoop(args: string[], options: RunLoopOptions = {}): Pro
     }
 
     // After the max-cycles release block above, haltReason is always set on a clean exit.
-    const summary = { haltReason, cyclesRun: cycles.length, cycles };
+    const summary = {
+      haltReason,
+      cyclesRun: cycles.length,
+      cycles,
+      ...(amsPolicyWithWarnings ? amsPolicyWarningJsonFields(amsPolicyWithWarnings) : {}),
+    };
     if (parsed.json) {
       console.log(JSON.stringify(summary, null, 2));
     } else {
-      console.log(`Loop finished after ${cycles.length} cycle(s): ${haltReason}.`);
+      console.log(
+        [
+          ...(amsPolicyWithWarnings ? renderAmsPolicyWarnings(amsPolicyWithWarnings) : []),
+          `Loop finished after ${cycles.length} cycle(s): ${haltReason}.`,
+        ].join("\n"),
+      );
     }
     return 0;
   } catch (error) {

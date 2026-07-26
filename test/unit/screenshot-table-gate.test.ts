@@ -587,6 +587,67 @@ describe("evaluateScreenshotTableGate", () => {
       expect(result).toEqual({ violated: false, reason: null });
     });
 
+    it("REGRESSION (#8866): a complete matrix that passed for head A is stale on head B when the body never changed", () => {
+      const passOnPush1 = evaluateScreenshotTableGate({
+        config: matrixConfig(),
+        prBody: FULL_MATRIX_BODY,
+        prLabels: [],
+        changedFiles: [],
+        headSha: "matrix-push-1",
+      });
+      expect(passOnPush1).toEqual({
+        violated: false,
+        reason: null,
+        presenceModeSatisfiedState: {
+          headSha: "matrix-push-1",
+          evidenceFingerprint: expect.any(String),
+        },
+      });
+      const staleOnPush2 = evaluateScreenshotTableGate({
+        config: matrixConfig(),
+        prBody: FULL_MATRIX_BODY,
+        prLabels: [],
+        changedFiles: [],
+        headSha: "matrix-push-2",
+        presenceModeSatisfied: passOnPush1.presenceModeSatisfiedState,
+      });
+      expect(staleOnPush2.violated).toBe(true);
+      expect(staleOnPush2.presenceModeSatisfiedState).toBeUndefined();
+    });
+
+    it("matrix mode is not stale when the contributor re-affirms with different image URLs on the new head (#8866)", () => {
+      const push1Body = FULL_MATRIX_BODY;
+      const push1 = evaluateScreenshotTableGate({
+        config: matrixConfig(),
+        prBody: push1Body,
+        prLabels: [],
+        changedFiles: [],
+        headSha: "matrix-push-1",
+      });
+      const reaffirmedBody = FULL_MATRIX_BODY.replaceAll("x.png", "x-v2.png").replaceAll("y.png", "y-v2.png");
+      const push2 = evaluateScreenshotTableGate({
+        config: matrixConfig(),
+        prBody: reaffirmedBody,
+        prLabels: [],
+        changedFiles: [],
+        headSha: "matrix-push-2",
+        presenceModeSatisfied: push1.presenceModeSatisfiedState,
+      });
+      expect(push2.violated).toBe(false);
+      expect(push2.presenceModeSatisfiedState?.headSha).toBe("matrix-push-2");
+    });
+
+    it("matrix mode without a headSha stays byte-identical to pre-#8866 (no checkpoint, no staleness)", () => {
+      const result = evaluateScreenshotTableGate({
+        config: matrixConfig(),
+        prBody: FULL_MATRIX_BODY,
+        prLabels: [],
+        changedFiles: [],
+        presenceModeSatisfied: { headSha: "old", evidenceFingerprint: "anything" },
+      });
+      expect(result).toEqual({ violated: false, reason: null });
+    });
+
     it("REGRESSION (metagraphed PR #4661 shape): desktop-only before/after (4/12 images) still violates matrix mode", () => {
       const desktopOnlyBody = [
         "| Theme | Before | After |",

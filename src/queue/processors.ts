@@ -3123,12 +3123,12 @@ async function runAgentMaintenancePlanAndExecute(
     screenshotTableGateResult.violated && screenshotTableGateConfig.action === "close"
       ? { matched: true, reason: screenshotTableGateResult.reason }
       : undefined;
-  // #stale-screenshot-table-fix: presence mode just independently re-confirmed the gate for THIS head SHA --
-  // persist the (headSha, evidenceFingerprint) checkpoint so a LATER push that carries the SAME UNCHANGED
-  // evidence correctly re-violates instead of silently staying green forever (see evaluateScreenshotTableGate's
-  // staleness comment). Best-effort, mirrors markPullRequestVisualCaptureSatisfied's call site: a write failure
-  // here just means the next evaluation can't tell this evidence was already checked, never blocks the rest of
-  // the maintenance pass.
+  // #stale-screenshot-table-fix / #8866: presence or matrix mode just independently re-confirmed the gate for
+  // THIS head SHA -- persist the (headSha, evidenceFingerprint) checkpoint so a LATER push that carries the
+  // SAME UNCHANGED evidence correctly re-violates instead of silently staying green forever (see
+  // evaluateScreenshotTableGate's staleness comment). Best-effort, mirrors markPullRequestVisualCaptureSatisfied's
+  // call site: a write failure here just means the next evaluation can't tell this evidence was already checked,
+  // never blocks the rest of the maintenance pass.
   if (screenshotTableGateResult.presenceModeSatisfiedState) {
     await markPullRequestScreenshotTablePresenceSatisfied(env, repoFullName, pr.number, screenshotTableGateResult.presenceModeSatisfiedState).catch((error) => {
       console.log(

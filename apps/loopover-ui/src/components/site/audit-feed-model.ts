@@ -125,5 +125,8 @@ export function skipReasonTone(reason: string): "ready" | "info" | "warn" | "deg
   if (reason === "bot_author" || reason === "not_official_gittensor_miner") return "info";
   if (reason === "surface_off" || reason === "maintainer_author") return "warn";
   if (reason === "miner_detection_unavailable" || reason === "missing_author") return "degraded";
-  return "ready";
+  // #8666: an unrecognized reason degrades to the neutral "info" tone (matching
+  // contributor-quality-table-model's `band` convention), not "ready" -- a green/healthy tone would imply a
+  // successful state for a value that is actually unclassified, since none of the enumerated reasons map to "ready".
+  return "info";
 }

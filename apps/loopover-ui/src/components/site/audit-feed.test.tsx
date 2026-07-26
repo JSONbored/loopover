@@ -11,6 +11,7 @@ import {
   normalizeSinceInput,
   normalizeSkippedPrAuditExport,
   pullRequestHref,
+  skipReasonTone,
 } from "@/components/site/audit-feed-model";
 import { AuditFeed } from "@/components/site/audit-feed";
 
@@ -60,6 +61,19 @@ describe("audit feed helpers", () => {
     ).toBe(
       "/v1/app/skipped-pr-audit?limit=50&offset=50&repoFullName=repo-owner%2Fowned-repo&reason=bot_author&since=2026-05-28T00%3A00%3A00.000Z",
     );
+  });
+
+  it("maps each enumerated skip reason to its tone and degrades an unrecognized reason to neutral 'info', not 'ready' (#8666)", () => {
+    expect(skipReasonTone("bot_author")).toBe("info");
+    expect(skipReasonTone("not_official_gittensor_miner")).toBe("info");
+    expect(skipReasonTone("surface_off")).toBe("warn");
+    expect(skipReasonTone("maintainer_author")).toBe("warn");
+    expect(skipReasonTone("miner_detection_unavailable")).toBe("degraded");
+    expect(skipReasonTone("missing_author")).toBe("degraded");
+    // An unrecognized/legacy reason must NOT read as a green "ready" (healthy) pill -- it degrades to the
+    // neutral "info" tone, matching contributor-quality-table-model's convention for unknown enum-like values.
+    expect(skipReasonTone("some_future_reason")).not.toBe("ready");
+    expect(skipReasonTone("some_future_reason")).toBe("info");
   });
 
   it("formats skip reasons and pull request links", () => {

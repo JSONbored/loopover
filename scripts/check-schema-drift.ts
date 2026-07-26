@@ -45,6 +45,7 @@ export const RAW_SQL_ONLY_TABLES: Set<string> = new Set([
   "decision_ledger",
   "decision_records",
   "decision_replay_inputs",
+  "ai_review_verdict_flips",
   "global_agent_controls",
   "global_contributor_blacklist",
   "global_moderation_config",

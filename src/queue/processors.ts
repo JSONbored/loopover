@@ -41,6 +41,7 @@ import {
   markRepositoriesRemovedFromInstallation,
   persistAdvisory,
   getCachedAiReview,
+  getCachedAiReviewAcrossHeads,
   getLatestPublishedAiReview,
   countPublishedAiReviewHeads,
   putCachedAiReview,
@@ -648,6 +649,7 @@ import {
 import { AI_JUDGMENT_BLOCKER_CODES } from "../rules/advisory";
 import { computeSalvageabilityForTarget } from "../review/salvageability-wire";
 import { deriveDecisionReasonCode, persistDecisionReplayInputForGate } from "../review/decision-replay";
+import { recordVerdictFlip } from "../review/verdict-flip-store";
 import { REVIEW_PROMPT_VERSION, REVIEW_SYSTEM_PROMPT } from "../services/ai-review";
 import { resolveAutomaticCloseConfidence } from "../review/risk-control-wire";
 import { maybeApplyCloseAuditHoldout } from "../review/close-audit-holdout";
@@ -10381,7 +10383,7 @@ async function maybePublishPrPublicSurface(
           // (unbounded reuse, exactly as before this fix).
           const cachedReview = webhook.forceAiReview === true
             ? null
-            : await getCachedAiReview(
+            : (await getCachedAiReview(
                 env,
                 repoFullName,
                 pr.number,
@@ -10389,7 +10391,20 @@ async function maybePublishPrPublicSurface(
                 settings.aiReviewMode,
                 inputFingerprint,
                 { allowNonCacheable: true, maxAgeMs: AI_REVIEW_NON_CACHEABLE_RETRY_COOLDOWN_MS },
-              ).catch(() => null);
+              ).catch(() => null)) ??
+              // #9016 (security): the exact-head lookup just missed. Before spending a fresh, independently
+              // random LLM roll, check whether this PR already has a verdict computed against IDENTICAL
+              // review content (the fingerprint already hashes the actual patch content, not just the head
+              // SHA) under a DIFFERENT head — closes the no-op-recommit reroll exploit without weakening the
+              // cache's normal same-head behavior at all.
+              (await getCachedAiReviewAcrossHeads(
+                env,
+                repoFullName,
+                pr.number,
+                settings.aiReviewMode,
+                inputFingerprint,
+                { maxAgeMs: AI_REVIEW_NON_CACHEABLE_RETRY_COOLDOWN_MS },
+              ).catch(() => null));
           if (cachedReview && hasPublicReviewAssessment(cachedReview.notes)) {
             advisory.findings.push(...cachedReview.findings);
             aiReview = cachedReview;
@@ -10475,6 +10490,34 @@ async function maybePublishPrPublicSurface(
               deliveryId: webhook.deliveryId,
               preComputedReputationSkip,
             });
+            // #9016 (security): a FRESH verdict (this branch only runs on a genuine cache miss — never for a
+            // reused cache hit, which is not a new independent roll) is checked against the PR's flip history.
+            // The AI reviewer is non-deterministic, so a contributor can otherwise force re-rolls (a no-op
+            // recommit, or a same-head retry after the non-cacheable cooldown lapses) until a lucky CLEAN roll
+            // auto-merges a PR another roll flagged as blocked. Scoped to block mode only — advisory mode never
+            // gates on the AI verdict, so there is nothing to shop for there. Best-effort/fail-open by
+            // construction (recordVerdictFlip never throws); a persistable placeholder never counts as a roll.
+            if (aiReview && aiReview.persistable !== false && settings.aiReviewMode === "block") {
+              const verdictFlip = await recordVerdictFlip(env, repoFullName, pr.number, aiReview.findings ?? []);
+              if (verdictFlip.escalate) {
+                advisory.findings.push({
+                  code: "ai_review_inconclusive",
+                  severity: "warning",
+                  title: "AI review verdict has flip-flopped too many times",
+                  detail: `This PR's AI review result has changed direction ${verdictFlip.flipCount} times across recent re-reviews of the same or similar content. Repeated re-rolls of a non-deterministic reviewer are held for a human instead of trusting the newest roll.`,
+                  action: "A maintainer should review this PR directly, or push a substantive fix so the next review reflects real content change.",
+                });
+                incr("loopover_ai_review_verdict_flip_escalated_total");
+                await recordAuditEvent(env, {
+                  eventType: "github_app.ai_review_verdict_flip_escalated",
+                  actor: author,
+                  targetKey: `${repoFullName}#${pr.number}`,
+                  outcome: "completed",
+                  detail: `verdict flipped ${verdictFlip.flipCount} times; held for human review`,
+                  metadata: { deliveryId: webhook.deliveryId, repoFullName, headSha: advisory.headSha ?? null, flipCount: verdictFlip.flipCount },
+                }).catch(() => undefined);
+              }
+            }
             // `persistable === false` (only the lock-contention placeholder — see runAiReviewForAdvisory's return
             // type doc comment) is excluded from EVERY write, not just the durable one: it describes a transient
             // scheduling race, not a real AI opinion, and the concurrent pass it deferred to persists the real

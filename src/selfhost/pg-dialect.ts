@@ -15,6 +15,9 @@ const REPLACE_CONFLICT_KEYS: Record<string, string[]> = {
   // #8893: orb_reuse_counters (migrations/0177) is written with INSERT OR REPLACE by src/orb/ingest.ts; its
   // PRIMARY KEY (instance_id, day) is the conflict target the hourly ORB export needs on self-host Postgres.
   orb_reuse_counters: ["instance_id", "day"],
+  // #9016: ai_review_verdict_flips (migrations/0183) is written with ON CONFLICT by recordVerdictFlip;
+  // its PRIMARY KEY (repo_full_name, pull_number) is the conflict target on self-host Postgres.
+  ai_review_verdict_flips: ["repo_full_name", "pull_number"],
   // ams_signals (#8382): TWO columns here, deliberately — this must name the table's REAL unique constraint
   // (`UNIQUE (instance_id, pr_hash)`, migrations/0148_ams_signals.sql), or Postgres rejects the generated
   // `ON CONFLICT` with "no unique or exclusion constraint matching". The 3-column shape orb_signals needed

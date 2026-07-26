@@ -341,6 +341,11 @@ describe("queue processors", () => {
       if (url.includes("/commits/c9/status")) return Response.json({ state: "success", statuses: [] });
       if (url.endsWith("/pulls/9/reviews") && init?.method === "POST") return Response.json({ id: 1 });
       if (url.endsWith("/pulls/9/reviews")) return Response.json([]);
+      // The one-shot close posts a close-explanation comment (createOrUpdateCloseExplanationComment): its
+      // marker search LISTS the PR's comments first, and the list endpoint must return an ARRAY -- the
+      // generic `Response.json({})` fallback below would make the close action itself fail.
+      if (url.includes("/issues/9/comments") && init?.method === "POST") return Response.json({ id: 91 });
+      if (url.includes("/issues/9/comments")) return Response.json([]);
       if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
       if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
       return Response.json({});

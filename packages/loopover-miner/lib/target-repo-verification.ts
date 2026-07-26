@@ -14,6 +14,9 @@
 import { spawn as nodeSpawn } from "node:child_process";
 import type { RepoStackResult } from "./stack-detection.js";
 
+/** The slice of ChildProcess the tree-kill needs — narrow so tests can drive both arms with plain fakes. */
+export type KillableChild = { pid?: number | undefined; kill: (signal: NodeJS.Signals) => boolean };
+
 export type TargetRepoVerificationSpawn = (
   command: string,
   options: { cwd: string; timeoutMs: number },
@@ -39,29 +42,72 @@ export const DEFAULT_VERIFICATION_TIMEOUT_MS = 10 * 60 * 1000;
 /** Postmortem detail bound — enough tail to show the failing assertion, never an unbounded log dump. */
 export const VERIFICATION_OUTPUT_TAIL_CHARS = 4000;
 
+/** Post-timeout grace before giving up on the `close` event: a killed process group's pipes close nearly
+ *  instantly, so this only fires when something double-forked out of the group and kept the pipes open —
+ *  the gate resolves as failed rather than hanging on that orphan. */
+export const VERIFICATION_KILL_SETTLE_MS = 5000;
+
+/** Kill the command's whole detached process group via the NEGATIVE pid: a test command is routinely a tree
+ *  (`npm test` → node → workers), and killing only the shell leaves grandchildren holding the stdio pipes —
+ *  the `close` event then waits on THEM, stalling the gate far past its own timeout (observed as the 30s
+ *  hang on Linux CI). Falls back to the plain single-process kill when the group kill isn't possible
+ *  (no pid, or the group is already gone and the signal throws). */
+export function killVerificationProcessTree(child: KillableChild, killGroup: (pid: number, signal: NodeJS.Signals) => void = (pid, signal) => process.kill(-pid, signal)): void {
+  try {
+    if (typeof child.pid !== "number") throw new Error("child has no pid");
+    killGroup(child.pid, "SIGKILL");
+  } catch {
+    child.kill("SIGKILL");
+  }
+}
+
 /** Default spawn: shell-executed (detected commands are shell strings like "npm test" / "ruff check ."),
- *  merged stdout+stderr, killed at the timeout (a killed process reports code null → treated as failure). */
-export const defaultVerificationSpawn: TargetRepoVerificationSpawn = (command, options) =>
-  new Promise((resolve) => {
-    const child = nodeSpawn(command, { cwd: options.cwd, shell: true, stdio: ["ignore", "pipe", "pipe"] });
+ *  merged stdout+stderr, killed at the timeout (a killed/timed-out command reports code null → treated as
+ *  failure upstream). `internals` exists ONLY for tests to reach the timeout/settle arms deterministically;
+ *  production callers always take the defaults. */
+export function runShellCommandWithTreeKill(
+  command: string,
+  options: { cwd: string; timeoutMs: number },
+  internals: { killTree?: (child: KillableChild) => void; settleMs?: number } = {},
+): Promise<{ code: number | null; output: string }> {
+  const killTree = internals.killTree ?? killVerificationProcessTree;
+  const settleMs = internals.settleMs ?? VERIFICATION_KILL_SETTLE_MS;
+  return new Promise((resolve) => {
+    // detached: its own process group, so the timeout can kill the entire tree, not just the shell.
+    const child = nodeSpawn(command, { cwd: options.cwd, shell: true, stdio: ["ignore", "pipe", "pipe"], detached: true });
     let output = "";
+    let settled = false;
+    let settleTimer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (result: { code: number | null; output: string }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (settleTimer !== undefined) clearTimeout(settleTimer);
+      resolve(result);
+    };
     const capture = (chunk: Buffer) => {
       output = (output + chunk.toString()).slice(-VERIFICATION_OUTPUT_TAIL_CHARS * 4);
     };
     child.stdout?.on("data", capture);
     child.stderr?.on("data", capture);
     const timer = setTimeout(() => {
-      child.kill("SIGKILL");
+      killTree(child);
+      // Bounded settle: if some orphan still holds the pipes open after the group kill, resolve as a
+      // timeout failure anyway — the verification gate must never outlive its own per-command bound.
+      settleTimer = setTimeout(() => {
+        finish({ code: null, output: `${output}\n[verification timeout after ${options.timeoutMs}ms — process tree killed]` });
+      }, settleMs);
     }, options.timeoutMs);
     child.on("error", (error) => {
-      clearTimeout(timer);
-      resolve({ code: null, output: `${output}\n${String(error)}` });
+      finish({ code: null, output: `${output}\n${String(error)}` });
     });
     child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ code, output });
+      finish({ code, output });
     });
   });
+}
+
+export const defaultVerificationSpawn: TargetRepoVerificationSpawn = (command, options) => runShellCommandWithTreeKill(command, options);
 
 export async function runTargetRepoVerification(options: {
   worktreeDir: string;

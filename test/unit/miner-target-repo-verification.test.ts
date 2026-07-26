@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_VERIFICATION_TIMEOUT_MS,
   defaultVerificationSpawn,
+  killVerificationProcessTree,
+  runShellCommandWithTreeKill,
   runTargetRepoVerification,
   VERIFICATION_OUTPUT_TAIL_CHARS,
   type TargetRepoVerificationSpawn,
@@ -101,5 +103,33 @@ describe("runTargetRepoVerification (#8807)", () => {
       stack: detectedStack({ testCommand: "true", lintCommand: null, buildCommand: null }),
     });
     expect(result.status).toBe("passed");
+  }, 15_000);
+
+  it("killVerificationProcessTree kills the GROUP via negative pid, falling back to the single-process kill on no-pid or a thrown group kill", () => {
+    const groupKills: Array<[number, string]> = [];
+    const kill = vi.fn().mockReturnValue(true);
+    // Happy arm: pid present → group kill, no single-process fallback.
+    killVerificationProcessTree({ pid: 4242, kill }, (pid, signal) => void groupKills.push([pid, signal]));
+    expect(groupKills).toEqual([[4242, "SIGKILL"]]);
+    expect(kill).not.toHaveBeenCalled();
+    // No-pid arm (spawn failed before assigning one) → single-process fallback.
+    killVerificationProcessTree({ pid: undefined, kill });
+    expect(kill).toHaveBeenCalledWith("SIGKILL");
+    // Thrown-group-kill arm (group already reaped → ESRCH) → single-process fallback.
+    const killAfterThrow = vi.fn().mockReturnValue(true);
+    killVerificationProcessTree({ pid: 4242, kill: killAfterThrow }, () => {
+      throw new Error("ESRCH");
+    });
+    expect(killAfterThrow).toHaveBeenCalledWith("SIGKILL");
+  });
+
+  it("the bounded settle resolves a timeout even when the kill leaves an orphan holding the pipes (the gate can never hang)", async () => {
+    // A no-op killTree simulates a survivor that keeps stdout open past the kill: the settle timer must
+    // still resolve the spawn as a timeout failure instead of waiting for the orphan's own exit.
+    const result = await runShellCommandWithTreeKill("sleep 1", { cwd: process.cwd(), timeoutMs: 150 }, { killTree: () => undefined, settleMs: 100 });
+    expect(result.code).toBeNull();
+    expect(result.output).toContain("verification timeout after 150ms");
+    // Let the (never-killed) command's own close event fire afterwards: the settled guard must ignore it.
+    await new Promise((r) => setTimeout(r, 1100));
   }, 15_000);
 });

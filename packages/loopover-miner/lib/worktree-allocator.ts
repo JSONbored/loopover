@@ -273,12 +273,16 @@ export function openWorktreeAllocator(options: {
   const maxLeaseMs = normalizeMaxLeaseMs(options.maxLeaseMs);
   const hostId = normalizeHostId(options.hostId);
   const processPid = Number.isInteger(options.processPid) ? options.processPid as number : process.pid;
-  const nowMs = Number.isFinite(options.nowMs) ? options.nowMs as number : Date.now();
+  // A function, not a captured value: production callers (no injected nowMs) get a genuinely fresh
+  // Date.now() on every reclaim call -- including each acquire() below (#8859) -- while a test's injected
+  // nowMs stays frozen at that same simulated instant across the initial open-time reclaim AND every
+  // later acquire() in that test, matching the deterministic clock the rest of this file's tests assume.
+  const getNowMs = Number.isFinite(options.nowMs) ? () => options.nowMs as number : () => Date.now();
 
   const db = openLocalStoreDb(resolvedPath);
   ensureSlotTable(db);
   ensureSlots(db, worktreeBaseDir, maxConcurrency);
-  reclaimOrphanedAllocations(db, nowMs, maxLeaseMs, hostId);
+  reclaimOrphanedAllocations(db, getNowMs(), maxLeaseMs, hostId);
 
   const getByAttempt = db.prepare(
     "SELECT slot_index, worktree_path, attempt_id, repo_full_name, status, owner_pid, owner_host, allocated_at FROM worktree_slots WHERE attempt_id = ?",
@@ -326,6 +330,10 @@ export function openWorktreeAllocator(options: {
     processPid,
     hostId,
     acquire(attemptId, repoFullName) {
+      // Reclaim orphaned slots first, so a peer's crashed/killed allocation frees up promptly instead of
+      // only at the next process-restart's openWorktreeAllocator() call (#8859) -- same per-call sweep
+      // pattern as portfolio-queue-manager.ts's claimNextBatch().
+      reclaimOrphanedAllocations(db, getNowMs(), maxLeaseMs, hostId);
       const normalizedAttempt = normalizeAttemptId(attemptId);
       const normalizedRepo = normalizeRepoFullName(repoFullName);
       const existing = getByAttempt.get(normalizedAttempt) as WorktreeSlotRow | undefined;

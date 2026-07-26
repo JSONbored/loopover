@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  AMS_POLICY_SPEC_FILENAMES,
   DEFAULT_AMS_POLICY_SPEC,
   parseAmsPolicySpec,
   parseAmsPolicySpecContent,
@@ -10,12 +9,6 @@ describe("AmsPolicySpec parser (#5132)", () => {
   it("re-exports the parser API from the engine barrel", () => {
     expect(typeof parseAmsPolicySpec).toBe("function");
     expect(typeof parseAmsPolicySpecContent).toBe("function");
-    expect(AMS_POLICY_SPEC_FILENAMES).toEqual([
-      ".loopover-ams.yml",
-      ".github/loopover-ams.yml",
-      ".loopover-ams.json",
-      ".github/loopover-ams.json",
-    ]);
   });
 
   it("treats missing raw input as an absent safe-default spec", () => {

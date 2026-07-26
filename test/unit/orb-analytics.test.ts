@@ -87,6 +87,38 @@ describe("computeFleetAnalytics()", () => {
     expect(inst.fnRate).toBeCloseTo(1 / 5);
   });
 
+  it("decisionAccuracy (#8820) scores only merge/close verdicts — holds are excluded and outright mispredictions COUNT", async () => {
+    const env = createTestEnv();
+    // The live-fleet shape that exposed the bug: a large block of holds plus real mispredictions that carry
+    // no reversal marker at all.
+    await signals(env, "i", 10, { verdict: "merge", outcome: "merged" }); // confirmed
+    await signals(env, "i", 2, { verdict: "merge", outcome: "closed" }); // WRONG, no reversal marker
+    await signals(env, "i", 6, { verdict: "close", outcome: "closed" }); // confirmed
+    await signals(env, "i", 2, { verdict: "close", outcome: "merged" }); // WRONG, no reversal marker
+    await signals(env, "i", 30, { verdict: "hold", outcome: "merged" }); // deferrals — never scored
+    const inst = (await computeFleetAnalytics(env)).instances[0]!;
+    expect(inst.decisionAccuracy).toBeCloseTo(16 / 20); // 80% over the 20 real decisions
+    // The old published formula would have called this ~100% — every miss here is marker-less, and the 30
+    // holds dominate its denominator. This gap IS the bug.
+    expect(1 - inst.reversalRate).toBe(1);
+  });
+
+  it("decisionAccuracy is null for a holds-only instance (no decision to score) and drives the fleet median", async () => {
+    const env = createTestEnv();
+    await signals(env, "holds-only", 6, { verdict: "hold", outcome: "merged" });
+    const holdsOnly = (await computeFleetAnalytics(env)).instances[0]!;
+    expect(holdsOnly.decisionAccuracy).toBeNull();
+
+    const env2 = createTestEnv();
+    await signals(env2, "a", 8, { verdict: "merge", outcome: "merged" });
+    await signals(env2, "a", 2, { verdict: "merge", outcome: "closed" }); // 0.8
+    await signals(env2, "b", 9, { verdict: "close", outcome: "closed" });
+    await signals(env2, "b", 1, { verdict: "close", outcome: "merged" }); // 0.9
+    await env2.DB.prepare(`INSERT INTO orb_instances (instance_id, registered) VALUES ('a', 1), ('b', 1)`).run();
+    const fleet = await computeFleetAnalytics(env2);
+    expect(fleet.fleet.decisionAccuracy).toBeCloseTo(0.85); // median of 0.8 and 0.9
+  });
+
   it("a superseded close (#8820) disconfirms closePrecision and counts toward reversalRate, exactly like a reopen", async () => {
     const env = createTestEnv();
     await signals(env, "i", 3, { verdict: "close", outcome: "closed", reversal: "none" }); // confirmed

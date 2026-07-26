@@ -162,8 +162,11 @@ export function ProofOfPowerStats({ className }: { className?: string }) {
             label="Decision accuracy"
             value={displayedAccuracyPct == null ? "—" : `${displayedAccuracyPct}%`}
             hint={
+              // #8820: the fleet number is the share of merge/close DECISIONS the realized outcome confirmed
+              // (holds excluded -- they're deferrals, not decisions), so say that rather than the old
+              // "reversal-grounded" wording, which described a formula the surface no longer publishes.
               fleetEligible
-                ? `across ${intFmt.format(data.fleetAccuracy.instanceCount)} self-hosted instance${data.fleetAccuracy.instanceCount === 1 ? "" : "s"}${data.fleetAccuracy.gamingFlagsCaught > 0 ? ` · ${intFmt.format(data.fleetAccuracy.gamingFlagsCaught)} gaming pattern${data.fleetAccuracy.gamingFlagsCaught === 1 ? "" : "s"} flagged` : ""}`
+                ? `merge/close calls confirmed by outcome · ${intFmt.format(data.fleetAccuracy.instanceCount)} self-hosted instance${data.fleetAccuracy.instanceCount === 1 ? "" : "s"}${data.fleetAccuracy.gamingFlagsCaught > 0 ? ` · ${intFmt.format(data.fleetAccuracy.gamingFlagsCaught)} gaming pattern${data.fleetAccuracy.gamingFlagsCaught === 1 ? "" : "s"} flagged` : ""}`
                 : totals.reversed > 0
                   ? `${intFmt.format(totals.reversed)} human-reversed`
                   : "reversal-grounded"

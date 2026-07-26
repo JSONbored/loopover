@@ -495,8 +495,30 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
 
     const out = await getPublicStats(env, NOW);
 
-    // decided=5 (>= computeFleetAnalytics's MIN_DECIDED), reversed=1 -> reversalRate 0.2 -> accuracy 80%.
+    // 5 merge verdicts, 4 confirmed (the 5th was reverted) -> decisionAccuracy 4/5 -> 80%.
     expect(out.fleetAccuracy).toEqual({ accuracyPct: 80, instanceCount: 1, windowDays: 90, gamingFlagsCaught: 0 });
+  });
+
+  it("REGRESSION (#8820): the published fleet accuracy scores DECISIONS — holds are excluded and marker-less mispredictions count", async () => {
+    const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "" });
+    const db = env.DB;
+    await db.prepare("INSERT INTO orb_instances (instance_id, registered) VALUES (?, 1)").bind("inst-1").run();
+    const signal = async (n: number, verdict: string, outcome: string, tag: string) => {
+      for (let i = 0; i < n; i++) {
+        await db
+          .prepare(`INSERT INTO orb_signals (instance_id, repo_hash, pr_hash, gate_verdict, outcome, reversal_flag) VALUES (?, 'repo-hash', ?, ?, ?, 'none')`)
+          .bind("inst-1", `pr-${tag}-${i}`, verdict, outcome)
+          .run();
+      }
+    };
+    await signal(6, "merge", "merged", "ok"); // confirmed
+    await signal(2, "merge", "closed", "bad"); // WRONG, and carries no reversal marker
+    await signal(40, "hold", "merged", "hold"); // deferrals — must not enter the denominator
+
+    const out = await getPublicStats(env, NOW);
+    // 8 real decisions, 6 confirmed -> 75%. The retired `1 - reversalRate` formula would have published
+    // 100% here: zero reversal markers, and 40 holds swamping its denominator.
+    expect(out.fleetAccuracy.accuracyPct).toBe(75);
   });
 
   it("REGRESSION (#fairness-analytics): surfaces gamingFlagsCaught from computeFleetAnalytics's anti-farming detector", async () => {

@@ -234,12 +234,12 @@ export interface PublicStatsPayload {
     closed: number;
     accuracyPct: number | null;
   }>;
-  /** Live, fleet-wide reversal-grounded accuracy across REGISTERED self-hosted ORB instances
-   *  (computeFleetAnalytics, src/orb/analytics.ts) -- unlike totals.accuracyPct (own-ledger, frozen as of the
-   *  self-host cutover, see the file header), this keeps growing as the fleet operates, so it's the number that
-   *  actually reflects how ORB is treating today's contributors. accuracyPct is null until at least one
-   *  registered instance clears computeFleetAnalytics's own minimum-volume bar -- the caller falls back to
-   *  totals.accuracyPct in that case. */
+  /** Live, fleet-wide DECISION accuracy across REGISTERED self-hosted ORB instances (computeFleetAnalytics,
+   *  src/orb/analytics.ts): the share of the gate's own merge/close decisions that the realized outcome
+   *  confirmed (#8820). Unlike totals.accuracyPct (own-ledger, frozen as of the self-host cutover, see the
+   *  file header), this keeps growing as the fleet operates, so it's the number that actually reflects how
+   *  ORB is treating today's contributors. accuracyPct is null until at least one registered instance clears
+   *  computeFleetAnalytics's own minimum-volume bar -- the caller falls back to totals.accuracyPct then. */
   fleetAccuracy: {
     accuracyPct: number | null;
     instanceCount: number;
@@ -419,16 +419,21 @@ export async function getPublicStats(
   totals.closed += orb.closed;
   totals.handled += orb.total;
 
-  // computeFleetAnalytics's fleet.reversalRate is a median over ELIGIBLE instances, each of which always has a
-  // non-null reversalRate (InstanceMetrics.reversalRate is a plain division, never null) -- it can only be null
-  // when there are zero eligible instances, which is exactly the `instanceCount > 0` guard below.
-  let fleetAccuracyPct: number | null = null;
-  if (fleet.instanceCount > 0) {
-    /* v8 ignore next -- fleet.fleet.reversalRate is non-null whenever instanceCount > 0, per the comment above;
-     *  the ?? 0 fallback exists only to satisfy the number|null type, not a reachable runtime case. */
-    const reversalRate = fleet.fleet.reversalRate ?? 0;
-    fleetAccuracyPct = Math.round((1 - reversalRate) * 1000) / 10;
-  }
+  // DECISION-GROUNDED (#8820): publish the share of the gate's own merge/close decisions that the realized
+  // outcome CONFIRMED (fleet.decisionAccuracy), not `1 - reversalRate`.
+  //
+  // The old formula overstated accuracy two ways, and on the live fleet the two differ by ~6 points (93.6%
+  // vs 99.6% at the time of the fix -- real errors, not rounding):
+  //   1. DENOMINATOR: reversalRate divides by every signal including `hold` verdicts, which are deferrals to
+  //      a human, not decisions that can be right or wrong. Holds were ~36% of fleet signals, dragging the
+  //      rate toward zero and the published accuracy toward 100 no matter how the gate actually performed.
+  //   2. NUMERATOR: it counted only EXPLICIT reversal markers, so an outright misprediction (the gate said
+  //      merge and the PR ended up closed) never registered at all -- hundreds of them were invisible.
+  // decisionAccuracy is null only when no eligible instance made a single merge/close verdict (holds only),
+  // which is a genuine "no signal yet" -- the caller falls back to the own-ledger number exactly as it does
+  // for an empty fleet.
+  const fleetAccuracyPct =
+    fleet.fleet.decisionAccuracy === null ? null : Math.round(fleet.fleet.decisionAccuracy * 1000) / 10;
 
   const reviewed = reviewedOf(totals);
   const w = weeklyRows[0] ?? { reviewed: 0, merged: 0 };

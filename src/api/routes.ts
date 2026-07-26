@@ -4830,6 +4830,30 @@ export function createApp() {
     return c.json(await backfillOpenPullRequestDetails(c.env, { repoFullName: body.repoFullName, mode, ...(Number.isFinite(Number(body?.cursor)) ? { cursor: Number(body.cursor) } : {}) }));
   });
 
+  // #8898: the first real producer for agent-regate-pr's `force` field (src/types.ts) -- every other
+  // producer re-gates automatically and never forces a cache bypass. This lets an operator force a
+  // fresh AI opinion on one specific PR instead of reusing a recent (possibly disputed) result.
+  app.post("/v1/internal/jobs/agent-regate-pr", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    if (typeof body?.repoFullName !== "string" || body.repoFullName.length === 0) return c.json({ error: "repo_full_name_required" }, 400);
+    if (typeof body?.prNumber !== "number" || !Number.isInteger(body.prNumber) || body.prNumber <= 0) return c.json({ error: "pr_number_required" }, 400);
+    const pullRequest = await getPullRequest(c.env, body.repoFullName, body.prNumber);
+    if (!pullRequest) return c.json({ error: "pull_request_not_found" }, 404);
+    const repo = await getRepository(c.env, body.repoFullName);
+    if (!repo || typeof repo.installationId !== "number") return c.json({ error: "repo_not_found" }, 404);
+    const message: JobMessage = {
+      type: "agent-regate-pr",
+      deliveryId: `manual-regate:${body.repoFullName}#${body.prNumber}:${crypto.randomUUID()}`,
+      repoFullName: body.repoFullName,
+      prNumber: body.prNumber,
+      installationId: repo.installationId,
+      force: true,
+      ...(pullRequest.createdAt ? { prCreatedAt: pullRequest.createdAt } : {}),
+    };
+    await c.env.JOBS.send(message);
+    return c.json({ ok: true, status: "queued", repoFullName: body.repoFullName, prNumber: body.prNumber, force: true }, 202);
+  });
+
   app.post("/v1/internal/jobs/refresh-scoring-model", async (c) => {
     const message: JobMessage = { type: "refresh-scoring-model", requestedBy: "api" };
     await c.env.JOBS.send(message);

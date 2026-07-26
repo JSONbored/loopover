@@ -19228,6 +19228,33 @@
           }
         ]
       }
+    },
+    "/v1/internal/jobs/agent-regate-pr": {
+      "post": {
+        "summary": "Force a re-gate of a specific pull request",
+        "responses": {
+          "202": {
+            "description": "Forced re-gate queued"
+          },
+          "400": {
+            "description": "Invalid repo/PR request"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          },
+          "404": {
+            "description": "Pull request or repository not found"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
     }
   },
   "servers": [

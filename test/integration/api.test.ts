@@ -4415,6 +4415,31 @@ describe("api routes", () => {
     expect(sent).toEqual(expect.arrayContaining([expect.objectContaining({ message: expect.objectContaining({ type: "backfill-pr-details", installationId: 654, cursor: 5 }) })]));
     expect((await app.request("/v1/internal/jobs/backfill-pr-details/run", { method: "POST", headers: internalHeaders, body: "{}" }, env)).status).toBe(400);
 
+    // #8898: force-regate route -- validation, not-found, and success branches.
+    expect((await app.request("/v1/internal/jobs/agent-regate-pr", { method: "POST", headers: internalHeaders, body: "{}" }, env)).status).toBe(400);
+    expect((await app.request("/v1/internal/jobs/agent-regate-pr", { method: "POST", headers: internalHeaders, body: JSON.stringify({ repoFullName: "owner/repo" }) }, env)).status).toBe(400);
+    expect((await app.request("/v1/internal/jobs/agent-regate-pr", { method: "POST", headers: internalHeaders, body: JSON.stringify({ repoFullName: "owner/repo", prNumber: 404 }) }, env)).status).toBe(404);
+    expect((await app.request("/v1/internal/jobs/agent-regate-pr", { method: "POST", headers: internalHeaders, body: JSON.stringify({ repoFullName: "owner/other-missing", prNumber: 9 }) }, env)).status).toBe(404);
+    // PR row exists but its repo was never registered (e.g. uninstalled after sync) -- distinct 404 branch.
+    await upsertPullRequestFromGitHub(env, "owner/unregistered", { number: 1, title: "Orphan PR", state: "open", created_at: "2026-06-01T00:00:00Z", labels: [] });
+    expect((await app.request("/v1/internal/jobs/agent-regate-pr", { method: "POST", headers: internalHeaders, body: JSON.stringify({ repoFullName: "owner/unregistered", prNumber: 1 }) }, env)).status).toBe(404);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 9, title: "Test PR", state: "open", created_at: "2026-06-01T00:00:00Z", labels: [] });
+    const queuedRegate = await app.request(
+      "/v1/internal/jobs/agent-regate-pr",
+      { method: "POST", headers: internalHeaders, body: JSON.stringify({ repoFullName: "owner/repo", prNumber: 9 }) },
+      env,
+    );
+    expect(queuedRegate.status).toBe(202);
+    await expect(queuedRegate.json()).resolves.toMatchObject({ ok: true, status: "queued", repoFullName: "owner/repo", prNumber: 9, force: true });
+    expect(sent).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: expect.objectContaining({ type: "agent-regate-pr", repoFullName: "owner/repo", prNumber: 9, installationId: 654, force: true, prCreatedAt: "2026-06-01T00:00:00Z" }),
+        }),
+      ]),
+    );
+    expect((await app.request("/v1/internal/jobs/agent-regate-pr", { method: "POST", body: JSON.stringify({ repoFullName: "owner/repo", prNumber: 9 }) }, env)).status).toBe(401);
+
     expect((await app.request("/v1/internal/jobs/build-contributor-decision-packs/run", { method: "POST", headers: internalHeaders, body: "{}" }, env)).status).toBe(400);
     expect((await app.request("/v1/internal/jobs/refresh-contributor-activity", { method: "POST", headers: internalHeaders, body: "{}" }, env)).status).toBe(400);
     const queuedContributorRefresh = await app.request(

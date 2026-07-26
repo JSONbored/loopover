@@ -31,9 +31,11 @@ export type JobMessage =
       // (#audit-sweep-fanout, deliveryId prefixed "regate-sweep:" — genuinely deferrable maintenance) and the
       // sweep's own outage-repair fan-out (deliveryId prefixed "regate-repair:" — a PR missing a current-head
       // Gate check or public-surface publish); a trailing coalesced re-review after a webhook burst; an
-      // over-cap sibling wake; a linked-issue-change re-review. EXCEPT for the "regate-sweep:" prefix, every
-      // producer carries the real webhook/event deliveryId that caused it — current-HEAD contributor-PR-review
-      // work, never background maintenance (isScheduledRegateSweepJob / githubRateLimitAdmissionTargetForJob in
+      // over-cap sibling wake; a linked-issue-change re-review; an operator-forced re-gate via
+      // POST /v1/internal/jobs/agent-regate-pr (deliveryId prefixed "manual-regate:" — #8898, no real
+      // webhook/event to carry forward). EXCEPT for the "regate-sweep:" prefix, every producer carries the
+      // real webhook/event deliveryId that caused it — current-HEAD contributor-PR-review work, never
+      // background maintenance (isScheduledRegateSweepJob / githubRateLimitAdmissionTargetForJob in
       // ../selfhost/queue-common.ts, #selfhost-queue-liveness).
       type: "agent-regate-pr";
       deliveryId: string;

@@ -1314,6 +1314,17 @@ export function buildOpenApiSpec() {
   });
   registry.registerPath({
     method: "post",
+    path: "/v1/internal/jobs/agent-regate-pr",
+    summary: "Force a re-gate of a specific pull request",
+    responses: {
+      202: { description: "Forced re-gate queued" },
+      400: { description: "Invalid repo/PR request" },
+      404: { description: "Pull request or repository not found" },
+      401: { description: "Invalid internal token" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
     path: "/v1/internal/jobs/generate-review-recap",
     summary: "Queue a maintainer review recap digest job",
     responses: {

@@ -559,7 +559,6 @@ export {
   DEFAULT_AMS_POLICY_SPEC,
   parseAmsPolicySpec,
   parseAmsPolicySpecContent,
-  AMS_POLICY_SPEC_FILENAMES,
   AMS_NETWORK_ALLOWLIST_ECOSYSTEMS,
   type AmsCapLimits,
   type AmsNetworkAllowlist,

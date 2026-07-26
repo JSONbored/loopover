@@ -583,13 +583,9 @@ export async function runLoop(args: string[], options: RunLoopOptions = {}): Pro
             // `unfavorable` only on a closed-without-merge (rejection-state-machine.js's isRejectedPr, matching
             // #5655's own-rejection classification). Forge-scoped by claimed.apiBaseUrl (#5563), like every other
             // governor-state write here.
-            const priorReputation = governorState.loadReputationHistory(claimed.repoFullName, claimed.apiBaseUrl);
-            governorState.saveReputationHistory(
+            governorState.incrementReputationHistory(
               claimed.repoFullName,
-              {
-                decided: priorReputation.decided + 1,
-                unfavorable: priorReputation.unfavorable + (isRejectedPr(prDisposition) ? 1 : 0),
-              },
+              { decided: 1, unfavorable: isRejectedPr(prDisposition) ? 1 : 0 },
               claimed.apiBaseUrl,
             );
             reentryOutcome = classifyPrDisposition(prDisposition) as "merged" | "disengaged" | "other";

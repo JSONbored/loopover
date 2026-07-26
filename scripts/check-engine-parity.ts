@@ -133,6 +133,45 @@ export const SECRET_DETECTION_MARKERS = Object.freeze([
   '"generic_secret_assignment"',
 ] as const);
 
+/** `scripts/forbidden-content.ts`'s FORBIDDEN_CONTENT is a THIRD hand-copy (#7433) of the HARD_SECRET_KINDS
+ *  regex bodies in `src/review/secret-patterns.ts` — the four package-manifest checkers (check-mcp/miner/
+ *  engine/ui-kit-package.ts) use it to reject a packed tarball embedding a provider secret. Unlike the REES
+ *  pair it was never drift-checked, so a tightened or added HARD_SECRET_KINDS pattern would silently leave
+ *  packaged MCP/miner/engine/ui-kit scanning with a stale body, with no CI signal (#8674). Registered here so
+ *  a divergence in any of the shared regex bodies fails CI. */
+export const FORBIDDEN_CONTENT_TWIN_PAIR: NamedTwinPair = Object.freeze({
+  area: "forbidden-content-secret-patterns",
+  hostRelative: "src/review/secret-patterns.ts",
+  engineRelative: "scripts/forbidden-content.ts",
+  hostFileName: "secret-patterns.ts",
+  engineFileName: "forbidden-content.ts",
+});
+
+// The distinctive core of each HARD_SECRET_KINDS regex body that forbidden-content.ts hand-copied EXACTLY
+// (#7433/#8396). Anchored on the backslash-free inner body, NOT the `\b`/`\.` escapes (which necessarily differ
+// between secret-patterns.ts's regex literals — single `\` — and forbidden-content.ts's string bodies — double
+// `\\`), so a merely-reformatted boundary never false-fails while a change to the actual character class /
+// length / watermark of any shared pattern does. `github_token`/`github_pat`/`private_key_block` are
+// DELIBERATELY EXCLUDED: forbidden-content.ts keeps its own looser pre-#7433 bodies for those three (e.g.
+// `gh[pousr]_[A-Za-z0-9_]+` vs secret-patterns.ts's `gh[pousr]_[A-Za-z0-9]{20,}`), a pre-existing intentional
+// divergence — including them would false-fail this check on the very PR that introduces it, exactly as
+// SECRET_DETECTION_MARKERS excludes its own two naming-divergent kinds.
+export const FORBIDDEN_CONTENT_MARKERS = Object.freeze([
+  "AKIA[0-9A-Z]{16}", // aws_access_key
+  "xox[baprs]-[A-Za-z0-9-]{10,}", // slack_token
+  "AIza[0-9A-Za-z_-]{35}", // google_api_key
+  "glpat-[0-9A-Za-z_-]{20}(?![0-9A-Za-z_-])", // gitlab_token
+  "npm_[A-Za-z0-9]{36}", // npm_token
+  "(?:sk|rk)_live_[0-9A-Za-z]{24,}", // stripe_secret_key
+  "[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])", // sendgrid_key (the distinctive 43-char secret half)
+  "hf_[A-Za-z0-9]{34}", // huggingface_token
+  "(?:pa|al)-[A-Za-z0-9]{20,}(?![A-Za-z0-9_-])", // voyage_api_key
+  "fc-[A-Za-z0-9]{16,}(?![A-Za-z0-9_-])", // firecrawl_api_key
+  "sk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}T3BlbkFJ[A-Za-z0-9_-]{20,}", // openai_api_key
+  "sk-ant-api03-[A-Za-z0-9_-]{93}AA", // anthropic_api_key
+  "eyJ[A-Za-z0-9_-]{10,}", // jwt (#8396)
+] as const);
+
 /** Every explicitly named twin pair, checked for core-marker presence in `runEngineParityChecks` — the
  *  same escape hatch #4518 built for `GATE_DECISION_TWIN_PAIR`, generalized (#4605) so a function-level or
  *  nested-directory duplicate can be added here without inventing a new mechanism. `GATE_DECISION_TWIN_PAIR`
@@ -148,6 +187,7 @@ export const NAMED_TWIN_PAIRS: ReadonlyArray<{ pair: NamedTwinPair; markers: rea
   { pair: DIFF_FILE_PRIORITY_TWIN_PAIR, markers: DIFF_FILE_PRIORITY_MARKERS },
   { pair: SHARES_MEANINGFUL_FILE_TWIN_PAIR, markers: SHARES_MEANINGFUL_FILE_MARKERS },
   { pair: SECRET_DETECTION_TWIN_PAIR, markers: SECRET_DETECTION_MARKERS },
+  { pair: FORBIDDEN_CONTENT_TWIN_PAIR, markers: FORBIDDEN_CONTENT_MARKERS },
 ]);
 const ENGINE_SRC_ROOT = "packages/loopover-engine/src";
 const HOST_SRC_ROOT = "src";

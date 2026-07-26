@@ -20,6 +20,8 @@ import {
   discoverGateDecisionTwinPair,
   enginePackageVersionIncreased,
   extractForbiddenTermsRegex,
+  FORBIDDEN_CONTENT_MARKERS,
+  FORBIDDEN_CONTENT_TWIN_PAIR,
   GATE_DECISION_TWIN_PAIR,
   type EngineParityPair,
   isEngineStubPair,
@@ -455,7 +457,7 @@ const CHECK_RUN_FORBIDDEN_TERMS =
   });
 
   describe("named twin-pair coverage (#4605)", () => {
-    it("registers the gate-decision, safe-url, diff-file-priority, shares-meaningful-file, and secret-detection pairs", () => {
+    it("registers the gate-decision, safe-url, diff-file-priority, shares-meaningful-file, secret-detection, and forbidden-content pairs", () => {
       const areas = NAMED_TWIN_PAIRS.map(({ pair }) => pair.area);
       expect(areas).toEqual([
         "gate-decision",
@@ -463,6 +465,7 @@ const CHECK_RUN_FORBIDDEN_TERMS =
         "diff-file-priority",
         "shares-meaningful-file",
         "secret-detection",
+        "forbidden-content-secret-patterns",
       ]);
     });
 
@@ -476,7 +479,7 @@ const CHECK_RUN_FORBIDDEN_TERMS =
       expect(scanned.some((discovered) => discovered.fileName === "safe-url.ts")).toBe(false);
     });
 
-    it("passes marker presence for all five named pairs against the real repo (regression guard)", () => {
+    it("passes marker presence for all six named pairs against the real repo (regression guard)", () => {
       for (const { pair, markers } of NAMED_TWIN_PAIRS) {
         const result = checkGateDecisionTwinPresence({ root: process.cwd(), pair, markers });
         expect(result.failures).toEqual([]);
@@ -522,7 +525,7 @@ const CHECK_RUN_FORBIDDEN_TERMS =
       );
     });
 
-    it("includes all five named pairs in runEngineParityChecks pairsChecked", () => {
+    it("includes all six named pairs in runEngineParityChecks pairsChecked", () => {
       const result = runEngineParityChecks({ root: process.cwd() });
       const checkedAreas = result.pairsChecked.map((pair) => pair.area);
       for (const { pair } of NAMED_TWIN_PAIRS) {
@@ -599,6 +602,45 @@ const CHECK_RUN_FORBIDDEN_TERMS =
       expect(result.failures).toHaveLength(1);
       expect(result.failures[0]).toContain(SECRET_DETECTION_TWIN_PAIR.engineRelative);
       expect(result.failures[0]).toContain(JSON.stringify('"voyage_api_key"'));
+    });
+  });
+
+  describe("forbidden-content twin coverage (#8674)", () => {
+    it("registers scripts/forbidden-content.ts against src/review/secret-patterns.ts", () => {
+      expect(FORBIDDEN_CONTENT_TWIN_PAIR.hostRelative).toBe("src/review/secret-patterns.ts");
+      expect(FORBIDDEN_CONTENT_TWIN_PAIR.engineRelative).toBe("scripts/forbidden-content.ts");
+    });
+
+    it("excludes the three kinds whose forbidden-content bodies deliberately diverge (github_token/github_pat/private_key_block)", () => {
+      // Those three keep looser pre-#7433 bodies in forbidden-content.ts (e.g. `gh[pousr]_[A-Za-z0-9_]+`);
+      // asserting their absence documents the deliberate omission and guards against someone "completing the
+      // set" and reintroducing a false-fail, exactly as the secret-detection pair does for its own divergences.
+      const joined = FORBIDDEN_CONTENT_MARKERS.join("\n");
+      expect(joined).not.toContain("gh[pousr]_");
+      expect(joined).not.toContain("github_pat_");
+      expect(joined).not.toContain("PRIVATE KEY");
+    });
+
+    it("fails presence when a shared HARD_SECRET_KINDS regex body drifts between the two copies", () => {
+      // Reproduces the drift class this pair exists to catch (#8674): a HARD_SECRET_KINDS body is tightened in
+      // secret-patterns.ts while forbidden-content.ts's hand-copy is left stale, silently packaging tarballs
+      // with an outdated scanner. Both bodies start from the FULL marker set so only the dropped line fails.
+      const droppedMarker = "sk-ant-api03-[A-Za-z0-9_-]{93}AA";
+      const hostBody = FORBIDDEN_CONTENT_MARKERS.join("\n");
+      const driftedTwinBody = FORBIDDEN_CONTENT_MARKERS.filter((marker) => marker !== droppedMarker).join("\n");
+      const result = checkGateDecisionTwinPresence({
+        root: "/fake",
+        readFile: (_root, relativePath) => {
+          if (relativePath === FORBIDDEN_CONTENT_TWIN_PAIR.hostRelative) return hostBody;
+          if (relativePath === FORBIDDEN_CONTENT_TWIN_PAIR.engineRelative) return driftedTwinBody;
+          throw new Error(`unexpected read: ${relativePath}`);
+        },
+        pair: FORBIDDEN_CONTENT_TWIN_PAIR,
+        markers: FORBIDDEN_CONTENT_MARKERS,
+      });
+      expect(result.failures).toHaveLength(1);
+      expect(result.failures[0]).toContain(FORBIDDEN_CONTENT_TWIN_PAIR.engineRelative);
+      expect(result.failures[0]).toContain(JSON.stringify(droppedMarker));
     });
   });
 

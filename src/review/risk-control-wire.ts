@@ -51,11 +51,20 @@ export function riskControlFlagKey(arm: string): string {
 
 /** Labeled pairs for one arm: adjudicated correct/incorrect labels (uncertain is EXCLUDED both sides — the
  *  rubric's contract) joined to the decision-time confidence the record persisted. Rows whose record carries
- *  no aiConfidence (rule-only decisions) cannot join a confidence-thresholded guarantee and are skipped. */
+ *  no aiConfidence (rule-only decisions) cannot join a confidence-thresholded guarantee and are skipped.
+ *
+ *  The join scopes to the LATEST decision record per PR (decision_records keys one row per head sha, so a
+ *  PR reviewed across several pushes accumulates several rows): the label adjudicates the decision that was
+ *  ACTED — the latest finalized record, the same latest-row semantics loadDecisionRecordCollapsible renders —
+ *  and a bare target_id join would fan one label out into N pairs with different confidences, breaking the
+ *  one-label-one-trial contract Clopper–Pearson depends on. `id DESC` breaks created_at ties. */
 export async function loadCalibrationPairs(env: Env, verdict: "close" | "merge", project: string | null = null): Promise<CalibrationPair[]> {
   const base = `SELECT dal.adjudication AS adjudication, dr.record_json AS recordJson
        FROM decision_audit_labels dal
-       JOIN decision_records dr ON dr.repo_full_name || '#' || dr.pull_number = dal.target_id
+       JOIN decision_records dr ON dr.id = (
+            SELECT dr2.id FROM decision_records dr2
+             WHERE dr2.repo_full_name || '#' || dr2.pull_number = dal.target_id
+             ORDER BY dr2.created_at DESC, dr2.id DESC LIMIT 1)
       WHERE dal.status = 'adjudicated'
         AND dal.adjudication IN ('correct', 'incorrect')
         AND dal.verdict = ?`;

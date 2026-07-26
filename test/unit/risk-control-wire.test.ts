@@ -41,6 +41,22 @@ describe("loadCalibrationPairs", () => {
       { confidence: 0.95, correct: true },
     ]);
   });
+
+  it("a PR with several records (one per head sha) contributes exactly ONE pair — the latest record's confidence", async () => {
+    const env = createTestEnv();
+    await seedLabeledDecision(env, 1, "close", "correct", 0.7); // first review cycle @sha
+    // Two later cycles on new head shas. Without latest-record scoping this one label fans out into three
+    // pairs at three different confidences, corrupting the calibration set's one-label-one-trial contract.
+    for (const [sha, confidence, offsetMs] of [["sha2", 0.8, 60_000], ["sha3", 0.9, 120_000]] as const) {
+      await env.DB.prepare(
+        `INSERT INTO decision_records (id, repo_full_name, pull_number, head_sha, action, reason_code, record_digest, record_json, created_at)
+         VALUES (?, 'o/r', 1, ?, 'close', 'r', 'd', ?, ?)`,
+      )
+        .bind(`record:o/r#1@${sha}`, sha, JSON.stringify({ aiConfidence: confidence }), new Date(Date.now() + offsetMs).toISOString())
+        .run();
+    }
+    expect(await loadCalibrationPairs(env, "close")).toEqual([{ confidence: 0.9, correct: true }]);
+  });
 });
 
 describe("runRiskControlRecalibration", () => {

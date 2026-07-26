@@ -76,7 +76,48 @@ function extractTypeLiteralFieldEntries(text: string, typeName: string): TypeLit
     const fieldMatch = /^\s*([a-zA-Z_][a-zA-Z0-9_]*)\??:\s*(.+);\s*$/.exec(line);
     if (fieldMatch) fields.push({ name: fieldMatch[1]!, typeText: fieldMatch[2]!.trim() });
   }
+  // Intersection half: `{ ... } & Record<KeyUnion, ValueType>`. Brace-counting above stops at the object
+  // literal's own `}`, so the Record's keys -- the actual feature/experimental keys of
+  // FocusManifestFeaturesConfig / FocusManifestExperimentalConfig -- sit entirely outside it and were never
+  // seen. Resolve each KeyUnion member (inline `"a" | "b"` literals, or a locally-declared string-literal union
+  // type like ConvergedFeatureKey) to its own field entry. Generalizes to any `{...} & Record<...>` (#8656).
+  // Only THIS declaration's tail (up to its terminating `;`), so a `& Record<...>` from a later type in the
+  // file is never mis-attributed here. `^[^;]*` always matches (even with no trailing `;`), so no branch.
+  const intersection = /^[^;]*/.exec(text.slice(index))![0];
+  for (const recordMatch of intersection.matchAll(/&\s*Record<\s*([^,]+?)\s*,\s*([^>]+?)>/g)) {
+    const valueText = recordMatch[2]!.trim();
+    for (const key of resolveRecordKeyLiterals(recordMatch[1]!, text)) {
+      fields.push({ name: key, typeText: valueText });
+    }
+  }
   return fields;
+}
+
+function stringLiteralsIn(source: string): string[] {
+  return [...source.matchAll(/["']([^"']+)["']/g)].map((match) => match[1]!);
+}
+
+/** Resolve a `Record<K, V>` key operand `K` to its string-literal members, so each becomes a documented field:
+ *  - inline `"a" | "b"` literals are taken directly;
+ *  - a bare identifier is looked up as a locally-declared `export type K = ...`, resolving either a direct
+ *    string-literal union (`"a" | "b"`) or the `(typeof SOME_ARRAY)[number]` indirection over a `const
+ *    SOME_ARRAY = ["a", "b", ...] as const` string array -- the shape ConvergedFeatureKey / ExperimentalPluginKey
+ *    actually use.
+ *  Returns [] for a non-literal key (e.g. `Record<string, V>`), so no field names are ever invented. */
+function resolveRecordKeyLiterals(keyText: string, text: string): string[] {
+  const inlineLiterals = stringLiteralsIn(keyText);
+  if (inlineLiterals.length > 0) return inlineLiterals;
+  const identifier = keyText.trim();
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(identifier)) return [];
+  const aliasMatch = new RegExp(`export type ${identifier}\\s*=\\s*([^;]+);`).exec(text);
+  if (!aliasMatch) return [];
+  const aliasBody = aliasMatch[1]!;
+  const directUnion = stringLiteralsIn(aliasBody);
+  if (directUnion.length > 0) return directUnion;
+  const typeofArray = /\(\s*typeof\s+([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*\[\s*number\s*\]/.exec(aliasBody);
+  if (!typeofArray) return [];
+  const arrayMatch = new RegExp(`const ${typeofArray[1]}\\s*=\\s*\\[([^\\]]*)\\]`).exec(text);
+  return arrayMatch ? stringLiteralsIn(arrayMatch[1]!) : [];
 }
 
 /** Every top-level field name DECLARED directly on the `RepositorySettings` object-literal type in src/types.ts

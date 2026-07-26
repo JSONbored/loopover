@@ -7350,6 +7350,39 @@ export function maybeAddRequiredAutoReviewSkipHold(
   return true;
 }
 
+/**
+ * #9015 — the REPUTATION skip's fail-closed hold, the exact sibling of the contributor-controlled skip
+ * above. A reputation downgrade (low signal, or the submissions>=8/merged<1 burst) suppresses AI review
+ * entirely; without this hold the PR then proceeds on deterministic checks alone — none of which read code
+ * semantics — and can auto-merge with ZERO defect detection. That inverts the feature's intent: a SUSPECTED
+ * abuser would receive LESS scrutiny than a trusted contributor. Where the repo requires blocking AI review,
+ * the skip must therefore hold for a human rather than silently pass. PURE (mutates the advisory it is
+ * given, like its sibling); the caller owns the reputation decision itself.
+ */
+export function maybeAddReputationSkipHold(
+  env: Env,
+  args: {
+    settings: RepositorySettings;
+    advisory: Pick<Awaited<ReturnType<typeof buildPullRequestAdvisory>>, "headSha" | "findings">;
+    repoFullName: string;
+    author: string | null;
+    confirmedContributor: boolean;
+    skipAiReview?: boolean | undefined;
+    reputationSkipped: boolean;
+  },
+): boolean {
+  if (!args.reputationSkipped || !shouldRequirePublicAiReviewForAdvisory(env, args)) return false;
+  args.advisory.findings.push({
+    code: "ai_review_inconclusive",
+    severity: "warning",
+    title: "Required AI review was skipped by a submitter-reputation downgrade",
+    detail:
+      "This repository requires blocking AI review, and the submitter's recent-submission signal downgraded this PR to deterministic-only checks. Those checks do not read code semantics, so the gate is held for human review instead of passing automatically.",
+    action: "Review this PR manually, or run AI review with a trusted override, before merging.",
+  });
+  return true;
+}
+
 /** Record a quiet auto-review skip (never a gate failure). Exported for unit tests. (#1954) */
 export async function auditPullRequestAutoReviewSkip(
   env: Env,
@@ -9928,6 +9961,19 @@ async function maybePublishPrPublicSurface(
       isReputationEnabled(env) && isConvergenceRepoAllowed(env, repoFullName)
         ? await shouldSkipAiForReputation(env, { project: repoFullName, submitter: author })
         : undefined;
+    // #9015: the reputation skip must FAIL CLOSED wherever blocking AI review is required — otherwise a
+    // suspected abuser's PR proceeds on deterministic checks alone (no code-semantics review at all) and can
+    // auto-merge, i.e. suspicion would BUY less scrutiny. Exact sibling of the contributor-controlled skip
+    // hold above; a no-op when the repo does not require blocking AI review, or when no skip fired.
+    maybeAddReputationSkipHold(env, {
+      settings,
+      advisory,
+      repoFullName,
+      author,
+      confirmedContributor,
+      skipAiReview: webhook.skipAiReview,
+      reputationSkipped: preComputedReputationSkip === true,
+    });
     // #one-shot-review-cadence: only even attempts the lookup when the review would otherwise be eligible to
     // run fresh this pass (mirrors how the frozen/paused branches below are similarly mutually exclusive) --
     // a PR that's blacklisted/frozen/already-skipped for another reason never shows AI content at all today,

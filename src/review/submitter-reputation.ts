@@ -111,8 +111,13 @@ export function isMachinePacedCadence(cadence: SubmissionCadence): boolean {
 export async function getSubmitterCadence(env: Env, project: string, submitter: string | undefined): Promise<SubmissionCadence> {
   if (!submitter) return { count: 0, medianGapMs: null };
   try {
+    // #9015: reads the LIVE ledger. This query previously read `review_targets`, which stopped receiving
+    // writes at the 2026-06-22 self-host cutover — the cadence leg was silently inert (newest row frozen at
+    // the cutover date), so the machine-paced signal never fired for any submitter. `pull_requests` is the
+    // live per-PR table the same pipeline maintains; `created_at` is its ingest timestamp, which is what a
+    // SUBMISSION cadence is about.
     const result = await storage(env)
-      .prepare(`SELECT created_at AS createdAt FROM review_targets WHERE project = ? AND submitter = ? AND created_at >= datetime('now', ?) ORDER BY created_at DESC LIMIT ?`)
+      .prepare(`SELECT created_at AS createdAt FROM pull_requests WHERE repo_full_name = ? AND LOWER(author_login) = LOWER(?) AND created_at >= datetime('now', ?) ORDER BY created_at DESC LIMIT ?`)
       .bind(project, submitter, `-${CADENCE_WINDOW_HOURS} hours`, REPUTATION_WINDOW_ROW_CAP)
       .all<{ createdAt: string }>();
     const createdAts = (result?.results ?? []).map((r) => r.createdAt);

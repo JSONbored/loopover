@@ -763,7 +763,14 @@ export async function runAiReviewForAdvisory(
       findings.push({
         code: "ai_consensus_defect",
         severity: "critical",
-        title: `AI reviewers agree on a likely critical defect: ${result.consensusDefect.title}`,
+        // #9074/#9087: only claim AGREEMENT when more than one reviewer actually ran. Under `combine: "single"`
+        // (the live claude-code+ollama config) a lone reviewer's blocker reaches this same finding, and the
+        // plural copy asserted a corroboration that was never checked — on a contributor's PR, as the stated
+        // reason their work was auto-closed.
+        title:
+          result.plannedReviewerCount > 1
+            ? `AI reviewers agree on a likely critical defect: ${result.consensusDefect.title}`
+            : `AI review flagged a likely critical defect: ${result.consensusDefect.title}`,
         detail: result.consensusDefect.detail,
         action:
           "Resolve the flagged defect, or override if the AI reviewers are mistaken, then re-run the gate.",

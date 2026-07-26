@@ -917,7 +917,16 @@ export function parseModelReview(text: string): ModelReview | null {
       if (valueAssessment && valueAssessment.rationale.length >= SCOPE_RECLASSIFY_MIN_RATIONALE_CHARS) {
         return {
           assessment: SCOPE_MISMATCH_ASSESSMENT,
-          blockers,
+          // #9087: blockers are DROPPED on reclassification. The system prompt instructs a model that cannot
+          // read the diff to bail with INCOHERENT_DIFF_ASSESSMENT *and return empty blockers*; a model that
+          // bails, violates that instruction, and happens to write a >=40-char rationale was having its
+          // blockers promoted into a usable review. Under `combine: "single"` (our live claude-code+ollama
+          // config) combineReviews turns a lone blocker into a full ai_consensus_defect -- severity critical,
+          // published as "AI reviewers agree on a likely critical defect" for a ONE-reviewer run -- which is a
+          // close under aiReviewGateMode: block. A model that just said it could not read the diff has not
+          // earned blocker authority over it. The valueAssessment (the entire point of #8789) is kept, so a
+          // valid-but-under-described PR still gets its scope observation instead of an inconclusive hold.
+          blockers: [],
           nits,
           suggestions,
           inlineFindings,
@@ -1963,22 +1972,85 @@ export function composeImprovementSignal(
  *  sub-`aiReviewCloseConfidence`-floor confidence changes what happens next (manual-review hold by default,
  *  non-blocking under `advisory_only`, or ignored under `one_shot`) rather than adding a second floor on top of
  *  the block decision itself. */
+/** #9074: the two reviewers' blocker texts, normalized for comparison — lowercased, punctuation stripped,
+ *  short/stopword tokens dropped. Deliberately content-only: model phrasing varies, so identity is judged on
+ *  the substantive terms (identifiers, file paths, defect nouns) both reviewers used. */
+function significantBlockerTokens(text: string): Set<string> {
+  const STOPWORDS = new Set([
+    "this", "that", "with", "from", "have", "has", "does", "not", "the", "and", "for", "are", "but", "its",
+    "into", "when", "will", "would", "could", "should", "there", "here", "which", "while", "your", "you",
+    "code", "change", "changes", "line", "lines", "file", "files", "pull", "request", "review",
+  ]);
+  return new Set(
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9/._-]+/g, " ")
+      .split(/\s+/)
+      .filter((token) => token.length >= 4 && !STOPWORDS.has(token)),
+  );
+}
+
+/** #9074: do these two blocker texts describe the SAME defect? Jaccard overlap over significant tokens, with a
+ *  lower bar when both cite the same path-like token (a shared `src/db.ts` plus any shared term is far stronger
+ *  evidence of the same finding than raw word overlap). Neither side having significant tokens is unverifiable
+ *  and therefore NOT agreement — this function only ever returns true on positive evidence. */
+export function blockersDescribeSameDefect(first: string, second: string): boolean {
+  const a = significantBlockerTokens(first);
+  const b = significantBlockerTokens(second);
+  if (a.size === 0 || b.size === 0) return false;
+  let shared = 0;
+  for (const token of a) if (b.has(token)) shared += 1;
+  if (shared === 0) return false;
+  // shared > 0 above guarantees both sets are non-empty, so the union is always >= 1 — no zero guard needed.
+  const jaccard = shared / (a.size + b.size - shared);
+  if (jaccard >= 0.4) return true;
+  // Same file/path cited by both, plus at least one other shared term.
+  const sharedPathish = [...a].some((token) => b.has(token) && (token.includes("/") || token.includes(".")));
+  return sharedPathish && shared >= 2;
+}
+
+/**
+ * #9074: a consensus defect requires the two reviewers to actually AGREE. This previously returned a defect
+ * whenever BOTH reviewers had a non-empty blockers list, never comparing the texts — so reviewer A's "SQL
+ * injection in src/db.ts" and reviewer B's "the new helper lacks a doc comment" produced
+ * `{title: "SQL injection in src/db.ts", split: false}`, published on the contributor's PR as "AI reviewers
+ * agree on a likely critical defect: SQL injection in src/db.ts" as the reason their work was auto-closed
+ * under one-shot rules. That is a false claim of agreement, and the doc comment right above the old code
+ * already asserted the property ("Requiring two independent models to AGREE is itself the precision
+ * mechanism") that the code did not implement.
+ *
+ * Two reviewers flagging DIFFERENT defects is not silence and not consensus — it is a SPLIT, which the caller
+ * now derives from a null return plus both-flagged (see combineReviews). The split still gates; it just no
+ * longer claims corroboration that was never checked.
+ */
+/** #9074: a whitespace-only entry is not a flagged blocker. Previously `blockers: [""]` counted as "flagged",
+ *  so two reviewers who each returned a blank entry produced a full consensus defect under the generic
+ *  "AI reviewers agree on a likely blocking defect" title — agreement about nothing at all. */
+export function realBlockersOf(review: ModelReview): string[] {
+  return review.blockers.filter((blocker) => blocker.trim().length > 0);
+}
+
 export function consensusDefectOf(
   a: ModelReview,
   b: ModelReview,
 ): AiConsensusDefect | null {
-  if (a.blockers.length === 0 || b.blockers.length === 0) return null;
-  const title = toPublicSafe(
-    a.blockers[0] ||
-      b.blockers[0] ||
-      "AI reviewers agree on a likely blocking defect",
-  );
+  const aBlockers = realBlockersOf(a);
+  const bBlockers = realBlockersOf(b);
+  if (aBlockers.length === 0 || bBlockers.length === 0) return null;
+  // Agreement is established when ANY of A's blockers matches ANY of B's — reviewers routinely order their
+  // findings differently, so a positional comparison would miss real consensus.
+  const agreedPair = aBlockers
+    .flatMap((first) => bBlockers.map((second) => [first, second] as const))
+    .find(([first, second]) => blockersDescribeSameDefect(first, second));
+  if (!agreedPair) return null;
+  // Cite the blocker the two reviewers actually AGREED on (#9074), not whichever happened to be first. Both
+  // halves of the pair came from realBlockersOf, so each is non-blank — no fallback chain is reachable here.
+  const agreed = agreedPair[0];
+  const title = toPublicSafe(agreed);
   if (!title) return null; // unsafe title → drop the block entirely (fail-safe)
   // Cite ONLY the primary blocker (not every finding joined together) so the Gate's "why blocked" reason
   // stays focused on the single core defect instead of repeating the whole blockers list. (#focused-reviews)
-  const detail =
-    toPublicSafe(a.blockers[0] || b.blockers[0] || "") ??
-    "Both AI reviewers independently flagged a concrete must-fix defect in this change.";
+  const detail = title;
   // The consensus is only as strong as the WEAKER reviewer: take the minimum of the two confidences (#8).
   return { title, detail, confidence: Math.min(a.confidence, b.confidence) };
 }
@@ -2371,7 +2443,10 @@ export function combineReviews(
   const [a, b] = reviews;
   if (a && b) {
     const defect = consensusDefectOf(a, b);
-    const split = !defect && a.blockers.length > 0 !== b.blockers.length > 0;
+    // #9074: a split is EITHER "exactly one reviewer flagged" (the historical case) OR "both flagged but they
+    // described different defects". Without the second arm, two reviewers each raising an uncorroborated
+    // concern produced no finding at all — strictly weaker than one reviewer doing so.
+    const split = !defect && (realBlockersOf(a).length > 0 || realBlockersOf(b).length > 0);
     // On a split, exactly one reviewer flagged a blocker — carry THAT reviewer's confidence so the
     // `ai_review_split` finding gates on the same calibrated floor a consensus defect would.
     return split
@@ -2379,7 +2454,15 @@ export function combineReviews(
           defect,
           split,
           inconclusive: false,
-          splitConfidence: a.blockers.length > 0 ? a.confidence : b.confidence,
+          // #9074: when BOTH flagged (disagreeing), neither is corroborated — take the MINIMUM so the split
+          // gates on the weaker reviewer, matching consensusDefectOf's own min() rule. When only one flagged,
+          // this is unchanged: that reviewer's own confidence.
+          splitConfidence:
+            realBlockersOf(a).length > 0 && realBlockersOf(b).length > 0
+              ? Math.min(a.confidence, b.confidence)
+              : realBlockersOf(a).length > 0
+                ? a.confidence
+                : b.confidence,
         }
       : { defect, split, inconclusive: false };
   }

@@ -212,6 +212,16 @@ export const CONFIGURED_GATE_BLOCKER_SIGNAL_CODES: readonly string[] = Object.fr
   "backtest_regression",
   "lockfile_tamper_risk",
   CLA_CONSENT_MISSING_CODE,
+  // #9085 taxonomy drift: both of these gate REAL closes but were absent from this list, so their reversals
+  // recorded under a different id (or not at all) and the per-rule precision check in downgradeCloseToHold
+  // could never apply to them — the exact drift this list's own doc comment promises against, and the same
+  // shape as the backtest_regression omission fixed above.
+  //   • slop_risk_above_threshold: pushed directly into `blockers`, never routed through
+  //     resolveConfiguredGateMode, and its reversals were recorded under `slop_gate_score`.
+  //   • surface_lane_reject: live in CONCRETE_EVIDENCE_BLOCKER_CODES but invisible to
+  //     recordConfiguredGateBlockerSignals and therefore to the entire calibration corpus.
+  "slop_risk_above_threshold",
+  "surface_lane_reject",
   ...GATE_SCORE_SIGNAL_CODES,
 ]);
 

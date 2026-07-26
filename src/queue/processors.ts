@@ -2436,14 +2436,14 @@ async function maybeRunAgentMaintenance(
   if (pr.isDraft) return;
   if (!gate) return;
 
-  // Per-PR mutual exclusion (#2129): a webhook re-review and a sweep-driven agent-regate-pr job use different
-  // coalesce-key shapes (jobCoalesceKey never matches one against the other) and QUEUE_CONCURRENCY explicitly
-  // overlaps I/O-bound jobs, so two passes for the SAME PR can both reach this point concurrently, each with its
-  // own independently-timed live CI/mergeable/reviewDecision read. If those reads disagree, both could plan and
-  // execute DIFFERENT actions for the same PR. Claim a short-TTL advisory lock before the plan-and-execute
-  // critical section (extracted below so the try/finally doesn't force-reindent that whole block); a pass that
-  // loses the race defers cleanly — the next webhook/sweep tick is the backstop. Lightweight stand-in for the
-  // per-PR SubmissionLock Durable Object noted as a longer-term TODO in env.d.ts.
+  // Per-PR mutual exclusion (#2129/#8896): a webhook re-review and a sweep-driven agent-regate-pr job use
+  // different coalesce-key shapes (jobCoalesceKey never matches one against the other) and QUEUE_CONCURRENCY
+  // explicitly overlaps I/O-bound jobs, so two passes for the SAME PR can both reach this point concurrently,
+  // each with its own independently-timed live CI/mergeable/reviewDecision read. If those reads disagree, both
+  // could plan and execute DIFFERENT actions for the same PR. Claim a short-TTL advisory lock before the
+  // plan-and-execute critical section (extracted below so the try/finally doesn't force-reindent that whole
+  // block); a pass that loses the race defers cleanly — the next webhook/sweep tick is the backstop. Prefers
+  // the SubmissionLock Durable Object when bound; otherwise the transient-cache mutex in transient-locks.ts.
   const actuationLock = await claimPrActuationLock(env, repoFullName, pr.number);
   if (!actuationLock.acquired) return;
   try {

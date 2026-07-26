@@ -1,6 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../src/api/routes";
 import { createTestEnv, type TestD1Database } from "../helpers/d1";
+
+async function pkcs8Pem(): Promise<string> {
+  const key = (await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"])) as CryptoKeyPair;
+  const b64 = Buffer.from((await crypto.subtle.exportKey("pkcs8", key.privateKey)) as ArrayBuffer).toString("base64").replace(/(.{64})/g, "$1\n");
+  return ["-----BEGIN", "PRIVATE KEY-----"].join(" ") + `\n${b64}\n` + ["-----END", "PRIVATE KEY-----"].join(" ");
+}
 
 describe("Central Orb installation registry routes (/v1/internal/orb/installations)", () => {
   const app = createApp();
@@ -12,6 +18,8 @@ describe("Central Orb installation registry routes (/v1/internal/orb/installatio
       .run();
   const register = (env: Env, body: unknown) =>
     app.request("/v1/internal/orb/installations/register", { method: "POST", headers: auth, body: typeof body === "string" ? body : JSON.stringify(body) }, env);
+
+  afterEach(() => vi.unstubAllGlobals());
 
   it("lists recorded installations (registered surfaced as a boolean)", async () => {
     const env = createTestEnv();
@@ -47,5 +55,30 @@ describe("Central Orb installation registry routes (/v1/internal/orb/installatio
     const env = { ...createTestEnv(), DB: { prepare: () => ({ all: () => Promise.resolve({}) }) } } as unknown as Env;
     const res = await app.request("/v1/internal/orb/installations", { headers: auth }, env);
     expect(((await res.json()) as { installations: unknown[] }).installations).toEqual([]);
+  });
+
+  it("backfills the registry from GitHub, recovering a webhook-missed installation", async () => {
+    const env = createTestEnv({ ORB_GITHUB_APP_ID: "4139483", ORB_GITHUB_APP_PRIVATE_KEY: await pkcs8Pem() });
+    await seed(env, 200, 1); // already recorded + opted in
+    vi.stubGlobal("fetch", async () =>
+      Response.json([
+        { id: 200, account: { login: "acme", type: "Organization", id: 20 }, repository_selection: "all" },
+        { id: 201, account: { login: "bob", type: "User", id: 21 }, repository_selection: "selected" }, // webhook fired pre-secret → never recorded
+      ]),
+    );
+    const res = await app.request("/v1/internal/orb/installations/backfill", { method: "POST", headers: auth }, env);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ backfilled: 2 });
+    const rows = await (env.DB as unknown as TestD1Database)
+      .prepare("SELECT installation_id, account_login, registered FROM orb_github_installations ORDER BY installation_id")
+      .all<{ installation_id: number; account_login: string; registered: number }>();
+    expect(rows.results).toEqual([
+      { installation_id: 200, account_login: "acme", registered: 1 }, // stayed trusted (backfill never re-trusts/untrusts)
+      { installation_id: 201, account_login: "bob", registered: 0 }, // recovered at the onboarding gate
+    ]);
+  });
+
+  it("401 without the internal token on the backfill route", async () => {
+    expect((await app.request("/v1/internal/orb/installations/backfill", { method: "POST" }, createTestEnv())).status).toBe(401);
   });
 });

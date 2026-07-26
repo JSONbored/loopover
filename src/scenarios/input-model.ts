@@ -29,7 +29,8 @@ export const scenarioSignalSources = [
 ] as const;
 export type ScenarioSignalSource = (typeof scenarioSignalSources)[number];
 
-const FORBIDDEN_PUBLIC_LANGUAGE =
+/** Shared public-safety term set for scenario input + public summary guards (#8885 / #913). */
+export const FORBIDDEN_PUBLIC_LANGUAGE =
   /wallet|hotkey|coldkey|mnemonic|seed phrase|payout|estimated[-\s]?rewards?|rewards?|reward[-\s]?estimate|rankings?|farming|raw trust|trust[-\s]?score|scoreability|private[-\s]?reviewability|public[-\s]?score[-\s]?(?:estimate|prediction)/i;
 
 const FORBIDDEN_SOURCE_UPLOAD_KEYS =

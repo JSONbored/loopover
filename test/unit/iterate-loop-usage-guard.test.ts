@@ -95,4 +95,18 @@ describe("runIterateLoop usage guard (#5827)", () => {
       expect(Number.isFinite(result.totalCostUsd)).toBe(true);
     }
   });
+
+  it("abandons immediately on a NaN or Infinity maxIterations rather than corrupting iterationsUsed or looping unbounded (#8860)", async () => {
+    for (const badMax of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      let driverCalled = false;
+      const { deps } = collectingDeps({ async run() { driverCalled = true; return { ok: true, changedFiles: ["src/upload.ts"], summary: "x" }; } });
+      const result = await runIterateLoop(passingInput({ maxIterations: badMax as number }), deps);
+
+      expect(result.outcome).toBe("abandon");
+      expect(result.finalDecision.abandonReason).toBe("max_iterations_reached");
+      expect(result.iterationsUsed).toBe(0);
+      expect(Number.isNaN(result.iterationsUsed)).toBe(false);
+      expect(driverCalled).toBe(false);
+    }
+  });
 });

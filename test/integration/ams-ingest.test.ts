@@ -124,39 +124,45 @@ describe("handleAmsIngest()", () => {
 
 describe("POST /v1/ams/ingest route", () => {
   const app = createApp();
+  // #9046: the collector fails CLOSED on an unset token, so every request-shape test below must present a
+  // valid credential — otherwise it asserts 200/400/413 against an endpoint that now correctly answers 401.
+  const AUTH = { authorization: "Bearer fleet-secret" };
+  const authedEnv = (extra: Partial<Env> = {}) => createTestEnv({ AMS_INGEST_TOKEN: "fleet-secret", ...extra });
 
   it("returns 200 + accepted count for a valid batch", async () => {
-    const env = createTestEnv();
+    const env = authedEnv();
     const body = JSON.stringify({ instanceId: "abc0", events: [{ repoHash: "rhash", prHash: "phash", decision: "merged" }] });
-    const res = await app.request("/v1/ams/ingest", { method: "POST", headers: { "content-type": "application/json" }, body }, env);
+    const res = await app.request("/v1/ams/ingest", { method: "POST", headers: { "content-type": "application/json", ...AUTH }, body }, env);
     expect(res.status).toBe(200);
     expect(((await res.json()) as { accepted: number }).accepted).toBe(1);
   });
 
   it("returns 400 for invalid JSON", async () => {
-    const res = await app.request("/v1/ams/ingest", { method: "POST", headers: { "content-type": "application/json" }, body: "{bad" }, createTestEnv());
+    const res = await app.request("/v1/ams/ingest", { method: "POST", headers: { "content-type": "application/json", ...AUTH }, body: "{bad" }, authedEnv());
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: string }).error).toBe("invalid_json");
   });
 
   it("returns 400 for an empty body", async () => {
-    const res = await app.request("/v1/ams/ingest", { method: "POST", body: "" }, createTestEnv());
+    const res = await app.request("/v1/ams/ingest", { method: "POST", headers: AUTH, body: "" }, authedEnv());
     expect(res.status).toBe(400);
   });
 
   it("returns 413 when the body exceeds the shared ingest byte ceiling", async () => {
     const huge = "x".repeat(MAX_ORB_INGEST_BODY_BYTES + 16);
-    const res = await app.request("/v1/ams/ingest", { method: "POST", body: huge }, createTestEnv());
+    const res = await app.request("/v1/ams/ingest", { method: "POST", headers: AUTH, body: huge }, authedEnv());
     expect(res.status).toBe(413);
     expect(((await res.json()) as { error: string }).error).toBe("payload_too_large");
   });
 
-  it("optional collector token: open when unset; enforced once AMS_INGEST_TOKEN is set", async () => {
+  // #9046: this used to assert the collector was OPEN when the token was unset — the shipped default — which
+  // let anyone with network access POST batches. It now fails closed.
+  it("collector token: FAILS CLOSED when unset; enforced exactly once AMS_INGEST_TOKEN is set", async () => {
     const body = JSON.stringify({ instanceId: "abc0", events: [{ repoHash: "rhash", prHash: "phash", decision: "merged" }] });
     const post = (env: Env, authorization?: string) =>
       app.request("/v1/ams/ingest", { method: "POST", headers: { "content-type": "application/json", ...(authorization ? { authorization } : {}) }, body }, env);
 
-    expect((await post(createTestEnv())).status).toBe(200);
+    expect((await post(createTestEnv())).status).toBe(401); // unset ⇒ closed, not open
     const env = createTestEnv({ AMS_INGEST_TOKEN: "fleet-secret" });
     expect((await post(env)).status).toBe(401);
     expect((await post(env, "Bearer wrong")).status).toBe(401);

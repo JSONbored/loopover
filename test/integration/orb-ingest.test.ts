@@ -304,29 +304,33 @@ describe("readOrbIngestBody()", () => {
 
 describe("POST /v1/orb/ingest route", () => {
   const app = createApp();
+  // #9046: the collector fails CLOSED on an unset token, so every request-shape test below must present a
+  // valid credential — otherwise it asserts 200/400/413 against an endpoint that now correctly answers 401.
+  const AUTH = { authorization: "Bearer fleet-secret" };
+  const authedEnv = (extra: Partial<Env> = {}) => createTestEnv({ ORB_INGEST_TOKEN: "fleet-secret", ...extra });
 
   it("returns 200 + accepted count for a valid batch", async () => {
-    const env = createTestEnv();
+    const env = authedEnv();
     const body = JSON.stringify({ instance_id: "abc0", events: [{ repo_hash: "rhash", pr_hash: "phash", outcome: "merged", reversal_flag: "none" }] });
-    const res = await app.request("/v1/orb/ingest", { method: "POST", headers: { "content-type": "application/json" }, body }, env);
+    const res = await app.request("/v1/orb/ingest", { method: "POST", headers: { "content-type": "application/json", ...AUTH }, body }, env);
     expect(res.status).toBe(200);
     expect(((await res.json()) as { accepted: number }).accepted).toBe(1);
   });
 
   it("returns 400 for invalid JSON", async () => {
-    const res = await app.request("/v1/orb/ingest", { method: "POST", headers: { "content-type": "application/json" }, body: "{bad" }, createTestEnv());
+    const res = await app.request("/v1/orb/ingest", { method: "POST", headers: { "content-type": "application/json", ...AUTH }, body: "{bad" }, authedEnv());
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: string }).error).toBe("invalid_json");
   });
 
   it("returns 400 for an empty body", async () => {
-    const res = await app.request("/v1/orb/ingest", { method: "POST", body: "" }, createTestEnv());
+    const res = await app.request("/v1/orb/ingest", { method: "POST", headers: AUTH, body: "" }, authedEnv());
     expect(res.status).toBe(400);
   });
 
   it("returns 413 when the body exceeds the ingest byte ceiling", async () => {
     const huge = "x".repeat(MAX_ORB_INGEST_BODY_BYTES + 16);
-    const res = await app.request("/v1/orb/ingest", { method: "POST", body: huge }, createTestEnv());
+    const res = await app.request("/v1/orb/ingest", { method: "POST", headers: AUTH, body: huge }, authedEnv());
     expect(res.status).toBe(413);
     expect(((await res.json()) as { error: string }).error).toBe("payload_too_large");
   });
@@ -340,20 +344,22 @@ describe("POST /v1/orb/ingest route", () => {
     });
     const res = await app.request(
       "/v1/orb/ingest",
-      { method: "POST", body: stream, ...({ duplex: "half" } as object) },
-      createTestEnv(),
+      { method: "POST", headers: AUTH, body: stream, ...({ duplex: "half" } as object) },
+      authedEnv(),
     );
     expect(res.status).toBe(413);
     expect(((await res.json()) as { error: string }).error).toBe("payload_too_large");
   });
 
-  it("optional collector token (#1285): open when unset; enforced once ORB_INGEST_TOKEN is set", async () => {
+  // #9046: this used to assert the collector was OPEN when the token was unset — the shipped default — so
+  // anyone with network access could POST batches that feed the PUBLISHED accuracy numbers. Now fails closed.
+  it("collector token (#1285/#9046): FAILS CLOSED when unset; enforced exactly once ORB_INGEST_TOKEN is set", async () => {
     const body = JSON.stringify({ instance_id: "abc0", events: [{ repo_hash: "rhash", pr_hash: "phash", outcome: "merged" }] });
     const post = (env: Env, authorization?: string) =>
       app.request("/v1/orb/ingest", { method: "POST", headers: { "content-type": "application/json", ...(authorization ? { authorization } : {}) }, body }, env);
 
-    // Token UNSET → open ingress (the live fleet keeps working with no auth header).
-    expect((await post(createTestEnv())).status).toBe(200);
+    // Token UNSET → CLOSED. An unconfigured collector rejects rather than accepting anonymous writes.
+    expect((await post(createTestEnv())).status).toBe(401);
     // Token SET → a missing or wrong bearer is rejected before the body is parsed.
     const env = createTestEnv({ ORB_INGEST_TOKEN: "fleet-secret" });
     expect((await post(env)).status).toBe(401);
@@ -366,11 +372,17 @@ describe("POST /v1/orb/ingest route", () => {
 describe("Orb instance registry routes (/v1/internal/orb/instances)", () => {
   const app = createApp();
   const auth = { authorization: "Bearer dev-internal-token" };
+  // #9046: ingest now requires a credential, so any env used with ingestOne must carry ORB_INGEST_TOKEN.
+  const ingestEnv = (extra: Partial<Env> = {}) => createTestEnv({ ORB_INGEST_TOKEN: "fleet-secret", ...extra });
   const ingestOne = (env: Env, instance: string) =>
-    app.request("/v1/orb/ingest", { method: "POST", body: JSON.stringify({ instance_id: instance, events: [{ repo_hash: "r", pr_hash: `${instance}-p`, outcome: "merged" }] }) }, env);
+    app.request(
+      "/v1/orb/ingest",
+      { method: "POST", headers: { authorization: "Bearer fleet-secret" }, body: JSON.stringify({ instance_id: instance, events: [{ repo_hash: "r", pr_hash: `${instance}-p`, outcome: "merged" }] }) },
+      env,
+    );
 
   it("lists ingested instances as unregistered with their stored-signal count", async () => {
-    const env = createTestEnv();
+    const env = ingestEnv();
     await ingestOne(env, "inst-a");
     const res = await app.request("/v1/internal/orb/instances", { headers: auth }, env);
     expect(res.status).toBe(200);
@@ -383,7 +395,7 @@ describe("Orb instance registry routes (/v1/internal/orb/instances)", () => {
   });
 
   it("registers an instance (and can unregister it)", async () => {
-    const env = createTestEnv();
+    const env = ingestEnv();
     await ingestOne(env, "inst-b");
     const reg = await app.request("/v1/internal/orb/instances/register", { method: "POST", headers: auth, body: JSON.stringify({ instanceId: "inst-b" }) }, env);
     expect(((await reg.json()) as { registered: boolean }).registered).toBe(true);

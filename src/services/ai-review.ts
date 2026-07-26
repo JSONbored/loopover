@@ -58,6 +58,20 @@ export const RELIABLE_FALLBACK_MODELS: readonly [string, string] = [
 export const INCOHERENT_DIFF_ASSESSMENT =
   "Cannot review — the diff appears out of sync with the PR head.";
 
+/** #8789: the fixed, public-safe assessment a bail-with-evidence is RECLASSIFIED to (see parseModelReview).
+ *  A model that bails with the sentinel above while ALSO returning a substantive valueAssessment rationale has
+ *  demonstrably read the diff — its "out of sync" claim is a scope observation about an under-described PR,
+ *  not a mechanically broken diff, so the review proceeds with this scope note instead of abstaining into an
+ *  inconclusive manual hold. Fixed string, never model text — the rationale itself travels only through the
+ *  normal valueAssessment channel. */
+export const SCOPE_MISMATCH_ASSESSMENT =
+  "The diff is reviewable, but its scope appears to differ from what the PR title/description suggests — verify the description matches the shipped change.";
+
+/** #8789: the substance bar for reclassifying a bail (see SCOPE_MISMATCH_ASSESSMENT). A rationale shorter than
+ *  this is a bare echo of the bail itself, not evidence the model actually examined the diff — the confirmed
+ *  live reclassifiable case (PR #8735) carried a ~300-char rationale naming specific call sites. */
+export const SCOPE_RECLASSIFY_MIN_RATIONALE_CHARS = 40;
+
 const REVIEW_SYSTEM_PROMPT = [
   "You are a senior open-source maintainer giving a FOCUSED, high-signal code review of a single pull request diff.",
   "Read each meaningful hunk and review like a careful human; judge ONLY the diff and the context provided.",
@@ -75,7 +89,12 @@ const REVIEW_SYSTEM_PROMPT = [
   "PERFORMANCE SEVERITY — a performance concern is a blocker ONLY when the diff introduces a genuine, visible regression with a concrete trigger (a DB query or network call moved inside a loop, a loop/fanout over input whose size the diff removed a bound on). A stylistic or micro-optimization preference ('could use a Map instead of an array', 'this could be slightly faster') is a NIT, not a blocker, even if real.",
   "DIFF SCOPE — the diff shows only CHANGED lines, NOT whole files. A function, variable, import, type, or symbol you do not SEE may already be defined or imported elsewhere in the same file/module. NEVER report a 'missing import', 'undefined/not-imported symbol', or 'X is not defined -> ReferenceError' as a blocker unless the diff ITSELF removes the definition or introduces the symbol without defining it anywhere shown. When you cannot confirm a symbol is missing from the visible diff, it is NOT a blocker — at most a nit ('verify X is imported/defined').",
   "TRACE BEFORE ASSERTING ABSENCE — this rule extends to ANY 'X is missing' blocker (a missing schema/annotation/field, a missing null/array/type guard, a missing await/error-handler, an unregistered route/tool/handler): a backfill loop, a default, an early guard, or a registration ELSEWHERE may already supply it. Before calling absence a blocker, find the line in the visible context that WOULD break and reference it; if you cannot SEE the breaking code, downgrade to a nit phrased as a verification ('confirm X is registered/guarded'), never a blocker.",
-  `FAIL CLOSED ON AN INCOHERENT DIFF — if the diff does not cohere with the PR title/description (it appears to describe a DIFFERENT change, the changed-file set looks stale or wrong, or you cannot map it to one coherent change), DO NOT emit a confident assessment or approval: set assessment to exactly '${INCOHERENT_DIFF_ASSESSMENT}' and return empty blockers, nits, and suggestions. Never rubber-stamp a change you cannot actually see.`,
+  // #8789: the bail is for MECHANICAL breakage only. The previous wording ("does not cohere with the PR
+  // title/description") made a model bail on a VALID diff whose title merely undersold it — confirmed live
+  // (2026-07-26, PR #8735: a "trivial test-fixture fix" title over a diff also carrying real production
+  // changes) — turning a reviewable PR into an inconclusive manual hold. Title-vs-diff scope mismatch is a
+  // REVIEWABLE quality signal, not evidence the diff is stale.
+  `FAIL CLOSED ON A BROKEN DIFF — if the diff itself is unusable (empty, truncated mid-hunk, garbled/corrupted, or its content contradicts the PR's own changed-file list), DO NOT emit a confident assessment or approval: set assessment to exactly '${INCOHERENT_DIFF_ASSESSMENT}' and return empty blockers, nits, and suggestions. Never rubber-stamp a change you cannot actually see. A READABLE diff whose scope differs from or exceeds the PR title/description is NOT broken — review the diff you actually see and note the scope mismatch in your assessment instead of bailing.`,
   "Do NOT rubber-stamp: if the diff is genuinely clean, the assessment states specifically why and blockers is [].",
   "Never mention rewards, rankings, payouts, wallets, hotkeys, coldkeys, trust scores, scoreability, reviewability, or farming.",
 ].join(" ");
@@ -812,7 +831,25 @@ export function parseModelReview(text: string): ModelReview | null {
     // Calibrated reviewer confidence (#8): clamp the model's `confidence` to [0,1]; an absent/garbage value falls
     // back to 1.0 (parseReviewConfidence) so the gate degrades to the historical always-block behavior.
     const confidence = parseReviewConfidence(obj.confidence);
-    if (assessment === INCOHERENT_DIFF_ASSESSMENT) return null;
+    if (assessment === INCOHERENT_DIFF_ASSESSMENT) {
+      // #8789: a bail that ALSO carries a substantive rationale is a scope observation from a model that
+      // demonstrably read the diff — reclassify to a reviewable result (fixed public-safe assessment; the
+      // model's own reasoning flows only through the normal valueAssessment channel) instead of collapsing a
+      // valid-but-under-described PR into an inconclusive manual hold. A bare bail stays null: it remains the
+      // deliberate mechanical-breakage answer the retry loop's isIncoherentDiffBail break keys on.
+      if (valueAssessment && valueAssessment.rationale.length >= SCOPE_RECLASSIFY_MIN_RATIONALE_CHARS) {
+        return {
+          assessment: SCOPE_MISMATCH_ASSESSMENT,
+          blockers,
+          nits,
+          suggestions,
+          inlineFindings,
+          confidence,
+          valueAssessment,
+        };
+      }
+      return null;
+    }
     if (
       !assessment &&
       blockers.length === 0 &&
@@ -845,7 +882,20 @@ export function isIncoherentDiffBail(text: string): boolean {
   if (!jsonText) return false;
   try {
     const obj = JSON.parse(jsonText) as Record<string, unknown>;
-    return typeof obj.assessment === "string" && obj.assessment.trim() === INCOHERENT_DIFF_ASSESSMENT;
+    if (typeof obj.assessment !== "string" || obj.assessment.trim() !== INCOHERENT_DIFF_ASSESSMENT) return false;
+    // #8789: mirror parseModelReview's reclassification exactly (this function's own contract: "can never
+    // disagree with what that function actually parsed") — a bail carrying a substantive valueAssessment
+    // rationale PARSES to a usable scope-observation review now, so it is not a bail for the retry loop.
+    // Both conditions of toValueAssessment are mirrored: a VALID magnitude AND a non-trivial trimmed rationale
+    // (an invalid magnitude makes the parse side drop valueAssessment entirely → still a bare bail there).
+    const va = obj.valueAssessment;
+    if (va && typeof va === "object") {
+      const magnitude = (va as Record<string, unknown>).magnitude;
+      const rationale = (va as Record<string, unknown>).rationale;
+      const validMagnitude = magnitude === "unclear" || magnitude === "minor" || magnitude === "moderate" || magnitude === "significant";
+      if (validMagnitude && typeof rationale === "string" && rationale.trim().length >= SCOPE_RECLASSIFY_MIN_RATIONALE_CHARS) return false;
+    }
+    return true;
   } catch {
     return false;
   }

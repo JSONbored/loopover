@@ -7,6 +7,8 @@ import {
   formatReviewDiagnosticsForCapture,
   INCOHERENT_DIFF_ASSESSMENT,
   isIncoherentDiffBail,
+  SCOPE_MISMATCH_ASSESSMENT,
+  SCOPE_RECLASSIFY_MIN_RATIONALE_CHARS,
   isStructuralProviderConfigError,
   resolveEffectiveAiReviewOnMerge,
   resolveEffectiveAiReviewPlan,
@@ -2095,6 +2097,54 @@ describe("pure helpers", () => {
     expect(coerceAiText({ choices: [{ text: "t" }] })).toBe("t"); // content via first.text fallback
     expect(coerceAiText({ output_text: "o" })).toBe("o");
     expect(coerceAiText(42)).toBe("");
+  });
+
+  it("#8789: reclassifies a bail carrying a substantive valueAssessment rationale into a scope-observation review — the model demonstrably read the diff", () => {
+    const rationale = "The PR title describes a trivial test-fixture fix, but the diff adds needsMinerDetection: true at 7 authorizePrActionActor call sites in processors.ts.";
+    const parsed = parseModelReview(
+      JSON.stringify({ assessment: INCOHERENT_DIFF_ASSESSMENT, blockers: [], nits: [], suggestions: [], confidence: 0.9, valueAssessment: { magnitude: "unclear", rationale } }),
+    );
+    expect(parsed).not.toBeNull();
+    expect(parsed?.assessment).toBe(SCOPE_MISMATCH_ASSESSMENT); // fixed public-safe string, never model text
+    expect(parsed?.confidence).toBe(0.9);
+    expect(parsed?.valueAssessment?.rationale).toBe(rationale);
+    expect(parsed?.blockers).toEqual([]);
+  });
+
+  it("#8789: a bail with a SHORT rationale (a bare echo) stays a bail — null parse, bail-true for the retry break", () => {
+    const short = JSON.stringify({
+      assessment: INCOHERENT_DIFF_ASSESSMENT,
+      blockers: [],
+      nits: [],
+      suggestions: [],
+      valueAssessment: { magnitude: "unclear", rationale: "x".repeat(SCOPE_RECLASSIFY_MIN_RATIONALE_CHARS - 1) },
+    });
+    expect(parseModelReview(short)).toBeNull();
+    expect(isIncoherentDiffBail(short)).toBe(true);
+  });
+
+  it("#8789: a bail with a long rationale but an INVALID magnitude stays a bail — the mirror agrees with toValueAssessment's rejection", () => {
+    const invalid = JSON.stringify({
+      assessment: INCOHERENT_DIFF_ASSESSMENT,
+      blockers: [],
+      nits: [],
+      suggestions: [],
+      valueAssessment: { magnitude: "huge", rationale: "y".repeat(SCOPE_RECLASSIFY_MIN_RATIONALE_CHARS + 10) },
+    });
+    expect(parseModelReview(invalid)).toBeNull();
+    expect(isIncoherentDiffBail(invalid)).toBe(true);
+  });
+
+  it("#8789: isIncoherentDiffBail is FALSE for a reclassifiable bail — parseModelReview and the retry break can never disagree", () => {
+    const reclassifiable = JSON.stringify({
+      assessment: INCOHERENT_DIFF_ASSESSMENT,
+      blockers: [],
+      nits: [],
+      suggestions: [],
+      valueAssessment: { magnitude: "minor", rationale: "z".repeat(SCOPE_RECLASSIFY_MIN_RATIONALE_CHARS) },
+    });
+    expect(isIncoherentDiffBail(reclassifiable)).toBe(false);
+    expect(parseModelReview(reclassifiable)).not.toBeNull();
   });
 
   it("parseModelReview returns null on junk / invalid JSON / empty objects; parses blockers + nits", () => {

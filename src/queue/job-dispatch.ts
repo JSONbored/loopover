@@ -25,6 +25,7 @@ import { performRepoDocRefresh } from "../github/repo-doc-refresh-runner";
 import { executeAgentRun } from "../services/agent-orchestrator";
 import { deliverNotification, evaluateNotificationEvent } from "../notifications/service";
 import { isOpsEnabled, resolveOpsManifestOverride, runOpsAlerts } from "../review/ops-wire";
+import { runAnomalyAlertsWired } from "../review/alerts-wire";
 import { isSweepWatchdogEnabled, resolveSweepWatchdogManifestOverride, runSweepLivenessWatchdog } from "../review/sweep-watchdog";
 import { isLoopEscalationSweepEnabled, resolveLoopEscalationManifestOverride, runLoopEscalationSweep } from "../review/loop-escalation-wire";
 import { isPrReconciliationEnabled, resolvePrReconciliationManifestOverride, runOpenPrReconciliation } from "../review/pr-reconciliation";
@@ -336,7 +337,12 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       // (env OR manifest) must still no-op, so disabled does zero work here too. Read-only telemetry — never
       // throws into the queue.
       const opsManifestOverride = await resolveOpsManifestOverride(env);
-      if (isOpsEnabled(env, opsManifestOverride)) await runOpsAlerts(env);
+      if (isOpsEnabled(env, opsManifestOverride)) {
+        await runOpsAlerts(env);
+        // Same tick, second channel: the ported Discord anomaly-alerter (#8905). Self-gated on a configured
+        // DISCORD_WEBHOOK_URL and fail-safe, so it is a no-op until an operator wires the channel.
+        await runAnomalyAlertsWired(env);
+      }
       return;
     }
     case "sweep-liveness-watchdog":

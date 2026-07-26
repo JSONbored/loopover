@@ -241,6 +241,11 @@ export const AMS_ENV_REFERENCE_ROWS: MinerEnvReferenceRow[] = [
     firstReference: "packages/loopover-engine/src/miner/driver-factory.ts",
     defaultValue: null,
   },
+  {
+    name: "MINER_SKIP_TARGET_REPO_VERIFICATION",
+    firstReference: "lib/attempt-cli.ts",
+    defaultValue: "",
+  },
 ];
 
 export const AMS_ENV_REFERENCE_MARKDOWN = [
@@ -297,5 +302,6 @@ export const AMS_ENV_REFERENCE_MARKDOWN = [
   '| `MINER_CODING_AGENT_PAUSED` | `packages/loopover-engine/src/miner/coding-agent-mode.ts` | `""` |',
   '| `MINER_CODING_AGENT_PROVIDER` | `lib/laptop-init.ts` | `""` |',
   "| `MINER_CODING_AGENT_TIMEOUT_MS` | `packages/loopover-engine/src/miner/driver-factory.ts` | (none) |",
+  '| `MINER_SKIP_TARGET_REPO_VERIFICATION` | `lib/attempt-cli.ts` | `""` |',
   "",
 ].join("\n");

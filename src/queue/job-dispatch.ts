@@ -46,6 +46,7 @@ import {
 import { syncBrokeredInstalledRepos } from "../orb/installed-repos-sync";
 import { incr } from "../selfhost/metrics";
 import { generateSignalSnapshots } from "./signal-snapshot";
+import { isDecisionAuditEnabled, runDecisionAuditSample } from "../review/decision-audit";
 import { runRetentionPrune } from "./retention";
 // The 15 handlers below have no reason to move -- each is only reachable via this dispatcher (or, for
 // mapWithConcurrency, ALSO used by other still-in-processors.ts code), so they stay put and are exported
@@ -235,6 +236,14 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
         message.dryRun ?? false,
       );
       return;
+    case "decision-audit-sample": {
+      // #8830: flag re-checked at execution (not only at enqueue) so a stale queued job after a flag flip
+      // does zero work, mirroring every sibling flag-gated job.
+      if (!isDecisionAuditEnabled(env)) return;
+      const inserted = await runDecisionAuditSample(env);
+      console.log(JSON.stringify({ event: "decision_audit_sampled", inserted }));
+      return;
+    }
     case "generate-weekly-value-report":
       await generateWeeklyValueReport(env, {
         variant: message.variant ?? "operator",

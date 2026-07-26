@@ -14,6 +14,7 @@ import { isAprRepoTransferPollEnabled } from "./orb/apr-repo-transfer";
 import { isPrReconciliationEnabled, resolvePrReconciliationManifestOverride } from "./review/pr-reconciliation";
 import { isActiveReviewReconciliationEnabled, resolveActiveReviewReconciliationManifestOverride } from "./review/active-review-reconciliation";
 import { isRagEnabled } from "./review/rag-wire";
+import { isDecisionAuditEnabled } from "./review/decision-audit";
 import { isSelfTuneEnabled } from "./review/selftune-wire";
 import { isSatisfactionFloorAutotuneEnabled } from "./services/satisfaction-floor-loosening-run";
 import {
@@ -289,6 +290,13 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
   }
   if (isHourly && scheduledAt.getUTCDay() === 1 && hour === 12) {
     jobs.push({ type: "generate-weekly-value-report", requestedBy: "schedule", variant: "operator", days: 7 });
+  }
+  // Decision-audit sampling (#8830, flag LOOPOVER_DECISION_AUDIT): weekly stratified draw of decided PRs for
+  // human adjudication. Tuesday 08:00 UTC — its own slot, clear of the Monday weekly report, the 03:00
+  // retention prune, and the 09:00 repo-doc sweep. Enqueued ONLY when the flag is ON — flag-OFF (default)
+  // this job is never created, so the cron tick does ZERO new work and the enqueued set is byte-identical.
+  if (isHourly && scheduledAt.getUTCDay() === 2 && hour === 8 && selfHostedReviews && isDecisionAuditEnabled(env)) {
+    jobs.push({ type: "decision-audit-sample", requestedBy: "schedule" });
   }
   // Prune expired log/snapshot rows once a day (03:00 UTC) per the conservative RETENTION_POLICY.
   if (isHourly && hour === 3) {

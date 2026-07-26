@@ -1145,6 +1145,26 @@ describe("worker entrypoint", () => {
     expect(sent.some((m) => m.type === "repo-doc-refresh-sweep")).toBe(false);
   });
 
+  it("#8830: enqueues the decision-audit sample only in the Tuesday 08:00 window, flag-ON, on a self-host", async () => {
+    const send = (over: Record<string, unknown>, when: string) => {
+      const sent: Array<import("../../src/types").JobMessage> = [];
+      const env = createTestEnv({
+        JOBS: { async send(message: import("../../src/types").JobMessage) { sent.push(message); } } as unknown as Queue,
+        ...over,
+      });
+      const waitUntil: Promise<unknown>[] = [];
+      return worker.scheduled(controllerFor(when), env, executionContext(waitUntil)).then(() => Promise.all(waitUntil)).then(() => sent);
+    };
+    const selfhost = { SELFHOST_TRANSIENT_CACHE: {} as never, LOOPOVER_DECISION_AUDIT: "true" };
+    // 2026-06-02 is a Tuesday.
+    expect((await send(selfhost, "2026-06-02T08:00:00.000Z")).some((m) => m.type === "decision-audit-sample")).toBe(true);
+    // Wrong hour, wrong day, flag off, and cloud runtime each suppress the enqueue.
+    expect((await send(selfhost, "2026-06-02T09:00:00.000Z")).some((m) => m.type === "decision-audit-sample")).toBe(false);
+    expect((await send(selfhost, "2026-06-01T08:00:00.000Z")).some((m) => m.type === "decision-audit-sample")).toBe(false);
+    expect((await send({ ...selfhost, LOOPOVER_DECISION_AUDIT: "false" }, "2026-06-02T08:00:00.000Z")).some((m) => m.type === "decision-audit-sample")).toBe(false);
+    expect((await send({ LOOPOVER_DECISION_AUDIT: "true", SELFHOST_TRANSIENT_CACHE: undefined }, "2026-06-02T08:00:00.000Z")).some((m) => m.type === "decision-audit-sample")).toBe(false);
+  });
+
   it("enqueues weekly value report generation during the Monday report window", async () => {
     const sent: Array<import("../../src/types").JobMessage> = [];
     const env = createTestEnv({

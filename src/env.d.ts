@@ -504,6 +504,8 @@ declare global {
     LOOPOVER_REVIEW_SELFTUNE?: string;
     /** #8830: weekly stratified human-audit sampling of gate decisions (default OFF). */
     LOOPOVER_DECISION_AUDIT?: string;
+    /** #8835: daily distribution-free risk-control recalibration over the audit labels (default OFF). */
+    LOOPOVER_RISK_CONTROL?: string;
     /** Experimental `gittensor` plugin (the `experimental:` manifest block, first key): the operator-level
      *  kill-switch for loopover's original subnet mining-registry/scoring integration, now opt-in rather than
      *  a core dependency. ANDed with the per-repo `.loopover.yml experimental.gittensor` opt-in -- neither

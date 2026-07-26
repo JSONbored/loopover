@@ -592,8 +592,8 @@ describe("runOpsAlerts — cron path over gittensory's outcome data", () => {
     await runOpsAlerts(env);
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.body.payload.severity).toBe("error");
-    expect(calls[0]?.body.payload.summary).toMatch(/review burst/);
+    expect(calls[0]?.body.payload?.severity).toBe("error");
+    expect(calls[0]?.body.payload?.summary).toMatch(/review burst/);
     expect(calls[0]?.body.dedup_key).toBe("ops_anomaly:owner/repo");
   });
 

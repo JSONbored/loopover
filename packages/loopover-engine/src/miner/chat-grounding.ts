@@ -227,6 +227,17 @@ function* foldAssistantMessage(message: Record<string, unknown>): Generator<Chat
   }
 }
 
+/** True if a blocked field surfaces anywhere in a tool_result's content — a string, an SDK content-block
+ *  array, or an object where the blocklisted term can appear as a KEY (a `payout` field) or inside a value.
+ *  The structured-content analogue of {@link containsBlockedTerm}. */
+function toolResultContentIsBlocked(content: unknown): boolean {
+  if (typeof content === "string") return containsBlockedTerm(content);
+  if (Array.isArray(content)) return content.some(toolResultContentIsBlocked);
+  const record = asRecord(content);
+  if (!record) return false;
+  return Object.entries(record).some(([key, value]) => containsBlockedTerm(key) || toolResultContentIsBlocked(value));
+}
+
 /** Folds one user message's tool-result blocks (the SDK reports tool output on a `user`-role message). */
 function* foldToolResultMessage(message: Record<string, unknown>): Generator<ChatGroundingEvent> {
   const content = asRecord(message.message)?.content;
@@ -235,7 +246,11 @@ function* foldToolResultMessage(message: Record<string, unknown>): Generator<Cha
     const block = asRecord(rawBlock);
     if (!block || block.type !== "tool_result") continue;
     const tool = typeof block.tool_use_id === "string" ? block.tool_use_id : "";
-    yield { type: "tool_result", tool, output: block.content };
+    // #8869: an MCP tool's OWN output is untrusted and bypassed the redaction backstop foldAssistantMessage
+    // applies. Run it through the same PUBLIC_FIELD_BLOCKLIST check and, on a hit, replace the whole output
+    // wholesale (matching redactBlockedText's replace-not-filter policy) so a blocklisted field cannot leak.
+    const output = toolResultContentIsBlocked(block.content) ? CHAT_REDACTED_TEXT : block.content;
+    yield { type: "tool_result", tool, output };
   }
 }
 

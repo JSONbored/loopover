@@ -346,6 +346,61 @@ export async function resolveDispositionReason(
   }
 }
 
+/**
+ * Record the realized outcome of a terminal action THIS bot just completed, without waiting for GitHub to
+ * deliver the matching `pull_request.closed` webhook (#8823).
+ *
+ * recordPrOutcome below is webhook-only, so a delivery this instance never processes — a dropped brokered
+ * relay event, a restart mid-delivery — loses that PR's ground truth PERMANENTLY: the fleet export inner-joins
+ * gate_decision to pr_outcome, so an outcome-less PR vanishes from calibration entirely, contributing to
+ * neither numerator nor denominator. Measured on the live self-host, ~55% of bot closes after 2026-07-18 had
+ * no pr_outcome row while the PRs were verifiably closed on GitHub, and because the dropped rows skew toward
+ * the gate's MISTAKES (a superseded close is by definition a wrong close), their absence biased published
+ * accuracy upward.
+ *
+ * Idempotent: skips when a pr_outcome row already exists for the target, so the webhook path (whichever wins
+ * the race) never produces a duplicate. Best-effort — a bookkeeping failure must never fail the action that
+ * already succeeded against GitHub.
+ */
+export async function recordTerminalActionOutcome(
+  env: Env,
+  repoFullName: string,
+  pullNumber: number,
+  decision: "merged" | "closed",
+): Promise<void> {
+  const targetId = reviewAuditTargetId(repoFullName, pullNumber);
+  try {
+    const existing = await env.DB.prepare(
+      "SELECT 1 AS x FROM review_audit WHERE target_id = ? AND event_type = 'pr_outcome' LIMIT 1",
+    )
+      .bind(targetId)
+      .first<{ x: number }>();
+    if (existing) return;
+  } catch (error) {
+    // An unreadable ledger must not suppress the write — a duplicate row is strictly better than a lost
+    // outcome (the fleet export and computeGateEval both read the LATEST pr_outcome per target).
+    console.warn(JSON.stringify({ event: "pr_outcome_direct_probe_error", message: errorMessage(error).slice(0, 160) }));
+  }
+
+  incr("loopover_pr_outcomes_total", { outcome: decision });
+  await appendReviewAudit(env, {
+    project: repoFullName.slice(0, 200),
+    targetId,
+    eventType: "pr_outcome",
+    decision,
+  });
+  await recordAuditEvent(env, {
+    eventType: "pr_outcome",
+    actor: null,
+    targetKey: targetId,
+    outcome: "completed",
+    detail: decision,
+    metadata: { repoFullName, pullNumber, merged: decision === "merged", botWasActor: true, source: "terminal_action" },
+  }).catch((error) =>
+    console.warn(JSON.stringify({ event: "pr_outcome_direct_audit_error", message: errorMessage(error).slice(0, 160) })),
+  );
+}
+
 export async function recordPrOutcome(
   env: Env,
   eventName: string,

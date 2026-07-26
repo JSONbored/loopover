@@ -17,7 +17,7 @@ import {
 import { isAuthorBlacklisted } from "../settings/contributor-blacklist";
 import { classifyMergeFailure, isMergeConflictMessage, isNoNewBaseCommitsMessage, MERGE_RETRY_CAP } from "./merge-failure";
 import { notifyActionToDiscord, notifyActionToSlack, type NotifyOutcome } from "./notify-discord";
-import { resolveDispositionReason } from "../review/outcomes-wire";
+import { recordTerminalActionOutcome, resolveDispositionReason } from "../review/outcomes-wire";
 import { cancelInFlightWorkflowRunsForHeadSha, createInstallationToken, githubErrorStatus, isGitHubRateLimitedError } from "../github/app";
 import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestState, fetchLiveReviewThreadBlockers, refreshInstallationHealthForInstallation } from "../github/backfill";
 import { githubRateLimitAdmissionKeyForToken } from "../github/client";
@@ -1049,6 +1049,10 @@ async function performAction(env: Env, ctx: AgentActionExecutionContext, action:
       // expectedHeadSha == ctx.headSha, so its behavior is unchanged; the fallback covers any unpinned plan.
       const mergeSha = action.expectedHeadSha ?? ctx.headSha;
       await mergePullRequest(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, { mergeMethod: action.mergeMethod ?? "squash", ...(mergeSha ? { sha: mergeSha } : {}) });
+      // #8823: record ground truth from the action we just completed rather than depending on the inbound
+      // `pull_request.closed` webhook — a delivery this instance never processes used to lose the outcome
+      // permanently, dropping the PR out of fleet calibration entirely. Idempotent against the webhook path.
+      await recordTerminalActionOutcome(env, ctx.repoFullName, ctx.pullNumber, "merged");
       return;
     }
     case "close":
@@ -1057,6 +1061,9 @@ async function performAction(env: Env, ctx: AgentActionExecutionContext, action:
       // instead of stacking a duplicate "why we closed you" every failed cycle.
       if (action.closeComment) await createOrUpdateCloseExplanationComment(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, action.closeComment, action.closeKind);
       await closePullRequest(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber);
+      // #8823: see the merge case — the bot's own close is authoritative ground truth and must not depend on
+      // a webhook round-trip the instance might never see.
+      await recordTerminalActionOutcome(env, ctx.repoFullName, ctx.pullNumber, "closed");
       return;
     case "update_branch": {
       // update_branch does NOT need the accept-flow-level "unpinned → deny" gate that #2377/#2422 added for

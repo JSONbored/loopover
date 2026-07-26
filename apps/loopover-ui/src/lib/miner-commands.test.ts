@@ -33,24 +33,43 @@ describe("sanitizeMinerCommand (#8677)", () => {
 
   it("does not corrupt a legitimate login/repo token that merely contains a forbidden word as a name", () => {
     // Contract: assignment form is required. A repo named wallet-adapter must not be mangled.
-    const cmd = "loopover-mcp preflight --login trust-score --repo wallet-adapter/sdk --base origin/main --json";
+    const cmd =
+      "loopover-mcp preflight --login trust-score --repo wallet-adapter/sdk --base origin/main --json";
     expect(sanitizeMinerCommand(cmd)).toBe(cmd);
   });
 
   it("redacts POSIX home, absolute, and Windows absolute local paths", () => {
     expect(sanitizeMinerCommand("run --cwd /home/user/project --json")).toContain("<local-path>");
     expect(sanitizeMinerCommand("run --cwd ~/code/repo --json")).toContain("<local-path>");
-    expect(sanitizeMinerCommand("run --cwd C:\\Users\\admin\\proj --json")).toContain("<local-path>");
+    expect(sanitizeMinerCommand("run --cwd C:\\Users\\admin\\proj --json")).toContain(
+      "<local-path>",
+    );
   });
 });
 
 describe("buildMinerCommandActions (#8677)", () => {
   it("returns setup/ready actions when login and repo are absent (fallback placeholders)", () => {
     const actions = buildMinerCommandActions({});
-    expect(actions.map((a) => a.id)).toEqual(["install", "status", "doctor", "plan", "preflight", "packet"]);
-    expect(actions.find((a) => a.id === "install")).toMatchObject({ state: "setup", copyable: true });
-    expect(actions.find((a) => a.id === "status")).toMatchObject({ state: "ready", copyable: true });
-    expect(actions.find((a) => a.id === "doctor")).toMatchObject({ state: "ready", copyable: true });
+    expect(actions.map((a) => a.id)).toEqual([
+      "install",
+      "status",
+      "doctor",
+      "plan",
+      "preflight",
+      "packet",
+    ]);
+    expect(actions.find((a) => a.id === "install")).toMatchObject({
+      state: "setup",
+      copyable: true,
+    });
+    expect(actions.find((a) => a.id === "status")).toMatchObject({
+      state: "ready",
+      copyable: true,
+    });
+    expect(actions.find((a) => a.id === "doctor")).toMatchObject({
+      state: "ready",
+      copyable: true,
+    });
     expect(actions.find((a) => a.id === "plan")).toMatchObject({
       state: "needs_login",
       copyable: false,
@@ -61,7 +80,10 @@ describe("buildMinerCommandActions (#8677)", () => {
       copyable: false,
       command: expect.stringContaining("owner/repo"),
     });
-    expect(actions.find((a) => a.id === "packet")).toMatchObject({ state: "needs_login", copyable: false });
+    expect(actions.find((a) => a.id === "packet")).toMatchObject({
+      state: "needs_login",
+      copyable: false,
+    });
   });
 
   it("marks plan ready and preflight/packet needs_repo when only login is present", () => {
@@ -71,8 +93,14 @@ describe("buildMinerCommandActions (#8677)", () => {
       copyable: true,
       command: expect.stringContaining("--login alice"),
     });
-    expect(actions.find((a) => a.id === "preflight")).toMatchObject({ state: "needs_repo", copyable: false });
-    expect(actions.find((a) => a.id === "packet")).toMatchObject({ state: "needs_repo", copyable: false });
+    expect(actions.find((a) => a.id === "preflight")).toMatchObject({
+      state: "needs_repo",
+      copyable: false,
+    });
+    expect(actions.find((a) => a.id === "packet")).toMatchObject({
+      state: "needs_repo",
+      copyable: false,
+    });
   });
 
   it("marks preflight and packet ready when both login and repo are present", () => {
@@ -85,7 +113,8 @@ describe("buildMinerCommandActions (#8677)", () => {
     expect(actions.find((a) => a.id === "packet")).toMatchObject({
       state: "ready",
       copyable: true,
-      command: "loopover-mcp agent packet --login alice --repo acme/widgets --base origin/main --json",
+      command:
+        "loopover-mcp agent packet --login alice --repo acme/widgets --base origin/main --json",
     });
   });
 

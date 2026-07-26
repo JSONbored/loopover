@@ -7,6 +7,7 @@ import {
   callAiProvider,
   formatReviewDiagnosticsForCapture,
   INCOHERENT_DIFF_ASSESSMENT,
+  blockersDescribeSameDefect,
   isIncoherentDiffBail,
   SCOPE_MISMATCH_ASSESSMENT,
   SCOPE_RECLASSIFY_MIN_RATIONALE_CHARS,
@@ -2158,6 +2159,32 @@ describe("pure helpers", () => {
     expect(parsed?.blockers).toEqual([]);
   });
 
+  // #9087: the system prompt tells a model that cannot read the diff to bail AND return empty blockers. A model
+  // that bails, violates that instruction, and happens to write a >=40-char rationale had its blockers promoted
+  // into a usable review — and under `combine: "single"` (the live claude-code+ollama config) a lone blocker
+  // becomes a full ai_consensus_defect: severity critical, published as agreement, and a CLOSE under
+  // aiReviewGateMode: block. A model that just said it could not read the diff has not earned blocker authority.
+  it("#9087: a reclassified bail DROPS its blockers while keeping the valueAssessment", () => {
+    const rationale = "The PR title describes a trivial test-fixture fix, but the diff adds needsMinerDetection: true at 7 call sites.";
+    const parsed = parseModelReview(
+      JSON.stringify({
+        assessment: INCOHERENT_DIFF_ASSESSMENT,
+        blockers: ["This change introduces a critical security hole"],
+        nits: ["a nit"],
+        suggestions: ["a suggestion"],
+        confidence: 0.9,
+        valueAssessment: { magnitude: "unclear", rationale },
+      }),
+    );
+    expect(parsed?.assessment).toBe(SCOPE_MISMATCH_ASSESSMENT);
+    // The whole point: no blocker authority survives the bail.
+    expect(parsed?.blockers).toEqual([]);
+    // ...but #8789's actual purpose (the scope observation) is preserved, along with the softer channels.
+    expect(parsed?.valueAssessment?.rationale).toBe(rationale);
+    expect(parsed?.nits).toEqual(["a nit"]);
+    expect(parsed?.suggestions).toEqual(["a suggestion"]);
+  });
+
   it("#8789: a bail with a SHORT rationale (a bare echo) stays a bail — null parse, bail-true for the retry break", () => {
     const short = JSON.stringify({
       assessment: INCOHERENT_DIFF_ASSESSMENT,
@@ -3167,38 +3194,100 @@ describe("pure helpers", () => {
     ).toBeNull(); // unsafe → dropped
   });
 
-  it("consensusDefectOf falls back to b's blocker when a's is blank", () => {
-    const a = {
-      assessment: "",
-      suggestions: [],
-      nits: [],
-      blockers: [""],
-      inlineFindings: [],
-      confidence: 1,
-    };
-    const b = {
-      assessment: "",
-      suggestions: [],
-      nits: [],
-      blockers: ["Race condition in src/x.ts"],
-      inlineFindings: [],
-      confidence: 1,
-    };
-    expect(consensusDefectOf(a, b)?.title).toBe("Race condition in src/x.ts");
+  // #9074: consensusDefectOf returned a defect whenever BOTH reviewers had a non-empty blockers list, never
+  // comparing the texts — so "SQL injection in src/db.ts" and "the new helper lacks a doc comment" produced a
+  // critical finding published as "AI reviewers agree on a likely critical defect: SQL injection in src/db.ts",
+  // a false claim of agreement posted on a contributor's PR as the reason it was auto-closed.
+  describe("#9074: consensus requires the reviewers to actually agree", () => {
+    const base = { assessment: "", suggestions: [], nits: [], inlineFindings: [], confidence: 1 };
+
+    it("returns NO consensus when the two reviewers flagged unrelated defects", () => {
+      const a = { ...base, blockers: ["SQL injection in src/db.ts allows arbitrary query execution"] };
+      const b = { ...base, blockers: ["the new helper lacks a doc comment"] };
+      expect(consensusDefectOf(a, b)).toBeNull();
+    });
+
+    it("returns a consensus defect when both describe the SAME defect in different words", () => {
+      const a = { ...base, blockers: ["Null dereference of `user.profile` in src/auth/session.ts"] };
+      const b = { ...base, blockers: ["src/auth/session.ts dereferences user.profile without a null check"] };
+      const out = consensusDefectOf(a, b);
+      expect(out).not.toBeNull();
+      expect(out?.confidence).toBe(1);
+    });
+
+    it("matches ANY pair across the two lists, not just the first of each (reviewers order findings differently)", () => {
+      const a = { ...base, blockers: ["missing changelog entry", "Race condition in src/queue/worker.ts on shutdown"] };
+      const b = { ...base, blockers: ["src/queue/worker.ts has a shutdown race condition"] };
+      const out = consensusDefectOf(a, b);
+      expect(out).not.toBeNull();
+      // ...and it cites the AGREED blocker, not a.blockers[0].
+      expect(out?.title).toContain("Race condition");
+    });
+
+    it("takes the WEAKER reviewer's confidence for the agreed defect", () => {
+      const a = { ...base, confidence: 0.9, blockers: ["Race condition in src/queue/worker.ts on shutdown"] };
+      const b = { ...base, confidence: 0.4, blockers: ["src/queue/worker.ts has a shutdown race condition"] };
+      expect(consensusDefectOf(a, b)?.confidence).toBe(0.4);
+    });
+
+    it("treats two DISAGREEING reviewers as a split, not as silence", () => {
+      const a = { ...base, confidence: 0.8, blockers: ["SQL injection in src/db.ts"] };
+      const b = { ...base, confidence: 0.5, blockers: ["the new helper lacks a doc comment"] };
+      const combined = combineReviews([a, b], { strategy: "consensus" });
+      expect(combined.defect).toBeNull();
+      // Before this, `split` required exactly one side to have flagged — so BOTH flagging produced no finding
+      // at all, strictly weaker than one reviewer flagging.
+      expect(combined.split).toBe(true);
+      // Neither is corroborated, so the split gates on the weaker reviewer.
+      expect(combined.splitConfidence).toBe(0.5);
+    });
+
+    it("still reports a one-sided split with that reviewer's own confidence (unchanged)", () => {
+      const a = { ...base, confidence: 0.7, blockers: ["SQL injection in src/db.ts"] };
+      const b = { ...base, confidence: 0.2, blockers: [] };
+      const combined = combineReviews([a, b], { strategy: "consensus" });
+      expect(combined.split).toBe(true);
+      expect(combined.splitConfidence).toBe(0.7);
+    });
+
+    it("is NOT agreement when a blocker has no significant tokens to compare (unverifiable ⇒ never a defect)", () => {
+      // All tokens are short/stopwords, so there is nothing substantive to match on.
+      const vague = { ...base, blockers: ["it is bad"] };
+      const real = { ...base, blockers: ["Null dereference in src/auth/session.ts"] };
+      expect(blockersDescribeSameDefect("it is bad", "so is that")).toBe(false);
+      expect(consensusDefectOf(vague, real)).toBeNull();
+    });
+
+    it("accepts a shared file path plus a second shared term even when raw word overlap is low", () => {
+      // Long, differently-worded reports that nonetheless cite the same file AND the same defect noun: the
+      // Jaccard ratio is dragged below 0.4 by the surrounding prose, but this is real agreement.
+      const first = "A subtle and intermittent deadlock arises inside src/queue/worker.ts whenever shutdown overlaps with an inflight claim operation";
+      const second = "src/queue/worker.ts deadlock";
+      expect(blockersDescribeSameDefect(first, second)).toBe(true);
+    });
+
+    it("does not treat a single shared path token alone as agreement", () => {
+      // Same file, entirely different defects — one shared token is not corroboration.
+      expect(blockersDescribeSameDefect("src/db.ts leaks a connection", "src/db.ts needs a comment")).toBe(false);
+    });
+
+    it("reports neither defect nor split when nobody flagged anything", () => {
+      const clean = { ...base, blockers: [] };
+      const combined = combineReviews([clean, clean], { strategy: "consensus" });
+      expect(combined).toMatchObject({ defect: null, split: false, inconclusive: false });
+    });
   });
 
-  it("consensusDefectOf uses the default title + detail when BOTH reviewers' blockers are blank", () => {
-    const blank = {
-      assessment: "",
-      suggestions: [],
-      nits: [],
-      blockers: [""],
-      inlineFindings: [],
-      confidence: 1,
-    };
-    const out = consensusDefectOf(blank, { ...blank, blockers: [""] });
-    expect(out?.title).toContain("AI reviewers agree"); // both blockers[0] falsy → default title
-    expect(out?.detail).toContain("independently flagged"); // joined detail empty → default detail
+  // #9074: a blank blocker entry is not a flagged blocker, and two reviewers who each returned one are not in
+  // agreement about anything. These previously asserted the opposite — that `blockers: [""]` on both sides
+  // produced a full consensus defect under the generic "AI reviewers agree on a likely blocking defect" title,
+  // i.e. a critical, closing finding manufactured from two empty strings.
+  it("#9074: a blank blocker on either side is not a flagged blocker — no consensus defect", () => {
+    const blank = { assessment: "", suggestions: [], nits: [], blockers: [""], inlineFindings: [], confidence: 1 };
+    const real = { ...blank, blockers: ["Null dereference in src/db.ts"] };
+    expect(consensusDefectOf(blank, real)).toBeNull();
+    expect(consensusDefectOf(real, blank)).toBeNull();
+    expect(consensusDefectOf(blank, { ...blank, blockers: [""] })).toBeNull();
   });
 
   it("synthesizeDefect cites the FLAGGING reviewer's blocker + confidence, skipping an earlier clean reviewer (#8)", () => {

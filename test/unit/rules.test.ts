@@ -1,3 +1,4 @@
+import { CONFIGURED_GATE_BLOCKER_SIGNAL_CODES } from "../../src/rules/advisory";
 import { describe, expect, it } from "vitest";
 import {
   buildCheckRunAnnotations,
@@ -1751,3 +1752,21 @@ function emptyCollisions(): CollisionReport {
     clusters: [],
   };
 }
+
+// #9085 taxonomy drift: both of these gate REAL closes but were absent from the signal-codes list, so their
+// reversals recorded under a different id (or not at all) and the per-rule precision check in
+// downgradeCloseToHold could never apply to them — the same shape as the backtest_regression omission that
+// this list's own doc comment was written about.
+describe("CONFIGURED_GATE_BLOCKER_SIGNAL_CODES covers every code that can close a PR (#9085)", () => {
+  it("includes slop_risk_above_threshold, which is pushed directly into blockers", () => {
+    expect(CONFIGURED_GATE_BLOCKER_SIGNAL_CODES).toContain("slop_risk_above_threshold");
+  });
+
+  it("includes surface_lane_reject, which is live in CONCRETE_EVIDENCE_BLOCKER_CODES", () => {
+    expect(CONFIGURED_GATE_BLOCKER_SIGNAL_CODES).toContain("surface_lane_reject");
+  });
+
+  it("has no duplicate entries (a duplicate would double-record a single reversal)", () => {
+    expect(new Set(CONFIGURED_GATE_BLOCKER_SIGNAL_CODES).size).toBe(CONFIGURED_GATE_BLOCKER_SIGNAL_CODES.length);
+  });
+});

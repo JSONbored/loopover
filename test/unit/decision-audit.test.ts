@@ -93,6 +93,11 @@ describe("planAuditSample (#8830)", () => {
 });
 
 describe("runDecisionAuditSample (#8830) — end-to-end over the real ledger", () => {
+  async function seedOpenPr(env: Env, n: number, author: string): Promise<void> {
+    // A cached PR with NO pr_outcome — open/undecided. Must never count toward an author's decided total.
+    await env.DB.prepare(`INSERT INTO pull_requests (repo_full_name, number, title, state, author_login) VALUES ('o/r', ?, 't', 'open', ?)`).bind(n, author).run();
+  }
+
   async function seedDecision(env: Env, n: number, verdict: "merge" | "close", outcome: "merged" | "closed", author: string, opts: { policyClose?: boolean; old?: boolean } = {}): Promise<void> {
     const at = opts.old ? "2026-01-01T00:00:00.000Z" : new Date().toISOString();
     await env.DB.prepare(
@@ -112,7 +117,11 @@ describe("runDecisionAuditSample (#8830) — end-to-end over the real ledger", (
     const env = createTestEnv();
     await seedDecision(env, 1, "merge", "merged", "veteran");
     await seedDecision(env, 2, "merge", "merged", "veteran"); // veteran has 2 PRs -> not first-time
-    await seedDecision(env, 3, "close", "closed", "newbie"); // newbie's only PR -> first-time
+    await seedDecision(env, 3, "close", "closed", "newbie"); // newbie's only DECIDED PR -> first-time
+    // REGRESSION (review blocker on this PR): open/undecided PRs must not inflate the decided count — a
+    // newcomer with several open PRs and one decided PR is still first-time.
+    await seedOpenPr(env, 300, "newbie");
+    await seedOpenPr(env, 301, "newbie");
     await seedDecision(env, 4, "close", "closed", "capped", { policyClose: true }); // enforcement — excluded
     await seedDecision(env, 5, "merge", "merged", "old-timer", { old: true }); // outside the 7d window
     const inserted = await runDecisionAuditSample(env, Date.now(), () => 0.5);

@@ -133,11 +133,17 @@ export async function runDecisionAuditSample(env: Env, nowMs: number = Date.now(
   const decided = results;
   if (decided.length === 0) return 0;
 
-  // First-time detection: the author's earliest decided PR. review_audit carries no logins by design, so the
-  // author comes from the pull_requests cache; a PR with no cached row degrades to "not first-time" (the
-  // stratum under-fills and the spill covers it) rather than guessing.
+  // First-time detection: the author's DECIDED-PR count. review_audit carries no logins by design, so the
+  // author comes from the pull_requests cache — but only rows whose target actually has a realized
+  // pr_outcome count, otherwise a newcomer with several open-but-undecided PRs and exactly one decided PR
+  // would be wrongly marked veteran, starving the stratum whose whole purpose is weak-prior newcomers. A PR
+  // with no cached row degrades to "not first-time" (the stratum under-fills and the spill covers it)
+  // rather than guessing.
   const authorRows = await env.DB.prepare(
-    `SELECT repo_full_name || '#' || number AS targetId, author_login AS author FROM pull_requests WHERE author_login IS NOT NULL`,
+    `SELECT p.repo_full_name || '#' || p.number AS targetId, p.author_login AS author
+       FROM pull_requests p
+      WHERE p.author_login IS NOT NULL
+        AND EXISTS (SELECT 1 FROM review_audit ra WHERE ra.event_type = 'pr_outcome' AND ra.target_id = p.repo_full_name || '#' || p.number)`,
   ).all<{ targetId: string; author: string }>();
   const authorByTarget = new Map(authorRows.results.map((r) => [r.targetId, r.author.toLowerCase()]));
   const decidedCountByAuthor = new Map<string, number>();

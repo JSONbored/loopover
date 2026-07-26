@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   isPagerDutyEnabled,
   resolvePagerDutyCooldownMinutes,
+  resolvePagerDutyIncident,
   resolvePagerDutyMinSeverity,
   resolvePagerDutyRoutingKey,
   triggerPagerDutyIncident,
@@ -246,6 +247,66 @@ describe("triggerPagerDutyIncident — cooldown gate (alert fatigue control #2)"
     expect(calls).toHaveLength(0);
     const rows = await pagerDutyAudit(env);
     expect(rows[rows.length - 1]).toEqual(expect.objectContaining({ outcome: "denied", detail: "cooldown_active" }));
+  });
+});
+
+describe("resolvePagerDutyIncident — auto-close a cleared incident (#8903)", () => {
+  const resolve = (env: Env, dedupKey = "ops_anomaly:acme/widgets"): Promise<void> =>
+    resolvePagerDutyIncident(env, { repoFullName: "acme/widgets", dedupKey });
+
+  it("flag off → no fetch, no audit row (silent, like the trigger path)", async () => {
+    const calls = stubFetch();
+    const env = withEnv();
+    await resolve(env);
+    expect(calls).toEqual([]);
+    expect(await pagerDutyAudit(env)).toEqual([]);
+  });
+
+  it("flag on but no routing key resolves → no fetch, audited denied/missing_global_key", async () => {
+    const calls = stubFetch();
+    const env = withEnv({ LOOPOVER_ENABLE_PAGERDUTY: "1" });
+    await resolve(env);
+    expect(calls).toEqual([]);
+    expect(await pagerDutyAudit(env)).toEqual([expect.objectContaining({ outcome: "denied", detail: "missing_global_key" })]);
+  });
+
+  it("posts a resolve event (routing + dedup key, no payload) and audits completed/resolved on success", async () => {
+    const calls = stubFetch(202);
+    const env = enabledEnv();
+    await resolve(env);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("https://events.pagerduty.com/v2/enqueue");
+    expect(calls[0]?.body).toEqual({ routing_key: VALID_KEY, event_action: "resolve", dedup_key: "ops_anomaly:acme/widgets" });
+    expect(await pagerDutyAudit(env)).toEqual([expect.objectContaining({ outcome: "completed", detail: "resolved" })]);
+  });
+
+  it("has NO severity floor or cooldown -- always resolves even right after a recent page for the same dedupKey", async () => {
+    const calls = stubFetch(202);
+    const env = enabledEnv();
+    // A page recorded moments ago would suppress a repeat TRIGGER via the cooldown -- a resolve must not care.
+    await recordAuditEvent(env, { eventType: "external_notification.pagerduty", actor: "loopover", targetKey: "ops_anomaly:acme/widgets", outcome: "completed", detail: "triggered" });
+    await resolve(env);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.body).toMatchObject({ event_action: "resolve" });
+  });
+
+  it("a non-ok response is audited as an error and never throws", async () => {
+    stubFetch(500);
+    const env = enabledEnv();
+    await expect(resolve(env)).resolves.toBeUndefined();
+    expect(await pagerDutyAudit(env)).toEqual([expect.objectContaining({ outcome: "error" })]);
+  });
+
+  it("a network failure is audited as an error, logs pagerduty_resolve_failed, and never throws", async () => {
+    vi.stubGlobal("fetch", async () => {
+      throw new Error("network down");
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const env = enabledEnv();
+    await expect(resolve(env)).resolves.toBeUndefined();
+    expect(await pagerDutyAudit(env)).toEqual([expect.objectContaining({ outcome: "error", detail: expect.stringContaining("network down") })]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("pagerduty_resolve_failed"));
+    warn.mockRestore();
   });
 });
 

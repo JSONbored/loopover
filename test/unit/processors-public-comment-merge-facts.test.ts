@@ -12,13 +12,18 @@ const NO_GUARDRAIL_OVERRIDES = {
   hardGuardrailGlobs: [],
   hardGuardrailGlobsOverridesInvariants: false,
   manualReviewLabel: undefined,
-} as Pick<RepositorySettings, "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants" | "manualReviewLabel">;
+  closeOwnerAuthors: false,
+} as Pick<
+  RepositorySettings,
+  "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants" | "manualReviewLabel" | "closeOwnerAuthors"
+>;
 
 function facts(overrides: Partial<Parameters<typeof derivePublicCommentMergeFacts>[0]> = {}) {
   return derivePublicCommentMergeFacts({
     liveMergeState: "clean",
     mergeableState: "dirty",
     authorLogin: "contributor",
+    authorIsAdmin: false,
     liveCi: { ciState: "passed", failingDetails: [], nonRequiredFailingDetails: [] },
     settings: NO_GUARDRAIL_OVERRIDES,
     unifiedFiles: [UNGUARDED_FILE],
@@ -118,7 +123,8 @@ describe("derivePublicCommentMergeFacts() — heldForReview (#guarded-hold-comme
           hardGuardrailGlobs: [],
           hardGuardrailGlobsOverridesInvariants: true,
           manualReviewLabel: undefined,
-        } as Pick<RepositorySettings, "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants" | "manualReviewLabel">,
+          closeOwnerAuthors: false,
+        } as Pick<RepositorySettings, "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants" | "manualReviewLabel" | "closeOwnerAuthors">,
       }).heldForReview,
     ).toBe(false);
   });
@@ -147,7 +153,8 @@ describe("derivePublicCommentMergeFacts() — manual-review label hold (#7994-fo
       hardGuardrailGlobs: [],
       hardGuardrailGlobsOverridesInvariants: false,
       manualReviewLabel: "needs-maintainer",
-    } as Pick<RepositorySettings, "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants" | "manualReviewLabel">;
+      closeOwnerAuthors: false,
+    } as Pick<RepositorySettings, "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants" | "manualReviewLabel" | "closeOwnerAuthors">;
     // The default "manual-review" label no longer matters once a custom name is configured.
     expect(facts({ unifiedFiles: [UNGUARDED_FILE], settings, prLabels: ["manual-review"] }).heldForReview).toBe(false);
     expect(facts({ unifiedFiles: [UNGUARDED_FILE], settings, prLabels: ["needs-maintainer"] }).heldForReview).toBe(true);
@@ -158,7 +165,8 @@ describe("derivePublicCommentMergeFacts() — manual-review label hold (#7994-fo
       hardGuardrailGlobs: [],
       hardGuardrailGlobsOverridesInvariants: false,
       manualReviewLabel: null,
-    } as Pick<RepositorySettings, "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants" | "manualReviewLabel">;
+      closeOwnerAuthors: false,
+    } as Pick<RepositorySettings, "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants" | "manualReviewLabel" | "closeOwnerAuthors">;
     expect(facts({ unifiedFiles: [UNGUARDED_FILE], settings, prLabels: ["manual-review"] }).heldForReview).toBe(false);
   });
 });
@@ -194,5 +202,34 @@ describe("derivePublicCommentMergeFacts() — neverClosed (#8/#9, #4607)", () =>
 
   it("treats a repoFullName with no owner segment as having no owner", () => {
     expect(facts({ repoFullName: "no-slash-name", authorLogin: "contributor" }).neverClosed).toBe(false);
+  });
+
+  // #8683: the two cases where the old owner-only, closeOwnerAuthors-blind formula diverged from the planner.
+  it("is false for an owner-authored PR once the repo opts into closeOwnerAuthors (planner can close them)", () => {
+    const settings = {
+      ...NO_GUARDRAIL_OVERRIDES,
+      closeOwnerAuthors: true,
+    } as Pick<
+      RepositorySettings,
+      "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants" | "manualReviewLabel" | "closeOwnerAuthors"
+    >;
+    expect(facts({ repoFullName: "acme/widgets", authorLogin: "acme", settings }).neverClosed).toBe(false);
+    // Sanity: the same owner WITHOUT the opt-in is still protected (the pre-existing behavior).
+    expect(facts({ repoFullName: "acme/widgets", authorLogin: "acme" }).neverClosed).toBe(true);
+  });
+
+  it("is true for a per-repo admin (non-owner) author when the repo has not opted into closeOwnerAuthors", () => {
+    // authorIsAdmin is the caller-resolved isPerTenantAdmin verdict; a non-owner admin is protected exactly
+    // like the owner, which the old formula (owner-login match only) never reflected.
+    expect(facts({ authorLogin: "admin-person", authorIsAdmin: true }).neverClosed).toBe(true);
+    // And that same admin becomes closable once the repo opts in, matching the owner path.
+    const settings = {
+      ...NO_GUARDRAIL_OVERRIDES,
+      closeOwnerAuthors: true,
+    } as Pick<
+      RepositorySettings,
+      "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants" | "manualReviewLabel" | "closeOwnerAuthors"
+    >;
+    expect(facts({ authorLogin: "admin-person", authorIsAdmin: true, settings }).neverClosed).toBe(false);
   });
 });

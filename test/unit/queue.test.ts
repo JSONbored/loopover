@@ -7403,6 +7403,102 @@ describe("queue processors", () => {
       expect(bypassAudit?.outcome).toBe("completed");
     });
 
+    it("#9008: a forced re-run steals an orphaned AI-review lock instead of silently landing on the contended placeholder", async () => {
+      let aiCalls = 0;
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) }; } } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "100000",
+      });
+      await seedRegateChurnRepo(env);
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 95, title: "Held behind an orphaned AI-review lock", state: "open", user: { login: "contributor" }, head: { sha: "a95" }, labels: [], body: "Closes #1" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+        if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "maintain" });
+        if (url.includes("/pulls/95/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+        if (url.endsWith("/pulls/95")) return Response.json({ number: 95, title: "Held behind an orphaned AI-review lock", state: "open", user: { login: "contributor" }, head: { sha: "a95" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+        if (url.includes("/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+        if (url.includes("/status")) return Response.json({ state: "success", statuses: [] });
+        if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+        if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+        return Response.json({});
+      });
+
+      // Simulate the exact production scenario: a self-host process claimed the AI-review lock for this PR's
+      // head and died before releasing it -- the lock now sits held for the full TTL with no live pass behind
+      // it, per aiReviewLockKey's (repo, PR, head, mode) shape.
+      const orphan = await claimAiReviewLock(env, "JSONbored/gittensory", 95, "a95", "block");
+      expect(orphan.acquired).toBe(true);
+
+      // A normal (non-forced) pass correctly defers to the (orphaned, but indistinguishable from live) lock --
+      // this used to be completely silent; it must now both name itself in the audit trail AND trip the
+      // missing-summary alarm instead of the placeholder masquerading as a real review.
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "unforced-hits-orphan", repoFullName: "JSONbored/gittensory", prNumber: 95, installationId: 123 });
+      expect(aiCalls).toBe(0);
+      const contendedAudit = await env.DB.prepare("select detail, metadata_json from audit_events where event_type = ? and target_key = ?")
+        .bind("github_app.ai_review_lock_contended", "JSONbored/gittensory#95")
+        .first<{ detail: string; metadata_json: string }>();
+      expect(contendedAudit).toBeTruthy();
+      expect(JSON.parse(contendedAudit!.metadata_json)).toMatchObject({ forced: false, headSha: "a95" });
+      const missingSummaryAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
+        .bind("github_app.ai_review_public_summary_missing", "JSONbored/gittensory#95")
+        .first<{ n: number }>();
+      expect(missingSummaryAudit?.n).toBeGreaterThan(0); // the masquerade no longer suppresses this alarm
+
+      // A FORCED pass against the SAME still-held lock steals it and spends a genuinely fresh review --
+      // it must NOT land on the contended path at all.
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "forced-steals-orphan", repoFullName: "JSONbored/gittensory", prNumber: 95, installationId: 123, force: true });
+      expect(aiCalls).toBeGreaterThan(0);
+      const secondContendedCount = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ? and detail = detail").bind("github_app.ai_review_lock_contended", "JSONbored/gittensory#95").first<{ n: number }>();
+      expect(secondContendedCount?.n).toBe(1); // still just the ONE unforced-pass row from above -- the forced pass never hit this branch
+    });
+
+    it("#9008: a failing lock-contended audit write is best-effort and never crashes the deferred pass", async () => {
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run: async () => ({ response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) }) } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "100000",
+      });
+      await seedRegateChurnRepo(env);
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 96, title: "Held behind an orphaned lock, audit write down", state: "open", user: { login: "contributor" }, head: { sha: "a96" }, labels: [], body: "Closes #1" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+        if (url.includes("/pulls/96/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+        if (url.endsWith("/pulls/96")) return Response.json({ number: 96, title: "Held behind an orphaned lock, audit write down", state: "open", user: { login: "contributor" }, head: { sha: "a96" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+        if (url.includes("/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+        if (url.includes("/status")) return Response.json({ state: "success", statuses: [] });
+        if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+        if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+        return Response.json({});
+      });
+      const orphan = await claimAiReviewLock(env, "JSONbored/gittensory", 96, "a96", "block");
+      expect(orphan.acquired).toBe(true);
+      const originalRecordAuditEvent = repositoriesModule.recordAuditEvent;
+      const auditSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockImplementation(async (auditEnv, event) => {
+        if (event.eventType === "github_app.ai_review_lock_contended") throw new Error("audit DB down");
+        await originalRecordAuditEvent(auditEnv, event);
+      });
+
+      await expect(
+        processJob(env, { type: "agent-regate-pr", deliveryId: "unforced-hits-orphan-audit-fails", repoFullName: "JSONbored/gittensory", prNumber: 96, installationId: 123 }),
+      ).resolves.toBeUndefined();
+
+      auditSpy.mockRestore();
+      // The write failed, so no row exists for it -- confirming the failure was genuinely swallowed rather
+      // than this test accidentally not exercising the branch at all.
+      const contendedCount = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
+        .bind("github_app.ai_review_lock_contended", "JSONbored/gittensory#96")
+        .first<{ n: number }>();
+      expect(contendedCount?.n).toBe(0);
+    });
+
     describe("one-shot AI review cadence (#one-shot-review-cadence)", () => {
       it("default (one_shot, no manual-review label): a genuinely NEW push does not spend a fresh main-review AI call -- reuses the prior published review", async () => {
         let aiCalls = 0;

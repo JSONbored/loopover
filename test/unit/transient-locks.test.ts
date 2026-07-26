@@ -350,6 +350,118 @@ describe("claimTransientLock / releaseTransientLockIfOwner — cache fallback wi
   });
 });
 
+describe("claimTransientLock — steal option (#9008)", () => {
+  it("cache path: steal overwrites a still-live holder's claim instead of contending against it", async () => {
+    const held = new Map<string, string>();
+    const env = createTestEnv({
+      SELFHOST_TRANSIENT_CACHE: {
+        get: async (key) => held.get(key) ?? null,
+        set: async (key, value) => {
+          held.set(key, value);
+        },
+        claim: async (key, value) => {
+          if (held.has(key)) return false;
+          held.set(key, value);
+          return true;
+        },
+        releaseIfValue: async (key, value) => {
+          if (held.get(key) !== value) return false;
+          held.delete(key);
+          return true;
+        },
+      },
+    });
+    delete env.SUBMISSION_LOCK;
+
+    const original = await claimTransientLock(env, "steal-key", 30);
+    expect(original.acquired).toBe(true);
+
+    // A plain (non-steal) claim against the same key still contends normally and loses.
+    const contended = await claimTransientLock(env, "steal-key", 30);
+    expect(contended.acquired).toBe(false);
+
+    const stolen = await claimTransientLock(env, "steal-key", 30, { steal: true });
+    expect(stolen.acquired).toBe(true);
+    expect(stolen.ownerToken).toEqual(expect.any(String));
+    expect(stolen.ownerToken).not.toBe(original.ownerToken);
+    expect(held.get("steal-key")).toBe(stolen.ownerToken);
+
+    // The stealer's own token now genuinely owns the key: it releases cleanly...
+    await releaseTransientLockIfOwner(env, "steal-key", stolen.ownerToken);
+    expect(held.has("steal-key")).toBe(false);
+    // ...and the ORIGINAL holder's stale release (its token no longer matches) is a safe no-op, exactly like
+    // the existing stale-actuation-lock-holder regression above.
+    held.set("steal-key", "someone-else");
+    await releaseTransientLockIfOwner(env, "steal-key", original.ownerToken);
+    expect(held.get("steal-key")).toBe("someone-else");
+  });
+
+  it("cache path: steal fails open (acquired: true, ownerToken: null) when the underlying set() throws", async () => {
+    const env = createTestEnv({
+      SELFHOST_TRANSIENT_CACHE: {
+        get: async () => null,
+        set: async () => {
+          throw new Error("cache unavailable");
+        },
+        claim: async () => true,
+        releaseIfValue: async () => true,
+      },
+    });
+    delete env.SUBMISSION_LOCK;
+
+    await expect(claimTransientLock(env, "steal-key", 30, { steal: true })).resolves.toEqual({
+      acquired: true,
+      ownerToken: null,
+    });
+  });
+
+  it("cache path: a non-steal call is byte-identical to before -- steal:false/absent never touches set()", async () => {
+    let setCalls = 0;
+    const held = new Map<string, string>();
+    const env = createTestEnv({
+      SELFHOST_TRANSIENT_CACHE: {
+        get: async (key) => held.get(key) ?? null,
+        set: async (key, value) => {
+          setCalls += 1;
+          held.set(key, value);
+        },
+        claim: async (key, value) => {
+          if (held.has(key)) return false;
+          held.set(key, value);
+          return true;
+        },
+        releaseIfValue: async () => true,
+      },
+    });
+    delete env.SUBMISSION_LOCK;
+
+    await claimTransientLock(env, "steal-key", 30);
+    await claimTransientLock(env, "steal-key", 30, { steal: false });
+    expect(setCalls).toBe(0);
+  });
+
+  it("DO path: steal overwrites a still-live claim; a non-steal claim against the same key still loses", async () => {
+    const ns = submissionLockNamespace();
+    const env = createTestEnv({ SUBMISSION_LOCK: ns as unknown as DurableObjectNamespace });
+    delete env.SELFHOST_TRANSIENT_CACHE;
+
+    const original = await claimTransientLock(env, "do-steal-key", 60);
+    expect(original.acquired).toBe(true);
+
+    const contended = await claimTransientLock(env, "do-steal-key", 60);
+    expect(contended.acquired).toBe(false);
+
+    const stolen = await claimTransientLock(env, "do-steal-key", 60, { steal: true });
+    expect(stolen.acquired).toBe(true);
+    expect(stolen.ownerToken).not.toBe(original.ownerToken);
+
+    // The stealer's release now works; the original holder's own token no longer matches what's stored.
+    await releaseTransientLockIfOwner(env, "do-steal-key", stolen.ownerToken);
+    const reclaim = await claimTransientLock(env, "do-steal-key", 60);
+    expect(reclaim.acquired).toBe(true);
+  });
+});
+
 describe("domain wrappers + PrActuationLockContendedError (#8896)", () => {
   it("routes claim/release for PR actuation and contributor-cap through the same lock helpers", async () => {
     const ns = submissionLockNamespace();

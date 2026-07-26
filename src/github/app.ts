@@ -827,6 +827,12 @@ export async function createOrUpdateSkippedGateCheckRun(
         summary: reason,
         text: "LoopOver does not post late first comments on closed or merged pull requests.",
       },
+      // #9020: without this, the no-checkRunId lookup path's default (effectively "any") lets this call PATCH
+      // an already-`completed` Gate run (e.g. a fully-evaluated, green run on a since-merged head) down to
+      // `skipped` -- falsifying the historical verdict. This call's own purpose is narrower: finalize an
+      // in-progress "evaluating" run when the PR closed before evaluation finished, which "in_progress_only"
+      // already covers correctly; it must never touch a run that already reached a real terminal conclusion.
+      updateExisting: "in_progress_only",
       supersedeLegacyNames: [GITTENSORY_LEGACY_GATE_CHECK_NAME, GITTENSORY_LEGACY_ORB_GATE_CHECK_NAME],
       mode,
     },

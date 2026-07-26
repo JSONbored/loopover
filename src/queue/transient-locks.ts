@@ -44,8 +44,9 @@ export async function claimTransientLock(
   env: Env,
   key: string,
   ttlSeconds: number,
+  options?: { steal?: boolean },
 ): Promise<TransientLockClaim> {
-  const viaDo = await claimSubmissionLockIfBound(env, key, ttlSeconds);
+  const viaDo = await claimSubmissionLockIfBound(env, key, ttlSeconds, options);
   if (viaDo !== null) return viaDo;
 
   const cache = env.SELFHOST_TRANSIENT_CACHE;
@@ -55,6 +56,19 @@ export async function claimTransientLock(
   // calling claim() so misconfigured test/custom adapters never acquire an unreleasable lock (#2129/#3153).
   if (!cache.releaseIfValue) return { acquired: true, ownerToken: null };
   const ownerToken = randomUUID();
+  // #9008: a `steal` caller (a maintainer's explicit forced re-run) intentionally takes ownership even from a
+  // still-live holder — a duplicate LLM call is the accepted cost, and a self-host process that died mid-review
+  // otherwise orphans this key for the FULL TTL with no recovery path (confirmed live: a lock outlived the
+  // process that claimed it by 15+ minutes). `set` unconditionally overwrites (unlike `claim`'s SET-NX), so a
+  // steal can never itself contend — that is the entire point.
+  if (options?.steal) {
+    try {
+      await cache.set(key, ownerToken, ttlSeconds);
+      return { acquired: true, ownerToken };
+    } catch {
+      return { acquired: true, ownerToken: null }; // fail open — same posture as every other claim failure
+    }
+  }
   try {
     const acquired = await cache.claim(key, ownerToken, ttlSeconds);
     return { acquired, ownerToken: acquired ? ownerToken : null };
@@ -85,6 +99,7 @@ async function claimSubmissionLockIfBound(
   env: Env,
   key: string,
   ttlSeconds: number,
+  options?: { steal?: boolean },
 ): Promise<TransientLockClaim | null> {
   const ns = env.SUBMISSION_LOCK;
   if (!ns) return null;
@@ -94,7 +109,7 @@ async function claimSubmissionLockIfBound(
     const response = await ns.get(id).fetch("https://submission-lock/claim", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ownerToken, ttlSeconds }),
+      body: JSON.stringify({ ownerToken, ttlSeconds, steal: options?.steal === true }),
     });
     const body = (await response.json().catch(() => null)) as { acquired?: unknown } | null;
     if (typeof body?.acquired !== "boolean") return { acquired: true, ownerToken: null }; // fail open

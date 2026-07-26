@@ -1864,6 +1864,63 @@ describe("GitHub check runs", () => {
     );
   });
 
+  // #9020: a late-arriving panel re-run click on an ALREADY-MERGED PR used to reach this call with the head's
+  // Gate check run already `completed` (a real, fully-evaluated verdict) -- and demote it to `skipped`,
+  // falsifying the historical result. `updateExisting: "in_progress_only"` means this call may only finalize a
+  // still-`in_progress` run; an already-completed one is left alone (a second, separate run is posted instead,
+  // so the call still does its job without touching the terminal one).
+  it("#9020: never demotes an already-completed Gate check run to skipped -- posts a separate run instead", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    let patchedExisting = false;
+    let newRunPosted = false;
+    vi.stubGlobal(
+      "fetch",
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (url.includes("/access_tokens"))
+          return Response.json({ token: "installation-token" });
+        if (url.includes("/commits/merged123/check-runs")) {
+          return Response.json({
+            total_count: 1,
+            check_runs: [
+              {
+                id: 999,
+                name: "LoopOver Orb Review Agent",
+                status: "completed",
+                conclusion: "success",
+              },
+            ],
+          });
+        }
+        if (method === "PATCH" && url.includes("/check-runs/999")) {
+          patchedExisting = true;
+          return Response.json({ id: 999, html_url: "https://github.com/checks/999" });
+        }
+        if (method === "POST" && url.includes("/check-runs")) {
+          newRunPosted = true;
+          return Response.json(
+            { id: 1000, html_url: "https://github.com/checks/1000" },
+            { status: 201 },
+          );
+        }
+        return new Response("not found", { status: 404 });
+      },
+    );
+
+    const result = await createOrUpdateSkippedGateCheckRun(
+      createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }),
+      123,
+      "JSONbored/gittensory",
+      gateAdvisory("merged123"),
+      "Merged before LoopOver finished.",
+    );
+
+    expect(patchedExisting).toBe(false); // the completed run was never touched
+    expect(newRunPosted).toBe(true); // the call still completes its own job
+    expect(result).toMatchObject({ kind: "published", id: 1000 });
+  });
+
   it("reposts a known check-run id when the old run belongs to a prior App", async () => {
     const privateKey = await generatePrivateKeyPem();
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});

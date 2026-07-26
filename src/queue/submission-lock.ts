@@ -14,6 +14,9 @@ type LockRecord = {
 type ClaimBody = {
   ownerToken?: unknown;
   ttlSeconds?: unknown;
+  // #9008: a forced re-run intentionally takes ownership even from a still-live holder — mirrors the
+  // cache-path steal in claimTransientLock (transient-locks.ts), kept consistent across both lock backends.
+  steal?: unknown;
 };
 
 type ReleaseBody = {
@@ -44,9 +47,10 @@ export class SubmissionLock extends DurableObject<Env> {
       return Response.json({ error: "invalid_claim" }, { status: 400 });
     }
 
+    const steal = body?.steal === true;
     const now = Date.now();
     const existing = await this.ctx.storage.get<LockRecord>(STORAGE_KEY);
-    if (existing && existing.expiresAt > now && existing.ownerToken !== ownerToken) {
+    if (!steal && existing && existing.expiresAt > now && existing.ownerToken !== ownerToken) {
       return Response.json({ acquired: false });
     }
 

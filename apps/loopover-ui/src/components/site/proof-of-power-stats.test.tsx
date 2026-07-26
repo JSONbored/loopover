@@ -213,8 +213,12 @@ describe("ProofOfPowerStats", () => {
     await screen.findByText("Decision accuracy");
     expect(screen.getByText("80%")).toBeTruthy();
     expect(screen.queryByText("98.4%")).toBeNull(); // the own-ledger number is no longer shown
+    // #8820: the hint states WHAT is measured -- merge/close decisions confirmed by the realized outcome --
+    // rather than the retired "reversal-grounded" formula the surface no longer publishes.
     expect(
-      screen.getByText("across 3 self-hosted instances · 2 gaming patterns flagged"),
+      screen.getByText(
+        "merge/close calls confirmed by outcome · 3 self-hosted instances · 2 gaming patterns flagged",
+      ),
     ).toBeTruthy();
     // No fleet-accuracy trend exists yet -- the tile's sparkline is omitted rather than showing a mismatched one.
     expect(screen.getAllByRole("img", { name: "Trend over the last 8 weeks" })).toHaveLength(3);

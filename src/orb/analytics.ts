@@ -56,7 +56,18 @@ export interface InstanceMetrics {
   closePrecision: number | null; // P(closed & not reopened | gate said close)
   fpRate: number | null; // P(closed or reverted | gate said merge) — gate approved, it was wrong
   fnRate: number | null; // P(merged or reopened | gate said close) — gate blocked, it was wrong
-  reversalRate: number; // share of decided PRs a human reversed
+  reversalRate: number; // share of ALL signals (incl. holds) carrying an explicit reversal marker
+  /** Share of the gate's AUTONOMOUS decisions (merge/close verdicts) that the realized outcome confirmed —
+   *  the number that actually answers "how often is the bot's decision right" (#8820).
+   *
+   *  NOT `1 − reversalRate`, which the public surface used to publish and which overstates accuracy two ways:
+   *    1. its denominator counts `hold` verdicts, which are deferrals to a human, not decisions that can be
+   *       right or wrong — on this fleet they were ~36% of all signals, diluting the rate toward zero; and
+   *    2. its numerator counts only EXPLICIT reversal markers, so an outright misprediction (gate said
+   *       merge, the PR ended up closed) never registered at all.
+   *  Measured on the live fleet the two differ by ~6 points (93.6% vs 99.6%) — the gap is real errors, not
+   *  rounding. null when the instance made no merge/close verdicts at all (holds only). */
+  decisionAccuracy: number | null;
 }
 
 /** #2350: one self-hosted instance whose combined volume/precision/reversal-rate pattern looks like it is
@@ -81,6 +92,10 @@ export interface FleetAnalytics {
     closePrecision: number | null;
     fpRate: number | null;
     reversalRate: number | null;
+    /** Share of AUTONOMOUS decisions the realized outcome confirmed — the honest "decision accuracy"
+     *  (#8820). See InstanceMetrics.decisionAccuracy for why this, not 1 − reversalRate, is the number to
+     *  publish. */
+    decisionAccuracy: number | null;
     cycleP50Ms: number | null;
     cycleP95Ms: number | null;
   };
@@ -132,6 +147,7 @@ export function foldInstance(instanceId: string, cells: Cell[]): InstanceMetrics
       else closeFalse += c.n;
     }
   }
+  const verdicts = wouldMerge + wouldClose;
   return {
     instanceId,
     decided,
@@ -140,6 +156,7 @@ export function foldInstance(instanceId: string, cells: Cell[]): InstanceMetrics
     fpRate: wouldMerge > 0 ? mergeFalse / wouldMerge : null,
     fnRate: wouldClose > 0 ? closeFalse / wouldClose : null,
     reversalRate: reversals / decided, // decided ≥ 1 (the instance has at least one cell)
+    decisionAccuracy: verdicts > 0 ? (mergeConfirmed + closeConfirmed) / verdicts : null,
   };
 }
 
@@ -179,7 +196,7 @@ export async function computeFleetAnalytics(env: Env, opts: { windowDays?: numbe
     const reg = await env.DB.prepare(`SELECT instance_id FROM orb_instances WHERE registered = 1`).all<{ instance_id: string }>();
     registered = new Set((reg.results ?? []).map((r) => r.instance_id));
   } catch {
-    return { windowDays, instanceCount: 0, fleet: { mergePrecision: null, closePrecision: null, fpRate: null, reversalRate: null, cycleP50Ms: null, cycleP95Ms: null }, instances: [], outliers: [], gamingPatternFlags: [] };
+    return { windowDays, instanceCount: 0, fleet: { mergePrecision: null, closePrecision: null, fpRate: null, reversalRate: null, decisionAccuracy: null, cycleP50Ms: null, cycleP95Ms: null }, instances: [], outliers: [], gamingPatternFlags: [] };
   }
 
   // Group cells by instance, fold each.
@@ -242,6 +259,7 @@ export async function computeFleetAnalytics(env: Env, opts: { windowDays?: numbe
       closePrecision: fleetCloseP,
       fpRate: median(nums((i) => i.fpRate)),
       reversalRate: median(nums((i) => i.reversalRate)),
+      decisionAccuracy: median(nums((i) => i.decisionAccuracy)),
       cycleP50Ms: percentile(cycle, 50),
       cycleP95Ms: percentile(cycle, 95),
     },

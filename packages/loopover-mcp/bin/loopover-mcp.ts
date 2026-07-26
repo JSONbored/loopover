@@ -44,9 +44,8 @@ import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadat
 import { formatTable } from "../lib/format-table.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "../lib/cli-error.js";
 import { redactKnownLocalPaths, redactLocalPath } from "../lib/redact-local-path.js";
-// Aliased: this file's own recordStdioToolTelemetry is the chokepoint that calls it, and the two names sitting
-// side by side unaliased would read as the same function (#6238).
-import { recordMcpToolCall as recordLocalMcpToolCall } from "../lib/telemetry.js";
+// wrapStdioToolHandler owns the await-flush chokepoint (#8690); bin only wires telemetryState().enabled.
+import { wrapStdioToolHandler } from "../lib/telemetry.js";
 
 // Self-referencing package import (Node's own mechanism for "resolve a file that belongs to my own
 // package, correctly, regardless of my own current location on disk") -- requires the "exports" map
@@ -1682,6 +1681,24 @@ function flushStdio(): Promise<void> {
   return Promise.all([drained(process.stdout), drained(process.stderr)]).then(() => undefined);
 }
 
+/* v8 ignore start -- an "error" on stdout/stderr only occurs in the real launched process writing to an OS
+   pipe: a reader that closes early (`... | head`) breaks the pipe, and the next unguarded write would surface
+   as an uncaught `Error: write EPIPE` and crash the whole CLI with a stack trace instead of exiting cleanly.
+   flushStdio() above only drains via "drain", which never fires once the stream has errored, so the listener
+   must be attached separately. The in-process unit importer never spawns a subprocess and never binds these,
+   so this stays unhit there; mcp-cli-broken-pipe.test.ts drives the real subprocess path out-of-band. */
+if (runAsCliEntrypoint) {
+  const onStreamError = (error: NodeJS.ErrnoException) => {
+    // A broken pipe (EPIPE) is the downstream reader closing early — a normal, expected end to a piped
+    // command, not a failure — so exit with success. Any other stream error is unexpected but still must not
+    // crash as an uncaught exception, so exit with a conventional failure code instead.
+    process.exit(error.code === "EPIPE" ? 0 : 1);
+  };
+  process.stdout.on("error", onStreamError);
+  process.stderr.on("error", onStreamError);
+}
+/* v8 ignore stop */
+
 /* v8 ignore next 11 -- the CLI dispatch runs only in the launched process (runAsCliEntrypoint); an in-process
    unit importer keeps it false and drives runCli/maintainCli directly instead (mcp-cli-plan-issues.test.ts). */
 if (runAsCliEntrypoint && cliArgs[0] !== "--stdio") {
@@ -1703,38 +1720,14 @@ export const server = new McpServer({
 
 // #4777: register a stdio tool under its loopover_ name. Thin wrapper kept so all 37 call sites
 // stay uniform with the rest of this file's registration style.
-// Single chokepoint for the #6228 PostHog tool-call telemetry (#6238): every registerStdioTool-registered tool
-// routes through here exactly once per invocation, whether it returns or throws. Pure observability -- a
-// telemetry failure must never reach the tool caller, so this keeps a defensive try/catch on top of
-// recordMcpToolCall's own never-throw guarantee (#6236), mirroring recordMcpToolTelemetry on the remote side
-// (#6237).
-//
-// Reads the opt-in flag HERE, at module scope, on purpose: registerStdioTool's second parameter is the TOOL's
-// config and shadows the module-level `config` this resolves from, so a read inside that function would silently
-// see the wrong object and never fire.
-function recordStdioToolTelemetry(tool: any, ok: any, durationMs: any) {
-  try {
-    recordLocalMcpToolCall({ telemetryEnabled: telemetryState().enabled }, { tool, callerType: "local", ok, durationMs });
-  } catch {
-    // Telemetry must never affect the tool response (#6238).
-  }
-}
-
+// Telemetry await/flush lives in wrapStdioToolHandler (lib/telemetry.ts, unit-tested) — #6238 / #8690.
+// Reads telemetryState() HERE on purpose: registerStdioTool's second parameter is the TOOL's config and
+// shadows the module-level `config`, so a read inside a nested function would silently see the wrong object.
+/* v8 ignore start -- thin registration glue; wrapStdioToolHandler covered by unit tests (#8690) */
 function registerStdioTool(name: any, config: any, handler: any) {
-  server.registerTool(name, config, async (...args) => {
-    const startedAt = Date.now();
-    try {
-      const result = await handler(...args);
-      // Mirror the remote's caller-visible outcome (`response.status < 400`): a handler that reports failure by
-      // returning an error result is not a success, even though it never threw.
-      recordStdioToolTelemetry(name, result?.isError !== true, Date.now() - startedAt);
-      return result;
-    } catch (error) {
-      recordStdioToolTelemetry(name, false, Date.now() - startedAt);
-      throw error;
-    }
-  });
+  server.registerTool(name, config, wrapStdioToolHandler(name, () => telemetryState().enabled, handler));
 }
+/* v8 ignore stop */
 
 registerStdioTool(
   "loopover_get_repo_context",
@@ -5462,6 +5455,12 @@ Use --profile <name> or LOOPOVER_PROFILE to run login, logout, whoami, status, d
 function parseOptions(args: any) {
   const options: any = {};
   const repeatable = new Set(["label", "issue", "id", "commit", "changedFile", "test", "testFile", "validation", "validationCommand", "validationStatus", "validationSummary", "validationDuration", "scenarioNote"]);
+  // Boolean flags that must parse their inline `--key=value` form to a REAL boolean (#8689): the
+  // generic inline-equals handler below stores the raw string, so `--json=false` became the truthy
+  // string "false" and ENABLED JSON output — the opposite of what the flag says. Parsing here keeps
+  // every consumer's check an explicit boolean comparison (the `--refresh`/`--help` `=== true`
+  // convention already established at every other boolean flag's consumer, e.g. line ~4033).
+  const booleanFlags = new Set(["json", "exitCode"]);
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--json") {
@@ -5484,6 +5483,10 @@ function parseOptions(args: any) {
       const inlineKey = camel(arg.slice(2, equals));
       const inlineValue = arg.slice(equals + 1);
       if (repeatable.has(inlineKey)) options[inlineKey] = [...(options[inlineKey] ?? []), inlineValue];
+      // Only the exact strings "false" and "" disable a boolean flag (`--json=false`,
+      // `--exit-code=false`); any other value (`--json=true`, bare `--json` elsewhere) keeps the
+      // flag's previous enabling behavior, so ONLY the `=false` form changes meaning.
+      else if (booleanFlags.has(inlineKey)) options[inlineKey] = inlineValue !== "false" && inlineValue !== "";
       else options[inlineKey] = inlineValue;
       continue;
     }
@@ -5937,7 +5940,9 @@ async function doctor(options: any) {
   }
   // Opt-in: let `doctor` gate CI/pre-commit by exiting non-zero when a check fails. The default
   // stays exit 0 so existing scripts that ignore the exit code keep working.
-  return options.exitCode && payload.status === "needs_attention" ? 1 : 0;
+  // Explicit `=== true` (the `--refresh`/`--help` convention): parseOptions maps `--exit-code=false`
+  // to boolean false, which must keep the exit code at 0 even when checks need attention (#8689).
+  return options.exitCode === true && payload.status === "needs_attention" ? 1 : 0;
 }
 
 function doctorStatus(checks: any) {

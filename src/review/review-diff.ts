@@ -27,7 +27,9 @@ export const DEFAULT_DIFF_BUDGET = 80_000;
 export function diffFilePriority(path: string): number {
   // Only the lockfile-NAME portion is delegated; the suffix-based generated-file patterns stay inline.
   if (isLockfile(path) || /\.(min\.(js|css)|map|snap)$/i.test(path)) return 4;
-  if (/(^|\/)(dist|build|out|coverage|vendor|node_modules)\//i.test(path)) return 4;
+  // Must stay in sync with packages/loopover-engine/src/review/diff-file-priority.ts and
+  // review-grounding.ts — vendored/third_party/third-party/bower_components/jspm_packages (#7526 / #8648).
+  if (/(^|\/)(dist|build|out|coverage|vendor|vendored|third_party|third-party|node_modules|bower_components|jspm_packages)\//i.test(path)) return 4;
   if (/\.(md|mdx|markdown|rst|adoc|asciidoc|txt)$/i.test(path)) return 2;
   if (isTestPath(path)) return 1;
   return 0; // source code

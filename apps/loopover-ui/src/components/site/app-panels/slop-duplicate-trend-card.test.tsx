@@ -2,7 +2,10 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { SlopDuplicateTrendCard } from "@/components/site/app-panels/slop-duplicate-trend-card";
-import type { MaintainerSlopDuplicateTrend } from "@/components/site/app-panels/slop-duplicate-trend-card-model";
+import {
+  latestWeekWithSignal,
+  type MaintainerSlopDuplicateTrend,
+} from "@/components/site/app-panels/slop-duplicate-trend-card-model";
 
 function trend(
   overrides: Partial<MaintainerSlopDuplicateTrend> = {},
@@ -85,5 +88,31 @@ describe("SlopDuplicateTrendCard", () => {
   it("surfaces the stale snapshot pill when data is old", () => {
     render(<SlopDuplicateTrendCard trend={trend({ stale: true })} />);
     expect(screen.getByText(/stale snapshot/i)).toBeTruthy();
+  });
+
+  it("resolves each series' legend from its own latest signal-bearing week", () => {
+    // Most recent week has only duplicate signal; earlier week has slop (and band).
+    // Shared "latest any signal" would hide the slop band behind the null series.
+    const weeks = [
+      {
+        weekStart: "2026-06-02",
+        slopFlagRatePct: 18.5,
+        slopBandLabel: "elevated" as const,
+        duplicateFlagRatePct: null,
+      },
+      {
+        weekStart: "2026-06-09",
+        slopFlagRatePct: null,
+        slopBandLabel: null,
+        duplicateFlagRatePct: 40,
+      },
+    ];
+
+    expect(latestWeekWithSignal(weeks, "slop")?.weekStart).toBe("2026-06-02");
+    expect(latestWeekWithSignal(weeks, "duplicate")?.weekStart).toBe("2026-06-09");
+
+    render(<SlopDuplicateTrendCard trend={trend({ weeks })} />);
+    expect(screen.getByText(/latest band: elevated/i)).toBeTruthy();
+    expect(screen.getByText(/latest: 40%/i)).toBeTruthy();
   });
 });

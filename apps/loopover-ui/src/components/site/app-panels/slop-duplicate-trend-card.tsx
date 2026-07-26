@@ -26,7 +26,8 @@ export function SlopDuplicateTrendCard({ trend }: { trend: MaintainerSlopDuplica
   const hasSignal = trendHasAnySignal(trend.weeks);
   const hasSlop = seriesHasSignal(trend.weeks, "slop");
   const hasDuplicate = seriesHasSignal(trend.weeks, "duplicate");
-  const latest = latestWeekWithSignal(trend.weeks);
+  const latestSlop = latestWeekWithSignal(trend.weeks, "slop");
+  const latestDuplicate = latestWeekWithSignal(trend.weeks, "duplicate");
 
   return (
     <AnalyticsCardShell
@@ -51,20 +52,20 @@ export function SlopDuplicateTrendCard({ trend }: { trend: MaintainerSlopDuplica
           color="var(--mint)"
           label="Slop flag rate"
           detail={
-            latest?.slopBandLabel
-              ? `latest band: ${latest.slopBandLabel}`
+            latestSlop?.slopBandLabel
+              ? `latest band: ${latestSlop.slopBandLabel}`
               : hasSlop
-                ? `latest: ${formatTrendRatePct(latest?.slopFlagRatePct)}`
+                ? `latest: ${formatTrendRatePct(latestSlop?.slopFlagRatePct)}`
                 : "no slop samples"
           }
-          bandLabel={latest?.slopBandLabel}
+          bandLabel={latestSlop?.slopBandLabel}
         />
         <LegendItem
           color="var(--warning)"
           label="Duplicate flag rate"
           detail={
             hasDuplicate
-              ? `latest: ${formatTrendRatePct(latest?.duplicateFlagRatePct)}`
+              ? `latest: ${formatTrendRatePct(latestDuplicate?.duplicateFlagRatePct)}`
               : "no duplicate samples"
           }
         />

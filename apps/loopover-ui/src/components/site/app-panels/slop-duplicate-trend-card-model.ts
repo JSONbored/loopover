@@ -45,13 +45,16 @@ export function trendHasAnySignal(weeks: SlopDuplicateTrendWeek[]): boolean {
   return seriesHasSignal(weeks, "slop") || seriesHasSignal(weeks, "duplicate");
 }
 
+/** Most recent week with a non-null value for the given series (independent per series). */
 export function latestWeekWithSignal(
   weeks: SlopDuplicateTrendWeek[],
+  series: "slop" | "duplicate",
 ): SlopDuplicateTrendWeek | null {
   for (let index = weeks.length - 1; index >= 0; index -= 1) {
     const week = weeks[index];
     if (!week) continue;
-    if (week.slopFlagRatePct !== null || week.duplicateFlagRatePct !== null) return week;
+    const value = series === "slop" ? week.slopFlagRatePct : week.duplicateFlagRatePct;
+    if (value !== null) return week;
   }
   return null;
 }

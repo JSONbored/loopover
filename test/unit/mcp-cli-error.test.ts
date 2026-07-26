@@ -34,6 +34,13 @@ describe("mcp cli-error (#5928)", () => {
     expect(argsWantJson([])).toBe(false);
   });
 
+  it("argsWantJson treats the explicit --json=false disable as NOT wanting JSON (#8689)", () => {
+    expect(argsWantJson(["whoami", "--json=false"])).toBe(false);
+    expect(argsWantJson(["whoami", "--json=true"])).toBe(true);
+    // A later enabling form still wins over an earlier disable, matching parseOptions' last-write behavior.
+    expect(argsWantJson(["whoami", "--json=false", "--json"])).toBe(true);
+  });
+
   it("describeCliError normalizes thrown values", () => {
     expect(describeCliError(new Error("boom"))).toBe("boom");
     expect(describeCliError("plain")).toBe("plain");

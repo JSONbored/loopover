@@ -17,24 +17,26 @@ describe("loopover-engine objective-anchor config-filename classification", () =
     expect(features.paths).toEqual([".loopover.yml"]);
   });
 
-  // The dependency check must use the same exact-match discipline as the adjacent CONFIG_FILENAMES
-  // check: an anchored /^package(?:-lock)?\.json$/ so a differently-prefixed sibling is NOT tagged
-  // "dependency" (#8874). Exercised on the vitest side because Codecov grades this file via vitest.
-  it("tags only exact package(.-lock).json as a 'dependency' change kind, not a prefixed sibling (#8874)", () => {
-    const dependency = extractObjectiveAnchorFeatures({
-      paths: ["package.json", "package-lock.json"],
+  // #8873: bare .yml/.yaml extension must not imply "ci" — only real CI path segments.
+  // Vitest-side coverage is required so codecov/patch sees both branches of kindsFromPath's CI check
+  // (package-local node:test uploads are invisible to the backend vitest lcov).
+  it("does not classify non-CI YAML as ci, while still classifying CI workflow YAML (#8873)", () => {
+    const nonCi = extractObjectiveAnchorFeatures({
+      paths: [".loopover.yml", "docs/mkdocs.yml", "config/app.yaml"],
       labels: [],
       titles: [],
       notes: [],
     });
-    expect(dependency.changeKinds).toContain("dependency");
+    expect(nonCi.changeKinds).not.toContain("ci");
+    expect(nonCi.changeKinds).toContain("config");
+    expect(nonCi.changeKinds).toContain("docs");
 
-    const notDependency = extractObjectiveAnchorFeatures({
-      paths: ["sub-package.json", "mock-package.json"],
+    const ciWorkflow = extractObjectiveAnchorFeatures({
+      paths: [".github/workflows/ci.yml"],
       labels: [],
       titles: [],
       notes: [],
     });
-    expect(notDependency.changeKinds).not.toContain("dependency");
+    expect(ciWorkflow.changeKinds).toContain("ci");
   });
 });

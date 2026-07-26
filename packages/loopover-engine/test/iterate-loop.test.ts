@@ -106,6 +106,20 @@ test("immediate abandon: maxIterations <= 0 abandons before ever invoking the dr
   assert.equal(events[0]?.eventType, "attempt_aborted");
 });
 
+test("immediate abandon: a NaN or Infinity maxIterations abandons rather than corrupting iterationsUsed or looping unbounded (#8860)", async () => {
+  for (const badMax of [Number.NaN, Number.POSITIVE_INFINITY]) {
+    let driverCalled = false;
+    const { deps } = collectingDeps({ driver: { async run() { driverCalled = true; return okResult(); } } });
+    const result = await runIterateLoop(baseInput({ maxIterations: badMax }), deps);
+
+    assert.equal(result.outcome, "abandon");
+    assert.equal(result.finalDecision.abandonReason, "max_iterations_reached");
+    assert.equal(result.iterationsUsed, 0);
+    assert.equal(Number.isNaN(result.iterationsUsed), false);
+    assert.equal(driverCalled, false, "the driver must never run for a non-finite maxIterations");
+  }
+});
+
 test("paused mode: does not invoke the coding-agent driver (regression for pause gate bypass)", async () => {
   let driverCalled = false;
   const { deps, events } = collectingDeps({ driver: { async run() { driverCalled = true; return okResult(); } } });

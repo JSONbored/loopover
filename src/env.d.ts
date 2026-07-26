@@ -5,6 +5,9 @@ declare global {
     /** Self-host webhook queue binding. Cloudflare no longer binds this because hosted reviews are retired. */
     WEBHOOKS?: Queue;
     RATE_LIMITER?: DurableObjectNamespace;
+    /** Per-key exclusive mutex Durable Object (`SubmissionLock`, #8896). Optional so self-host installs
+     *  without Durable Objects keep the transient-cache lock path in `src/queue/transient-locks.ts`. */
+    SUBMISSION_LOCK?: DurableObjectNamespace;
     AI?: Ai;
     /** Self-host (RAG): a DEDICATED embedding provider, kept SEPARATE from the review chat chain so the reviewer
      *  stays frontier-only (claude-code/codex) while embeddings — which those CLIs cannot produce — route to a
@@ -70,9 +73,6 @@ declare global {
        *  `claim()` (validated at self-host boot). */
       releaseIfValue?(key: string, value: string): Promise<boolean>;
     };
-    /** TODO (convergence follow-up): a per-PR LOCK Durable Object (`SubmissionLock` mutex) is a separate,
-     *  more-involved sub-task — it needs the ported DO class + its own migration tag, not just a binding here.
-     *  Deliberately NOT declared in this chunk; the review path keeps its current concurrency behavior. */
     PUBLIC_API_ORIGIN?: string;
     PUBLIC_SITE_ORIGIN?: string;
     /** Comma-separated extra origins (each `scheme://host[:port]`) allowed as a post-GitHub-OAuth `returnTo`

@@ -250,6 +250,38 @@ describe("operator dashboard payload", () => {
     expect(JSON.stringify(payload)).not.toContain("missing_linked_issue"); // the healthy rule never appears
   });
 
+  it("surfaces the per-project rule breakdown (#8906), catching a rule broken on ONE repo even while a second repo's healthy usage pools it back above the blended floor", async () => {
+    const env = createTestEnv();
+    const seedClose = async (id: string, project: string, ruleCode: string, truth: "closed" | "merged"): Promise<void> => {
+      await env.DB.prepare(
+        `INSERT INTO review_audit (id, project, target_id, event_type, decision, summary, source, created_at) VALUES (?, ?, ?, 'gate_decision', 'close', ?, 'gittensory-native', ?)`,
+      )
+        .bind(`gd-${id}`, project, `${project}#${id}`, ruleCode, new Date().toISOString())
+        .run();
+      await env.DB.prepare(
+        `INSERT INTO review_audit (id, project, target_id, event_type, decision, source, created_at) VALUES (?, ?, ?, 'pr_outcome', ?, 'github', ?)`,
+      )
+        .bind(`po-${id}`, project, `${project}#${id}`, truth, new Date().toISOString())
+        .run();
+    };
+    // Broken on ONE repo: 12 closes (clears AUTOTUNE_MIN_DECIDED), every single one later merged -- 0% precision.
+    for (let i = 1; i <= 12; i++) await seedClose(`bad-${i}`, "metagraphed/broken-repo", "shared_rule", "merged");
+    // The SAME rule, healthy on a SECOND repo: 90 closes, all correctly closed -- pools the blended precision to
+    // 90/102 ≈ 0.882, above AUTOTUNE_CLOSE_PRECISION_FLOOR (0.85), so the blended tile does NOT flag this rule
+    // even though it is genuinely broken on metagraphed/broken-repo -- exactly the gap #8906 exists to close.
+    for (let i = 1; i <= 90; i++) await seedClose(`good-${i}`, "metagraphed/healthy-repo", "shared_rule", "closed");
+
+    const payload = await buildOperatorDashboardPayload(env);
+    expect(payload.metrics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ label: "Rules below close-precision floor", value: "0", delta: "no rule below floor" })]),
+    );
+    expect(payload.metrics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: "Rules below close-precision floor (per-project)", value: "1", delta: "metagraphed/broken-repo:shared_rule" }),
+      ]),
+    );
+  });
+
   it("wires computeFindingAcceptance into the dashboard's acceptance card shape (#1967/#5213)", async () => {
     const env = createTestEnv();
     await env.DB.prepare(

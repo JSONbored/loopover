@@ -111,4 +111,22 @@ describe("getOrbGlobalStats", () => {
     await recordOrbPrOutcome(e, "pull_request", closedPr("acme/new", 2, null, 100)); // closed, no own-ledger counterpart → must still count
     expect(await getOrbGlobalStats(e)).toEqual({ merged: 0, closed: 1, total: 1 });
   });
+
+  // #8879: a D1 error on the join must degrade to zeros (like computeFleetAnalytics), not throw out of the
+  // Promise.all in public-stats.ts and 503 the whole /v1/public/stats payload.
+  it("degrades to zeros on a DB error instead of throwing (#8879)", async () => {
+    const brokenDb = {
+      prepare: () => ({ bind: () => ({ first: () => Promise.reject(new Error("D1 exceeded its CPU time limit and was reset")) }) }),
+    } as unknown as Env["DB"];
+    await expect(getOrbGlobalStats({ DB: brokenDb } as unknown as Env)).resolves.toEqual({ merged: 0, closed: 0, total: 0 });
+  });
+
+  // Defensive .first() null guard: a driver anomaly returning no row degrades to zeros rather than throwing on
+  // a null field access (covers the `if (!row)` branch the try/catch reindent brings into the diff).
+  it("returns zeros when the query resolves without a row (#8879)", async () => {
+    const nullRowDb = {
+      prepare: () => ({ bind: () => ({ first: () => Promise.resolve(null) }) }),
+    } as unknown as Env["DB"];
+    await expect(getOrbGlobalStats({ DB: nullRowDb } as unknown as Env)).resolves.toEqual({ merged: 0, closed: 0, total: 0 });
+  });
 });

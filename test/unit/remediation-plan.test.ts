@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRemediationPlan } from "../../src/services/remediation-plan";
+import { buildRemediationPlan, FORBIDDEN_PATTERN } from "../../src/services/remediation-plan";
 
 const FORBIDDEN = /\b(wallet|hotkey|coldkey|mnemonic|farming|payout|raw[-_\s]?trust|score\w*|scoreability|token[-_\s]?score|base[-_\s]?score)\b/i;
 
@@ -186,6 +186,15 @@ describe("buildRemediationPlan", () => {
         step: "Resolve branch-quality findings before submission.",
       }),
     ]);
+  });
+
+  it("FORBIDDEN_PATTERN catches both the singular 'ranking' and the plural 'rankings' (#8886)", () => {
+    // The bare singular `ranking` could never match inside "rankings" (no word boundary between "g" and "s"),
+    // so the plural leaked past this secondary gate; `rankings?` fixes it while still matching the singular.
+    expect(FORBIDDEN_PATTERN.test("this shows the ranking of contributors")).toBe(true);
+    expect(FORBIDDEN_PATTERN.test("this shows the rankings of contributors")).toBe(true);
+    // A benign word that merely starts the same must still pass through untouched.
+    expect(FORBIDDEN_PATTERN.test("the rankboard is empty")).toBe(false);
   });
 
   it("falls back to public-safe copy when every blocker string is fully redacted", () => {

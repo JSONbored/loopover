@@ -134,14 +134,27 @@ async function recalibrateArm(env: Env, arm: "close" | "merge", verdict: "close"
   } else {
     // A stale guarantee is a lie: retract any previously-published λ̂ the moment the data stops supporting it.
     await env.DB.prepare(`DELETE FROM system_flags WHERE key = ?`).bind(riskControlFlagKey(scope)).run();
-    await recordAuditEvent(env, {
-      eventType: "risk_control_insufficient",
-      actor: null,
-      targetKey: `riskcontrol:${scope}`,
-      outcome: "completed",
-      detail: `${scope}: cannot certify α=${alpha} — ${result.have} usable label(s) of ${result.needed} needed`,
-      metadata: { arm, ...result },
-    });
+    if (result.status === "no_certifiable_threshold") {
+      // Distinct event + message so the label burn-down (#8828) never conflates "needs more labels" with
+      // "needs better close precision": this arm HAS the labels, the threshold is the blocker (#9048).
+      await recordAuditEvent(env, {
+        eventType: "risk_control_no_certifiable_threshold",
+        actor: null,
+        targetKey: `riskcontrol:${scope}`,
+        outcome: "completed",
+        detail: `${scope}: ${result.totalPairs} usable label(s) available but no threshold achieves α=${alpha} (best upper bound ${result.bestUpperBound} at λ=${result.bestLambda}, n=${result.bestN}) — the threshold, not the sample, is the blocker`,
+        metadata: { arm, ...result },
+      });
+    } else {
+      await recordAuditEvent(env, {
+        eventType: "risk_control_insufficient",
+        actor: null,
+        targetKey: `riskcontrol:${scope}`,
+        outcome: "completed",
+        detail: `${scope}: cannot certify α=${alpha} — ${result.have} usable label(s) of ${result.needed} needed`,
+        metadata: { arm, ...result },
+      });
+    }
   }
   return result;
 }

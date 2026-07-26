@@ -86,6 +86,26 @@ describe("runRiskControlRecalibration", () => {
     const audit = await env.DB.prepare(`SELECT detail FROM audit_events WHERE event_type = 'risk_control_calibrated'`).first<{ detail: string }>();
     expect(audit!.detail).toContain("P(wrong | acted) ≤ 0.05 guaranteed at 100% coverage");
   });
+
+  it("NO CERTIFIABLE THRESHOLD: ample labels but high error emits a DISTINCT event with the true label count (#9048)", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare(`INSERT INTO system_flags (key, value) VALUES (?, 'stale')`).bind(riskControlFlagKey("close")).run();
+    // 60 close labels clear the 59-label floor (alpha 0.05 under 350 pairs), but ~half are wrong at every
+    // confidence, so no threshold certifies. This is a precision problem, not a supply problem.
+    for (let i = 1; i <= 60; i += 1) await seedLabeledDecision(env, i, "close", i % 2 === 0 ? "correct" : "incorrect", 0.6 + (i % 4) / 100);
+    const summary = await runRiskControlRecalibration(env);
+    expect(summary.close).toBe("no_certifiable_threshold");
+    const flag = await env.DB.prepare(`SELECT value FROM system_flags WHERE key = ?`).bind(riskControlFlagKey("close")).first();
+    expect(flag).toBeFalsy(); // a stale guarantee is still retracted when no threshold certifies
+    const audit = await env.DB
+      .prepare(`SELECT detail FROM audit_events WHERE event_type = 'risk_control_no_certifiable_threshold' AND target_key = 'riskcontrol:close'`)
+      .first<{ detail: string }>();
+    expect(audit!.detail).toContain("60 usable label(s) available but no threshold achieves");
+    expect(audit!.detail).toContain("the threshold, not the sample, is the blocker");
+    // Crucially, the burn-down's supply-shortfall event is NOT emitted for this arm — the two are now distinct.
+    const conflated = await env.DB.prepare(`SELECT detail FROM audit_events WHERE event_type = 'risk_control_insufficient' AND target_key = 'riskcontrol:close'`).first();
+    expect(conflated).toBeFalsy();
+  });
 });
 
 describe("fail-safe arms", () => {

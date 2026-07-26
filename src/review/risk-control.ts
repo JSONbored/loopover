@@ -79,7 +79,23 @@ export type CalibrationResult =
       delta: number;
       totalPairs: number;
     }
-  | { status: "insufficient_labels"; needed: number; have: number; alpha: number; delta: number };
+  | { status: "insufficient_labels"; needed: number; have: number; alpha: number; delta: number }
+  | {
+      /** Enough labels cleared the sample-size floor, but NO threshold certifies α: the error rate, not the
+       *  label supply, is the blocker (#9048). `totalPairs` is the TRUE usable-label count — never the
+       *  residual size of the final surviving stratum, which the old `insufficient_labels.have` conflated it
+       *  with, telling operators to collect labels that cannot help. */
+      status: "no_certifiable_threshold";
+      totalPairs: number;
+      needed: number;
+      /** n and λ of the sweep step that achieved the tightest bound while still clearing the sample floor. */
+      bestN: number;
+      bestLambda: number;
+      /** The tightest Clopper–Pearson upper bound achieved across the sweep — still above α. */
+      bestUpperBound: number;
+      alpha: number;
+      delta: number;
+    };
 
 /**
  * Fixed-sequence calibration, walked in DESCENDING-coverage order: candidates are the distinct observed
@@ -104,22 +120,27 @@ export function calibrateActThreshold(pairs: CalibrationPair[], alpha: number, d
   let dropped = 0;
   let droppedErrors = 0;
   let index = 0;
-  let lastTestedN = sorted.length;
+  // Every floor-clearing sweep step that failed to certify, so branch B can report the tightest bound achieved
+  // instead of the residual last-stratum size (#9048).
+  const attempts: Array<{ n: number; lambda: number; upperBound: number }> = [];
   for (const lambda of candidates) {
     const n = sorted.length - dropped;
     const errors = totalErrors - droppedErrors;
-    lastTestedN = n;
-    if (n >= needed && clopperPearsonUpperBound(errors, n, delta) <= alpha) {
-      return {
-        status: "calibrated",
-        lambda,
-        coverageAtLambda: n / sorted.length,
-        nAtLambda: n,
-        errorsAtLambda: errors,
-        alpha,
-        delta,
-        totalPairs: sorted.length,
-      };
+    if (n >= needed) {
+      const upperBound = clopperPearsonUpperBound(errors, n, delta);
+      if (upperBound <= alpha) {
+        return {
+          status: "calibrated",
+          lambda,
+          coverageAtLambda: n / sorted.length,
+          nAtLambda: n,
+          errorsAtLambda: errors,
+          alpha,
+          delta,
+          totalPairs: sorted.length,
+        };
+      }
+      attempts.push({ n, lambda, upperBound });
     }
     // Drop this stratum and test the next, more conservative λ.
     while (index < sorted.length && sorted[index]!.confidence <= lambda) {
@@ -128,5 +149,9 @@ export function calibrateActThreshold(pairs: CalibrationPair[], alpha: number, d
       index += 1;
     }
   }
-  return { status: "insufficient_labels", needed, have: lastTestedN, alpha, delta };
+  // The floor was cleared (the first candidate tests the full set, whose n === sorted.length >= needed) so at
+  // least one attempt was recorded, but no λ certified α. Report the TRUE label count and the tightest bound
+  // achieved so the burn-down sees precision — not sample size — as the blocker, never the residual stratum.
+  const best = attempts.reduce((tightest, attempt) => (attempt.upperBound < tightest.upperBound ? attempt : tightest));
+  return { status: "no_certifiable_threshold", totalPairs: sorted.length, needed, bestN: best.n, bestLambda: best.lambda, bestUpperBound: best.upperBound, alpha, delta };
 }

@@ -64,12 +64,41 @@ describe("calibrateActThreshold (fixed-sequence)", () => {
     }
   });
 
-  it("a passing-but-tiny high-confidence clique cannot certify — the prefix itself must clear the floor", () => {
-    // 50 pristine pairs at 0.99, then errors immediately: the 0.99 prefix passes its bound test... but 50
-    // labels cannot certify alpha=0.005, and pretending otherwise is the exact dishonesty this refuses.
+  it("a floor-clearing set that no threshold certifies reports its TRUE label count, not the residual stratum (#9048)", () => {
+    // 50 pristine pairs at 0.99, then 600 errors: 650 labels clear the sample floor (>= 598), so this is NOT
+    // an insufficient-labels case. No λ certifies (the clean 0.99 prefix is under-powered; the full set is 92%
+    // wrong), so it is a "no certifiable threshold" outcome. `totalPairs` must be the true 650 usable labels --
+    // the old `insufficient_labels.have` reported the residual 50 here, the exact conflation #9048 fixes.
     const pairs = [...Array.from({ length: 50 }, () => pair(0.99, true)), ...Array.from({ length: 600 }, () => pair(0.5, false))];
     const result = calibrateActThreshold(pairs, 0.005, 0.05);
-    expect(result).toMatchObject({ status: "insufficient_labels", needed: 598, have: 50 });
+    expect(result).toMatchObject({ status: "no_certifiable_threshold", needed: 598, totalPairs: 650 });
+    // Never a residual: totalPairs is the label supply, distinct from the best surviving stratum's bestN.
+    if (result.status === "no_certifiable_threshold") {
+      expect(result.totalPairs).toBe(650);
+      expect(result.bestUpperBound).toBeGreaterThan(0.005); // still above alpha -- genuinely uncertifiable
+    }
+  });
+
+  it("branch B carries the tightest bound achieved and never mislabels a precision problem as a supply problem (#9048)", () => {
+    const rep = (n: number, confidence: number, wrongBelow: number) =>
+      Array.from({ length: n }, (_, i) => pair(confidence, i >= wrongBelow));
+
+    // A high error rate at every candidate; dropping low-confidence strata TIGHTENS the bound but never to
+    // alpha=0.2. The final 0.9 stratum (n=5) is under the floor and must be excluded from `bestN`.
+    const tightensThenSubFloor = [...rep(14, 0.3, 7), ...rep(14, 0.6, 2), ...rep(5, 0.9, 3)];
+    const a = calibrateActThreshold(tightensThenSubFloor, 0.2, 0.05);
+    expect(a).toMatchObject({ status: "no_certifiable_threshold", totalPairs: 33, needed: 14, bestN: 19, bestLambda: 0.6 });
+
+    // Dropping a CLEAN low-confidence stratum raises the residual error rate, so the tightest bound is the
+    // full set here -- the reduce must keep the earlier, lower bound rather than the looser later one.
+    const loosensAfterDrop = [...rep(14, 0.5, 0), ...rep(14, 0.9, 6)];
+    const b = calibrateActThreshold(loosensAfterDrop, 0.2, 0.05);
+    expect(b).toMatchObject({ status: "no_certifiable_threshold", totalPairs: 28, needed: 14, bestN: 28, bestLambda: 0.5 });
+    if (a.status === "no_certifiable_threshold" && b.status === "no_certifiable_threshold") {
+      // The tightest bound is genuinely the minimum across the sweep, above alpha in both directions of the drop.
+      expect(a.bestUpperBound).toBeGreaterThan(0.2);
+      expect(b.bestUpperBound).toBeGreaterThan(0.2);
+    }
   });
 
   it("is deterministic and input-order independent", () => {

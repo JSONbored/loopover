@@ -179,6 +179,28 @@ describe("chat grounding streaming (#6517)", () => {
     ]);
   });
 
+  it("redacts a blocked term in tool_result output — string or structured — and passes clean output through (#8869)", async () => {
+    async function toolResultOutput(content: unknown): Promise<unknown> {
+      const events = await collect(
+        runChatGrounding(USER_ONLY, {
+          env: AGENT_SDK_ENV,
+          query: queryYielding([{ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "loopover_miner_get_run_state", content }] } }]),
+        }),
+      );
+      return events.find((event): event is Extract<ChatGroundingEvent, { type: "tool_result" }> => event.type === "tool_result")?.output;
+    }
+
+    // An MCP tool's OWN output must not leak a blocklisted field, however it is shaped:
+    expect(await toolResultOutput("your trust score is 9")).toBe(CHAT_REDACTED_TEXT); // string content
+    expect(await toolResultOutput([{ type: "text", text: "your wallet balance is 5" }])).toBe(CHAT_REDACTED_TEXT); // array of blocks
+    expect(await toolResultOutput({ nested: { payout: "42 TAO" } })).toBe(CHAT_REDACTED_TEXT); // nested object
+
+    // Clean output — of any shape — passes through verbatim, structure preserved.
+    expect(await toolResultOutput("run state is idle")).toBe("run state is idle");
+    expect(await toolResultOutput([{ type: "text", text: "all good" }])).toEqual([{ type: "text", text: "all good" }]);
+    expect(await toolResultOutput(7)).toBe(7); // a non-string/array/object primitive is never blocked
+  });
+
   it("defaults a tool_use with no input to an empty object and a tool_result with no id to an empty name", async () => {
     const events = await collect(
       runChatGrounding(USER_ONLY, {

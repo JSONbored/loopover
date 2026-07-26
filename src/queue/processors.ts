@@ -74,6 +74,7 @@ import {
   isGlobalAgentFrozen,
   markGateOutcomeOverridden,
   markPullRequestLinkedIssueHardRuleViolated,
+  clearPullRequestLinkedIssueHardRuleViolation,
   startActiveReviewTracking,
   terminalizeActiveReviewTracking,
   bumpPullRequestDraftConversionCount,
@@ -3093,16 +3094,26 @@ async function runAgentMaintenancePlanAndExecute(
   // confirmed violation isn't remembered, matching every other loopover-computed marker write in this file
   // (mergeBlockedSha, draftConversionCount, lastRegatedAt).
   if (liveLinkedIssueHardRule?.violated === true) {
-    await markPullRequestLinkedIssueHardRuleViolated(env, repoFullName, pr.number, liveLinkedIssueHardRule.reason ?? "the linked issue is not eligible for a community PR").catch(() => undefined);
+    // #9029: snapshot WHICH issues were linked at violation time, so a later pass can tell an issue-side state
+    // change (exonerate) from an author link edit (violation stands).
+    await markPullRequestLinkedIssueHardRuleViolated(env, repoFullName, pr.number, liveLinkedIssueHardRule.reason, pr.linkedIssues).catch(() => undefined);
   }
   const linkedIssueHardRule = mergeLinkedIssueHardRuleWithPersistedViolation(
     liveLinkedIssueHardRule,
     {
       violatedAt: pr.linkedIssueHardRuleViolatedAt,
       reason: pr.linkedIssueHardRuleViolationReason,
+      issuesAtViolation: pr.linkedIssueHardRuleViolationIssues,
+      currentIssues: pr.linkedIssues,
     },
     anyLinkedIssueHardRuleOn(linkedIssueRulesConfig),
   );
+  // #9029: the merge just exonerated a remembered violation (same issues still linked, live rules now pass), so
+  // drop the marker rather than re-deciding it identically on every future pass. Best-effort: a failed clear
+  // only means the next pass re-derives the same exoneration, never a wrong close.
+  if (pr.linkedIssueHardRuleViolatedAt != null && linkedIssueHardRule?.violated !== true) {
+    await clearPullRequestLinkedIssueHardRuleViolation(env, repoFullName, pr.number).catch(() => undefined);
+  }
 
   // Unlinked-issue guardrail (#unlinked-issue-guardrail, credibility-gate-farming defense): when this PR
   // links NO issue and the repo opted in (settings.unlinkedIssueGuardrail.mode === "hold"), check whether the

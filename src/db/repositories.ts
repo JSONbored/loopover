@@ -4229,13 +4229,43 @@ export async function markPullRequestMergeBlocked(env: Env, fullName: string, nu
  *  the body or the linked issue's state changing after this call is a no-op here: the PR already proved itself in
  *  violation once and stays that way for its lifetime. A no-op (0 rows affected) when the PR row doesn't exist yet
  *  is safe -- the caller only reaches this after a live violation was just evaluated against an existing row. */
-export async function markPullRequestLinkedIssueHardRuleViolated(env: Env, fullName: string, number: number, reason: string): Promise<void> {
+export async function markPullRequestLinkedIssueHardRuleViolated(
+  env: Env,
+  fullName: string,
+  number: number,
+  // Nullable: the default lives here rather than at the call site so the fallback is directly unit-testable
+  // (a violation with no reason is not reachable through the live evaluator today, but the column is
+  // NOT NULL-tolerant by contract and a future rule could omit one).
+  reason: string | null | undefined,
+  // #9029: the linked-issue set observed at violation time, COALESCE'd like the siblings so it always describes
+  // the FIRST violation. Without it a later pass cannot tell an issue-side state change (exonerate) from an
+  // author link edit (violation stands) -- see mergeLinkedIssueHardRuleWithPersistedViolation.
+  linkedIssues?: readonly number[] | undefined,
+): Promise<void> {
   const db = getDb(env.DB);
+  const snapshot = jsonString([...new Set(linkedIssues ?? [])].sort((a, b) => a - b));
   await db
     .update(pullRequests)
     .set({
       linkedIssueHardRuleViolatedAt: sql`COALESCE(${pullRequests.linkedIssueHardRuleViolatedAt}, ${nowIso()})`,
-      linkedIssueHardRuleViolationReason: sql`COALESCE(${pullRequests.linkedIssueHardRuleViolationReason}, ${reason.slice(0, 280)})`,
+      linkedIssueHardRuleViolationReason: sql`COALESCE(${pullRequests.linkedIssueHardRuleViolationReason}, ${(reason ?? "the linked issue is not eligible for a community PR").slice(0, 280)})`,
+      linkedIssueHardRuleViolationIssuesJson: sql`COALESCE(${pullRequests.linkedIssueHardRuleViolationIssuesJson}, ${snapshot})`,
+      updatedAt: nowIso(),
+    })
+    .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number)));
+}
+
+/** #9029: clear a remembered linked-issue hard-rule violation once a later pass proves it was an issue-side,
+ *  benign state change rather than an author dodge. Only ever called with that determination already made
+ *  (see mergeLinkedIssueHardRuleWithPersistedViolation's exoneration branch). */
+export async function clearPullRequestLinkedIssueHardRuleViolation(env: Env, fullName: string, number: number): Promise<void> {
+  const db = getDb(env.DB);
+  await db
+    .update(pullRequests)
+    .set({
+      linkedIssueHardRuleViolatedAt: null,
+      linkedIssueHardRuleViolationReason: null,
+      linkedIssueHardRuleViolationIssuesJson: null,
       updatedAt: nowIso(),
     })
     .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number)));
@@ -6844,6 +6874,7 @@ function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): Pull
     lastRegatedAt: row.lastRegatedAt,
     lastPublishedSurfaceSha: row.lastPublishedSurfaceSha,
     linkedIssueHardRuleViolatedAt: row.linkedIssueHardRuleViolatedAt,
+    linkedIssueHardRuleViolationIssues: parseJson<number[]>(row.linkedIssueHardRuleViolationIssuesJson, []),
     linkedIssueHardRuleViolationReason: row.linkedIssueHardRuleViolationReason,
     visualCaptureSatisfiedSha: row.visualCaptureSatisfiedSha,
     screenshotTablePresenceSatisfied: parseJson<{ headSha: string; evidenceFingerprint: string } | null>(row.screenshotTablePresenceSatisfiedJson, null),

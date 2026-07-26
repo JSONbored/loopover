@@ -53,7 +53,7 @@ const KIND_FILTERS = [
 type StatusFilter = (typeof STATUS_FILTERS)[number];
 type KindFilter = (typeof KIND_FILTERS)[number];
 
-interface AgentRun {
+export interface AgentRun {
   id: string;
   source: "mcp" | "api" | "github-command";
   kind: "plan-next-work" | "preflight-branch" | "prepare-pr-packet" | "explain-blockers";
@@ -72,7 +72,7 @@ type AgentRunBundleResponse = {
   runs: AgentRunBundle[];
 };
 
-type AgentRunBundle = {
+export type AgentRunBundle = {
   run: {
     id: string;
     objective: string;
@@ -455,7 +455,7 @@ function AgentRuns() {
   );
 }
 
-function mapAgentRunBundle(bundle: AgentRunBundle): AgentRun {
+export function mapAgentRunBundle(bundle: AgentRunBundle): AgentRun {
   const payload = bundle.run.payload ?? {};
   const input = recordValue(payload.input);
   const repo =
@@ -506,14 +506,14 @@ function mapAgentRunBundle(bundle: AgentRunBundle): AgentRun {
   };
 }
 
-function mapAgentRunKind(kind: string | null): AgentRun["kind"] {
+export function mapAgentRunKind(kind: string | null): AgentRun["kind"] {
   if (kind === "preflight_branch") return "preflight-branch";
   if (kind === "prepare_pr_packet") return "prepare-pr-packet";
   if (kind === "explain_blockers" || kind === "explain_branch_blockers") return "explain-blockers";
   return "plan-next-work";
 }
 
-function mapSignalFidelity(
+export function mapSignalFidelity(
   status: AgentRunBundle["run"]["dataQualityStatus"],
 ): AgentRun["signal_fidelity"] {
   if (status === "complete") return "ready";
@@ -569,7 +569,7 @@ type SavedView = {
   q: string;
 };
 
-function SavedViews({
+export function SavedViews({
   current,
   onApply,
 }: {

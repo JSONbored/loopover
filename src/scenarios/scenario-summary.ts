@@ -4,7 +4,7 @@ import type { OpenPrPressureSimulation, OpenPrStrategyOption } from "../services
 import type { ScoreGateBlocker } from "../scoring/preview";
 import type { PendingPrScenarioDetection, OpenPrPendingClass } from "../scoring/pending-pr-scenarios";
 import type { AgentScenarioInput } from "./input-model";
-import { serializeScenarioInputPublic } from "./input-model";
+import { FORBIDDEN_PUBLIC_LANGUAGE, serializeScenarioInputPublic } from "./input-model";
 
 /**
  * Public-safe rendering of scenario simulator outputs for MCP/API clients and
@@ -92,9 +92,6 @@ const PUBLIC_BLOCKER_TEXT: Partial<Record<ScoreGateBlocker["code"], string>> = {
   stale_work: "Stale open PR(s) detected; consider closing stale work before opening more.",
 };
 
-const FORBIDDEN_PUBLIC_LANGUAGE =
-  /wallet|hotkey|coldkey|mnemonic|seed phrase|payout|reward[-\s]?estimate|farming|raw trust|trust[-\s]?score|scoreability|private[-\s]?reviewability|public[-\s]?score[-\s]?(?:estimate|prediction)/i;
-
 function renderOptions(simulation: OpenPrPressureSimulation): RenderedScenarioOption[] {
   return simulation.scenarios.map((s) => {
     const rationaleParts = [...s.facts.slice(0, 1), ...s.tradeoffs.slice(0, 1)];
@@ -180,17 +177,16 @@ function extractDataClassification(scenarioInput: AgentScenarioInput | undefined
   };
 }
 
-function assertPublicSummaryClean(summary: PublicScenarioSummary): void {
+/** Defensive final guard: catches forbidden terms that slipped past per-field sanitization (#8885). */
+export function assertPublicSummaryClean(summary: PublicScenarioSummary): void {
   // Scan only rendered free-text fields. repoFullName/generatedAt are structural identifiers (the repo
   // the summary is about), not sanitized content -- a legitimately named repo (e.g. "owner/hotkey-vault")
   // must not make this guard throw and fail the whole summary.
   const { repoFullName: _repoFullName, generatedAt: _generatedAt, ...renderedContent } = summary;
   const serialized = JSON.stringify(renderedContent);
-  /* v8 ignore start -- Defensive: every rendered field is individually sanitized; this guards a future unsanitized field. */
   if (FORBIDDEN_PUBLIC_LANGUAGE.test(serialized)) {
     throw new Error("Public scenario summary still contains forbidden language.");
   }
-  /* v8 ignore end */
 }
 
 /**

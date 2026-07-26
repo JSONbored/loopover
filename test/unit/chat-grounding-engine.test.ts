@@ -269,6 +269,43 @@ describe("chat grounding privacy backstop (#6517)", () => {
     );
     expect(events).toEqual([{ type: "text", text: "your run state is idle" }, { type: "done" }]);
   });
+
+  it("redacts a tool_result string containing a blocked term (#8869)", async () => {
+    const events = await collect(
+      runChatGrounding(USER_ONLY, {
+        env: AGENT_SDK_ENV,
+        query: queryYielding([
+          {
+            type: "user",
+            message: { content: [{ type: "tool_result", tool_use_id: "loopover_miner_status", content: "your trust score is 9" }] },
+          },
+        ]),
+      }),
+    );
+    expect(events).toEqual([
+      { type: "tool_result", tool: "loopover_miner_status", output: CHAT_REDACTED_TEXT },
+      { type: "done" },
+    ]);
+  });
+
+  it("forwards a non-string tool_result payload unchanged (#8869)", async () => {
+    const payload = { ok: true, state: "idle" };
+    const events = await collect(
+      runChatGrounding(USER_ONLY, {
+        env: AGENT_SDK_ENV,
+        query: queryYielding([
+          {
+            type: "user",
+            message: { content: [{ type: "tool_result", tool_use_id: "loopover_miner_status", content: payload }] },
+          },
+        ]),
+      }),
+    );
+    expect(events).toEqual([
+      { type: "tool_result", tool: "loopover_miner_status", output: payload },
+      { type: "done" },
+    ]);
+  });
 });
 
 describe("chat message validation + prompt building (#6517)", () => {

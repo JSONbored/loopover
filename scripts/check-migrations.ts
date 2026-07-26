@@ -23,12 +23,12 @@
 //   • 0074 — both 0074_ai_review_cache (#1462) and 0074_orb_self_enrollment_disabled (#1465, a bare ADD COLUMN)
 //     merged + deployed before the collision surfaced; the column already exists in prod, so a rename would
 //     re-run the ALTER and fail. Grandfathered for the same reason as 0015/0017.
-//   • 0090 — both 0090_contributor_cap_label (#2479) and 0090_pull_request_detail_sync_head_sha (#2527)
-//     merged with bare ADD COLUMN statements. Preserve both filenames so already-applied databases never
-//     replay either ALTER under a new migration name.
+//   • 0090 — historically both 0090_contributor_cap_label (#2479) and 0090_pull_request_detail_sync_head_sha
+//     (#2527) collided; the latter was renumbered to 0092, so only contributor_cap_label remains at 90 and
+//     the grandfather entry was removed (#8897).
 //   • 0156 — both 0156_draft_pr_close_policy and 0156_pull_request_screenshot_table_presence_satisfied
 //     merged independently from the same base and were both applied to production before the collision
-//     surfaced; bare ADD COLUMN statements, same grandfather reasoning as 0074/0090.
+//     surfaced; bare ADD COLUMN statements, same grandfather reasoning as 0074.
 import { readdirSync, readFileSync } from "node:fs";
 import { detectMigrationCollisions, extractMigrationNumber, KNOWN_MIGRATION_DUPLICATES, MIGRATION_FILENAME_PATTERN } from "../src/db/migration-collisions.js";
 import { detectColumnCollisions } from "../src/db/migration-column-extraction.js";

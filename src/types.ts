@@ -874,6 +874,10 @@ export type RepositorySettings = {
   duplicatePrGateMode: GateRuleMode;
   qualityGateMode: GateRuleMode;
   qualityGateMinScore?: number | null | undefined;
+  /** #8831: percent (0-20) of would-auto-close PRs randomly HELD for human adjudication — the randomized
+   *  holdout behind the unbiased close-precision estimate. Manifest-only (gate.closeAuditHoldoutPct);
+   *  absent/0 disables and is byte-identical to today. */
+  closeAuditHoldoutPct?: number | null | undefined;
   /** Deterministic anti-slop signal (#530/#532). `off` = no slop score; `advisory` = surface the slop
    *  score + warnings in context; `block` = ALSO hard-block when slopRisk >= slopGateMinScore (deterministic
    *  only, applies to every author like every blocker). Default `off` — opt-in via .loopover.yml. */

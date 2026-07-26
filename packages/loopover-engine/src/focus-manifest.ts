@@ -98,6 +98,11 @@ export type FocusManifestGateConfig = {
    *  separate `mergeReadiness` composite gate above. */
   readinessMode: GateRuleMode | null;
   readinessMinScore: number | null;
+  /** `gate.closeAuditHoldoutPct` (#8831): percent (0-20) of would-auto-close PRs randomly HELD for human
+   *  adjudication instead — the randomized holdout that makes an unbiased close-precision estimate possible
+   *  (selective-labels: outcomes are only observed for the action taken). Bounded at 20 because the holdout
+   *  is a measurement instrument, not a review mode; null/0 disables (the default — byte-identical). */
+  closeAuditHoldoutPct: number | null;
   slopMode: GateRuleMode | null;
   slopMinScore: number | null;
   slopAiAdvisory: boolean | null;
@@ -1296,6 +1301,7 @@ const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
   enabled: null,
   checkMode: null,
   pack: null,
+  closeAuditHoldoutPct: null,
   linkedIssue: null,
   duplicates: null,
   readinessMode: null,
@@ -1617,6 +1623,15 @@ function normalizeOptionalScore(value: JsonValue | undefined, field: string, war
   return Math.max(0, Math.min(100, Math.round(value)));
 }
 
+function normalizeOptionalHoldoutPct(value: JsonValue | undefined, field: string, warnings: string[]): number | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 20) {
+    warnings.push(`Manifest gate field "${field}" must be a number between 0 and 20; ignoring it.`);
+    return null;
+  }
+  return value;
+}
+
 function normalizeOptionalNonNegativeInt(value: JsonValue | undefined, field: string, warnings: string[]): number | null {
   if (value === undefined || value === null) return null;
   if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value < 0) {
@@ -1781,6 +1796,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     duplicates: normalizeOptionalGateMode(record.duplicates, "gate.duplicates", warnings),
     readinessMode: normalizeReadinessGateMode(readinessRecord?.mode, "gate.readiness.mode", warnings),
     readinessMinScore: normalizeOptionalScore(readinessRecord?.minScore, "gate.readiness.minScore", warnings),
+    closeAuditHoldoutPct: normalizeOptionalHoldoutPct(record.closeAuditHoldoutPct, "gate.closeAuditHoldoutPct", warnings),
     slopMode: normalizeOptionalGateMode(slopRecord?.mode, "gate.slop.mode", warnings),
     slopMinScore: normalizeOptionalScore(slopRecord?.minScore, "gate.slop.minScore", warnings),
     slopAiAdvisory: normalizeOptionalBoolean(slopRecord?.aiAdvisory, "gate.slop.aiAdvisory", warnings),
@@ -1844,6 +1860,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     gate.duplicates !== null ||
     gate.readinessMode !== null ||
     gate.readinessMinScore !== null ||
+    gate.closeAuditHoldoutPct !== null ||
     gate.slopMode !== null ||
     gate.slopMinScore !== null ||
     gate.slopAiAdvisory !== null ||
@@ -1909,6 +1926,7 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
     out.size = size;
   }
   if (gate.lockfileIntegrityMode !== null) out.lockfileIntegrity = gate.lockfileIntegrityMode;
+  if (gate.closeAuditHoldoutPct !== null) out.closeAuditHoldoutPct = gate.closeAuditHoldoutPct;
   if (gate.slopMode !== null || gate.slopMinScore !== null || gate.slopAiAdvisory !== null) {
     const slop: Record<string, JsonValue> = {};
     if (gate.slopMode !== null) slop.mode = gate.slopMode;

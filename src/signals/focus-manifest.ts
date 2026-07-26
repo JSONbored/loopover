@@ -498,6 +498,7 @@ function applyGateConfigOverrides(effective: RepositorySettings, gate: FocusMani
   if (gate.duplicates !== null) effective.duplicatePrGateMode = gate.duplicates;
   if (gate.readinessMode !== null) effective.qualityGateMode = gate.readinessMode;
   if (gate.readinessMinScore !== null) effective.qualityGateMinScore = gate.readinessMinScore;
+  if (gate.closeAuditHoldoutPct !== null) effective.closeAuditHoldoutPct = gate.closeAuditHoldoutPct;
   if (gate.sizeMode !== null) effective.sizeGateMode = gate.sizeMode;
   if (gate.sizeMaxFiles !== null) effective.sizeGateMaxFiles = gate.sizeMaxFiles;
   if (gate.sizeMaxLines !== null) effective.sizeGateMaxLines = gate.sizeMaxLines;

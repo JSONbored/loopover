@@ -191,6 +191,24 @@ describe("shouldStartAiReviewForAdvisory", () => {
       }),
     ).resolves.toBe(true);
   });
+
+  // #9008: a maintainer clicking the panel's re-run checkbox wants a fresh opinion regardless of the
+  // reputation heuristic -- before this, forceAiReview was silently ignored here, so a forced re-run for a
+  // low-reputation author would end with NO review and no explanation, the exact "silent skip" the issue
+  // reported.
+  it("#9008: forceAiReview bypasses ONLY the reputation skip, not the hard entry gates", async () => {
+    const env = createTestEnv({ AI: { run: vi.fn() } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", LOOPOVER_REVIEW_REPUTATION: "true", LOOPOVER_REVIEW_REPOS: "acme/widgets" });
+    await env.DB.prepare("INSERT INTO submitter_stats (project, submitter, submissions, merged, closed, manual, last_seen) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)").bind("acme/widgets", "alice", 8, 0, 8, 0).run();
+    // Without force, reputation still skips (pinned above) -- WITH force, the same low-reputation author is
+    // reviewed.
+    await expect(shouldStartAiReviewForAdvisory(env, { ...base, forceAiReview: true })).resolves.toBe(true);
+    // But force never overrides a HARD, maintainer-configured gate: aiReviewMode: "off" still returns false,
+    // and an explicit skipAiReview (a different caller-level suppression) still wins too.
+    await expect(
+      shouldStartAiReviewForAdvisory(env, { ...base, forceAiReview: true, settings: { aiReviewMode: "off" } as RepositorySettings }),
+    ).resolves.toBe(false);
+    await expect(shouldStartAiReviewForAdvisory(env, { ...base, forceAiReview: true, skipAiReview: true })).resolves.toBe(false);
+  });
 });
 
 describe("runAiReviewForAdvisory", () => {

@@ -2527,6 +2527,63 @@ describe("queue processors", () => {
     });
   });
 
+  // #9020: the panel comment is deliberately preserved after merge/close (#preserve-review-on-close) and its
+  // re-run checkbox stays interactive on a closed/merged PR forever. Before this guard, a post-merge click
+  // sailed past every other check (bot_author/missing_repo_pr_or_installation/cached_pr_missing/authorization),
+  // ran deep into the pipeline, and only died later at the freshness guard -- real spend, contradictory
+  // telemetry, and no user-visible feedback. Mirrors reReviewStoredPullRequest's own `pr.state !== "open"` guard.
+  it("#9020: a re-run click on an already-merged PR is skipped immediately with pr_not_open, no live GitHub calls", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", {});
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 49,
+      title: "Already merged",
+      state: "closed",
+      merged_at: "2026-07-26T00:00:00.000Z",
+      user: { login: "contributor" },
+      author_association: "CONTRIBUTOR",
+      head: { sha: "merged-sha" },
+      labels: [],
+      body: "Validation: npm test",
+    });
+    const checkedPanel = [
+      "<!-- gittensory-pr-panel:v1 -->",
+      "",
+      "- [x] <!-- gittensory-rerun-review:v1 --> Re-run LoopOver review",
+    ].join("\n");
+    let fetchCalls = 0;
+    vi.stubGlobal("fetch", async () => {
+      fetchCalls += 1;
+      return new Response("unexpected fetch", { status: 500 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "panel-retrigger-merged-pr",
+      eventName: "issue_comment",
+      payload: {
+        action: "edited",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 49, title: "Already merged", state: "closed", user: { login: "contributor" }, pull_request: {} },
+        comment: { id: 781, body: checkedPanel, user: { login: "loopover-orb[bot]", type: "Bot" } },
+        sender: { login: "maintainer", type: "User" },
+      },
+    });
+
+    expect(fetchCalls).toBe(0); // never reaches authorization/readiness/gate at all
+    const audit = await env.DB.prepare("select actor, target_key, detail from audit_events where event_type = ?")
+      .bind("github_app.pr_panel_retrigger_skipped")
+      .first<{ actor: string | null; target_key: string; detail: string }>();
+    expect(audit).toMatchObject({ target_key: "JSONbored/gittensory#49", detail: "pr_not_open" });
+    // No contradictory "completed" retrigger outcome either -- this is the ONLY audit row for the delivery.
+    const retriggered = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?")
+      .bind("github_app.pr_panel_retriggered")
+      .first<{ n: number }>();
+    expect(retriggered?.n).toBe(0);
+  });
+
   it("ignores invalid rerun task edits and audits skipped rerun requests", async () => {
     const env = createTestEnv();
     const checkedPanel = [

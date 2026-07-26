@@ -116,11 +116,13 @@ export async function claimAiReviewLock(
   prNumber: number,
   headSha: string,
   mode: string,
+  options?: { steal?: boolean },
 ): Promise<TransientLockClaim> {
   return claimTransientLock(
     env,
     aiReviewLockKey(repoFullName, prNumber, headSha, mode),
     AI_REVIEW_LOCK_TTL_SECONDS,
+    options,
   );
 }
 
@@ -185,10 +187,16 @@ export async function shouldStartAiReviewForAdvisory(
     // no second REPUTATION_WINDOW_ROW_CAP-bounded review_targets scan when the caller already ran one this pass.
     // Absent (every existing/direct caller) ⇒ computed here exactly as before.
     preComputedReputationSkip?: boolean | undefined;
+    // #9008: true for a maintainer's explicit forced re-run (the PR-panel checkbox / `@loopover review`).
+    // Bypasses ONLY the reputation anti-abuse skip below -- a transient, heuristic gate about spend, not a
+    // configuration decision. It deliberately does NOT bypass shouldRequirePublicAiReviewForAdvisory's hard
+    // gates (aiReviewMode off, an ineligible author under aiReviewConfirmedContributorsOnly, no AI binding,
+    // ...): those are maintainer-configured policy a click cannot override. Absent/false ⇒ byte-identical.
+    forceAiReview?: boolean | undefined;
   },
 ): Promise<boolean> {
   if (!shouldRequirePublicAiReviewForAdvisory(env, args)) return false;
-  if (args.settings.aiReviewAllAuthors) return true;
+  if (args.settings.aiReviewAllAuthors || args.forceAiReview) return true;
   if (!(isReputationEnabled(env) && isConvergenceRepoAllowed(env, args.repoFullName))) return true;
   const reputationSkip =
     args.preComputedReputationSkip ??

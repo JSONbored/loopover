@@ -9998,6 +9998,7 @@ async function maybePublishPrPublicSurface(
         confirmedContributor,
         skipAiReview: webhook.skipAiReview,
         preComputedReputationSkip,
+        forceAiReview: webhook.forceAiReview,
       }));
     aiReviewExpected = aiReviewWillRun;
     if (isFrozenForManualReview) {
@@ -10185,8 +10186,31 @@ async function maybePublishPrPublicSurface(
         pr.number,
         aiReviewHeadSha,
         settings.aiReviewMode,
+        // #9008: a maintainer's explicit forced re-run (the panel checkbox / `@loopover review`) steals this
+        // lock instead of deferring to whatever currently holds it. Without this, an orphaned lock left behind
+        // by a self-host process that died mid-review made the re-run button permanently inert for the full
+        // TTL (confirmed live: 15+ minutes) -- a duplicate LLM call is the explicitly accepted cost.
+        { steal: webhook.forceAiReview === true },
       );
       if (!aiReviewLock.acquired) {
+        // #9008: this branch used to be completely silent -- no audit event, so a killed process's orphaned
+        // lock made every subsequent pass (forced or not) vanish with zero trace. Named unconditionally; a
+        // FORCED pass landing here at all is itself notable (steal should make that unreachable barring a
+        // cache error, so `forced: true` here is a signal worth alerting on, not just informational).
+        await recordAuditEvent(env, {
+          eventType: "github_app.ai_review_lock_contended",
+          actor: author,
+          targetKey: `${repoFullName}#${pr.number}`,
+          outcome: "completed",
+          detail: "Another pass already holds the AI-review lock for this exact PR head; deferring rather than duplicating the LLM call.",
+          metadata: {
+            deliveryId: webhook.deliveryId,
+            repoFullName,
+            headSha: aiReviewHeadSha,
+            aiReviewMode: settings.aiReviewMode,
+            forced: webhook.forceAiReview === true,
+          },
+        }).catch(() => undefined);
         aiReview = aiReviewLockContendedResult(advisory);
       } else {
         try {
@@ -10577,7 +10601,14 @@ async function maybePublishPrPublicSurface(
         },
       );
     }
-    if (aiReviewExpected && !hasPublicReviewAssessment(aiReview?.notes)) {
+    // #9008: `aiReview?.persistable === false` is produced ONLY by aiReviewLockContendedResult
+    // (ai-review-orchestration.ts) — its plain-prose "AI review is already running..." notes have no
+    // Blockers/Nits section, so hasPublicReviewAssessment previously read them as a legitimate summary and
+    // silently suppressed this exact alarm — a lock-contended pass (forced or not) masqueraded as a real,
+    // completed review with a public assessment, defeating the one safety net meant to catch "no fresh review
+    // happened." Checking persistable directly (rather than special-casing the notes string) is precise: no
+    // other producer ever sets it false.
+    if (aiReviewExpected && (aiReview?.persistable === false || !hasPublicReviewAssessment(aiReview?.notes))) {
       const message =
         "AI review did not produce a public summary; publishing deterministic PR surface without AI notes";
       await recordAuditEvent(env, {
@@ -13053,6 +13084,24 @@ async function maybeProcessPrPanelRetrigger(
       targetKey,
       actor,
       "cached_pr_missing",
+    );
+    return true;
+  }
+  // #9020: the panel comment is deliberately preserved after merge/close (#preserve-review-on-close) and its
+  // re-run checkbox stays interactive on GitHub forever, but every downstream step below assumes an OPEN PR --
+  // prReadyForReview returns true unconditionally for a non-open PR (it has no CI/mergeable state left to wait
+  // on), so a post-merge click used to sail straight through readiness, spend a real gate evaluation + live CI
+  // reads, and only die deep in the pipeline at the freshness guard (which records a contradictory "denied" on
+  // top of this call's own "completed" outcome) -- real spend, no user-visible feedback, checkbox left ticked.
+  // Mirrors reReviewStoredPullRequest's identical `pr.state !== "open"` guard (the sibling entry point).
+  if (pr.state !== "open") {
+    await recordPrPanelRetriggerSkip(
+      env,
+      deliveryId,
+      repoFullName,
+      targetKey,
+      actor,
+      "pr_not_open",
     );
     return true;
   }

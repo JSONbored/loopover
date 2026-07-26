@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { ReversalHealthCard } from "@/components/site/app-panels/reversal-health-card";
 import {
   formatRatePct,
+  formatReversalEventType,
   reversalHealthStatus,
   type ReversalHealth,
 } from "@/components/site/app-panels/reversal-health-card-model";
@@ -36,6 +37,20 @@ describe("reversalHealthStatus", () => {
       tone: "info",
       label: "no auto-actions in window",
     });
+  });
+});
+
+describe("formatReversalEventType", () => {
+  it("labels reversal_reverted as a merge reverted", () => {
+    expect(formatReversalEventType("reversal_reverted")).toBe("merge reverted");
+  });
+
+  it("labels reversal_reopened as a close reopened", () => {
+    expect(formatReversalEventType("reversal_reopened")).toBe("close reopened");
+  });
+
+  it("falls back to underscore-to-space formatting for unrecognized event types", () => {
+    expect(formatReversalEventType("some_new_event")).toBe("some new event");
   });
 });
 

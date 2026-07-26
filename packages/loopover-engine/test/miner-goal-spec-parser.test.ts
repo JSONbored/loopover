@@ -215,6 +215,36 @@ test("parseMinerGoalSpec: malformed fields fall back independently with targeted
   assert.match(warningText, /truncated an over-long entry/i);
 });
 
+test("parseMinerGoalSpec: selfPlagiarism.similarityThreshold out of [0,1] warns and falls back (#8862)", () => {
+  const tooHigh = parseMinerGoalSpec({
+    wantedPaths: ["src/**"],
+    selfPlagiarism: { similarityThreshold: 5 },
+  });
+  assert.deepEqual(tooHigh.spec.selfPlagiarism, { similarityThreshold: 0.85 });
+  assert.match(tooHigh.warnings.join(" "), /selfPlagiarism\.similarityThreshold.*between 0 and 1/i);
+
+  const tooLow = parseMinerGoalSpec({
+    wantedPaths: ["src/**"],
+    selfPlagiarism: { similarityThreshold: -1 },
+  });
+  assert.deepEqual(tooLow.spec.selfPlagiarism, { similarityThreshold: 0.85 });
+  assert.match(tooLow.warnings.join(" "), /selfPlagiarism\.similarityThreshold.*between 0 and 1/i);
+
+  const nonFinite = parseMinerGoalSpec({
+    wantedPaths: ["src/**"],
+    selfPlagiarism: { similarityThreshold: Number.NaN },
+  });
+  assert.deepEqual(nonFinite.spec.selfPlagiarism, { similarityThreshold: 0.85 });
+  assert.match(nonFinite.warnings.join(" "), /selfPlagiarism\.similarityThreshold.*must be a number/i);
+
+  const valid = parseMinerGoalSpec({
+    wantedPaths: ["src/**"],
+    selfPlagiarism: { similarityThreshold: 0.9 },
+  });
+  assert.deepEqual(valid.spec.selfPlagiarism, { similarityThreshold: 0.9 });
+  assert.deepEqual(valid.warnings, []);
+});
+
 test("parseMinerGoalSpec: unknown-only or default-only content stays absent with a fallback warning", () => {
   const unknownOnly = parseMinerGoalSpec({ mystery: true });
   assert.equal(unknownOnly.present, false);

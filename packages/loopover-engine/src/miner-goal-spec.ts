@@ -255,18 +255,22 @@ function normalizeSelfPlagiarismPolicy(
     warnings.push(`MinerGoalSpec field "${field}" must be a mapping; falling back to defaults.`);
     return fallback;
   }
-  const resolved = resolveSelfPlagiarismConfig(value);
   const record = value as Record<string, unknown>;
-  if (
-    record.similarityThreshold !== undefined &&
-    typeof record.similarityThreshold !== "number"
-  ) {
-    warnings.push(
-      `MinerGoalSpec field "${field}.similarityThreshold" must be a number; falling back to ${fallback.similarityThreshold}.`,
-    );
-    return fallback;
+  if (record.similarityThreshold !== undefined) {
+    if (typeof record.similarityThreshold !== "number" || !Number.isFinite(record.similarityThreshold)) {
+      warnings.push(
+        `MinerGoalSpec field "${field}.similarityThreshold" must be a number; falling back to ${fallback.similarityThreshold}.`,
+      );
+      return fallback;
+    }
+    if (record.similarityThreshold < 0 || record.similarityThreshold > 1) {
+      warnings.push(
+        `MinerGoalSpec field "${field}.similarityThreshold" must be between 0 and 1; falling back to ${fallback.similarityThreshold}.`,
+      );
+      return fallback;
+    }
   }
-  return resolved;
+  return resolveSelfPlagiarismConfig(value);
 }
 
 function normalizeKillSwitchPolicy(

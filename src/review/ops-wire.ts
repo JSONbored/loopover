@@ -32,13 +32,13 @@
 // auto-apply.ts's own isStrictlyTightening / evaluateShadowPromotion anticipate. This module is READ-ONLY
 // observability: it reports drift; it never changes what blocks a live PR.
 
-import { findHottestInconclusiveReviewTargetForRepo, findHottestReviewTargetForRepo, listRepositories, sumByokAiUsageForRepoSince } from "../db/repositories";
+import { findHottestInconclusiveReviewTargetForRepo, findHottestReviewTargetForRepo, latestCompletedAuditEventDetail, listRepositories, sumByokAiUsageForRepoSince } from "../db/repositories";
 import { incr } from "../selfhost/metrics";
 import { isAgentConfigured } from "../settings/autonomy";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { loadGatePrecisionReport, type GatePrecisionReport } from "../services/gate-precision";
 import { buildRepoOutcomeCalibration, type OutcomeCalibration } from "../services/outcome-calibration";
-import { triggerPagerDutyIncident, type PagerDutySeverity } from "../services/notify-pagerduty";
+import { isPagerDutyEnabled, resolvePagerDutyIncident, triggerPagerDutyIncident, type PagerDutySeverity } from "../services/notify-pagerduty";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { resolveLoopOverSelfRepoFullName } from "../config/loopover-repo-focus-manifest";
 import { errorMessage, nowIso } from "../utils/json";
@@ -282,7 +282,24 @@ export async function runOpsAlerts(env: Env): Promise<Record<string, string[]>> 
           findHottestInconclusiveReviewTargetForRepo(env, repoFullName, reviewBurstSinceIso),
         ]);
         const anomalies = detectOutcomeAnomalies({ repoFullName, gatePrecision, calibration, reviewBurst, reviewFailureBurst });
-        if (anomalies.length === 0) continue;
+        const dedupKey = `ops_anomaly:${repoFullName}`;
+        if (anomalies.length === 0) {
+          // AUTO-RESOLVE (#8903): a repo that is healthy THIS tick but had an OPEN PagerDuty incident from a
+          // prior tick (its newest completed pagerduty audit for this dedupKey was a `trigger`, not yet a
+          // `resolve`) gets a matching `resolve` event so the incident auto-closes instead of waiting for a
+          // human. The `audit_events` row the trigger already writes IS the persisted previous-tick state --
+          // no bespoke table needed, and it survives isolate recycling across cron ticks. Gated on
+          // isPagerDutyEnabled so a flag-OFF deploy (the default) does zero new work and healthy repos never
+          // run the audit-log lookup -- byte-identical to today when paging is off. resolvePagerDutyIncident
+          // is itself a no-op when no routing key resolves and never throws.
+          if (isPagerDutyEnabled(env)) {
+            const lastAction = await latestCompletedAuditEventDetail(env, "loopover", "external_notification.pagerduty", dedupKey);
+            if (lastAction === "triggered") {
+              await resolvePagerDutyIncident(env, { repoFullName, dedupKey });
+            }
+          }
+          continue;
+        }
         found[repoFullName] = anomalies;
         // Structured log = loopover's notify path (no Discord/operator webhook exists) AND the Sentry path
         // (level:"error" + an `event` field reaches forwardStructuredLogToSentry). One line per repo.
@@ -301,15 +318,16 @@ export async function runOpsAlerts(env: Env): Promise<Record<string, string[]>> 
         // comment for why alert fatigue needed both controls, not just PagerDuty's own dedup_key. Awaited (not
         // fire-and-forget) so a page failure is captured within THIS tick's own error handling, not orphaned
         // after runOpsAlerts has already returned -- triggerPagerDutyIncident itself never throws and bounds
-        // its own HTTP call to a 5s timeout, so this cannot hang the scan. This does not yet send a matching
-        // "resolve" event once anomalies clear (would need tracking previous-tick state) -- an operator
-        // currently resolves the incident manually once the underlying condition is fixed.
+        // its own HTTP call to a 5s timeout, so this cannot hang the scan. A matching "resolve" event auto-
+        // closes the incident once anomalies clear on a later tick (#8903): the healthy-branch above reads
+        // this trigger's own persisted `audit_events` row as the previous-tick state, so no operator has to
+        // resolve it manually anymore.
         const worst = worstAnomaly(anomalies);
         await triggerPagerDutyIncident(env, {
           repoFullName,
           summary: worst.line,
           severity: worst.severity,
-          dedupKey: `ops_anomaly:${repoFullName}`,
+          dedupKey,
           customDetails: { anomalies },
         });
         // #ops-anomaly-metric: Prometheus counterpart to the log line above so a self-host operator can alert on

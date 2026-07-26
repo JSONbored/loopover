@@ -237,6 +237,23 @@ describe("exportOrbBatch() — always-on; reads review_audit, ships anonymized r
     expect("reuse_counters" in captured!).toBe(false);
   });
 
+  it("ships live risk-control calibrations in the payload; omits the field when none are published (#8835)", async () => {
+    const db = makeDb();
+    await audit(db, "o/r", 1, "gate_decision", "merge", "2026-02-01T00:00:00Z");
+    await audit(db, "o/r", 1, "pr_outcome", "merged", "2026-02-01T01:00:00Z");
+    await db.prepare("INSERT INTO system_flags (key, value) VALUES ('riskcontrol:close', ?)").bind(JSON.stringify({ lambda: 0.94, alpha: 0.015 })).run();
+    let captured: { risk_control?: Record<string, unknown> } | undefined;
+    await exportOrbBatch(db, 200, async (_u, init) => { captured = JSON.parse(init!.body as string); return new Response(null, { status: 200 }); });
+    expect(captured!.risk_control).toEqual({ close: { lambda: 0.94, alpha: 0.015 } });
+
+    const bare = makeDb();
+    await audit(bare, "o/r", 2, "gate_decision", "merge", "2026-02-01T00:00:00Z");
+    await audit(bare, "o/r", 2, "pr_outcome", "merged", "2026-02-01T01:00:00Z");
+    captured = undefined;
+    await exportOrbBatch(bare, 200, async (_u, init) => { captured = JSON.parse(init!.body as string); return new Response(null, { status: 200 }); });
+    expect("risk_control" in captured!).toBe(false);
+  });
+
   it("REGRESSION (#8820): a reversal recorded AFTER a PR was already exported re-exports that PR with the flag", async () => {
     const db = makeDb();
     await audit(db, "o/r", 5, "gate_decision", "close", "2026-02-01T00:00:00Z");

@@ -134,6 +134,34 @@ describe("resolveGitHubToken (#6116)", () => {
     expect(capturedUrl).toBe("https://api.loopover.ai/v1/auth/github/token");
   });
 
+  it("falls back to the top-level/global config.apiUrl when the active profile has none (#8854)", async () => {
+    dir = mkdtempSync(join(tmpdir(), "loopover-miner-github-token-global-apiurl-"));
+    // apiUrl set globally (not per-profile); trailing slash proves normalization runs on the global branch too.
+    writeConfig(dir, { apiUrl: "https://global.example/", profiles: { default: { session: { token: "session-token" } } } });
+    let capturedUrl: string | undefined;
+    const fetchImpl = async (url: string) => {
+      capturedUrl = url;
+      return Response.json({ token: "live-token" });
+    };
+    await resolveGitHubToken(configuredEnv(dir), { fetchImpl });
+    expect(capturedUrl).toBe("https://global.example/v1/auth/github/token");
+  });
+
+  it("prefers the active profile's apiUrl over the global config.apiUrl (#8854)", async () => {
+    dir = mkdtempSync(join(tmpdir(), "loopover-miner-github-token-profile-over-global-"));
+    writeConfig(dir, {
+      apiUrl: "https://global.example",
+      profiles: { default: { apiUrl: "https://profile.example", session: { token: "session-token" } } },
+    });
+    let capturedUrl: string | undefined;
+    const fetchImpl = async (url: string) => {
+      capturedUrl = url;
+      return Response.json({ token: "live-token" });
+    };
+    await resolveGitHubToken(configuredEnv(dir), { fetchImpl });
+    expect(capturedUrl).toBe("https://profile.example/v1/auth/github/token");
+  });
+
   it("treats a legacy default API URL stored in the profile as absent, falling through to the current default", async () => {
     dir = mkdtempSync(join(tmpdir(), "loopover-miner-github-token-legacy-url-"));
     writeConfig(dir, { profiles: { default: { apiUrl: "https://gittensory-api.zeronode.workers.dev", session: { token: "session-token" } } } });

@@ -25,6 +25,7 @@ import { performRepoDocRefresh } from "../github/repo-doc-refresh-runner";
 import { executeAgentRun } from "../services/agent-orchestrator";
 import { deliverNotification, evaluateNotificationEvent } from "../notifications/service";
 import { isOpsEnabled, resolveOpsManifestOverride, runOpsAlerts } from "../review/ops-wire";
+import { runAnomalyAlertsWired } from "../review/alerts-wire";
 import { isSweepWatchdogEnabled, resolveSweepWatchdogManifestOverride, runSweepLivenessWatchdog } from "../review/sweep-watchdog";
 import { isLoopEscalationSweepEnabled, resolveLoopEscalationManifestOverride, runLoopEscalationSweep } from "../review/loop-escalation-wire";
 import { isPrReconciliationEnabled, resolvePrReconciliationManifestOverride, runOpenPrReconciliation } from "../review/pr-reconciliation";
@@ -47,6 +48,7 @@ import { syncBrokeredInstalledRepos } from "../orb/installed-repos-sync";
 import { incr } from "../selfhost/metrics";
 import { generateSignalSnapshots } from "./signal-snapshot";
 import { isDecisionAuditEnabled, runDecisionAuditSample } from "../review/decision-audit";
+import { isRiskControlEnabled, runRiskControlRecalibration } from "../review/risk-control-wire";
 import { runRetentionPrune } from "./retention";
 // The 15 handlers below have no reason to move -- each is only reachable via this dispatcher (or, for
 // mapWithConcurrency, ALSO used by other still-in-processors.ts code), so they stay put and are exported
@@ -244,6 +246,13 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       console.log(JSON.stringify({ event: "decision_audit_sampled", inserted }));
       return;
     }
+    case "risk-control-recalibrate": {
+      // #8835: same stale-queued-job posture as its sampling sibling above.
+      if (!isRiskControlEnabled(env)) return;
+      const summary = await runRiskControlRecalibration(env);
+      console.log(JSON.stringify({ event: "risk_control_recalibrated", ...summary }));
+      return;
+    }
     case "generate-weekly-value-report":
       await generateWeeklyValueReport(env, {
         variant: message.variant ?? "operator",
@@ -328,7 +337,12 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       // (env OR manifest) must still no-op, so disabled does zero work here too. Read-only telemetry — never
       // throws into the queue.
       const opsManifestOverride = await resolveOpsManifestOverride(env);
-      if (isOpsEnabled(env, opsManifestOverride)) await runOpsAlerts(env);
+      if (isOpsEnabled(env, opsManifestOverride)) {
+        await runOpsAlerts(env);
+        // Same tick, second channel: the ported Discord anomaly-alerter (#8905). Self-gated on a configured
+        // DISCORD_WEBHOOK_URL and fail-safe, so it is a no-op until an operator wires the channel.
+        await runAnomalyAlertsWired(env);
+      }
       return;
     }
     case "sweep-liveness-watchdog":

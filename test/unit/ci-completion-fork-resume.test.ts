@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ciCompletionHeadSha, processJob, resolveCiCompletionPrNumbers } from "../../src/queue/processors";
-import { upsertPullRequestFromGitHub, upsertRepositoryFromGitHub, upsertRepositorySettings } from "../../src/db/repositories";
+import { getPullRequestDetailSyncState, upsertPullRequestDetailSyncState, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub, upsertRepositorySettings } from "../../src/db/repositories";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { createTestEnv } from "../helpers/d1";
 import type { GitHubWebhookPayload, JobMessage } from "../../src/types";
@@ -205,6 +205,78 @@ describe("CI-completion fork PR resume (head-SHA fallback)", () => {
     expect(forkAudit?.n).toBe(0);
     const webhook = await env.DB.prepare("select status from webhook_events where delivery_id = ?").bind("same-repo-delivery-1").first<{ status: string }>();
     expect(webhook?.status).toBe("processed");
+  });
+
+  it("invalidation: a COALESCED fork completion still invalidates the durable CI-state cache (on BOTH events)", async () => {
+    const cache = new MemoryTransientCache();
+    const env = createTestEnv({ SELFHOST_TRANSIENT_CACHE: cache });
+    await seedForkResumeRepo(env, "JSONbored/gittensory", 99, FORK_SHA);
+    // A second open PR on a DIFFERENT head SHA must be skipped by the invalidation loop's head-SHA filter.
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 98, title: "Other fork PR", state: "open", user: { login: "someone-else" }, head: { sha: "feedface0000feedface0000feedface0000feed" }, labels: [], body: "unrelated" });
+    // A throwing fetch proves both events resolve/invalidate off the stored DB row, never the live commits/pulls call.
+    vi.stubGlobal("fetch", async () => {
+      throw new Error("fetch must not be called: the stored fork PR row matches the head SHA");
+    });
+
+    // Seed a STALE, pre-completion CI aggregate a reader could observe, keyed to the completing head SHA.
+    const seedStaleCiState = async (pullNumber: number, ciState: "failed" | "passed") =>
+      upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber, status: "complete", ciHeadSha: FORK_SHA, ciState, ciStateFetchedAt: new Date().toISOString() });
+
+    // Event 1 (NOT coalesced): claims the head-SHA window, invalidates via the re-review loop.
+    await seedStaleCiState(99, "failed");
+    await seedStaleCiState(98, "failed");
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "fork-invalidate-1",
+      eventName: "check_suite",
+      payload: checkSuitePayload({ repo: "JSONbored/gittensory", installationId: 5001, headSha: FORK_SHA, prNumbers: [] }),
+    });
+    expect((await getPullRequestDetailSyncState(env, "JSONbored/gittensory", 99))?.ciState).toBeNull();
+
+    // A reader repopulates the durable cache with the burst's NEXT, DIFFERING settled CI state before the second event.
+    await seedStaleCiState(99, "passed");
+
+    // Event 2 (COALESCED within the same window): the re-review dispatch is suppressed, but the fix guarantees the
+    // durable-cache invalidation still runs -- otherwise a reader would observe the stale "passed" snapshot until TTL.
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "fork-invalidate-2",
+      eventName: "check_suite",
+      payload: checkSuitePayload({ repo: "JSONbored/gittensory", installationId: 5001, headSha: FORK_SHA, prNumbers: [] }),
+    });
+    expect((await getPullRequestDetailSyncState(env, "JSONbored/gittensory", 99))?.ciState).toBeNull();
+    // PR 98 (mismatched head SHA) is never touched by the invalidation loop -- its stale state stays put.
+    expect((await getPullRequestDetailSyncState(env, "JSONbored/gittensory", 98))?.ciState).toBe("failed");
+  });
+
+  it("regression: the COALESCED second fork completion suppresses the duplicate re-review dispatch", async () => {
+    const cache = new MemoryTransientCache();
+    const env = createTestEnv({ SELFHOST_TRANSIENT_CACHE: cache });
+    await seedForkResumeRepo(env, "JSONbored/gittensory", 99, FORK_SHA);
+    vi.stubGlobal("fetch", async () => {
+      throw new Error("fetch must not be called: the stored fork PR row matches the head SHA");
+    });
+
+    for (const deliveryId of ["fork-dispatch-1", "fork-dispatch-2"]) {
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId,
+        eventName: "check_suite",
+        payload: checkSuitePayload({ repo: "JSONbored/gittensory", installationId: 5001, headSha: FORK_SHA, prNumbers: [] }),
+      });
+    }
+
+    // The fork-resume audit is written on the dispatch path only (AFTER the coalescing early-return), so exactly one
+    // audit across two same-window events proves the second event's re-review dispatch was coalesced away, not re-run.
+    const audits = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?")
+      .bind("github_app.ci_completion_fork_resume")
+      .first<{ n: number }>();
+    expect(audits?.n).toBe(1);
+    // Both events are still recorded as processed regardless of coalescing.
+    const processed = await env.DB.prepare("select count(*) as n from webhook_events where status = 'processed' and delivery_id in (?, ?)")
+      .bind("fork-dispatch-1", "fork-dispatch-2")
+      .first<{ n: number }>();
+    expect(processed?.n).toBe(2);
   });
 
   it("dispatch: a head SHA that matches nothing is a no-op (no fork audit, no throw, webhook recorded)", async () => {

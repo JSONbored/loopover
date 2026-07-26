@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   checkEngineParityDrift,
+  checkGateDecisionForbiddenTermsParity,
   checkGateDecisionTwinPresence,
   checkGateDecisionVersionBump,
   checkEngineVersionSkew,
@@ -15,9 +16,13 @@ import {
   describeEngineVersionSkew,
   DIFF_FILE_PRIORITY_MARKERS,
   DIFF_FILE_PRIORITY_TWIN_PAIR,
+  DIFF_FILE_PRIORITY_GROUNDING_TWIN_PAIR,
   discoverEngineParityPairs,
   discoverGateDecisionTwinPair,
   enginePackageVersionIncreased,
+  extractForbiddenTermsRegex,
+  FORBIDDEN_CONTENT_MARKERS,
+  FORBIDDEN_CONTENT_TWIN_PAIR,
   GATE_DECISION_TWIN_PAIR,
   type EngineParityPair,
   isEngineStubPair,
@@ -347,15 +352,122 @@ describe("check-engine-parity script", () => {
     });
   });
 
+  // #8697: strengthen the gate-decision twin guard to diff the CHECK_RUN_FORBIDDEN_TERMS regex BODY, not just
+  // the four function-name markers -- the engine copy had silently dropped `likely_duplicate|reviewability\s*\d`
+  // and nothing caught it. These mirror the marker-presence test pattern above with a synthetic divergence.
+  describe("CHECK_RUN_FORBIDDEN_TERMS regex-body parity (#8697)", () => {
+    const gateDecisionReadFile = (host: string, engine: string) => (_root: string, relativePath: string) => {
+      if (relativePath === GATE_DECISION_TWIN_PAIR.hostRelative) return host;
+      if (relativePath === GATE_DECISION_TWIN_PAIR.engineRelative) return engine;
+      throw new Error(`unexpected read: ${relativePath}`);
+    };
+
+    it("extracts the regex literal (source + flags) and returns null when it is absent", () => {
+      const withRegex = String.raw`
+const CHECK_RUN_FORBIDDEN_TERMS =
+  /\b(?:rewards?|likely_duplicate|reviewability\s*\d)\b/gi;
+`;
+      expect(extractForbiddenTermsRegex(withRegex)).toBe("/\\b(?:rewards?|likely_duplicate|reviewability\\s*\\d)\\b/gi");
+      expect(extractForbiddenTermsRegex("export const OTHER = 1;\n")).toBeNull();
+      expect(extractForbiddenTermsRegex("const CHECK_RUN_FORBIDDEN_TERMS = buildTerms(list);\n")).toBeNull();
+    });
+
+    it("passes against the real repo now that both twins carry the same regex body", () => {
+      expect(checkGateDecisionForbiddenTermsParity({ root: process.cwd() }).failures).toEqual([]);
+    });
+
+    it("passes when the two synthetic regex bodies are byte-identical", () => {
+      const body = String.raw`
+const CHECK_RUN_FORBIDDEN_TERMS =
+  /\b(?:rewards?|likely_duplicate|reviewability\s*\d)\b/gi;
+`;
+      const result = checkGateDecisionForbiddenTermsParity({ root: "/fake", readFile: gateDecisionReadFile(body, body) });
+      expect(result.failures).toEqual([]);
+    });
+
+    it("fails when the two regex bodies are made to diverge again (synthetic fixture)", () => {
+      const host = String.raw`
+const CHECK_RUN_FORBIDDEN_TERMS =
+  /\b(?:rewards?|likely_duplicate|reviewability\s*\d)\b/gi;
+`;
+      const engine = String.raw`
+const CHECK_RUN_FORBIDDEN_TERMS =
+  /\b(?:rewards?)\b/gi;
+`;
+      const result = checkGateDecisionForbiddenTermsParity({ root: "/fake", readFile: gateDecisionReadFile(host, engine) });
+      expect(result.failures.some((failure) => failure.includes("regex body has drifted"))).toBe(true);
+      // runEngineParityChecks surfaces the same drift end-to-end.
+      const combined = runEngineParityChecks({
+        root: "/fake",
+        readFile: (_root, relativePath) => {
+          if (relativePath === "packages/loopover-engine/package.json") return JSON.stringify({ version: "0.2.0" });
+          if (relativePath === GATE_DECISION_TWIN_PAIR.hostRelative) return host;
+          if (relativePath === GATE_DECISION_TWIN_PAIR.engineRelative) return engine;
+          throw new Error(`unexpected read: ${relativePath}`);
+        },
+        listDir: () => [],
+        resolveInstalled: () => "0.2.0",
+        readExpected: () => "0.2.0",
+        changedFiles: [],
+        headEngineVersion: "0.2.0",
+      });
+      expect(combined.failures.some((failure) => failure.includes("regex body has drifted"))).toBe(true);
+    });
+
+    it("fails when either twin copy is missing its regex literal entirely", () => {
+      const withRegex = String.raw`
+const CHECK_RUN_FORBIDDEN_TERMS =
+  /\b(?:rewards?)\b/gi;
+`;
+      const withoutRegex = "const CHECK_RUN_FORBIDDEN_TERMS = buildForbiddenTerms();\n";
+
+      const engineMissing = checkGateDecisionForbiddenTermsParity({
+        root: "/fake",
+        readFile: gateDecisionReadFile(withRegex, withoutRegex),
+      });
+      expect(
+        engineMissing.failures.some((failure) => failure.includes(`${GATE_DECISION_TWIN_PAIR.engineRelative} is missing`)),
+      ).toBe(true);
+
+      const hostMissing = checkGateDecisionForbiddenTermsParity({
+        root: "/fake",
+        readFile: gateDecisionReadFile(withoutRegex, withRegex),
+      });
+      expect(
+        hostMissing.failures.some((failure) => failure.includes(`${GATE_DECISION_TWIN_PAIR.hostRelative} is missing`)),
+      ).toBe(true);
+    });
+
+    it("reports a load failure when a twin file cannot be read (both Error and non-Error throws)", () => {
+      const errorThrow = checkGateDecisionForbiddenTermsParity({
+        root: "/fake",
+        readFile: () => {
+          throw new Error("boom");
+        },
+      });
+      expect(errorThrow.failures).toEqual(["Could not load gate-decision twin pair files for regex-body parity: boom"]);
+
+      const stringThrow = checkGateDecisionForbiddenTermsParity({
+        root: "/fake",
+        readFile: () => {
+          throw "kaboom";
+        },
+      });
+      expect(stringThrow.failures).toEqual(["Could not load gate-decision twin pair files for regex-body parity: kaboom"]);
+    });
+  });
+
   describe("named twin-pair coverage (#4605)", () => {
-    it("registers the gate-decision, safe-url, diff-file-priority, shares-meaningful-file, and secret-detection pairs", () => {
+    it("registers the gate-decision, content-lane, diff-file-priority, diff-file-priority-grounding, shares-meaningful-file, secret-detection, and forbidden-content pairs", () => {
       const areas = NAMED_TWIN_PAIRS.map(({ pair }) => pair.area);
       expect(areas).toEqual([
         "gate-decision",
         "content-lane",
         "diff-file-priority",
+        "diff-file-priority-grounding",
         "shares-meaningful-file",
         "secret-detection",
+        "forbidden-content-secret-patterns",
       ]);
     });
 
@@ -369,7 +481,7 @@ describe("check-engine-parity script", () => {
       expect(scanned.some((discovered) => discovered.fileName === "safe-url.ts")).toBe(false);
     });
 
-    it("passes marker presence for all five named pairs against the real repo (regression guard)", () => {
+    it("passes marker presence for all named pairs against the real repo (regression guard)", () => {
       for (const { pair, markers } of NAMED_TWIN_PAIRS) {
         const result = checkGateDecisionTwinPresence({ root: process.cwd(), pair, markers });
         expect(result.failures).toEqual([]);
@@ -389,6 +501,7 @@ describe("check-engine-parity script", () => {
       const fixedHostBody =
         "export function diffFilePriority(path: string): number {\n" +
         "  if (isLockfile(path)) return 4;\n" +
+        "  if (/(^|\\/)(dist|build|out|coverage|vendor|vendored|third_party|third-party|node_modules|bower_components|jspm_packages)\\//i.test(path)) return 4;\n" +
         "  return 0;\n" +
         "}\n";
       const result = checkGateDecisionTwinPresence({
@@ -401,9 +514,39 @@ describe("check-engine-parity script", () => {
         pair: DIFF_FILE_PRIORITY_TWIN_PAIR,
         markers: DIFF_FILE_PRIORITY_MARKERS,
       });
-      expect(result.failures).toHaveLength(1);
+      expect(result.failures.length).toBeGreaterThanOrEqual(1);
       expect(result.failures[0]).toContain(DIFF_FILE_PRIORITY_TWIN_PAIR.engineRelative);
-      expect(result.failures[0]).toContain(JSON.stringify(DIFF_FILE_PRIORITY_MARKERS[1]));
+      expect(result.failures.some((f) => f.includes(JSON.stringify(DIFF_FILE_PRIORITY_MARKERS[1])))).toBe(true);
+    });
+
+    it("diffFilePriority markers fail when a host twin keeps the pre-#7526 vendored-directory regex (#8648)", () => {
+      const staleHostBody =
+        "export function diffFilePriority(path: string): number {\n" +
+        "  if (isLockfile(path)) return 4;\n" +
+        "  if (/(^|\\/)(dist|build|out|coverage|vendor|node_modules)\\//i.test(path)) return 4;\n" +
+        "  return 0;\n" +
+        "}\n";
+      const fixedEngineBody =
+        "export function diffFilePriority(path: string): number {\n" +
+        "  if (isLockfile(path)) return 4;\n" +
+        "  if (/(^|\\/)(dist|build|out|coverage|vendor|vendored|third_party|third-party|node_modules|bower_components|jspm_packages)\\//i.test(path)) return 4;\n" +
+        "  return 0;\n" +
+        "}\n";
+      for (const pair of [DIFF_FILE_PRIORITY_TWIN_PAIR, DIFF_FILE_PRIORITY_GROUNDING_TWIN_PAIR]) {
+        const result = checkGateDecisionTwinPresence({
+          root: "/fake",
+          readFile: (_root, relativePath) => {
+            if (relativePath === pair.hostRelative) return staleHostBody;
+            if (relativePath === pair.engineRelative) return fixedEngineBody;
+            throw new Error(`unexpected read: ${relativePath}`);
+          },
+          pair,
+          markers: DIFF_FILE_PRIORITY_MARKERS,
+        });
+        expect(result.failures).toHaveLength(1);
+        expect(result.failures[0]).toContain(pair.hostRelative);
+        expect(result.failures[0]).toContain(JSON.stringify(DIFF_FILE_PRIORITY_MARKERS[2]));
+      }
     });
 
     it("safe-url and shares-meaningful-file marker sets are non-empty and pair-specific", () => {
@@ -415,7 +558,7 @@ describe("check-engine-parity script", () => {
       );
     });
 
-    it("includes all five named pairs in runEngineParityChecks pairsChecked", () => {
+    it("includes all named pairs in runEngineParityChecks pairsChecked", () => {
       const result = runEngineParityChecks({ root: process.cwd() });
       const checkedAreas = result.pairsChecked.map((pair) => pair.area);
       for (const { pair } of NAMED_TWIN_PAIRS) {
@@ -492,6 +635,45 @@ describe("check-engine-parity script", () => {
       expect(result.failures).toHaveLength(1);
       expect(result.failures[0]).toContain(SECRET_DETECTION_TWIN_PAIR.engineRelative);
       expect(result.failures[0]).toContain(JSON.stringify('"voyage_api_key"'));
+    });
+  });
+
+  describe("forbidden-content twin coverage (#8674)", () => {
+    it("registers scripts/forbidden-content.ts against src/review/secret-patterns.ts", () => {
+      expect(FORBIDDEN_CONTENT_TWIN_PAIR.hostRelative).toBe("src/review/secret-patterns.ts");
+      expect(FORBIDDEN_CONTENT_TWIN_PAIR.engineRelative).toBe("scripts/forbidden-content.ts");
+    });
+
+    it("excludes the three kinds whose forbidden-content bodies deliberately diverge (github_token/github_pat/private_key_block)", () => {
+      // Those three keep looser pre-#7433 bodies in forbidden-content.ts (e.g. `gh[pousr]_[A-Za-z0-9_]+`);
+      // asserting their absence documents the deliberate omission and guards against someone "completing the
+      // set" and reintroducing a false-fail, exactly as the secret-detection pair does for its own divergences.
+      const joined = FORBIDDEN_CONTENT_MARKERS.join("\n");
+      expect(joined).not.toContain("gh[pousr]_");
+      expect(joined).not.toContain("github_pat_");
+      expect(joined).not.toContain("PRIVATE KEY");
+    });
+
+    it("fails presence when a shared HARD_SECRET_KINDS regex body drifts between the two copies", () => {
+      // Reproduces the drift class this pair exists to catch (#8674): a HARD_SECRET_KINDS body is tightened in
+      // secret-patterns.ts while forbidden-content.ts's hand-copy is left stale, silently packaging tarballs
+      // with an outdated scanner. Both bodies start from the FULL marker set so only the dropped line fails.
+      const droppedMarker = "sk-ant-api03-[A-Za-z0-9_-]{93}AA";
+      const hostBody = FORBIDDEN_CONTENT_MARKERS.join("\n");
+      const driftedTwinBody = FORBIDDEN_CONTENT_MARKERS.filter((marker) => marker !== droppedMarker).join("\n");
+      const result = checkGateDecisionTwinPresence({
+        root: "/fake",
+        readFile: (_root, relativePath) => {
+          if (relativePath === FORBIDDEN_CONTENT_TWIN_PAIR.hostRelative) return hostBody;
+          if (relativePath === FORBIDDEN_CONTENT_TWIN_PAIR.engineRelative) return driftedTwinBody;
+          throw new Error(`unexpected read: ${relativePath}`);
+        },
+        pair: FORBIDDEN_CONTENT_TWIN_PAIR,
+        markers: FORBIDDEN_CONTENT_MARKERS,
+      });
+      expect(result.failures).toHaveLength(1);
+      expect(result.failures[0]).toContain(FORBIDDEN_CONTENT_TWIN_PAIR.engineRelative);
+      expect(result.failures[0]).toContain(JSON.stringify(droppedMarker));
     });
   });
 

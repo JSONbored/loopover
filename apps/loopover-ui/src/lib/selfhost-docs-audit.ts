@@ -170,7 +170,7 @@ export const SELFHOST_SOURCE_OF_TRUTH_ROWS: readonly SelfHostSourceOfTruthRow[] 
     runtimeSources: [".github/workflows/release-selfhost.yml", "Dockerfile"],
     docsPath: "/docs/self-hosting-releases",
     notes:
-      "Release workflow uploads source maps to Sentry; maps never ship inside the runtime image.",
+      "Release workflow uploads source maps to PostHog; maps never ship inside the runtime image.",
   },
   {
     topic: "Release smoke matrix and image-contents audit",

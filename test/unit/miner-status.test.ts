@@ -20,7 +20,7 @@ import {
   runDoctorChecks,
   runStatus,
 } from "../../packages/loopover-miner/lib/status.js";
-import { initLaptopState } from "../../packages/loopover-miner/lib/laptop-init.js";
+import { initLaptopState, resolveLaptopStateDbPath } from "../../packages/loopover-miner/lib/laptop-init.js";
 
 // Read live, never hardcode: a hardcoded snapshot of this range (e.g. "^3.0.0") goes stale the moment
 // packages/loopover-miner/package.json's @loopover/engine dependency is bumped by a real release, and
@@ -41,7 +41,15 @@ function tempRoot() {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  // On Windows, node:sqlite can briefly keep a handle after close(); ignore EBUSY so cleanup
+  // failures don't mask assertion results (CI Linux does not hit this).
+  for (const root of roots.splice(0)) {
+    try {
+      rmSync(root, { recursive: true, force: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EBUSY") throw error;
+    }
+  }
 });
 
 /** Creates an executable file `name` in a fresh bin dir and returns that dir (usable directly as PATH). */
@@ -146,6 +154,7 @@ describe("loopover-miner status/doctor (#2288)", () => {
       "store-integrity:ranked-candidates",
       "store-integrity:deny-hook-synthesis",
       "store-integrity:orb-export",
+      "store-integrity:laptop-state",
     ]);
     // REGRESSION (#6768): doctor previously omitted these four durable local stores from the integrity sweep.
     expect(checks.map((check) => check.name)).toEqual(
@@ -160,6 +169,8 @@ describe("loopover-miner status/doctor (#2288)", () => {
     expect(checks.map((check) => check.name)).toEqual(
       expect.arrayContaining(["store-integrity:ranked-candidates", "store-integrity:deny-hook-synthesis"]),
     );
+    // REGRESSION (#8641): laptop-state was only covered by a shallow SELECT 1, not the deep integrity sweep.
+    expect(checks.map((check) => check.name)).toEqual(expect.arrayContaining(["store-integrity:laptop-state"]));
     expect(runDoctor([], env, cwd)).toBe(0);
     expect(log).toHaveBeenCalled();
   });
@@ -172,6 +183,28 @@ describe("loopover-miner status/doctor (#2288)", () => {
     const checks = runDoctorChecks(env);
     expect(checks.find((check) => check.name === "store-integrity:event-ledger")?.ok).toBe(false);
     expect(runDoctor([], env)).toBe(1); // a failed check makes doctor exit non-zero
+  });
+
+  it("doctor flags a corrupted laptop-state store via the deep integrity sweep (#8641)", () => {
+    const env = { LOOPOVER_MINER_CONFIG_DIR: join(tempRoot(), "state") };
+    const laptopPath = resolveLaptopStateDbPath(env);
+    mkdirSync(dirname(laptopPath), { recursive: true });
+    writeFileSync(laptopPath, "this is not a sqlite database");
+    const checks = runDoctorChecks(env);
+    expect(checks.find((check) => check.name === "store-integrity:laptop-state")?.ok).toBe(false);
+
+    // Healthy absence still passes: a missing laptop-state file is not a failed deep check.
+    const cleanEnv = { LOOPOVER_MINER_CONFIG_DIR: join(tempRoot(), "clean-state") };
+    const clean = runDoctorChecks(cleanEnv).find((check) => check.name === "store-integrity:laptop-state");
+    expect(clean?.ok).toBe(true);
+    expect(clean?.detail).toMatch(/not created yet/);
+
+    // Healthy presence: a real initialized file must pass the deep PRAGMA integrity_check path.
+    const healthyEnv = { LOOPOVER_MINER_CONFIG_DIR: join(tempRoot(), "healthy-state") };
+    initLaptopState(healthyEnv);
+    const healthy = runDoctorChecks(healthyEnv).find((check) => check.name === "store-integrity:laptop-state");
+    expect(healthy?.ok).toBe(true);
+    expect(healthy?.detail).toMatch(/: ok$/);
   });
 
   describe("checkConfigContent (#4873)", () => {

@@ -1,4 +1,5 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@loopover/ui-kit/components/avatar";
+import { GovernorChatActionResult } from "./governor-action-result";
 import type { ChatMessage, ChatRole } from "./fixtures";
 
 // Role-differentiated bubble backgrounds, built ONLY from existing @loopover/ui-kit theme tokens
@@ -33,7 +34,13 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
       </Avatar>
       <div className="flex min-w-0 flex-col gap-1">
         <div className={`whitespace-pre-wrap break-words rounded-token-sm px-3 py-2 text-token-sm ${bubbleClass}`}>
-          {message.content}
+          {message.governorActionResult ? (
+            // #8670: a resolved governor pause/resume turn renders through the dedicated result component
+            // (same Ledgers-verbatim copy as `content`), not as an undifferentiated plain-text bubble.
+            <GovernorChatActionResult pending={false} result={message.governorActionResult} />
+          ) : (
+            message.content
+          )}
         </div>
         <time className="text-token-xs text-muted-foreground" dateTime={message.timestamp}>
           {formatTimestamp(message.timestamp)}

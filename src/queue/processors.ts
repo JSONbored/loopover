@@ -4577,12 +4577,25 @@ async function maybeReReviewOnCiCompletion(
   const headSha = ciCompletionHeadSha(eventName, payload);
   if (isConvergenceRepoAllowed(env, repoFullName)) {
     // GitHub can emit many empty-pull_requests CI completions for the same fork head SHA. Claim a head-SHA
-    // window before the fallback resolver so duplicate events do not repeat DB scans or commits/{sha}/pulls calls.
+    // window before the fallback resolver so duplicate events skip the re-review dispatch and its live
+    // commits/{sha}/pulls round-trip (the cheap stored-DB invalidation still runs -- see the branch below).
     if (
       populatedPrNumbers.length === 0 &&
       headSha &&
       (await ciHeadShaResolutionCoalesced(env, repoFullName, headSha))
     ) {
+      // The re-review DISPATCH is coalesced away here, but the durable CI-state cache invalidation is NOT
+      // meant to be -- the loop below invalidates "for EVERY resolved PR, regardless of whether the re-review
+      // actually fires", and a fork PR must get that same unconditional guarantee same-repo PRs already do
+      // (a coalesced completion in a burst carries a newer settled CI state that a reader must not miss).
+      // Resolve via the fast STORED-DB head-SHA lookup only -- no live fork fallback (that's the round-trip the
+      // coalesce exists to avoid): a durable cache entry exists only for a PR this process already tracks, so an
+      // untracked fork the DB lookup misses has nothing stale to clear (mirrors maybeInvalidateCiCacheOnLegacyCiEvent).
+      const openPullRequests = await listOpenPullRequests(env, repoFullName).catch(() => []);
+      for (const pr of openPullRequests) {
+        if (pr.headSha !== headSha) continue;
+        await invalidateCiStateCache(env, repoFullName, pr.number).catch(() => undefined);
+      }
       await recordWebhookEvent(env, {
         deliveryId,
         eventName,
@@ -10812,6 +10825,17 @@ async function maybePublishPrPublicSurface(
               });
             }
           }
+          // #8686: when both the primary publish and its fallback fail (or there was no pending id to fall
+          // back on), record the same failedOutputs entry check_run/comment/label already push — otherwise a
+          // gate-only repo silently leaves publishedOutputs+failedOutputs empty and finishPublicSurfacePublication
+          // skips pr_public_surface_failed / PostHog escalation / transient retry entirely.
+          if (!gateFinalized) {
+            failedOutputs.push({
+              output: "gate_check_run",
+              error: gateCheckResult.warning,
+              transient: false,
+            });
+          }
         }
       } catch (checkError) {
         if (isGitHubRateLimitedError(checkError)) throw checkError;
@@ -10853,6 +10877,16 @@ async function maybePublishPrPublicSurface(
               );
             });
           }
+        }
+        // #8686: final failure after fallback also failed (or was unavailable) — same failedOutputs contract
+        // as check_run so gate-only repos get operator-visible failure + transient retry when applicable.
+        if (!gateFinalized) {
+          const message = errorMessage(checkError);
+          failedOutputs.push({
+            output: "gate_check_run",
+            error: message,
+            transient: isGitHubTransientPublishError(checkError),
+          });
         }
         await recordAuditEvent(env, {
           eventType: "github_app.gate_check_failed_nonfatal",
@@ -11762,6 +11796,7 @@ async function maybeProcessGateOverrideCommand(
     commandName: "gate-override" as LoopOverMentionCommandName,
     settings,
     pr,
+    needsMinerDetection: true,
   });
   if (!authorization.authorized) {
     await recordAuditEvent(env, {
@@ -11957,7 +11992,7 @@ async function maybeProcessResolveCommand(env: Env, deliveryId: string, payload:
   const [pr, settings] = await Promise.all([getPullRequest(env, req.repoFullName, req.pr.number), resolveRepositorySettings(env, req.repoFullName)]);
   const targetKey = `${req.repoFullName}#${req.pr.number}`;
   if (!pr) { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_skipped", actor: req.actor, targetKey, outcome: "completed", detail: "cached_pr_missing", metadata: { deliveryId, repoFullName: req.repoFullName, reason: "cached_pr_missing" } }); await recordGithubProductUsage(env, "finding_resolved_skipped", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "skipped", metadata: { reason: "cached_pr_missing" } }); return true; }
-  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "resolve" as LoopOverMentionCommandName, settings, pr });
+  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "resolve" as LoopOverMentionCommandName, settings, pr, needsMinerDetection: true });
   if (!authorization.authorized) { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_denied", actor: req.actor, targetKey, outcome: "denied", detail: authorization.reason, metadata: { deliveryId, repoFullName: req.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "resolve") } }); await recordGithubProductUsage(env, "finding_resolved_denied", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "denied", metadata: { reason: authorization.reason, actorKind: authorization.actorKind, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "resolve") } }); return true; }
   const findingRef = normalizeResolveFindingRef(command.reason);
   if (!findingRef.ok) { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_skipped", actor: req.actor, targetKey, outcome: "completed", detail: findingRef.reason, metadata: { deliveryId, repoFullName: req.repoFullName, reason: findingRef.reason } }); await recordGithubProductUsage(env, "finding_resolved_skipped", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "skipped", metadata: { reason: findingRef.reason } }); return true; }
@@ -12066,7 +12101,7 @@ async function maybeProcessPauseCommand(env: Env, deliveryId: string, payload: G
     await recordAutoreviewPausedSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "cached_pr_missing");
     return true;
   }
-  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "pause" as LoopOverMentionCommandName, settings, pr });
+  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "pause" as LoopOverMentionCommandName, settings, pr, needsMinerDetection: true });
   if (!authorization.authorized) {
     await recordAuditEvent(env, { eventType: "github_app.autoreview_paused_denied", actor: req.actor, targetKey, outcome: "denied", detail: authorization.reason, metadata: { deliveryId, repoFullName: req.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "pause") } });
     await recordGithubProductUsage(env, "autoreview_paused_denied", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "denied", metadata: { reason: authorization.reason, actorKind: authorization.actorKind, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "pause") } });
@@ -12109,7 +12144,7 @@ async function maybeProcessResumeCommand(env: Env, deliveryId: string, payload: 
     await recordAutoreviewResumedSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "cached_pr_missing");
     return true;
   }
-  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "resume" as LoopOverMentionCommandName, settings, pr });
+  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "resume" as LoopOverMentionCommandName, settings, pr, needsMinerDetection: true });
   if (!authorization.authorized) {
     await recordAuditEvent(env, { eventType: "github_app.autoreview_resumed_denied", actor: req.actor, targetKey, outcome: "denied", detail: authorization.reason, metadata: { deliveryId, repoFullName: req.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "resume") } });
     await recordGithubProductUsage(env, "autoreview_resumed_denied", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "denied", metadata: { reason: authorization.reason, actorKind: authorization.actorKind, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "resume") } });
@@ -12176,7 +12211,7 @@ async function maybeProcessExplainCommand(env: Env, deliveryId: string, payload:
     await recordFindingExplainedSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "cached_pr_missing");
     return true;
   }
-  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "explain" as LoopOverMentionCommandName, settings, pr });
+  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "explain" as LoopOverMentionCommandName, settings, pr, needsMinerDetection: true });
   if (!authorization.authorized) {
     await recordAuditEvent(env, { eventType: "github_app.finding_explained_denied", actor: req.actor, targetKey, outcome: "denied", detail: authorization.reason, metadata: { deliveryId, repoFullName: req.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "explain") } });
     await recordGithubProductUsage(env, "finding_explained_denied", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "denied", metadata: { reason: authorization.reason, actorKind: authorization.actorKind, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "explain") } });
@@ -12257,7 +12292,7 @@ async function maybeProcessGenerateTestsCommand(env: Env, deliveryId: string, pa
     await recordGenerateTestsSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "cached_pr_missing");
     return true;
   }
-  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "generate-tests" as LoopOverMentionCommandName, settings, pr });
+  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "generate-tests" as LoopOverMentionCommandName, settings, pr, needsMinerDetection: true });
   if (!authorization.authorized) {
     await recordAuditEvent(env, { eventType: "github_app.e2e_tests_generation_denied", actor: req.actor, targetKey, outcome: "denied", detail: authorization.reason, metadata: { deliveryId, repoFullName: req.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "generate-tests") } });
     await recordGithubProductUsage(env, "e2e_tests_generation_denied", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "denied", metadata: { reason: authorization.reason, actorKind: authorization.actorKind, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "generate-tests") } });
@@ -12978,7 +13013,7 @@ async function maybeProcessPrPanelGenerateTests(
     commandName: "generate-tests" as LoopOverMentionCommandName,
     settings,
     pr,
-    needsMinerDetection: false,
+    needsMinerDetection: true,
   });
   if (!authorization.authorized) {
     await recordAuditEvent(env, {

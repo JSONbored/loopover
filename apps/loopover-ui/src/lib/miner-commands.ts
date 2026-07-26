@@ -84,7 +84,8 @@ function safeRepoFullName(value: string | null | undefined): string | null {
   return /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(text) ? text : null;
 }
 
-function sanitizeMinerCommand(command: string): string {
+/** Redact local paths and `term=value` secret-shaped leakage before a command is shown on a public surface. */
+export function sanitizeMinerCommand(command: string): string {
   return command
     .replace(/(?:~\/|[A-Za-z]:\\)[^\s"'`,;)]+/g, "<local-path>")
     .replace(

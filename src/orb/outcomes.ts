@@ -63,8 +63,9 @@ export interface OrbGlobalStats {
 export async function getOrbGlobalStats(env: Env, opts: { excludeAccount?: string } = {}): Promise<OrbGlobalStats> {
   // excludeAccount de-dups an account already counted by another source. "" = include all.
   const exclude = (opts.excludeAccount ?? "").toLowerCase();
-  const row = await env.DB.prepare(
-    `SELECT
+  try {
+    const row = await env.DB.prepare(
+      `SELECT
        SUM(CASE WHEN o.outcome = 'merged' THEN 1 ELSE 0 END) AS merged,
        SUM(CASE WHEN o.outcome = 'closed' THEN 1 ELSE 0 END) AS closed,
        COUNT(*) AS total
@@ -75,10 +76,16 @@ export async function getOrbGlobalStats(env: Env, opts: { excludeAccount?: strin
        AND ae.event_type = 'github_app.pr_public_surface_published'
      WHERE (? = '' OR LOWER(COALESCE(i.account_login, '')) <> ?)
        AND ae.id IS NULL`,
-  )
-    .bind(exclude, exclude)
-    .first<{ merged: number | null; closed: number | null; total: number | null }>();
-  /* v8 ignore next -- an aggregate query always returns exactly one row; this guards the nullable .first() type only */
-  if (!row) return { merged: 0, closed: 0, total: 0 };
-  return { merged: row.merged ?? 0, closed: row.closed ?? 0, total: row.total ?? 0 };
+    )
+      .bind(exclude, exclude)
+      .first<{ merged: number | null; closed: number | null; total: number | null }>();
+    /* v8 ignore next -- an aggregate query always returns exactly one row; this guards the nullable .first() type only */
+    if (!row) return { merged: 0, closed: 0, total: 0 };
+    return { merged: row.merged ?? 0, closed: row.closed ?? 0, total: row.total ?? 0 };
+  } catch {
+    // #8879: degrade to zeros on a DB error, mirroring computeFleetAnalytics's try/catch (src/orb/analytics.ts)
+    // so a D1 failure on this join drops ONLY the orb aggregate instead of 503-ing the entire /v1/public/stats
+    // payload (accuracyTrend/reuseRateTrend/reviewVolumeTrend/rulePrecision) via the route-level catch.
+    return { merged: 0, closed: 0, total: 0 };
+  }
 }

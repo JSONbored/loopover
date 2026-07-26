@@ -60,6 +60,12 @@ export type AttemptInput = {
 };
 
 export type AttemptDeps = {
+  /** #8807: pre-bound target-repo verification (worktree + detected stack captured by the caller). Runs the
+   *  TARGET repo's own test/lint/build commands after handoff and BEFORE any submission read/write — a
+   *  failed verification blocks the PR instead of trusting the coding agent's self-attestation. Optional:
+   *  absent (older callers, tests) preserves the pre-#8807 flow byte-identically. Loosely typed at this
+   *  public boundary like runSlopAssessment above; the real shape is TargetRepoVerificationResult. */
+  verifyTargetRepo?: () => Promise<{ status: string } & Record<string, unknown>>;
   driver: CodingAgentDriver;
   runSlopAssessment: (input: unknown) => unknown;
   appendAttemptLogEvent: (event: unknown) => void;
@@ -83,6 +89,7 @@ export type AttemptDeps = {
 
 export type AttemptResult =
   | { outcome: "abandon"; loopResult: IterateLoopResult }
+  | { outcome: "verification_failed"; verification: unknown; loopResult: IterateLoopResult }
   | { outcome: "stale"; reason: FreshnessAbortReason; loopResult: IterateLoopResult }
   | { outcome: "blocked"; decision: HarnessSubmissionDecision; loopResult: IterateLoopResult }
   | { outcome: "governed"; decision: GovernorDecision; loopResult: IterateLoopResult }
@@ -210,6 +217,18 @@ export async function runMinerAttempt(input: AttemptInput, deps: AttemptDeps): P
           handoffPacket: undefined,
         },
       };
+    }
+  }
+
+  // #8807: the independent quality gate — the target repo's own commands against the worktree. Placed
+  // BEFORE the freshness read so a failing build never spends GitHub API budget. A "skipped" or "passed"
+  // result proceeds; only a real command failure blocks. Deliberately NOT re-entering the iterate loop in
+  // this change: the loop's internal self-review iterations already ran, and never-submit-known-bad is the
+  // trust win — feeding the failure back as loop input is the tracked follow-up on the issue.
+  if (typeof deps.verifyTargetRepo === "function") {
+    const verification = await deps.verifyTargetRepo();
+    if (verification.status === "failed") {
+      return { outcome: "verification_failed", verification, loopResult };
     }
   }
 

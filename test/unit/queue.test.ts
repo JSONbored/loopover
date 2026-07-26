@@ -2729,6 +2729,11 @@ describe("queue processors", () => {
           if (index >= 0) liveLabels.splice(index, 1);
           return new Response(null, { status: 204 });
         }
+        // The enforced close posts a close-explanation comment (createOrUpdateCloseExplanationComment):
+        // its marker search LISTS the PR's comments first, and the list endpoint must return an ARRAY --
+        // the generic `Response.json({})` fallback below would make the close action itself fail.
+        if (url.includes("/issues/7/comments") && method === "GET") return Response.json([]);
+        if (url.includes("/issues/7/comments") && method === "POST") return Response.json({ id: 71 });
         // The `.loopover.yml`/`.json` content fetch (raw.githubusercontent.com) is the ONLY place
         // linkedIssueHardRules can be turned on (see the comment above). Batch-A settings ride along on BOTH
         // arms so their effective value stays "off" regardless of whether the hard rule itself is enabled.

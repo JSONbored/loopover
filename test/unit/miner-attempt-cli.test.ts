@@ -2670,3 +2670,77 @@ describe("resolveAttemptHouseRulesConfig (#8806)", () => {
     expect(close).toHaveBeenCalled();
   });
 });
+
+describe("target-repo verification wiring (#8807)", () => {
+  it("binds verifyTargetRepo into the runner deps (worktree-scoped thunk over the injected verifier)", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const runMinerAttemptSpy = vi.fn(async (_input: unknown, deps: { verifyTargetRepo?: () => Promise<unknown> }) => {
+      // The thunk exists and resolves through the injected verifier when invoked.
+      expect(typeof deps.verifyTargetRepo).toBe("function");
+      const verification = await deps.verifyTargetRepo!();
+      expect(verification).toEqual({ status: "skipped", reason: "stack_undetected" });
+      return { outcome: "abandon", loopResult: { outcome: "abandon", iterations: [], finalMeterTotals: { tokens: 0 } } };
+    });
+    const runVerifier = vi.fn(async (opts: { worktreeDir: string }) => {
+      expect(opts.worktreeDir).toBeTruthy(); // bound to THIS attempt's worktree
+      return { status: "skipped" as const, reason: "stack_undetected" as const };
+    });
+
+    await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({ runMinerAttempt: runMinerAttemptSpy, runTargetRepoVerification: runVerifier }),
+    });
+
+    expect(runMinerAttemptSpy).toHaveBeenCalled();
+    expect(runVerifier).toHaveBeenCalled();
+  });
+
+  it("without an injected verifier the thunk runs the REAL verification (default arm) — an unmarked temp worktree skips", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const runMinerAttemptSpy = vi.fn(async (_input: unknown, deps: { verifyTargetRepo?: () => Promise<{ status: string }> }) => {
+      const verification = await deps.verifyTargetRepo!();
+      expect(verification.status).toBe("skipped"); // no stack markers in the fixture worktree
+      return { outcome: "abandon", loopResult: { outcome: "abandon", iterations: [], finalMeterTotals: { tokens: 0 } } };
+    });
+
+    await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({ runMinerAttempt: runMinerAttemptSpy }),
+    });
+
+    expect(runMinerAttemptSpy).toHaveBeenCalled();
+  });
+
+  it("MINER_SKIP_TARGET_REPO_VERIFICATION omits the thunk entirely — the documented escape hatch", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const runMinerAttemptSpy = vi.fn(async (_input: unknown, deps: { verifyTargetRepo?: unknown }) => {
+      expect(deps.verifyTargetRepo).toBeUndefined();
+      return { outcome: "abandon", loopResult: { outcome: "abandon", iterations: [], finalMeterTotals: { tokens: 0 } } };
+    });
+
+    await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop", MINER_SKIP_TARGET_REPO_VERIFICATION: "1" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({ runMinerAttempt: runMinerAttemptSpy }),
+    });
+
+    expect(runMinerAttemptSpy).toHaveBeenCalled();
+  });
+});

@@ -279,11 +279,20 @@ describe("shouldSkipAiForReputation (helper)", () => {
 
   describe("submission-cadence signal (#4514)", () => {
     async function seedReviewTarget(env: Env, args: { number: number; submitter: string; createdAt: string }) {
+      // Merged/approved review_targets keep the QUALITY signal neutral/trusted, so only cadence can trip these.
       await env.DB.prepare(
         `INSERT INTO review_targets (id, project, kind, repo, number, submitter, status, decision_json, terminal_at, created_at)
          VALUES (?, 'acme/widgets', 'pull_request', 'acme/widgets', ?, ?, 'merged', ?, ?, ?)`,
       )
         .bind(`acme/widgets:pull_request:acme/widgets#${args.number}`, args.number, args.submitter, JSON.stringify({ reasonCode: "dual_review_approved" }), args.createdAt, args.createdAt)
+        .run();
+      // #9041 moved getSubmitterCadence off the cutover-frozen review_targets to the LIVE pull_requests ledger,
+      // so the submission-cadence signal is sourced from here now -- seed it too or the query reads 0 samples.
+      await env.DB.prepare(
+        `INSERT INTO pull_requests (id, repo_full_name, number, title, state, author_login, created_at)
+         VALUES (?, 'acme/widgets', ?, 'PR', 'open', ?, ?)`,
+      )
+        .bind(`acme/widgets#${args.number}`, args.number, args.submitter, args.createdAt)
         .run();
     }
 

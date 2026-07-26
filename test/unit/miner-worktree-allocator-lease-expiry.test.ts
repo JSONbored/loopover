@@ -224,3 +224,36 @@ describe("loopover-miner worktree allocator age-based orphan reclaim (#7085)", (
     expect(allocator.release("attempt-a")?.ownerHost).toBeNull();
   });
 });
+
+describe("loopover-miner worktree allocator per-acquire orphan reclaim (#8859)", () => {
+  it("reclaims a peer's allocation orphaned AFTER the allocator was opened, on the very next acquire() -- no reopen needed", () => {
+    const paths = tempPaths();
+    const allocator = reopen(paths, { hostId: "host-A" });
+    allocator.acquire("attempt-1", "acme/widgets");
+    expect(activeCount(allocator)).toBe(1);
+
+    // Simulate a PEER crashing on this same host well AFTER openWorktreeAllocator() already ran its
+    // one-time startup reclaim: a second connection to the same store file overwrites the active row as
+    // a dead pid with a recent (well within-lease) allocated_at, so only the same-host dead-pid fast path
+    // -- not the age guard -- can explain a reclaim here.
+    const peer = new DatabaseSync(paths.dbPath);
+    try {
+      peer
+        .prepare(`
+          UPDATE worktree_slots
+          SET owner_pid = ?, owner_host = ?, allocated_at = ?
+          WHERE attempt_id = 'attempt-1'
+        `)
+        .run(DEAD_PID, "host-A", new Date(Date.now() - 60_000).toISOString());
+    } finally {
+      peer.close();
+    }
+
+    // Without #8859's fix, this allocator's reclaim only ever ran once, at the reopen() call above --
+    // this acquire() would see the slot as still "active" and throw worktree_capacity_exceeded. No fresh
+    // openWorktreeAllocator() call happens here: the SAME long-lived instance must reclaim it itself.
+    const allocation = allocator.acquire("attempt-2", "acme/other");
+    expect(allocation.status).toBe("active");
+    expect(activeCount(allocator)).toBe(1);
+  });
+});

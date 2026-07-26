@@ -1,16 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { sanitizePublicComment } from "../../src/github/commands";
-import { buildScenarioInput, createScenarioSignalEntry } from "../../src/scenarios/input-model";
-import { renderPublicScenarioSummary } from "../../src/scenarios/scenario-summary";
+import {
+  buildScenarioInput,
+  createScenarioSignalEntry,
+  FORBIDDEN_PUBLIC_LANGUAGE,
+} from "../../src/scenarios/input-model";
+import {
+  assertPublicSummaryClean,
+  renderPublicScenarioSummary,
+  type PublicScenarioSummary,
+} from "../../src/scenarios/scenario-summary";
 import { deriveEligibilityPlan } from "../../src/services/eligibility-plan";
 import { simulateOpenPrPressure } from "../../src/services/open-pr-pressure-scenarios";
 import type { PendingPrScenarioDetection } from "../../src/scoring/pending-pr-scenarios";
 import { buildScorePreview, type ScoreGateBlocker } from "../../src/scoring/preview";
 import type { QueueHealth, RoleContext } from "../../src/signals/engine";
 import type { ScoringModelSnapshotRecord } from "../../src/types";
-
-const FORBIDDEN_PUBLIC_LANGUAGE =
-  /wallet|hotkey|coldkey|mnemonic|seed phrase|payout|reward[-\s]?estimate|farming|raw trust|trust[-\s]?score|scoreability|private[-\s]?reviewability|public[-\s]?score[-\s]?(?:estimate|prediction)/i;
 
 const snapshot: ScoringModelSnapshotRecord = {
   id: "scenario-summary-model",
@@ -410,5 +415,32 @@ describe("renderPublicScenarioSummary", () => {
 
     expect(summary.pendingScenarioNotes.join(" ")).not.toMatch(/Projected open PR count after pending cleanup/i);
     expect(summary.pendingPullRequests[0]?.classification).toBe("custom pending class");
+  });
+
+  it("assertPublicSummaryClean rejects bare rewards/rankings like the input-model guard (#8885)", () => {
+    const base: PublicScenarioSummary = {
+      repoFullName: "octo/demo",
+      generatedAt: "2026-06-03T00:00:00.000Z",
+      advisoryOnly: true,
+      notAutonomousPrBot: true,
+      notPublicScoring: true,
+      headline: "Advisory scenario summary generated from available repo signals.",
+      options: [],
+      eligibilityNotes: [],
+      blockerNotes: [],
+      pendingScenarioNotes: [],
+      pendingPullRequests: [],
+      dataClassification: { facts: [], assumptions: [], unavailableSignals: [] },
+    };
+
+    expect(() => assertPublicSummaryClean({ ...base, headline: "Projected rewards look strong." })).toThrow(
+      /forbidden language/i,
+    );
+    expect(() => assertPublicSummaryClean({ ...base, eligibilityNotes: ["Private rankings leaked."] })).toThrow(
+      /forbidden language/i,
+    );
+    // Shared constant must stay identical to the input-model #913 term set.
+    expect(FORBIDDEN_PUBLIC_LANGUAGE.test("rewards")).toBe(true);
+    expect(FORBIDDEN_PUBLIC_LANGUAGE.test("rankings")).toBe(true);
   });
 });

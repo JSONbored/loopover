@@ -57,6 +57,9 @@ export type GateCheckPolicy = {
    *  non-blocker on its own. What varies below the floor is {@link aiReviewLowConfidenceDisposition}: `null`/undefined
    *  ⇒ the 0.93 default. */
   aiReviewCloseConfidence?: number | null | undefined;
+  /** #8849: true when the floor above came from a LIVE risk-control calibration (not a static setting or the
+   *  backtest loosening) — the low-confidence hold names its source so a held contributor sees why. */
+  aiReviewCloseConfidenceCalibrated?: boolean | undefined;
   /** Disposition for a sub-floor `ai_consensus_defect`/`ai_review_split` finding (#4603) — see the type's own doc
    *  comment (`src/types.ts`) for the full semantics of `one_shot` / `hold_for_review` / `advisory_only`.
    *  `null`/undefined ⇒ `hold_for_review` (the shipped default). Only `advisory_only` changes what
@@ -231,15 +234,17 @@ export function isAiJudgmentOnlyFailure(evaluation: GateCheckEvaluation): boolea
  */
 export function resolveAiReviewLowConfidenceHold(
   evaluation: GateCheckEvaluation,
-  policy: Pick<GateCheckPolicy, "aiReviewLowConfidenceDisposition" | "aiReviewCloseConfidence">,
+  policy: Pick<GateCheckPolicy, "aiReviewLowConfidenceDisposition" | "aiReviewCloseConfidence" | "aiReviewCloseConfidenceCalibrated">,
 ): { reason: string; comment: string } | undefined {
   if ((policy.aiReviewLowConfidenceDisposition ?? "hold_for_review") !== "hold_for_review") return undefined;
   if (!isAiJudgmentOnlyFailure(evaluation)) return undefined;
   const floor = policy.aiReviewCloseConfidence ?? DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE;
   const belowFloor = evaluation.blockers.some((blocker) => (blocker.confidence ?? 1) < floor);
   if (!belowFloor) return undefined;
+  // #8849: name the calibrated-abstention source when the floor in force is a live risk-control λ̂.
+  const floorSource = policy.aiReviewCloseConfidenceCalibrated === true ? "calibrated risk-control threshold" : "configured close-confidence floor";
   return {
-    reason: `an AI-reviewer defect finding's confidence is below the configured close-confidence floor (${floor})`,
+    reason: `an AI-reviewer defect finding's confidence is below the ${floorSource} (${floor})`,
     comment:
       "An AI reviewer flagged a likely defect, but its confidence was below this repository's configured close-confidence floor, so this is held for a maintainer to confirm instead of closing automatically. Resolve the flagged defect (see the review notes), or ask a maintainer to override.",
   };

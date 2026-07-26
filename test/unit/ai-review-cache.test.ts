@@ -470,6 +470,31 @@ describe("AI review cache (#1)", () => {
       }
     });
 
+    it("breaks ties on identical published_at via rowid DESC (#8894)", async () => {
+      const env = createTestEnv();
+      const publishedAt = "2026-07-09T12:00:00.000Z";
+      // Insert order ⇒ rising rowid; with equal published_at the higher rowid must win.
+      await env.DB.prepare(
+        `INSERT INTO ai_review_cache (repo_full_name, pull_number, head_sha, ai_review_mode, notes, reviewer_count, findings_json, metadata_json, cacheable, published_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+        .bind("o/r", 56, "sha-earlier-rowid", "block", "earlier rowid", 1, "[]", "{}", 1, publishedAt, publishedAt)
+        .run();
+      await env.DB.prepare(
+        `INSERT INTO ai_review_cache (repo_full_name, pull_number, head_sha, ai_review_mode, notes, reviewer_count, findings_json, metadata_json, cacheable, published_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+        .bind("o/r", 56, "sha-later-rowid", "block", "later rowid", 1, "[]", "{}", 1, publishedAt, publishedAt)
+        .run();
+
+      expect(await getLatestPublishedAiReview(env, "o/r", 56, "block")).toEqual({
+        notes: "later rowid",
+        reviewerCount: 1,
+        findings: [],
+        headSha: "sha-later-rowid",
+      });
+    });
+
     it("omits headSha from the payload when the stored head_sha is empty", async () => {
       const env = createTestEnv();
       await env.DB.prepare(

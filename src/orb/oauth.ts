@@ -68,9 +68,25 @@ export async function verifyInstallationAdmin(
 }
 
 async function handleOrbEnrollment(c: Context<{ Bindings: Env }>, code: string, installationId: number): Promise<Response> {
-  const token = await exchangeOrbOAuthCode(c.env, code);
+  // A thrown network error (DNS failure, or a timeout past timeoutFetch's own retry budget) from any of the three
+  // GitHub calls below degrades to the same clean landing page a bad HTTP *response* already produces, instead of
+  // escaping handleOrbOAuthCallback as an uncaught framework 500. Mirrors the failure-doesn't-escape convention in
+  // webhook.ts/relay.ts/ingest.ts. The calls stay separate (not one body-wide wrapper) so a throw is never confused
+  // with a DB/broker fault after identity is established.
+  const identityError = () => c.html(landingPage(c.env, "Couldn't verify your GitHub identity", "We couldn't reach GitHub to verify your identity — try the install again."), 400);
+  let token: string | null;
+  try {
+    token = await exchangeOrbOAuthCode(c.env, code);
+  } catch {
+    return identityError();
+  }
   if (!token) return c.html(landingPage(c.env, "Couldn't verify your GitHub identity", "The authorization didn't complete — re-run the install from GitHub and try again."), 400);
-  const user = await fetchOrbOAuthUser(token);
+  let user: GitHubUser | null;
+  try {
+    user = await fetchOrbOAuthUser(token);
+  } catch {
+    return identityError();
+  }
   if (!user) return c.html(landingPage(c.env, "Couldn't verify your GitHub identity", "We couldn't read your GitHub account — try the install again."), 400);
   const install = await c.env.DB.prepare("SELECT account_login, account_type, account_id, registered, self_enrollment_disabled, suspended_at, removed_at FROM orb_github_installations WHERE installation_id = ?")
     .bind(installationId)
@@ -79,7 +95,12 @@ async function handleOrbEnrollment(c: Context<{ Bindings: Env }>, code: string, 
   // The admin-of-installation check is the authorization gate — it runs BEFORE we reveal or change any state, so a
   // non-admin learns nothing about the install and can never enroll someone else's. It binds to the immutable
   // GitHub account id (logins can be renamed/reused), so a stale account_login can never grant access.
-  const isAdmin = await verifyInstallationAdmin(token, user.login, user.id, install.account_login, install.account_type, install.account_id);
+  let isAdmin: boolean;
+  try {
+    isAdmin = await verifyInstallationAdmin(token, user.login, user.id, install.account_login, install.account_type, install.account_id);
+  } catch {
+    return identityError();
+  }
   if (!isAdmin) return c.html(landingPage(c.env, "Admin access required", "You must be an admin of this installation's account to enroll it for self-host."), 403);
   if (install.removed_at !== null || install.suspended_at !== null) return c.html(landingPage(c.env, "Installation not active", "This installation is suspended or uninstalled — re-install the Orb App, then retry."), 403);
   if (install.self_enrollment_disabled === 1) return c.html(landingPage(c.env, "Installation disabled", "This installation was disabled by the operator — contact the operator to re-enable self-host enrollment."), 403);

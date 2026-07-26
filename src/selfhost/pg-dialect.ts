@@ -12,6 +12,9 @@ const REPLACE_CONFLICT_KEYS: Record<string, string[]> = {
   tunables_overrides_shadow: ["project"],
   orb_export_cursor: ["instance_hash"],
   orb_signals: ["instance_id", "repo_hash", "pr_hash"],
+  // #8893: orb_reuse_counters (migrations/0177) is written with INSERT OR REPLACE by src/orb/ingest.ts; its
+  // PRIMARY KEY (instance_id, day) is the conflict target the hourly ORB export needs on self-host Postgres.
+  orb_reuse_counters: ["instance_id", "day"],
   // ams_signals (#8382): TWO columns here, deliberately — this must name the table's REAL unique constraint
   // (`UNIQUE (instance_id, pr_hash)`, migrations/0148_ams_signals.sql), or Postgres rejects the generated
   // `ON CONFLICT` with "no unique or exclusion constraint matching". The 3-column shape orb_signals needed

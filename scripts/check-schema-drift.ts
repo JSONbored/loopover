@@ -49,6 +49,7 @@ export const RAW_SQL_ONLY_TABLES: Set<string> = new Set([
   "orb_instances",
   "orb_pr_outcomes",
   "orb_relay_failures",
+  "orb_reuse_counters",
   "orb_signals",
   "orb_webhook_events",
   "override_audit",

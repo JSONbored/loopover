@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../src/api/routes";
 import { createSessionForGitHubUser } from "../../src/auth/security";
-import { upsertInstallation, upsertRepositoryFromGitHub } from "../../src/db/repositories";
+import { upsertInstallation, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
 // The miner ⊕ maintainer access boundary, locked against regression.
@@ -80,6 +80,52 @@ describe("access boundary: per-repo maintainer data is repo-scoped", () => {
     const own = await app.request("/v1/repos/alice/repo-a/agent/pending-actions", { headers: { cookie } }, env);
     expect(own.status).toBe(200);
     await expect(own.json()).resolves.toMatchObject({ repoFullName: "alice/repo-a", pendingActions: [] });
+  });
+
+  // #8653: three maintainer-session routes were missing from canSessionAccessPath, so a maintainer's own
+  // browser session hit the coarse 403 before the route's own guard could admit it. Each route's guard still
+  // scopes per-repo (maintainer of A → 403 forbidden_repo on B).
+  it("a maintainer can REACH automation-state on their OWN repo, scoped per-repo (allowlist parity with /settings)", async () => {
+    const { app, env } = await setup();
+    const { token } = await createSessionForGitHubUser(env, { login: "alice", id: 101 });
+    const cookie = `loopover_session=${token}`;
+    expect((await app.request("/v1/repos/alice/repo-a/automation-state", { headers: { cookie } }, env)).status).toBe(200);
+    const other = await app.request("/v1/repos/bob/repo-b/automation-state", { headers: { cookie } }, env);
+    expect(other.status).toBe(403);
+    expect(await other.json()).toMatchObject({ error: "forbidden_repo" });
+  });
+
+  it("a maintainer can REACH ams-miner-cohort on their OWN repo, scoped per-repo (allowlist parity with maintainer-noise)", async () => {
+    const { app, env } = await setup();
+    const { token } = await createSessionForGitHubUser(env, { login: "alice", id: 101 });
+    const cookie = `loopover_session=${token}`;
+    expect((await app.request("/v1/repos/alice/repo-a/ams-miner-cohort", { headers: { cookie } }, env)).status).toBe(200);
+    const other = await app.request("/v1/repos/bob/repo-b/ams-miner-cohort", { headers: { cookie } }, env);
+    expect(other.status).toBe(403);
+    expect(await other.json()).toMatchObject({ error: "forbidden_repo" });
+  });
+
+  it("a maintainer can REACH pulls/:number/chat-qa on their OWN repo, scoped per-repo (allowlist parity with the maintainer panel)", async () => {
+    const { app, env } = await setup();
+    // chat-qa needs a real PR to resolve; the answer service returns a 200 "disabled" status by default
+    // (advisoryAiRouting.chatQa off with no .loopover.yml), so no AI mock is needed to prove reachability.
+    await upsertPullRequestFromGitHub(env, "alice/repo-a", { number: 7, title: "t", state: "open", user: { login: "someone" }, labels: [], body: "x" });
+    const { token } = await createSessionForGitHubUser(env, { login: "alice", id: 101 });
+    const cookie = `loopover_session=${token}`;
+    const own = await app.request(
+      "/v1/repos/alice/repo-a/pulls/7/chat-qa",
+      { method: "POST", headers: { cookie }, body: JSON.stringify({ question: "why is this blocked?" }) },
+      env,
+    );
+    expect(own.status).toBe(200);
+    // The per-route requireRepoMaintainer still scopes: maintainer of A cannot reach B's chat-qa.
+    const other = await app.request(
+      "/v1/repos/bob/repo-b/pulls/7/chat-qa",
+      { method: "POST", headers: { cookie }, body: JSON.stringify({ question: "why?" }) },
+      env,
+    );
+    expect(other.status).toBe(403);
+    expect(await other.json()).toMatchObject({ error: "forbidden_repo" });
   });
 
   it("a pure miner (no maintainer role on any repo) cannot read ANY repo's maintainer settings", async () => {

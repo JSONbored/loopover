@@ -6114,6 +6114,9 @@ function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: 
   if (isRepoOutcomeCalibrationPath(path)) return true;
   if (isRepoGatePrecisionPath(path)) return true;
   if (isRepoMaintainerNoisePath(path)) return true;
+  if (isRepoAutomationStatePath(path)) return true; // #8653: route's requireRepoMaintainer enforces per-repo authority
+  if (isRepoAmsMinerCohortPath(path)) return true; // #8653: route's requireRepoMaintainer enforces per-repo authority
+  if (isRepoChatQaPath(path)) return true; // #8653: route's requireRepoMaintainer enforces per-repo authority
   if (isRepoSelftuneOverridesPath(path)) return true;
   if (isRepoSettingsPreviewPath(path)) return true;
   if (isRepoOnboardingPackPreviewPath(path)) return true;
@@ -6167,6 +6170,24 @@ function isRepoGatePrecisionPath(path: string): boolean {
 
 function isRepoMaintainerNoisePath(path: string): boolean {
   return /^\/v1\/repos\/[^/]+\/[^/]+\/maintainer-noise$/.test(path);
+}
+
+// #8653: three maintainer-session routes documented themselves as reachable by a maintainer's browser panel
+// (automation-state "Maintainer-gated like /settings", ams-miner-cohort "mirrors maintainer-noise",
+// pulls/:number/chat-qa "exposes ... to apps/loopover-ui's maintainer panel") but were missing from this
+// allowlist, so a real non-operator maintainer session hit the coarse 403 before the handler's own
+// requireRepoMaintainer/requireRepoWriteAccess guard could admit them. Each route's own guard still enforces
+// per-repo authority (a maintainer of A reaching B → 403 forbidden_repo).
+function isRepoAutomationStatePath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/automation-state$/.test(path);
+}
+
+function isRepoAmsMinerCohortPath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/ams-miner-cohort$/.test(path);
+}
+
+function isRepoChatQaPath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/pulls\/[^/]+\/chat-qa$/.test(path);
 }
 
 // #6168: let a browser (session) maintainer reach the self-tune override admin routes; the route's own

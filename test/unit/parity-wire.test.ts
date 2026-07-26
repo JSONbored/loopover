@@ -147,6 +147,38 @@ describe("recordNativeGateDecision — flag-gated SHADOW recording into review_a
     expect(rows[0]).toMatchObject({ miner_authored: 1 });
   });
 
+  it("#8825: a conclusion-derived verdict NEVER overwrites a recorded close (the terminal action already happened)", async () => {
+    const env = createTestEnv({ LOOPOVER_REVIEW_PARITY_AUDIT: "true" });
+    // The disposition-aware caller records the real action: the bot closed this PR (CI failure / policy).
+    await recordNativeGateDecision(env, { project: "owner/repo", pullNumber: 7, headSha: "abc123", conclusion: "success", action: "close", reasonCode: "ci_failing" });
+    // The conclusion-only caller then finalizes with a "success" conclusion, which maps to merge. Before this
+    // fix that clobbered the close and calibration scored the PR as a merge prediction that ended closed.
+    await recordNativeGateDecision(env, { project: "owner/repo", pullNumber: 7, headSha: "abc123", conclusion: "success", reasonCode: "success" });
+
+    const rows = await rawAll(env, "SELECT * FROM review_audit");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ decision: "close", summary: "ci_failing" });
+  });
+
+  it("#8825: an EXPLICIT action still replaces a recorded close — only conclusion-derived writes are blocked", async () => {
+    const env = createTestEnv({ LOOPOVER_REVIEW_PARITY_AUDIT: "true" });
+    await recordNativeGateDecision(env, { project: "owner/repo", pullNumber: 7, headSha: "abc123", conclusion: "success", action: "close", reasonCode: "ci_failing" });
+    await recordNativeGateDecision(env, { project: "owner/repo", pullNumber: 7, headSha: "abc123", conclusion: "success", action: "merge", reasonCode: "recovered" });
+
+    const rows = await rawAll(env, "SELECT * FROM review_audit");
+    expect(rows[0]).toMatchObject({ decision: "merge", summary: "recovered" });
+  });
+
+  it("#8825: a conclusion-derived verdict still updates a non-close row (hold/merge stay latest-wins)", async () => {
+    const env = createTestEnv({ LOOPOVER_REVIEW_PARITY_AUDIT: "true" });
+    await recordNativeGateDecision(env, { project: "owner/repo", pullNumber: 7, headSha: "abc123", conclusion: "failure", reasonCode: "guardrail_hold" });
+    await recordNativeGateDecision(env, { project: "owner/repo", pullNumber: 7, headSha: "abc123", conclusion: "success", reasonCode: "success" });
+
+    const rows = await rawAll(env, "SELECT * FROM review_audit");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ decision: "merge", summary: "success" });
+  });
+
   it("a re-run at the SAME commit REPLACES the prior decision (latest finalize wins, no duplicate)", async () => {
     const env = createTestEnv({ LOOPOVER_REVIEW_PARITY_AUDIT: "true" });
     await recordNativeGateDecision(env, { project: "owner/repo", pullNumber: 7, headSha: "abc123", conclusion: "success", reasonCode: "all_clear" });

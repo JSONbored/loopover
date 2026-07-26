@@ -1365,8 +1365,10 @@ describe("queue processors", () => {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
-      // GET /pulls/7 reports the SAME head a7 — no drift, so the resync upsert must not fire.
-      if (url.endsWith("/pulls/7")) return Response.json({ number: 7, title: "Current PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+      // GET /pulls/7 reports the SAME head a7 — no drift, so the resync upsert must not fire. Labels are
+      // OMITTED from the live payload (the #8804 drift check's ?? [] arm): absent live labels vs stored []
+      // is not drift either.
+      if (url.endsWith("/pulls/7")) return Response.json({ number: 7, title: "Current PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, body: "Closes #1" });
       if (url.includes("/pulls/7/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
       if (url.includes("/commits/a7/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
       if (url.includes("/commits/a7/status")) return Response.json({ state: "success", statuses: [] });
@@ -1383,6 +1385,35 @@ describe("queue processors", () => {
     const stored = await getPullRequest(env, "owner/agent-repo", 7);
     expect(stored?.headSha).toBe("a7");
     resyncUpsertSpy.mockRestore();
+  });
+
+  it("#8804: re-review RESYNCS on a LABEL-ONLY drift (same head) — the live labels the sweep already fetched are persisted, not discarded", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, gatePack: "oss-anti-slop" });
+    await upsertRepoFocusManifest(env, "owner/agent-repo", { settings: { checkRunMode: "off", commentMode: "off", publicSurface: "off", aiReviewMode: "off", reviewCheckMode: "required" } });
+    // STORED labels are stale-empty (the `labeled` webhook is still queued behind this sweep); live has the
+    // pending-closure label Pass 1 of the flag-then-close machine just applied. Same head — label-only drift.
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Labeled PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/pulls/7")) return Response.json({ number: 7, title: "Labeled PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [{ name: "pending-closure" }, {}], body: "Closes #1" });
+      if (url.includes("/pulls/7/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/commits/a7/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/a7/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    await processJob(env, { type: "agent-regate-pr", deliveryId: "resync-label-drift", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+
+    const stored = await getPullRequest(env, "owner/agent-repo", 7);
+    expect(stored?.labels).toEqual(["pending-closure"]); // the label-only drift was persisted
+    expect(stored?.headSha).toBe("a7"); // no head change involved
   });
 
   it("#regate-terminal-exit: a swept PR CLOSED on GitHub reconciles the stored row then early-exits — no files/CI reads, no review (#1942)", async () => {

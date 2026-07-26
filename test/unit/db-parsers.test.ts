@@ -32,6 +32,8 @@ import {
   recordAuditEvent,
   recordWebhookEvent,
   upsertOfficialMinerDetection,
+  getIssue,
+  upsertIssueFromGitHub,
   upsertPullRequestFromGitHub,
   extractLinkedIssueNumbers,
   extractLinkedIssueNumbersWithOverflow,
@@ -684,6 +686,31 @@ describe("database row parser hardening", () => {
       });
 
       expect(synced.state).toBe("closed"); // nothing stored to compare against -> guard can't prove staleness, applies the write
+    });
+
+    it("#8804: LABELS are guarded too -- a stale payload cannot wipe a just-applied disposition label (the pending-closure two-pass machine's Pass-2 key)", async () => {
+      const env = createTestEnv();
+      await upsertPullRequestFromGitHub(env, "owner/repo", {
+        number: 35, title: "PR", state: "open", user: { login: "bob" }, head: { sha: "a1" }, labels: [{ name: "pending-closure" }], updated_at: "2026-07-21T12:21:17.000Z",
+      });
+      const stale = await upsertPullRequestFromGitHub(env, "owner/repo", {
+        number: 35, title: "PR", state: "open", user: { login: "bob" }, head: { sha: "a1" }, labels: [], updated_at: "2026-07-21T12:15:52.000Z",
+      });
+      expect(stale.labels).toEqual(["pending-closure"]); // the returned record agrees with what was persisted
+      const stored = await getPullRequest(env, "owner/repo", 35);
+      expect(stored?.labels).toEqual(["pending-closure"]);
+    });
+
+    it("#8804: a NEWER payload's labels still apply normally (removal included)", async () => {
+      const env = createTestEnv();
+      await upsertPullRequestFromGitHub(env, "owner/repo", {
+        number: 36, title: "PR", state: "open", user: { login: "bob" }, head: { sha: "a1" }, labels: [{ name: "pending-closure" }], updated_at: "2026-07-21T12:00:00.000Z",
+      });
+      const fresh = await upsertPullRequestFromGitHub(env, "owner/repo", {
+        number: 36, title: "PR", state: "open", user: { login: "bob" }, head: { sha: "a1" }, labels: [], updated_at: "2026-07-21T12:05:00.000Z",
+      });
+      expect(fresh.labels).toEqual([]);
+      expect((await getPullRequest(env, "owner/repo", 36))?.labels).toEqual([]);
     });
 
     it("mergedAt is guarded the same way -- a stale payload cannot regress a real merge back to null", async () => {
@@ -1638,5 +1665,48 @@ describe("listPullRequests / listAllPullRequests ordering (#ops-anomaly-calibrat
 
     const ordered = (await listAllPullRequests(env)).map((pr) => `${pr.repoFullName}#${pr.number}`);
     expect(ordered).toEqual(["owner/repo-b#1", "owner/repo-a#2", "owner/repo-a#1"]);
+  });
+});
+
+describe("upsertIssueFromGitHub out-of-order webhook guard (#8804)", () => {
+  it("REGRESSION: a delayed OLDER issue webhook cannot regress state or wipe a just-applied label", async () => {
+    const env = createTestEnv();
+    await upsertIssueFromGitHub(env, "owner/repo", {
+      number: 50, title: "Issue", state: "closed", user: { login: "bob" }, labels: [{ name: "gittensor:bug" }], updated_at: "2026-07-21T12:21:17.000Z",
+    });
+    const stale = await upsertIssueFromGitHub(env, "owner/repo", {
+      number: 50, title: "Issue", state: "open", user: { login: "bob" }, labels: [], updated_at: "2026-07-21T12:15:52.000Z",
+    });
+    // The returned record agrees with what was persisted (the upsertPullRequestFromGitHub contract).
+    expect(stale.state).toBe("closed");
+    expect(stale.labels).toEqual(["gittensor:bug"]);
+    const stored = await getIssue(env, "owner/repo", 50);
+    expect(stored?.state).toBe("closed");
+    expect(stored?.labels).toEqual(["gittensor:bug"]);
+  });
+
+  it("a NEWER issue webhook still applies normally", async () => {
+    const env = createTestEnv();
+    await upsertIssueFromGitHub(env, "owner/repo", {
+      number: 51, title: "Issue", state: "open", user: { login: "bob" }, labels: [{ name: "help wanted" }], updated_at: "2026-07-21T12:00:00.000Z",
+    });
+    const fresh = await upsertIssueFromGitHub(env, "owner/repo", {
+      number: 51, title: "Issue", state: "closed", user: { login: "bob" }, labels: [], updated_at: "2026-07-21T12:05:00.000Z",
+    });
+    expect(fresh.state).toBe("closed");
+    expect(fresh.labels).toEqual([]);
+  });
+
+  it("fails OPEN on a sparse payload (no updated_at) and on a pre-migration row (no stored timestamp)", async () => {
+    const env = createTestEnv();
+    // Pre-migration shape: first sync carries no updated_at -> nothing stored to compare against later.
+    await upsertIssueFromGitHub(env, "owner/repo", { number: 52, title: "Issue", state: "open", user: { login: "bob" }, labels: [] });
+    const synced = await upsertIssueFromGitHub(env, "owner/repo", {
+      number: 52, title: "Issue", state: "closed", user: { login: "bob" }, labels: [], updated_at: "2026-07-21T12:00:00.000Z",
+    });
+    expect(synced.state).toBe("closed");
+    // Sparse follow-up (no updated_at at all) applies the write exactly as before the guard existed.
+    const sparse = await upsertIssueFromGitHub(env, "owner/repo", { number: 52, title: "Issue", state: "open", user: { login: "bob" }, labels: [] });
+    expect(sparse.state).toBe("open");
   });
 });

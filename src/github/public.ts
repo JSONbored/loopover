@@ -94,14 +94,30 @@ export async function fetchPublicContributorProfile(login: string, env?: Pick<En
     ]);
     if (!userResponse.ok) throw new Error(`GitHub user lookup failed (${userResponse.status})`);
     const user = (await userResponse.json()) as GitHubUserResponse;
-    const repos: GitHubRepoResponse[] = reposResponse.ok ? ((await reposResponse.json()) as GitHubRepoResponse[]) : [];
-    let linkHeader = reposResponse.ok ? reposResponse.headers.get("link") : null;
+    // Isolate repos-list fetch/parse from the user profile (#8891): an HTTP failure already degraded to
+    // `repos = []` while keeping `user`; a truncated/invalid JSON body previously escaped to the outer catch
+    // and discarded the successfully-parsed user as `source: "unavailable"`.
+    let repos: GitHubRepoResponse[] = [];
+    let linkHeader: string | null = null;
+    if (reposResponse.ok) {
+      try {
+        repos = (await reposResponse.json()) as GitHubRepoResponse[];
+        linkHeader = reposResponse.headers.get("link");
+      } catch {
+        repos = [];
+        linkHeader = null;
+      }
+    }
     for (let page = 2; page <= MAX_REPO_PAGES && linkHeader?.includes('rel="next"'); page += 1) {
       const nextResponse = await fetchWithTimeout(`https://api.github.com/users/${safeLogin}/repos?per_page=100&sort=updated&page=${page}`);
       if (!nextResponse.ok) break;
-      const batch = (await nextResponse.json()) as GitHubRepoResponse[];
-      repos.push(...batch);
-      linkHeader = nextResponse.headers.get("link");
+      try {
+        const batch = (await nextResponse.json()) as GitHubRepoResponse[];
+        repos.push(...batch);
+        linkHeader = nextResponse.headers.get("link");
+      } catch {
+        break;
+      }
     }
     const languageCounts = new Map<string, number>();
     for (const repo of repos) {

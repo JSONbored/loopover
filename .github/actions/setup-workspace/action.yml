@@ -1,8 +1,8 @@
 name: Setup workspace
 description: >-
   Strip untrusted npm config, set up Node, and restore/install/save the fork/trusted-scoped
-  node_modules cache. Extracted from ci.yml's validate-code, validate-tests, and validate-tests-merge
-  jobs, which had this exact sequence copy-pasted three times -- the same kind of drift that caused a
+  node_modules cache. Extracted from ci.yml's validate-code and validate-tests jobs, which had this
+  exact sequence copy-pasted at each site -- the same kind of drift that caused a
   real cache-key mismatch bug this repo already hit once (two jobs' Turborepo cache pair silently
   diverged when one was edited and the other wasn't). This doesn't fix that specific bug on its own,
   but a future change to this sequence now only needs to happen here, not be remembered at every call
@@ -13,9 +13,10 @@ description: >-
 inputs:
   save-cache:
     description: >-
-      Whether to save the node_modules cache after a successful install. validate-tests-merge sets
-      this to "false" -- it only ever reads the cache validate-code/validate-tests already populate,
-      never writes to it, so a save here would just be redundant work.
+      Whether to save the node_modules cache after a successful install (default "true"). A
+      general-purpose escape hatch: set it to "false" in a job that should only ever read a cache
+      another job already populated and never write one -- a save there would just be redundant work.
+      No current caller overrides the default; every live caller both restores and saves.
     required: false
     default: "true"
 

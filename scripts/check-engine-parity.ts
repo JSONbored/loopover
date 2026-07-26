@@ -352,6 +352,67 @@ export function checkGateDecisionTwinPresence({
   return { failures, pairChecked: twin };
 }
 
+/** The `const` both gate-decision twins declare their shared check-run redaction regex on. */
+const FORBIDDEN_TERMS_CONST = "const CHECK_RUN_FORBIDDEN_TERMS =";
+
+/** Pull the `CHECK_RUN_FORBIDDEN_TERMS` regex literal (source + flags) out of a twin file's raw text so the
+ *  two copies can be compared by CONTENT, not just by the const name's presence (#8697). The regex body
+ *  carries no forward slash, so the literal spans from the first `/` after the const to the next unescaped
+ *  `/` and its trailing flags. Returns null when the const declaration or its regex literal isn't found. */
+export function extractForbiddenTermsRegex(text: string): string | null {
+  const constIndex = text.indexOf(FORBIDDEN_TERMS_CONST);
+  if (constIndex === -1) return null;
+  const afterConst = text.slice(constIndex + FORBIDDEN_TERMS_CONST.length);
+  const literal = afterConst.match(/\/((?:\\.|[^/\\])+)\/([a-z]*)/);
+  if (!literal) return null;
+  return `/${literal[1]}/${literal[2]}`;
+}
+
+/** Content-level drift guard (#8697): both gate-decision twins hand-maintain a `CHECK_RUN_FORBIDDEN_TERMS`
+ *  regex their own comments claim is "byte-identical", but no check ever diffed the bodies -- the engine copy
+ *  had silently dropped `likely_duplicate|reviewability\s*\d`. `checkGateDecisionTwinPresence` only asserts
+ *  the four function-name markers exist, so it never saw this. This diffs the two regex literals directly, so
+ *  a future divergence in the body itself (not just a missing entrypoint) fails CI immediately. */
+export function checkGateDecisionForbiddenTermsParity({
+  root,
+  readFile = defaultReadFile,
+  pair = GATE_DECISION_TWIN_PAIR,
+}: {
+  root: string;
+  readFile?: EngineParityReadFile;
+  pair?: NamedTwinPair;
+}): { failures: string[] } {
+  let hostText: string;
+  let engineText: string;
+  try {
+    hostText = readFile(root, pair.hostRelative);
+    engineText = readFile(root, pair.engineRelative);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { failures: [`Could not load ${pair.area} twin pair files for regex-body parity: ${message}`] };
+  }
+  const failures: string[] = [];
+  const hostRegex = extractForbiddenTermsRegex(hostText);
+  const engineRegex = extractForbiddenTermsRegex(engineText);
+  if (hostRegex === null) {
+    failures.push(`${pair.hostRelative} is missing a CHECK_RUN_FORBIDDEN_TERMS regex literal to diff.`);
+  }
+  if (engineRegex === null) {
+    failures.push(`${pair.engineRelative} is missing a CHECK_RUN_FORBIDDEN_TERMS regex literal to diff.`);
+  }
+  if (hostRegex !== null && engineRegex !== null && hostRegex !== engineRegex) {
+    failures.push(
+      [
+        "CHECK_RUN_FORBIDDEN_TERMS regex body has drifted between the gate-decision twins:",
+        `  • ${pair.hostRelative}: ${hostRegex}`,
+        `  • ${pair.engineRelative}: ${engineRegex}`,
+        `  Make ${pair.engineRelative}'s regex byte-identical to the host copy.`,
+      ].join("\n"),
+    );
+  }
+  return { failures };
+}
+
 export function parseEnginePackageVersion(text: string): string | null {
   try {
     const version = JSON.parse(text).version;
@@ -635,6 +696,8 @@ export function runEngineParityChecks(options: {
   const namedTwinPresence = NAMED_TWIN_PAIRS.map(({ pair, markers }) =>
     checkGateDecisionTwinPresence({ root: options.root, readFile, pair, markers }),
   );
+  // Content-level guard on the gate-decision twins' shared redaction regex, beyond mere marker presence (#8697).
+  const forbiddenTermsParity = checkGateDecisionForbiddenTermsParity({ root: options.root, readFile });
   const skew = checkEngineVersionSkew(options);
   const pinSync = checkMinerEngineVersionPinSync(options);
   let headEngineVersion = options.headEngineVersion;
@@ -675,6 +738,7 @@ export function runEngineParityChecks(options: {
     failures: [
       ...drift.failures,
       ...namedTwinPresence.flatMap((result) => result.failures),
+      ...forbiddenTermsParity.failures,
       ...versionBump.failures,
       ...skew.failures,
       ...pinSync.failures,

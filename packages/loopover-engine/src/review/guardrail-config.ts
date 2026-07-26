@@ -51,6 +51,14 @@ export const ENGINE_DECISION_GUARDRAIL_GLOBS = [
   "src/review/cutover-gate.ts",
   "src/review/linked-issue-hard-rules.ts",
   "src/review/outcomes-wire.ts",
+  // #8698: the guardrail-matching engine and the gate-decision core themselves were a self-referential blind
+  // spot -- none of the packages/loopover-engine files that actually decide a PR's disposition were listed, so
+  // a PR weakening the glob matcher, flipping a block/advisory disposition, or rewiring the orchestrator would
+  // not itself trip the hard guardrail. Listed on the engine side (no src/ shim exists for these) for the same
+  // reason the autonomy/guardrail-config real paths are: it is the substantive logic a PR edit would change.
+  "packages/loopover-engine/src/signals/change-guardrail.ts",
+  "packages/loopover-engine/src/advisory/gate-advisory.ts",
+  "packages/loopover-engine/src/predicted-gate.ts",
 ];
 
 // Default, safe-by-default invariant set (restored by #3943 after the original pure-config-as-code design

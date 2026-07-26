@@ -374,10 +374,10 @@ export function buildIssueAdvisory(repo: RepositoryRecord | null, issue: IssueRe
 }
 
 // Kept byte-identical with the GATE_DECISION_TWIN_PAIR copy in packages/loopover-engine/src/advisory/
-// gate-advisory.ts (checkGateDecisionVersionBump enforces this). The mnemonics/seed-phrases/cohort/
-// miner-|human-originated/bare-raw-trust/bare-rankings terms were ported from sanitizePublicComment's own fix
-// for the same leak class (#7074) -- `raw\s+trust\s+scores?` stays ahead of bare `raw\s+trust` so the compound
-// still matches first.
+// gate-advisory.ts (checkGateDecisionForbiddenTermsParity now diffs the two regex bodies byte-for-byte, #8697).
+// The mnemonics/seed-phrases/cohort/miner-|human-originated/bare-raw-trust/bare-rankings terms were ported from
+// sanitizePublicComment's own fix for the same leak class (#7074) -- `raw\s+trust\s+scores?` stays ahead of
+// bare `raw\s+trust` so the compound still matches first.
 const CHECK_RUN_FORBIDDEN_TERMS =
   /\b(?:rewards?|payouts?|farming|estimated\s+scores?|raw\s+trust\s+scores?|raw\s+trust|trust\s+scores?|score\s+estimates?|reward\s+estimates?|wallets?|hotkeys?|coldkeys?|mnemonics?|seed\s?phrases?|cohorts?|miner[-_\s]?originated|human[-_\s]?originated|rankings?|reviewability|scoreability|private\s+signals?|likely_duplicate|reviewability\s*\d)\b/gi;
 

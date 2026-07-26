@@ -239,17 +239,26 @@ function isSlotOrphaned(row: OrphanProbeRow, nowMs: number, maxLeaseMs: number, 
   return false;
 }
 
-function reclaimOrphanedAllocations(db: DatabaseSync, nowMs: number, maxLeaseMs: number, hostId: string): void {
-  const orphans = db
-    .prepare("SELECT slot_index, owner_pid, owner_host, allocated_at FROM worktree_slots WHERE status = 'active'")
-    .all() as OrphanProbeRow[];
+/** Exported for the CAS regression test only — production callers go through the allocator handle. */
+export function reclaimOrphanedAllocations(db: DatabaseSync, nowMs: number, maxLeaseMs: number, hostId: string, probedRows?: OrphanProbeRow[]): void {
+  const orphans =
+    probedRows ??
+    (db
+      .prepare("SELECT slot_index, owner_pid, owner_host, allocated_at FROM worktree_slots WHERE status = 'active'")
+      .all() as OrphanProbeRow[]);
+  // COMPARE-AND-SET on the exact lease evidence the probe saw: between the SELECT above and this UPDATE, a
+  // peer process can legitimately free-and-re-acquire the same slot (the sweep runs on EVERY acquire since
+  // #8859, so the window is hit under real concurrency — CI reproduced duplicate paths). A re-acquired slot
+  // carries a fresh allocated_at (and usually a new owner), so guarding on the probed values makes a stale
+  // reclaim a no-op instead of force-freeing a live peer's allocation and double-booking the worktree.
   const reclaim = db.prepare(`
     UPDATE worktree_slots
     SET status = 'free', attempt_id = NULL, repo_full_name = NULL, owner_pid = NULL, owner_host = NULL, allocated_at = NULL
-    WHERE slot_index = ?
+    WHERE slot_index = ? AND status = 'active'
+      AND allocated_at IS ? AND owner_pid IS ? AND owner_host IS ?
   `);
   for (const row of orphans) {
-    if (isSlotOrphaned(row, nowMs, maxLeaseMs, hostId)) reclaim.run(row.slot_index);
+    if (isSlotOrphaned(row, nowMs, maxLeaseMs, hostId)) reclaim.run(row.slot_index, row.allocated_at, row.owner_pid, row.owner_host);
   }
 }
 

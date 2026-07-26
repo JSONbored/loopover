@@ -4572,12 +4572,25 @@ async function maybeReReviewOnCiCompletion(
   const headSha = ciCompletionHeadSha(eventName, payload);
   if (isConvergenceRepoAllowed(env, repoFullName)) {
     // GitHub can emit many empty-pull_requests CI completions for the same fork head SHA. Claim a head-SHA
-    // window before the fallback resolver so duplicate events do not repeat DB scans or commits/{sha}/pulls calls.
+    // window before the fallback resolver so duplicate events skip the re-review dispatch and its live
+    // commits/{sha}/pulls round-trip (the cheap stored-DB invalidation still runs -- see the branch below).
     if (
       populatedPrNumbers.length === 0 &&
       headSha &&
       (await ciHeadShaResolutionCoalesced(env, repoFullName, headSha))
     ) {
+      // The re-review DISPATCH is coalesced away here, but the durable CI-state cache invalidation is NOT
+      // meant to be -- the loop below invalidates "for EVERY resolved PR, regardless of whether the re-review
+      // actually fires", and a fork PR must get that same unconditional guarantee same-repo PRs already do
+      // (a coalesced completion in a burst carries a newer settled CI state that a reader must not miss).
+      // Resolve via the fast STORED-DB head-SHA lookup only -- no live fork fallback (that's the round-trip the
+      // coalesce exists to avoid): a durable cache entry exists only for a PR this process already tracks, so an
+      // untracked fork the DB lookup misses has nothing stale to clear (mirrors maybeInvalidateCiCacheOnLegacyCiEvent).
+      const openPullRequests = await listOpenPullRequests(env, repoFullName).catch(() => []);
+      for (const pr of openPullRequests) {
+        if (pr.headSha !== headSha) continue;
+        await invalidateCiStateCache(env, repoFullName, pr.number).catch(() => undefined);
+      }
       await recordWebhookEvent(env, {
         deliveryId,
         eventName,

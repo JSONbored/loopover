@@ -30,6 +30,9 @@ type LoopoverConfigProfile = {
 type LoopoverConfig = {
   activeProfile?: unknown;
   profiles?: Record<string, LoopoverConfigProfile | undefined>;
+  // #8854: a top-level/global apiUrl, mirroring loopover-mcp's config shape — the fallback the miner's
+  // hand-copied resolver previously skipped (it read only the per-profile apiUrl).
+  apiUrl?: unknown;
 };
 
 const DEFAULT_API_URL = "https://api.loopover.ai";
@@ -85,10 +88,16 @@ function loopoverSessionToken(env: NodeJS.ProcessEnv): string | null {
 
 function loopoverApiUrl(env: NodeJS.ProcessEnv): string {
   if (env.LOOPOVER_API_URL) return env.LOOPOVER_API_URL.replace(/\/+$/, "");
-  const profileApiUrl = activeLoopoverProfile(env).apiUrl;
-  if (typeof profileApiUrl === "string" && profileApiUrl.trim()) {
-    const normalized = profileApiUrl.replace(/\/+$/, "");
-    if (!LEGACY_DEFAULT_API_URLS.has(normalized)) return normalized;
+  const config = loadLoopoverConfig(env);
+  const profile = config.profiles?.[selectProfileName(config, env.LOOPOVER_PROFILE)] ?? {};
+  // #8854: mirror loopover-mcp's `activeProfile.apiUrl ?? config.apiUrl ?? default` resolution — try the active
+  // profile's apiUrl first, THEN the top-level/global config.apiUrl, before the hardcoded default. The miner
+  // previously read only the profile apiUrl, so a config that set apiUrl globally fell straight to the default.
+  for (const candidate of [profile.apiUrl, config.apiUrl]) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      const normalized = candidate.replace(/\/+$/, "");
+      if (!LEGACY_DEFAULT_API_URLS.has(normalized)) return normalized;
+    }
   }
   return DEFAULT_API_URL;
 }

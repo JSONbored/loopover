@@ -337,7 +337,16 @@ export function openWorktreeAllocator(options: {
       const normalizedAttempt = normalizeAttemptId(attemptId);
       const normalizedRepo = normalizeRepoFullName(repoFullName);
       const existing = getByAttempt.get(normalizedAttempt) as WorktreeSlotRow | undefined;
-      if (existing?.status === "active") return rowToAllocation(existing);
+      if (existing?.status === "active") {
+        // #8858: the early-return keys only on attempt_id — guard the repo too, so a second acquire for the same
+        // attempt but a DIFFERENT repo fails loudly instead of silently handing back the first repo's allocation.
+        if (existing.repo_full_name !== normalizedRepo) {
+          throw new Error(
+            `attempt_id_repo_mismatch: attempt ${normalizedAttempt} is already active for ${existing.repo_full_name}, not ${normalizedRepo}`,
+          );
+        }
+        return rowToAllocation(existing);
+      }
 
       db.exec("BEGIN IMMEDIATE");
       try {

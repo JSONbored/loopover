@@ -78,6 +78,18 @@ describe("loopover-miner worktree allocator scaffolding (#4298)", () => {
     expect(allocator.listSlots().filter((slot) => slot.status === "active")).toHaveLength(2);
   });
 
+  // #8858: the acquire early-return keyed only on attempt_id. A re-acquire of the same active attempt for a
+  // DIFFERENT repo used to silently hand back the first repo's allocation; it now fails loudly.
+  it("throws attempt_id_repo_mismatch when the same active attempt is re-acquired for a different repo (#8858)", () => {
+    const allocator = tempAllocator({ maxConcurrency: 2 });
+    const first = allocator.acquire("attempt-a", "acme/widgets");
+    expect(first.status).toBe("active");
+    // Same-repo re-acquire stays idempotent (returns the same allocation)...
+    expect(allocator.acquire("attempt-a", "acme/widgets").worktreePath).toBe(first.worktreePath);
+    // ...but a different repo for that same active attempt is a mismatch, not a silent stale hand-back.
+    expect(() => allocator.acquire("attempt-a", "acme/other")).toThrow("attempt_id_repo_mismatch");
+  });
+
   it("release frees a slot for reuse and rejects invalid input", () => {
     const allocator = tempAllocator({ maxConcurrency: 1 });
     const first = allocator.acquire("attempt-a", "acme/widgets");

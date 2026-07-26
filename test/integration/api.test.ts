@@ -4418,6 +4418,8 @@ describe("api routes", () => {
     // #8898: force-regate route -- validation, not-found, and success branches.
     expect((await app.request("/v1/internal/jobs/agent-regate-pr", { method: "POST", headers: internalHeaders, body: "{}" }, env)).status).toBe(400);
     expect((await app.request("/v1/internal/jobs/agent-regate-pr", { method: "POST", headers: internalHeaders, body: JSON.stringify({ repoFullName: "owner/repo" }) }, env)).status).toBe(400);
+    expect((await app.request("/v1/internal/jobs/agent-regate-pr", { method: "POST", headers: internalHeaders, body: JSON.stringify({ repoFullName: "owner/repo", prNumber: 1.5 }) }, env)).status).toBe(400);
+    expect((await app.request("/v1/internal/jobs/agent-regate-pr", { method: "POST", headers: internalHeaders, body: JSON.stringify({ repoFullName: "owner/repo", prNumber: -1 }) }, env)).status).toBe(400);
     expect((await app.request("/v1/internal/jobs/agent-regate-pr", { method: "POST", headers: internalHeaders, body: JSON.stringify({ repoFullName: "owner/repo", prNumber: 404 }) }, env)).status).toBe(404);
     expect((await app.request("/v1/internal/jobs/agent-regate-pr", { method: "POST", headers: internalHeaders, body: JSON.stringify({ repoFullName: "owner/other-missing", prNumber: 9 }) }, env)).status).toBe(404);
     // PR row exists but its repo was never registered (e.g. uninstalled after sync) -- distinct 404 branch.

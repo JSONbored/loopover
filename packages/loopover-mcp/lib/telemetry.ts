@@ -9,8 +9,9 @@ import { PostHog } from "posthog-node";
 //
 // SAFE NO-OP: unless the caller passes `telemetryEnabled: true` AND LOOPOVER_MCP_POSTHOG_API_KEY is set,
 // this records nothing and behaves byte-identically to before this module existed -- true for every user
-// who has not run `loopover-mcp telemetry enable` (the default). It also never throws: a PostHog init/
-// capture failure degrades to recording nothing, so it can never affect the CLI's actual command behavior.
+// who has not run `loopover-mcp telemetry enable` (the default). It also never throws/rejects: a PostHog
+// init/capture/flush failure degrades to recording nothing, so it can never affect the CLI's actual
+// command behavior.
 
 /** PostHog US-cloud ingestion host -- the default when LOOPOVER_MCP_POSTHOG_HOST isn't set. */
 const DEFAULT_POSTHOG_HOST = "https://us.i.posthog.com";
@@ -29,8 +30,16 @@ export type McpToolCallEvent = { tool: string; callerType?: "local"; ok: boolean
  * Record a single local MCP tool call to PostHog. Safe no-op unless `telemetryEnabled` is explicitly
  * `true` (the caller's resolved, persisted opt-in flag, default OFF -- #6236) AND
  * LOOPOVER_MCP_POSTHOG_API_KEY is configured; never throws.
+ *
+ * Returns a promise that resolves once the event has actually been flushed to PostHog (#8690,
+ * mirroring the remote wrapper's #7233 fix) -- the `flushAt: 1, flushInterval: 0` config makes
+ * `capture()` queue the network request immediately, but `capture()` itself is fire-and-forget and
+ * returns before that request lands. Awaiting `client.flush()` means the caller
+ * (bin/loopover-mcp.js's `recordStdioToolTelemetry`) knows the event has been sent (or definitively
+ * failed) before it returns, so a stdio process that exits shortly after a tool call no longer
+ * silently drops the in-flight event.
  */
-export function recordMcpToolCall(options: RecordMcpToolCallOptions, event: McpToolCallEvent): void {
+export async function recordMcpToolCall(options: RecordMcpToolCallOptions, event: McpToolCallEvent): Promise<void> {
   // Opt-in default OFF (#6236, per #6228's privacy decision) -- unlike the remote wrapper, presence of an
   // API key alone is not enough; the user must have explicitly enabled telemetry.
   if (options?.telemetryEnabled !== true) return;
@@ -55,9 +64,10 @@ export function recordMcpToolCall(options: RecordMcpToolCallOptions, event: McpT
       // No IP-based geo enrichment: the event is anonymous fleet telemetry, not a user location.
       disableGeoip: true,
     });
+    await client.flush();
   } catch {
-    // Telemetry is best-effort and MUST NOT throw into the CLI (#6236): a PostHog init/capture failure
-    // degrades to recording nothing, identical to the unconfigured path above.
+    // Telemetry is best-effort and MUST NOT throw into the CLI (#6236): a PostHog init/capture/flush
+    // failure degrades to recording nothing, identical to the unconfigured path above.
   }
 }
 

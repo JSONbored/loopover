@@ -6,10 +6,11 @@
 //   pull — GET peer bundles from it.
 //
 // SCOPE — deliberately NOT the import side. A pulled bundle is fetched, shape-checked and RETURNED; it is
-// never signature-verified, never trust-gated, and never persisted. That is #6480's job, and #6480 is blocked
-// on #6477 (the key-trust/anti-poisoning design). Verifying here would not merely be out of scope, it would be
-// WRONG: there is no trust anchor to verify against yet, and inventing one is exactly what #6477 exists to
-// prevent (see the TODO(#6477) note on signFederatedBundle in ./federated-bundle.ts).
+// never signature-verified, never trust-gated, and never persisted. That is #6480's job, which SHIPPED
+// separately in ./federated-import.ts: it trust-gates each bundle against the operator's
+// `federatedIntelligence.peerKeys` allowlist per #6477's ratified key-trust/anti-poisoning design. Verifying
+// HERE would still be wrong — the trust anchor lives with the importer that decides what to fold in, not with
+// the transport client that only fetches (see the KEY-TRUST note on signFederatedBundle in ./federated-bundle.ts).
 //
 // NO DEFAULT COLLECTOR, BY DESIGN. The client only ever talks to an endpoint the operator configured in
 // `.loopover.yml`. There is no hardcoded fallback and no auto-discovery — this codebase's self-host posture
@@ -164,8 +165,9 @@ export async function pushFederatedBundle(manifest: ManifestSlice, db: D1Databas
  *
  * Returns [] — having touched nothing — unless the operator opted in AND configured a pull-armed collector.
  * Bundles are shape-checked and returned; unrecognized entries are dropped. They are deliberately NOT
- * signature-verified or trust-gated — that is #6480, blocked on #6477. Returns [] rather than throwing on any
- * failure, so an unreachable or hostile collector is indistinguishable from "no peers yet" to every caller.
+ * signature-verified or trust-gated — that is #6480's job, shipped in ./federated-import.ts (the peerKeys
+ * allowlist). Returns [] rather than throwing on any failure, so an unreachable or hostile collector is
+ * indistinguishable from "no peers yet" to every caller.
  */
 export async function pullPeerBundles(manifest: ManifestSlice, opts: CollectorOpts = {}): Promise<FederatedSignalBundle[]> {
   const endpoint = resolveCollectorEndpoint(manifest, "pull");

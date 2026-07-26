@@ -1638,6 +1638,35 @@ describe("advisory rules", () => {
     }
   });
 
+  it("flags Missing test evidence for TS/JS module and JVM scripting extensions via isCodePath + isCodeFile parity", () => {
+    const advisory = buildPullRequestAdvisory(repo, {
+      repoFullName: repo.fullName, number: 26, title: "Add module variants without tests", state: "open",
+      authorLogin: "contributor", authorAssociation: "NONE", labels: [], linkedIssues: [],
+    });
+    const sourcePaths = [
+      "src/config.mts",
+      "src/legacy.cts",
+      "scripts/run.mjs",
+      "scripts/legacy.cjs",
+      "build.gradle.kts",
+      "src/main/scala/App.scala",
+      "scripts/deploy.groovy",
+    ];
+    const files: PullRequestFileRecord[] = sourcePaths.map((path) => ({
+      repoFullName: repo.fullName, pullNumber: 26, path, additions: 10, deletions: 0, changes: 10, payload: {},
+    }));
+    const collisions: CollisionReport = {
+      repoFullName: repo.fullName, generatedAt: "2026-06-10T00:00:00.000Z",
+      summary: { clusterCount: 0, highRiskCount: 0, itemsReviewed: 0 }, clusters: [],
+    };
+
+    const { annotations } = buildCheckRunAnnotations(advisory, { files, collisions, pullNumber: 26 }, "standard");
+
+    for (const path of sourcePaths) {
+      expect(annotations.some((entry) => entry.title === "Missing test evidence" && entry.path === path)).toBe(true);
+    }
+  });
+
   it("buildCheckRunAnnotations uses notice level for medium-risk collisions and critical public finding text", () => {
     const advisory = {
       ...buildPullRequestAdvisory(repo, null),

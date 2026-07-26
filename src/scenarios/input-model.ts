@@ -1,5 +1,8 @@
 import { z } from "zod";
 import { sanitizePublicComment } from "../github/commands";
+import { assertScenarioLocalBranchInputSafe } from "../../packages/loopover-mcp/lib/scenario-local-branch-input-safe.js";
+
+export { assertScenarioLocalBranchInputSafe };
 
 export const SCENARIO_INPUT_VERSION = 1 as const;
 export const SCENARIO_MAX_REPO_FULL_NAME_CHARS = 200;
@@ -32,9 +35,6 @@ export type ScenarioSignalSource = (typeof scenarioSignalSources)[number];
 /** Shared public-safety term set for scenario input + public summary guards (#8885 / #913). */
 export const FORBIDDEN_PUBLIC_LANGUAGE =
   /wallet|hotkey|coldkey|mnemonic|seed phrase|payout|estimated[-\s]?rewards?|rewards?|reward[-\s]?estimate|rankings?|farming|raw trust|trust[-\s]?score|scoreability|private[-\s]?reviewability|public[-\s]?score[-\s]?(?:estimate|prediction)/i;
-
-const FORBIDDEN_SOURCE_UPLOAD_KEYS =
-  /^(?:sourceContent|sourceContents|fileContent|fileContents|rawSource|rawSourceContent|content|contents|diff|patch|rawDiff)$/i;
 
 const scenarioSignalEntrySchema = z
   .object({
@@ -185,39 +185,6 @@ export function buildScenarioInput(args: {
     notAutonomousPrBot: true,
     notPublicScoring: true,
   });
-}
-
-export function assertScenarioLocalBranchInputSafe(payload: Record<string, unknown>): void {
-  if (/^(1|true|yes)$/i.test(String(process.env.LOOPOVER_UPLOAD_SOURCE ?? "false"))) {
-    throw new Error("LOOPOVER_UPLOAD_SOURCE=true is not supported; scenario inputs remain metadata-only.");
-  }
-  for (const key of Object.keys(payload)) {
-    if (FORBIDDEN_SOURCE_UPLOAD_KEYS.test(key)) {
-      throw new Error(`Refusing scenario local-branch field ${key}; source contents are never uploaded.`);
-    }
-  }
-  const changedFiles = payload.changedFiles;
-  // #8328: a present-but-non-array changedFiles (a plain object like { diff: "…source…" }, a string, a number)
-  // is not the documented array-of-entries shape, and the Array.isArray guard below would silently skip the
-  // entire forbidden-key/oversize scan for it — letting exactly the source content this validator exists to
-  // refuse slip through unchecked. Reject it outright; an omitted / undefined changedFiles stays allowed.
-  if (changedFiles !== undefined && !Array.isArray(changedFiles)) {
-    throw new Error("Refusing non-array changedFiles; an array of file entries is required.");
-  }
-  if (Array.isArray(changedFiles)) {
-    for (const entry of changedFiles) {
-      if (!entry || typeof entry !== "object") continue;
-      for (const nestedKey of Object.keys(entry as Record<string, unknown>)) {
-        if (FORBIDDEN_SOURCE_UPLOAD_KEYS.test(nestedKey)) {
-          throw new Error(`Refusing changedFiles.${nestedKey}; source contents are never uploaded.`);
-        }
-        const value = (entry as Record<string, unknown>)[nestedKey];
-        if (typeof value === "string" && value.length > 4000) {
-          throw new Error("Refusing oversized changedFiles payload; metadata-only paths are required.");
-        }
-      }
-    }
-  }
 }
 
 export function scenarioInputFromLocalBranchMetadata(args: {

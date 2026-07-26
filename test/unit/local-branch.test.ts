@@ -1980,6 +1980,29 @@ describe("local MCP git metadata collection", () => {
     expect(() => collectLocalBranchMetadata({ cwd: tempDir, baseRef: "HEAD", login: "oktofeesh1" })).toThrow(/not supported/);
   });
 
+  it("rejects forbidden source-upload keys on the production collectLocalBranchMetadata entry point (#8884)", async () => {
+    const { collectLocalBranchMetadata } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-local-"));
+    git(tempDir, "init");
+    git(tempDir, "config", "user.email", "test@example.com");
+    git(tempDir, "config", "user.name", "LoopOver Test");
+    git(tempDir, "config", "commit.gpgsign", "false");
+    git(tempDir, "remote", "add", "origin", "git@github.com:acme/widgets.git");
+    writeFileSync(join(tempDir, "README.md"), "fixture\n");
+    git(tempDir, "add", "README.md");
+    git(tempDir, "commit", "-m", "initial");
+
+    expect(() =>
+      collectLocalBranchMetadata({
+        cwd: tempDir,
+        baseRef: "HEAD",
+        login: "oktofeesh1",
+        // Forbidden top-level key — must be refused by assertScenarioLocalBranchInputSafe on the production path.
+        ...({ sourceContent: "export const leak = true" } as object),
+      } as Parameters<typeof collectLocalBranchMetadata>[0]),
+    ).toThrow(/source contents are never uploaded/i);
+  });
+
   it("selects and validates cwd from MCP roots without leaking local paths", async () => {
     const { collectLocalBranchMetadata, normalizeMcpWorkspaceRoots, resolveWorkspaceCwd } = await import("../../packages/loopover-mcp/lib/local-branch.js");
     tempDir = mkdtempSync(join(tmpdir(), "loopover-local-"));

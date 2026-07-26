@@ -138,6 +138,11 @@ export async function getOrCreateAnonSecret(db: D1Database): Promise<string> {
 export function bucketReasonCode(summary: string | null | undefined): string {
   if (!summary) return "none";
   const s = summary.toLowerCase();
+  // #8825: a POLICY close (contributor cap, blacklist, copycat, review-nag, screenshot-table, linked-issue
+  // hard rule) is a deliberate enforcement action, NOT a claim about code quality — scoring it as a quality
+  // prediction distorts precision in both directions. Checked FIRST so the prefix wins over the substring
+  // rules below (e.g. `policy_close:linked-issue-hard-rule` must not bucket as plain issue_policy).
+  if (s.startsWith("policy_close:")) return "policy_action";
   if (s.includes("linked_issue") || s.includes("linked issue")) return "issue_policy";
   if (s.includes("duplicate")) return "duplicate_risk";
   if (s.includes("slop")) return "slop_advisory";

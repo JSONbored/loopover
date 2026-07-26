@@ -3275,13 +3275,28 @@ async function runAgentMaintenancePlanAndExecute(
   // downstream autonomous disposition (merge/close/hold), not only the gate check conclusion. In particular, a
   // failing gate can still become a concrete auto-close after CI/conflict/duplicate/linked-issue planning; recording
   // only the gate's hold-shaped conclusion would blind the close-precision breaker to those live closes.
+  // #8825: a POLICY close (contributor cap, blacklist, copycat, review-nag, screenshot-table, linked-issue
+  // hard rule) carries no gate blocker, so blockerClass is "none" and the reason used to fall back to the
+  // gate's own conclusion -- recording "success" on a PR the bot deliberately closed. Every one of those rows
+  // then scored as a quality misprediction ("said merge, ended closed") when the gate never made a quality
+  // claim at all; measured on the live fleet, all 210 rows in that class carried the bare summary "success".
+  // Naming the closeKind makes the policy action distinguishable from a quality verdict at scoring time.
+  const policyCloseKind =
+    disposition.actionClass === "close"
+      ? breakerOnPlan.find((planned) => planned.actionClass === "close" && planned.closeKind !== undefined)?.closeKind
+      : undefined;
   await recordNativeGateDecision(env, {
     project: repoFullName,
     pullNumber: pr.number,
     headSha: pr.headSha,
     conclusion: gate.conclusion,
     action: disposition.actionClass,
-    reasonCode: disposition.blockerClass === "none" ? gate.conclusion : disposition.blockerClass,
+    reasonCode:
+      disposition.blockerClass !== "none"
+        ? disposition.blockerClass
+        : policyCloseKind !== undefined
+          ? `policy_close:${policyCloseKind}`
+          : gate.conclusion,
     // #2352: this row is the ACTUAL autonomous disposition that the precision breaker evaluates, so preserve
     // the same miner-authored scope as the gate-check audit row below. Omitting it defaults to non-miner and can
     // erase a prior miner-authored prediction for the same head.

@@ -41,6 +41,10 @@ export interface Cell {
   verdict: string | null;
   outcome: string;
   reversal_flag: string;
+  /** #8825: `policy_action` marks a deliberate enforcement close (contributor cap, blacklist, copycat,
+   *  review-nag, screenshot-table, linked-issue hard rule) rather than a claim about code quality. Null on
+   *  rows exported before the bucket existed — treated as a normal quality verdict, matching prior behavior. */
+  gate_reasoncode_bucket?: string | null;
   n: number;
 }
 
@@ -68,6 +72,10 @@ export interface InstanceMetrics {
    *  Measured on the live fleet the two differ by ~6 points (93.6% vs 99.6%) — the gap is real errors, not
    *  rounding. null when the instance made no merge/close verdicts at all (holds only). */
   decisionAccuracy: number | null;
+  /** #8825: enforcement closes excluded from the precision/accuracy scoring above (contributor cap, blacklist,
+   *  copycat, review-nag, screenshot-table, linked-issue hard rule). Reported so the volume of policy actions
+   *  stays visible instead of vanishing from every metric. */
+  policyActions: number;
 }
 
 /** #2350: one self-hosted instance whose combined volume/precision/reversal-rate pattern looks like it is
@@ -133,10 +141,18 @@ export function percentile(sorted: number[], p: number): number | null {
 export function foldInstance(instanceId: string, cells: Cell[]): InstanceMetrics {
   let wouldMerge = 0, mergeConfirmed = 0, mergeFalse = 0;
   let wouldClose = 0, closeConfirmed = 0, closeFalse = 0;
-  let reversals = 0, decided = 0;
+  let reversals = 0, decided = 0, policyActions = 0;
   for (const c of cells) {
     decided += c.n;
     if (c.reversal_flag !== "none") reversals += c.n;
+    // #8825: a deliberate enforcement close is not a quality prediction and can be neither confirmed nor
+    // disconfirmed as one, so it is excluded from the precision/accuracy scoring entirely — counted on its own
+    // (policyActions) rather than silently inflating either side. It still contributes to `decided` and
+    // reversalRate, which measure activity and human overrides rather than gate correctness.
+    if (c.gate_reasoncode_bucket === "policy_action") {
+      policyActions += c.n;
+      continue;
+    }
     if (c.verdict === "merge") {
       wouldMerge += c.n;
       if (c.outcome === "merged" && c.reversal_flag !== "reverted") mergeConfirmed += c.n;
@@ -157,6 +173,7 @@ export function foldInstance(instanceId: string, cells: Cell[]): InstanceMetrics
     fnRate: wouldClose > 0 ? closeFalse / wouldClose : null,
     reversalRate: reversals / decided, // decided ≥ 1 (the instance has at least one cell)
     decisionAccuracy: verdicts > 0 ? (mergeConfirmed + closeConfirmed) / verdicts : null,
+    policyActions,
   };
 }
 
@@ -173,9 +190,9 @@ export async function computeFleetAnalytics(env: Env, opts: { windowDays?: numbe
   try {
     const matrix = await env.DB
       .prepare(
-        `SELECT instance_id, gate_verdict AS verdict, outcome, reversal_flag, COUNT(*) AS n
+        `SELECT instance_id, gate_verdict AS verdict, outcome, reversal_flag, gate_reasoncode_bucket, COUNT(*) AS n
          FROM orb_signals WHERE received_at >= ?
-         GROUP BY instance_id, gate_verdict, outcome, reversal_flag`,
+         GROUP BY instance_id, gate_verdict, outcome, reversal_flag, gate_reasoncode_bucket`,
       )
       .bind(cutoff)
       .all<Cell>();

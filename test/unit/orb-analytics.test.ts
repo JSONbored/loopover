@@ -8,15 +8,15 @@ async function signals(
   env: Env,
   instance: string,
   n: number,
-  o: { verdict?: string | null; outcome?: string; reversal?: string; ms?: number | null } = {},
+  o: { verdict?: string | null; outcome?: string; reversal?: string; ms?: number | null; bucket?: string | null } = {},
 ): Promise<void> {
   for (let i = 0; i < n; i++) {
     await env.DB
       .prepare(
-        `INSERT INTO orb_signals (instance_id, repo_hash, pr_hash, gate_verdict, outcome, reversal_flag, time_to_close_ms)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO orb_signals (instance_id, repo_hash, pr_hash, gate_verdict, outcome, reversal_flag, time_to_close_ms, gate_reasoncode_bucket)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .bind(instance, `repo${seq}`, `pr${seq++}`, o.verdict ?? "merge", o.outcome ?? "merged", o.reversal ?? "none", o.ms ?? null)
+      .bind(instance, `repo${seq}`, `pr${seq++}`, o.verdict ?? "merge", o.outcome ?? "merged", o.reversal ?? "none", o.ms ?? null, o.bucket ?? null)
       .run();
   }
 }
@@ -101,6 +101,28 @@ describe("computeFleetAnalytics()", () => {
     // The old published formula would have called this ~100% — every miss here is marker-less, and the 30
     // holds dominate its denominator. This gap IS the bug.
     expect(1 - inst.reversalRate).toBe(1);
+  });
+
+  it("#8825: a POLICY close is excluded from accuracy scoring — it is enforcement, not a quality prediction", async () => {
+    const env = createTestEnv();
+    await signals(env, "i", 8, { verdict: "close", outcome: "closed" }); // real quality closes, all confirmed
+    await signals(env, "i", 2, { verdict: "close", outcome: "merged" }); // real quality misses
+    // Enforcement closes: the gate made no quality claim, so they must not count either way.
+    await signals(env, "i", 40, { verdict: "close", outcome: "closed", bucket: "policy_action" });
+    const inst = (await computeFleetAnalytics(env)).instances[0]!;
+    expect(inst.decisionAccuracy).toBeCloseTo(8 / 10); // NOT 48/50 — the 40 enforcement closes are excluded
+    expect(inst.closePrecision).toBeCloseTo(8 / 10);
+    expect(inst.policyActions).toBe(40);
+    expect(inst.decided).toBe(50); // still counted as activity
+  });
+
+  it("#8825: rows exported BEFORE the bucket existed (null) still score as ordinary quality verdicts", async () => {
+    const env = createTestEnv();
+    await signals(env, "i", 4, { verdict: "close", outcome: "closed", bucket: null });
+    await signals(env, "i", 1, { verdict: "close", outcome: "merged", bucket: "other" });
+    const inst = (await computeFleetAnalytics(env)).instances[0]!;
+    expect(inst.decisionAccuracy).toBeCloseTo(4 / 5);
+    expect(inst.policyActions).toBe(0);
   });
 
   it("decisionAccuracy is null for a holds-only instance (no decision to score) and drives the fleet median", async () => {

@@ -140,6 +140,32 @@ describe("pruneExpiredRecords", () => {
     const rows = await env.DB.prepare("SELECT delivery_id FROM webhook_events").all<{ delivery_id: string }>();
     expect(rows.results.map((row) => row.delivery_id)).toEqual(["wh-recent"]);
   });
+
+  it("prunes notification_deliveries older than 90d and keeps recent rows (#8899)", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare(
+      `INSERT INTO notification_deliveries
+        (id, dedup_key, channel, recipient_login, event_type, repo_full_name, title, body, deeplink, status, created_at)
+       VALUES
+         ('nd-old-1', 'd1', 'email', 'alice', 'issue_watch_match', 'acme/widgets', 't', 'b', 'https://x', 'delivered', ?),
+         ('nd-old-2', 'd2', 'email', 'alice', 'issue_watch_match', 'acme/widgets', 't', 'b', 'https://x', 'delivered', ?),
+         ('nd-recent', 'd3', 'email', 'alice', 'issue_watch_match', 'acme/widgets', 't', 'b', 'https://x', 'delivered', ?)`,
+    )
+      .bind(daysAgo(100), daysAgo(95), daysAgo(1))
+      .run();
+
+    expect(RETENTION_POLICY.some((rule) => rule.table === "notification_deliveries" && rule.column === "created_at" && rule.days === 90)).toBe(
+      true,
+    );
+
+    const results = await pruneExpiredRecords(env, {
+      nowMs: NOW,
+      policy: [{ table: "notification_deliveries", column: "created_at", days: 90 }],
+    });
+    expect(results[0]?.deleted).toBe(2);
+    const rows = await env.DB.prepare("SELECT id FROM notification_deliveries").all<{ id: string }>();
+    expect(rows.results.map((row) => row.id)).toEqual(["nd-recent"]);
+  });
 });
 
 describe("dedupeSignalSnapshots", () => {

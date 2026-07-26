@@ -197,12 +197,19 @@ async function runWorkersE2eTestGen(env: Env, system: string, user: string, maxT
   if (!ai || typeof ai.run !== "function") return { testSource: null };
   const gatewayId = env.AI_GATEWAY_ID?.trim();
   const extra: AiGatewayOptions | undefined = gatewayId ? { gateway: { id: gatewayId } } : undefined;
-  for (const model of E2E_TEST_GEN_MODELS) {
+  for (const [modelIndex, model] of E2E_TEST_GEN_MODELS.entries()) {
     for (let attempt = 0; attempt < E2E_TEST_GEN_ATTEMPTS_PER_MODEL; attempt += 1) {
       try {
         const result = await ai.run(
           model,
-          { max_tokens: maxTokens, temperature: 0, messages: [{ role: "system", content: system }, { role: "user", content: user }] },
+          {
+            max_tokens: maxTokens,
+            temperature: 0,
+            messages: [{ role: "system", content: system }, { role: "user", content: user }],
+            // Only the truly final attempt (last model, last attempt) stays Sentry-visible (error); earlier
+            // attempts are about to be retried, so log them quietly (warn) per selfhost/ai.ts's contract (#8673).
+            finalAttempt: attempt === E2E_TEST_GEN_ATTEMPTS_PER_MODEL - 1 && modelIndex === E2E_TEST_GEN_MODELS.length - 1,
+          },
           extra,
         );
         const parsed = parseE2eTestGenResponse(coerceAiText(result));

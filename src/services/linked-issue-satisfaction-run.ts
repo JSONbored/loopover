@@ -83,12 +83,19 @@ async function runWorkersSatisfactionOpinion(
   if (!ai || typeof ai.run !== "function") return { result: null };
   const gatewayId = env.AI_GATEWAY_ID?.trim();
   const extra: AiGatewayOptions | undefined = gatewayId ? { gateway: { id: gatewayId } } : undefined;
-  for (const model of LINKED_ISSUE_SATISFACTION_MODELS) {
+  for (const [modelIndex, model] of LINKED_ISSUE_SATISFACTION_MODELS.entries()) {
     for (let attempt = 0; attempt < LINKED_ISSUE_SATISFACTION_ATTEMPTS_PER_MODEL; attempt += 1) {
       try {
         const raw = await ai.run(
           model,
-          { max_tokens: maxTokens, temperature: 0, messages: [{ role: "system", content: system }, { role: "user", content: user }] },
+          {
+            max_tokens: maxTokens,
+            temperature: 0,
+            messages: [{ role: "system", content: system }, { role: "user", content: user }],
+            // Only the truly final attempt (last model, last attempt) stays Sentry-visible (error); earlier
+            // attempts are about to be retried, so log them quietly (warn) per selfhost/ai.ts's contract (#8673).
+            finalAttempt: attempt === LINKED_ISSUE_SATISFACTION_ATTEMPTS_PER_MODEL - 1 && modelIndex === LINKED_ISSUE_SATISFACTION_MODELS.length - 1,
+          },
           extra,
         );
         const text = coerceAiText(raw);

@@ -27,6 +27,7 @@ const FULL_PACKAGE = [
   "LICENSE",
   "dist/bin/loopover-mcp.js",
   "dist/lib/cli-error.js",
+  "dist/lib/scenario-local-branch-input-safe.js",
   "dist/lib/telemetry.js",
   "scripts/gittensor-score-preview.mjs",
   "scripts/gittensor-score-preview.py",

@@ -4,6 +4,7 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isCodeFile, isTestPath as isTestFile } from "@loopover/engine/signals/test-evidence";
 import { redactLocalPath } from "./redact-local-path.js";
+import { assertScenarioLocalBranchInputSafe } from "./scenario-local-branch-input-safe.js";
 
 export { isCodeFile, isTestFile };
 export { redactLocalPath };
@@ -122,7 +123,9 @@ export function collectLocalDiff(cwd: string, baseRef: string, workspaceRoots?: 
 }
 
 export function collectLocalBranchMetadata(input: CollectLocalBranchMetadataInput): LocalBranchMetadata {
-  assertSourceUploadDisabled();
+  // Production entry point for the scenario local-branch safety guard (#8884) — scans forbidden source-upload
+  // keys / oversized changedFiles in addition to the LOOPOVER_UPLOAD_SOURCE env check.
+  assertScenarioLocalBranchInputSafe({ ...input } as Record<string, unknown>);
   const workspace = resolveWorkspaceCwd(input);
   const cwd = workspace.cwd;
   const baseRef = input.baseRef ?? defaultBaseRef(cwd);
@@ -702,12 +705,6 @@ function truncateText(value: unknown, maxLength = 240): string | undefined {
 
 function splitCommand(command: unknown): string[] {
   return String(command).match(/(?:[^\s"]+|"[^"]*")+/g)?.map((part) => part.replace(/^"|"$/g, "")) ?? [];
-}
-
-function assertSourceUploadDisabled(): void {
-  if (/^(1|true|yes)$/i.test(process.env.LOOPOVER_UPLOAD_SOURCE ?? "false")) {
-    throw new Error("LOOPOVER_UPLOAD_SOURCE=true is not supported in v1; local MCP sends metadata only.");
-  }
 }
 
 // Word-boundary the closing keywords (as the server-side extractors in src/db/repositories.ts and

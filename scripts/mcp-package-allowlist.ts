@@ -6,6 +6,7 @@ export const MCP_PACKAGE_ALLOWED_FILE_PATTERNS: RegExp[] = [
   /^dist\/bin\/loopover-mcp\.js$/,
   /^dist\/lib\/cli-error\.js$/,
   /^dist\/lib\/local-branch\.js$/,
+  /^dist\/lib\/scenario-local-branch-input-safe\.js$/,
   /^dist\/lib\/format-table\.js$/,
   /^dist\/lib\/redact-local-path\.js$/,
   /^dist\/lib\/telemetry\.js$/,

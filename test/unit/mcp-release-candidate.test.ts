@@ -21,6 +21,7 @@ const ALLOWED_FILES = [
   "dist/bin/loopover-mcp.js",
   "dist/lib/cli-error.js",
   "dist/lib/local-branch.js",
+  "dist/lib/scenario-local-branch-input-safe.js",
   "dist/lib/format-table.js",
   "dist/lib/redact-local-path.js",
   "scripts/gittensor-score-preview.mjs",
@@ -89,7 +90,12 @@ describe("checkChangelog", () => {
 
 describe("checkTarball", () => {
   it("accepts every shipped MCP lib file previously missing from the RC allowlist (#6291)", () => {
-    for (const file of ["dist/lib/cli-error.js", "dist/lib/format-table.js", "dist/lib/redact-local-path.js"]) {
+    for (const file of [
+      "dist/lib/cli-error.js",
+      "dist/lib/format-table.js",
+      "dist/lib/redact-local-path.js",
+      "dist/lib/scenario-local-branch-input-safe.js",
+    ]) {
       expect(unexpectedTarballFiles([file])).toEqual([]);
       expect(MCP_PACKAGE_ALLOWED_FILE_PATTERNS.some((pattern) => pattern.test(file))).toBe(true);
     }

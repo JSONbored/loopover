@@ -4576,6 +4576,49 @@ describe("queue processors", () => {
       expect(skipped?.detail).toBe("cached_pr_missing");
     });
 
+    it("skips generation on a closed PR with pr_not_open and never calls the model (#9311)", async () => {
+      const repoFullName = "JSONbored/gen-tests-9311-closed";
+      const run = vi.fn();
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run: async () => ({ response: run() }) } as unknown as Ai,
+        LOOPOVER_REVIEW_E2E_TESTS: "true",
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+      });
+      await seedGenerateTestsPr(env, repoFullName, 9311, "gen-tests-9311-closed-sha");
+      await upsertPullRequestFromGitHub(env, repoFullName, {
+        number: 9311,
+        title: "Add retry to checkout",
+        state: "closed",
+        user: { login: "contributor" },
+        author_association: "CONTRIBUTOR",
+        head: { sha: "gen-tests-9311-closed-sha", ref: "feature/checkout-retry" },
+        labels: [],
+        body: "Retries the payment call once on a 5xx.",
+      });
+      let posted = 0;
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
+        if (url.includes("/issues/9311/comments") && method === "GET") return Response.json([]);
+        if (url.includes("/issues/9311/comments") && method === "POST") {
+          posted += 1;
+          return Response.json({ id: 93110 });
+        }
+        return new Response("not found", { status: 404 });
+      });
+
+      await processJob(env, generateTestsWebhook(repoFullName, 9311, "maintainer", { association: "MEMBER" }));
+
+      expect(run).not.toHaveBeenCalled();
+      expect(posted).toBe(0);
+      const skipped = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.e2e_tests_generation_skipped").first<{ detail: string }>();
+      expect(skipped?.detail).toBe("pr_not_open");
+    });
+
     it("declines (returns false) for a non-command comment, claiming nothing", async () => {
       const repoFullName = "JSONbored/gen-tests-4195-decline";
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
@@ -5747,6 +5790,40 @@ describe("queue processors", () => {
         .bind("github_app.e2e_tests_generation_skipped")
         .first<{ detail: string }>();
       expect(skipped?.detail).toBe("dry_run");
+    });
+
+    it("skips generation on a closed PR with pr_not_open and never calls the model (#9311)", async () => {
+      const repoFullName = "JSONbored/checkbox-9311-closed";
+      const run = vi.fn();
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run } as unknown as Ai,
+        LOOPOVER_REVIEW_E2E_TESTS: "true",
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+      });
+      await seedCheckboxPr(env, repoFullName, 6015, "checkbox-9311-closed-sha");
+      await upsertPullRequestFromGitHub(env, repoFullName, {
+        number: 6015,
+        title: "Add retry to checkout",
+        state: "closed",
+        user: { login: "contributor" },
+        author_association: "CONTRIBUTOR",
+        head: { sha: "checkbox-9311-closed-sha", ref: "feature/checkout-retry" },
+        labels: [],
+        body: "No validation evidence mentioned here.",
+      });
+      const posted = { count: 0, body: "" };
+      stubCheckboxFetch(6015, "maintainer", "admin", posted);
+
+      await processJob(env, checkboxWebhook(repoFullName, 6015, 910, { login: "maintainer" }));
+
+      expect(run).not.toHaveBeenCalled();
+      expect(posted.count).toBe(0);
+      const skipped = await env.DB.prepare("select detail from audit_events where event_type = ?")
+        .bind("github_app.e2e_tests_generation_skipped")
+        .first<{ detail: string }>();
+      expect(skipped?.detail).toBe("pr_not_open");
     });
 
     it("respects the repo's configured commit delivery mode via the checkbox (NOT forced comment-only, unlike the auto-trigger)", async () => {

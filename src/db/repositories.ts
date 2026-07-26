@@ -2250,7 +2250,10 @@ export async function listNotificationDeliveriesForRecipient(
     .select()
     .from(notificationDeliveries)
     .where(and(...conditions))
-    .orderBy(desc(notificationDeliveries.createdAt))
+    // #8895: a fan-out (e.g. issue_watch_match to many miners) stamps createdAt via nowIso() per row, so
+    // several deliveries can tie on the millisecond timestamp; the unique text id is a deterministic
+    // secondary sort so display order and the limit-boundary row are stable, not engine-defined.
+    .orderBy(desc(notificationDeliveries.createdAt), desc(notificationDeliveries.id))
     .limit(Math.min(Math.max(options.limit ?? 50, 1), 100));
   return rows.map(toNotificationDeliveryRecord);
 }

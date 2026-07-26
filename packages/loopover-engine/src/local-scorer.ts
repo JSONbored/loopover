@@ -10,6 +10,7 @@
 // definitions. isCodeFile/isTestPath are the same portable classifiers local-branch.ts already delegates to.
 
 import { isCodeFile, isTestPath } from "./signals/test-evidence.js";
+import { DEFAULT_SCORING_CONSTANTS } from "./scoring/model.js";
 
 export type LocalScorerChangedFile = {
   path: string;
@@ -50,8 +51,12 @@ export function computeLocalScorerTokens(input: { changedFiles: LocalScorerChang
   const files = input.changedFiles.filter((file) => !file.binary);
   const testTokenScore = files.filter((file) => isTestPath(file.path)).reduce((sum, file) => sum + fileLines(file), 0);
   const sourceTokenScore = files.filter((file) => isCodeFile(file.path)).reduce((sum, file) => sum + fileLines(file), 0);
-  const totalTokenScore = files.reduce((sum, file) => sum + fileLines(file), 0);
-  const nonCodeTokenScore = Math.max(0, totalTokenScore - sourceTokenScore - testTokenScore);
+  const rawLineTotal = files.reduce((sum, file) => sum + fileLines(file), 0);
+  const nonCodeTokenScore = Math.max(0, rawLineTotal - sourceTokenScore - testTokenScore);
+  // Mirror preview.ts's derivedTotalTokenScore: test lines are discounted by TEST_FILE_CONTRIBUTION_WEIGHT
+  // so feeding this total back as `localScorer.totalTokenScore` does not bypass the gate's own weighting (#8875).
+  const testFileWeight = DEFAULT_SCORING_CONSTANTS.TEST_FILE_CONTRIBUTION_WEIGHT ?? 0.05;
+  const totalTokenScore = sourceTokenScore + testFileWeight * testTokenScore + nonCodeTokenScore;
   const failed = (input.validation ?? []).some((entry) => entry.status === "failed");
   const warnings = failed ? ["Local validation reported failures — token scores describe the diff, not a passing build."] : [];
   return {

@@ -28,7 +28,7 @@ describe("MCP loopover_run_local_scorer (#782)", () => {
     });
     expect(result.isError).toBeFalsy();
     const data = result.structuredContent as { tokenScores: { mode: string; sourceTokenScore: number; testTokenScore: number; nonCodeTokenScore: number; totalTokenScore: number }; usage: string };
-    expect(data.tokenScores).toMatchObject({ mode: "external_command", sourceTokenScore: 12, testTokenScore: 8, nonCodeTokenScore: 5, totalTokenScore: 25 });
+    expect(data.tokenScores).toMatchObject({ mode: "external_command", sourceTokenScore: 12, testTokenScore: 8, nonCodeTokenScore: 5, totalTokenScore: 12 + 0.05 * 8 + 5 });
     expect(data.usage).toMatch(/localScorer/);
     expect(JSON.stringify(data)).not.toMatch(/wallet|hotkey|reward|payout|trust score/i);
   });

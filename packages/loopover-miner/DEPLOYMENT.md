@@ -70,12 +70,14 @@ For provider selection and the CLI-specific model/timeout overrides, see
 
    Not every file appears immediately: `laptop-state` is written by `init`, and each of the others is created
    the first time its subsystem actually runs (an attempt, a discovery pass, a replay, an Orb export, …), so a
-   fresh install that has only run `status`/`doctor` will show a subset. All sixteen default into this one
+   fresh install that has only run `status`/`doctor` will show a subset. All eighteen default into this one
    directory. Override the directory for every store at once with `LOOPOVER_MINER_CONFIG_DIR` or
-   `XDG_CONFIG_HOME` (same resolution chain as `@loopover/mcp`); every store except `laptop-state.sqlite3`
-   (directory only) also honors its own `LOOPOVER_MINER_<NAME>_DB` path override — e.g.
-   `LOOPOVER_MINER_PORTFOLIO_QUEUE_DB` — to relocate an individual file. `doctor`'s `store-integrity:*` checks
-   report the persistent stores, so it is the quickest way to confirm what exists and is readable on disk.
+   `XDG_CONFIG_HOME` (same resolution chain as `@loopover/mcp`); every store — including
+   `laptop-state.sqlite3` via `LOOPOVER_MINER_LAPTOP_STATE_DB` — also honors its own
+   `LOOPOVER_MINER_<NAME>_DB` path override — e.g. `LOOPOVER_MINER_PORTFOLIO_QUEUE_DB` — to relocate an
+   individual file. `doctor`'s `store-integrity:*` checks (including `store-integrity:laptop-state`) run a
+   deep `PRAGMA integrity_check` on each persistent store, so it is the quickest way to confirm what exists
+   and is readable on disk.
 
 4. Optional per-repo miner goals: copy [`.loopover-miner.yml.example`](../../.loopover-miner.yml.example) to a target repo as `.loopover-miner.yml`. See [`docs/miner-goal-spec.md`](docs/miner-goal-spec.md).
 

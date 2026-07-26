@@ -309,6 +309,23 @@ test("composite honors custom weights and falls back to objective-only when all 
   assert.equal(allZero.compositeScore, 0.4);
 });
 
+test("composite normalizes invalid weights to the default blend, not an objective-only collapse (#8643)", () => {
+  const ingestion = ingestReviewerConsensusCalibrationSignals([signal()]);
+  const result = computeReviewerConsensusCompositeCalibrationScore({
+    objectiveAnchor: 0.4,
+    pairwise: 0.4,
+    reviewerConsensus: ingestion,
+    weights: { objectiveAnchor: Number.NaN, pairwiseJudge: -1, structuredReviewerConsensus: -1 },
+  });
+  // NaN/negative weights (with real pairwise + structured scores present) recover to the documented default
+  // 45/35/20 blend -- NOT a 100%-objective-anchor collapse, matching pairwise-calibration.ts's distinction.
+  assert.deepEqual(result.weights, {
+    objectiveAnchor: 0.45,
+    pairwiseJudge: 0.35,
+    structuredReviewerConsensus: 0.2,
+  });
+});
+
 test("composite sanitizes pre-ingested reviewer-consensus rows before auditing", () => {
   const poisoned = {
     accepted: [

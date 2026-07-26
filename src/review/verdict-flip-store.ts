@@ -1,5 +1,5 @@
 // Verdict-flip persistence (#9016, security) — the IO around src/review/verdict-flip-guard.ts's pure state
-// machine. One row per PR (migration 0182); fail-open throughout — an infra blip must degrade to "never
+// machine. One row per PR (migration 0183); fail-open throughout — an infra blip must degrade to "never
 // escalate," never block or unblock the gate on its own.
 import { findingsHadAiDefect, nextVerdictFlipState, type VerdictFlipResult, type VerdictFlipState } from "./verdict-flip-guard";
 import { errorMessage, nowIso } from "../utils/json";

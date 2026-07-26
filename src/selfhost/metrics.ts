@@ -153,6 +153,7 @@ export const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["loopover_ai_review_one_shot_reuse_total", { help: "AI review passes that reused a one-shot prior verdict instead of re-running.", type: "counter" }],
   ["loopover_ai_review_paused_reuse_total", { help: "AI review passes that reused a prior verdict because the repo is paused.", type: "counter" }],
   ["loopover_ai_review_tiebreak_order_unstable_total", { help: "Dual-reviewer tiebreak passes where reviewer order was not stable, by combine mode.", type: "counter" }],
+  ["loopover_ai_review_verdict_flip_escalated_total", { help: "AI review verdict-flip escalations (#9016): a PR's fresh AI-judgment verdict oscillated past the flip threshold and was held for a human instead of trusting the newest roll.", type: "counter" }],
   ["loopover_grounding_cache_hit_total", { help: "Review grounding-context cache hits.", type: "counter" }],
   ["loopover_grounding_cache_miss_total", { help: "Review grounding-context cache misses.", type: "counter" }],
   ["loopover_impact_map_cache_hit_total", { help: "Impact-map cache hits.", type: "counter" }],

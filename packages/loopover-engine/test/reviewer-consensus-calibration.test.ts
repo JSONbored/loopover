@@ -309,6 +309,24 @@ test("composite honors custom weights and falls back to objective-only when all 
   assert.equal(allZero.compositeScore, 0.4);
 });
 
+test("computeReviewerConsensusCompositeCalibrationScore normalizes invalid weights without producing NaN (#8643)", () => {
+  const ingestion = ingestReviewerConsensusCalibrationSignals([signal()]);
+  const result = computeReviewerConsensusCompositeCalibrationScore({
+    objectiveAnchor: 0.4,
+    pairwise: 0.4,
+    reviewerConsensus: ingestion,
+    weights: { objectiveAnchor: Number.NaN, pairwiseJudge: -1, structuredReviewerConsensus: -1 },
+  });
+
+  // NaN/negative inputs must recover to the documented 45/35/20 default, not collapse to objective-only.
+  assert.deepEqual(result.weights, {
+    objectiveAnchor: 0.45,
+    pairwiseJudge: 0.35,
+    structuredReviewerConsensus: 0.2,
+  });
+  assert.equal(result.compositeScore, 0.52);
+});
+
 test("composite sanitizes pre-ingested reviewer-consensus rows before auditing", () => {
   const poisoned = {
     accepted: [

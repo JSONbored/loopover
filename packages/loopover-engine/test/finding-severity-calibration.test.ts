@@ -483,3 +483,20 @@ test("computeFindingSeverityCompositeCalibrationScore falls back to objective-on
   assert.deepEqual(result.weights, { objectiveAnchor: 1, pairwiseJudge: 0, structuredFindingSeverity: 0 });
   assert.equal(result.compositeScore, 0.4);
 });
+
+test("computeFindingSeverityCompositeCalibrationScore normalizes invalid weights without producing NaN (#8643)", () => {
+  const result = computeFindingSeverityCompositeCalibrationScore({
+    objectiveAnchor: 0.4,
+    pairwise: 0.4,
+    findingSeverity: [signal()],
+    weights: { objectiveAnchor: Number.NaN, pairwiseJudge: -1, structuredFindingSeverity: -1 },
+  });
+
+  // NaN/negative inputs must recover to the documented 45/35/20 default, not collapse to objective-only.
+  assert.deepEqual(result.weights, {
+    objectiveAnchor: 0.45,
+    pairwiseJudge: 0.35,
+    structuredFindingSeverity: 0.2,
+  });
+  assert.equal(result.compositeScore, 0.52);
+});

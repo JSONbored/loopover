@@ -602,6 +602,27 @@ test("computeGateVerdictCompositeCalibrationScore falls back to objective-only w
   assert.equal(result.compositeScore, 0.4);
 });
 
+test("computeGateVerdictCompositeCalibrationScore normalizes invalid weights without producing NaN (#8643)", () => {
+  const result = computeGateVerdictCompositeCalibrationScore({
+    objectiveAnchor: 0.4,
+    pairwise: 0.4,
+    gateVerdicts: [
+      {
+        repoFullName: "acme/widgets",
+        replayRunId: "replay-1",
+        gateRunId: "gate-1",
+        optedIn: true,
+        dimensions: [{ dimension: "correctness", outcome: "pass" }],
+      },
+    ],
+    weights: { objectiveAnchor: Number.NaN, pairwiseJudge: -1, structuredGateVerdict: -1 },
+  });
+
+  // NaN/negative inputs must recover to the documented 45/35/20 default, not collapse to objective-only.
+  assert.deepEqual(result.weights, { objectiveAnchor: 0.45, pairwiseJudge: 0.35, structuredGateVerdict: 0.2 });
+  assert.equal(result.compositeScore, 0.52);
+});
+
 test("computeGateVerdictCompositeCalibrationScore preserves a malformed-repo (invalid_repo) rejected row instead of dropping it (#6170)", () => {
   const result = computeGateVerdictCompositeCalibrationScore({
     objectiveAnchor: 0.5,

@@ -147,6 +147,10 @@ function finiteNonNegative(value: number | undefined, fallback: number): number 
   return value;
 }
 
+function isInvalidWeight(value: number | undefined): boolean {
+  return value !== undefined && (!Number.isFinite(value) || value < 0);
+}
+
 function roundScore(value: number): number {
   return Math.round(Math.min(1, Math.max(0, value)) * 1_000_000) / 1_000_000;
 }
@@ -318,8 +322,19 @@ function normalizeCompositeWeights(weights: GateVerdictCalibrationWeights | unde
   const total = raw.objectiveAnchor + raw.pairwiseJudge + raw.structuredGateVerdict;
   // Preserve explicitly-zeroed weights rather than substituting the defaults: a caller that zeroes every component
   // must reach the objective-only fallback in the composite scorer, not silently get the default 45/35/20 blend
-  // (converges with reviewer-consensus-calibration.ts's already-correct behavior; #6170).
-  if (total <= 0) return { objectiveAnchor: 0, pairwiseJudge: 0, structuredGateVerdict: 0 };
+  // (converges with reviewer-consensus-calibration.ts / #6170; #7443 / #8643).
+  // NaN/negative inputs still recover to DEFAULT_COMPOSITE_WEIGHTS when the clamped total is empty — same as
+  // pairwise-calibration.ts — so the invalid-weight suite keeps asserting the 45/35/20 default.
+  if (total <= 0) {
+    if (
+      isInvalidWeight(weights?.objectiveAnchor) ||
+      isInvalidWeight(weights?.pairwiseJudge) ||
+      isInvalidWeight(weights?.structuredGateVerdict)
+    ) {
+      return DEFAULT_COMPOSITE_WEIGHTS;
+    }
+    return { objectiveAnchor: 0, pairwiseJudge: 0, structuredGateVerdict: 0 };
+  }
   return {
     objectiveAnchor: raw.objectiveAnchor / total,
     pairwiseJudge: raw.pairwiseJudge / total,

@@ -10,6 +10,7 @@
 //
 // Flag-gated by LOOPOVER_DECISION_AUDIT (default OFF — the weekly job is never enqueued, zero new work,
 // byte-identical to today), mirroring every sibling cron flag (selftune-wire et al).
+import { LOOPOVER_NATIVE_SOURCE } from "./parity-wire";
 import { errorMessage, nowIso } from "../utils/json";
 
 /** Bump ONLY with a corresponding edit to docs/decision-audit-rubric.md — adjudications are comparable only
@@ -110,7 +111,7 @@ export async function runDecisionAuditSample(env: Env, nowMs: number = Date.now(
        SELECT target_id, project, decision AS verdict, summary, created_at,
               ROW_NUMBER() OVER (PARTITION BY target_id ORDER BY created_at DESC) AS rn
          FROM review_audit
-        WHERE event_type = 'gate_decision' AND decision IN ('merge', 'close') AND source = 'gittensory-native'
+        WHERE event_type = 'gate_decision' AND decision IN ('merge', 'close') AND source = ?
      ),
      po AS (
        SELECT target_id, decision AS outcome,
@@ -126,7 +127,7 @@ export async function runDecisionAuditSample(env: Env, nowMs: number = Date.now(
         AND (gd.summary IS NULL OR gd.summary NOT LIKE 'policy_close:%')
         AND NOT EXISTS (SELECT 1 FROM decision_audit_labels dal WHERE dal.target_id = gd.target_id)`,
   )
-    .bind(sinceIso)
+    .bind(LOOPOVER_NATIVE_SOURCE, sinceIso)
     .all<{ targetId: string; project: string; verdict: "merge" | "close"; outcome: "merged" | "closed" }>();
 
   const decided = results;

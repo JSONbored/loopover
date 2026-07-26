@@ -4421,14 +4421,22 @@ export function createApp() {
       return c.json({ error: "id and adjudication (correct|incorrect|uncertain) required" }, 400);
     }
     const reasonCategory = typeof payload?.reasonCategory === "string" ? payload.reasonCategory.slice(0, 100) : null;
-    const existing = await c.env.DB.prepare("SELECT status FROM decision_audit_labels WHERE id = ?").bind(id).first<{ status: string }>();
-    if (!existing) return c.json({ error: "label_not_found" }, 404);
-    if (existing.status === "adjudicated") return c.json({ error: "already_adjudicated" }, 409);
-    await c.env.DB.prepare(
-      `UPDATE decision_audit_labels SET status = 'adjudicated', adjudication = ?, reason_category = ?, adjudicated_at = ? WHERE id = ?`,
+    // Atomic claim: the status predicate rides the UPDATE itself, so two concurrent adjudications can never
+    // both win — a select-then-update here would let both pass the pending check and silently violate the
+    // one-adjudication-per-label guarantee (labels are calibration data; rewrites must be impossible, not
+    // merely discouraged). meta.changes disambiguates afterwards: 0 changes is either "no such label" (404)
+    // or "someone else already adjudicated it" (409), resolved by one read that no longer guards anything.
+    const result = await c.env.DB.prepare(
+      `UPDATE decision_audit_labels SET status = 'adjudicated', adjudication = ?, reason_category = ?, adjudicated_at = ?
+        WHERE id = ? AND status = 'pending'`,
     )
       .bind(adjudication, reasonCategory, new Date().toISOString(), id)
       .run();
+    if (result.meta.changes === 0) {
+      const existing = await c.env.DB.prepare("SELECT status FROM decision_audit_labels WHERE id = ?").bind(id).first<{ status: string }>();
+      if (!existing) return c.json({ error: "label_not_found" }, 404);
+      return c.json({ error: "already_adjudicated" }, 409);
+    }
     return c.json({ id, adjudication, reasonCategory });
   });
 

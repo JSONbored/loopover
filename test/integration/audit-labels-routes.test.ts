@@ -57,4 +57,19 @@ describe("decision-audit adjudication routes (/v1/internal/audit-labels)", () =>
     const uncertain = await app.request("/v1/internal/audit-labels/adjudicate", { method: "POST", headers: auth, body: JSON.stringify({ id: "audit:o/r#2", adjudication: "uncertain" }) }, env);
     expect(uncertain.status).toBe(200);
   });
+
+  it("REGRESSION (Superagent P1): concurrent adjudications race atomically — exactly one wins, the other 409s", async () => {
+    const env = createTestEnv();
+    await seedLabel(env, "audit:o/r#9");
+    const fire = () =>
+      app.request(
+        "/v1/internal/audit-labels/adjudicate",
+        { method: "POST", headers: auth, body: JSON.stringify({ id: "audit:o/r#9", adjudication: "correct" }) },
+        env,
+      );
+    const [a, b] = await Promise.all([fire(), fire()]);
+    expect([a.status, b.status].sort()).toEqual([200, 409]);
+    const row = await env.DB.prepare("SELECT adjudication FROM decision_audit_labels WHERE id = 'audit:o/r#9'").first<{ adjudication: string }>();
+    expect(row!.adjudication).toBe("correct");
+  });
 });

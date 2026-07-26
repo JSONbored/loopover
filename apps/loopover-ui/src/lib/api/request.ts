@@ -125,7 +125,11 @@ export function notifyApiFailure(args: {
   const recent = prev && now - prev.lastNotifiedAt < 5000;
   const repeatCount = sameKind && recent ? prev.repeatCount + 1 : 1;
 
-  notifierState.set(id, { kind, status, lastNotifiedAt: now, repeatCount, retrying: false });
+  // #8676: MERGE, don't replace -- a full-object replacement here reset `retrying` to false on the shared
+  // entry even while runRetryWithProgress had a retry in flight, silently defeating its `if (entry.retrying)
+  // return` re-entrancy guard and allowing a concurrent second retry. Preserve an in-flight `true`; all other
+  // fields still update as before.
+  notifierState.set(id, { kind, status, lastNotifiedAt: now, repeatCount, retrying: prev?.retrying === true });
 
   const statusLabel =
     apiStatus !== "ok" && apiStatus !== "idle" ? describeApiStatus(apiStatus) : null;

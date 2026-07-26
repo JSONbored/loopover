@@ -14,7 +14,7 @@
 import { errorMessage, nowIso } from "../utils/json";
 
 /** Bump when the record's FIELD SET changes meaning — consumers compare records only within a version. */
-export const DECISION_RECORD_SCHEMA_VERSION = "2"; // v2 (#8834): + aiConfidence, model/prompt commitments live
+export const DECISION_RECORD_SCHEMA_VERSION = "3"; // v3 (#8962): + salvageability {score, factors}; v2 (#8834): + aiConfidence, model/prompt commitments
 
 /**
  * Canonical JSON: recursively key-sorted, no insignificant whitespace — the ONE serialization every digest
@@ -76,18 +76,23 @@ export type DecisionRecord = {
    *  defect / split), null when no AI judgment contributed. Persisted so every decision joins the
    *  risk-control calibration set (#8835) with its confidence attached. */
   aiConfidence: number | null;
+  /** #8962: the deterministic salvageability score + its named factors when an AI judgment shaped the
+   *  decision — the second-axis evidence for auditing the close/hold boundary. null for rule-only decisions
+   *  (and for reconstructed/backfilled records predating v3). */
+  salvageability: { score: number; factors: string[] } | null;
   decidedAt: string;
 };
 
 /** Assemble the record and its own content digest. PURE given pre-computed digests. Normalizes the
  *  optional-shaped caller fields (undefined -> null) HERE so call sites carry no fallback arms of their own. */
 export async function buildDecisionRecord(
-  input: Omit<DecisionRecord, "schemaVersion" | "decidedAt" | "gatePack" | "ciState" | "baseSha" | "aiConfidence"> & {
+  input: Omit<DecisionRecord, "schemaVersion" | "decidedAt" | "gatePack" | "ciState" | "baseSha" | "aiConfidence" | "salvageability"> & {
     decidedAt?: string;
     gatePack?: string | null | undefined;
     ciState?: string | null | undefined;
     baseSha?: string | null | undefined;
     aiConfidence?: number | null | undefined;
+    salvageability?: { score: number; factors: string[] } | null | undefined;
   },
 ): Promise<{ record: DecisionRecord; recordDigest: string }> {
   const record: DecisionRecord = {
@@ -98,6 +103,7 @@ export async function buildDecisionRecord(
     ciState: input.ciState ?? null,
     baseSha: input.baseSha ?? null,
     aiConfidence: input.aiConfidence ?? null,
+    salvageability: input.salvageability ?? null,
   };
   return { record, recordDigest: await contentDigest(record) };
 }

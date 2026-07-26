@@ -9974,6 +9974,10 @@
           "closeAuditHoldoutPct": {
             "type": "number",
             "nullable": true
+          },
+          "aiReviewSalvageabilityMinScore": {
+            "type": "number",
+            "nullable": true
           }
         },
         "required": [

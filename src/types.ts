@@ -1059,6 +1059,10 @@ export type RepositorySettings = {
    *  ignores the floor entirely. Config-as-code only — set via `.loopover.yml gate.aiReview.closeConfidence`
    *  (no dashboard/DB column); unset ⇒ the gate uses the 0.93 default. Clamped to [0,1] at parse time. */
   aiReviewCloseConfidence?: number | null | undefined;
+  /** #8962: 0-100 salvageability floor at/above which an at-confidence-floor AI-judgment close is held with
+   *  fix-it guidance instead ("real defect, salvageable PR"). Manifest-only (gate.aiReview.salvageabilityMinScore);
+   *  absent/null ⇒ the salvageability axis never changes a disposition. */
+  aiReviewSalvageabilityMinScore?: number | null | undefined;
   /** Disposition for a sub-floor `ai_consensus_defect`/`ai_review_split` finding (#4603) — see
    *  {@link AiReviewLowConfidenceDisposition} for the full semantics of each value. Default `"hold_for_review"`.
    *  Unlike {@link aiReviewCloseConfidence}, this IS DB-backed/dashboard-settable (via the `/ai-review` route,

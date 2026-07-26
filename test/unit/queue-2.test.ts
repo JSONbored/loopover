@@ -309,6 +309,70 @@ describe("queue processors", () => {
     expect(pr8?.state).toBe("open");
   });
 
+  it("#8962: an AT-floor defect on a salvageable PR is HELD with guidance instead of one-shot-closed; the v3 record carries the score", async () => {
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      AI: { run: async () => ({ response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) }) } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { close: "auto" }, gatePack: "oss-anti-slop" });
+    // The knob rides the MANIFEST (config-as-code only) — this exercises parse -> overlay -> policy end to end.
+    await upsertRepoFocusManifest(env, "owner/agent-repo", { settings: { checkRunMode: "off", commentMode: "off", publicSurface: "off", reviewCheckMode: "required", aiReviewMode: "block" }, gate: { aiReview: { salvageabilityMinScore: 60 } } });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 18, title: "Salvageable defect PR", state: "open", user: { login: "contributor" }, head: { sha: "d18" }, labels: [], body: "Closes #1" });
+    await upsertPullRequestFile(env, { repoFullName: "owner/agent-repo", pullNumber: 18, path: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, payload: { patch: "@@\n+export const ok = value.length;" } });
+    // Salvageability evidence: the author has two realized MERGED outcomes in this repo (+25) and the
+    // flagged defect class is mechanical (+45) => score 70 >= the manifest floor of 60.
+    for (const n of [101, 102]) {
+      await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: n, title: "landed", state: "closed", user: { login: "contributor" }, head: { sha: `m${n}` }, labels: [], body: "" });
+      await env.DB.prepare("INSERT INTO review_audit (id, project, target_id, event_type, decision, created_at) VALUES (?, 'owner/agent-repo', ?, 'pr_outcome', 'merged', ?)")
+        .bind(`ra-${n}`, `owner/agent-repo#${n}`, new Date().toISOString())
+        .run();
+    }
+    const inputFingerprint = await cachedSubFloorDefectFingerprint("Salvageable defect PR");
+    await putCachedAiReview(env, "owner/agent-repo", 18, "d18", "block", {
+      notes: "cached review",
+      reviewerCount: 2,
+      // 0.95 sits ABOVE the default 0.93 floor — without the salvageability axis this one-shot-closes.
+      findings: [{ code: "ai_consensus_defect", severity: "critical", title: "Unused import", detail: "unused import join from node:path is dead code.", confidence: 0.95 }],
+      metadata: { inputFingerprint },
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/18/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = value.length;" }]);
+      if (url.endsWith("/pulls/18") && init?.method === "PATCH") return Response.json({ number: 18, state: "closed" });
+      if (url.endsWith("/pulls/18")) return Response.json({ number: 18, title: "Salvageable defect PR", state: "open", user: { login: "contributor" }, head: { sha: "d18" }, labels: [], body: "Closes #1" });
+      if (url.includes("/commits/d18/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/d18/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.endsWith("/pulls/18/reviews") && init?.method === "POST") return Response.json({ id: 1 });
+      if (url.endsWith("/pulls/18/reviews")) return Response.json([]);
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    await sweepAndDrainPerPr(env, "owner/agent-repo");
+    // The gate still failed on the AI-judgment blocker (merge stays blocked)...
+    const blocker = await env.DB.prepare("select blocker_codes_json from gate_outcomes where repo_full_name = ? and pull_number = ? order by rowid desc limit 1").bind("owner/agent-repo", 18).first<{ blocker_codes_json: string }>();
+    expect(blocker?.blocker_codes_json).toContain("ai_consensus_defect");
+    // ...but the salvageability hold suppressed the at-floor one-shot close.
+    const closeAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and detail like ?").bind("agent.action.close", "%#18%").first<{ n: number }>();
+    expect(closeAudit?.n).toBe(0);
+    const pr18 = await getPullRequest(env, "owner/agent-repo", 18);
+    expect(pr18?.state).toBe("open");
+    // The v3 decision record carries the boundary evidence.
+    const record = await env.DB.prepare("select record_json from decision_records where repo_full_name = ? and pull_number = ?").bind("owner/agent-repo", 18).first<{ record_json: string }>();
+    const parsedRecord = JSON.parse(record!.record_json) as { schemaVersion: string; salvageability: { score: number; factors: string[] } | null };
+    expect(parsedRecord.schemaVersion).toBe("3");
+    expect(parsedRecord.salvageability?.score).toBe(70);
+    expect(parsedRecord.salvageability?.factors.join(" ")).toContain("mechanical defect class");
+  });
+
   it("#4603: the SAME sub-floor defect one-shot-closes when aiReviewLowConfidenceDisposition is explicitly one_shot", async () => {
     let aiCalls = 0;
     const env = createTestEnv({
@@ -368,7 +432,7 @@ describe("queue processors", () => {
     // decision record — the row every future calibration read keys on.
     const record = await env.DB.prepare("select record_json from decision_records where repo_full_name = 'owner/agent-repo' and pull_number = 9 order by created_at desc limit 1").first<{ record_json: string }>();
     const parsedRecord = JSON.parse(record!.record_json) as { aiConfidence: number | null; promptDigest: string | null; schemaVersion: string };
-    expect(parsedRecord.schemaVersion).toBe("2");
+    expect(parsedRecord.schemaVersion).toBe("3"); // v3 (#8962): + salvageability
     expect(parsedRecord.aiConfidence).toBe(0.3); // the cached sub-floor defect's calibrated confidence
     expect(typeof parsedRecord.promptDigest).toBe("string");
   });

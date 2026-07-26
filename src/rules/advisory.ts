@@ -60,6 +60,9 @@ export type GateCheckPolicy = {
   /** #8849: true when the floor above came from a LIVE risk-control calibration (not a static setting or the
    *  backtest loosening) — the low-confidence hold names its source so a held contributor sees why. */
   aiReviewCloseConfidenceCalibrated?: boolean | undefined;
+  /** #8962: 0-100 salvageability floor (manifest-only, gate.aiReview.salvageabilityMinScore); null/absent =
+   *  the salvageability axis is OFF and never changes a disposition. */
+  aiReviewSalvageabilityMinScore?: number | null | undefined;
   /** Disposition for a sub-floor `ai_consensus_defect`/`ai_review_split` finding (#4603) — see the type's own doc
    *  comment (`src/types.ts`) for the full semantics of `one_shot` / `hold_for_review` / `advisory_only`.
    *  `null`/undefined ⇒ `hold_for_review` (the shipped default). Only `advisory_only` changes what
@@ -247,6 +250,35 @@ export function resolveAiReviewLowConfidenceHold(
     reason: `an AI-reviewer defect finding's confidence is below the ${floorSource} (${floor})`,
     comment:
       "An AI reviewer flagged a likely defect, but its confidence was below this repository's configured close-confidence floor, so this is held for a maintainer to confirm instead of closing automatically. Resolve the flagged defect (see the review notes), or ask a maintainer to override.",
+  };
+}
+
+/**
+ * #8962 — the salvageability hold, resolveAiReviewLowConfidenceHold's sibling for the OTHER side of the
+ * floor: an AI-judgment failure whose blockers all sit AT/ABOVE the close-confidence floor (a close WOULD
+ * fire) but whose deterministic salvageability score clears the repo's `gate.aiReview.salvageabilityMinScore`
+ * manifest knob ("real defect, salvageable PR" — the residual close-error class the 2026-07 decision audit
+ * identified). Routes the close into the same held-for-manual-review path, with fix-it guidance. Returns
+ * undefined (no hold) when the knob is unset (the default — behavior byte-identical), the failure isn't
+ * AI-judgment-only, any blocker sits below the floor (the low-confidence hold owns that case and must keep
+ * precedence), or the score is under the knob. PURE — the caller computes the score.
+ */
+export function resolveAiReviewSalvageableHold(
+  evaluation: GateCheckEvaluation,
+  policy: Pick<GateCheckPolicy, "aiReviewLowConfidenceDisposition" | "aiReviewCloseConfidence" | "aiReviewSalvageabilityMinScore">,
+  salvageability: { score: number; factors: string[] } | null,
+): { reason: string; comment: string } | undefined {
+  const minScore = policy.aiReviewSalvageabilityMinScore;
+  if (minScore == null || salvageability === null) return undefined;
+  if ((policy.aiReviewLowConfidenceDisposition ?? "hold_for_review") !== "hold_for_review") return undefined;
+  if (!isAiJudgmentOnlyFailure(evaluation)) return undefined;
+  const floor = policy.aiReviewCloseConfidence ?? DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE;
+  if (evaluation.blockers.some((blocker) => (blocker.confidence ?? 1) < floor)) return undefined;
+  if (salvageability.score < minScore) return undefined;
+  return {
+    reason: `the flagged defect looks fixable and the author's record clears the salvageability floor (${salvageability.score} ≥ ${minScore}: ${salvageability.factors.join("; ")})`,
+    comment:
+      "An AI reviewer flagged a likely defect with high confidence, but this PR scored as salvageable (fixable defect class and/or a proven author track record), so it is HELD with guidance instead of closed: push a fix addressing the flagged defect and the next review cycle re-evaluates it. A maintainer can still close or merge manually at any time.",
   };
 }
 

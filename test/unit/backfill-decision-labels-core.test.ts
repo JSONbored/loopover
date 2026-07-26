@@ -115,7 +115,7 @@ describe("buildBundle", () => {
       expect(await contentDigest(record)).toBe(row.record_digest);
       expect(canonicalJson(record)).toBe(row.record_json);
       expect(record.configDigest).toBe("backfill:unavailable");
-      expect(record.schemaVersion).toBe("2");
+      expect(record.schemaVersion).toBe("3"); // v3 (#8962): + salvageability
     }
     expect(records[0]).toMatchObject({ id: "record:o/r#1@sha1", action: "close", created_at: "2026-07-01T00:00:00.000Z" });
     expect(records[1]).toMatchObject({ action: "hold" });

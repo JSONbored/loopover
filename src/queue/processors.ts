@@ -198,6 +198,7 @@ import {
   recordConfiguredGateBlockerSignals,
   recordGateScoreSignals,
   resolveAiReviewLowConfidenceHold,
+  resolveAiReviewSalvageableHold,
 } from "../rules/advisory";
 import { hasValidationNote, isTestPath } from "../signals/test-evidence";
 import { detectNotificationEvents } from "../notifications/events";
@@ -645,6 +646,7 @@ import {
   recordReversalSignals,
 } from "../review/outcomes-wire";
 import { AI_JUDGMENT_BLOCKER_CODES } from "../rules/advisory";
+import { computeSalvageabilityForTarget } from "../review/salvageability-wire";
 import { REVIEW_PROMPT_VERSION, REVIEW_SYSTEM_PROMPT } from "../services/ai-review";
 import { resolveAutomaticCloseConfidence } from "../review/risk-control-wire";
 import { maybeApplyCloseAuditHoldout } from "../review/close-audit-holdout";
@@ -3192,6 +3194,13 @@ async function runAgentMaintenancePlanAndExecute(
   // gate failed SOLELY on a sub-aiReviewCloseConfidence-floor ai_consensus_defect/ai_review_split finding under
   // the (default) hold_for_review disposition. See resolveAiReviewLowConfidenceHold's own doc comment.
   const aiReviewLowConfidenceHold = resolveAiReviewLowConfidenceHold(gate, settings);
+  // #8962 salvageability hold — the OTHER side of the floor: an at/above-floor AI-judgment close routed to
+  // hold-with-guidance when the deterministic salvageability score clears gate.aiReview.salvageabilityMinScore.
+  // Knob unset (the default) short-circuits before any IO; the low-confidence hold keeps precedence.
+  const aiReviewSalvageableHold =
+    aiReviewLowConfidenceHold === undefined && settings.aiReviewSalvageabilityMinScore != null
+      ? resolveAiReviewSalvageableHold(gate, settings, await computeSalvageabilityForTarget(env, repoFullName, pr.number, pr.authorLogin, gate))
+      : undefined;
   const planned = planAgentMaintenanceActions(
     buildAgentMaintenancePlanInput({
       gate,
@@ -3210,7 +3219,7 @@ async function runAgentMaintenancePlanAndExecute(
       linkedIssueRulesConfig,
       migrationCollisionHold,
       unlinkedIssueMatchHold,
-      aiReviewLowConfidenceHold,
+      aiReviewLowConfidenceHold: aiReviewLowConfidenceHold ?? aiReviewSalvageableHold,
       unlinkedIssueMatchClose,
       liveMergeState,
       liveReviewDecision,
@@ -3335,6 +3344,9 @@ async function runAgentMaintenancePlanAndExecute(
   // worse than recording nothing (the reviewDiagnostics ledger holds the per-run model identities).
   {
     const aiJudgment = gate.blockers.find((blocker) => AI_JUDGMENT_BLOCKER_CODES.has(blocker.code));
+    // #8962: recomputed here (two cheap reads, only when an AI judgment shaped the decision) rather than
+    // threaded from the plan site — the record must carry the boundary evidence even when the knob is off.
+    const salvageability = aiJudgment !== undefined ? await computeSalvageabilityForTarget(env, repoFullName, pr.number, pr.authorLogin, gate) : null;
     const { record, recordDigest } = await buildDecisionRecord({
       repoFullName,
       pullNumber: pr.number,
@@ -3353,6 +3365,7 @@ async function runAgentMaintenancePlanAndExecute(
       modelId: null,
       promptDigest: aiJudgment !== undefined ? await contentDigest({ version: REVIEW_PROMPT_VERSION, template: REVIEW_SYSTEM_PROMPT }) : null,
       aiConfidence: aiJudgment?.confidence ?? null,
+      salvageability,
     });
     await persistDecisionRecord(env, record, recordDigest);
   }

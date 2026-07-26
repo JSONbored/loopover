@@ -3,6 +3,7 @@ import {
   computeRuleGateEval,
   computeBlendedRuleGateEval,
   rulesBelowClosePrecisionFloor,
+  projectRulesBelowClosePrecisionFloor,
   type RuleGateEvalRow,
   type BlendedRuleGateEvalRow,
 } from "../../src/review/rule-gate-eval";
@@ -381,5 +382,70 @@ describe("rulesBelowClosePrecisionFloor (#7984, #7986's own read)", () => {
     expect(rulesBelowClosePrecisionFloor(atFloor)).toEqual([]);
     const justBelow = [blendedRow({ ruleCode: "rule_a", wouldClose: 20, weightedClosePrecision: AUTOTUNE_CLOSE_PRECISION_FLOOR - 0.01 })];
     expect(rulesBelowClosePrecisionFloor(justBelow)).toHaveLength(1);
+  });
+});
+
+function projectRow(overrides: Partial<RuleGateEvalRow> = {}): RuleGateEvalRow {
+  return {
+    project: "acme/widgets",
+    ruleCode: "rule_a",
+    wouldMerge: 0,
+    mergeConfirmed: 0,
+    mergeFalse: 0,
+    wouldClose: 0,
+    closeConfirmed: 0,
+    closeFalse: 0,
+    decided: 0,
+    mergePrecision: null,
+    closePrecision: null,
+    weightedMergeConfirmed: 0,
+    weightedCloseConfirmed: 0,
+    weightedMergePrecision: null,
+    weightedClosePrecision: null,
+    ...overrides,
+  };
+}
+
+describe("projectRulesBelowClosePrecisionFloor — per-(project, ruleCode) counterpart (#8906)", () => {
+  it("flags a rule once its sample clears AUTOTUNE_MIN_DECIDED with a below-floor weighted precision, on the SPECIFIC project it fired on", () => {
+    const rows = [
+      projectRow({ project: "acme/widgets", ruleCode: "surface_lane_reject", wouldClose: 12, closeConfirmed: 0, weightedClosePrecision: 0 }),
+    ];
+    const flagged = projectRulesBelowClosePrecisionFloor(rows, AUTOTUNE_CLOSE_PRECISION_FLOOR, AUTOTUNE_MIN_DECIDED);
+    expect(flagged).toHaveLength(1);
+    expect(flagged[0]?.project).toBe("acme/widgets");
+    expect(flagged[0]?.ruleCode).toBe("surface_lane_reject");
+  });
+
+  it("does NOT flag a rule with insufficient sample even at 0% precision, mirroring the blended fold's same floor", () => {
+    const rows = [projectRow({ ruleCode: "rare_rule", wouldClose: 3, closeConfirmed: 0, weightedClosePrecision: 0 })];
+    expect(projectRulesBelowClosePrecisionFloor(rows, AUTOTUNE_CLOSE_PRECISION_FLOOR, AUTOTUNE_MIN_DECIDED)).toEqual([]);
+  });
+
+  it("does NOT flag a healthy rule with plenty of sample and good precision", () => {
+    const rows = [projectRow({ ruleCode: "healthy_rule", wouldClose: 40, closeConfirmed: 39, weightedClosePrecision: 39 / 40 })];
+    expect(projectRulesBelowClosePrecisionFloor(rows, AUTOTUNE_CLOSE_PRECISION_FLOOR, AUTOTUNE_MIN_DECIDED)).toEqual([]);
+  });
+
+  it("does NOT flag a rule whose weightedClosePrecision is null (no decided close verdict at all)", () => {
+    const rows = [projectRow({ ruleCode: "merge_only_rule", wouldClose: 0, weightedClosePrecision: null })];
+    expect(projectRulesBelowClosePrecisionFloor(rows, AUTOTUNE_CLOSE_PRECISION_FLOOR, AUTOTUNE_MIN_DECIDED)).toEqual([]);
+  });
+
+  it("defaults floor and minDecided to the SAME constants the blended fold uses", () => {
+    const atFloor = [projectRow({ ruleCode: "rule_a", wouldClose: 20, weightedClosePrecision: AUTOTUNE_CLOSE_PRECISION_FLOOR })];
+    expect(projectRulesBelowClosePrecisionFloor(atFloor)).toEqual([]);
+    const justBelow = [projectRow({ ruleCode: "rule_a", wouldClose: 20, weightedClosePrecision: AUTOTUNE_CLOSE_PRECISION_FLOOR - 0.01 })];
+    expect(projectRulesBelowClosePrecisionFloor(justBelow)).toHaveLength(1);
+  });
+
+  it("isolates a rule broken on ONE project even when a second project's healthy rows would pool it away in the blended view", () => {
+    const rows = [
+      projectRow({ project: "acme/broken-repo", ruleCode: "shared_rule", wouldClose: 15, closeConfirmed: 0, weightedClosePrecision: 0 }),
+      projectRow({ project: "acme/healthy-repo", ruleCode: "shared_rule", wouldClose: 30, closeConfirmed: 30, weightedClosePrecision: 1 }),
+    ];
+    const flagged = projectRulesBelowClosePrecisionFloor(rows, AUTOTUNE_CLOSE_PRECISION_FLOOR, AUTOTUNE_MIN_DECIDED);
+    expect(flagged).toHaveLength(1);
+    expect(flagged[0]?.project).toBe("acme/broken-repo");
   });
 });

@@ -434,4 +434,23 @@ describe("GET /v1/internal/fleet/analytics route", () => {
     const res = await app.request("/v1/internal/fleet/analytics", {}, createTestEnv());
     expect(res.status).toBe(401);
   });
+
+  it("stores risk_control calibrations ONLY for REGISTERED senders and retracts absent arms (#8835)", async () => {
+    const db = new TestD1Database() as unknown as D1Database;
+    const flag = async () => (await (db as unknown as TestD1Database).prepare("SELECT value FROM system_flags WHERE key='riskcontrol:fleet:close'").first<{ value: string }>())?.value;
+    const send = (risk_control: unknown) =>
+      handleOrbIngest(JSON.stringify({ instance_id: "inst1", events: [{ repo_hash: "rh", pr_hash: `g${Math.random()}`, outcome: "merged" }], risk_control }), db);
+
+    // Unregistered sender: the strongest homepage claim must not be plantable via open ingest.
+    await send({ close: { alpha: 0.015, lambda: 0.94, coverageAtLambda: 0.8, nAtLambda: 200 } });
+    expect(await flag()).toBeUndefined();
+
+    await (db as unknown as TestD1Database).prepare("UPDATE orb_instances SET registered = 1 WHERE instance_id = 'inst1'").run();
+    await send({ close: { alpha: 0.015, lambda: 0.94, coverageAtLambda: 0.8, nAtLambda: 200 } });
+    expect(JSON.parse((await flag())!)).toMatchObject({ lambda: 0.94 });
+
+    // The sender stops publishing the arm → the fleet copy retracts (a stale guarantee lies).
+    await send({});
+    expect(await flag()).toBeUndefined();
+  });
 });

@@ -208,6 +208,33 @@ export async function handleOrbIngest(body: string, db: D1Database): Promise<Orb
     }
   }
 
+  // #8835: the instance's live risk-control calibrations. TRUST GATE: stored only when the sender is a
+  // REGISTERED instance — a published accuracy guarantee is the strongest claim on the homepage, and open
+  // ingest must not let a stranger plant one (same anchor computeFleetAnalytics uses). Bounded: two known
+  // arms, value stored verbatim as JSON for public-stats to render.
+  const riskControl = (payload as { risk_control?: unknown }).risk_control;
+  if (riskControl !== undefined && riskControl !== null && typeof riskControl === "object" && !Array.isArray(riskControl)) {
+    try {
+      const registeredRow = await db.prepare("SELECT registered FROM orb_instances WHERE instance_id = ?").bind(instance_id).first<{ registered: number }>();
+      if (registeredRow?.registered === 1) {
+        for (const arm of ["close", "merge"]) {
+          const value = (riskControl as Record<string, unknown>)[arm];
+          if (value !== undefined && value !== null && typeof value === "object") {
+            await db
+              .prepare(`INSERT OR REPLACE INTO system_flags (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)`)
+              .bind(`riskcontrol:fleet:${arm}`, JSON.stringify(value).slice(0, 2000))
+              .run();
+          } else {
+            // The sender no longer publishes this arm — retract the fleet copy too (stale guarantees lie).
+            await db.prepare(`DELETE FROM system_flags WHERE key = ?`).bind(`riskcontrol:fleet:${arm}`).run();
+          }
+        }
+      }
+    } catch {
+      // best-effort — a calibration hiccup must never fail the outcome batch
+    }
+  }
+
   // #8820: day-bucketed reuse counters (optional field; older builds omit it). Every row is
   // whitelist-validated (strict YYYY-MM-DD day, clamped non-negative counts) and upserted on
   // (instance_id, day) — the sender re-exports a rolling window each tick, so REPLACE keeps the freshest

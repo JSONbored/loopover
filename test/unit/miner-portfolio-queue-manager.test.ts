@@ -30,6 +30,18 @@ describe("normalizePortfolioCaps() (#4285)", () => {
     });
     expect(normalizePortfolioCaps()).toEqual({ globalWipCap: 0, perRepoWipCap: 0 });
   });
+
+  it("preserves an explicit Infinity cap as uncapped, not collapsed to 0 (#8861)", () => {
+    // The engine's nextEligibleItems reads globalWipCap: 0 as a full-exclusion cap; collapsing Infinity to 0
+    // here would silently exclude everything. Infinity must survive as "uncapped" (the engine-side behavior is
+    // pinned in test/unit/portfolio-queue.test.ts).
+    expect(normalizePortfolioCaps({ globalWipCap: Number.POSITIVE_INFINITY, perRepoWipCap: 3 })).toEqual({
+      globalWipCap: Number.POSITIVE_INFINITY,
+      perRepoWipCap: 3,
+    });
+    // A finite/absent cap is still coerced exactly as before.
+    expect(normalizePortfolioCaps({ globalWipCap: 4.9, perRepoWipCap: -2 })).toEqual({ globalWipCap: 4, perRepoWipCap: 0 });
+  });
 });
 
 describe("entriesToPortfolioQueue() / selectEligibleBatch() (#4285)", () => {
@@ -84,6 +96,18 @@ describe("entriesToPortfolioQueue() / selectEligibleBatch() (#4285)", () => {
     expect(() => parseQueueItemId("::acme/widgets::issue:7")).toThrow("invalid_queue_item_id");
     expect(() => parseQueueItemId("https://api.github.com::acme/widgets::")).toThrow("invalid_queue_item_id");
     expect(() => parseQueueItemId("https://api.github.com::::issue:7")).toThrow("invalid_queue_item_id");
+  });
+
+  it("queueItemId/parseQueueItemId round-trip an identifier that does NOT contain the '::' separator (#8857)", () => {
+    const id = queueItemId("https://api.github.com", "acme/widgets", "issue:5");
+    expect(parseQueueItemId(id)).toEqual({ apiBaseUrl: "https://api.github.com", repoFullName: "acme/widgets", identifier: "issue:5" });
+  });
+
+  it("rejects an identifier containing the '::' separator at enqueue time, preventing silent id corruption (#8857)", () => {
+    const manager = memoryManager({ globalWipCap: 4, perRepoWipCap: 2 });
+    expect(() => manager.enqueue({ repoFullName: "acme/widgets", identifier: "issue::5", apiBaseUrl: "https://api.github.com" })).toThrow("invalid_identifier");
+    // A single-colon identifier is still accepted — the invariant only forbids the "::" join sequence itself.
+    expect(manager.enqueue({ repoFullName: "acme/widgets", identifier: "issue:5", apiBaseUrl: "https://api.github.com" }).identifier).toBe("issue:5");
   });
 
   it("entriesToPortfolioQueue falls back to the github.com default when a row's apiBaseUrl is missing (#5563)", () => {

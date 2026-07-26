@@ -57,6 +57,9 @@ function normalizeItem(item: PortfolioQueueItem): PortfolioQueueItem {
 }
 
 function finiteNonNegativeInt(value: number): number {
+  // Infinity means "uncapped" (this codebase's own convention -- portfolio-queue-cli.ts documents it), NOT
+  // "collapse to 0", which would make nextEligibleItems return [] for globalWipCap: Infinity (#8861).
+  if (value === Number.POSITIVE_INFINITY) return Number.POSITIVE_INFINITY;
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.trunc(value));
 }

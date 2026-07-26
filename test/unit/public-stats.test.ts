@@ -219,6 +219,7 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
       instanceCount: 0,
       windowDays: 90,
       gamingFlagsCaught: 0,
+      guaranteed: { close: null, merge: null },
     });
   });
 
@@ -827,5 +828,22 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     expect(out.totals.handled).toBe(0);
     expect(out.byProject).toEqual([]);
     expect(out.weekly).toEqual({ reviewed: 0, merged: 0 });
+  });
+});
+
+describe("fleetAccuracy.guaranteed (#8835)", () => {
+  it("publishes a live per-arm guarantee from the fleet flags; malformed or absent flags read null (fail-open)", async () => {
+    const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "" });
+    await env.DB.prepare(`INSERT INTO system_flags (key, value) VALUES ('riskcontrol:fleet:close', ?)`)
+      .bind(JSON.stringify({ alpha: 0.015, lambda: 0.94, coverageAtLambda: 0.82, nAtLambda: 240 }))
+      .run();
+    await env.DB.prepare(`INSERT INTO system_flags (key, value) VALUES ('riskcontrol:fleet:merge', '{broken')`).run();
+    const out = await getPublicStats(env, NOW);
+    expect(out.fleetAccuracy.guaranteed.close).toEqual({ alpha: 0.015, lambda: 0.94, coveragePct: 82, n: 240 });
+    expect(out.fleetAccuracy.guaranteed.merge).toBeNull();
+    // A structurally-wrong flag (missing fields) also reads null rather than publishing garbage.
+    await env.DB.prepare(`UPDATE system_flags SET value = '{"alpha":"high"}' WHERE key = 'riskcontrol:fleet:close'`).run();
+    const again = await getPublicStats(env, NOW);
+    expect(again.fleetAccuracy.guaranteed.close).toBeNull();
   });
 });

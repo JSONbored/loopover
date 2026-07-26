@@ -113,6 +113,11 @@ function normalizeIdentifier(identifier: unknown): string {
   if (typeof identifier !== "string") throw new Error("invalid_identifier");
   const trimmed = identifier.trim();
   if (!trimmed) throw new Error("invalid_identifier");
+  // portfolio-queue-manager's composite queueItemId joins apiBaseUrl/repoFullName/identifier on "::"
+  // (ITEM_ID_SEPARATOR). repoFullName is "::"-free by isValidRepoSegment, but identifier had no such guard: an
+  // identifier containing "::" would silently corrupt the parsed apiBaseUrl/repoFullName/identifier triple.
+  // Reject it at construction rather than encode-and-hope (#8857).
+  if (trimmed.includes("::")) throw new Error("invalid_identifier");
   return trimmed;
 }
 

@@ -256,6 +256,10 @@ export interface PublicStatsPayload {
     coveragePct: number | null;
     /** merge + close verdicts behind accuracyPct — the denominator a reader needs to judge the claim. */
     decidedCount: number;
+    /** #8835: the live finite-sample guarantees, per arm, when a registered instance publishes one —
+     *  "P(wrong | acted) ≤ alpha at coveragePct" with the certification's own sample size. Null arms mean no
+     *  guarantee is currently live (insufficient labels, or the instrument retracted it). */
+    guaranteed: { close: { alpha: number; lambda: number; coveragePct: number; n: number } | null; merge: { alpha: number; lambda: number; coveragePct: number; n: number } | null };
     instanceCount: number;
     windowDays: number;
     /** Self-hosted instances currently flagged by computeFleetAnalytics's anti-farming detector
@@ -448,6 +452,21 @@ export async function getPublicStats(
   // for an empty fleet.
   const fleetAccuracyPct =
     fleet.fleet.decisionAccuracy === null ? null : Math.round(fleet.fleet.decisionAccuracy * 1000) / 10;
+  // #8835: live per-arm guarantees, published by a REGISTERED instance's risk-control calibration and
+  // stored by ingest under riskcontrol:fleet:<arm>. Fail-open null — a flags blip hides the guarantee
+  // rather than fabricating or freezing one.
+  const readGuarantee = async (arm: string): Promise<{ alpha: number; lambda: number; coveragePct: number; n: number } | null> => {
+    try {
+      const row = await env.DB.prepare("SELECT value FROM system_flags WHERE key = ?").bind(`riskcontrol:fleet:${arm}`).first<{ value: string }>();
+      if (!row?.value) return null;
+      const parsed = JSON.parse(row.value) as { alpha?: unknown; lambda?: unknown; coverageAtLambda?: unknown; nAtLambda?: unknown };
+      if (typeof parsed.alpha !== "number" || typeof parsed.lambda !== "number" || typeof parsed.coverageAtLambda !== "number" || typeof parsed.nAtLambda !== "number") return null;
+      return { alpha: parsed.alpha, lambda: parsed.lambda, coveragePct: Math.round(parsed.coverageAtLambda * 1000) / 10, n: parsed.nAtLambda };
+    } catch {
+      return null;
+    }
+  };
+  const guaranteed = { close: await readGuarantee("close"), merge: await readGuarantee("merge") };
   // #8829: intervals/coverage come from the POOLED counts (a median cannot carry a sample size); with one
   // registered instance — the fleet today — pooled and median views coincide exactly.
   const pooled = fleet.fleet.pooled;
@@ -491,6 +510,7 @@ export async function getPublicStats(
       closePrecisionCiPct: ciPct(pooled.closeConfirmed, pooled.closeVerdicts),
       coveragePct: pooled.coverage === null ? null : pct(pooled.coverage),
       decidedCount: pooledVerdicts,
+      guaranteed,
       instanceCount: fleet.instanceCount,
       windowDays: fleet.windowDays,
       gamingFlagsCaught: fleet.gamingPatternFlags.length,

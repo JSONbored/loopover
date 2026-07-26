@@ -155,6 +155,7 @@ import { requestAprRepoTransfer } from "../orb/apr-repo-transfer";
 import { handleOrbIngest, readOrbIngestBody } from "../orb/ingest";
 import { handleAmsIngest } from "../ams/ingest";
 import { handleOrbWebhook } from "../orb/webhook";
+import { backfillOrbInstallations } from "../orb/installations";
 import { handleOrbOAuthCallback } from "../orb/oauth";
 import {
   brokerOrbToken,
@@ -1986,15 +1987,44 @@ export function createApp() {
     // longer prunes itself (see its own doc comment) precisely so a 500-installation fan-out below can't turn
     // into 500 redundant global TTL-prune scans/deletes against the shared orb_relay_pending table.
     await pruneRelayPending(c.env);
-    await Promise.all(installationIds.map((installationId) => enqueueConfigPushRelay(c.env, installationId, payload)));
+    // #8880: isolate each per-installation enqueue. A bare Promise.all let one target's throw abort the whole
+    // fan-out -- the audit event AND the response for the other ~499 installations were silently dropped, and
+    // there was no route-level try/catch to salvage them. Catch each target's failure inside its own fan-out
+    // task (mirroring pollPendingAprRepoTransfers' per-item isolation in src/orb/apr-repo-transfer.ts) so one
+    // bad row can't sink the batch, audit each failure so it is never silently swallowed, and still report the
+    // successful targets plus the partial failure to the caller.
+    const settled = await Promise.all(
+      installationIds.map(async (installationId): Promise<{ installationId: number; error?: string }> => {
+        try {
+          await enqueueConfigPushRelay(c.env, installationId, payload);
+          return { installationId };
+        } catch (error) {
+          return { installationId, error: errorMessage(error) };
+        }
+      }),
+    );
+    const failedInstallationIds: number[] = [];
+    for (const result of settled) {
+      if (result.error !== undefined) {
+        failedInstallationIds.push(result.installationId);
+        await recordAuditEvent(c.env, {
+          eventType: "operator.config_push_target_failed",
+          actor: identity.actor,
+          targetKey: `config_push#${parsed.data.pushId}#${result.installationId}`,
+          outcome: "error",
+          metadata: { installationId: result.installationId, pushId: parsed.data.pushId, message: result.error },
+        });
+      }
+    }
+    const succeededCount = installationIds.length - failedInstallationIds.length;
     await recordAuditEvent(c.env, {
       eventType: "operator.config_push_enqueued",
       actor: identity.actor,
       targetKey: `config_push#${parsed.data.pushId}`,
-      outcome: "completed",
-      metadata: { installationCount: installationIds.length, capability: payload.capability ?? null },
+      outcome: failedInstallationIds.length > 0 ? "error" : "completed",
+      metadata: { installationCount: installationIds.length, succeededCount, failedCount: failedInstallationIds.length, capability: payload.capability ?? null },
     });
-    return c.json({ ok: true, pushId: parsed.data.pushId, installationCount: installationIds.length });
+    return c.json({ ok: true, pushId: parsed.data.pushId, installationCount: installationIds.length, succeededCount, failedInstallationIds });
   });
 
   // #5672 post-merge incident report, internal-operator side: same reporting path as the repo-scoped customer
@@ -4512,6 +4542,15 @@ export function createApp() {
     return c.json({ installationId, registered: registered === 1 });
   });
 
+  // Operator-triggered reconciliation of the installation registry against GitHub's authoritative install list —
+  // recovers installs whose `installation` webhook fired before the receiver's secret was configured (so they were
+  // never recorded). Upserts each install WITHOUT touching `registered`, so a re-run never re-trusts an opted-out
+  // install and new rows land at registered=0 (the manual-onboarding gate). Bearer-gated by the `/v1/internal/*`
+  // middleware (INTERNAL_JOB_TOKEN). Returns { backfilled } — the count of installs GitHub reported.
+  app.post("/v1/internal/orb/installations/backfill", async (c) => {
+    return c.json(await backfillOrbInstallations(c.env));
+  });
+
   // Operator-only: issue a one-time token-broker enrollment secret for a REGISTERED install, to hand to that
   // maintainer's self-hosted container. The secret is returned ONCE (stored only hashed). Bearer-gated by the
   // /v1/internal/* middleware (INTERNAL_JOB_TOKEN); flag-gated (404 until ORB_BROKER_ENABLED).
@@ -4714,6 +4753,33 @@ export function createApp() {
 
   app.post("/v1/internal/jobs/refresh-registry/run", async (c) => {
     return c.json(await refreshRegistry(c.env));
+  });
+
+  // Operator-only manual re-gate trigger (#8898): enqueue an `agent-regate-pr` job with `force: true` for one
+  // repo+PR. This is the FIRST production producer of that job's `force` field (threaded through
+  // src/queue/job-dispatch.ts into regatePullRequest) -- every scheduled/webhook producer leaves it unset, so
+  // the force plumbing (a fresh AI opinion that bypasses the durable review cache and the non-cacheable-reuse
+  // cooldown) was built and tested but unreachable from any real caller until now. Bearer-gated by the
+  // `/v1/internal/*` middleware (INTERNAL_JOB_TOKEN). 400s a missing/blank repo or a non-positive-integer PR
+  // number; 404s a repo with no known installation (nothing to authenticate the re-gate against).
+  app.post("/v1/internal/jobs/regate-pr", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { repoFullName?: unknown; prNumber?: unknown };
+    const repoFullName = typeof body?.repoFullName === "string" ? body.repoFullName.trim() : "";
+    if (!repoFullName) return c.json({ error: "repoFullName required" }, 400);
+    const prNumber = Number(body?.prNumber);
+    if (!Number.isInteger(prNumber) || prNumber <= 0) return c.json({ error: "prNumber required" }, 400);
+    const repo = await getRepository(c.env, repoFullName);
+    if (typeof repo?.installationId !== "number") return c.json({ error: "repo not installed" }, 404);
+    const message: JobMessage = {
+      type: "agent-regate-pr",
+      deliveryId: `manual-regate:${crypto.randomUUID()}`,
+      repoFullName: repo.fullName,
+      prNumber,
+      installationId: repo.installationId,
+      force: true,
+    };
+    await c.env.JOBS.send(message);
+    return c.json({ ok: true, status: "queued", repoFullName: repo.fullName, prNumber, force: true }, 202);
   });
 
   app.post("/v1/internal/jobs/backfill-registered-repos", async (c) => {

@@ -360,7 +360,11 @@ async function runIterateLoopCore(input: IterateLoopInput, deps: IterateLoopDeps
   // reject), silently permitting one extra iteration beyond the caller's intent. Normalizing once here keeps
   // both checks watching the exact same integer ceiling.
   const maxIterations = Math.max(0, Math.trunc(input.maxIterations));
-  if (maxIterations <= 0) return immediateAbandonNoIterationsPermitted(input, deps);
+  // Number.isFinite rejects NaN/Infinity before the `<= 0` check: Math.trunc(NaN) is NaN (and NaN <= 0 is
+  // false), and Infinity passes `<= 0` too, so without this a NaN input would skip the guard and fall through
+  // to the "unreachable in practice" fail-closed fallback with a corrupted iterationsUsed: NaN, while Infinity
+  // would let the `for` loop run without its own bound ever terminating it (#8860).
+  if (!Number.isFinite(maxIterations) || maxIterations <= 0) return immediateAbandonNoIterationsPermitted(input, deps);
 
   safeAppendAttemptLogEvent(deps, {
     eventType: "attempt_started",

@@ -62,8 +62,10 @@ For provider selection and the CLI-specific model/timeout overrides, see
      worktree-allocator.sqlite3    # git-worktree-per-attempt allocation bookkeeping (#4297)
      prediction-ledger.sqlite3     # predicted-gate verdicts, for later self-improve scoring (#4263)
      replay-snapshot.sqlite3       # frozen historical-replay target snapshots (#3010)
+     contribution-profile-cache.sqlite3  # per-repo contribution-profile extraction cache (#6797)
      policy-doc-cache.sqlite3      # ETag cache for discovery's policy-doc fetches (#4842)
      policy-verdict-cache.sqlite3  # cache of resolved AI-usage-policy verdicts (#4843)
+     ranked-candidates.sqlite3     # last-discover-run ranked-candidates snapshot (#4859)
      deny-hook-synthesis.sqlite3   # synthesized PreToolUse deny-hook proposals (#4522)
      orb-export.sqlite3            # opt-in anonymized Orb telemetry export state (#4277)
    ```
@@ -117,7 +119,7 @@ docker run --rm -it \
   -e LOOPOVER_MINER_CONFIG_DIR=/data/miner \
   -e GITHUB_TOKEN_FILE=/run/secrets/github_token \
   -v miner-data:/data/miner \
-  -v /path/to/your/secret:/run/secrets/github_token:ro \
+  -v /path/to/your/token-file:/run/secrets/github_token:ro \
   loopover-miner:latest \
   doctor
 ```
@@ -211,7 +213,7 @@ and `LOOPOVER_MINER_CONFIG_DIR` are covered above under the fleet/state notes; t
 | Variable | Read by | Purpose |
 | --- | --- | --- |
 | `LOOPOVER_MINER_AMS_POLICY_PATH` | `dist/lib/ams-policy.js` | Path to the operator's `.loopover-ams.yml` policy spec. |
-| `LOOPOVER_MINER_AMS_COLLECTOR_URL`, `LOOPOVER_MINER_AMS_COLLECTOR_TOKEN` | `dist/lib/orb-export.js` | Endpoint + bearer for pushing fleet state to an AMS/Orb collector. |
+| `LOOPOVER_MINER_AMS_COLLECTOR_URL`, `LOOPOVER_MINER_AMS_COLLECTOR_TOKEN` | `dist/lib/orb-export.js` | Collector endpoint and auth token for pushing fleet state to an AMS/Orb collector. |
 | `LOOPOVER_MINER_CHAT_ACTIONS` | `dist/lib/chat-action-dispatch.js` | Truthy string enables the chat-action-dispatch flag (off by default). |
 | `LOOPOVER_MINER_LEDGER_RETENTION_DAYS`, `LOOPOVER_MINER_LEDGER_RETENTION_MAX_ROWS` | `dist/lib/store-maintenance.js` | Opt-in ledger retention window / row cap. |
 | `LOOPOVER_MINER_LOG_LEVEL` | `dist/lib/logger.js` | Log verbosity override. |
@@ -231,7 +233,7 @@ The Phase 6 **hosted discovery-index** is **off by default** — unlike Orb flee
 | --- | --- | --- |
 | `LOOPOVER_MINER_DISCOVERY_PLANE` | `dist/lib/discovery-index-client.js` | Master opt-in (truthy string, off by default). No hosted discovery-index traffic or telemetry unless set. |
 | `LOOPOVER_MINER_DISCOVERY_INDEX_URL` | `dist/lib/discovery-index-client.js` | Base URL of the hosted discovery-index service. Required for the plane to do anything once enabled. |
-| `LOOPOVER_MINER_DISCOVERY_SHARED_SECRET` | `dist/lib/discovery-index-client.js` | Optional bearer secret for the hosted endpoint, if it requires one. |
+| `LOOPOVER_MINER_DISCOVERY_SHARED_SECRET` | `dist/lib/discovery-index-client.js` | Optional shared auth value for the hosted endpoint, if it requires one. |
 | `LOOPOVER_MINER_DISCOVERY_TELEMETRY` | `dist/lib/discovery-index-client.js` | Second, independent opt-in for anonymized operational telemetry — can stay off while the plane itself is queried/claimed against. |
 
 See [`docs/discovery-plane-operator-guide.md`](docs/discovery-plane-operator-guide.md) for the full invariant list (metadata-only, no compensation signals, credentials stay local).
@@ -244,4 +246,4 @@ The `loopover-miner tenant` command group (create/list/destroy) provisions hoste
 | --- | --- | --- |
 | `LOOPOVER_MINER_CONTROL_PLANE` | `dist/lib/tenant-client.js` | Master opt-in (truthy string, off by default). No tenant admin traffic is possible unless set. |
 | `LOOPOVER_MINER_CONTROL_PLANE_URL` | `dist/lib/tenant-client.js` | Base URL of the hosted control-plane provisioning API. Required once the plane is enabled. |
-| `LOOPOVER_MINER_CONTROL_PLANE_ADMIN_TOKEN` | `dist/lib/tenant-client.js` | Bearer admin credential for the provisioning API — distinct from any tenant's own per-instance secrets. Required once the plane is enabled. |
+| `LOOPOVER_MINER_CONTROL_PLANE_ADMIN_TOKEN` | `dist/lib/tenant-client.js` | Admin API auth token for the provisioning API — distinct from any tenant's own per-instance credentials. Required once the plane is enabled. |

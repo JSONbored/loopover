@@ -140,6 +140,32 @@ describe("pruneExpiredRecords", () => {
     const rows = await env.DB.prepare("SELECT delivery_id FROM webhook_events").all<{ delivery_id: string }>();
     expect(rows.results.map((row) => row.delivery_id)).toEqual(["wh-recent"]);
   });
+
+  it("prunes notification_deliveries older than 90d and keeps recent rows (#8899)", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare(
+      `INSERT INTO notification_deliveries
+        (id, dedup_key, channel, recipient_login, event_type, repo_full_name, title, body, deeplink, status, created_at)
+       VALUES
+         ('nd-old-1', 'd1', 'email', 'alice', 'issue_watch_match', 'acme/widgets', 't', 'b', 'https://x', 'delivered', ?),
+         ('nd-old-2', 'd2', 'email', 'alice', 'issue_watch_match', 'acme/widgets', 't', 'b', 'https://x', 'delivered', ?),
+         ('nd-recent', 'd3', 'email', 'alice', 'issue_watch_match', 'acme/widgets', 't', 'b', 'https://x', 'delivered', ?)`,
+    )
+      .bind(daysAgo(100), daysAgo(95), daysAgo(1))
+      .run();
+
+    expect(RETENTION_POLICY.some((rule) => rule.table === "notification_deliveries" && rule.column === "created_at" && rule.days === 90)).toBe(
+      true,
+    );
+
+    const results = await pruneExpiredRecords(env, {
+      nowMs: NOW,
+      policy: [{ table: "notification_deliveries", column: "created_at", days: 90 }],
+    });
+    expect(results[0]?.deleted).toBe(2);
+    const rows = await env.DB.prepare("SELECT id FROM notification_deliveries").all<{ id: string }>();
+    expect(rows.results.map((row) => row.id)).toEqual(["nd-recent"]);
+  });
 });
 
 describe("dedupeSignalSnapshots", () => {
@@ -199,6 +225,39 @@ describe("dedupeSignalSnapshots", () => {
     expect(ids).not.toContain("contributor-strategy-old");
     expect(ids).toContain("pack-1"); // series preserved
     expect(ids).toContain("pack-2");
+  });
+
+  it("dedupes the eight latest-only signal types added in #8900 to one row per repo", async () => {
+    const env = createTestEnv();
+    const types = [
+      "config-quality",
+      "label-audit",
+      "maintainer-lane",
+      "maintainer-cut-readiness",
+      "contributor-intake-health",
+      "issue-quality",
+      "repo-outcome-patterns",
+      "pr-reviewability",
+    ] as const;
+    for (const signalType of types) {
+      await insertSignalSnapshot(env, `${signalType}-old`, signalType, "JSONbored/loopover", "2026-07-01T00:00:00.000Z");
+      await insertSignalSnapshot(env, `${signalType}-mid`, signalType, "JSONbored/loopover", "2026-07-02T00:00:00.000Z");
+      await insertSignalSnapshot(env, `${signalType}-new`, signalType, "JSONbored/loopover", "2026-07-03T00:00:00.000Z");
+      await insertSignalSnapshot(env, `${signalType}-other`, signalType, "other/repo", "2026-07-03T00:00:00.000Z");
+    }
+
+    const results = await dedupeSignalSnapshots(env);
+    const byType = Object.fromEntries(results.map((r) => [r.signalType, r.deleted]));
+    for (const signalType of types) {
+      expect(byType[signalType]).toBe(2); // old + mid deleted; new kept; other/repo untouched
+      expect(await countSignalSnapshots(env, signalType)).toBe(2); // latest for loopover + other/repo
+    }
+    const remaining = await env.DB.prepare("SELECT id FROM signal_snapshots ORDER BY id").all<{ id: string }>();
+    const ids = (remaining.results ?? []).map((row) => row.id);
+    expect(ids).toContain("pr-reviewability-new");
+    expect(ids).toContain("pr-reviewability-other");
+    expect(ids).not.toContain("pr-reviewability-old");
+    expect(ids).not.toContain("pr-reviewability-mid");
   });
 
   it("dedupes private and public focus-manifest cache snapshots (regression for storage exhaustion)", async () => {

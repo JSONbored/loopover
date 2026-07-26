@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildContributorEvidenceGraph,
   CONTRIBUTOR_EVIDENCE_GRAPH_MAX_LABELS,
+  CONTRIBUTOR_EVIDENCE_GRAPH_MAX_OUTCOMES,
   CONTRIBUTOR_EVIDENCE_GRAPH_MAX_PATHS,
   CONTRIBUTOR_EVIDENCE_GRAPH_MAX_REPOS,
   evidenceGraphTouchedRepoFullNames,
@@ -473,6 +474,30 @@ describe("contributor evidence graph", () => {
     expect(graphA.warnings).toEqual(
       expect.arrayContaining([expect.stringContaining("repo relationships capped"), expect.stringContaining("label relationships capped"), expect.stringContaining("path relationships capped")]),
     );
+  });
+
+  it("warns when outcome relationships exceed the max-outcomes cap (#8887)", () => {
+    const repoFullName = "owner/outcomes-cap";
+    // Multiple outcome rows for one included repo — buildOutcomeEdges does not dedupe by repo, so the
+    // outcomes slice can exceed MAX_OUTCOMES even when repos stay under MAX_REPOS.
+    const manyOutcomes = Array.from({ length: CONTRIBUTOR_EVIDENCE_GRAPH_MAX_OUTCOMES + 1 }, (_, index) =>
+      outcome(repoFullName, { pullRequests: index + 1, openPullRequests: 1, lane: index % 2 === 0 ? "direct_pr" : "issue_linked" }),
+    );
+    const graph = buildContributorEvidenceGraph({
+      login: "dev",
+      generatedAt: GENERATED_AT,
+      profile: profile({
+        registeredRepoActivity: { pullRequests: 1, mergedPullRequests: 0, issues: 0, reposTouched: [repoFullName], dominantLabels: [] },
+      }),
+      outcomeHistory: history(manyOutcomes),
+      roleContexts: [role(repoFullName)],
+      repositories: [repo(repoFullName)],
+      pullRequests: [pr(repoFullName, 1)],
+      pullRequestFiles: [],
+    });
+
+    expect(graph.outcomes).toHaveLength(CONTRIBUTOR_EVIDENCE_GRAPH_MAX_OUTCOMES);
+    expect(graph.warnings).toEqual(expect.arrayContaining([expect.stringContaining("outcome relationships capped")]));
   });
 
   it("selects only registered touched repos for bounded path-cache loading", () => {

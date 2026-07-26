@@ -1138,6 +1138,35 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
     expect(audit?.detail).toContain("contributor");
   });
 
+  it("#8801: a FAILED close records outcome 'error' with the failure named — never a false 'completed' (the #2260 contract)", async () => {
+    const calls: Array<{ url: string; method: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      calls.push({ url, method });
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.endsWith("/issues/42/comments") && method === "POST") return Response.json({ id: 1 }, { status: 201 });
+      // The close PATCH fails transiently — the exact scenario the audit trail used to lie about.
+      if (url.endsWith("/pulls/42") && method === "PATCH") return new Response("boom", { status: 502 });
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
+    await setupRepo(env);
+    await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
+
+    // No author login on the stored PR — the detail's "unknown" fallback arm is exercised on the failure path.
+    const payload = draftPayload("contributor");
+    payload.pull_request.user = undefined;
+    await processJob(env, { type: "github-webhook", deliveryId: "draft-dodge-fail", eventName: "pull_request", payload });
+
+    expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(true); // the close WAS attempted
+    const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("github_app.draft_dodge_closed").first<{ outcome: string; detail: string }>();
+    expect(audit?.outcome).toBe("error");
+    expect(audit?.detail).toContain("FAILED to close draft-dodge attempt by unknown");
+    expect(audit?.detail).toContain("the PR may still be open");
+  });
+
   it("does NOT draft-dodge close when live PR state has moved since the webhook was received (#2130)", async () => {
     const calls: Array<{ url: string; method: string }> = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {

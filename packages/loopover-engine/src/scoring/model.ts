@@ -8,6 +8,11 @@ import type { ScoringModelSnapshotRecord } from "./types.js";
 
 export const DEFAULT_ISSUE_DISCOVERY_SHARE = 0.5;
 
+// Upstream weights test-file tokens at 0.05× relative to source tokens (#808). Exported as a strongly-typed
+// named constant so non-snapshot callers (local-scorer.ts) can weight their own totals without indexing the
+// `Record<string, number>` map — keeping the value single-sourced with DEFAULT_SCORING_CONSTANTS below.
+export const TEST_FILE_CONTRIBUTION_WEIGHT = 0.05;
+
 export const DEFAULT_SCORING_CONSTANTS: Record<string, number> = {
   OSS_EMISSION_SHARE: 0.9,
   // Upstream name is ISSUES_TREASURY_EMISSION_SHARE (plural). The prior singular spelling never matched
@@ -21,7 +26,7 @@ export const DEFAULT_SCORING_CONSTANTS: Record<string, number> = {
   MAX_CONTRIBUTION_BONUS: 5,
   CONTRIBUTION_SCORE_FOR_FULL_BONUS: 1500,
   // Applied in preview.ts when computing totalTokenScore from components (#808).
-  TEST_FILE_CONTRIBUTION_WEIGHT: 0.05,
+  TEST_FILE_CONTRIBUTION_WEIGHT,
   // Upstream-enforced eligibility floors for PR and issue-discovery history (#808).
   // These gate whether a validator counts a contributor's submissions, not the per-PR/issue score itself.
   // Stored here so they sync from upstream and no longer appear as unmodeled drift warnings.

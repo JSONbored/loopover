@@ -9,6 +9,7 @@
 // moving the large, Node-coupled local-branch.ts; they are structurally identical to local-branch.ts's
 // definitions. isCodeFile/isTestPath are the same portable classifiers local-branch.ts already delegates to.
 
+import { TEST_FILE_CONTRIBUTION_WEIGHT } from "./scoring/model.js";
 import { isCodeFile, isTestPath } from "./signals/test-evidence.js";
 
 export type LocalScorerChangedFile = {
@@ -50,8 +51,13 @@ export function computeLocalScorerTokens(input: { changedFiles: LocalScorerChang
   const files = input.changedFiles.filter((file) => !file.binary);
   const testTokenScore = files.filter((file) => isTestPath(file.path)).reduce((sum, file) => sum + fileLines(file), 0);
   const sourceTokenScore = files.filter((file) => isCodeFile(file.path)).reduce((sum, file) => sum + fileLines(file), 0);
-  const totalTokenScore = files.reduce((sum, file) => sum + fileLines(file), 0);
-  const nonCodeTokenScore = Math.max(0, totalTokenScore - sourceTokenScore - testTokenScore);
+  const rawLineTotal = files.reduce((sum, file) => sum + fileLines(file), 0);
+  const nonCodeTokenScore = Math.max(0, rawLineTotal - sourceTokenScore - testTokenScore);
+  // #8875: weight test-file tokens with TEST_FILE_CONTRIBUTION_WEIGHT (0.05×) so this total mirrors
+  // buildScorePreview's `derivedTotalTokenScore`. Emitting a raw unweighted line sum here let a caller feed it
+  // back into the preview as an explicit `totalTokenScore`, which bypasses the test-file discount preview applies
+  // when it derives the total itself — over-counting a test-heavy diff's test lines in the contribution-bonus ramp.
+  const totalTokenScore = sourceTokenScore + TEST_FILE_CONTRIBUTION_WEIGHT * testTokenScore + nonCodeTokenScore;
   const failed = (input.validation ?? []).some((entry) => entry.status === "failed");
   const warnings = failed ? ["Local validation reported failures — token scores describe the diff, not a passing build."] : [];
   return {

@@ -20,7 +20,7 @@ test("classifies source / test / non-code disjointly from changed-file metadata"
   assert.equal(r.sourceTokenScore, 12);
   assert.equal(r.testTokenScore, 6);
   assert.equal(r.nonCodeTokenScore, 4);
-  assert.equal(r.totalTokenScore, 22);
+  assert.equal(r.totalTokenScore, 16.3); // #8875: 12 source + 0.05 × 6 test + 4 non-code
   assert.equal(r.warnings, undefined);
 });
 

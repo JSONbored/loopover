@@ -5094,7 +5094,7 @@ export async function getLatestPublishedAiReview(
 ): Promise<{ notes: string; reviewerCount: number; findings: AdvisoryFinding[]; headSha?: string | undefined; metadata?: Record<string, unknown> | undefined } | null> {
   const row = await env.DB
     .prepare(
-      "SELECT notes, reviewer_count AS reviewerCount, head_sha AS headSha, findings_json AS findingsJson, metadata_json AS metadataJson FROM ai_review_cache WHERE repo_full_name = ? AND pull_number = ? AND ai_review_mode = ? AND published_at IS NOT NULL ORDER BY published_at DESC LIMIT 1",
+      "SELECT notes, reviewer_count AS reviewerCount, head_sha AS headSha, findings_json AS findingsJson, metadata_json AS metadataJson FROM ai_review_cache WHERE repo_full_name = ? AND pull_number = ? AND ai_review_mode = ? AND published_at IS NOT NULL ORDER BY published_at DESC, rowid DESC LIMIT 1",
     )
     .bind(repoFullName, pullNumber, mode)
     .first<{ notes: string; reviewerCount: number; headSha: string; findingsJson: string | null; metadataJson: string | null }>();

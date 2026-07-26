@@ -94,6 +94,8 @@ test("budget cap: the termination ceiling denies with a kill_switch eventType (h
   );
   assert.equal(decision.stage, "budget_cap");
   assert.equal(decision.ledgerEvent.eventType, "kill_switch");
+  // eventType (not stage) drives ledger decision — termination is a kill_switch, so "paused" (#8864)
+  assert.equal(decision.ledgerEvent.decision, "paused");
 });
 
 test("non-convergence: a stuck item denies before reputation/self-plagiarism run", () => {

@@ -130,7 +130,9 @@ function denyResult(input: {
       eventType: input.eventType,
       repoFullName: input.repoFullName,
       actionClass: input.actionClass,
-      decision: input.stage === "kill_switch" ? "paused" : input.eventType === "throttled" ? "throttle" : "deny",
+      // Key off eventType, not stage: budget-cap termination fires stage "budget_cap" with
+      // eventType "kill_switch" and must still ledger as "paused" (#8864).
+      decision: input.eventType === "kill_switch" ? "paused" : input.eventType === "throttled" ? "throttle" : "deny",
       reason: input.reason,
       payload: { stage: input.stage, ...input.extraPayload },
     },

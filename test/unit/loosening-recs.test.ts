@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSatisfactionFloorLooseningRecs, LOOSENING_REC_PROJECT } from "../../src/review/loosening-recs";
+import { buildSatisfactionFloorLooseningRecs, buildTrackRecordRecs, LOOSENING_REC_PROJECT } from "../../src/review/loosening-recs";
 import type { SatisfactionFloorLooseningProposal } from "../../src/services/satisfaction-floor-loosening";
 
 function proposal(overrides: Partial<SatisfactionFloorLooseningProposal> = {}): SatisfactionFloorLooseningProposal {
@@ -69,5 +69,61 @@ describe("buildSatisfactionFloorLooseningRecs (#8160)", () => {
     const appliedOnly = buildSatisfactionFloorLooseningRecs({ flagEnabled: true, proposal: null, lastAppliedAt: "2026-07-23T05:00:00.000Z" });
     expect(appliedOnly).toHaveLength(1);
     expect(appliedOnly[0]!.severity).toBe("info");
+  });
+});
+
+describe("buildTrackRecordRecs (#8763)", () => {
+  function record(over: Partial<import("@loopover/engine").RegressedVerdictTrackRecord> = {}) {
+    return {
+      totalRuns: 0,
+      regressedRuns: 0,
+      regressedRate: null,
+      perRule: new Map(),
+      ...over,
+    } as import("@loopover/engine").RegressedVerdictTrackRecord;
+  }
+
+  it("returns [] for an empty track record — most ticks have no runs and must not add a noise line", () => {
+    expect(buildTrackRecordRecs(record())).toEqual([]);
+  });
+
+  it("renders an all-clean record as a good-severity line with the 0.000 rate and the per-rule breakdown", () => {
+    const recs = buildTrackRecordRecs(
+      record({
+        totalRuns: 3,
+        regressedRuns: 0,
+        regressedRate: 0,
+        perRule: new Map([["linked_issue_scope_mismatch", { total: 3, regressed: 0, improved: 2, unchanged: 1 }]]),
+      }),
+    );
+    expect(recs).toHaveLength(1);
+    expect(recs[0]!.project).toBe("global:backtest_track_record");
+    expect(recs[0]!.severity).toBe("good");
+    expect(recs[0]!.message).toContain("3 run(s), 0 REGRESSED (rate 0.000)");
+    expect(recs[0]!.message).toContain("linked_issue_scope_mismatch total=3 regressed=0 improved=2 unchanged=1");
+    expect(recs[0]!.overridePayload).toBeUndefined();
+  });
+
+  it("renders a regressed record as info severity, joining more than one rule's breakdown", () => {
+    const recs = buildTrackRecordRecs(
+      record({
+        totalRuns: 4,
+        regressedRuns: 1,
+        regressedRate: 0.25,
+        perRule: new Map([
+          ["ai_consensus_defect", { total: 2, regressed: 1, improved: 1, unchanged: 0 }],
+          ["linked_issue_scope_mismatch", { total: 2, regressed: 0, improved: 0, unchanged: 2 }],
+        ]),
+      }),
+    );
+    expect(recs[0]!.severity).toBe("info");
+    expect(recs[0]!.message).toContain("1 REGRESSED (rate 0.250)");
+    expect(recs[0]!.message).toContain("ai_consensus_defect total=2 regressed=1");
+    expect(recs[0]!.message).toContain("; linked_issue_scope_mismatch total=2");
+  });
+
+  it("renders a null rate (defensive: non-empty record built by a caller without runs counted) as N/A", () => {
+    const recs = buildTrackRecordRecs(record({ totalRuns: 1, regressedRuns: 0, regressedRate: null, perRule: new Map([["x", { total: 1, regressed: 0, improved: 1, unchanged: 0 }]]) }));
+    expect(recs[0]!.message).toContain("rate N/A");
   });
 });

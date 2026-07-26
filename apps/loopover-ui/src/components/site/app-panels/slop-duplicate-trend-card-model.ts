@@ -45,13 +45,18 @@ export function trendHasAnySignal(weeks: SlopDuplicateTrendWeek[]): boolean {
   return seriesHasSignal(weeks, "slop") || seriesHasSignal(weeks, "duplicate");
 }
 
+/** Latest week bearing a signal for ONE series. The two rates are independently nullable, so each
+ *  legend must resolve its own latest week — a single shared "any signal" lookup would let one
+ *  series' null in the newest signal-bearing week hide an older real value for the other (#8667). */
 export function latestWeekWithSignal(
   weeks: SlopDuplicateTrendWeek[],
+  series: "slop" | "duplicate",
 ): SlopDuplicateTrendWeek | null {
   for (let index = weeks.length - 1; index >= 0; index -= 1) {
     const week = weeks[index];
     if (!week) continue;
-    if (week.slopFlagRatePct !== null || week.duplicateFlagRatePct !== null) return week;
+    const value = series === "slop" ? week.slopFlagRatePct : week.duplicateFlagRatePct;
+    if (value !== null) return week;
   }
   return null;
 }

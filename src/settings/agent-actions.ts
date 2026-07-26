@@ -407,6 +407,15 @@ export type AgentActionPlanInput = {
   // held-for-review state so a maintainer can act on the signal their installed app raised. Each entry names the
   // triggering check/app/conclusion so the hold reason (and the manual-review label's comment) is actionable.
   advisoryCheckHold?: ReadonlyArray<{ name: string; appSlug: string; conclusion: string }> | undefined;
+  // Non-required failing checks/statuses (#8758, the #8711 silent-stall fix). The CI aggregate's
+  // nonRequiredFailingDetails: red checks that are neither branch-protection-required nor declared advisory —
+  // they never feed ciState or a close, but GitHub folds them into mergeable_state "unstable", which suppresses
+  // the merge below (mergeableClean requires "clean"). Pre-#8758 nothing else accounted for that state: approve
+  // still fired ("gate satisfied, CI green"), the ready-to-merge label landed, and the only record of WHY the
+  // merge never came was an internal audit row. Threaded here purely to NAME the culprit check(s) in the
+  // unstable hold's reason/comment; the hold itself keys on pr.mergeableState, not on this list (an unstable
+  // state whose source the aggregate couldn't itemize still holds, with generic wording).
+  nonRequiredCheckFailures?: ReadonlyArray<{ name: string; summary?: string | undefined; detailsUrl?: string | undefined }> | undefined;
   // Unlinked-issue guardrail (#unlinked-issue-guardrail, credibility-gate-farming defense). The trigger
   // (runAgentMaintenancePlanAndExecute) has already run the deterministic pre-filter + AI verification for a
   // PR that links NO issue -- this input is already the resolved "yes, hold this merge" verdict (or absent,
@@ -728,6 +737,24 @@ function advisoryHoldComment(holds: ReadonlyArray<{ name: string; appSlug: strin
   return `Held for manual review: a maintainer-configured advisory check-run reported a non-passing result — ${parts.join("; ")}. This does not block CI, but a maintainer should review it. This is an automated maintenance action.`;
 }
 
+// #8758: name the non-required check(s) behind a GitHub "unstable" mergeable state, for the hold reason (audit)
+// and the public comment. Check names are already public on the PR's own Checks tab, so interpolating them is
+// safe; summaries/URLs are deliberately NOT interpolated (same public-safe-comment posture as advisoryHoldComment).
+// Falls back to generic wording when the CI aggregate couldn't itemize the source (the hold keys on
+// mergeable_state itself, never on this list being non-empty).
+function mergeUnstableHoldReason(failures: ReadonlyArray<{ name: string }> | undefined): string {
+  const names = (failures ?? []).map((f) => `"${f.name}"`);
+  return names.length > 0
+    ? `mergeable_state is unstable — non-required check(s) not passing: ${names.join("; ")}`
+    : "mergeable_state is unstable — a non-required check or status is not passing";
+}
+
+function mergeUnstableHoldComment(failures: ReadonlyArray<{ name: string }> | undefined): string {
+  const names = (failures ?? []).map((f) => `\`${f.name}\``);
+  const culprit = names.length > 0 ? ` — ${names.join(", ")} —` : "";
+  return `Held for manual review: the gate and required CI are green, but GitHub reports this pull request's mergeable state as \`unstable\` because a non-required check or status${culprit} is not passing, so LoopOver will not auto-merge. A maintainer can resolve the failing check or review and merge manually. This is an automated maintenance action.`;
+}
+
 /**
  * Plan best-effort assignment of the PR's opening contributor (#3182), independent of merge/close/CI outcome.
  * MUST run before the CI-pending settle-before-decide return below (#assign-before-ci-pending) — a PR that has
@@ -993,11 +1020,23 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // would silently MERGE straight through the escalation instead of being held. When `close` IS acting, the
   // dedicated close branch below handles it and this term is redundant (harmless: both paths agree the PR
   // must not silently merge).
+  // Unstable mergeable state (#8758, the #8711 silent-stall fix): GitHub reports "unstable" when every REQUIRED
+  // check is green but some non-required check/status is not — exactly the state where canMerge below
+  // self-suppresses (mergeableClean requires "clean") while, pre-#8758, nothing else held, labeled, or explained.
+  // Folding it into heldForManualReview downgrades the would-approve/would-merge into the SAME loud
+  // held-for-review disposition every other merge-suppressing hold gets: no approve claiming "gate satisfied",
+  // no ready-to-merge label, and a manual-review label + comment naming the culprit check. Deliberately ONLY
+  // "unstable": "dirty" is the close path (isConflict), "behind" belongs to the rebase rail, and
+  // "blocked"/"unknown"/absent stay approvable (the approval itself can be the unblocking act — see the approve
+  // block's own doc comment — and a transient null must not spray hold labels). Every consumer that acts on this
+  // flag is conjoined with reviewGood, so a red-CI/failed-gate PR's close is never softened by this term.
+  const mergeableStateUnstable = input.pr.mergeableState === "unstable";
   const heldForManualReview =
     guardrailHit ||
     input.migrationCollisionHold !== undefined ||
     input.unlinkedIssueMatchHold !== undefined ||
     (input.advisoryCheckHold !== undefined && input.advisoryCheckHold.length > 0) ||
+    mergeableStateUnstable ||
     (input.unlinkedIssueMatchClose !== undefined && !acting("close"));
   const labels = resolveAgentDispositionLabels(input);
   // Canonical (reviewbot non-content-gate) policy, tuned to the operator's minimize-manual goal: merge-or-close
@@ -1156,6 +1195,22 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     });
   }
 
+  // 1f) unstable-mergeable-state manual-review fallback (#8758): mirrors 1d. When the dedicated
+  // review_state_label class isn't acting but merge is, a would-merge suppressed ONLY by GitHub's "unstable"
+  // mergeable state must still surface a visible hold — label + comment naming the non-required check —
+  // instead of the silent stall #8711 hit (approve posted, merge never planned, nothing on the PR saying why).
+  if (reviewGood && mergeableStateUnstable && !acting("review_state_label") && labels.manualReview !== null && acting("merge") && !hasLabelOrPlanned(input.pr.labels, actions, labels.manualReview)) {
+    actions.push({
+      actionClass: "label",
+      autonomyClass: "merge",
+      requiresApproval: approval("merge"),
+      reason: `verdict=${conclusion}; ${mergeUnstableHoldReason(input.nonRequiredCheckFailures)}`,
+      label: labels.manualReview,
+      labelOp: "add",
+      comment: sanitizePublicComment(mergeUnstableHoldComment(input.nonRequiredCheckFailures)),
+    });
+  }
+
   // 2) review_state_label (#label-scoping) — ready-to-merge (review-good, unguarded) / manual-review
   // (review-good but guarded) / changes-requested (not review-good → will be closed for a contributor, held for
   // the owner). A pending linked-issue hard-rule close (flag OR close pass) forces the changes-requested label
@@ -1189,9 +1244,11 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
                 ? `verdict=${conclusion}; ${input.unlinkedIssueMatchClose.reason}`
                 : input.advisoryCheckHold !== undefined && input.advisoryCheckHold.length > 0
                   ? `verdict=${conclusion}; ${advisoryHoldReason(input.advisoryCheckHold)}`
-                  : heldForManualReview
-                    ? `verdict=${conclusion}; ${guardrailReason}`
-                    : `verdict=${conclusion}; CI green`;
+                  : mergeableStateUnstable
+                    ? `verdict=${conclusion}; ${mergeUnstableHoldReason(input.nonRequiredCheckFailures)}`
+                    : heldForManualReview
+                      ? `verdict=${conclusion}; ${guardrailReason}`
+                      : `verdict=${conclusion}; CI green`;
     if (label !== null && !hasLabelOrPlanned(input.pr.labels, actions, label)) {
       actions.push({
         actionClass: "label",
@@ -1212,7 +1269,9 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
               ? { comment: sanitizePublicComment(input.unlinkedIssueMatchClose.comment) }
               : !linkedIssueCloseInFlight && !unlinkedIssueMatchViolated && reviewGood && input.advisoryCheckHold !== undefined && input.advisoryCheckHold.length > 0
                 ? { comment: sanitizePublicComment(advisoryHoldComment(input.advisoryCheckHold)) }
-                : {}),
+                : !linkedIssueCloseInFlight && !unlinkedIssueMatchViolated && reviewGood && mergeableStateUnstable
+                  ? { comment: sanitizePublicComment(mergeUnstableHoldComment(input.nonRequiredCheckFailures)) }
+                  : {}),
       });
     }
     // Stale disposition-label cleanup (#stale-disposition-label-cleanup): the review-state labels below
@@ -1285,7 +1344,10 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // Never APPROVE a base-conflicting PR: it is closed below (willClose on isConflict), so a "LoopOver approves —
   // safe to merge" review on a PR we're about to close is incoherent (and a stale approval strands the PR if it
   // later goes green). A `behind`/`blocked` PR is fine to approve (it is rebased pre-review or the approval clears
-  // the block); only a hard `dirty` conflict is excluded here. (#ready-needs-mergeable, the #4220 report) */
+  // the block); only a hard `dirty` conflict is excluded here. (#ready-needs-mergeable, the #4220 report)
+  // An `unstable` PR is excluded too, via heldForManualReview's mergeableStateUnstable term (#8758): the merge
+  // below would self-suppress on it, and approve firing while merge silently never comes was exactly #8711's
+  // "approved, labeled ready, never merged, nobody told" incident. */
   if (reviewGood && !heldForManualReview && !linkedIssueCloseInFlight && !isConflict && acting("approve") && input.pr.reviewDecision !== "APPROVED" && !alreadyApprovedThisHead) {
     actions.push({
       actionClass: "approve",

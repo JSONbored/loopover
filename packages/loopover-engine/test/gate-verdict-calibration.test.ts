@@ -602,6 +602,40 @@ test("computeGateVerdictCompositeCalibrationScore falls back to objective-only w
   assert.equal(result.compositeScore, 0.4);
 });
 
+test("computeGateVerdictCompositeCalibrationScore normalizes invalid weights to the default blend, not an objective-only collapse (#8643)", () => {
+  const objectiveAnchor = scoreObjectiveAnchor({
+    replayed: { paths: ["src/review/a.ts"], labels: ["feature"] },
+    revealed: { paths: ["src/review/b.ts"], labels: ["feature"] },
+  });
+  const pairwise = computePairwiseCalibrationScore({
+    objectiveAnchor,
+    samples: [{ attempts: [{ replayFirst: "replay_better", revealedFirst: "revealed_better" }] }],
+  });
+  const result = computeGateVerdictCompositeCalibrationScore({
+    objectiveAnchor,
+    pairwise,
+    gateVerdicts: [
+      {
+        repoFullName: "JSONbored/Loopover",
+        replayRunId: "replay-7",
+        gateRunId: "gate-7",
+        optedIn: true,
+        dimensions: [
+          { dimension: "correctness", outcome: "pass" },
+          { dimension: "tests", outcome: "warn" },
+        ],
+      },
+    ],
+    weights: { objectiveAnchor: Number.NaN, pairwiseJudge: -1, structuredGateVerdict: -1 },
+  });
+
+  // NaN/negative weights (with real pairwise + structured scores present) recover to the documented default
+  // 45/35/20 blend -- NOT a 100%-objective-anchor collapse, matching pairwise-calibration.ts's distinction.
+  assert.equal(pairwise.pairwiseJudgeScore, 1);
+  assert.equal(result.structuredGateVerdictScore, 0.75);
+  assert.deepEqual(result.weights, { objectiveAnchor: 0.45, pairwiseJudge: 0.35, structuredGateVerdict: 0.2 });
+});
+
 test("computeGateVerdictCompositeCalibrationScore preserves a malformed-repo (invalid_repo) rejected row instead of dropping it (#6170)", () => {
   const result = computeGateVerdictCompositeCalibrationScore({
     objectiveAnchor: 0.5,

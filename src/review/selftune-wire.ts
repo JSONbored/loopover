@@ -34,14 +34,16 @@
 //   side, so the advisor can only raise the floor) reaches the live gate with no risk of loosening it. Flag-OFF
 //   (default) the override is never read and settings are byte-identical. (See applySelfTuneOverrideToSettings.)
 
-import { listRepositories } from "../db/repositories";
+import { listAuditEventsByType, listRepositories } from "../db/repositories";
+import { computeRegressedVerdictTrackRecord, type BacktestComparison, type RegressedVerdictTrackRecord } from "@loopover/engine";
+import { THRESHOLD_BACKTEST_EVENT_TYPE } from "../services/threshold-backtest-run";
 import { isAgentConfigured } from "../settings/autonomy";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { buildRepoOutcomeCalibration } from "../services/outcome-calibration";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { errorMessage } from "../utils/json";
 import { computeTuningRecommendations, type GateEvalReport, type GateEvalRow } from "./auto-tune";
-import { buildKnobReliabilityRecs, buildReportOnlyKnobRecs, buildSatisfactionFloorLooseningRecs } from "./loosening-recs";
+import { buildKnobReliabilityRecs, buildReportOnlyKnobRecs, buildSatisfactionFloorLooseningRecs, buildTrackRecordRecs } from "./loosening-recs";
 import { loadReportOnlyKnobProposals, loadSatisfactionFloorRecState } from "../services/satisfaction-floor-loosening-run";
 import { loadLiveKnobStatuses } from "../services/knob-loosening-run";
 import { runAutoApplyRecommendations, type StorageEnv } from "./auto-apply";
@@ -149,6 +151,37 @@ async function selfTuneRepos(env: Env): Promise<string[]> {
  * Caller MUST gate this on {@link isSelfTuneEnabled}: it is invoked only from the flag-ON cron path, so flag-OFF
  * this function is never reached and the cron does ZERO new work.
  */
+/** The persisted-run event types the track-record rollup reads (#8763) — the same three
+ *  scripts/backtest-track-record.ts queries. THRESHOLD_BACKTEST_EVENT_TYPE is imported for real (its writer
+ *  is Worker-side); the logic + counterfactual literals are hand-mirrored from their scripts-side writers
+ *  (LOGIC_BACKTEST_EVENT_TYPE in scripts/backtest-logic-check-core.ts, COUNTERFACTUAL_BACKTEST_EVENT_TYPE in
+ *  scripts/counterfactual-replay-core.ts) and must be kept in sync by hand — scripts are deliberately not
+ *  importable from Worker code, the same posture the CLI takes toward this module in the other direction. */
+const BACKTEST_RUN_EVENT_TYPES: readonly string[] = [THRESHOLD_BACKTEST_EVENT_TYPE, "calibration.logic_backtest_run", "calibration.counterfactual_backtest_run"];
+
+/**
+ * Aggregate every persisted advisory-backtest run into the REGRESSED-verdict track record (#8763) — the
+ * cron-side sibling of scripts/backtest-track-record.ts, reading the same rows through the repository layer
+ * instead of wrangler, with the same metadata.comparison extraction and the same pure engine aggregator.
+ * Fail-open PER EVENT TYPE: one unreadable type degrades to fewer comparisons (the tick's rec line simply
+ * reflects less evidence), never breaks the self-tune pass.
+ */
+export async function loadBacktestTrackRecord(env: Env): Promise<RegressedVerdictTrackRecord> {
+  const comparisons: BacktestComparison[] = [];
+  for (const eventType of BACKTEST_RUN_EVENT_TYPES) {
+    try {
+      const rows = await listAuditEventsByType(env, eventType, new Date(0).toISOString());
+      for (const row of rows) {
+        const comparison = (row.metadata as { comparison?: BacktestComparison }).comparison;
+        if (comparison && typeof comparison === "object" && typeof comparison.ruleId === "string") comparisons.push(comparison);
+      }
+    } catch {
+      // Degrade to fewer comparisons — report-only surface, never worth failing the tick over.
+    }
+  }
+  return computeRegressedVerdictTrackRecord(comparisons);
+}
+
 export async function runSelfTune(env: Env): Promise<void> {
   try {
     const repos = await selfTuneRepos(env);
@@ -169,6 +202,10 @@ export async function runSelfTune(env: Env): Promise<void> {
           recs.push(...buildReportOnlyKnobRecs(await loadReportOnlyKnobProposals(env, nowMs)));
           // #8227: the curve-derived view beside the ladder, one line per live knob with a differing suggestion.
           recs.push(...buildKnobReliabilityRecs(await loadLiveKnobStatuses(env)));
+          // #8763: the REGRESSED-verdict track record beside the knob recs — the same rollup the
+          // backtest-track-record CLI prints, computed from the persisted advisory-backtest runs, so the
+          // maintainer sees #8105's decision evidence every tick without remembering to run the CLI.
+          recs.push(...buildTrackRecordRecs(await loadBacktestTrackRecord(env)));
         }
         // runAutoApplyRecommendations only ever consumes recs that carry a TIGHTENING overridePayload, shadow-
         // soaks them, and promotes a soaked override only when isStrictlyTightening + evidence + soak pass.

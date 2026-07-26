@@ -11,6 +11,7 @@ import {
   normalizeSinceInput,
   normalizeSkippedPrAuditExport,
   pullRequestHref,
+  skipReasonTone,
 } from "@/components/site/audit-feed-model";
 import { AuditFeed } from "@/components/site/audit-feed";
 
@@ -70,6 +71,21 @@ describe("audit feed helpers", () => {
     );
   });
 
+  it("maps the enumerated skip reasons to their tones and degrades an unrecognized reason to the neutral info tone, never ready", () => {
+    // The four enumerated reasons keep their existing tones.
+    expect(skipReasonTone("bot_author")).toBe("info");
+    expect(skipReasonTone("not_official_gittensor_miner")).toBe("info");
+    expect(skipReasonTone("surface_off")).toBe("warn");
+    expect(skipReasonTone("maintainer_author")).toBe("warn");
+    expect(skipReasonTone("miner_detection_unavailable")).toBe("degraded");
+    expect(skipReasonTone("missing_author")).toBe("degraded");
+    // An unrecognized/legacy reason string must degrade to the neutral pill (the
+    // contributor-quality-table-model `band: string` convention), not the green "ready" tone.
+    expect(skipReasonTone("legacy_skip_reason")).toBe("info");
+    expect(skipReasonTone("legacy_skip_reason")).not.toBe("ready");
+    expect(skipReasonTone("")).toBe("info");
+  });
+
   it("normalizes since input without throwing on invalid dates", () => {
     expect(normalizeSinceInput("")).toBe("");
     expect(normalizeSinceInput("   ")).toBe("");
@@ -119,6 +135,29 @@ describe("AuditFeed", () => {
       "https://api.test/v1/app/skipped-pr-audit?limit=50&offset=0",
       expect.objectContaining({ credentials: "include" }),
     );
+  });
+
+  it("renders an unrecognized skip reason as a neutral info pill, not the green ready tone", async () => {
+    apiFetch.mockResolvedValue({
+      ok: true,
+      data: {
+        ...SAMPLE,
+        items: [
+          {
+            repoFullName: "repo-owner/owned-repo",
+            pullNumber: 6,
+            reason: "legacy_skip_reason",
+            timestamp: "2026-05-28T00:00:04.000Z",
+            remediation: "Contact support to reclassify this legacy skip.",
+          },
+        ],
+      },
+    });
+    render(<AuditFeed />);
+    const pill = await screen.findByText("legacy skip reason");
+    // "info" tone (text-mint), never the "ready" tone (text-success) that implies a healthy state.
+    expect(pill.className).toContain("text-mint");
+    expect(pill.className).not.toContain("text-success");
   });
 
   it("wraps the audit table in a keyboard-focusable, labelled scroll region with a caption and column-scoped headers (#794 a11y pattern)", async () => {

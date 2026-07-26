@@ -157,6 +157,11 @@ services:
       # Uncomment for Ollama AI (--profile ollama):
       # AI_PROVIDER: ollama
       # OLLAMA_AI_BASE_URL: http://ollama:11434/v1
+      # RAG needs an EMBED-capable endpoint (#8765): with LOOPOVER_REVIEW_RAG=true and a CLI-only review
+      # chain (AI_PROVIDER=claude-code / codex), the two lines below are REQUIRED or the index never
+      # populates — CLI-subscription providers cannot embed. See .env.example's AI_EMBED section.
+      # AI_EMBED_BASE_URL: http://ollama:11434/v1
+      # AI_EMBED_MODEL: bge-m3
       # BROKERED mode — use the central LoopOver Orb App instead of creating your own GitHub App. Install the
       # Orb App on your repos + set ORB_ENROLLMENT_SECRET in .env (loaded above); the engine then brokers
       # short-lived GitHub tokens from the Orb on demand (no own App private key). See .env.example.
@@ -927,9 +932,7 @@ services:
       # check lives in entrypoint below. Runtime still fails closed unless the operator sets GRAFANA_ADMIN_PASSWORD.
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-${GRAFANA_LOCAL_SMOKE_PASSWORD:-}}
       GF_USERS_ALLOW_SIGN_UP: "false"
-      # grafana-sentry-datasource (#5369): first-party Grafana Labs plugin, confirmed Grafana-signed and
-      # installs cleanly on this pinned Grafana version (verified live, not assumed).
-      GF_INSTALL_PLUGINS: frser-sqlite-datasource,grafana-github-datasource,grafana-sentry-datasource
+      GF_INSTALL_PLUGINS: frser-sqlite-datasource,grafana-github-datasource
       # Read-only fine-grained PAT for the GitHub data source provisioning ($GITHUB_TOKEN expansion). From .env.
       GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
     deploy:

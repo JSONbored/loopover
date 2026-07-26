@@ -39,7 +39,10 @@ export type PublicStats = {
     closePrecisionCiPct?: { lo: number; hi: number } | null;
     coveragePct?: number | null;
     decidedCount?: number;
-    guaranteed?: { close: { alpha: number; lambda: number; coveragePct: number; n: number } | null; merge: { alpha: number; lambda: number; coveragePct: number; n: number } | null };
+    guaranteed?: {
+      close: { alpha: number; lambda: number; coveragePct: number; n: number } | null;
+      merge: { alpha: number; lambda: number; coveragePct: number; n: number } | null;
+    };
     instanceCount: number;
     windowDays: number;
     gamingFlagsCaught: number;

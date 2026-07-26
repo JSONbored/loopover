@@ -75,10 +75,19 @@ describe("KNOWN_MIGRATION_DUPLICATES (#2550)", () => {
   it("stays byte-identical to scripts/check-migrations.ts's grandfathered list", () => {
     // A drift here would mean the CI script and the live premerge recheck disagree about what's grandfathered
     // — this pins the exact set so a future addition to one side without the other is caught immediately.
-    expect([...KNOWN_MIGRATION_DUPLICATES.keys()].sort((a, b) => a - b)).toEqual([15, 17, 74, 90, 156]);
-    expect(KNOWN_MIGRATION_DUPLICATES.get(90)).toEqual(new Set(["0090_contributor_cap_label.sql", "0090_pull_request_detail_sync_head_sha.sql"]));
+    expect([...KNOWN_MIGRATION_DUPLICATES.keys()].sort((a, b) => a - b)).toEqual([15, 17, 74, 156]);
     expect(KNOWN_MIGRATION_DUPLICATES.get(156)).toEqual(
       new Set(["0156_draft_pr_close_policy.sql", "0156_pull_request_screenshot_table_presence_satisfied.sql"]),
     );
+  });
+
+  it("no longer grandfathers migration 90 — only 0090_contributor_cap_label.sql exists there (#8897)", () => {
+    // 0090_pull_request_detail_sync_head_sha.sql was renumbered to 0092, so 0090 is a single-file number now.
+    expect(KNOWN_MIGRATION_DUPLICATES.has(90)).toBe(false);
+    // detectMigrationCollisions is unaffected: a single real file at 0090 is not a collision, with or without a
+    // grandfather entry (the guard only consults the list when files.length > 1).
+    expect(detectMigrationCollisions(["0090_contributor_cap_label.sql"], KNOWN_MIGRATION_DUPLICATES)).toEqual([]);
+    // And the renumbered file at its new number is likewise a lone, non-colliding entry.
+    expect(detectMigrationCollisions(["0092_pull_request_detail_sync_head_sha.sql"], KNOWN_MIGRATION_DUPLICATES)).toEqual([]);
   });
 });

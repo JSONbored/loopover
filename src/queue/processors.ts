@@ -13478,6 +13478,10 @@ async function maybeProcessGenerateTestsCommand(env: Env, deliveryId: string, pa
     await recordGenerateTestsSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "cached_pr_missing");
     return true;
   }
+  if (pr.state !== "open") {
+    await recordGenerateTestsSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "pr_not_open");
+    return true;
+  }
   const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "generate-tests" as LoopOverMentionCommandName, settings, pr, needsMinerDetection: true });
   if (!authorization.authorized) {
     await recordAuditEvent(env, { eventType: "github_app.e2e_tests_generation_denied", actor: req.actor, targetKey, outcome: "denied", detail: authorization.reason, metadata: { deliveryId, repoFullName: req.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "generate-tests") } });
@@ -14206,6 +14210,10 @@ async function maybeProcessPrPanelGenerateTests(
   ]);
   if (!pr) {
     await recordGenerateTestsSkip(env, deliveryId, repoFullName, targetKey, actor, "cached_pr_missing");
+    return true;
+  }
+  if (pr.state !== "open") {
+    await recordGenerateTestsSkip(env, deliveryId, repoFullName, targetKey, actor, "pr_not_open");
     return true;
   }
 

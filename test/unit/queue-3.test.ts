@@ -4490,6 +4490,45 @@ describe("queue processors", () => {
     expect(seen.labels).not.toContain("new-account");
   });
 
+  it("account-age throttle (#8687 issue path): falls back to the default 'new-account' label when settings omit newAccountLabel", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", issues: "write" }, events: ["issues"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      autonomy: { close: "auto", review_state_label: "auto" },
+    });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { accountAgeThresholdDays: 30 } });
+    // The DB default normally always populates newAccountLabel; strip it at the one settings-resolution seam so
+    // the issue-side call site's `?? "new-account"` fallback (previously a bare non-null assertion that would
+    // have labeled with `undefined`) is exercised end-to-end, matching the already-correct PR-side twins.
+    const original = repositorySettingsModule.resolveRepositorySettings;
+    const settingsSpy = vi.spyOn(repositorySettingsModule, "resolveRepositorySettings").mockImplementation(async (e, r) => {
+      const resolved = { ...(await original(e, r)) };
+      delete resolved.newAccountLabel;
+      return resolved;
+    });
+    const seen = { labels: [] as string[], closed: false };
+    vi.stubGlobal("fetch", stubIssueAccountAgeFetch(62, new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(), seen));
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "account-age-issue-default-label-8687",
+      eventName: "issues",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 62, title: "Newbie's issue", state: "open", user: { login: "newbie" }, labels: [], body: "x" },
+      },
+    });
+
+    expect(seen.labels).toContain("new-account");
+    settingsSpy.mockRestore();
+  });
+
   it("account-age throttle (#2561 issue path): the repo OWNER's own issue is never labeled even on a brand-new account", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertInstallation(env, {

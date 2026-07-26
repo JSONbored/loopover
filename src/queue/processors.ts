@@ -6739,7 +6739,10 @@ async function handleIssueWebhookEvent(
               installationId,
               payload.repository.full_name,
               issue.number,
-              issueSettings.newAccountLabel!,
+              // #8687: mirror the PR-side twins (processors.ts:2765,3123) -- degrade to the "new-account"
+              // default rather than a bare non-null assertion, so a settings source that omits the field
+              // (e.g. a manifest overlay) labels consistently across the issue and PR paths.
+              issueSettings.newAccountLabel ?? "new-account",
               { createMissingLabel: issueSettings.createMissingLabel, mode: newAccountMode },
             ).catch(
               /* v8 ignore next -- fail-safe: a label-application failure must never block the rest of the handler */

@@ -206,7 +206,13 @@ describe("ProofOfPowerStats", () => {
       durationMs: 1,
       data: {
         ...PAYLOAD,
-        fleetAccuracy: { accuracyPct: 80, coveragePct: 64.3, instanceCount: 3, windowDays: 90, gamingFlagsCaught: 2 },
+        fleetAccuracy: {
+          accuracyPct: 80,
+          coveragePct: 64.3,
+          instanceCount: 3,
+          windowDays: 90,
+          gamingFlagsCaught: 2,
+        },
       },
     });
     renderWithClient(<ProofOfPowerStats />);

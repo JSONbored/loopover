@@ -919,3 +919,8 @@ export { generateAnonSecret, hmacAnonymize } from "./telemetry/anonymize.js";
 // Pure PR-target-key parser (#4882) -- parses `"<owner>/<repo>#<number>"` into its parts; extracted so the
 // D1-heavy repositories access layer no longer carries this stranded pure logic.
 export { parsePullRequestTargetKey } from "./parse-pull-request-target-key.js";
+
+// Local-branch scenario-input safety guard (#8884) -- shared by the backend scenario-input model and the
+// loopover-mcp production local-branch collector so both enforce the same forbidden-source-upload-key /
+// oversized-content, metadata-only contract on the real collection path.
+export { assertScenarioLocalBranchInputSafe } from "./scenario-input-safety.js";

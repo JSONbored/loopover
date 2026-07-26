@@ -5077,9 +5077,18 @@ export async function getLatestAdvisoryForPullRequest(env: Env, repoFullName: st
  *  sweep tick, while a stale non-cacheable row still correctly falls through to a fresh call.
  *
  *  A PUBLISHED row (`published_at` set by markAiReviewPublished, once the review actually reached the PR) skips
- *  the `maxAgeMs` staleness check entirely: the cooldown exists to bound reuse BEFORE the first publish (e.g. two
+ *  the `maxAgeMs` staleness check: the cooldown exists to bound reuse BEFORE the first publish (e.g. two
  *  overlapping sweep passes racing the same head), not to force a periodic re-run of an already-surfaced verdict
- *  for the SAME head+fingerprint — see the migration's doc comment for the production incident this closes. */
+ *  for the SAME head+fingerprint — see the migration's doc comment for the production incident this closes.
+ *
+ *  #9019: that publish exemption does NOT extend to a row whose own verdict was INCONCLUSIVE
+ *  (`metadata.inconclusive` — a provider outage, a consensus-disputed roll). `cacheable=0` conflates two
+ *  unrelated things: a dynamic review context (grounding/RAG), where the verdict is conclusive but simply not
+ *  durable across time, and a genuinely inconclusive verdict. Only the latter must stay retryable: without this,
+ *  a transient outage verdict was FINAL for that head once surfaced — the bot never retried, contradicting the
+ *  finding's own "re-evaluates on the next update" text, while a green PR gave the contributor no reason to push
+ *  the commit that would force one. The #2119 anti-churn incident the exemption exists for concerned
+ *  dynamic-context rows, which keep it. */
 export async function getCachedAiReview(
   env: Env,
   repoFullName: string,
@@ -5095,14 +5104,15 @@ export async function getCachedAiReview(
     .bind(repoFullName, pullNumber, headSha)
     .first<{ notes: string; reviewerCount: number; mode: string; findingsJson: string | null; metadataJson: string | null; cacheable: number; publishedAt: string | null; createdAt: string }>();
   if (!row || row.mode !== mode) return null;
+  const metadata = parseJson<Record<string, unknown>>(row.metadataJson, {});
   if (row.cacheable !== 1) {
     if (!options?.allowNonCacheable) return null;
-    if (row.publishedAt == null) {
+    // Published rows skip the cooldown UNLESS the verdict itself was inconclusive (#9019, see above).
+    if (row.publishedAt == null || metadata.inconclusive === true) {
       const ageMs = Date.now() - Date.parse(row.createdAt);
       if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > (options.maxAgeMs ?? 0)) return null;
     }
   }
-  const metadata = parseJson<Record<string, unknown>>(row.metadataJson, {});
   if (
     expectedInputFingerprint !== undefined &&
     metadata.inputFingerprint !== expectedInputFingerprint
@@ -5179,22 +5189,38 @@ export async function getLatestPublishedAiReview(
   repoFullName: string,
   pullNumber: number,
   mode: string,
+  // #9019: `conclusiveOnly` skips rows whose own verdict was INCONCLUSIVE (`metadata.inconclusive` -- a
+  // provider outage, a consensus-disputed roll, a lock-contention placeholder). The one-shot cadence caller
+  // passes it because this lookup is head-AGNOSTIC by design: without it, one inconclusive verdict permanently
+  // pinned that PR across ALL future heads -- unlike every other cadence, a contributor pushing new code could
+  // not escape it, since the reused row was never keyed to their old commit. That PR never actually got its
+  // one real shot, so one-shot must not count it as spent. Deliberately NOT keyed on `cacheable`, which
+  // conflates this with a dynamic review context (a conclusive verdict that simply isn't durable across time,
+  // #2119) -- those stay reusable. The manual-review-freeze caller does not pass it: freezing intends to reuse
+  // whatever was last surfaced, conclusive or not, until a maintainer explicitly retriggers.
+  options?: { conclusiveOnly?: boolean } | undefined,
 ): Promise<{ notes: string; reviewerCount: number; findings: AdvisoryFinding[]; headSha?: string | undefined; metadata?: Record<string, unknown> | undefined } | null> {
-  const row = await env.DB
+  // `inconclusive` lives in the metadata JSON blob, so the filter can't be a portable SQL predicate across
+  // both backends -- scan the few most-recent published rows and pick in JS. Bounded by the same small limit
+  // the sibling fingerprint scan uses; a PR accumulates only a handful of review rows over its lifetime.
+  const { results } = await env.DB
     .prepare(
-      "SELECT notes, reviewer_count AS reviewerCount, head_sha AS headSha, findings_json AS findingsJson, metadata_json AS metadataJson FROM ai_review_cache WHERE repo_full_name = ? AND pull_number = ? AND ai_review_mode = ? AND published_at IS NOT NULL ORDER BY published_at DESC, rowid DESC LIMIT 1",
+      "SELECT notes, reviewer_count AS reviewerCount, head_sha AS headSha, findings_json AS findingsJson, metadata_json AS metadataJson FROM ai_review_cache WHERE repo_full_name = ? AND pull_number = ? AND ai_review_mode = ? AND published_at IS NOT NULL ORDER BY published_at DESC, rowid DESC LIMIT ?",
     )
-    .bind(repoFullName, pullNumber, mode)
-    .first<{ notes: string; reviewerCount: number; headSha: string; findingsJson: string | null; metadataJson: string | null }>();
-  if (!row) return null;
-  const metadata = parseJson<Record<string, unknown>>(row.metadataJson, {});
-  return {
-    notes: row.notes,
-    reviewerCount: row.reviewerCount,
-    findings: parseJson<AdvisoryFinding[]>(row.findingsJson, []),
-    ...(row.headSha ? { headSha: row.headSha } : {}),
-    ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
-  };
+    .bind(repoFullName, pullNumber, mode, options?.conclusiveOnly ? AI_REVIEW_FINGERPRINT_SCAN_LIMIT : 1)
+    .all<{ notes: string; reviewerCount: number; headSha: string; findingsJson: string | null; metadataJson: string | null }>();
+  for (const row of results ?? []) {
+    const metadata = parseJson<Record<string, unknown>>(row.metadataJson, {});
+    if (options?.conclusiveOnly && metadata.inconclusive === true) continue;
+    return {
+      notes: row.notes,
+      reviewerCount: row.reviewerCount,
+      findings: parseJson<AdvisoryFinding[]>(row.findingsJson, []),
+      ...(row.headSha ? { headSha: row.headSha } : {}),
+      ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
+    };
+  }
+  return null;
 }
 
 /** Count distinct PR head SHAs that already received a published AI review — used by

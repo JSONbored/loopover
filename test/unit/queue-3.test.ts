@@ -3082,17 +3082,23 @@ describe("queue processors", () => {
       return Response.json({});
     });
 
-    await processJob(env, {
-      type: "github-webhook",
-      deliveryId: "contributor-cap-pr-lock-contended",
-      eventName: "pull_request",
-      payload: {
-        action: "opened",
-        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
-        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
-        pull_request: { number: 56, title: "Farmer's 3rd PR", state: "open", user: { login: "farmer99" }, head: { sha: "f56" }, labels: [], body: "x", mergeable_state: "clean", reviewDecision: "APPROVED" },
-      },
-    });
+    // #9025: the trailing maintenance pass hits the SAME still-held actuation lock and now throws the
+    // retryable contention error rather than returning silently, so the disposition retries instead of being
+    // dropped. The early-cap short-circuit under test here is a different call site and still defers cleanly
+    // (its own `return false`, unchanged) -- both assertions below are exactly as before.
+    await expect(
+      processJob(env, {
+        type: "github-webhook",
+        deliveryId: "contributor-cap-pr-lock-contended",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 56, title: "Farmer's 3rd PR", state: "open", user: { login: "farmer99" }, head: { sha: "f56" }, labels: [], body: "x", mergeable_state: "clean", reviewDecision: "APPROVED" },
+        },
+      }),
+    ).rejects.toMatchObject({ name: "PrActuationLockContendedError" });
 
     // The early close DEFERRED (no PATCH close fired from it) and the pipeline fell through, mirroring the
     // author-lock contention semantics one namespace over.

@@ -140,6 +140,9 @@ describe("agentHoldAuditDetail — durable why-no-action audit reason", () => {
   const base = {
     planned: [] as PlannedAgentAction[],
     breakerOnPlan: [] as PlannedAgentAction[],
+    // #9040: both transforms now REPORT their own engagement rather than being inferred from a set difference.
+    precisionBreakerEngaged: false,
+    closeAuditHoldoutEngaged: false,
     gateConclusion: "success",
     gateBlockerCodes: [] as string[],
     ciState: "passed",
@@ -155,14 +158,38 @@ describe("agentHoldAuditDetail — durable why-no-action audit reason", () => {
   };
 
   it("records that a precision breaker removed the planned terminal action", () => {
-    expect(agentHoldAuditDetail({ ...base, planned: [mergeAction] })).toBe("auto-action held by precision circuit breaker");
+    expect(agentHoldAuditDetail({ ...base, precisionBreakerEngaged: true, planned: [mergeAction] })).toBe("auto-action held by precision circuit breaker");
     expect(
       agentHoldAuditDetail({
         ...base,
+        precisionBreakerEngaged: true,
         planned: [readyLabel, mergeAction],
         breakerOnPlan: [{ actionClass: "label", requiresApproval: false, reason: "held", label: AGENT_LABEL_NEEDS_REVIEW, labelOp: "add" }],
       }),
     ).toBe("auto-action held by precision circuit breaker");
+  });
+
+  // #9040: the ε-holdout (#8831) and the precision breaker are DIFFERENT causes that both remove a planned
+  // terminal action. The old code inferred "breaker" purely from `planned` having a terminal action that
+  // `breakerOnPlan` lacks -- but the call site passes the POST-holdout plan, so every holdout hold was
+  // misattributed to a breaker that had never engaged (6/6 live rows paired 1:1 with decision_audit_holdout
+  // events while system_flags contained no engaged breaker at all).
+  it("#9040: attributes an ε-holdout hold to the holdout, never to the precision breaker", () => {
+    expect(
+      agentHoldAuditDetail({ ...base, closeAuditHoldoutEngaged: true, planned: [heuristicClose] }),
+    ).toBe("auto-action held for close-audit adjudication (ε-holdout)");
+  });
+
+  it("#9040: the holdout wins when both transforms engaged in one pass (it consumes the post-breaker plan)", () => {
+    expect(
+      agentHoldAuditDetail({ ...base, precisionBreakerEngaged: true, closeAuditHoldoutEngaged: true, planned: [heuristicClose] }),
+    ).toBe("auto-action held for close-audit adjudication (ε-holdout)");
+  });
+
+  it("#9040: a terminal action removed with NO transform reporting itself gets an honest generic reason, never a false breaker attribution", () => {
+    expect(agentHoldAuditDetail({ ...base, planned: [mergeAction] })).toBe(
+      "auto-action held: a planned terminal action was removed before execution (unreported transform)",
+    );
   });
 
   it("records pending CI ahead of mergeability or gate-policy guesses", () => {

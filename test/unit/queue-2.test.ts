@@ -6,6 +6,7 @@ import { PR_PANEL_COMMENT_MARKER } from "../../src/github/comments";
 import * as backfillModule from "../../src/github/backfill";
 import * as rateLimitModule from "../../src/github/rate-limit";
 import * as repositoriesModule from "../../src/db/repositories";
+import * as decisionRecordModule from "../../src/review/decision-record";
 import * as reviewEffortModule from "../../src/review/review-effort";
 import * as repositorySettingsModule from "../../src/settings/repository-settings";
 import * as posthogModule from "../../src/selfhost/posthog";
@@ -3227,12 +3228,76 @@ describe("queue processors", () => {
     // review round 4) — one shared namespace, not a maintenance-only lock.
     await env.SELFHOST_TRANSIENT_CACHE?.set("pr-actuation-lock:owner/agent-repo#7", "1", 60);
 
-    await processJob(env, { type: "agent-regate-pr", deliveryId: "race-sweep", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+    // #9025: the contended pass RETRIES rather than returning silently. It used to `return`, which completed
+    // the job "successfully" while dropping the disposition entirely -- a silent amplifier for every restart
+    // incident (the recovered job re-ran, hit its own dead predecessor's orphaned lock, and lost the
+    // disposition a second time with no trace). Throwing the retryable error is the same contract
+    // review-evasion.ts's withPrActuationLock already used for this exact condition; the queue honors its
+    // retryAfterMs via consumingRetryDelayMs, so the disposition lands once the contending pass releases.
+    await expect(
+      processJob(env, { type: "agent-regate-pr", deliveryId: "race-sweep", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 }),
+    ).rejects.toMatchObject({ name: "PrActuationLockContendedError", retryKind: "pr_actuation_lock_contended" });
 
-    // The held lock made this pass skip its plan-and-execute critical section entirely — no mutation attempted.
+    // The held lock still made this pass skip its plan-and-execute critical section entirely — the retry is
+    // about not LOSING the disposition, never about mutating while another pass owns the PR.
     expect(mergeCalls).toBe(0);
     const actionAudits = await env.DB.prepare("select count(*) as n from audit_events where event_type like 'agent.action.%'").first<{ n: number }>();
     expect(actionAudits?.n).toBe(0);
+    // ...and the contention itself is now visible in the ledger instead of leaving no trace at all.
+    const contendedAudit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? and target_key = ?")
+      .bind("github_app.agent_maintenance_lock_contended", "owner/agent-repo#7")
+      .first<{ outcome: string; detail: string }>();
+    expect(contendedAudit?.outcome).toBe("queued");
+
+    // #9025: the contention audit write is best-effort -- a failing write must never swallow or replace the
+    // retry itself. The disposition's durability cannot depend on the ledger being writable.
+    const originalRecordAuditEvent = repositoriesModule.recordAuditEvent;
+    const auditSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockImplementation(async (auditEnv, event) => {
+      if (event.eventType === "github_app.agent_maintenance_lock_contended") throw new Error("audit DB down");
+      await originalRecordAuditEvent(auditEnv, event);
+    });
+    await expect(
+      processJob(env, { type: "agent-regate-pr", deliveryId: "race-sweep-audit-down", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 }),
+    ).rejects.toMatchObject({ name: "PrActuationLockContendedError" });
+    auditSpy.mockRestore();
+  });
+
+  it("#9025: a NON-retryable maintenance failure is still swallowed and logged, never propagated to the queue", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, gatePack: "oss-anti-slop" });
+    await upsertRepoFocusManifest(env, "owner/agent-repo", { settings: { checkRunMode: "off", commentMode: "off", publicSurface: "off", aiReviewMode: "off", reviewCheckMode: "required" } });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 8, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a8" }, labels: [], body: "Closes #1" });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/8/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/pulls/8/reviews") && init?.method === "POST") return Response.json({ id: 1 });
+      if (url.includes("/pulls/8/reviews")) return Response.json([]);
+      if (/\/pulls\/8(\?|$)/.test(url)) return Response.json({ number: 8, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a8" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+      if (url.includes("/commits/a8/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/a8/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      return Response.json({});
+    });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+    // A plain (non-retryable) failure from inside the maintenance pass: the guard's FALSE arm must still
+    // swallow-and-log exactly as before #9025, so an ordinary bug never dead-letters a whole webhook job.
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    // persistDecisionRecord is awaited UNCAUGHT and called ONLY inside runAgentMaintenancePlanAndExecute, so a
+    // rejection here surfaces exactly where a real bug in the maintenance critical section would.
+    const capSpy = vi.spyOn(decisionRecordModule, "persistDecisionRecord").mockRejectedValue(new Error("plain non-retryable failure"));
+
+    await expect(
+      processJob(env, { type: "agent-regate-pr", deliveryId: "maintenance-plain-failure", repoFullName: "owner/agent-repo", prNumber: 8, installationId: 9001 }),
+    ).resolves.toBeUndefined();
+
+    capSpy.mockRestore();
+    expect(errorSpy.mock.calls.some((call) => String(call[0]).includes("agent_maintenance_failed"))).toBe(true);
+    errorSpy.mockRestore();
   });
 
   it("the sweep stamps the marker INLINE when the repo has no installation (audit-only, still converges) (#audit-sweep-fanout)", async () => {

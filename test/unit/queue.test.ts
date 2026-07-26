@@ -6251,14 +6251,17 @@ describe("queue processors", () => {
       expect(missAudit?.n).toBe(1); // only the genuine first-run miss — the forced pass is NOT double-counted here
     });
 
-    it("#9: a low-activity repo's old open PR NEVER generates a repeated AI review across many sweep ticks once published (#regate-churn)", async () => {
-      // Superseded policy note: this used to assert a BOUNDED, periodic retry (one fresh attempt per tick once
-      // AI_REVIEW_NON_CACHEABLE_RETRY_COOLDOWN_MS elapsed) for a never-durably-cacheable (still-inconclusive)
-      // outcome. That was itself the incident-mitigation for #1462, but it was still an UNBOUNDED total spend
-      // over a PR's lifetime (one fresh call every cooldown window, forever, for as long as the PR stayed open
-      // and inconclusive). The `published_at` marker (this PR) makes ANY review — cacheable or not — immutable
-      // for its exact head+fingerprint the moment it is actually published: a tick past the cooldown no longer
-      // buys a fresh attempt at all; only a real content/config change or an explicit maintainer force-rerun does.
+    it("#9019: a published-but-INCONCLUSIVE review still retries once per cooldown window, but never within one", async () => {
+      // Policy history, twice revised. Originally: a bounded periodic retry (one fresh attempt per tick once
+      // AI_REVIEW_NON_CACHEABLE_RETRY_COOLDOWN_MS elapsed) for a never-durably-cacheable outcome (#1462).
+      // Then the `published_at` marker made ANY review — cacheable or not — immutable for its exact
+      // head+fingerprint the moment it published, to bound lifetime spend (#regate-churn).
+      // #9019 narrows that second change back: immutability is right for a CONCLUSIVE verdict (including a
+      // dynamic-context one, covered by the sibling grounding test), but wrong for an INCONCLUSIVE one. A
+      // provider outage or a consensus-disputed roll would otherwise be FINAL for that head forever — the bot
+      // never retried, directly contradicting the finding's own "re-evaluates on the next update" text, while a
+      // green PR gave the contributor no reason to push the commit that would force one. The cooldown still
+      // bounds the spend to at most one attempt per window; only genuinely inconclusive rows are eligible.
       let aiCalls = 0;
       const env = createTestEnv({
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
@@ -6291,23 +6294,27 @@ describe("queue processors", () => {
       const callsPerAttempt = aiCalls;
       expect(callsPerAttempt).toBeGreaterThan(0);
 
-      // 5 more sweep ticks over a ~10-hour span (the production incident's 6h window had 97 sweep events for one
-      // repo), each beyond what used to be the 30-minute cooldown — the unchanged PR's published review is now
-      // reused indefinitely, so NONE of these buy a fresh attempt.
+      // 5 more sweep ticks over a ~10-hour span, each well BEYOND the 30-minute cooldown. Because the verdict
+      // is inconclusive, each buys exactly ONE fresh attempt (#9019) -- the stuck PR keeps getting a real
+      // chance to resolve instead of replaying the outage forever.
       const tickTimes = ["03:50:00", "05:40:00", "07:30:00", "09:20:00", "11:10:00"];
       for (const [index, time] of tickTimes.entries()) {
         vi.setSystemTime(new Date(`2026-05-28T${time}.000Z`));
         await processJob(env, { type: "agent-regate-pr", deliveryId: `low-activity-${index}`, repoFullName: "JSONbored/gittensory", prNumber: 65, installationId: 123 });
       }
-      expect(aiCalls).toBe(callsPerAttempt); // still just the one, original attempt
+      expect(aiCalls).toBe(callsPerAttempt * (1 + tickTimes.length));
 
-      // Tighten four more ticks to well INSIDE what used to be the cooldown window — still zero additional spend.
-      const tightTicks = ["12:00:00", "12:05:00", "12:10:00", "12:15:00"];
+      // Four more ticks well INSIDE one cooldown window buy NOTHING -- the retry stays strictly bounded to one
+      // attempt per window, which is what keeps lifetime spend finite. This is the half of #regate-churn's
+      // guarantee that #9019 deliberately preserves. Timed against the LAST attempt above (11:10), not the
+      // original baseline: every one of these lands inside its 30-minute window.
+      const callsBeforeTightTicks = aiCalls;
+      const tightTicks = ["11:20:00", "11:25:00", "11:30:00", "11:35:00"];
       for (const [index, time] of tightTicks.entries()) {
         vi.setSystemTime(new Date(`2026-05-28T${time}.000Z`));
         await processJob(env, { type: "agent-regate-pr", deliveryId: `low-activity-tight-${index}`, repoFullName: "JSONbored/gittensory", prNumber: 65, installationId: 123 });
       }
-      expect(aiCalls).toBe(callsPerAttempt);
+      expect(aiCalls).toBe(callsBeforeTightTicks);
     });
 
     describe("#regate-churn: production reproductions (#3379, #3383) and the maintainer-gated freeze", () => {

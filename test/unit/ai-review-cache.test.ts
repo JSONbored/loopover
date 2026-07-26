@@ -338,6 +338,40 @@ describe("AI review cache (#1)", () => {
       }
     });
 
+    // #9019: `cacheable=0` conflates a DYNAMIC-CONTEXT verdict (conclusive, just not durable across time --
+    // the row above) with a genuinely INCONCLUSIVE one (a provider outage, a consensus-disputed roll). Only the
+    // latter must stay retryable: without this, a transient outage verdict became FINAL for that head the
+    // moment it published -- the bot never retried, contradicting the finding's own "re-evaluates on the next
+    // update" text, while a green PR gave the contributor no reason to push the commit that would force one.
+    it("#9019: a published INCONCLUSIVE row still expires with the cooldown, so the stuck verdict is retried", async () => {
+      const env = createTestEnv();
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-07-01T00:00:00.000Z"));
+        await putCachedAiReview(env, "o/r", 41, "sha1", "block", {
+          notes: "provider outage",
+          reviewerCount: 0,
+          cacheable: false,
+          metadata: { inconclusive: true },
+        });
+        await markAiReviewPublished(env, "o/r", 41, "sha1");
+
+        // Inside the cooldown the published row is still reused -- the retry stays bounded to one per window.
+        vi.setSystemTime(new Date("2026-07-01T00:10:00.000Z"));
+        expect(
+          await getCachedAiReview(env, "o/r", 41, "sha1", "block", undefined, { allowNonCacheable: true, maxAgeMs: 30 * 60 * 1000 }),
+        ).toMatchObject({ notes: "provider outage" });
+
+        // Past the cooldown it MISSES, so the next pass spends a fresh attempt instead of replaying the outage.
+        vi.setSystemTime(new Date("2026-07-01T05:00:00.000Z"));
+        expect(
+          await getCachedAiReview(env, "o/r", 41, "sha1", "block", undefined, { allowNonCacheable: true, maxAgeMs: 30 * 60 * 1000 }),
+        ).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("still misses an UNPUBLISHED non-cacheable row past the cooldown (unchanged behavior)", async () => {
       const env = createTestEnv();
       vi.useFakeTimers();
@@ -504,6 +538,46 @@ describe("AI review cache (#1)", () => {
         .bind("o/r", 55, "", "block", "empty head", 1, "[]", "{}", 1, "2026-07-09T00:00:00.000Z", "2026-07-09T00:00:00.000Z")
         .run();
       expect(await getLatestPublishedAiReview(env, "o/r", 55, "block")).toEqual({ notes: "empty head", reviewerCount: 1, findings: [] });
+    });
+
+    // #9019: this lookup is head-AGNOSTIC by design, so an INCONCLUSIVE row it returns pins the PR's verdict
+    // across ALL future heads -- a contributor pushing new code cannot escape it, because the reused row was
+    // never keyed to their old commit. The one-shot cadence caller passes conclusiveOnly so that PR (which
+    // never actually got its one real shot) is not counted as spent. The freeze caller does not pass it.
+    it("#9019: conclusiveOnly skips an inconclusive published row and falls through to the newest conclusive one", async () => {
+      const env = createTestEnv();
+      await putCachedAiReview(env, "o/r", 57, "sha1", "block", {
+        notes: "real verdict",
+        reviewerCount: 2,
+        metadata: { inconclusive: false },
+      });
+      await markAiReviewPublished(env, "o/r", 57, "sha1");
+      await putCachedAiReview(env, "o/r", 57, "sha2", "block", {
+        notes: "provider outage",
+        reviewerCount: 0,
+        cacheable: false,
+        metadata: { inconclusive: true },
+      });
+      await markAiReviewPublished(env, "o/r", 57, "sha2");
+
+      // Without the flag (the manual-review-freeze caller) the NEWEST published row wins, inconclusive or not.
+      expect(await getLatestPublishedAiReview(env, "o/r", 57, "block")).toMatchObject({ notes: "provider outage" });
+      // With it (the one-shot caller) the outage row is skipped in favor of the genuine prior verdict.
+      expect(await getLatestPublishedAiReview(env, "o/r", 57, "block", { conclusiveOnly: true })).toMatchObject({ notes: "real verdict" });
+    });
+
+    it("#9019: conclusiveOnly returns null when EVERY published row is inconclusive — the PR never got its one shot", async () => {
+      const env = createTestEnv();
+      await putCachedAiReview(env, "o/r", 58, "sha1", "block", {
+        notes: "provider outage",
+        reviewerCount: 0,
+        cacheable: false,
+        metadata: { inconclusive: true },
+      });
+      await markAiReviewPublished(env, "o/r", 58, "sha1");
+
+      expect(await getLatestPublishedAiReview(env, "o/r", 58, "block")).toMatchObject({ notes: "provider outage" });
+      expect(await getLatestPublishedAiReview(env, "o/r", 58, "block", { conclusiveOnly: true })).toBeNull();
     });
   });
 

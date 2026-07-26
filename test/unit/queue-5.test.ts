@@ -4248,6 +4248,51 @@ describe("queue processors", () => {
       expect(JSON.parse(audited?.metadata_json ?? "{}")).toMatchObject({ status: "ok", byok: false });
     });
 
+    // REGRESSION (#8685): generate-tests is a maintainer-only default, but a repo may widen it to
+    // confirmed_miner via commandAuthorization (the safety clamp keeps confirmed_miner, only dropping the
+    // spoofable bare pr_author role). That widening was dead because this handler omitted
+    // authorizePrActionActor's needsMinerDetection: true -- miner status was never computed, so a confirmed
+    // miner's own-PR invocation always fell through to miner_detection_unavailable. With the flag now passed,
+    // a confirmed miner on their OWN PR is authorized once the repo widens the command. (Deliberately a
+    // materially different code path from the pause command's regression: a real generation + comment post.)
+    it("dispatches generation for a confirmed Gittensor miner on their OWN PR once the repo widens commandAuthorization for generate-tests (#8685)", async () => {
+      const repoFullName = "JSONbored/gen-tests-8685-miner";
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run: async () => ({ response: "```typescript\n" + VALID_TEST_SOURCE + "\n```" }) } as unknown as Ai,
+        LOOPOVER_REVIEW_E2E_TESTS: "true",
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+      });
+      await seedGenerateTestsPr(env, repoFullName, 8685, "gen-tests-8685-miner", "miner-author");
+      // Widen generate-tests to confirmed_miner; re-upsert restates seedGenerateTestsPr's own settings since
+      // upsertRepositorySettings is a full replace, not a merge.
+      await upsertRepositorySettings(env, { repoFullName, autoLabelEnabled: false, requireLinkedIssue: false, commandAuthorization: { default: ["maintainer"], commands: { "generate-tests": ["confirmed_miner"] } } });
+      await upsertOfficialMinerDetection(env, "miner-author", { status: "confirmed", snapshot: queueMinerSnapshot("miner-author") }, 60_000);
+      let posted = 0;
+      let postedBody = "";
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        // No repo permission at all -- the ONLY route to authorization is the confirmed_miner role on their own PR.
+        if (url.includes("/collaborators/miner-author/permission")) return new Response("not found", { status: 404 });
+        if (url.includes("/issues/8685/comments") && method === "GET") return Response.json([]);
+        if (url.includes("/issues/8685/comments") && method === "POST") { posted += 1; postedBody = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? ""); return Response.json({ id: 86850 }); }
+        return new Response("not found", { status: 404 });
+      });
+
+      await processJob(env, generateTestsWebhook(repoFullName, 8685, "miner-author", { association: "NONE", commenterIsAuthor: true }));
+
+      expect(posted).toBe(1);
+      expect(postedBody).toContain("AI-generated Playwright test for @miner-author");
+      const audited = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("github_app.e2e_tests_generation").first<{ outcome: string }>();
+      expect(audited?.outcome).toBe("completed");
+      // Provably NOT the pre-fix miner_detection_unavailable denial.
+      const denied = await env.DB.prepare("select 1 from audit_events where event_type = ?").bind("github_app.e2e_tests_generation_denied").first();
+      expect(denied).toBeFalsy();
+    });
+
     it("denies a collaborator-tier actor (write permission, not the PR author) — narrower than every other command", async () => {
       const repoFullName = "JSONbored/gen-tests-4195-collab";
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });

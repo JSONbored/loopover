@@ -2,6 +2,8 @@
 // entirely by props (a message array + a composing flag); a real data source arrives in a later,
 // separately-scoped issue. The shapes below are exactly what MessageBubble / MessageList render against.
 
+import type { GovernorPauseStateResult } from "../../lib/governor";
+
 export type ChatRole = "user" | "assistant" | "system";
 
 export interface ChatMessage {
@@ -14,6 +16,9 @@ export interface ChatMessage {
   authorName?: string;
   /** Optional avatar image URL; when absent, MessageBubble renders the initials fallback only. */
   avatarUrl?: string;
+  /** When set, MessageBubble renders this turn through GovernorChatActionResult instead of the plain
+   *  `content` string (#8670) — `content` still carries the same copy for wire-history/plain-text use. */
+  governorActionResult?: GovernorPauseStateResult;
 }
 
 /** Empty conversation — drives MessageList's StateBoundary empty branch. */

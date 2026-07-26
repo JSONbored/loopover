@@ -823,6 +823,38 @@ describe("queue processors", () => {
     expect(paused).toBeFalsy();
   });
 
+  // REGRESSION (#8685): pause is a maintainer/collaborator-only default, but a repo may widen it to
+  // confirmed_miner via commandAuthorization. That widening was dead because the pause handler omitted
+  // authorizePrActionActor's needsMinerDetection: true, so the miner status was never computed and a
+  // confirmed miner's own-PR pause always fell through to miner_detection_unavailable. With the flag now
+  // passed, the documented widening actually authorizes the confirmed miner.
+  it("pause (#8685): a confirmed Gittensor miner is authorized to pause their OWN PR once the repo widens commandAuthorization for pause", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await seedPausePr(env);
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commandAuthorization: { default: ["maintainer", "collaborator"], commands: { pause: ["confirmed_miner"] } } });
+    await upsertOfficialMinerDetection(env, "reporter", { status: "confirmed", snapshot: queueMinerSnapshot("reporter") }, 60_000);
+    let postedBody: string | undefined;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      // No repo permission at all — the ONLY route to authorization is the confirmed_miner role on their own PR.
+      if (url.includes("/collaborators/") && url.includes("/permission")) return new Response("not found", { status: 404 });
+      if (url.includes("/issues/77/comments")) {
+        postedBody = init?.body ? JSON.parse(init.body.toString()).body : undefined;
+        return Response.json({ id: 5 }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    await processJob(env, plannerWebhook("@loopover pause CI is flaky today", "reporter", pauseIssue));
+    expect(postedBody).toContain("Auto-review paused by @reporter");
+    const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("github_app.autoreview_paused").first<{ outcome: string; detail: string }>();
+    expect(audit?.outcome).toBe("completed");
+    expect(audit?.detail).toBe("CI is flaky today");
+    // Provably NOT the pre-fix miner_detection_unavailable denial: no denied marker was recorded.
+    const denied = await env.DB.prepare("select 1 from audit_events where event_type = ?").bind("github_app.autoreview_paused_denied").first();
+    expect(denied).toBeFalsy();
+  });
+
   it("pause: a pause on a PR with no cached record is recorded as a cached_pr_missing skip, never posted", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await setupPlannerRepo(env); // repo + installation, but deliberately NO cached PR record

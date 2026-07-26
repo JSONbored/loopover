@@ -483,3 +483,15 @@ test("computeFindingSeverityCompositeCalibrationScore falls back to objective-on
   assert.deepEqual(result.weights, { objectiveAnchor: 1, pairwiseJudge: 0, structuredFindingSeverity: 0 });
   assert.equal(result.compositeScore, 0.4);
 });
+
+test("computeFindingSeverityCompositeCalibrationScore normalizes invalid weights to the default blend, not an objective-only collapse (#8643)", () => {
+  const result = computeFindingSeverityCompositeCalibrationScore({
+    objectiveAnchor: 0.4,
+    pairwise: 0.4,
+    findingSeverity: [signal()],
+    weights: { objectiveAnchor: Number.NaN, pairwiseJudge: -1, structuredFindingSeverity: -1 },
+  });
+  // NaN/negative weights (with real pairwise + structured scores present) recover to the documented default
+  // 45/35/20 blend -- NOT a 100%-objective-anchor collapse, matching pairwise-calibration.ts's distinction.
+  assert.deepEqual(result.weights, { objectiveAnchor: 0.45, pairwiseJudge: 0.35, structuredFindingSeverity: 0.2 });
+});

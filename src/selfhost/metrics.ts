@@ -168,6 +168,7 @@ export const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["loopover_orb_relay_malformed_events_total", { help: "Orb relay batch entries dropped for missing/mistyped required fields (deliveryId/eventName/rawBody).", type: "counter" }],
   ["loopover_orb_relay_register_total", { help: "Orb relay registration attempts, by mode and result (registered/recovered/failed).", type: "counter" }],
   ["loopover_pr_outcomes_total", { help: "Recorded PR gate outcomes, by decision.", type: "counter" }],
+  ["loopover_close_audit_holdouts_total", { help: "Would-auto-close PRs diverted to human adjudication by the close-audit holdout (#8831).", type: "counter" }],
   ["loopover_public_origin_acknowledged", { help: "1 when the configured public origin is acknowledged as reachable; 0 otherwise.", type: "gauge" }],
   ["loopover_repo_culture_profile_cache_hit_total", { help: "Repo-culture-profile cache hits.", type: "counter" }],
   ["loopover_repo_culture_profile_cache_miss_total", { help: "Repo-culture-profile cache misses.", type: "counter" }],

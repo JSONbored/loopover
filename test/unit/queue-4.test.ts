@@ -8031,6 +8031,108 @@ describe("queue processors", () => {
     expect(summary.commands).toEqual([expect.objectContaining({ command: "blockers", usefulnessRate: 1 })]);
   });
 
+  it("#8682: a non-miner PR author can vote on their own chat answer when commandRateLimitPolicy is hold", async () => {
+    // Without command context, authorizeFeedbackActor defaults to "preflight" (confirmed_miner in the
+    // default roles) and denies with pr_author_not_confirmed_miner. Wiring commandName:"chat" + hold
+    // rate-limit + open non-draft PR must authorize via chat's pr_author role.
+    const env = createTestEnv();
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 77,
+      title: "Contributor chat",
+      state: "open",
+      draft: false,
+      user: { login: "contributor1" },
+      author_association: "NONE",
+      head: { sha: "chatsha" },
+      labels: [],
+      body: "x",
+    });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", {
+      settings: { commandRateLimitPolicy: "hold" },
+    });
+    await upsertAgentCommandAnswer(env, commandAnswer("answer-chat-author", "chat", { responseCommentId: 9101 }));
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "feedback-chat-pr-author",
+      eventName: "reaction",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 77, title: "Contributor chat", state: "open", pull_request: {}, user: { login: "contributor1" }, author_association: "NONE" },
+        comment: { id: 9101, body: commandAnswerBody("answer-chat-author", "chat"), user: { login: "loopover-orb[bot]", type: "Bot" } },
+        reaction: { id: 41, content: "+1", user: { login: "contributor1", type: "User" } },
+      },
+    });
+
+    const feedbackAudit = await env.DB.prepare(
+      "select event_type, detail from audit_events where event_type in (?, ?) order by created_at",
+    )
+      .bind("github_app.agent_command_feedback_recorded", "github_app.agent_command_feedback_denied")
+      .all<{ event_type: string; detail: string | null }>();
+    expect(feedbackAudit.results).toEqual([
+      expect.objectContaining({ event_type: "github_app.agent_command_feedback_recorded" }),
+    ]);
+    expect(feedbackAudit.results.some((row) => row.detail === "pr_author_not_confirmed_miner")).toBe(false);
+    const stored = await env.DB.prepare("select count(*) as n from github_agent_command_feedback where answer_id = ?").bind("answer-chat-author").first<{ n: number }>();
+    expect(stored?.n).toBe(1);
+  });
+
+  it("#8682: a custom commandAuthorization override for the answer's command is honored on feedback votes", async () => {
+    // next-action's shipped default has no pr_author role (falls through to confirmed_miner). A repo that
+    // explicitly widens next-action to include pr_author must have that override applied to feedback too —
+    // previously ignored because authorizeFeedbackActor never threaded the policy object.
+    const env = createTestEnv();
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 77,
+      title: "Override feedback",
+      state: "open",
+      draft: false,
+      user: { login: "contributor2" },
+      author_association: "NONE",
+      head: { sha: "ovsha" },
+      labels: [],
+      body: "x",
+    });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", {
+      settings: {
+        commandAuthorization: {
+          default: ["maintainer", "collaborator", "confirmed_miner"],
+          commands: { "next-action": ["maintainer", "collaborator", "pr_author"] },
+        },
+      },
+    });
+    await upsertAgentCommandAnswer(env, commandAnswer("answer-next-override", "next-action", { responseCommentId: 9102 }));
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "feedback-next-override",
+      eventName: "reaction",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 77, title: "Override feedback", state: "open", pull_request: {}, user: { login: "contributor2" }, author_association: "NONE" },
+        comment: { id: 9102, body: commandAnswerBody("answer-next-override", "next-action"), user: { login: "loopover-orb[bot]", type: "Bot" } },
+        reaction: { id: 42, content: "-1", user: { login: "contributor2", type: "User" } },
+      },
+    });
+
+    const feedbackAudit = await env.DB.prepare(
+      "select event_type, detail from audit_events where event_type in (?, ?) order by created_at",
+    )
+      .bind("github_app.agent_command_feedback_recorded", "github_app.agent_command_feedback_denied")
+      .all<{ event_type: string; detail: string | null }>();
+    expect(feedbackAudit.results).toEqual([
+      expect.objectContaining({ event_type: "github_app.agent_command_feedback_recorded" }),
+    ]);
+    const stored = await env.DB.prepare("select count(*) as n from github_agent_command_feedback where answer_id = ?")
+      .bind("answer-next-override")
+      .first<{ n: number }>();
+    expect(stored?.n).toBe(1);
+  });
+
   it("rejects copied feedback markers that do not match the stored answer context", async () => {
     const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "maintainer" });
     await upsertAgentCommandAnswer(env, commandAnswer("answer-bound", "preflight", { responseCommentId: 9001 }));

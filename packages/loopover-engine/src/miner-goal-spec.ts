@@ -257,14 +257,16 @@ function normalizeSelfPlagiarismPolicy(
   }
   const resolved = resolveSelfPlagiarismConfig(value);
   const record = value as Record<string, unknown>;
-  if (
-    record.similarityThreshold !== undefined &&
-    typeof record.similarityThreshold !== "number"
-  ) {
-    warnings.push(
-      `MinerGoalSpec field "${field}.similarityThreshold" must be a number; falling back to ${fallback.similarityThreshold}.`,
-    );
-    return fallback;
+  if (record.similarityThreshold !== undefined) {
+    const threshold = record.similarityThreshold;
+    // Reject non-numbers AND finite numbers outside [0,1] (which self-plagiarism.ts would otherwise silently
+    // clamp), warning + falling back to the default like every sibling numeric normalizer in this file (#8862).
+    if (typeof threshold !== "number" || !Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
+      warnings.push(
+        `MinerGoalSpec field "${field}.similarityThreshold" must be a number between 0 and 1; falling back to ${fallback.similarityThreshold}.`,
+      );
+      return fallback;
+    }
   }
   return resolved;
 }

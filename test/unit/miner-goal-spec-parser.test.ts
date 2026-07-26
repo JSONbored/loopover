@@ -224,6 +224,20 @@ describe("MinerGoalSpec parser (#2301)", () => {
     expect(arrayValue.warnings.join(" ")).toMatch(/selfPlagiarism.*must be a mapping/i);
   });
 
+  it("warns and falls back to the default when selfPlagiarism.similarityThreshold is a finite number out of [0,1] (#8862)", () => {
+    for (const outOfRange of [5, -1, Number.POSITIVE_INFINITY, Number.NaN]) {
+      const parsed = parseMinerGoalSpec({ wantedPaths: ["src/**"], selfPlagiarism: { similarityThreshold: outOfRange } });
+      // Out-of-range must fall back to the default, NOT silently clamp to 0/1, and it must warn.
+      expect(parsed.spec.selfPlagiarism).toEqual({ similarityThreshold: 0.85 });
+      expect(parsed.warnings.join(" ")).toMatch(/selfPlagiarism\.similarityThreshold.*between 0 and 1/i);
+    }
+
+    // A valid in-range value still resolves normally (no warning, no fallback).
+    const valid = parseMinerGoalSpec({ wantedPaths: ["src/**"], selfPlagiarism: { similarityThreshold: 0.5 } });
+    expect(valid.spec.selfPlagiarism).toEqual({ similarityThreshold: 0.5 });
+    expect(valid.warnings.join(" ")).not.toMatch(/selfPlagiarism\.similarityThreshold/i);
+  });
+
   it("a killSwitch policy alone (all other fields default) marks the spec present", () => {
     const parsed = parseMinerGoalSpec({ killSwitch: { paused: true } });
     expect(parsed.present).toBe(true);

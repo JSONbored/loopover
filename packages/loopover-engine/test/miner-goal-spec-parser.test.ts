@@ -299,3 +299,13 @@ test("parseMinerGoalSpecContent: non-mapping parsed content and oversized conten
   assert.equal(fourByteOversized.present, false);
   assert.match(fourByteOversized.warnings.join(" "), /exceeded 32768 bytes/i);
 });
+
+test("parseMinerGoalSpec: an out-of-range selfPlagiarism.similarityThreshold warns and falls back to the default (#8862)", () => {
+  for (const outOfRange of [5, -1, Number.POSITIVE_INFINITY, Number.NaN]) {
+    const parsed = parseMinerGoalSpec({ wantedPaths: ["src/**"], selfPlagiarism: { similarityThreshold: outOfRange } });
+    assert.deepEqual(parsed.spec.selfPlagiarism, { similarityThreshold: 0.85 });
+    assert.match(parsed.warnings.join(" "), /selfPlagiarism\.similarityThreshold.*between 0 and 1/i);
+  }
+  const valid = parseMinerGoalSpec({ wantedPaths: ["src/**"], selfPlagiarism: { similarityThreshold: 0.5 } });
+  assert.deepEqual(valid.spec.selfPlagiarism, { similarityThreshold: 0.5 });
+});

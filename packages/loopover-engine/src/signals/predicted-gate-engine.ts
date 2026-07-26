@@ -362,7 +362,11 @@ export function buildPreflightResult(
   registryEverSynced = true,
 ): PreflightResult {
   const lane = buildLaneAdvice(repo, input.repoFullName);
-  const linkedIssues = [...new Set([...(input.linkedIssues ?? []), ...extractLinkedIssueNumbers(truncateText(input.body ?? "", PREFLIGHT_LIMITS.bodyChars), input.repoFullName)])].sort(
+  const linkedIssueExtraction = extractLinkedIssueNumbersWithOverflow(
+    truncateText(input.body ?? "", PREFLIGHT_LIMITS.bodyChars),
+    input.repoFullName,
+  );
+  const linkedIssues = [...new Set([...(input.linkedIssues ?? []), ...linkedIssueExtraction.numbers])].sort(
     (left, right) => left - right,
   );
   // Flag an existing open-work cluster as a possible duplicate when it shares a
@@ -419,6 +423,19 @@ export function buildPreflightResult(
       title: "No linked issue detected",
       detail: "The planned PR does not reference a closing issue or explicit linked issue number.",
       action: "Link the issue being solved, or explicitly explain why this is a no-issue PR.",
+    });
+  }
+  // Mirror the maintainer-side linked-issue hard rule (src/review/linked-issue-hard-rules.ts's
+  // extractLinkedIssueNumbersWithOverflow branch): a PR body citing more than the cap of closing references is
+  // hard-failed upstream because too many to verify safely. Raise the same blocker locally so miners see the
+  // failure before pushing instead of a silently-truncated linkedIssues list that looks fine (#8868).
+  if (linkedIssueExtraction.overflow) {
+    findings.push({
+      code: "linked_issue_overflow",
+      severity: "critical",
+      title: "PR body links more issues than the maintainer gate can safely verify",
+      detail: "PR body links more issues than LoopOver can safely verify automatically; please reduce linked closing references or request maintainer review.",
+      action: `Reduce closing references to at most ${MAX_LINKED_ISSUE_NUMBERS} or request maintainer review.`,
     });
   }
   if (collisions.length > 0) {
@@ -921,7 +938,12 @@ export function tokenize(value: string): string[] {
  *  collecting at. Kept as a local literal because this module stays free of host imports by design (#6771). */
 const MAX_LINKED_ISSUE_NUMBERS = 50;
 
-function extractLinkedIssueNumbers(text: string, repoFullName: string): number[] {
+type LinkedIssueExtractionResult = {
+  numbers: number[];
+  overflow: boolean;
+};
+
+function extractLinkedIssueNumbersWithOverflow(text: string, repoFullName: string): LinkedIssueExtractionResult {
   // GitHub's native closing-keyword linker does not treat backtick-wrapped text as a real "Closes #N" directive,
   // and this repo's own PR template contains "(e.g. `Closes #123`)". Reject regex hits that fall inside an inline
   // code span, matching the canonical src/db/repositories.ts extractor; keep the original text (rather than
@@ -956,9 +978,18 @@ function extractLinkedIssueNumbers(text: string, repoFullName: string): number[]
   // Cap at the same ceiling the canonical extractor enforces (#6771): src/db/repositories.ts's
   // MAX_LINKED_ISSUE_NUMBERS = 50, which stops collecting once reached. Duplicated as a literal rather than
   // imported because this module is host-import-free by design; the cross-reference above is the drift guard.
-  // Without it, a body with 50+ short closing references (easily within the 20k-char truncation this runs on)
-  // made the miner's local prediction diverge from the maintainer-side gate it exists to mirror.
-  return [...new Set(numbers.filter((value) => Number.isInteger(value) && value > 0))].slice(0, MAX_LINKED_ISSUE_NUMBERS);
+  // Also SURFACE overflow (not just silently truncate, #8868): the maintainer gate hard-fails a body with more
+  // than the cap of closing references, so the local prediction has to raise the same blocker instead of
+  // returning a truncated list that looks fine.
+  const unique = [...new Set(numbers.filter((value) => Number.isInteger(value) && value > 0))];
+  return {
+    numbers: unique.slice(0, MAX_LINKED_ISSUE_NUMBERS),
+    overflow: unique.length > MAX_LINKED_ISSUE_NUMBERS,
+  };
+}
+
+function extractLinkedIssueNumbers(text: string, repoFullName: string): number[] {
+  return extractLinkedIssueNumbersWithOverflow(text, repoFullName).numbers;
 }
 
 function isMaintainerAssociation(value: string | null | undefined): boolean {
@@ -1015,6 +1046,7 @@ export const predictedGateEngineInternals = {
   sharesMeaningfulFile,
   truncateText,
   extractLinkedIssueNumbers,
+  extractLinkedIssueNumbersWithOverflow,
   changeScopeEvidence,
   reviewLoadComponentScore,
   validationComponent,

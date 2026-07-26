@@ -360,6 +360,60 @@ describe("predicted-gate engine module coverage (#2283)", () => {
     expect(preflight.linkedIssues.every((n) => Number.isInteger(n) && n > 0)).toBe(true);
   });
 
+  // #8868: the local extractor used to silently truncate at MAX_LINKED_ISSUE_NUMBERS while the maintainer's own
+  // linked-issue hard rule (src/review/linked-issue-hard-rules.ts) hard-FAILS a body carrying more references
+  // than the cap. So a miner's local prediction looked ready even though the upstream gate would close the PR
+  // outright — the whole point of the predicted-gate mirror is to catch that before the push.
+  it("REGRESSION (#8868): emits the maintainer gate's linked-issue overflow blocker when a body carries more than the cap of closing references", () => {
+    // 51 distinct same-repo closing references — one over the cap, the smallest overflow the extractor can see.
+    const body = Array.from({ length: 51 }, (_, index) => `Closes #${index + 1}`).join("\n");
+
+    const preflight = buildPreflightResult(
+      { repoFullName: "acme/widgets", title: "Too many links", body, linkedIssues: [] },
+      REPO,
+      [],
+      [],
+    );
+
+    // The parse still truncates at the cap (leaving downstream signal building unchanged), but overflow is now
+    // surfaced as a critical blocker matching the maintainer gate's own message so miners see it before pushing.
+    expect(preflight.linkedIssues).toHaveLength(50);
+    const overflow = preflight.findings.find((finding) => finding.code === "linked_issue_overflow");
+    expect(overflow).toBeDefined();
+    expect(overflow?.severity).toBe("critical");
+    expect(overflow?.detail).toBe(
+      "PR body links more issues than LoopOver can safely verify automatically; please reduce linked closing references or request maintainer review.",
+    );
+    // Critical findings must lift the preflight status above "ready" so the miner treats the run as blocked.
+    expect(preflight.status).toBe("needs_work");
+    // Direct extractor call also reports the overflow flag, matching the maintainer helper's shape.
+    expect(predictedGateEngineInternals.extractLinkedIssueNumbersWithOverflow(body, "acme/widgets").overflow).toBe(true);
+  });
+
+  it("does NOT flag overflow when the body sits at or under the cap of unique closing references", () => {
+    // Exactly at the cap: the maintainer helper returns overflow=false for length === cap.
+    const atCap = Array.from({ length: 50 }, (_, index) => `Closes #${index + 1}`).join("\n");
+    const preflightAtCap = buildPreflightResult(
+      { repoFullName: "acme/widgets", title: "At cap", body: atCap, linkedIssues: [] },
+      REPO,
+      [],
+      [],
+    );
+    expect(preflightAtCap.findings.some((finding) => finding.code === "linked_issue_overflow")).toBe(false);
+    expect(predictedGateEngineInternals.extractLinkedIssueNumbersWithOverflow(atCap, "acme/widgets").overflow).toBe(false);
+
+    // Dedupe happens BEFORE the overflow test: 100 lines that resolve to 50 unique issues do not overflow either.
+    const dedupedBody = Array.from({ length: 100 }, (_, index) => `Closes #${(index % 50) + 1}`).join("\n");
+    const preflightDeduped = buildPreflightResult(
+      { repoFullName: "acme/widgets", title: "Deduped", body: dedupedBody, linkedIssues: [] },
+      REPO,
+      [],
+      [],
+    );
+    expect(preflightDeduped.findings.some((finding) => finding.code === "linked_issue_overflow")).toBe(false);
+    expect(predictedGateEngineInternals.extractLinkedIssueNumbersWithOverflow(dedupedBody, "acme/widgets").overflow).toBe(false);
+  });
+
   it("never leaks public-unsafe wantedPaths/preferredLabels into contributor-facing guidance (#6770)", () => {
     // wantedPaths and preferredLabels are freeform maintainer-authored text that is never public-safety-checked
     // at parse time, so buildFocusManifestGuidance must filter them before interpolating them into a finding.

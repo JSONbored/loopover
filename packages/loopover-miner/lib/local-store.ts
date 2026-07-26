@@ -24,16 +24,25 @@ export function resolveLocalStoreDbPath(
 ): string {
   const explicitPath = typeof env[explicitEnvVarName] === "string" ? env[explicitEnvVarName].trim() : "";
   if (explicitPath) return explicitPath;
+  return join(resolveLocalStoreConfigDir(env), defaultDbFileName);
+}
 
+/**
+ * Resolve the package's local-store config directory (the directory the `defaultDbFileName` files live in when no
+ * explicit per-store env override is set), from `LOOPOVER_MINER_CONFIG_DIR`, then `XDG_CONFIG_HOME` (falling back to
+ * `~/.config`) — the shared dir half of `resolveLocalStoreDbPath`, exposed so callers that discover among several
+ * filenames in the same directory (e.g. AMS policy's documented discovery order, #8863) resolve it the same way.
+ */
+export function resolveLocalStoreConfigDir(env: Record<string, string | undefined> = process.env): string {
   const explicitConfigDir = typeof env.LOOPOVER_MINER_CONFIG_DIR === "string"
     ? env.LOOPOVER_MINER_CONFIG_DIR.trim()
     : "";
-  if (explicitConfigDir) return join(explicitConfigDir, defaultDbFileName);
+  if (explicitConfigDir) return explicitConfigDir;
 
   const configHome = typeof env.XDG_CONFIG_HOME === "string" && env.XDG_CONFIG_HOME.trim()
     ? env.XDG_CONFIG_HOME.trim()
     : join(homedir(), ".config");
-  return join(configHome, "loopover-miner", defaultDbFileName);
+  return join(configHome, "loopover-miner");
 }
 
 /** Trim and validate a caller-supplied (or resolved-default) DB path, throwing `invalidPathError` if it is empty. */

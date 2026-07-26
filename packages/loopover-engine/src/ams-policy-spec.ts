@@ -410,3 +410,13 @@ export function parseAmsPolicySpecContent(content: string | null | undefined): P
 
 /** The documented `.loopover-ams` file-discovery order (first match wins), mirroring `MINER_GOAL_SPEC_FILENAMES`. */
 export const AMS_POLICY_SPEC_FILENAMES = [".loopover-ams.yml", ".github/loopover-ams.yml", ".loopover-ams.json", ".github/loopover-ams.json"] as const;
+
+/**
+ * The first {@link AMS_POLICY_SPEC_FILENAMES} candidate that exists, or null. Pure: the caller injects the existence
+ * check (e.g. `fs.existsSync`) so this module stays IO-free and unit-testable — mirroring `discoverMinerGoalSpecPath`.
+ * A caller reads the returned path and feeds its content to {@link parseAmsPolicySpecContent}.
+ */
+export function discoverAmsPolicySpecPath(exists: (path: string) => boolean): string | null {
+  for (const name of AMS_POLICY_SPEC_FILENAMES) if (exists(name)) return name;
+  return null;
+}

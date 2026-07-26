@@ -29,8 +29,18 @@ export type McpToolCallEvent = { tool: string; callerType?: "local"; ok: boolean
  * Record a single local MCP tool call to PostHog. Safe no-op unless `telemetryEnabled` is explicitly
  * `true` (the caller's resolved, persisted opt-in flag, default OFF -- #6236) AND
  * LOOPOVER_MCP_POSTHOG_API_KEY is configured; never throws.
+ *
+ * Returns a promise that resolves once the event has actually been flushed to PostHog (#8690) —
+ * mirroring the remote `src/mcp/telemetry.ts` fix (#7233). `capture()` itself is fire-and-forget and
+ * returns before the network POST lands; awaiting `client.flush()` lets the stdio server (and any
+ * short-lived CLI path) hold the process open until the event is sent or definitively failed.
+ *
+ * Client lifetime: constructs a fresh PostHog client per call (same as the remote wrapper) rather than
+ * reusing one across the process. That keeps each call's flush/shutdown self-contained and avoids
+ * holding an idle long-lived client in a long-running `--stdio` session; the flush-before-return
+ * guarantee does not depend on process-exit hooks.
  */
-export function recordMcpToolCall(options: RecordMcpToolCallOptions, event: McpToolCallEvent): void {
+export async function recordMcpToolCall(options: RecordMcpToolCallOptions, event: McpToolCallEvent): Promise<void> {
   // Opt-in default OFF (#6236, per #6228's privacy decision) -- unlike the remote wrapper, presence of an
   // API key alone is not enough; the user must have explicitly enabled telemetry.
   if (options?.telemetryEnabled !== true) return;
@@ -55,9 +65,10 @@ export function recordMcpToolCall(options: RecordMcpToolCallOptions, event: McpT
       // No IP-based geo enrichment: the event is anonymous fleet telemetry, not a user location.
       disableGeoip: true,
     });
+    await client.flush();
   } catch {
-    // Telemetry is best-effort and MUST NOT throw into the CLI (#6236): a PostHog init/capture failure
-    // degrades to recording nothing, identical to the unconfigured path above.
+    // Telemetry is best-effort and MUST NOT throw into the CLI (#6236): a PostHog init/capture/flush
+    // failure degrades to recording nothing, identical to the unconfigured path above.
   }
 }
 

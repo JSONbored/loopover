@@ -1712,9 +1712,10 @@ export const server = new McpServer({
 // Reads the opt-in flag HERE, at module scope, on purpose: registerStdioTool's second parameter is the TOOL's
 // config and shadows the module-level `config` this resolves from, so a read inside that function would silently
 // see the wrong object and never fire.
-function recordStdioToolTelemetry(tool: any, ok: any, durationMs: any) {
+async function recordStdioToolTelemetry(tool: any, ok: any, durationMs: any) {
   try {
-    recordLocalMcpToolCall({ telemetryEnabled: telemetryState().enabled }, { tool, callerType: "local", ok, durationMs });
+    // Await flush so a short-lived stdio disconnect cannot drop the in-flight PostHog POST (#8690).
+    await recordLocalMcpToolCall({ telemetryEnabled: telemetryState().enabled }, { tool, callerType: "local", ok, durationMs });
   } catch {
     // Telemetry must never affect the tool response (#6238).
   }
@@ -1727,10 +1728,10 @@ function registerStdioTool(name: any, config: any, handler: any) {
       const result = await handler(...args);
       // Mirror the remote's caller-visible outcome (`response.status < 400`): a handler that reports failure by
       // returning an error result is not a success, even though it never threw.
-      recordStdioToolTelemetry(name, result?.isError !== true, Date.now() - startedAt);
+      await recordStdioToolTelemetry(name, result?.isError !== true, Date.now() - startedAt);
       return result;
     } catch (error) {
-      recordStdioToolTelemetry(name, false, Date.now() - startedAt);
+      await recordStdioToolTelemetry(name, false, Date.now() - startedAt);
       throw error;
     }
   });

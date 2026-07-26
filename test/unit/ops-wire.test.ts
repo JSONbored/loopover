@@ -611,6 +611,52 @@ describe("runOpsAlerts — cron path over gittensory's outcome data", () => {
     expect(found["owner/repo"]?.some((a) => /review burst/.test(a))).toBe(true);
     expect(calls).toEqual([]);
   });
+
+  // ── Auto-resolve a cleared incident (#8903): two consecutive ticks, anomaly then healthy ─────────────────
+  function stubPagerDutyLifecycleFetch(): Array<{ event_action: string; dedup_key: string }> {
+    const calls: Array<{ event_action: string; dedup_key: string }> = [];
+    vi.stubGlobal("fetch", async (_url: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(JSON.parse(String(init?.body)) as { event_action: string; dedup_key: string });
+      return new Response(null, { status: 202 });
+    });
+    return calls;
+  }
+
+  it("AUTO-RESOLVE (#8903): sends a PagerDuty resolve on the tick a paged repo's anomalies clear", async () => {
+    const calls = stubPagerDutyLifecycleFetch();
+    const env = createTestEnv({ LOOPOVER_ENABLE_PAGERDUTY: "1", PAGERDUTY_ROUTING_KEY: PD_KEY });
+    await seedRegisteredRepo(env, "owner/repo");
+    // Tick 1: an error-grade review burst pages (triggers) an incident.
+    for (let i = 0; i < 7; i += 1) {
+      await recordAuditEvent(env, { eventType: "github_app.pr_public_surface_published", actor: "contributor", targetKey: "owner/repo#99", outcome: "completed" });
+    }
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const tick1 = await runOpsAlerts(env);
+    expect(tick1["owner/repo"]?.some((a) => /review burst/.test(a))).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ event_action: "trigger", dedup_key: "ops_anomaly:owner/repo" });
+
+    // The publish surge falls out of the burst window before tick 2, so the repo is healthy again.
+    await env.DB.prepare("DELETE FROM audit_events WHERE event_type = ?").bind("github_app.pr_public_surface_published").run();
+
+    const tick2 = await runOpsAlerts(env);
+    expect(tick2["owner/repo"]).toBeUndefined(); // healthy now
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toMatchObject({ event_action: "resolve", dedup_key: "ops_anomaly:owner/repo" });
+  });
+
+  it("AUTO-RESOLVE (#8903): a still-healthy repo that never paged an incident sends no resolve", async () => {
+    const calls = stubPagerDutyLifecycleFetch();
+    const env = createTestEnv({ LOOPOVER_ENABLE_PAGERDUTY: "1", PAGERDUTY_ROUTING_KEY: PD_KEY });
+    await seedRegisteredRepo(env, "owner/clean");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const found = await runOpsAlerts(env);
+
+    expect(found["owner/clean"]).toBeUndefined();
+    expect(calls).toEqual([]); // no trigger (healthy) and no resolve (no open incident to close)
+  });
 });
 
 describe("computeOpsStats — cross-repo outcome aggregate", () => {

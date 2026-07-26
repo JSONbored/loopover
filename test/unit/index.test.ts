@@ -1165,6 +1165,23 @@ describe("worker entrypoint", () => {
     expect((await send({ LOOPOVER_DECISION_AUDIT: "true", SELFHOST_TRANSIENT_CACHE: undefined }, "2026-06-02T08:00:00.000Z")).some((m) => m.type === "decision-audit-sample")).toBe(false);
   });
 
+  it("#8835: enqueues the risk-control recalibration daily at 07:00 UTC, flag-ON, on a self-host", async () => {
+    const send = (over: Record<string, unknown>, when: string) => {
+      const sent: Array<import("../../src/types").JobMessage> = [];
+      const env = createTestEnv({
+        JOBS: { async send(message: import("../../src/types").JobMessage) { sent.push(message); } } as unknown as Queue,
+        ...over,
+      });
+      const waitUntil: Promise<unknown>[] = [];
+      return worker.scheduled(controllerFor(when), env, executionContext(waitUntil)).then(() => Promise.all(waitUntil)).then(() => sent);
+    };
+    const selfhost = { SELFHOST_TRANSIENT_CACHE: {} as never, LOOPOVER_RISK_CONTROL: "true" };
+    expect((await send(selfhost, "2026-06-03T07:00:00.000Z")).some((m) => m.type === "risk-control-recalibrate")).toBe(true);
+    expect((await send(selfhost, "2026-06-03T08:00:00.000Z")).some((m) => m.type === "risk-control-recalibrate")).toBe(false);
+    expect((await send({ ...selfhost, LOOPOVER_RISK_CONTROL: "0" }, "2026-06-03T07:00:00.000Z")).some((m) => m.type === "risk-control-recalibrate")).toBe(false);
+    expect((await send({ LOOPOVER_RISK_CONTROL: "true", SELFHOST_TRANSIENT_CACHE: undefined }, "2026-06-03T07:00:00.000Z")).some((m) => m.type === "risk-control-recalibrate")).toBe(false);
+  });
+
   it("enqueues weekly value report generation during the Monday report window", async () => {
     const sent: Array<import("../../src/types").JobMessage> = [];
     const env = createTestEnv({

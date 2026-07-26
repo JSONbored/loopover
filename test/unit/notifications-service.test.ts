@@ -241,6 +241,24 @@ describe("evaluateNotificationEvent", () => {
     const rows = await listNotificationDeliveriesForRecipient(env, "miner");
     expect(rows.find((row) => row.dedupKey === "over-limit")?.status).toBe("suppressed");
   });
+
+  it("returns a deterministic order for deliveries that tie on createdAt (#8895)", async () => {
+    const env = createTestEnv();
+    // Two deliveries stamped with an identical createdAt (a fan-out within one millisecond). Without a
+    // secondary sort key the tie order is engine-defined; desc(id) makes it deterministic. Controlled text
+    // ids (inserted a-before-z) prove the query reorders to id-desc rather than echoing insertion order.
+    const ts = "2026-07-10T00:00:00.000Z";
+    const insert =
+      "INSERT INTO notification_deliveries (id, dedup_key, channel, recipient_login, event_type, repo_full_name, pull_number, title, body, deeplink, actor_login, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+    await env.DB.prepare(insert)
+      .bind("delivery-a", "k-a", "badge", "miner", "pull_request_changes_requested", "owner/repo", 1, "t", "b", "https://x", "reviewer", "delivered", ts)
+      .run();
+    await env.DB.prepare(insert)
+      .bind("delivery-z", "k-z", "badge", "miner", "pull_request_changes_requested", "owner/repo", 2, "t", "b", "https://x", "reviewer", "delivered", ts)
+      .run();
+    const rows = await listNotificationDeliveriesForRecipient(env, "miner");
+    expect(rows.map((row) => row.id)).toEqual(["delivery-z", "delivery-a"]);
+  });
 });
 
 describe("deliverNotification", () => {

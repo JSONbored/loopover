@@ -1,0 +1,205 @@
+import { describe, expect, it } from "vitest";
+import { isRiskControlEnabled, loadCalibrationPairs, parseBudget, parseBudgetOrNull, readCalibratedThreshold, resolveAutomaticCloseConfidence, riskControlArms, riskControlFlagKey, runRiskControlRecalibration, scheduledAlpha } from "../../src/review/risk-control-wire";
+import { processJob } from "../../src/queue/processors";
+import { createTestEnv } from "../helpers/d1";
+
+// #8835: the IO around the calibration math. What must never drift: uncertain labels excluded, rule-only
+// (no-confidence) decisions skipped, per-arm scoping, publish-on-certify, RETRACT-on-insufficient.
+async function seedLabeledDecision(env: Env, n: number, verdict: "close" | "merge", adjudication: "correct" | "incorrect" | "uncertain", aiConfidence: number | null): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO decision_audit_labels (id, project, target_id, verdict, outcome, stratum, rubric_version, sampled_at, status, adjudication, adjudicated_at)
+     VALUES (?, 'o/r', ?, ?, 'closed', 'close_arm', '1', ?, 'adjudicated', ?, ?)`,
+  )
+    .bind(`audit:o/r#${n}`, `o/r#${n}`, verdict, new Date().toISOString(), adjudication, new Date().toISOString())
+    .run();
+  await env.DB.prepare(
+    `INSERT INTO decision_records (id, repo_full_name, pull_number, head_sha, action, reason_code, record_digest, record_json, created_at)
+     VALUES (?, 'o/r', ?, 'sha', ?, 'r', 'd', ?, ?)`,
+  )
+    .bind(`record:o/r#${n}@sha`, n, verdict, JSON.stringify({ aiConfidence }), new Date().toISOString())
+    .run();
+}
+
+describe("isRiskControlEnabled", () => {
+  it("default OFF; truthy strings enable", () => {
+    expect(isRiskControlEnabled({})).toBe(false);
+    expect(isRiskControlEnabled({ LOOPOVER_RISK_CONTROL: "true" })).toBe(true);
+  });
+});
+
+describe("loadCalibrationPairs", () => {
+  it("joins adjudicated labels to their record's confidence; excludes uncertain, rule-only, and the other arm", async () => {
+    const env = createTestEnv();
+    await seedLabeledDecision(env, 1, "close", "correct", 0.95);
+    await seedLabeledDecision(env, 2, "close", "incorrect", 0.6);
+    await seedLabeledDecision(env, 3, "close", "uncertain", 0.9); // rubric contract: excluded both sides
+    await seedLabeledDecision(env, 4, "close", "correct", null); // rule-only decision: no confidence to threshold
+    await seedLabeledDecision(env, 5, "merge", "correct", 0.99); // other arm
+    const pairs = await loadCalibrationPairs(env, "close");
+    expect(pairs.sort((a, b) => a.confidence - b.confidence)).toEqual([
+      { confidence: 0.6, correct: false },
+      { confidence: 0.95, correct: true },
+    ]);
+  });
+
+  it("a PR with several records (one per head sha) contributes exactly ONE pair — the latest record's confidence", async () => {
+    const env = createTestEnv();
+    await seedLabeledDecision(env, 1, "close", "correct", 0.7); // first review cycle @sha
+    // Two later cycles on new head shas. Without latest-record scoping this one label fans out into three
+    // pairs at three different confidences, corrupting the calibration set's one-label-one-trial contract.
+    for (const [sha, confidence, offsetMs] of [["sha2", 0.8, 60_000], ["sha3", 0.9, 120_000]] as const) {
+      await env.DB.prepare(
+        `INSERT INTO decision_records (id, repo_full_name, pull_number, head_sha, action, reason_code, record_digest, record_json, created_at)
+         VALUES (?, 'o/r', 1, ?, 'close', 'r', 'd', ?, ?)`,
+      )
+        .bind(`record:o/r#1@${sha}`, sha, JSON.stringify({ aiConfidence: confidence }), new Date(Date.now() + offsetMs).toISOString())
+        .run();
+    }
+    expect(await loadCalibrationPairs(env, "close")).toEqual([{ confidence: 0.9, correct: true }]);
+  });
+});
+
+describe("runRiskControlRecalibration", () => {
+  it("INSUFFICIENT: retracts any stale flag and audits the shortfall with the burn-down numbers", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare(`INSERT INTO system_flags (key, value) VALUES (?, 'stale')`).bind(riskControlFlagKey("close")).run();
+    await seedLabeledDecision(env, 1, "close", "correct", 0.95);
+    const summary = await runRiskControlRecalibration(env);
+    expect(summary).toEqual({ close: "insufficient_labels", merge: "insufficient_labels" });
+    const flag = await env.DB.prepare(`SELECT value FROM system_flags WHERE key = ?`).bind(riskControlFlagKey("close")).first();
+    expect(flag).toBeFalsy(); // a stale guarantee is a lie — retracted
+    const audit = await env.DB.prepare(`SELECT detail FROM audit_events WHERE event_type = 'risk_control_insufficient' AND target_key = 'riskcontrol:close'`).first<{ detail: string }>();
+    expect(audit!.detail).toContain("of 59 needed"); // scheduled close alpha 0.05 under 350 pairs → 59-label floor
+  });
+
+  it("CALIBRATED: publishes lambda + the certified statement once the close arm clears its floor", async () => {
+    const env = createTestEnv();
+    for (let i = 1; i <= 210; i += 1) await seedLabeledDecision(env, i, "close", "correct", 0.9 + (i % 5) / 100);
+    const summary = await runRiskControlRecalibration(env);
+    expect(summary.close).toBe("calibrated");
+    expect(summary.merge).toBe("insufficient_labels"); // merge alpha 0.005 needs 598 — genuinely separate arms
+    const flag = await env.DB.prepare(`SELECT value FROM system_flags WHERE key = ?`).bind(riskControlFlagKey("close")).first<{ value: string }>();
+    const stored = JSON.parse(flag!.value) as { lambda: number; coverageAtLambda: number; alpha: number };
+    expect(stored.lambda).toBe(0.9);
+    expect(stored.coverageAtLambda).toBe(1);
+    expect(stored.alpha).toBe(0.05); // 210 pairs < 350 → the schedule's first tier
+    const audit = await env.DB.prepare(`SELECT detail FROM audit_events WHERE event_type = 'risk_control_calibrated'`).first<{ detail: string }>();
+    expect(audit!.detail).toContain("P(wrong | acted) ≤ 0.05 guaranteed at 100% coverage");
+  });
+});
+
+describe("fail-safe arms", () => {
+  it("an unparseable record_json is skipped with a warn — one bad row never voids the pair set", async () => {
+    const env = createTestEnv();
+    const { vi } = await import("vitest");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await seedLabeledDecision(env, 1, "close", "correct", 0.95);
+    await env.DB.prepare("UPDATE decision_records SET record_json = '{broken' WHERE pull_number = 1").run();
+    await seedLabeledDecision(env, 2, "close", "incorrect", 0.6);
+    const pairs = await loadCalibrationPairs(env, "close");
+    expect(pairs).toEqual([{ confidence: 0.6, correct: false }]);
+    expect(warn).toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
+  it("a throwing arm recalibration is contained: the OTHER arm still runs and the summary reports insufficient", async () => {
+    const env = createTestEnv();
+    const { vi } = await import("vitest");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    vi.spyOn(env.DB, "prepare").mockImplementation((sql: string) => {
+      if (sql.includes("dal.verdict = ?")) {
+        return { bind: () => ({ all: async () => { throw new Error("ledger down"); } }) } as never;
+      }
+      return realPrepare(sql);
+    });
+    const summary = await runRiskControlRecalibration(env);
+    expect(summary).toEqual({ close: "insufficient_labels", merge: "insufficient_labels" });
+    expect(warn).toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+});
+
+describe("risk-control-recalibrate job dispatch (#8835)", () => {
+  it("flag-ON runs; flag-OFF (stale queued job) does zero work", async () => {
+    const on = createTestEnv({ LOOPOVER_RISK_CONTROL: "true" });
+    await processJob(on, { type: "risk-control-recalibrate", requestedBy: "test" });
+    const audited = await on.DB.prepare(`SELECT COUNT(*) AS n FROM audit_events WHERE event_type LIKE 'risk_control_%'`).first<{ n: number }>();
+    expect(audited!.n).toBe(2); // one insufficient audit per arm
+
+    const off = createTestEnv();
+    await processJob(off, { type: "risk-control-recalibrate", requestedBy: "test" });
+    const none = await off.DB.prepare(`SELECT COUNT(*) AS n FROM audit_events WHERE event_type LIKE 'risk_control_%'`).first<{ n: number }>();
+    expect(none!.n).toBe(0);
+  });
+});
+
+describe("actuation precedence (#8849)", () => {
+  it("a live calibrated λ̂ outranks the knob loosening; retraction restores it; flag-off ignores calibration", async () => {
+    const env = createTestEnv({ LOOPOVER_RISK_CONTROL: "true" });
+    await env.DB.prepare(`INSERT INTO system_flags (key, value) VALUES ('riskcontrol:close', ?)`).bind(JSON.stringify({ lambda: 0.94 })).run();
+    expect(await resolveAutomaticCloseConfidence(env, "o/r", 0.9)).toEqual({ value: 0.94, calibrated: true });
+    // Retraction → the loosening chain resumes automatically.
+    await env.DB.prepare(`DELETE FROM system_flags WHERE key = 'riskcontrol:close'`).run();
+    expect(await resolveAutomaticCloseConfidence(env, "o/r", 0.9)).toEqual({ value: 0.9, calibrated: false });
+    expect(await resolveAutomaticCloseConfidence(env, "o/r", null)).toBeNull();
+    // Flag off → calibration is never consulted even when a flag row exists.
+    const off = createTestEnv();
+    await off.DB.prepare(`INSERT INTO system_flags (key, value) VALUES ('riskcontrol:close', ?)`).bind(JSON.stringify({ lambda: 0.94 })).run();
+    expect(await resolveAutomaticCloseConfidence(off, "o/r", 0.9)).toEqual({ value: 0.9, calibrated: false });
+  });
+
+  it("readCalibratedThreshold prefers the repo-scoped key, falls back to global, fails OPEN on garbage", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare(`INSERT INTO system_flags (key, value) VALUES ('riskcontrol:close', ?)`).bind(JSON.stringify({ lambda: 0.9 })).run();
+    await env.DB.prepare(`INSERT INTO system_flags (key, value) VALUES ('riskcontrol:close:o/r', ?)`).bind(JSON.stringify({ lambda: 0.96 })).run();
+    expect(await readCalibratedThreshold(env, "close", "O/R")).toBe(0.96); // repo key, case-insensitive
+    expect(await readCalibratedThreshold(env, "close", "other/repo")).toBe(0.9); // global fallback
+    expect(await readCalibratedThreshold(env, "close")).toBe(0.9); // no-repo callers read global directly
+    await env.DB.prepare(`UPDATE system_flags SET value = '{oops' WHERE key = 'riskcontrol:close:o/r'`).run();
+    expect(await readCalibratedThreshold(env, "close", "o/r")).toBeNull(); // garbage fails open, never throws
+  });
+});
+
+describe("env-configurable budgets", () => {
+  it("clamped parse: defaults on absent/garbage/out-of-range; merge default is the relaxed 0.005", () => {
+    expect(parseBudget(undefined, 0.015, 0.05)).toBe(0.015);
+    expect(parseBudget("nope", 0.015, 0.05)).toBe(0.015);
+    expect(parseBudget("0.2", 0.015, 0.05)).toBe(0.015); // over max
+    expect(parseBudget("0", 0.015, 0.05)).toBe(0.015); // zero is not a budget
+    expect(parseBudget("0.01", 0.015, 0.05)).toBe(0.01);
+    const arms = riskControlArms(createTestEnv({ LOOPOVER_RISK_CONTROL_CLOSE_ALPHA: "0.02" }));
+    expect(arms.find((a) => a.arm === "close")!.alpha).toBe(0.02);
+    expect(arms.find((a) => a.arm === "merge")!.alpha).toBeNull(); // unset env = follow the schedule
+  });
+
+  it("parseBudgetOrNull: null on absent/garbage/out-of-range means 'use the schedule'", () => {
+    expect(parseBudgetOrNull(undefined, 0.05)).toBeNull();
+    expect(parseBudgetOrNull("nope", 0.05)).toBeNull();
+    expect(parseBudgetOrNull("0.2", 0.05)).toBeNull();
+    expect(parseBudgetOrNull("0", 0.05)).toBeNull();
+    expect(parseBudgetOrNull("0.03", 0.05)).toBe(0.03);
+  });
+
+  it("scheduledAlpha: the pre-registered close-arm tightening tiers; merge stays fixed at 0.005", () => {
+    expect(scheduledAlpha("close", 0)).toBe(0.05);
+    expect(scheduledAlpha("close", 349)).toBe(0.05);
+    expect(scheduledAlpha("close", 350)).toBe(0.025);
+    expect(scheduledAlpha("close", 699)).toBe(0.025);
+    expect(scheduledAlpha("close", 700)).toBe(0.015);
+    expect(scheduledAlpha("merge", 0)).toBe(0.005);
+    expect(scheduledAlpha("merge", 5000)).toBe(0.005);
+  });
+});
+
+describe("per-repo calibration (#8835)", () => {
+  it("publishes a repo-scoped λ̂ when that repo's own labels certify, retractable independently of global", async () => {
+    const env = createTestEnv({ LOOPOVER_RISK_CONTROL_CLOSE_ALPHA: "0.05" }); // floor ln(.05)/ln(.95) = 59 labels
+    for (let i = 1; i <= 65; i += 1) await seedLabeledDecision(env, i, "close", "correct", 0.95);
+    await runRiskControlRecalibration(env);
+    const repoKey = await env.DB.prepare(`SELECT value FROM system_flags WHERE key = 'riskcontrol:close:o/r'`).first<{ value: string }>();
+    expect(JSON.parse(repoKey!.value)).toMatchObject({ lambda: 0.95 });
+    const globalKey = await env.DB.prepare(`SELECT value FROM system_flags WHERE key = 'riskcontrol:close'`).first<{ value: string }>();
+    expect(JSON.parse(globalKey!.value)).toMatchObject({ lambda: 0.95 });
+  });
+});

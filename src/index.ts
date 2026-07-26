@@ -1,5 +1,6 @@
 import { createApp } from "./api/routes";
 import { RateLimiter } from "./auth/rate-limit";
+import { SubmissionLock } from "./queue/submission-lock";
 import { delayUntil, shouldWaitForGitHubRateLimit, LOW_REST_RATE_LIMIT_REMAINING, MAINTENANCE_RESERVED_HEADROOM } from "./github/rate-limit";
 import { processDlqBatch } from "./queue/dlq";
 import { processJob } from "./queue/processors";
@@ -15,6 +16,7 @@ import { isPrReconciliationEnabled, resolvePrReconciliationManifestOverride } fr
 import { isActiveReviewReconciliationEnabled, resolveActiveReviewReconciliationManifestOverride } from "./review/active-review-reconciliation";
 import { isRagEnabled } from "./review/rag-wire";
 import { isDecisionAuditEnabled } from "./review/decision-audit";
+import { isRiskControlEnabled } from "./review/risk-control-wire";
 import { isSelfTuneEnabled } from "./review/selftune-wire";
 import { isSatisfactionFloorAutotuneEnabled } from "./services/satisfaction-floor-loosening-run";
 import {
@@ -42,7 +44,7 @@ const REGATE_SWEEP_TRIGGER_TYPES = ["agent-regate-sweep"] as const;
 // queueProcessingTimeoutMs(), which defaults to this sweep's own 30-min cadence) go unnoticed by the next tick.
 const BACKLOG_CONVERGENCE_SWEEP_TRIGGER_TYPES = ["backlog-convergence-sweep"] as const;
 
-export { RateLimiter };
+export { RateLimiter, SubmissionLock };
 
 export default {
   fetch: app.fetch,
@@ -297,6 +299,12 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
   // this job is never created, so the cron tick does ZERO new work and the enqueued set is byte-identical.
   if (isHourly && scheduledAt.getUTCDay() === 2 && hour === 8 && selfHostedReviews && isDecisionAuditEnabled(env)) {
     jobs.push({ type: "decision-audit-sample", requestedBy: "schedule" });
+  }
+  // Risk-control recalibration (#8835, flag LOOPOVER_RISK_CONTROL): daily fixed-sequence calibration of the
+  // per-arm act/hold thresholds over the adjudicated labels. 07:00 UTC — its own slot. Enqueued ONLY when
+  // the flag is ON — flag-OFF (default) this job is never created and the tick is byte-identical.
+  if (isHourly && hour === 7 && selfHostedReviews && isRiskControlEnabled(env)) {
+    jobs.push({ type: "risk-control-recalibrate", requestedBy: "schedule" });
   }
   // Prune expired log/snapshot rows once a day (03:00 UTC) per the conservative RETENTION_POLICY.
   if (isHourly && hour === 3) {

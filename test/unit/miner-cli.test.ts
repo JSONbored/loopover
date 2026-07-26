@@ -69,6 +69,8 @@ describe("loopover-miner CLI helpers", () => {
     expect(text).toContain("loopover-miner migrate [--json]");
     expect(text).toContain("loopover-miner ledger metrics");
     expect(text).toContain("loopover-miner queue dashboard [--json]");
+    expect(text).toContain("deny-hooks");
+    expect(text).toContain("loopover-miner deny-hooks list <owner/repo> [--json]");
     expect(text).toContain("--no-update-check");
   });
 

@@ -237,6 +237,12 @@ export async function handleOrbRelay(c: Context<{ Bindings: Env }>): Promise<Res
   const secret = c.env.ORB_ENROLLMENT_SECRET;
   if (!secret) return c.json({ error: "relay_not_configured" }, 404); // not a brokered self-host → no relay
   const maxBodyBytes = parsePositiveInt(c.env.GITHUB_WEBHOOK_MAX_BODY_BYTES) ?? DEFAULT_MAX_WEBHOOK_BODY_BYTES;
+  // #8888: same Content-Length fast-path 413 handleGitHubWebhook uses -- reject an oversized request before
+  // buffering any of the body, rather than streaming up to the cap first.
+  const contentLength = parsePositiveInt(c.req.header("content-length"));
+  if (contentLength !== null && contentLength > maxBodyBytes) {
+    return c.json({ error: "payload_too_large", maxBytes: maxBodyBytes }, 413);
+  }
   const rawBody = await readBodyWithLimit(c.req.raw, maxBodyBytes);
   if (rawBody === null) return c.json({ error: "payload_too_large", maxBytes: maxBodyBytes }, 413);
   if (!(await relayVerify(secret, rawBody, c.req.header("x-orb-signature-256") ?? null))) {

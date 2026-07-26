@@ -1274,7 +1274,7 @@ const STDIO_TOOL_DESCRIPTORS = [
   {
     name: "loopover_check_issue_slop",
     category: "review",
-    description: "Assess the deterministic slop risk of an issue from its title + body alone (no repo data) — flags clearly low-effort issues (empty body, an unfilled template) for triage. Returns slopRisk (0-100), band, findings, and the rubric. Advisory-only.",
+    description: "Assess the deterministic slop risk of an issue from its title + body alone (no repo data) — flags clearly low-effort issues (empty body, an unfilled template) for triage. Returns band and findings. Advisory-only: issues never block.",
   },
   // #6150 — the miner-auto-dev profile's plan-DAG + local-scorer + gate-prediction tools, previously listed in
   // recommendedTools below but never actually registered.

@@ -63,6 +63,30 @@ describe("handleOrbWebhook (POST /v1/orb/webhook)", () => {
     errors.mockRestore();
   });
 
+  it("500 + distinct log when only the trailing webhook-event record write fails (#8883)", async () => {
+    const e = env();
+    const real = e.DB;
+    // The upsert/outcome writes succeed (so the earlier catch is NOT entered); throw only on the trailing
+    // orb_webhook_events INSERT (the status:"received" record), leaving the dedup SELECT read on the real DB.
+    (e as { DB: unknown }).DB = {
+      prepare: (sql: string) =>
+        sql.includes("orb_webhook_events") && sql.includes("INSERT")
+          ? { bind: () => ({ run: () => Promise.reject(new Error("boom")) }) }
+          : real.prepare(sql),
+    };
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const res = await post(e, INSTALL, { delivery: "rec-err" });
+    expect(res.status).toBe(500);
+    expect(await res.json()).toMatchObject({ error: "event_record_failed", deliveryId: "rec-err" });
+    // Distinct from orb_webhook_processing_failed: the processing succeeded, only the event-row write failed.
+    const processingLog = errors.mock.calls.map((c) => String(c[0])).find((line) => line.includes("orb_webhook_processing_failed"));
+    expect(processingLog).toBeUndefined();
+    const recordLog = errors.mock.calls.map((c) => String(c[0])).find((line) => line.includes("orb_webhook_event_record_failed"));
+    expect(recordLog).toBeDefined();
+    expect(JSON.parse(recordLog!)).toMatchObject({ level: "error", event: "orb_webhook_event_record_failed", deliveryId: "rec-err", eventName: "installation", installationId: 42, message: "Error: boom" });
+    errors.mockRestore();
+  });
+
   it("400 when the GitHub delivery or event header is missing", async () => {
     expect((await post(env(), INSTALL, { delivery: null as unknown as string })).status).toBe(400);
     expect((await post(env(), INSTALL, { event: null as unknown as string })).status).toBe(400);

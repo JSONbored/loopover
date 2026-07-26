@@ -222,3 +222,55 @@ describe("maintainer self-enrollment via the OAuth callback", () => {
     expect(await (await app.request("/v1/orb/oauth/callback?code=abc&installation_id=0", {}, brokeredEnv())).text()).toContain("LoopOver Orb connected"); // installationId > 0 false
   });
 });
+
+describe("self-enrollment degrades a thrown GitHub network error to the clean identity page (not an uncaught 500)", () => {
+  const app = createApp();
+  const db = (e: Env) => e.DB as unknown as TestD1Database;
+  const brokeredEnv = () => createTestEnv({ ORB_BROKER_ENABLED: "true", ORB_GITHUB_CLIENT_ID: "id", ORB_GITHUB_CLIENT_SECRET: "sec" });
+  const seedInstall = (e: Env, cols: Record<string, string | number>) => {
+    const keys = Object.keys(cols);
+    return db(e).prepare(`INSERT INTO orb_github_installations (${keys.join(", ")}) VALUES (${keys.map(() => "?").join(", ")})`).bind(...keys.map((k) => cols[k] as string | number)).run();
+  };
+  // Each of the three network calls resolves through the module's default timeoutFetch, so spying it lets us reject
+  // exactly one URL while the earlier calls succeed — reaching the specific call under test before it throws.
+  const rejectAt = (throwUrlFragment: string) =>
+    vi.spyOn(githubClientModule, "timeoutFetch").mockImplementation((async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes(throwUrlFragment)) throw new Error("network down");
+      if (url.includes("/login/oauth/access_token")) return Response.json({ access_token: "ghu_x" });
+      if (url.includes("api.github.com/user/memberships/orgs/")) return Response.json({ role: "admin", state: "active", organization: { id: 20 } });
+      if (url.endsWith("api.github.com/user")) return Response.json({ login: "alice", id: 7 });
+      return new Response("nf", { status: 404 });
+    }) as typeof githubClientModule.timeoutFetch);
+  afterEach(() => vi.restoreAllMocks());
+
+  it("a thrown code-exchange fetch degrades to the identity page (400), not an uncaught exception", async () => {
+    const e = brokeredEnv();
+    await seedInstall(e, { installation_id: 600, account_login: "acme", account_type: "Organization", account_id: 20, registered: 1 });
+    rejectAt("/login/oauth/access_token");
+    const res = await app.request("/v1/orb/oauth/callback?code=abc&installation_id=600", {}, e);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain("Couldn't verify your GitHub identity");
+  });
+
+  it("a thrown /user read degrades to the identity page (400)", async () => {
+    const e = brokeredEnv();
+    await seedInstall(e, { installation_id: 601, account_login: "acme", account_type: "Organization", account_id: 20, registered: 1 });
+    rejectAt("api.github.com/user"); // exchange succeeds first, then the /user read throws
+    const res = await app.request("/v1/orb/oauth/callback?code=abc&installation_id=601", {}, e);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain("Couldn't verify your GitHub identity");
+    expect(await db(e).prepare("SELECT 1 AS x FROM orb_enrollments WHERE installation_id=601").first()).toBeUndefined(); // never reached enrollment
+  });
+
+  it("a thrown org-membership check degrades to the identity page (400), leaving the install unregistered", async () => {
+    const e = brokeredEnv();
+    await seedInstall(e, { installation_id: 602, account_login: "acme", account_type: "Organization", account_id: 20, registered: 0 });
+    rejectAt("/user/memberships/orgs/"); // exchange + /user succeed, then the admin check throws
+    const res = await app.request("/v1/orb/oauth/callback?code=abc&installation_id=602", {}, e);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain("Couldn't verify your GitHub identity");
+    const row = await db(e).prepare("SELECT registered FROM orb_github_installations WHERE installation_id=602").first<{ registered: number }>();
+    expect(row?.registered).toBe(0); // a throw at the gate never auto-registers
+  });
+});

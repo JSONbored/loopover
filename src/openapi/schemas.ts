@@ -141,6 +141,7 @@ export const PublicStatsSchema = z
       closePrecisionCiPct: z.object({ lo: z.number(), hi: z.number() }).nullable(),
       coveragePct: z.number().nullable(),
       decidedCount: z.number(),
+      guaranteed: z.object({ close: z.object({ alpha: z.number(), lambda: z.number(), coveragePct: z.number(), n: z.number() }).nullable(), merge: z.object({ alpha: z.number(), lambda: z.number(), coveragePct: z.number(), n: z.number() }).nullable() }),
       instanceCount: z.number(),
       windowDays: z.number(),
       gamingFlagsCaught: z.number(),

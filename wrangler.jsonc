@@ -286,15 +286,17 @@
       "migrations_dir": "migrations",
     },
   ],
-  // TODO (convergence follow-up): a per-PR LOCK Durable Object (`SubmissionLock` mutex) so concurrent
-  // webhook deliveries for the same PR serialize. That is a separate, more-involved sub-task — it needs a DO
-  // class (ported) + its own `migrations` tag (`new_sqlite_classes: ["SubmissionLock"]`) + a `durable_objects`
-  // binding here. NOT ported in this chunk; the review path keeps its current concurrency behavior until then.
+  // Per-PR / per-lock-key exclusive mutex (#8896). claimTransientLock prefers SUBMISSION_LOCK when bound;
+  // self-host (no DO) keeps the Redis/transient-cache path.
   "durable_objects": {
     "bindings": [
       {
         "name": "RATE_LIMITER",
         "class_name": "RateLimiter",
+      },
+      {
+        "name": "SUBMISSION_LOCK",
+        "class_name": "SubmissionLock",
       },
     ],
   },
@@ -302,6 +304,10 @@
     {
       "tag": "v1-rate-limiter",
       "new_sqlite_classes": ["RateLimiter"],
+    },
+    {
+      "tag": "v2-submission-lock",
+      "new_sqlite_classes": ["SubmissionLock"],
     },
   ],
   // Queue rename (#4768): the producer writes to loopover-jobs. The old gittensory-jobs/-dlq drain-window

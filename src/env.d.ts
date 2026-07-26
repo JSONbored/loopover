@@ -5,6 +5,9 @@ declare global {
     /** Self-host webhook queue binding. Cloudflare no longer binds this because hosted reviews are retired. */
     WEBHOOKS?: Queue;
     RATE_LIMITER?: DurableObjectNamespace;
+    /** Per-key exclusive mutex Durable Object (`SubmissionLock`, #8896). Optional so self-host installs
+     *  without Durable Objects keep the transient-cache lock path in `src/queue/transient-locks.ts`. */
+    SUBMISSION_LOCK?: DurableObjectNamespace;
     AI?: Ai;
     /** Self-host (RAG): a DEDICATED embedding provider, kept SEPARATE from the review chat chain so the reviewer
      *  stays frontier-only (claude-code/codex) while embeddings — which those CLIs cannot produce — route to a
@@ -70,9 +73,6 @@ declare global {
        *  `claim()` (validated at self-host boot). */
       releaseIfValue?(key: string, value: string): Promise<boolean>;
     };
-    /** TODO (convergence follow-up): a per-PR LOCK Durable Object (`SubmissionLock` mutex) is a separate,
-     *  more-involved sub-task — it needs the ported DO class + its own migration tag, not just a binding here.
-     *  Deliberately NOT declared in this chunk; the review path keeps its current concurrency behavior. */
     PUBLIC_API_ORIGIN?: string;
     PUBLIC_SITE_ORIGIN?: string;
     /** Comma-separated extra origins (each `scheme://host[:port]`) allowed as a post-GitHub-OAuth `returnTo`
@@ -504,6 +504,13 @@ declare global {
     LOOPOVER_REVIEW_SELFTUNE?: string;
     /** #8830: weekly stratified human-audit sampling of gate decisions (default OFF). */
     LOOPOVER_DECISION_AUDIT?: string;
+    /** #8835: daily distribution-free risk-control recalibration over the audit labels (default OFF). */
+    LOOPOVER_RISK_CONTROL?: string;
+    /** #8835/#8849: per-arm error budgets + calibration confidence — instance-level instrument parameters
+     *  (clamped; defaults 0.015 / 0.005 / 0.05). */
+    LOOPOVER_RISK_CONTROL_CLOSE_ALPHA?: string;
+    LOOPOVER_RISK_CONTROL_MERGE_ALPHA?: string;
+    LOOPOVER_RISK_CONTROL_DELTA?: string;
     /** Experimental `gittensor` plugin (the `experimental:` manifest block, first key): the operator-level
      *  kill-switch for loopover's original subnet mining-registry/scoring integration, now opt-in rather than
      *  a core dependency. ANDed with the per-repo `.loopover.yml experimental.gittensor` opt-in -- neither

@@ -270,6 +270,7 @@ export function buildContributorEvidenceGraph(args: ContributorEvidenceGraphInpu
     ...(reposCapped ? [`Evidence graph repo relationships capped at ${CONTRIBUTOR_EVIDENCE_GRAPH_MAX_REPOS}.`] : []),
     ...(labels.length < allLabels.length ? [`Evidence graph label relationships capped at ${CONTRIBUTOR_EVIDENCE_GRAPH_MAX_LABELS}.`] : []),
     ...(paths.length < allPaths.length ? [`Evidence graph path relationships capped at ${CONTRIBUTOR_EVIDENCE_GRAPH_MAX_PATHS}.`] : []),
+    ...(outcomes.length < allOutcomes.length ? [`Evidence graph outcome relationships capped at ${CONTRIBUTOR_EVIDENCE_GRAPH_MAX_OUTCOMES}.`] : []),
   ];
 
   const sources = buildSources(generatedAt, args.profile, args.gittensorSnapshot, repoNodes, labels, paths, outcomes);

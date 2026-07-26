@@ -2499,6 +2499,7 @@ function buildAgentMaintenancePlanInput(args: {
   pr: PullRequestRecord;
   openDuplicateSiblings: ReturnType<typeof linkedIssueDuplicatePullRequestRecordsForGate>;
   duplicateWinnerEnabled: boolean;
+  manualReviewLockContentionResolved: AgentActionPlanInput["manualReviewLockContentionResolved"];
 }): AgentActionPlanInput {
   const {
     gate,
@@ -2524,6 +2525,7 @@ function buildAgentMaintenancePlanInput(args: {
     pr,
     openDuplicateSiblings,
     duplicateWinnerEnabled,
+    manualReviewLockContentionResolved,
   } = args;
   return {
     conclusion: gate.conclusion,
@@ -2590,6 +2592,7 @@ function buildAgentMaintenancePlanInput(args: {
     ...(unlinkedIssueMatchHold !== undefined ? { unlinkedIssueMatchHold } : {}),
     ...(aiReviewLowConfidenceHold !== undefined ? { aiReviewLowConfidenceHold } : {}),
     ...(unlinkedIssueMatchClose !== undefined ? { unlinkedIssueMatchClose } : {}),
+    manualReviewLockContentionResolved,
     pr: {
       mergeableState: liveMergeState ?? pr.mergeableState,
       reviewDecision: liveReviewDecision ?? pr.reviewDecision,
@@ -3204,6 +3207,26 @@ async function runAgentMaintenancePlanAndExecute(
     aiReviewLowConfidenceHold === undefined && settings.aiReviewSalvageabilityMinScore != null
       ? resolveAiReviewSalvageableHold(gate, settings, await computeSalvageabilityForTarget(env, repoFullName, pr.number, pr.authorLogin, gate))
       : undefined;
+  // #9009 (narrow scope): track whether manual-review is being held specifically for AI-review lock contention
+  // (aiReviewLockContendedResult's exact finding shape, ai-review-orchestration.ts) so it can be auto-cleared
+  // once that transient contention resolves -- see planAgentMaintenanceActions' own doc comment on
+  // manualReviewLockContentionResolved for why this is the ONLY provenance-tracked auto-clear. The marker is
+  // keyed per (repo, PR) -- not per head SHA -- since the label persists across pushes and a real verdict may
+  // only land on a LATER head; a generous 24h TTL means a contention that hasn't cleared naturally in a day no
+  // longer counts as purely transient and reverts to requiring a maintainer, matching every other hold class.
+  const manualReviewLockContentionMarkerKey = `manual-review-lock-contention:${repoFullName.toLowerCase()}#${pr.number}`;
+  const hadPriorLockContentionHold = Boolean(await getTransientKey(env, manualReviewLockContentionMarkerKey));
+  const aiReviewLockContentionThisPass = gate.warnings.some(
+    (finding) => finding.code === "ai_review_inconclusive" && finding.title === "AI review already in progress for this PR head",
+  );
+  if (aiReviewLockContentionThisPass) {
+    await putTransientKey(env, manualReviewLockContentionMarkerKey, "1", 24 * 60 * 60);
+  } else if (hadPriorLockContentionHold) {
+    // Consumed regardless of what else fires this pass -- once contention itself has cleared, the marker's
+    // OWN reason is stale; a different reason now co-occurring (if any) must stand on its own from here on,
+    // not inherit this transient provenance on some future pass.
+    await deleteTransientKey(env, manualReviewLockContentionMarkerKey);
+  }
   const planned = planAgentMaintenanceActions(
     buildAgentMaintenancePlanInput({
       gate,
@@ -3229,6 +3252,7 @@ async function runAgentMaintenancePlanAndExecute(
       pr,
       openDuplicateSiblings,
       duplicateWinnerEnabled,
+      manualReviewLockContentionResolved: hadPriorLockContentionHold && !aiReviewLockContentionThisPass,
     }),
   );
   // Accuracy circuit-breakers (#self-improve / GAP-4): two INDEPENDENT, fail-open precision breakers, chained.

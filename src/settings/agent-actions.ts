@@ -279,6 +279,16 @@ export type AgentActionPlanInput = {
   changesRequestedLabel?: string | null | undefined;
   migrationCollisionLabel?: string | null | undefined;
   pendingClosureLabel?: string | null | undefined;
+  // #9009 (narrow scope): true when a transient marker recorded that manual-review was held/applied because a
+  // PRIOR pass lost the AI-review lock race (a genuinely transient infra artifact -- see
+  // aiReviewLockContendedResult, ai-review-orchestration.ts), AND this pass's fresh gate evaluation no longer
+  // shows that specific contention (the caller clears the marker the moment contention resolves, regardless of
+  // whether this flag ends up removing the label -- see buildAgentMaintenancePlanInput's caller). Deliberately
+  // the ONLY provenance-tracked auto-clear condition: every OTHER manual-review trigger (guardrail, migration
+  // collision, breaker downgrades, unstable-mergeable, a human's own hold, ...) still requires a maintainer to
+  // lift it, exactly as before -- see the stale-disposition-label-cleanup comment below for why a general
+  // provenance-free auto-clear is unsafe. Absent/false ⇒ byte-identical to pre-#9009 behavior.
+  manualReviewLockContentionResolved?: boolean | undefined;
   // True when the PR author is the repo owner (e.g. JSONbored). Standing rule: owner PRs are NEVER
   // auto-closed. They may still auto-merge when clean + passing.
   authorIsOwner: boolean;
@@ -1537,6 +1547,30 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
       // 1c/1d above), but those apply only to a would-MERGE hold (reviewGood); this hold applies to a would-CLOSE
       // suppression instead, so it belongs in this generic not-review-good fallback, not sections 1c/1d.
       ...(!reviewGood && input.aiReviewLowConfidenceHold !== undefined ? { comment: sanitizePublicComment(input.aiReviewLowConfidenceHold.comment) } : {}),
+    });
+  }
+
+  // #9009 (narrow scope): auto-clear manual-review when the caller's transient marker proves this exact hold
+  // was applied because a prior pass lost the AI-review lock race, and this fresh pass shows the contention
+  // has cleared. `manualHoldReason === null` is the load-bearing safety check here: it means NOTHING else this
+  // pass (guardrail, migration collision, unverified CI, action-required conclusion, a not-review-good verdict,
+  // ...) currently justifies the label, so removing it cannot silently drop a substantive or human-applied
+  // hold that happens to coexist. If manualHoldReason is non-null, the block above already re-adds/keeps the
+  // label for that OTHER reason this same pass, so this branch is naturally a no-op there.
+  if (
+    input.manualReviewLockContentionResolved === true &&
+    manualHoldReason === null &&
+    labels.manualReview !== null &&
+    hasLabel(input.pr.labels, labels.manualReview) &&
+    !actions.some((action) => action.actionClass === "label" && action.label?.toLowerCase() === labels.manualReview?.toLowerCase())
+  ) {
+    actions.push({
+      actionClass: "label",
+      autonomyClass: manualHoldAutonomyClass,
+      requiresApproval: approval(manualHoldAutonomyClass),
+      reason: "AI-review lock contention has cleared and nothing else currently holds this PR — removing the transient manual-review hold",
+      label: labels.manualReview,
+      labelOp: "remove",
     });
   }
 

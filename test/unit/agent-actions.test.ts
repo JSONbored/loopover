@@ -139,6 +139,71 @@ describe("planAgentMaintenanceActions (#778)", () => {
       expect(classes(plan)).toEqual(["label", "approve", "merge"]);
     });
 
+    describe("manual-review lock-contention auto-clear (#9009, narrow scope)", () => {
+      // Same base scenario as the "does NOT clear" test immediately above (conclusion success, clean, the
+      // label already live) -- the ONLY difference in each case is manualReviewLockContentionResolved. This is
+      // the exact truth table the caller-side marker (processors.ts) is responsible for computing correctly;
+      // here we pin what the PURE planner does once given each value.
+      const base = { conclusion: "success" as const, autonomy: { approve: "auto", merge: "auto", review_state_label: "auto" } as const, autoMaintain: { requireApprovals: 0, mergeMethod: "squash" } as const };
+
+      it("clears manual-review when the marker says lock contention resolved and nothing else holds the PR", () => {
+        const plan = planAgentMaintenanceActions(input({ ...base, pr: { labels: [AGENT_LABEL_NEEDS_REVIEW], mergeableState: "clean" }, manualReviewLockContentionResolved: true }));
+        expect(plan).toContainEqual(expect.objectContaining({ actionClass: "label", label: AGENT_LABEL_NEEDS_REVIEW, labelOp: "remove" }));
+      });
+
+      it("does NOT clear when manualReviewLockContentionResolved is absent (byte-identical to pre-#9009)", () => {
+        // Identical to the test above in every other respect -- proves the new behavior is opt-in via the flag,
+        // not a silent widening of the existing "does NOT clear" test just above.
+        const plan = planAgentMaintenanceActions(input({ ...base, pr: { labels: [AGENT_LABEL_NEEDS_REVIEW], mergeableState: "clean" } }));
+        expect(plan.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_NEEDS_REVIEW && a.labelOp === "remove")).toBe(false);
+      });
+
+      it("does NOT clear when a DIFFERENT reason (a guardrail hit) still holds the PR this same pass", () => {
+        // The load-bearing safety property: manualHoldReason non-null (guardrailHit here) means something ELSE
+        // currently justifies the label, so the resolved-lock-contention marker must never override it. The
+        // label is already correctly live (guardrail's own add is a no-op via hasLabelOrPlanned), so the plan
+        // is empty either way -- what matters is that it is NOT a "remove".
+        const plan = planAgentMaintenanceActions(
+          input({
+            conclusion: "success",
+            autonomy: { merge: "auto", review_state_label: "auto" },
+            changedPaths: ["src/settings/agent-actions.ts"],
+            hardGuardrailGlobs: ["src/settings/**"],
+            pr: { labels: [AGENT_LABEL_NEEDS_REVIEW], mergeableState: "clean" },
+            manualReviewLockContentionResolved: true,
+          }),
+        );
+        expect(plan.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_NEEDS_REVIEW && a.labelOp === "remove")).toBe(false);
+        expect(plan).toEqual([]);
+
+        // Sharper version of the same property: guardrailHit, but the label is NOT yet live (a earlier pass's
+        // marker predates the guardrail path ever adding it). Here the guardrail's own add DOES fire, proving
+        // the "resolved" marker never suppresses a genuine, currently-justified hold from being (re)applied.
+        const withoutLabelYet = planAgentMaintenanceActions(
+          input({
+            conclusion: "success",
+            autonomy: { merge: "auto", review_state_label: "auto" },
+            changedPaths: ["src/settings/agent-actions.ts"],
+            hardGuardrailGlobs: ["src/settings/**"],
+            pr: { labels: [], mergeableState: "clean" },
+            manualReviewLockContentionResolved: true,
+          }),
+        );
+        expect(withoutLabelYet).toContainEqual(expect.objectContaining({ actionClass: "label", label: AGENT_LABEL_NEEDS_REVIEW, labelOp: "add" }));
+        expect(withoutLabelYet.some((a) => a.actionClass === "label" && a.labelOp === "remove")).toBe(false);
+      });
+
+      it("plans no spurious removal when the label isn't currently on the PR", () => {
+        const plan = planAgentMaintenanceActions(input({ ...base, pr: { labels: [], mergeableState: "clean" }, manualReviewLockContentionResolved: true }));
+        expect(plan.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_NEEDS_REVIEW && a.labelOp === "remove")).toBe(false);
+      });
+
+      it("respects a configured manual-review label name, not just the engine default", () => {
+        const plan = planAgentMaintenanceActions(input({ ...base, manualReviewLabel: "human-review", pr: { labels: ["human-review"], mergeableState: "clean" }, manualReviewLockContentionResolved: true }));
+        expect(plan).toContainEqual(expect.objectContaining({ actionClass: "label", label: "human-review", labelOp: "remove" }));
+      });
+    });
+
     it("clears a stale ready-to-merge label when the PR newly becomes guarded", () => {
       const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto", review_state_label: "auto" }, changedPaths: ["src/settings/agent-actions.ts"], hardGuardrailGlobs: ["src/settings/**"], pr: { labels: [AGENT_LABEL_READY], mergeableState: "clean" } }));
       expect(plan).toContainEqual(expect.objectContaining({ actionClass: "label", label: AGENT_LABEL_NEEDS_REVIEW, labelOp: "add" }));

@@ -24,7 +24,7 @@ export const AMS_ENV_REFERENCE_ROWS: MinerEnvReferenceRow[] = [
   {
     name: "LOOPOVER_MINER_AMS_POLICY_PATH",
     firstReference: "lib/ams-policy.ts",
-    defaultValue: null,
+    defaultValue: "",
   },
   {
     name: "LOOPOVER_MINER_ATTEMPT_LOG_DB",
@@ -38,7 +38,7 @@ export const AMS_ENV_REFERENCE_ROWS: MinerEnvReferenceRow[] = [
   },
   {
     name: "LOOPOVER_MINER_CONFIG_DIR",
-    firstReference: "lib/laptop-init.ts",
+    firstReference: "lib/ams-policy.ts",
     defaultValue: "",
   },
   {
@@ -258,10 +258,10 @@ export const AMS_ENV_REFERENCE_MARKDOWN = [
   '| `LOOPOVER_MINER_AMS_COLLECTOR_TOKEN` | `lib/orb-export.ts` | `""` |',
   '| `LOOPOVER_MINER_AMS_COLLECTOR_URL` | `lib/orb-export.ts` | `""` |',
   '| `LOOPOVER_MINER_AMS_OAUTH_CLIENT_ID` | `lib/oauth-device-flow.ts` | `""` |',
-  "| `LOOPOVER_MINER_AMS_POLICY_PATH` | `lib/ams-policy.ts` | (none) |",
+  '| `LOOPOVER_MINER_AMS_POLICY_PATH` | `lib/ams-policy.ts` | `""` |',
   "| `LOOPOVER_MINER_ATTEMPT_LOG_DB` | `lib/attempt-log.ts` | (none) |",
   "| `LOOPOVER_MINER_CLAIM_LEDGER_DB` | `lib/claim-ledger.ts` | (none) |",
-  '| `LOOPOVER_MINER_CONFIG_DIR` | `lib/laptop-init.ts` | `""` |',
+  '| `LOOPOVER_MINER_CONFIG_DIR` | `lib/ams-policy.ts` | `""` |',
   "| `LOOPOVER_MINER_CONTRIBUTION_PROFILE_CACHE_DB` | `lib/contribution-profile-cache.ts` | (none) |",
   '| `LOOPOVER_MINER_CONTROL_PLANE` | `lib/tenant-client.ts` | `""` |',
   '| `LOOPOVER_MINER_CONTROL_PLANE_ADMIN_TOKEN` | `lib/tenant-client.ts` | `""` |',

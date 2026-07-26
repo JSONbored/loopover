@@ -280,6 +280,7 @@ import {
   type AgentDispositionLabelSettings,
   type PlannedAgentAction,
 } from "../settings/agent-actions";
+import { isCommentMergeStateHeld } from "../settings/pr-disposition";
 import { isAutoCloseExempt } from "../settings/auto-close-exempt";
 import {
   isSkipAutomationBotPullRequestsEnabledGlobally,
@@ -2063,6 +2064,10 @@ export function derivePublicCommentMergeFacts(args: {
   const mergeReadiness: MergeReadiness = {
     ciState,
     ...(mergeStateLabel ? { mergeStateLabel } : {}),
+    // #8759: the SHARED interpretation of the merge state (pr-disposition.ts) — the same one the
+    // disposition planner reads — resolved here so the self-contained renderer consumes a boolean
+    // instead of re-deriving meaning from the raw string (the #8711 four-surfaces-disagree class).
+    ...(mergeStateLabel ? { mergeStateHeld: isCommentMergeStateHeld(mergeStateLabel) } : {}),
     ...(failingDetails.length > 0 ? { failingChecks: failingDetails.map((detail) => detail.name) } : {}),
     ...(failingDetails.length > 0 ? { failingDetails } : {}),
     ...(nonRequiredFailingDetails.length > 0 ? { nonRequiredFailingDetails } : {}),

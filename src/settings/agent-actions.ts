@@ -1,6 +1,7 @@
 import type { AgentActionClass, AutoMaintainPolicy, AutoMergeMethod, AutonomyPolicy } from "../types";
 import { AI_JUDGMENT_BLOCKER_CODES, type GateCheckConclusion } from "../rules/advisory";
 import { DEFAULT_AUTO_MAINTAIN_POLICY, autonomyRequiresApproval, isActingAutonomyLevel, resolveAutonomy } from "./autonomy";
+import { assessMergeableState, derivePrDisposition } from "./pr-disposition";
 import { changedPathsHittingGuardrail, isGuardrailHit } from "../signals/change-guardrail";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../review/linked-issue-hard-rules";
 import { REVIEW_THREAD_BLOCKER_CODE } from "../review/review-thread-findings";
@@ -966,7 +967,8 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // The gate verdict is authoritative. Green CI is still required for merge/approve, but it does not rewrite an AI
   // or review-thread blocker into success once the gate has classified it as blocking.
   const conclusion: GateCheckConclusion = input.conclusion;
-  const isConflict = input.pr.mergeableState === "dirty"; // conflicts with base — can't merge as-is
+  // #8759: the raw mergeable_state string is interpreted ONLY by assessMergeableState — one shared meaning.
+  const isConflict = assessMergeableState(input.pr.mergeableState) === "conflict"; // conflicts with base — can't merge as-is
   // True when an unresolved GitHub review thread is (at least one of) this close's justifications -- the SAME
   // staleness class as isConflict above (#3863), just triggered by a contributor clicking "Resolve conversation"
   // on GitHub instead of the base branch becoming mergeable again. A mixed blocker set (thread + something else)
@@ -1020,24 +1022,27 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // would silently MERGE straight through the escalation instead of being held. When `close` IS acting, the
   // dedicated close branch below handles it and this term is redundant (harmless: both paths agree the PR
   // must not silently merge).
-  // Unstable mergeable state (#8758, the #8711 silent-stall fix): GitHub reports "unstable" when every REQUIRED
-  // check is green but some non-required check/status is not — exactly the state where canMerge below
-  // self-suppresses (mergeableClean requires "clean") while, pre-#8758, nothing else held, labeled, or explained.
-  // Folding it into heldForManualReview downgrades the would-approve/would-merge into the SAME loud
-  // held-for-review disposition every other merge-suppressing hold gets: no approve claiming "gate satisfied",
-  // no ready-to-merge label, and a manual-review label + comment naming the culprit check. Deliberately ONLY
-  // "unstable": "dirty" is the close path (isConflict), "behind" belongs to the rebase rail, and
-  // "blocked"/"unknown"/absent stay approvable (the approval itself can be the unblocking act — see the approve
-  // block's own doc comment — and a transient null must not spray hold labels). Every consumer that acts on this
-  // flag is conjoined with reviewGood, so a red-CI/failed-gate PR's close is never softened by this term.
-  const mergeableStateUnstable = input.pr.mergeableState === "unstable";
-  const heldForManualReview =
-    guardrailHit ||
-    input.migrationCollisionHold !== undefined ||
-    input.unlinkedIssueMatchHold !== undefined ||
-    (input.advisoryCheckHold !== undefined && input.advisoryCheckHold.length > 0) ||
-    mergeableStateUnstable ||
-    (input.unlinkedIssueMatchClose !== undefined && !acting("close"));
+  // #8759: the hold/approve/merge core now comes from the SHARED disposition module — the same
+  // derivation the unified comment's bridge reads — so the four surfaces can never again disagree on
+  // what a raw mergeable_state means (#8711's root class). The unstable-hold semantics are #8758's,
+  // unchanged (see derivePrDisposition's own doc + the MergeableAssessment contract): "dirty" stays the
+  // close path, "behind" stays the rebase rail's, "blocked"/"unknown" stay approvable, "unstable" holds
+  // loudly. The disposition's wouldApprove/wouldMerge feed the approve/merge gates below, still
+  // conjoined with the planner-private terms (autonomy, idempotency, approvals, terminal-block) that
+  // are not disposition. reviewGood is computed here (moved up from beside canMerge — same formula,
+  // gate passes AND CI green) because the disposition needs it.
+  const reviewGood = gatePassing && ciPassed;
+  const disposition = derivePrDisposition({
+    mergeableState: input.pr.mergeableState,
+    reviewGood,
+    guardrailHit,
+    migrationCollisionHold: input.migrationCollisionHold !== undefined,
+    unlinkedIssueMatchHold: input.unlinkedIssueMatchHold !== undefined,
+    advisoryCheckHold: input.advisoryCheckHold !== undefined && input.advisoryCheckHold.length > 0,
+    unlinkedIssueMatchCloseWithoutCloseActing: input.unlinkedIssueMatchClose !== undefined && !acting("close"),
+  });
+  const heldForManualReview = disposition.heldForManualReview;
+  const mergeableStateUnstable = disposition.heldForUnstableMergeState;
   const labels = resolveAgentDispositionLabels(input);
   // Canonical (reviewbot non-content-gate) policy, tuned to the operator's minimize-manual goal: merge-or-close
   // with high accuracy; manual review is the RARE exception. A PR is "review-good" when the gate passes AND CI is
@@ -1045,8 +1050,6 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // one-shot CLOSE (taopedia model: resolve + open a fresh PR). The guardrail is handled SEPARATELY: it converts
   // would-approve/would-merge dispositions into a manual hold.
   const ciUnverified = input.ciState === "unverified";
-  const reviewGood = gatePassing && ciPassed;
-  const mergeableClean = input.pr.mergeableState === "clean";
   // RC3: a prior merge attempt failed terminally for THIS exact head SHA (403/405/409/conflict) → never re-plan
   // the merge; it can't complete for this commit. A new commit makes the live head differ from mergeBlockedSha.
   const mergeTerminallyBlocked = input.pr.mergeBlockedSha != null && input.pr.headSha != null && input.pr.mergeBlockedSha === input.pr.headSha;
@@ -1055,7 +1058,9 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // reviewDecision to APPROVED, so reviewDecision alone can't dedup). A new commit makes the heads differ →
   // approve may fire again. Absent approved-head SHA (never approved by the bot) ⇒ not idempotent-skipped.
   const alreadyApprovedThisHead = input.pr.approvedHeadSha != null && input.pr.headSha != null && input.pr.approvedHeadSha === input.pr.headSha;
-  const canMerge = reviewGood && !heldForManualReview && acting("merge") && mergeableClean && approvalsSatisfied && !mergeTerminallyBlocked;
+  // #8759: disposition.wouldMerge = reviewGood && !held && exactly-clean — the shared core; the terms
+  // conjoined here (autonomy, approvals, terminal-block) are planner-private state, not disposition.
+  const canMerge = disposition.wouldMerge && acting("merge") && approvalsSatisfied && !mergeTerminallyBlocked;
   // CLOSE a contributor PR ONLY on a REAL adverse signal — a confirmed gate FAILURE, red CI, or a base
   // CONFLICT. NEVER close merely because CI is UNVERIFIED (a fork whose Actions await approval, or unreadable
   // checks) or otherwise not-yet-mergeable — those are HELD for review, not killed (#harm-stop fork-false-close).
@@ -1348,7 +1353,9 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // An `unstable` PR is excluded too, via heldForManualReview's mergeableStateUnstable term (#8758): the merge
   // below would self-suppress on it, and approve firing while merge silently never comes was exactly #8711's
   // "approved, labeled ready, never merged, nobody told" incident. */
-  if (reviewGood && !heldForManualReview && !linkedIssueCloseInFlight && !isConflict && acting("approve") && input.pr.reviewDecision !== "APPROVED" && !alreadyApprovedThisHead) {
+  // #8759: disposition.wouldApprove = reviewGood && !held && not-a-conflict — the shared core the executor's
+  // live recheck mirrors; the terms conjoined here are planner-private (close-in-flight, autonomy, idempotency).
+  if (disposition.wouldApprove && !linkedIssueCloseInFlight && acting("approve") && input.pr.reviewDecision !== "APPROVED" && !alreadyApprovedThisHead) {
     actions.push({
       actionClass: "approve",
       requiresApproval: approval("approve"),

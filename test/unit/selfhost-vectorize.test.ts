@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { nodeSqliteDriver } from "../../src/selfhost/d1-adapter";
 import { cosineSimilarity, createSqliteVectorize } from "../../src/selfhost/vectorize";
 
@@ -81,5 +81,52 @@ describe("createSqliteVectorize (#979 local RAG)", () => {
     const res = await v.query([1, 0], { topK: 10 }); // no namespace → scans all
     expect(res.matches.map((m) => m.id)).toContain("n1");
     expect(res.matches.map((m) => m.id)).toContain("n2");
+  });
+});
+
+describe("dimension-mismatch guard (#8766)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("SKIPS a stored vector whose width differs from the query's — never scores over a truncated prefix", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const v = makeVectorize();
+    await v.upsert([
+      { id: "ok", values: [1, 0], namespace: "n" },
+      { id: "wide", values: [1, 0, 0, 0], namespace: "n" }, // stale row from a different-dimension model
+    ]);
+    const { matches } = await v.query([1, 0], { topK: 10, namespace: "n" });
+    expect(matches.map((m) => m.id)).toEqual(["ok"]);
+    // One WARN per query, naming both widths.
+    expect(warn).toHaveBeenCalledTimes(1);
+    const logged = JSON.parse(warn.mock.calls[0]![0] as string);
+    expect(logged).toMatchObject({ event: "sqlite_vectorize_dimension_mismatch", queryWidth: 2, storedWidths: [4] });
+  });
+
+  it("logs NOTHING when every stored width matches (the steady state stays silent)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const v = makeVectorize();
+    await v.upsert([{ id: "a", values: [1, 0], namespace: "n" }]);
+    const { matches } = await v.query([1, 0], { topK: 10, namespace: "n" });
+    expect(matches).toHaveLength(1);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("dedupes the warned widths and still returns matching rows sorted by score", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const v = makeVectorize();
+    await v.upsert([
+      { id: "best", values: [1, 0], namespace: "n" },
+      { id: "worse", values: [0.5, 0.5], namespace: "n" },
+      { id: "w4a", values: [1, 0, 0, 0], namespace: "n" },
+      { id: "w4b", values: [0, 1, 0, 0], namespace: "n" },
+      { id: "w3", values: [1, 0, 0], namespace: "n" },
+    ]);
+    const { matches } = await v.query([1, 0], { topK: 10, namespace: "n" });
+    expect(matches.map((m) => m.id)).toEqual(["best", "worse"]);
+    const logged = JSON.parse((vi.mocked(console.warn).mock.calls[0]!)[0] as string);
+    expect(logged.storedWidths).toEqual([3, 4]);
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 });

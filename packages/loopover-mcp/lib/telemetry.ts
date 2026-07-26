@@ -29,8 +29,18 @@ export type McpToolCallEvent = { tool: string; callerType?: "local"; ok: boolean
  * Record a single local MCP tool call to PostHog. Safe no-op unless `telemetryEnabled` is explicitly
  * `true` (the caller's resolved, persisted opt-in flag, default OFF -- #6236) AND
  * LOOPOVER_MCP_POSTHOG_API_KEY is configured; never throws.
+ *
+ * Returns a promise that resolves once the event has actually been flushed to PostHog (#8690) —
+ * mirroring the remote `src/mcp/telemetry.ts` fix (#7233). `capture()` itself is fire-and-forget and
+ * returns before the network POST lands; awaiting `client.flush()` lets the stdio server (and any
+ * short-lived CLI path) hold the process open until the event is sent or definitively failed.
+ *
+ * Client lifetime: constructs a fresh PostHog client per call (same as the remote wrapper) rather than
+ * reusing one across the process. That keeps each call's flush/shutdown self-contained and avoids
+ * holding an idle long-lived client in a long-running `--stdio` session; the flush-before-return
+ * guarantee does not depend on process-exit hooks.
  */
-export function recordMcpToolCall(options: RecordMcpToolCallOptions, event: McpToolCallEvent): void {
+export async function recordMcpToolCall(options: RecordMcpToolCallOptions, event: McpToolCallEvent): Promise<void> {
   // Opt-in default OFF (#6236, per #6228's privacy decision) -- unlike the remote wrapper, presence of an
   // API key alone is not enough; the user must have explicitly enabled telemetry.
   if (options?.telemetryEnabled !== true) return;
@@ -55,10 +65,57 @@ export function recordMcpToolCall(options: RecordMcpToolCallOptions, event: McpT
       // No IP-based geo enrichment: the event is anonymous fleet telemetry, not a user location.
       disableGeoip: true,
     });
+    await client.flush();
   } catch {
-    // Telemetry is best-effort and MUST NOT throw into the CLI (#6236): a PostHog init/capture failure
-    // degrades to recording nothing, identical to the unconfigured path above.
+    // Telemetry is best-effort and MUST NOT throw into the CLI (#6236): a PostHog init/capture/flush
+    // failure degrades to recording nothing, identical to the unconfigured path above.
   }
+}
+
+/**
+ * Stdio-tool chokepoint (#6238 / #8690): every registerStdioTool-registered tool routes through here
+ * once per invocation. Awaits {@link recordMcpToolCall}'s flush, and never lets a telemetry failure
+ * reach the tool caller (defensive try/catch on top of recordMcpToolCall's own never-throw guarantee).
+ */
+export async function recordStdioToolTelemetry(
+  telemetryEnabled: boolean,
+  tool: string,
+  ok: boolean,
+  durationMs: number,
+  record: (options: RecordMcpToolCallOptions, event: McpToolCallEvent) => Promise<void> = recordMcpToolCall,
+): Promise<void> {
+  try {
+    await record({ telemetryEnabled }, { tool, callerType: "local", ok, durationMs });
+  } catch {
+    // Telemetry must never affect the tool response (#6238).
+  }
+}
+
+type StdioToolHandler = (...args: any[]) => Promise<any>;
+
+/**
+ * Wrap a stdio tool handler so success and throw paths both await telemetry flush before returning
+ * (#8690). Lives in lib/ (not bin/) so codecov/patch can attribute the await branches via unit tests;
+ * bin registration stays thin glue.
+ */
+export function wrapStdioToolHandler(
+  name: string,
+  getTelemetryEnabled: () => boolean,
+  handler: StdioToolHandler,
+): StdioToolHandler {
+  return async (...args) => {
+    const startedAt = Date.now();
+    try {
+      const result = await handler(...args);
+      // Mirror the remote's caller-visible outcome (`response.status < 400`): a handler that reports
+      // failure by returning an error result is not a success, even though it never threw.
+      await recordStdioToolTelemetry(getTelemetryEnabled(), name, result?.isError !== true, Date.now() - startedAt);
+      return result;
+    } catch (error) {
+      await recordStdioToolTelemetry(getTelemetryEnabled(), name, false, Date.now() - startedAt);
+      throw error;
+    }
+  };
 }
 
 /** Trim a possibly-undefined env string, treating blank/whitespace as absent. */

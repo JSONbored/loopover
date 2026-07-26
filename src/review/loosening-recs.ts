@@ -12,6 +12,7 @@
 import type { TuningRec } from "./auto-tune";
 import type { SatisfactionFloorLooseningProposal } from "../services/satisfaction-floor-loosening";
 import type { KnobLooseningProposal } from "../services/loosening-knobs";
+import type { RegressedVerdictTrackRecord } from "@loopover/engine";
 
 /** The advisor list is per-project elsewhere; the satisfaction floor is deployment-global, so its recs use
  *  this fixed pseudo-project label rather than impersonating any repo. */
@@ -99,4 +100,29 @@ export function buildReportOnlyKnobRecs(proposals: readonly KnobLooseningProposa
       `held-out split ${proposal.heldOut.verdict} (${proposal.heldOutCases} case(s)). ` +
       "This knob has no override consumer yet — applying requires shipping its consumption plumbing as its own reviewed change.",
   }));
+}
+
+/**
+ * #8763: the cron-side rendering of the REGRESSED-verdict track record — the same rollup
+ * scripts/backtest-track-record.ts prints on demand, surfaced as one report-only rec line per self-tune
+ * tick so the maintainer sees #8105's decision evidence continuously instead of only when remembering to
+ * run the CLI. Zero recorded runs → NO line (an empty track record is the steady state for most ticks and
+ * must not add noise). Payload-less like every builder in this file: the apply path can never promote it.
+ */
+export function buildTrackRecordRecs(record: RegressedVerdictTrackRecord): TuningRec[] {
+  if (record.totalRuns === 0) return [];
+  const perRule = [...record.perRule.entries()]
+    .map(([ruleId, bucket]) => `${ruleId} total=${bucket.total} regressed=${bucket.regressed} improved=${bucket.improved} unchanged=${bucket.unchanged}`)
+    .join("; ");
+  const rate = record.regressedRate === null ? "N/A" : record.regressedRate.toFixed(3);
+  return [
+    {
+      project: "global:backtest_track_record",
+      severity: record.regressedRuns > 0 ? "info" : "good",
+      message:
+        `Backtest track record (threshold + logic + replay runs): ${record.totalRuns} run(s), ` +
+        `${record.regressedRuns} REGRESSED (rate ${rate}). Per rule: ${perRule}. Report-only — the ` +
+        "evidence feed for the Phase-2 gating decision; scripts/backtest-track-record.ts stays the deep-dive view.",
+    },
+  ];
 }

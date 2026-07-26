@@ -55,14 +55,17 @@ export const SAFE_URL_MARKERS = Object.freeze([
   "export function isSafeEndpointUrl",
 ] as const);
 
-/** `diffFilePriority` is duplicated by FUNCTION, not by file: two byte-identical host copies
- *  (review-diff.ts, review-grounding.ts) and a differently-named engine copy (diff-file-priority.ts) —
- *  none share a filename, so the directory scan never pairs them. The `isLockfile(path)` marker
- *  regression-guards #4605 Finding 1 at its root: that bug was the engine copy's hand-rolled
- *  Carthage-lockfile regex silently drifting to `cartfile\.lock` (not a real filename — Carthage's is
- *  `Cartfile.resolved`). Since #8357 every copy delegates lockfile-NAME matching to the canonical
- *  `isLockfile`/`LOCKFILE_NAMES`, so no copy owns a name list that CAN drift; asserting the delegation is
- *  present is therefore a strictly stronger guard than asserting one literal name inside a private regex. */
+/** `diffFilePriority` is duplicated by FUNCTION, not by file: two host copies (review-diff.ts,
+ *  review-grounding.ts) and a differently-named engine copy (diff-file-priority.ts) — none share a
+ *  filename, so the directory scan never pairs them. Both host copies are registered below.
+ *  The `isLockfile(path)` marker regression-guards #4605 Finding 1 at its root: that bug was the engine
+ *  copy's hand-rolled Carthage-lockfile regex silently drifting to `cartfile\.lock` (not a real filename —
+ *  Carthage's is `Cartfile.resolved`). Since #8357 every copy delegates lockfile-NAME matching to the
+ *  canonical `isLockfile`/`LOCKFILE_NAMES`, so no copy owns a name list that CAN drift; asserting the
+ *  delegation is present is therefore a strictly stronger guard than asserting one literal name inside a
+ *  private regex. The vendored-directory regex marker regression-guards #7526 / #8648: the engine copy was
+ *  fixed first and both host twins silently kept the pre-fix directory set until this check covered the
+ *  regex body itself (not just signature / `isLockfile` presence). */
 export const DIFF_FILE_PRIORITY_TWIN_PAIR: NamedTwinPair = Object.freeze({
   area: "diff-file-priority",
   hostRelative: "src/review/review-diff.ts",
@@ -71,9 +74,20 @@ export const DIFF_FILE_PRIORITY_TWIN_PAIR: NamedTwinPair = Object.freeze({
   engineFileName: "diff-file-priority.ts",
 });
 
+/** Second host twin of `diffFilePriority` — same markers as `DIFF_FILE_PRIORITY_TWIN_PAIR` (#8648). */
+export const DIFF_FILE_PRIORITY_GROUNDING_TWIN_PAIR: NamedTwinPair = Object.freeze({
+  area: "diff-file-priority-grounding",
+  hostRelative: "src/review/review-grounding.ts",
+  engineRelative: "packages/loopover-engine/src/review/diff-file-priority.ts",
+  hostFileName: "review-grounding.ts",
+  engineFileName: "diff-file-priority.ts",
+});
+
 export const DIFF_FILE_PRIORITY_MARKERS = Object.freeze([
   "export function diffFilePriority(path: string): number {",
   "isLockfile(path)",
+  // Exact vendored-directory regex body shared by all three copies (#7526 / #8648).
+  "/(^|\\/)(dist|build|out|coverage|vendor|vendored|third_party|third-party|node_modules|bower_components|jspm_packages)\\//i",
 ] as const);
 
 /** `sharesMeaningfulFile` is a near-duplicate helper (the host folds its guard clause into one `if`; the
@@ -133,6 +147,45 @@ export const SECRET_DETECTION_MARKERS = Object.freeze([
   '"generic_secret_assignment"',
 ] as const);
 
+/** `scripts/forbidden-content.ts`'s FORBIDDEN_CONTENT is a THIRD hand-copy (#7433) of the HARD_SECRET_KINDS
+ *  regex bodies in `src/review/secret-patterns.ts` — the four package-manifest checkers (check-mcp/miner/
+ *  engine/ui-kit-package.ts) use it to reject a packed tarball embedding a provider secret. Unlike the REES
+ *  pair it was never drift-checked, so a tightened or added HARD_SECRET_KINDS pattern would silently leave
+ *  packaged MCP/miner/engine/ui-kit scanning with a stale body, with no CI signal (#8674). Registered here so
+ *  a divergence in any of the shared regex bodies fails CI. */
+export const FORBIDDEN_CONTENT_TWIN_PAIR: NamedTwinPair = Object.freeze({
+  area: "forbidden-content-secret-patterns",
+  hostRelative: "src/review/secret-patterns.ts",
+  engineRelative: "scripts/forbidden-content.ts",
+  hostFileName: "secret-patterns.ts",
+  engineFileName: "forbidden-content.ts",
+});
+
+// The distinctive core of each HARD_SECRET_KINDS regex body that forbidden-content.ts hand-copied EXACTLY
+// (#7433/#8396). Anchored on the backslash-free inner body, NOT the `\b`/`\.` escapes (which necessarily differ
+// between secret-patterns.ts's regex literals — single `\` — and forbidden-content.ts's string bodies — double
+// `\\`), so a merely-reformatted boundary never false-fails while a change to the actual character class /
+// length / watermark of any shared pattern does. `github_token`/`github_pat`/`private_key_block` are
+// DELIBERATELY EXCLUDED: forbidden-content.ts keeps its own looser pre-#7433 bodies for those three (e.g.
+// `gh[pousr]_[A-Za-z0-9_]+` vs secret-patterns.ts's `gh[pousr]_[A-Za-z0-9]{20,}`), a pre-existing intentional
+// divergence — including them would false-fail this check on the very PR that introduces it, exactly as
+// SECRET_DETECTION_MARKERS excludes its own two naming-divergent kinds.
+export const FORBIDDEN_CONTENT_MARKERS = Object.freeze([
+  "AKIA[0-9A-Z]{16}", // aws_access_key
+  "xox[baprs]-[A-Za-z0-9-]{10,}", // slack_token
+  "AIza[0-9A-Za-z_-]{35}", // google_api_key
+  "glpat-[0-9A-Za-z_-]{20}(?![0-9A-Za-z_-])", // gitlab_token
+  "npm_[A-Za-z0-9]{36}", // npm_token
+  "(?:sk|rk)_live_[0-9A-Za-z]{24,}", // stripe_secret_key
+  "[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])", // sendgrid_key (the distinctive 43-char secret half)
+  "hf_[A-Za-z0-9]{34}", // huggingface_token
+  "(?:pa|al)-[A-Za-z0-9]{20,}(?![A-Za-z0-9_-])", // voyage_api_key
+  "fc-[A-Za-z0-9]{16,}(?![A-Za-z0-9_-])", // firecrawl_api_key
+  "sk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}T3BlbkFJ[A-Za-z0-9_-]{20,}", // openai_api_key
+  "sk-ant-api03-[A-Za-z0-9_-]{93}AA", // anthropic_api_key
+  "eyJ[A-Za-z0-9_-]{10,}", // jwt (#8396)
+] as const);
+
 /** Every explicitly named twin pair, checked for core-marker presence in `runEngineParityChecks` — the
  *  same escape hatch #4518 built for `GATE_DECISION_TWIN_PAIR`, generalized (#4605) so a function-level or
  *  nested-directory duplicate can be added here without inventing a new mechanism. `GATE_DECISION_TWIN_PAIR`
@@ -146,8 +199,10 @@ export const NAMED_TWIN_PAIRS: ReadonlyArray<{ pair: NamedTwinPair; markers: rea
   { pair: GATE_DECISION_TWIN_PAIR, markers: GATE_DECISION_CORE_MARKERS },
   { pair: SAFE_URL_TWIN_PAIR, markers: SAFE_URL_MARKERS },
   { pair: DIFF_FILE_PRIORITY_TWIN_PAIR, markers: DIFF_FILE_PRIORITY_MARKERS },
+  { pair: DIFF_FILE_PRIORITY_GROUNDING_TWIN_PAIR, markers: DIFF_FILE_PRIORITY_MARKERS },
   { pair: SHARES_MEANINGFUL_FILE_TWIN_PAIR, markers: SHARES_MEANINGFUL_FILE_MARKERS },
   { pair: SECRET_DETECTION_TWIN_PAIR, markers: SECRET_DETECTION_MARKERS },
+  { pair: FORBIDDEN_CONTENT_TWIN_PAIR, markers: FORBIDDEN_CONTENT_MARKERS },
 ]);
 const ENGINE_SRC_ROOT = "packages/loopover-engine/src";
 const HOST_SRC_ROOT = "src";
@@ -350,6 +405,67 @@ export function checkGateDecisionTwinPresence({
     }
   }
   return { failures, pairChecked: twin };
+}
+
+/** The `const` both gate-decision twins declare their shared check-run redaction regex on. */
+const FORBIDDEN_TERMS_CONST = "const CHECK_RUN_FORBIDDEN_TERMS =";
+
+/** Pull the `CHECK_RUN_FORBIDDEN_TERMS` regex literal (source + flags) out of a twin file's raw text so the
+ *  two copies can be compared by CONTENT, not just by the const name's presence (#8697). The regex body
+ *  carries no forward slash, so the literal spans from the first `/` after the const to the next unescaped
+ *  `/` and its trailing flags. Returns null when the const declaration or its regex literal isn't found. */
+export function extractForbiddenTermsRegex(text: string): string | null {
+  const constIndex = text.indexOf(FORBIDDEN_TERMS_CONST);
+  if (constIndex === -1) return null;
+  const afterConst = text.slice(constIndex + FORBIDDEN_TERMS_CONST.length);
+  const literal = afterConst.match(/\/((?:\\.|[^/\\])+)\/([a-z]*)/);
+  if (!literal) return null;
+  return `/${literal[1]}/${literal[2]}`;
+}
+
+/** Content-level drift guard (#8697): both gate-decision twins hand-maintain a `CHECK_RUN_FORBIDDEN_TERMS`
+ *  regex their own comments claim is "byte-identical", but no check ever diffed the bodies -- the engine copy
+ *  had silently dropped `likely_duplicate|reviewability\s*\d`. `checkGateDecisionTwinPresence` only asserts
+ *  the four function-name markers exist, so it never saw this. This diffs the two regex literals directly, so
+ *  a future divergence in the body itself (not just a missing entrypoint) fails CI immediately. */
+export function checkGateDecisionForbiddenTermsParity({
+  root,
+  readFile = defaultReadFile,
+  pair = GATE_DECISION_TWIN_PAIR,
+}: {
+  root: string;
+  readFile?: EngineParityReadFile;
+  pair?: NamedTwinPair;
+}): { failures: string[] } {
+  let hostText: string;
+  let engineText: string;
+  try {
+    hostText = readFile(root, pair.hostRelative);
+    engineText = readFile(root, pair.engineRelative);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { failures: [`Could not load ${pair.area} twin pair files for regex-body parity: ${message}`] };
+  }
+  const failures: string[] = [];
+  const hostRegex = extractForbiddenTermsRegex(hostText);
+  const engineRegex = extractForbiddenTermsRegex(engineText);
+  if (hostRegex === null) {
+    failures.push(`${pair.hostRelative} is missing a CHECK_RUN_FORBIDDEN_TERMS regex literal to diff.`);
+  }
+  if (engineRegex === null) {
+    failures.push(`${pair.engineRelative} is missing a CHECK_RUN_FORBIDDEN_TERMS regex literal to diff.`);
+  }
+  if (hostRegex !== null && engineRegex !== null && hostRegex !== engineRegex) {
+    failures.push(
+      [
+        "CHECK_RUN_FORBIDDEN_TERMS regex body has drifted between the gate-decision twins:",
+        `  • ${pair.hostRelative}: ${hostRegex}`,
+        `  • ${pair.engineRelative}: ${engineRegex}`,
+        `  Make ${pair.engineRelative}'s regex byte-identical to the host copy.`,
+      ].join("\n"),
+    );
+  }
+  return { failures };
 }
 
 export function parseEnginePackageVersion(text: string): string | null {
@@ -635,6 +751,8 @@ export function runEngineParityChecks(options: {
   const namedTwinPresence = NAMED_TWIN_PAIRS.map(({ pair, markers }) =>
     checkGateDecisionTwinPresence({ root: options.root, readFile, pair, markers }),
   );
+  // Content-level guard on the gate-decision twins' shared redaction regex, beyond mere marker presence (#8697).
+  const forbiddenTermsParity = checkGateDecisionForbiddenTermsParity({ root: options.root, readFile });
   const skew = checkEngineVersionSkew(options);
   const pinSync = checkMinerEngineVersionPinSync(options);
   let headEngineVersion = options.headEngineVersion;
@@ -675,6 +793,7 @@ export function runEngineParityChecks(options: {
     failures: [
       ...drift.failures,
       ...namedTwinPresence.flatMap((result) => result.failures),
+      ...forbiddenTermsParity.failures,
       ...versionBump.failures,
       ...skew.failures,
       ...pinSync.failures,

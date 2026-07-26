@@ -261,6 +261,19 @@ describe("review-grounding: diffFilePriority (source survives the budget first)"
     expect(diffFilePriority("src/review/review-grounding.ts")).toBe(0);
     expect(diffFilePriority("packages/api/handler.py")).toBe(0);
   });
+
+  it("ranks the extended vendored-directory set as noise(4), matching the engine copy (#8648)", () => {
+    for (const path of [
+      "vendored/lib.js",
+      "third_party/x.js",
+      "third-party/x.js",
+      "bower_components/x.js",
+      "jspm_packages/x.js",
+    ]) {
+      expect(diffFilePriority(path)).toBe(4);
+      expect(diffFilePriority(path)).toBeGreaterThan(diffFilePriority("src/a.ts"));
+    }
+  });
 });
 
 describe("review-grounding: fetchFullFileContents (injected FileFetcher, fail-safe + bounded)", () => {

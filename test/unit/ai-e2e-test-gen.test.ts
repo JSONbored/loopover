@@ -558,4 +558,25 @@ describe("runWorkersE2eTestGen (internal)", () => {
     const finalFlags = run.mock.calls.map((c) => ((c as unknown[])[1] as { finalAttempt?: boolean }).finalAttempt);
     expect(finalFlags).toEqual([false, false, false, false, false, true]);
   });
+
+  it("breaks to the fallback model immediately on a rate-limit error instead of burning all per-model attempts (#8672)", async () => {
+    // Every call 429s. Before #8672 this burned all 3 attempts per model (6 calls); now a rate limit short-
+    // circuits the inner retry loop after the first attempt on each model — 2 models × 1 attempt = 2 calls.
+    const run = vi.fn(async () => {
+      throw new Error("workers_ai_http_429");
+    });
+    const env = enabledEnv(run);
+    await expect(runWorkersE2eTestGen(env, "system", "user", 1024)).resolves.toEqual({ testSource: null });
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it("still burns all per-model attempts on a NON-rate-limit error (the retry path is unchanged) (#8672)", async () => {
+    // A transient non-429 error keeps the original behavior: 2 models × 3 attempts = 6 calls.
+    const run = vi.fn(async () => {
+      throw new Error("transient_timeout");
+    });
+    const env = enabledEnv(run);
+    await runWorkersE2eTestGen(env, "system", "user", 1024);
+    expect(run).toHaveBeenCalledTimes(6);
+  });
 });

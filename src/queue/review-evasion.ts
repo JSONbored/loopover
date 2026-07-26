@@ -609,7 +609,7 @@ async function closeReviewEvasionSelfCloseIfReviewed(
   // Only the PR's OWN author closing their OWN PR is a self-close-evasion candidate -- a third party (e.g. a
   // maintainer) closing someone else's PR is an ordinary maintainer action, not evasion.
   if (!closer || !authorLogin || closer !== authorLogin) return;
-  if (isProtectedAutomationAuthor(pr.authorLogin)) return;
+  if (isProtectedAutomationAuthor(pr.authorLogin, env)) return;
   if (isAutoCloseExempt(pr.authorLogin, settings.autoCloseExemptLogins)) return;
   if (!pr.headSha) return;
   const headSha = pr.headSha; // captured so the allowStaleIf closure below keeps the narrowed non-null type
@@ -828,7 +828,7 @@ async function closeReviewEvasionDraftConversionIfReviewed(
   // not evasion, and must never be enforced against the AUTHOR who didn't do it (mirrors the self-close
   // sibling's identical actor check).
   if (!converter || !authorLogin || converter !== authorLogin) return;
-  if (isProtectedAutomationAuthor(pr.authorLogin)) return;
+  if (isProtectedAutomationAuthor(pr.authorLogin, env)) return;
   if (isAutoCloseExempt(pr.authorLogin, settings.autoCloseExemptLogins)) return;
   if (!pr.headSha) return;
   const headSha = pr.headSha;
@@ -994,7 +994,7 @@ async function closeRepeatedDraftCyclingIfDetected(
   const converter = (payload.sender?.login ?? "").toLowerCase();
   /* v8 ignore next -- unreachable given the call site's own author-only increment guarantee; see comment above. */
   if (!converter || !authorLogin || converter !== authorLogin) return;
-  if (isProtectedAutomationAuthor(pr.authorLogin)) return;
+  if (isProtectedAutomationAuthor(pr.authorLogin, env)) return;
   // Honor the maintainer's trusted-contributor allowlist, same as the two sibling review-evasion guards
   // (closeReviewEvasionSelfCloseIfReviewed / closeReviewEvasionDraftConversionIfReviewed) already do (#6165).
   if (isAutoCloseExempt(pr.authorLogin, settings.autoCloseExemptLogins)) return;
@@ -1155,7 +1155,7 @@ async function closeDraftPrIfPolicyEnabled(
   const actorLogin = (payload.sender?.login ?? "").toLowerCase();
   const authorLogin = (pr.authorLogin ?? "").toLowerCase();
   if (!actorLogin || !authorLogin || actorLogin !== authorLogin) return;
-  if (isProtectedAutomationAuthor(pr.authorLogin)) return;
+  if (isProtectedAutomationAuthor(pr.authorLogin, env)) return;
   if (isAutoCloseExempt(pr.authorLogin, settings.autoCloseExemptLogins)) return;
   if (!pr.headSha) return;
   const headSha = pr.headSha;
@@ -1289,7 +1289,7 @@ async function closeSynchronizeAmendmentIfPolicyEnabled(
   const actorLogin = (payload.sender?.login ?? "").toLowerCase();
   const authorLogin = (pr.authorLogin ?? "").toLowerCase();
   if (!actorLogin || !authorLogin || actorLogin !== authorLogin) return;
-  if (isProtectedAutomationAuthor(pr.authorLogin)) return;
+  if (isProtectedAutomationAuthor(pr.authorLogin, env)) return;
   if (isAutoCloseExempt(pr.authorLogin, settings.autoCloseExemptLogins)) return;
   if (!pr.headSha) return;
   const headSha = pr.headSha;

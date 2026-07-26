@@ -61,12 +61,34 @@ export function createSqliteVectorize(driver: SqliteDriver): Vectorize {
       const { rows } = opts.namespace
         ? driver.query(`SELECT id, embedding, metadata FROM ${TABLE} WHERE namespace=?`, [opts.namespace])
         : driver.query(`SELECT id, embedding, metadata FROM ${TABLE}`, []);
-      const scored: Match[] = rows.map((r) => {
+      // #8766: a stored vector whose width differs from the query's (an operator swapped embedding models
+      // without a full reindex) is SKIPPED, never scored — cosineSimilarity's Math.min would otherwise
+      // silently compute a wrong similarity over the shorter prefix. Skipping degrades to fewer candidates,
+      // the same fail-safe posture the RAG pipeline already takes everywhere else; Qdrant hard-fails this at
+      // the collection level and pgvector raises, so this brings the SQLite adapter to parity. One WARN per
+      // query (not per row) so a mixed-width store is visible without flooding the log.
+      const mismatchedWidths = new Set<number>();
+      const scored: Match[] = [];
+      for (const r of rows) {
         const values = JSON.parse(r.embedding as string) as number[];
+        if (values.length !== vector.length) {
+          mismatchedWidths.add(values.length);
+          continue;
+        }
         const metadata = r.metadata ? (JSON.parse(r.metadata as string) as Record<string, unknown>) : undefined;
         const score = cosineSimilarity(vector, values);
-        return metadata === undefined ? { id: r.id as string, score } : { id: r.id as string, score, metadata };
-      });
+        scored.push(metadata === undefined ? { id: r.id as string, score } : { id: r.id as string, score, metadata });
+      }
+      if (mismatchedWidths.size > 0) {
+        console.warn(
+          JSON.stringify({
+            event: "sqlite_vectorize_dimension_mismatch",
+            queryWidth: vector.length,
+            storedWidths: [...mismatchedWidths].sort((a, b) => a - b),
+            detail: "mismatched-width rows skipped — reindex after an embedding-model change",
+          }),
+        );
+      }
       scored.sort((a, b) => b.score - a.score);
       return { matches: scored.slice(0, opts.topK ?? 12) };
     },

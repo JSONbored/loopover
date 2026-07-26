@@ -10,9 +10,10 @@ export function reportCliFailure(wantsJson: boolean, message: string, exitCode =
   return exitCode;
 }
 
-/** True when argv includes `--json` or `--json=...` (used before a full parse result exists). */
+/** True when argv includes `--json` or `--json=...` (used before a full parse result exists).
+ *  `--json=false` explicitly DISABLES JSON output (#8689), so it must not count as wanting JSON. */
 export function argsWantJson(args: readonly string[]): boolean {
-  return args.some((arg) => arg === "--json" || arg?.startsWith("--json="));
+  return args.some((arg) => arg === "--json" || (arg?.startsWith("--json=") && arg !== "--json=false"));
 }
 
 /** Normalize a thrown value to a safe error string for CLI output. */

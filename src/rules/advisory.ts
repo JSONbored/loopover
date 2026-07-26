@@ -169,6 +169,10 @@ export type GateCheckEvaluation = {
   summary: string;
   blockers: AdvisoryFinding[];
   warnings: AdvisoryFinding[];
+  /** #8838: the evaluation's own exact inputs, attached by evaluateGateCheck. OPTIONAL by design: the
+   *  content-lane and bridge paths construct synthetic evaluations whose verdicts come from their own
+   *  deterministic pipelines, not this evaluator — those decisions have no advisory replay input. */
+  replay?: { findings: AdvisoryFinding[]; policy: GateCheckPolicy } | undefined;
 };
 
 // AI-JUDGMENT blocker codes. Kept distinct from deterministic blockers for telemetry and regression tests; the old
@@ -679,10 +683,15 @@ function promoteAdvisoryToBlock(policy: GateCheckPolicy): GateCheckPolicy {
  *  the core eval with advisory sub-gates promoted to block and attaches that as `displayConclusion` — the would-be
  *  merge/close/manual verdict — while the POSTED `conclusion` stays the real, non-enforcing one. */
 export function evaluateGateCheck(advisoryResult: Advisory, policy: GateCheckPolicy = {}): GateCheckEvaluation {
+  // #8838: every evaluation carries its own EXACT inputs so the finalize site can persist them for the
+  // deterministic replay harness — captured here, at the single choke point every call site goes through,
+  // instead of threading (advisory, policy) across callers. In-memory only; the finalize site decides what
+  // is persisted (decision_replay_inputs — a PRIVATE sibling of the public record).
+  const replay = { findings: advisoryResult.findings, policy };
   const result = evaluateGateCheckCore(advisoryResult, policy);
-  if (!policy.dryRun) return result;
+  if (!policy.dryRun) return { ...result, replay };
   const wouldBe = evaluateGateCheckCore(advisoryResult, promoteAdvisoryToBlock(policy));
-  return { ...result, displayConclusion: wouldBe.conclusion };
+  return { ...result, displayConclusion: wouldBe.conclusion, replay };
 }
 
 function evaluateGateCheckCore(advisoryResult: Advisory, policy: GateCheckPolicy = {}): GateCheckEvaluation {

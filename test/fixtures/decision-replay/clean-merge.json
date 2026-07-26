@@ -1,0 +1,16 @@
+{
+ "record": {
+  "id": "record:fx/repo#1@clean-merge",
+  "reason_code": "success",
+  "action": "merge"
+ },
+ "replayInput": {
+  "findings": [],
+  "policy": {},
+  "policyCloseKind": null,
+  "evaluated": {
+   "conclusion": "success",
+   "blockerCodes": []
+  }
+ }
+}

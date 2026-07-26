@@ -647,6 +647,7 @@ import {
 } from "../review/outcomes-wire";
 import { AI_JUDGMENT_BLOCKER_CODES } from "../rules/advisory";
 import { computeSalvageabilityForTarget } from "../review/salvageability-wire";
+import { deriveDecisionReasonCode, persistDecisionReplayInputForGate } from "../review/decision-replay";
 import { REVIEW_PROMPT_VERSION, REVIEW_SYSTEM_PROMPT } from "../services/ai-review";
 import { resolveAutomaticCloseConfidence } from "../review/risk-control-wire";
 import { maybeApplyCloseAuditHoldout } from "../review/close-audit-holdout";
@@ -3353,12 +3354,9 @@ async function runAgentMaintenancePlanAndExecute(
       headSha: pr.headSha ?? "unknown",
       baseSha: null,
       action: disposition.actionClass,
-      reasonCode:
-        disposition.blockerClass !== "none"
-          ? disposition.blockerClass
-          : policyCloseKind !== undefined
-            ? `policy_close:${policyCloseKind}`
-            : gate.conclusion,
+      // #8838: the shared derivation — replayDecision recomputes reasonCode through this SAME function, so
+      // the live mapping and the replay mapping can never drift apart.
+      reasonCode: deriveDecisionReasonCode(disposition.blockerClass, policyCloseKind ?? null, gate.conclusion),
       configDigest: await contentDigest(settings),
       gatePack: settings.gatePack,
       ciState: null,
@@ -3368,6 +3366,10 @@ async function runAgentMaintenancePlanAndExecute(
       salvageability,
     });
     await persistDecisionRecord(env, record, recordDigest);
+    // #8838: persist the evaluation's own exact inputs beside the record (PRIVATE sibling, migration 0181)
+    // so the replay harness can re-derive this decision bit-exactly. Best-effort, like the record itself;
+    // the no-replay no-op (synthetic content-lane/bridge evaluations) lives inside the helper.
+    await persistDecisionReplayInputForGate(env, `record:${record.repoFullName}#${record.pullNumber}@${record.headSha}`.slice(0, 250), gate, policyCloseKind ?? null);
   }
   // #2349 (PR 1): additive per-contributor calibration data, gated identically to recordNativeGateDecision
   // above -- see src/review/contributor-calibration.ts's doc comment. Currently write-only; nothing reads

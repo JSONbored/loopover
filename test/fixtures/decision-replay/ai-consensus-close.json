@@ -1,0 +1,29 @@
+{
+ "record": {
+  "id": "record:fx/repo#1@ai-consensus-close",
+  "reason_code": "ai_consensus_defect",
+  "action": "close"
+ },
+ "replayInput": {
+  "findings": [
+   {
+    "code": "ai_consensus_defect",
+    "title": "Consensus defect",
+    "severity": "critical",
+    "detail": "unused import join is dead code",
+    "confidence": 0.95
+   }
+  ],
+  "policy": {
+   "aiReviewGateMode": "block",
+   "aiReviewCloseConfidence": 0.93
+  },
+  "policyCloseKind": null,
+  "evaluated": {
+   "conclusion": "failure",
+   "blockerCodes": [
+    "ai_consensus_defect"
+   ]
+  }
+ }
+}

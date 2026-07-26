@@ -89,7 +89,15 @@ describe("computeMinerGoalLaneFit", () => {
     expect(computeMinerGoalLaneFit({ labels: ["feature"] }, spec)).toBe(0.25);
   });
 
-  it("scores normally when no blocked labels are configured", () => {
-    expect(computeMinerGoalLaneFit({ labels: ["docs"] }, DEFAULT_MINER_GOAL_SPEC)).toBe(1);
+  it("scores a neutral 0.5 when no preferred labels are configured (#8870)", () => {
+    expect(computeMinerGoalLaneFit({ labels: ["docs"] }, DEFAULT_MINER_GOAL_SPEC)).toBe(0.5);
+  });
+
+  it("still applies the encouraged floor when no preferred labels are configured", () => {
+    const encouraged = {
+      ...DEFAULT_MINER_GOAL_SPEC,
+      issueDiscoveryPolicy: "encouraged" as const,
+    };
+    expect(computeMinerGoalLaneFit({ labels: ["docs"] }, encouraged)).toBe(0.85);
   });
 });

@@ -241,6 +241,7 @@ export type RepoSettingsPreview = {
     duplicatePrGateMode: RepositorySettings["duplicatePrGateMode"];
     qualityGateMode: RepositorySettings["qualityGateMode"];
     qualityGateMinScore?: number | null | undefined;
+    closeAuditHoldoutPct?: number | null | undefined;
     slopGateMode: RepositorySettings["slopGateMode"];
     mergeReadinessGateMode: RepositorySettings["mergeReadinessGateMode"];
     manifestPolicyGateMode: RepositorySettings["manifestPolicyGateMode"];
@@ -379,6 +380,7 @@ export function buildRepoSettingsPreview(args: {
       duplicatePrGateMode: settings.duplicatePrGateMode,
       qualityGateMode: settings.qualityGateMode,
       qualityGateMinScore: settings.qualityGateMinScore ?? null,
+      closeAuditHoldoutPct: settings.closeAuditHoldoutPct ?? null,
       slopGateMode: settings.slopGateMode,
       mergeReadinessGateMode: settings.mergeReadinessGateMode,
       manifestPolicyGateMode: settings.manifestPolicyGateMode,

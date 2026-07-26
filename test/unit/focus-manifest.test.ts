@@ -302,6 +302,7 @@ describe(".loopover.yml.example field-exhaustiveness (#1670)", () => {
     aiJudgmentBlockersMode: "aiJudgmentBlockers:",
     copycatMode: "copycat:",
     copycatMinScore: "copycat:",
+    closeAuditHoldoutPct: "closeAuditHoldoutPct:",
   } satisfies Record<Exclude<keyof FocusManifestGateConfig, "present">, string>;
 
   it.each(Object.entries(GATE_FIELD_TOKENS))("documents gate.%s", (_field, token) => {
@@ -954,7 +955,7 @@ describe("compileFocusManifestPolicy", () => {
       issueDiscoveryPolicy: "neutral",
       maintainerNotes: [],
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
-      gate: { present: false, enabled: null, checkMode: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, sizeMaxFiles: null, sizeMaxLines: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewLowConfidenceDisposition: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, contentLaneDeliverable: null, backtestRegression: null, manifestPolicy: null, dryRun: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, staleBaseAheadByThreshold: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, advisoryCheckRuns: null, aiJudgmentBlockersMode: null, copycatMode: null, copycatMinScore: null },
+      gate: { present: false, enabled: null, checkMode: null, pack: null, closeAuditHoldoutPct: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, sizeMaxFiles: null, sizeMaxLines: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewLowConfidenceDisposition: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, contentLaneDeliverable: null, backtestRegression: null, manifestPolicy: null, dryRun: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, staleBaseAheadByThreshold: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, advisoryCheckRuns: null, aiJudgmentBlockersMode: null, copycatMode: null, copycatMinScore: null },
       settings: {},
       review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, sweepWatchdog: null, prReconciliation: null, activeReviewReconciliation: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { blockers: null, nits: null }, commentVerbosity: null, e2eTestDelivery: null, e2eTestAutoTrigger: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null },
       features: { present: false, rag: null, reputation: null, safety: null, grounding: null, e2eTests: null, screenshots: null, improvementSignal: null, amsReputationBridge: null },
@@ -1115,13 +1116,39 @@ describe("public-safe invariant", () => {
   });
 });
 
+describe("gate.closeAuditHoldoutPct (#8831)", () => {
+  it("parses a valid percent, folds it into effective settings, and round-trips through gateConfigToJson", () => {
+    const m = parseFocusManifest({ gate: { closeAuditHoldoutPct: 5 } });
+    expect(m.gate.closeAuditHoldoutPct).toBe(5);
+    expect(m.gate.present).toBe(true);
+    const effective = resolveEffectiveSettings({} as RepositorySettings, m);
+    expect(effective.closeAuditHoldoutPct).toBe(5);
+    expect(gateConfigToJson(m.gate)).toMatchObject({ closeAuditHoldoutPct: 5 });
+    // Fractional percents are legal — ε is a rate, not a count.
+    expect(parseFocusManifest({ gate: { closeAuditHoldoutPct: 2.5 } }).gate.closeAuditHoldoutPct).toBe(2.5);
+  });
+
+  it("rejects out-of-range / non-numeric values with a warning and leaves the setting unset", () => {
+    for (const bad of [21, -1, "lots", true]) {
+      const m = parseFocusManifest({ gate: { closeAuditHoldoutPct: bad } });
+      expect(m.gate.closeAuditHoldoutPct).toBeNull();
+      expect(m.warnings.some((w) => w.includes("closeAuditHoldoutPct"))).toBe(true);
+      expect(resolveEffectiveSettings({} as RepositorySettings, m).closeAuditHoldoutPct).toBeUndefined();
+    }
+    // Absent → null, no warning, no fold.
+    const absent = parseFocusManifest({ gate: { linkedIssue: "block" } });
+    expect(absent.gate.closeAuditHoldoutPct).toBeNull();
+    expect(absent.warnings.some((w) => w.includes("closeAuditHoldoutPct"))).toBe(false);
+  });
+});
+
 describe("parseFocusManifest gate config", () => {
   it("parses a full gate section including the readiness block", () => {
     // readiness.mode uses "advisory" here (not "block") — readiness/quality can never hard-block (#2267);
     // the block→advisory deprecation-downgrade behavior itself is covered separately below.
     const m = parseFocusManifest({ gate: { linkedIssue: "block", duplicates: "advisory", readiness: { mode: "advisory", minScore: 70 } } });
     expect(m.present).toBe(true);
-    expect(m.gate).toEqual({ present: true, enabled: null, checkMode: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, sizeMaxFiles: null, sizeMaxLines: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewLowConfidenceDisposition: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, contentLaneDeliverable: null, backtestRegression: null, manifestPolicy: null, dryRun: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, staleBaseAheadByThreshold: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, advisoryCheckRuns: null, aiJudgmentBlockersMode: null, copycatMode: null, copycatMinScore: null });
+    expect(m.gate).toEqual({ present: true, enabled: null, checkMode: null, pack: null, closeAuditHoldoutPct: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, sizeMaxFiles: null, sizeMaxLines: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewLowConfidenceDisposition: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, contentLaneDeliverable: null, backtestRegression: null, manifestPolicy: null, dryRun: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, staleBaseAheadByThreshold: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, advisoryCheckRuns: null, aiJudgmentBlockersMode: null, copycatMode: null, copycatMinScore: null });
   });
 
   it("parses gate.mergeReadiness, round-trips it, and warns on a bad value (#822)", () => {

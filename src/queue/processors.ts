@@ -644,6 +644,7 @@ import {
   recordPrOutcome,
   recordReversalSignals,
 } from "../review/outcomes-wire";
+import { maybeApplyCloseAuditHoldout } from "../review/close-audit-holdout";
 import { neutralHoldReasonCode, nativeGateActionFromConclusion, recordNativeGateDecision } from "../review/parity-wire";
 import { recordContributorGateDecision } from "../review/contributor-calibration";
 import { recordGateBlockersAndCheckRepeatAlarm } from "../review/rule-repeat-alarm-wire";
@@ -3254,6 +3255,24 @@ async function runAgentMaintenancePlanAndExecute(
   for (const direction of precisionBreakerDirections) {
     incr("loopover_precision_breaker_downgrades_total", { direction });
   }
+  // #8831: the randomized close-audit holdout consumes the FINAL post-breaker plan — after this point the
+  // close decision is settled, so the draw can divert it to a human but never influence it. ε = 0 (the
+  // default, and any repo without the gate.closeAuditHoldoutPct manifest knob) returns the plan untouched
+  // with zero I/O, keeping the common path byte-identical.
+  const holdoutOnPlan = await maybeApplyCloseAuditHoldout(env, {
+    repoFullName,
+    pullNumber: pr.number,
+    planned: breakerOnPlan,
+    epsilonPct: settings.closeAuditHoldoutPct,
+    closeAutonomyIsAuto: resolveAutonomy(settings.autonomy, "close") === "auto",
+    labelSettings: {
+      manualReviewLabel: settings.manualReviewLabel,
+      readyToMergeLabel: settings.readyToMergeLabel,
+      changesRequestedLabel: settings.changesRequestedLabel,
+      migrationCollisionLabel: settings.migrationCollisionLabel,
+      pendingClosureLabel: settings.pendingClosureLabel,
+    },
+  });
   // Observability (#terminal-outcome-audit): the final per-pass disposition, ALWAYS recorded -- including the
   // "hold" bucket below (guardrail, owner-exemption, migration-collision, breaker-downgraded, or any other
   // reason that produces no merge/close action), which previously left NO aggregate signal at all. Placed
@@ -3264,7 +3283,7 @@ async function runAgentMaintenancePlanAndExecute(
   // `neutral` conclusion (see evaluateGateCheckCore) -- neutralHoldReasonCode recovers the real, nameable hold
   // reason from `gate.warnings` in that case, so a guardrail/size/manifest-blocked hold doesn't flatten to the
   // same "none" bucket as a merge-ready PR waiting on nothing more than pending CI.
-  const disposition = agentDispositionLabels(breakerOnPlan, gate.blockers.map((blocker) => blocker.code), neutralHoldReasonCode(gate));
+  const disposition = agentDispositionLabels(holdoutOnPlan, gate.blockers.map((blocker) => blocker.code), neutralHoldReasonCode(gate));
   incr("loopover_agent_disposition_total", {
     repo: repoFullName,
     action_class: disposition.actionClass,
@@ -3283,7 +3302,7 @@ async function runAgentMaintenancePlanAndExecute(
   // Naming the closeKind makes the policy action distinguishable from a quality verdict at scoring time.
   const policyCloseKind =
     disposition.actionClass === "close"
-      ? breakerOnPlan.find((planned) => planned.actionClass === "close" && planned.closeKind !== undefined)?.closeKind
+      ? holdoutOnPlan.find((planned) => planned.actionClass === "close" && planned.closeKind !== undefined)?.closeKind
       : undefined;
   await recordNativeGateDecision(env, {
     project: repoFullName,
@@ -3334,7 +3353,7 @@ async function runAgentMaintenancePlanAndExecute(
     const closeEligible = isContributorAuthor || ((authorIsOwner || authorIsAdmin) && settings.closeOwnerAuthors === true);
     const holdDetail = agentHoldAuditDetail({
       planned,
-      breakerOnPlan,
+      breakerOnPlan: holdoutOnPlan,
       gateConclusion: gate.conclusion,
       gateBlockerCodes,
       ciState: ciAggregate.ciState,
@@ -3380,7 +3399,7 @@ async function runAgentMaintenancePlanAndExecute(
         guardrailMatches,
         disposition,
         plannedActionClasses: planned.map((action) => action.actionClass),
-        finalActionClasses: breakerOnPlan.map((action) => action.actionClass),
+        finalActionClasses: holdoutOnPlan.map((action) => action.actionClass),
       },
     }).catch(() => undefined);
     // #merge-race guarantee: "unknown" is the ONE genuinely transient mergeableState value (GitHub still
@@ -3391,7 +3410,7 @@ async function runAgentMaintenancePlanAndExecute(
       await scheduleTrailingMergeableStateReReview(env, deliveryId, installationId, repoFullName, pr.number).catch(() => undefined);
     }
   }
-  if (breakerOnPlan.length === 0) {
+  if (holdoutOnPlan.length === 0) {
     return;
   }
 
@@ -3407,7 +3426,7 @@ async function runAgentMaintenancePlanAndExecute(
   // stages for a human, not an immediate merge). A forced rebase's resulting `synchronize` webhook re-triggers
   // a fresh evaluation on the new head, so this pass stops here rather than executing against stale inputs.
   const requireFreshRebaseWindowMinutes = settings.requireFreshRebaseWindowMinutes;
-  const planHasImminentMerge = breakerOnPlan.some((action) => action.actionClass === "merge" && !action.requiresApproval);
+  const planHasImminentMerge = holdoutOnPlan.some((action) => action.actionClass === "merge" && !action.requiresApproval);
   if (
     typeof requireFreshRebaseWindowMinutes === "number" &&
     baseRef &&
@@ -3485,7 +3504,7 @@ async function runAgentMaintenancePlanAndExecute(
       // must check the SAME configured label the planner itself resolves labels.manualReview from.
       manualReviewLabel: settings.manualReviewLabel,
     },
-    breakerOnPlan,
+    holdoutOnPlan,
   );
 
   // Flag-then-close double-check, Pass 2 trigger: only re-enqueue when the pending-closure label mutation
@@ -3493,7 +3512,7 @@ async function runAgentMaintenancePlanAndExecute(
   // so scheduling off the plan alone can create a verification loop. Best-effort — if the enqueue fails, the next
   // sweep / CI event is the backstop Pass 2. Reuses the existing `recapture-preview` delayed-re-review job.
   const flaggedForLinkedIssue = pendingClosureLabelApplied(
-    breakerOnPlan,
+    holdoutOnPlan,
     actionOutcomes,
   );
   if (flaggedForLinkedIssue) {

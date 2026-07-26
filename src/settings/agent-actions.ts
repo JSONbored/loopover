@@ -506,7 +506,8 @@ type ResolvedAgentDispositionLabels = {
   pendingClosure: string | null;
 };
 
-function resolveAgentDispositionLabels(settings: AgentDispositionLabelSettings): ResolvedAgentDispositionLabels {
+// Exported for the close-audit holdout (#8831), whose hold conversion must resolve the SAME labels.
+export function resolveAgentDispositionLabels(settings: AgentDispositionLabelSettings): ResolvedAgentDispositionLabels {
   return {
     manualReview: resolveNullableLabel(settings.manualReviewLabel, AGENT_LABEL_NEEDS_REVIEW),
     readyToMerge: resolveNullableLabel(settings.readyToMergeLabel, AGENT_LABEL_READY),

@@ -107,6 +107,9 @@ publicNotes:
 #   block    — the finding can become a hard `LoopOver Gate` blocker
 #              (always confirmed-contributor-gated).
 gate:
+  # Percent (0-20) of would-auto-close PRs randomly HELD for human adjudication instead of closing --
+  # the randomized holdout behind the unbiased close-precision estimate (#8831). 0/absent disables.
+  # closeAuditHoldoutPct: 5
   # Legacy check-run publish switch (#5355) — despite the name, this does NOT turn the deterministic
   # gate itself on or off. Gate evaluation, comments, labels, audit records, spend, and autonomous
   # merge/close all run identically whether this is true, false, or unset; the per-dimension modes

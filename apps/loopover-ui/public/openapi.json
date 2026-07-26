@@ -9912,6 +9912,10 @@
               "advisory",
               "block"
             ]
+          },
+          "closeAuditHoldoutPct": {
+            "type": "number",
+            "nullable": true
           }
         },
         "required": [
@@ -10652,6 +10656,10 @@
                   "advisory",
                   "block"
                 ]
+              },
+              "closeAuditHoldoutPct": {
+                "type": "number",
+                "nullable": true
               }
             },
             "required": [

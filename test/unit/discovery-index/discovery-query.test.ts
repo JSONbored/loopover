@@ -109,6 +109,41 @@ describe("discovery-index runDiscoveryQuery (#7164)", () => {
     expect(calls.filter((c) => c.method === "fetchRepoFile")).toHaveLength(1);
   });
 
+  it("forwards real assignee logins onto the candidate (#8655)", async () => {
+    const { github } = makeStubGitHub({
+      issuesByRepo: {
+        "acme/widgets": [
+          {
+            number: 10,
+            title: "Owned issue",
+            assignees: [{ login: "acme-owner" }, { login: "  helper  " }, { login: "" }, { name: "no-login" }, "skip"],
+          },
+        ],
+      },
+      filesByRepo: { "acme/widgets": { "AI-USAGE.md": ALLOWED_AI_USAGE } },
+    });
+    const response = await runDiscoveryQuery(query({ repos: ["acme/widgets"] }), makeDeps(github));
+    expect(response.candidates).toHaveLength(1);
+    expect(response.candidates[0]?.assignees).toEqual(["acme-owner", "helper"]);
+  });
+
+  it("omits assignees when the GitHub issue has none (#8655)", async () => {
+    const { github } = makeStubGitHub({
+      issuesByRepo: {
+        "acme/widgets": [
+          { number: 11, title: "Unassigned issue" },
+          { number: 12, title: "Empty assignees array", assignees: [] },
+        ],
+      },
+      filesByRepo: { "acme/widgets": { "AI-USAGE.md": ALLOWED_AI_USAGE } },
+    });
+    const response = await runDiscoveryQuery(query({ repos: ["acme/widgets"] }), makeDeps(github));
+    expect(response.candidates).toHaveLength(2);
+    for (const candidate of response.candidates) {
+      expect(Object.prototype.hasOwnProperty.call(candidate, "assignees")).toBe(false);
+    }
+  });
+
   it("skips a repo entirely when its AI policy disallows contributions", async () => {
     const { github, calls } = makeStubGitHub({
       issuesByRepo: { "acme/banned": [{ number: 1, title: "Should never appear" }] },

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as signalTrackingWire from "../../src/review/signal-tracking-wire";
 import { createSignalStore } from "../../src/review/signal-tracking-wire";
 import { processJob } from "../../src/queue/processors";
@@ -1698,7 +1698,7 @@ describe("recordReversalSignals — aiReviewLowConfidenceHold confirmation (#812
     expect(await overridesFor(env, "ai_consensus_defect")).toHaveLength(0);
   });
 
-  it("records nothing when the PR was not AI-judgment-held (no matching fired event, other rules ignored)", async () => {
+  it("records no AI-code override when the PR was not AI-judgment-held; a fired non-AI code gets #8761's IMPLICIT confirmation instead", async () => {
     const env = createTestEnv();
     await seedAiFired(env, "secret_leak"); // a non-AI code firing does not make this an AI hold
 
@@ -1706,7 +1706,11 @@ describe("recordReversalSignals — aiReviewLowConfidenceHold confirmation (#812
 
     expect(await overridesFor(env, "ai_consensus_defect")).toHaveLength(0);
     expect(await overridesFor(env, "ai_review_split")).toHaveLength(0);
-    expect(await overridesFor(env, "secret_leak")).toHaveLength(0);
+    // #8761: the owner's terminal close IS consistent with the fired secret_leak verdict — implicit confirm.
+    const secretOverrides = await overridesFor(env, "secret_leak");
+    expect(secretOverrides).toHaveLength(1);
+    expect(secretOverrides[0]).toMatchObject({ verdict: "confirmed" });
+    expect((secretOverrides[0]!.metadata as { basis: string }).basis).toBe("implicit_terminal_disposition");
   });
 
   it("records nothing for a fired event on a DIFFERENT target", async () => {
@@ -1754,6 +1758,122 @@ describe("recordReversalSignals — aiReviewLowConfidenceHold confirmation (#812
       },
     });
 
+    await expect(recordReversalSignals(env, "pull_request", ownerClose())).resolves.toBeUndefined();
+  });
+});
+
+// ── #8761: implicit terminal-disposition confirmations for the non-AI rules ─────────────────────────────────
+
+describe("recordReversalSignals — implicit terminal confirmations (#8761)", () => {
+  // The preceding describe's last test spies createSignalStore and (deliberately) never restores inside its
+  // own block — restore here so these tests always exercise the real D1-backed store.
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  async function seedFired(env: Env, ruleId: string, targetKey = "owner/repo#9"): Promise<void> {
+    await createSignalStore(env).recordRuleFired({ ruleId, targetKey, outcome: "blocker", occurredAt: new Date().toISOString() });
+  }
+
+  function ownerClose(number = 9, overrides: Record<string, unknown> = {}) {
+    return {
+      action: "closed",
+      repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
+      pull_request: pullRequestPayload({ number, state: "closed", merged_at: null }),
+      sender: { login: "owner", type: "User" },
+      ...overrides,
+    };
+  }
+
+  async function overridesFor(env: Env, ruleId: string) {
+    return (await createSignalStore(env).queryRuleHistory(ruleId, 0)).overrides;
+  }
+
+  it("confirms a fired non-AI rule on an owner close-without-merge, tagged basis=implicit_terminal_disposition", async () => {
+    const env = createTestEnv();
+    await seedFired(env, "missing_linked_issue");
+    await recordReversalSignals(env, "pull_request", ownerClose());
+    const overrides = await overridesFor(env, "missing_linked_issue");
+    expect(overrides).toHaveLength(1);
+    expect(overrides[0]).toMatchObject({ ruleId: "missing_linked_issue", targetKey: "owner/repo#9", verdict: "confirmed" });
+    expect((overrides[0]!.metadata as { basis: string }).basis).toBe("implicit_terminal_disposition");
+  });
+
+  it("includes linked_issue_scope_mismatch — its first-ever confirmed side (#8101 wired reversals only)", async () => {
+    const env = createTestEnv();
+    await seedFired(env, "linked_issue_scope_mismatch");
+    await recordReversalSignals(env, "pull_request", ownerClose());
+    const overrides = await overridesFor(env, "linked_issue_scope_mismatch");
+    expect(overrides).toHaveLength(1);
+    expect(overrides[0]).toMatchObject({ verdict: "confirmed" });
+  });
+
+  it("IDEMPOTENT: an existing override (either verdict) suppresses the implicit confirmation — a pair stays single-verdict", async () => {
+    const env = createTestEnv();
+    await seedFired(env, "missing_linked_issue");
+    await createSignalStore(env).recordHumanOverride({
+      ruleId: "missing_linked_issue",
+      targetKey: "owner/repo#9",
+      verdict: "reversed",
+      occurredAt: new Date().toISOString(),
+    });
+    await recordReversalSignals(env, "pull_request", ownerClose());
+    const overrides = await overridesFor(env, "missing_linked_issue");
+    expect(overrides).toHaveLength(1);
+    expect(overrides[0]).toMatchObject({ verdict: "reversed" });
+  });
+
+  it("IDEMPOTENT: a second owner close records nothing new — the first confirmation is the pair's only verdict", async () => {
+    const env = createTestEnv();
+    await seedFired(env, "duplicate_pr_risk");
+    await recordReversalSignals(env, "pull_request", ownerClose());
+    await recordReversalSignals(env, "pull_request", ownerClose());
+    expect(await overridesFor(env, "duplicate_pr_risk")).toHaveLength(1);
+  });
+
+  it("EXCLUDES the score-signal codes — they fire on pass outcomes too, so close-confirmation is incoherent for them", async () => {
+    const env = createTestEnv();
+    await seedFired(env, "slop_gate_score");
+    await seedFired(env, "quality_gate_score");
+    await recordReversalSignals(env, "pull_request", ownerClose());
+    expect(await overridesFor(env, "slop_gate_score")).toHaveLength(0);
+    expect(await overridesFor(env, "quality_gate_score")).toHaveLength(0);
+  });
+
+  it("leaves the AI-judgment codes to their existing explicit writer — exactly one confirmation, never a basis tag", async () => {
+    const env = createTestEnv();
+    await createSignalStore(env).recordRuleFired({
+      ruleId: "ai_consensus_defect",
+      targetKey: "owner/repo#9",
+      outcome: "warning",
+      occurredAt: new Date().toISOString(),
+      metadata: { confidence: 0.4 },
+    });
+    await recordReversalSignals(env, "pull_request", ownerClose());
+    const overrides = await overridesFor(env, "ai_consensus_defect");
+    expect(overrides).toHaveLength(1);
+    expect(overrides[0]!.metadata?.basis).toBeUndefined();
+  });
+
+  it("covers backtest_regression via the drift-fixed signal-codes list (#8761's list fix)", async () => {
+    const env = createTestEnv();
+    await seedFired(env, "backtest_regression");
+    await recordReversalSignals(env, "pull_request", ownerClose());
+    expect(await overridesFor(env, "backtest_regression")).toHaveLength(1);
+  });
+
+  it("records nothing for a fired non-AI rule when a CONTRIBUTOR closes — owner-only, same guard as #8123", async () => {
+    const env = createTestEnv();
+    await seedFired(env, "missing_linked_issue");
+    await recordReversalSignals(env, "pull_request", ownerClose(9, { sender: { login: "contributor", type: "User" } }));
+    expect(await overridesFor(env, "missing_linked_issue")).toHaveLength(0);
+  });
+
+  it("degrades silently when createSignalStore itself throws — the close handling never throws (both confirm writers' outer catch)", async () => {
+    const env = createTestEnv();
+    vi.spyOn(signalTrackingWire, "createSignalStore").mockImplementation(() => {
+      throw new Error("store construction failed");
+    });
     await expect(recordReversalSignals(env, "pull_request", ownerClose())).resolves.toBeUndefined();
   });
 });

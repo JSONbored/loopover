@@ -197,6 +197,9 @@ export const CONFIGURED_GATE_BLOCKER_SIGNAL_CODES: readonly string[] = Object.fr
   "manifest_linked_issue_required",
   "self_authored_linked_issue",
   "content_lane_deliverable_missing",
+  // #8761 drift fix: backtest_regression (#8138) was added to the gate switch but never to this list, so its
+  // reversals silently never recorded — exactly the drift this list's own doc comment promises against.
+  "backtest_regression",
   "lockfile_tamper_risk",
   CLA_CONSENT_MISSING_CODE,
   ...GATE_SCORE_SIGNAL_CODES,
@@ -374,10 +377,10 @@ export function buildIssueAdvisory(repo: RepositoryRecord | null, issue: IssueRe
 }
 
 // Kept byte-identical with the GATE_DECISION_TWIN_PAIR copy in packages/loopover-engine/src/advisory/
-// gate-advisory.ts (checkGateDecisionVersionBump enforces this). The mnemonics/seed-phrases/cohort/
-// miner-|human-originated/bare-raw-trust/bare-rankings terms were ported from sanitizePublicComment's own fix
-// for the same leak class (#7074) -- `raw\s+trust\s+scores?` stays ahead of bare `raw\s+trust` so the compound
-// still matches first.
+// gate-advisory.ts (checkGateDecisionForbiddenTermsParity now diffs the two regex bodies byte-for-byte, #8697).
+// The mnemonics/seed-phrases/cohort/miner-|human-originated/bare-raw-trust/bare-rankings terms were ported from
+// sanitizePublicComment's own fix for the same leak class (#7074) -- `raw\s+trust\s+scores?` stays ahead of
+// bare `raw\s+trust` so the compound still matches first.
 const CHECK_RUN_FORBIDDEN_TERMS =
   /\b(?:rewards?|payouts?|farming|estimated\s+scores?|raw\s+trust\s+scores?|raw\s+trust|trust\s+scores?|score\s+estimates?|reward\s+estimates?|wallets?|hotkeys?|coldkeys?|mnemonics?|seed\s?phrases?|cohorts?|miner[-_\s]?originated|human[-_\s]?originated|rankings?|reviewability|scoreability|private\s+signals?|likely_duplicate|reviewability\s*\d)\b/gi;
 
@@ -1016,79 +1019,97 @@ function isEvaluationBlocker(code: string, policy: GateCheckPolicy): boolean {
 // resolveAiReviewLowConfidenceHold (below) and for the packages/loopover-engine gate-decision twin's own copy.
 export const DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE = 0.93;
 
-function isConfiguredGateBlocker(finding: AdvisoryFinding, policy: GateCheckPolicy): boolean {
+/**
+ * Resolve a finding's configured gate MODE (#8760): the single source of truth both the gate's own blocker
+ * decision ({@link isConfiguredGateBlocker} — mode === "block") and the calibration recorder
+ * ({@link recordConfiguredGateBlockerSignals} — mode !== "off") derive from, so the two can never drift.
+ * Every mode default below is byte-identical to the pre-#8760 isConfiguredGateBlocker switch; an unknown
+ * code resolves "off" (never blocks, never records — pure-warning codes like `pre_merge_check_failed` or
+ * `readiness_score_below_threshold` are deliberately not configured-gate-class findings).
+ */
+function resolveConfiguredGateMode(finding: AdvisoryFinding, policy: GateCheckPolicy): GateRuleMode {
   const code = finding.code;
   // Missing linked issue defaults to ADVISORY — issues aren't always available, so it only blocks when a
   // repo explicitly opts in with linkedIssueGateMode: "block". Duplicates still default to blocking.
-  if (code === "missing_linked_issue") return gateMode(policy.linkedIssueGateMode ?? "advisory") === "block";
-  if (code === "duplicate_pr_risk") return gateMode(policy.duplicatePrGateMode ?? "block") === "block";
+  if (code === "missing_linked_issue") return gateMode(policy.linkedIssueGateMode ?? "advisory");
+  if (code === "duplicate_pr_risk") return gateMode(policy.duplicatePrGateMode ?? "block");
   // A dual-model AI consensus defect blocks ONLY when the maintainer opted into aiReview: block. It is the
   // most conservative AI signal (two independent models) but still confirmed-contributor gated by
   // evaluateGateCheck, and advisory by default.
   // A consensus defect (both reviewers) OR a SPLIT (one reviewer flagged a blocker the other did not) both block
   // when aiReviewGateMode is `block`. (#ai-review-split) The close-confidence floor + disposition (#4603) decide
   // what happens to a SUB-floor finding: `one_shot`/`hold_for_review` (both still block here -- hold_for_review's
-  // difference is downstream, in resolveAiReviewLowConfidenceHold below) leave this branch's return unchanged;
-  // only `advisory_only` demotes a sub-floor finding to a non-blocker.
+  // difference is downstream, in resolveAiReviewLowConfidenceHold below) leave this branch's mode unchanged;
+  // only `advisory_only` demotes a sub-floor finding — to "advisory" (a real finding a human saw, worth
+  // corpus evidence), never to "off".
   if (code === "ai_consensus_defect" || code === "ai_review_split") {
-    if (gateMode(policy.aiReviewGateMode ?? "advisory") !== "block") return false;
+    const mode = gateMode(policy.aiReviewGateMode ?? "advisory");
+    if (mode !== "block") return mode;
     if ((policy.aiReviewLowConfidenceDisposition ?? "hold_for_review") === "advisory_only") {
       const floor = policy.aiReviewCloseConfidence ?? DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE;
       const confidence = finding.confidence ?? 1;
-      if (confidence < floor) return false;
+      if (confidence < floor) return "advisory";
     }
-    return true;
+    return "block";
   }
-  if (code === REVIEW_THREAD_BLOCKER_CODE) return true;
+  if (code === REVIEW_THREAD_BLOCKER_CODE) return "block";
   // A leaked-secret finding (`secret_leak`) ALWAYS hard-blocks: a committed credential must be removed and
   // rotated before merge, with no opt-in. This finding is produced ONLY by the flag-gated safety scan
   // (LOOPOVER_REVIEW_SAFETY); when the flag is off the finding never exists, so this branch is unreachable and the
   // gate verdict is byte-identical to today.
-  if (code === "secret_leak") return true;
+  if (code === "secret_leak") return "block";
   // A maintainer pre-merge check (#review-pre-merge-checks) marked `enforce: true` produces this DETERMINISTIC
   // finding when it fails (a required title/description phrase or label is missing). It always blocks: the
   // per-check `enforce` flag in `.loopover.yml` IS the opt-in (mirroring secret_leak — the finding only exists
   // when the maintainer configured an enforced check). The advisory variant (`pre_merge_check_failed`) is a plain
   // warning and is never blocked here. No AI judgment is involved, so this can never cause an AI false-close.
-  if (code === "pre_merge_check_required") return true;
+  if (code === "pre_merge_check_required") return "block";
   // Focus-manifest missing-tests policy (#555): blocks ONLY when the maintainer opts into manifestPolicy:
   // block. Path holds are intentionally separate and configured via hardGuardrailGlobs.
   if (code === "manifest_missing_tests") {
-    return gateMode(policy.manifestPolicyGateMode ?? "off") === "block";
+    return gateMode(policy.manifestPolicyGateMode ?? "off");
   }
   // Focus-manifest linked-issue policy (#555, #4618): blocks when EITHER the manifest-policy gate OR the
   // linked-issue gate is opted into block. resolveEffectiveSettings promotes linkedIssueGateMode to "block"
   // whenever the yml-only `linkedIssuePolicy: required` knob is set (mirroring the requireLinkedIssue
   // promotion), so this finding's own escalation must honor that gate too -- not just manifestPolicyGateMode
   // -- or the promotion would have no actual blocking effect and the config-surface-reduction fix would be a
-  // no-op.
+  // no-op. Mode composition: the STRICTER of the two gates wins (block > advisory > off), preserving the
+  // original "blocks when either blocks" semantics exactly.
   if (code === "manifest_linked_issue_required") {
-    return gateMode(policy.manifestPolicyGateMode ?? "off") === "block" || gateMode(policy.linkedIssueGateMode ?? "advisory") === "block";
+    const manifest = gateMode(policy.manifestPolicyGateMode ?? "off");
+    const linked = gateMode(policy.linkedIssueGateMode ?? "advisory");
+    if (manifest === "block" || linked === "block") return "block";
+    return manifest === "advisory" || linked === "advisory" ? "advisory" : "off";
   }
   // Self-authored linked-issue gate: blocks only when the maintainer opts in with `block`. Defaults to
   // advisory — the finding surfaces in the panel without ever closing the PR unless explicitly configured.
-  if (code === "self_authored_linked_issue") return gateMode(policy.selfAuthoredLinkedIssueGateMode ?? "advisory") === "block";
+  if (code === "self_authored_linked_issue") return gateMode(policy.selfAuthoredLinkedIssueGateMode ?? "advisory");
   // Linked-issue satisfaction gate (#1961/#3906): blocks only when the maintainer opts in with `block`. The
   // finding itself is only ever produced when the caller already resolved `block` mode (see
   // runLinkedIssueSatisfactionForAdvisory), so this is a defense-in-depth mirror of that gate, not the
   // primary enforcement point.
-  if (code === "linked_issue_scope_mismatch") return gateMode(policy.linkedIssueSatisfactionGateMode ?? "advisory") === "block";
+  if (code === "linked_issue_scope_mismatch") return gateMode(policy.linkedIssueSatisfactionGateMode ?? "advisory");
   // Content-lane linked-issue deliverable gate (#content-lane-deliverable): blocks only when the maintainer
   // opts in with `block`. The finding itself is only ever produced when the caller already resolved a non-
   // "off" mode (see runContentLaneDeliverableCheckForAdvisory), so this is a defense-in-depth mirror of that
   // gate, not the primary enforcement point -- mirrors linked_issue_scope_mismatch immediately above.
-  if (code === "content_lane_deliverable_missing") return gateMode(policy.contentLaneDeliverableGateMode ?? "off") === "block";
+  if (code === "content_lane_deliverable_missing") return gateMode(policy.contentLaneDeliverableGateMode ?? "off");
   // Backtest-regression gate (#8105): blocks only under an explicit opt-in, mirroring the content-lane gate
   // above -- the finding itself only exists in block mode (see resolveThresholdBacktestAdvisory).
-  if (code === "backtest_regression") return gateMode(policy.backtestRegressionGateMode ?? "advisory") === "block";
+  if (code === "backtest_regression") return gateMode(policy.backtestRegressionGateMode ?? "advisory");
   // Lockfile-tamper-risk gate (#2563): blocks only when the maintainer opts in with `block`. Defaults to `off`
   // (the finding is never even produced — see maybeAddLockfileTamperFinding's mode gate in queue/processors.ts),
   // so this branch only matters once a repo has explicitly turned the scan on.
-  if (code === "lockfile_tamper_risk") return gateMode(policy.lockfileIntegrityGateMode ?? "off") === "block";
+  if (code === "lockfile_tamper_risk") return gateMode(policy.lockfileIntegrityGateMode ?? "off");
   // CLA / license-compatibility gate (#2564): blocks only when the maintainer opts into claMode: block.
   // Defaults to off (evaluateClaCheck never even runs for an off repo, so the finding does not exist).
-  if (code === CLA_CONSENT_MISSING_CODE) return gateMode(policy.claGateMode ?? "off") === "block";
-  return false;
+  if (code === CLA_CONSENT_MISSING_CODE) return gateMode(policy.claGateMode ?? "off");
+  return "off";
+}
+
+function isConfiguredGateBlocker(finding: AdvisoryFinding, policy: GateCheckPolicy): boolean {
+  return resolveConfiguredGateMode(finding, policy) === "block";
 }
 
 // #8130: codes whose raw evaluated content must NEVER be captured into fired-event metadata. `secret_leak`
@@ -1104,11 +1125,24 @@ export const RAW_CONTEXT_EXCLUDED_CODES = new Set<string>(["secret_leak"]);
 export const RAW_CONTEXT_MAX_DIFF_CHARS = 120000;
 
 /**
- * Record a {@link RuleFiredEvent} for every finding that `isConfiguredGateBlocker` would put into
- * `configuredBlockers`, excluding `linked_issue_scope_mismatch` (#8104 / complements #8101). Call from the
- * env-bearing gate path immediately after {@link evaluateGateCheck} with the SAME advisory + policy so the
- * filter matches `evaluateGateCheckCore`'s own. Best-effort: a SignalStore failure never throws and never
- * affects the gate verdict.
+ * Record a {@link RuleFiredEvent} for every configured-gate-class finding whose resolved gate mode is not
+ * "off" (#8760; originally block-mode-only per #8104), excluding `linked_issue_scope_mismatch` (#8101 owns
+ * it). Call from the env-bearing gate path immediately after {@link evaluateGateCheck} with the SAME
+ * advisory + policy so the mode resolution matches `evaluateGateCheckCore`'s own. Best-effort: a
+ * SignalStore failure never throws and never affects the gate verdict.
+ *
+ * #8760: pre-#8760 this recorded only findings that RESOLVED to "block" — but every gate defaults to
+ * advisory/off, so the majority of real traffic (advisory findings a human actually saw) recorded nothing
+ * and every downstream corpus was built from the biased block-mode-only minority. Now every non-"off"
+ * finding records, tagged `metadata.gateMode` ("block" | "advisory") so consumers can segment.
+ * Consumer-segmentation audit (per #8760's Requirements): every current consumer is DECIDED-case-driven —
+ * `buildBacktestCorpus` pairs fired events with override verdicts and drops unpaired fires;
+ * `computeRulePrecision`, the reliability curve, and the knob evaluators all run over that decided corpus;
+ * the rule-repeat alarm reads its own separately-namespaced composite ruleId (`<repo>:<code>`, written by
+ * recordGateBlockersAndCheckRepeatAlarm) and never sees these events. Advisory-mode fires therefore sit
+ * inert (unpaired) until a matching override/confirmation exists — no existing metric shifts from this
+ * change alone; #8761's implicit confirmations are what will start pairing them, carrying their own
+ * `basis` tag for weighting.
  *
  * #8130: non-excluded codes also capture the raw context their detection actually evaluated, so their
  * corpora can backtest logic/detection changes rather than only thresholds:
@@ -1131,14 +1165,17 @@ export async function recordConfiguredGateBlockerSignals(
   context: { aiReviewDiff?: string } = {},
 ): Promise<void> {
   const effective = applyMergeReadinessGate(policy);
-  const configuredBlockers = advisoryResult.findings.filter((finding) => isConfiguredGateBlocker(finding, effective));
+  const recordable = advisoryResult.findings
+    .map((finding) => ({ finding, mode: resolveConfiguredGateMode(finding, effective) }))
+    .filter(({ finding, mode }) => mode !== "off" && finding.code !== "linked_issue_scope_mismatch");
   const store = createSignalStore(env);
   const targetKey = `${repoFullName}#${prNumber}`;
   const occurredAt = nowIso();
   await Promise.all(
-    configuredBlockers.map((finding) => {
-      if (finding.code === "linked_issue_scope_mismatch") return Promise.resolve();
-      const metadata: Record<string, unknown> = {};
+    recordable.map(({ finding, mode }) => {
+      // gateMode always present (#8760): downstream consumers segment block-mode evidence (a bot action
+      // followed, a reversal is meaningful) from advisory-mode evidence (a human saw it, no bot action).
+      const metadata: Record<string, unknown> = { gateMode: mode };
       if (finding.confidence !== undefined) metadata.confidence = finding.confidence;
       if (!RAW_CONTEXT_EXCLUDED_CODES.has(finding.code)) {
         if (AI_JUDGMENT_BLOCKER_CODES.has(finding.code)) {
@@ -1153,7 +1190,7 @@ export async function recordConfiguredGateBlockerSignals(
           targetKey,
           outcome: finding.severity ?? "blocker",
           occurredAt,
-          ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
+          metadata,
         })
         .catch(() => undefined);
     }),

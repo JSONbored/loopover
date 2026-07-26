@@ -19,6 +19,8 @@ export interface GitHubIssue {
   number?: unknown;
   title?: unknown;
   labels?: unknown;
+  /** GitHub issue assignees (`login` of each), present on issues-list and search-issues payloads. */
+  assignees?: unknown;
   comments?: unknown;
   created_at?: unknown;
   updated_at?: unknown;

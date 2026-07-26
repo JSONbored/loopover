@@ -39,6 +39,7 @@ import {
   coerceAiUsage,
   estimateNeurons,
   isEnabled,
+  isRateLimitError,
   utcDayStartIso,
 } from "./ai-review";
 
@@ -214,8 +215,12 @@ async function runWorkersE2eTestGen(env: Env, system: string, user: string, maxT
         );
         const parsed = parseE2eTestGenResponse(coerceAiText(result));
         if (parsed) return { testSource: parsed, usage: coerceAiUsage(result) };
-      } catch {
-        /* retry / fall through to fallback */
+      } catch (error) {
+        // #8672: a 429 will not have cleared by the next attempt a few hundred ms later, so retrying THIS
+        // model burns the remaining budget for zero additional chance of success -- move straight to the
+        // fallback model instead (the same guard runWorkersSlopOpinion/runWorkersOpinion already apply).
+        if (isRateLimitError(error)) break;
+        /* non-rate-limit error: retry this model / fall through to the fallback model */
       }
     }
   }

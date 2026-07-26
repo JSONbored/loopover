@@ -34,6 +34,7 @@ import type { GitHubWebhookPayload } from "../types";
 import {
   CONFIGURED_GATE_BLOCKER_SIGNAL_CODES,
   CONFIGURED_GATE_BLOCKER_SIGNAL_LOOKBACK_MS,
+  GATE_SCORE_SIGNAL_CODES,
 } from "../rules/advisory";
 import { errorMessage, nowIso } from "../utils/json";
 import {
@@ -572,6 +573,51 @@ async function recordAiJudgmentHoldConfirmations(env: Env, targetId: string): Pr
   }
 }
 
+// #8761: implicit terminal-disposition confirmations for every OTHER rule — the "confirmed" mirror the
+// non-AI codes never had (pre-#8761 only reversals existed for them, structurally biasing their measured
+// precision toward 0 as data accumulated). Terminal-event mapping, documented per #8761's Requirements:
+// the repo OWNER closing a PR WITHOUT merging it is the one human disposition CONSISTENT WITH an adverse
+// finding's verdict — the same signal #8123 already treats as confirmation for the two AI-judgment codes.
+// Deliberately EXCLUDED from this mapping:
+//   • AI_JUDGMENT_BLOCKER_CODES — recordAiJudgmentHoldConfirmations above owns them (the explicit,
+//     untagged confirmation; #8123's established semantics stay byte-identical).
+//   • GATE_SCORE_SIGNAL_CODES — score signals fire on PASS outcomes too (above/below threshold alike, so
+//     the corpus can replay thresholds), so "owner closed ⇒ the rule was right" is incoherent for them;
+//     their ground truth comes from threshold replays, never terminal dispositions.
+//   • a merge-despite-advisory-finding — weak evidence AGAINST the finding (a reversal-shaped signal),
+//     out of #8761's scope by design.
+// Idempotent: any existing override (either verdict) for the (ruleId, target) pair suppresses the write —
+// a pair stays single-verdict, so a reopen-recorded reversal is never followed by a contradicting implicit
+// confirmation. Every write is tagged metadata.basis = "implicit_terminal_disposition" so downstream
+// consumers can weight (or exclude) implicit evidence separately from #8123's explicit kind. Fail-open per
+// code; callers attach `.catch(() => undefined)` like every writer in this file.
+const IMPLICIT_CONFIRMATION_BASIS = "implicit_terminal_disposition";
+const IMPLICIT_CONFIRMATION_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
+
+async function recordImplicitTerminalConfirmations(env: Env, targetId: string): Promise<void> {
+  const store = createSignalStore(env);
+  const excluded = new Set<string>([...AI_JUDGMENT_BLOCKER_CODES, ...GATE_SCORE_SIGNAL_CODES]);
+  const codes = [...CONFIGURED_GATE_BLOCKER_SIGNAL_CODES.filter((code) => !excluded.has(code)), LINKED_ISSUE_SCOPE_MISMATCH_RULE_ID];
+  await Promise.all(
+    codes.map(async (ruleId) => {
+      try {
+        const history = await store.queryRuleHistory(ruleId, Date.now() - IMPLICIT_CONFIRMATION_LOOKBACK_MS);
+        if (!history.fired.some((event) => event.targetKey === targetId)) return;
+        if (history.overrides.some((event) => event.targetKey === targetId)) return; // single-verdict pair
+        await store.recordHumanOverride({
+          ruleId,
+          targetKey: targetId,
+          verdict: "confirmed",
+          occurredAt: nowIso(),
+          metadata: { basis: IMPLICIT_CONFIRMATION_BASIS },
+        });
+      } catch {
+        // Fail-open per code: one SignalStore reject must not skip the rest of the candidate list.
+      }
+    }),
+  );
+}
+
 /**
  * Record a REVERSAL — a human overriding a loopover auto-action — into the eval/audit stores (the
  * ground-truth accuracy signal). Mirrors reviewbot recordReversalSignals (runtime.ts ~157/274):
@@ -643,12 +689,16 @@ export async function recordReversalSignals(
   // #8123: the OWNER closing a PR WITHOUT merging it — when that PR was held for a low-confidence AI
   // judgment, the owner's close is the explicit confirmation the finding was right ("confirmed" override).
   // A contributor's own close is not a confirmation signal and records nothing (mirrors the reversal side's
-  // owner-vs-contributor distinction above).
+  // owner-vs-contributor distinction above). #8761 extends the same terminal disposition to every other
+  // fired rule as an IMPLICIT confirmation (basis-tagged, idempotent — see
+  // recordImplicitTerminalConfirmations' own doc comment for the mapping and its exclusions).
   if (payload.action === "closed" && !pr.merged_at) {
     const ownerLogin = (repoFullName.split("/")[0] || "").toLowerCase();
     const senderLogin = (payload.sender?.login || "").toLowerCase();
     if (!!ownerLogin && !!senderLogin && ownerLogin === senderLogin) {
-      await recordAiJudgmentHoldConfirmations(env, reviewAuditTargetId(repoFullName, pr.number)).catch(() => undefined);
+      const targetId = reviewAuditTargetId(repoFullName, pr.number);
+      await recordAiJudgmentHoldConfirmations(env, targetId).catch(() => undefined);
+      await recordImplicitTerminalConfirmations(env, targetId).catch(() => undefined); // #8761
     }
     return;
   }

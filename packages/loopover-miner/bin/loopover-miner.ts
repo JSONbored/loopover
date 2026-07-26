@@ -16,6 +16,7 @@ import { runMetrics } from "../lib/metrics-cli.js";
 import { runPlanCli } from "../lib/plan-store-cli.js";
 import { runClaimCli } from "../lib/claim-ledger-cli.js";
 import { runPurge } from "../lib/purge-cli.js";
+import { runDenyHooks } from "../lib/deny-hooks-cli.js";
 import { runQueueCli } from "../lib/portfolio-queue-cli.js";
 import { runOrbExportCli } from "../lib/orb-export.js";
 import { runTenantCli } from "../lib/tenant-cli.js";
@@ -166,6 +167,12 @@ if (cliArgs[0] === "idea-feasibility") {
 // SQLite stores, so it is dispatched here too, before the opportunistic npm-registry update check ever starts.
 if (cliArgs[0] === "purge") {
   process.exit(runPurge(cliArgs.slice(1)));
+}
+
+// `deny-hooks` (#8806) is strictly local + offline like `purge` above — it only opens the local synthesis
+// store to list/refresh/approve the synthesized guardrail proposals buildAttemptDeps now enforces.
+if (cliArgs[0] === "deny-hooks") {
+  process.exit(runDenyHooks(cliArgs.slice(1)));
 }
 
 const packageName = "@loopover/miner";

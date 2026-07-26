@@ -33,6 +33,12 @@ interface AiRunOptions {
   // (embeddings, the subscription CLIs, Anthropic) ignores it, so it is safe to set unconditionally on a
   // call that ONLY ever targets an Ollama-backed binding (e.g. AI_VISION).
   providerOptions?: Record<string, unknown>;
+  // #8790: the caller expects a JSON object back (the PR-review prompt's contract). Only
+  // createOpenAiCompatibleAi's chat path reads this — forwarded as OpenAI's `response_format` so a local
+  // model (confirmed live: an Ollama fallback answering the review prompt in markdown prose on every
+  // attempt) is FORCED into JSON mode instead of merely asked. Every other provider ignores it (the
+  // subscription CLIs already comply via the prompt), so it is safe to set unconditionally on review calls.
+  responseFormat?: "json_object";
   // Correlation context for a provider-failure log (#codex-timeout-fields): purely observational, never read by a
   // provider's own request logic. The caller (runWorkersOpinion) passes whatever of these it already has in scope
   // for THIS review — job id and attempt are per-attempt, repoFullName/pullNumber identify the PR being reviewed —
@@ -366,18 +372,33 @@ export function createOpenAiCompatibleAi(opts: {
       }
       const repoOverride = opts.providerName ? resolveOpenAiCompatibleRepoOverride(opts.providerName, options) : undefined;
       const resolvedModel = resolveModel(firstConfigured(repoOverride, opts.model), model, opts.defaultModel ?? DEFAULT_OPENAI_COMPATIBLE_CHAT_MODEL);
-      const res = await fetch(`${base}/chat/completions`, {
-        method: "POST",
-        headers: headers(),
-        body: JSON.stringify({
+      const chatBody = (withResponseFormat: boolean): string =>
+        JSON.stringify({
           model: resolvedModel,
           messages: toMessages(options).map((message) => ({ role: message.role, content: toOpenAiMessageContent(message.content) })),
           max_tokens: options.max_tokens,
           temperature: options.temperature,
           ...(options.providerOptions ? { options: options.providerOptions } : {}),
-        }),
+          // #8790: force JSON mode when the caller declared a JSON contract — Ollama's and vLLM's
+          // OpenAI-compatible layers both honor it; servers that don't get the 400-fallback below.
+          ...(withResponseFormat && options.responseFormat === "json_object" ? { response_format: { type: "json_object" } } : {}),
+        });
+      let res = await fetch(`${base}/chat/completions`, {
+        method: "POST",
+        headers: headers(),
+        body: chatBody(true),
         signal: AbortSignal.timeout(120_000),
       });
+      // #8790: an older OpenAI-compatible server may reject the response_format parameter outright with a
+      // 400. Retry once without it — degrading to the pre-#8790 ask-nicely behavior beats failing the call.
+      if (!res.ok && res.status === 400 && options.responseFormat === "json_object") {
+        res = await fetch(`${base}/chat/completions`, {
+          method: "POST",
+          headers: headers(),
+          body: chatBody(false),
+          signal: AbortSignal.timeout(120_000),
+        });
+      }
       if (!res.ok) throw new Error(`ai_http_${res.status}`);
       const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
       const usage = extractCliUsage(JSON.stringify(data));

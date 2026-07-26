@@ -476,7 +476,7 @@ export type ModelReview = {
 export type AiReviewDiagnostic = {
   model: string;
   attempt: number;
-  status: "parsed" | "empty_output" | "unparseable_output" | "provider_error" | "missing_assessment";
+  status: "parsed" | "empty_output" | "unparseable_output" | "provider_error" | "missing_assessment" | "identical_retry_skipped";
   responseChars?: number | undefined;
   hasJsonObject?: boolean | undefined;
   error?: string | undefined;
@@ -1189,6 +1189,12 @@ async function runWorkersOpinion(
     if (modelIndex > 0) {
       incr("loopover_ai_review_model_fallback_total", { primary, fallback: model });
     }
+    // #8790: the previous attempt's raw output for THIS model. Reviews run at temperature 0, so a
+    // byte-identical repeat is deterministic — the remaining retries are provably useless (confirmed live
+    // 2026-07-26: a fallback returned the same 2,814-char markdown response on all 3 attempts). Same
+    // stop-retrying-this-model reasoning as the deliberate-bail/timeout/429 breaks below; the next model
+    // still gets its own full budget.
+    let lastRawText: string | undefined;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
         const cliSystemAppend = selfHostCliSystemAppend(model, systemAppend);
@@ -1197,6 +1203,10 @@ async function runWorkersOpinion(
           {
             max_tokens: maxTokens,
             temperature: 0,
+            // #8790: the review prompt's contract is a JSON object — declare it so an OpenAI-compatible
+            // provider is forced into JSON mode (response_format) instead of merely asked. Ignored by every
+            // other provider (the subscription CLIs already comply via the prompt).
+            responseFormat: "json_object",
             messages: [
               { role: "system", content: system },
               { role: "user", content: toContentBlocks(user, images) },
@@ -1232,6 +1242,22 @@ async function runWorkersOpinion(
         const text = coerceAiText(result);
         const usage = coerceAiUsage(result);
         const usageFields = usage ? { usage } : {};
+        // #8790: byte-identical to the previous attempt's (necessarily failed — a success returns) output →
+        // deterministic repeat; stop this model's retries instead of burning the rest of the budget on it.
+        if (attempt > 0 && text.trim() !== "" && text === lastRawText) {
+          diagnostics.push({ model, attempt, status: "identical_retry_skipped", responseChars: text.length, hasJsonObject: Boolean(extractLastJsonObject(text)), ...usageFields });
+          console.warn(
+            JSON.stringify({
+              level: "warn",
+              event: "ai_review_provider_identical_retry_skipped",
+              model,
+              attempt,
+              responseChars: text.length,
+            }),
+          );
+          break;
+        }
+        lastRawText = text;
         const parsed = parseModelReview(text);
         if (parsed && parsed.assessment.trim() !== "") {
           diagnostics.push({ model, attempt, status: "parsed", responseChars: text.length, hasJsonObject: Boolean(extractLastJsonObject(text)), ...usageFields });

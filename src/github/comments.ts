@@ -26,6 +26,30 @@ export function closeExplanationMarker(closeKind: string | undefined): string {
 // `batch.length < 100` early-exit below still keeps a short comment list to a single request.
 const COMMENT_SEARCH_PAGE_LIMIT = 10;
 
+// The PR panel embeds a per-pass `<sub>Review updated: <timestamp></sub>` line (review/unified-comment.ts),
+// re-stamped from `reviewedAt ?? new Date()` on every render. Comparing raw bodies in the idempotency check
+// below therefore NEVER matched for the panel, defeating the skip entirely: every re-gate tick PATCHed GitHub
+// (a write + rate-limit cost) purely to move a clock, and each PATCH generated an inbound
+// `issue_comment.edited` delivery that ingress then classified as our own noise and discarded -- ~26% of all
+// lifetime webhook traffic (79,612 of ~309,600 deliveries) was this loop feeding itself (#9069).
+//
+// Normalizing the timestamp out of BOTH sides restores the skip. Deliberately COMPARE-ONLY: the body actually
+// posted keeps its real timestamp, and whenever some other part of the body does change, the PATCH carries the
+// fresh one along with it. The surviving timestamp then reads as "the review last CHANGED at X" rather than
+// "we last looked at X" -- the more useful meaning, and the one the line's own wording already implies.
+//
+// Bounded to `[^<]*` so it can only ever match this exact generated line: every caller-supplied string that
+// reaches a comment body is HTML-angle-escaped first (escapePublicHtmlAngles), so contributor text cannot
+// forge a `<sub>` wrapper here. Comments without the line (close explanations, visual follow-ups) are
+// untouched, keeping their comparison byte-exact as before.
+const VOLATILE_REVIEW_TIMESTAMP_LINE = /^<sub>Review updated: [^<]*<\/sub>$/gm;
+const VOLATILE_REVIEW_TIMESTAMP_PLACEHOLDER = "<sub>Review updated:</sub>";
+
+/** Body projection used ONLY for the idempotency equality check -- never for what gets posted. */
+export function comparableCommentBody(body: string): string {
+  return body.replace(VOLATILE_REVIEW_TIMESTAMP_LINE, VOLATILE_REVIEW_TIMESTAMP_PLACEHOLDER);
+}
+
 type IssueComment = {
   id: number;
   body?: string | null;
@@ -138,11 +162,16 @@ async function createOrUpdateIssueCommentWithMarker(
     }
     const canonical = canonicalMarkerComment(existing);
     if (canonical) {
-      // Idempotency (#4): skip the PATCH when the rendered body is byte-identical to what's already posted. The
+      // Idempotency (#4): skip the PATCH when the rendered body matches what's already posted. The
       // re-gate sweep re-renders the same surface every cycle for an unchanged PR; without this, every cycle PATCHes
       // GitHub (a write + rate-limit cost) for no visible change. Defense-in-depth alongside the head_sha publish
       // marker — also collapses a duplicate webhook delivery for the same commit.
-      if (canonical.body === body) {
+      // #9069: compared through comparableCommentBody so the panel's per-pass "Review updated" timestamp — which
+      // changes on every render and made this check unreachable for the panel — no longer counts as a change.
+      /* v8 ignore next -- `?? ""` is a type-level guard only: the marker filter above requires
+       * `comment.body?.includes(candidate)`, so any comment that becomes `canonical` provably has a non-empty
+       * string body. Kept because IssueComment types `body` as `string | null | undefined`. */
+      if (comparableCommentBody(canonical.body ?? "") === comparableCommentBody(body)) {
         await deleteDuplicateMarkerComments(octokit, owner, repo, existing, canonical.id);
         return { id: canonical.id, ...(canonical.html_url !== undefined ? { html_url: canonical.html_url } : {}), changed: false };
       }

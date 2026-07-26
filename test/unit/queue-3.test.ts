@@ -1755,6 +1755,103 @@ describe("queue processors", () => {
     expect(closeAudit?.n).toBeGreaterThanOrEqual(1);
   });
 
+  // #8866: same audited failure as #stale-screenshot-table-fix, but for MATRIX mode (requireViewports set).
+  // Pre-fix, matrix mode only re-scanned labeled rows with no head-SHA correlation, so an unchanged matrix
+  // table silently PASSed forever after push #1. Post-fix it must reuse the presence-mode fingerprint
+  // checkpoint and re-violate on push #2.
+  it("screenshot-table gate (#8866): a matrix table that passed on push #1 no longer satisfies the gate on push #2 when the body was never re-edited", async () => {
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+    });
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      autonomy: { close: "auto", merge: "auto", label: "auto" },
+    });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", {
+      settings: {
+        commentMode: "all_prs",
+        publicSurface: "comment_only",
+        checkRunMode: "off",
+        screenshotTableGate: {
+          enabled: true,
+          whenLabels: ["visual"],
+          requireViewports: ["Desktop"],
+          requireThemes: ["Light"],
+        },
+        reviewCheckMode: "required",
+      },
+    }, "repo_file");
+    const unchangedMatrixBody = [
+      "Changed the button color.",
+      "",
+      "| Viewport · Theme | Before | After |",
+      "| --- | --- | --- |",
+      "| Desktop · Light | ![before](https://x/before.png) | ![after](https://x/after.png) |",
+      "",
+      "Closes #1",
+    ].join("\n");
+    let currentHeadSha = "matrix-stale-push-1";
+    const seen = { closed: false, closeCount: 0 };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/9002/files")) return Response.json([{ filename: "apps/ui/src/App.tsx", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+const ok = true;" }]);
+      if (url.includes("/pulls/9002/reviews")) return Response.json([]);
+      if (url.includes("/pulls/9002/commits")) return Response.json([]);
+      if (url.endsWith("/pulls/9002") && method === "PATCH") {
+        if (JSON.parse(String(init?.body ?? "{}")).state === "closed") { seen.closed = true; seen.closeCount += 1; }
+        return Response.json({ number: 9002, state: "closed" });
+      }
+      if (url.endsWith("/pulls/9002")) return Response.json({ number: 9002, state: "open", user: { login: "visual-contributor" }, head: { sha: currentHeadSha }, mergeable_state: "clean" });
+      if (url.includes(`/commits/${currentHeadSha}/check-runs`)) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes(`/commits/${currentHeadSha}/status`)) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      if (url.includes("/issues/9002/labels") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/9002/labels") && method === "POST") return Response.json([]);
+      if (url.includes("/issues/9002/comments") && method === "POST") return Response.json({ id: 1 }, { status: 201 });
+      if (url.includes("/issues/9002/comments")) return Response.json([]);
+      return Response.json({});
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "screenshot-table-matrix-stale-push-1",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 9002, title: "New button color", state: "open", user: { login: "visual-contributor" }, head: { sha: currentHeadSha }, labels: [{ name: "visual" }], body: unchangedMatrixBody, mergeable_state: "clean", reviewDecision: "APPROVED" },
+      },
+    });
+    expect(seen.closed).toBe(false);
+    const afterPush1 = await getPullRequest(env, "JSONbored/gittensory", 9002);
+    expect(afterPush1?.screenshotTablePresenceSatisfied?.headSha).toBe("matrix-stale-push-1");
+
+    currentHeadSha = "matrix-stale-push-2";
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "screenshot-table-matrix-stale-push-2",
+      eventName: "pull_request",
+      payload: {
+        action: "synchronize",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 9002, title: "New button color", state: "open", user: { login: "visual-contributor" }, head: { sha: currentHeadSha }, labels: [{ name: "visual" }], body: unchangedMatrixBody, mergeable_state: "clean", reviewDecision: "APPROVED" },
+      },
+    });
+    expect(seen.closed).toBe(true);
+    expect(seen.closeCount).toBe(1);
+    const closeAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'agent.action.close'").first<{ n: number }>();
+    expect(closeAudit?.n).toBeGreaterThanOrEqual(1);
+  });
+
   // #4110: same in-scope, NO-body-table fixture as the "closed deterministically" test above (a hand-authored
   // table would normally be the ONLY way to avoid the close) -- the ONLY difference is that this PR ALSO
   // touches a web-visible route file with a real, resolvable preview deploy. Proves the marker

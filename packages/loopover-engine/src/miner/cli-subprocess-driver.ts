@@ -277,6 +277,17 @@ export function createCliSubprocessCodingAgentDriver(options: CliSubprocessDrive
       });
       const transcript = redactSecrets(spawned.stdout, knownSecrets).slice(0, MAX_TRANSCRIPT_CHARS);
 
+      // The JSON usage envelope is present on every result, success or not (a failed-but-billed attempt — e.g. a
+      // mid-session API error — still carries real cost/token usage). Extract it once here so the failure branches
+      // below report spend symmetrically with the success path and with agent-sdk-driver.ts, preventing
+      // attempt-metering budget-ceiling undercounting (#8871). extractCliUsage tolerates unparseable/empty stdout.
+      const usage = extractCliUsage(spawned.stdout);
+      const tokensUsed = totalTokensFromUsage(usage);
+      const usageFields = {
+        ...(usage.costUsd !== undefined ? { costUsd: usage.costUsd } : {}),
+        ...(tokensUsed !== undefined ? { tokensUsed } : {}),
+      };
+
       if (spawned.timedOut && spawned.stalledNoOutput) {
         // Fast-fail path (#4994/#5053): killed at firstOutputTimeoutMs, well before the full timeoutMs, because
         // stdout produced no bytes at all. A distinct error (never reusing `${command}_timeout_...`) so this
@@ -288,6 +299,7 @@ export function createCliSubprocessCodingAgentDriver(options: CliSubprocessDrive
           summary: `${options.command} stalled with no stdout within ${options.firstOutputTimeoutMs}ms`,
           transcript,
           error: `${options.command}_stalled_no_output`,
+          ...usageFields,
         };
       }
       if (spawned.timedOut) {
@@ -297,6 +309,7 @@ export function createCliSubprocessCodingAgentDriver(options: CliSubprocessDrive
           summary: `${options.command} timed out after ${timeoutMs}ms`,
           transcript,
           error: `${options.command}_timeout_${timeoutMs}ms`,
+          ...usageFields,
         };
       }
       if (spawned.code !== 0) {
@@ -309,6 +322,7 @@ export function createCliSubprocessCodingAgentDriver(options: CliSubprocessDrive
               summary: `${options.command} exited non-zero`,
               transcript,
               error: redactSecrets(`claude_code_error_${errStatus}`, knownSecrets),
+              ...usageFields,
             };
           }
         }
@@ -328,6 +342,7 @@ export function createCliSubprocessCodingAgentDriver(options: CliSubprocessDrive
                 "codex_no_auth: auth.json missing or expired -- run `codex auth` to authenticate",
                 knownSecrets,
               ),
+              ...usageFields,
             };
           }
           if (jsonlDetail) {
@@ -340,6 +355,7 @@ export function createCliSubprocessCodingAgentDriver(options: CliSubprocessDrive
               summary: `${options.command} exited non-zero`,
               transcript,
               error: `${options.command}_exit_${spawned.code}: ${detail}`,
+              ...usageFields,
             };
           }
         }
@@ -351,6 +367,7 @@ export function createCliSubprocessCodingAgentDriver(options: CliSubprocessDrive
           summary: `${options.command} exited non-zero`,
           transcript,
           error: `${options.command}_exit_${spawned.code}: ${detail}`,
+          ...usageFields,
         };
       }
       // Claude Code's own documented behavior: `--output-format json` "sometimes exits non-zero", implying
@@ -369,18 +386,16 @@ export function createCliSubprocessCodingAgentDriver(options: CliSubprocessDrive
             summary: `${options.command} exited 0 but reported an error envelope`,
             transcript,
             error: redactSecrets(`claude_code_error_${errStatus}`, knownSecrets),
+            ...usageFields,
           };
         }
       }
-      const usage = extractCliUsage(spawned.stdout);
-      const tokensUsed = totalTokensFromUsage(usage);
       return {
         ok: true,
         changedFiles: [],
         summary: `${options.command} completed for ${task.attemptId}`,
         transcript,
-        ...(usage.costUsd !== undefined ? { costUsd: usage.costUsd } : {}),
-        ...(tokensUsed !== undefined ? { tokensUsed } : {}),
+        ...usageFields,
       };
     },
   };

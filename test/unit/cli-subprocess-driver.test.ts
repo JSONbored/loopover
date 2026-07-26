@@ -99,6 +99,46 @@ describe("createCliSubprocessCodingAgentDriver (#4266)", () => {
     expect(result.error).not.toContain("sk-ant-abcdefghijklmnop12345");
   });
 
+  it("still reports cost/token usage on a non-zero exit that billed real spend (#8871)", async () => {
+    const { spawn } = fakeSpawn({
+      stdout: JSON.stringify({ type: "result", is_error: true, total_cost_usd: 0.05, input_tokens: 100, output_tokens: 50 }),
+      code: 1,
+    });
+    const driver = createCliSubprocessCodingAgentDriver({ command: "codex", spawn });
+    const result = await driver.run(TASK);
+    expect(result.ok).toBe(false);
+    // A failed-but-billed attempt must not undercount spend against the metering budget ceiling.
+    expect(result.costUsd).toBe(0.05);
+    expect(result.tokensUsed).toBe(150);
+  });
+
+  it("still reports cost/token usage on a timeout that billed real spend (#8871)", async () => {
+    const { spawn } = fakeSpawn({
+      stdout: JSON.stringify({ total_cost_usd: 0.02, input_tokens: 10, output_tokens: 5 }),
+      code: null,
+      timedOut: true,
+    });
+    const driver = createCliSubprocessCodingAgentDriver({ command: "claude", spawn, timeoutMs: 5000 });
+    const result = await driver.run(TASK);
+    expect(result.ok).toBe(false);
+    expect(result.summary).toBe("claude timed out after 5000ms");
+    expect(result.costUsd).toBe(0.02);
+    expect(result.tokensUsed).toBe(15);
+  });
+
+  it("still reports cost/token usage on a code-0 claude error envelope that billed real spend (#8871)", async () => {
+    const { spawn } = fakeSpawn({
+      stdout: JSON.stringify({ type: "result", subtype: "success", is_error: true, api_error_status: "overloaded_error", total_cost_usd: 0.03, input_tokens: 20, output_tokens: 10 }),
+      code: 0,
+    });
+    const driver = createCliSubprocessCodingAgentDriver({ command: "claude", spawn });
+    const result = await driver.run(TASK);
+    expect(result.ok).toBe(false);
+    expect(result.summary).toBe("claude exited 0 but reported an error envelope");
+    expect(result.costUsd).toBe(0.03);
+    expect(result.tokensUsed).toBe(30);
+  });
+
   it("falls back to 'exit <code>' when a failing subprocess wrote no stderr (incl. a null code)", async () => {
     const { spawn } = fakeSpawn({ stdout: "", code: null });
     const driver = createCliSubprocessCodingAgentDriver({ command: "claude", spawn });

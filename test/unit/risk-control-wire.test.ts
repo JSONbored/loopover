@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isRiskControlEnabled, loadCalibrationPairs, parseBudget, readCalibratedThreshold, resolveAutomaticCloseConfidence, riskControlArms, riskControlFlagKey, runRiskControlRecalibration } from "../../src/review/risk-control-wire";
+import { isRiskControlEnabled, loadCalibrationPairs, parseBudget, parseBudgetOrNull, readCalibratedThreshold, resolveAutomaticCloseConfidence, riskControlArms, riskControlFlagKey, runRiskControlRecalibration, scheduledAlpha } from "../../src/review/risk-control-wire";
 import { processJob } from "../../src/queue/processors";
 import { createTestEnv } from "../helpers/d1";
 
@@ -69,7 +69,7 @@ describe("runRiskControlRecalibration", () => {
     const flag = await env.DB.prepare(`SELECT value FROM system_flags WHERE key = ?`).bind(riskControlFlagKey("close")).first();
     expect(flag).toBeFalsy(); // a stale guarantee is a lie — retracted
     const audit = await env.DB.prepare(`SELECT detail FROM audit_events WHERE event_type = 'risk_control_insufficient' AND target_key = 'riskcontrol:close'`).first<{ detail: string }>();
-    expect(audit!.detail).toContain("of 199 needed"); // close-arm alpha 0.015 floor
+    expect(audit!.detail).toContain("of 59 needed"); // scheduled close alpha 0.05 under 350 pairs → 59-label floor
   });
 
   it("CALIBRATED: publishes lambda + the certified statement once the close arm clears its floor", async () => {
@@ -77,13 +77,14 @@ describe("runRiskControlRecalibration", () => {
     for (let i = 1; i <= 210; i += 1) await seedLabeledDecision(env, i, "close", "correct", 0.9 + (i % 5) / 100);
     const summary = await runRiskControlRecalibration(env);
     expect(summary.close).toBe("calibrated");
-    expect(summary.merge).toBe("insufficient_labels"); // merge alpha 0.002 needs 1497 — genuinely separate arms
+    expect(summary.merge).toBe("insufficient_labels"); // merge alpha 0.005 needs 598 — genuinely separate arms
     const flag = await env.DB.prepare(`SELECT value FROM system_flags WHERE key = ?`).bind(riskControlFlagKey("close")).first<{ value: string }>();
-    const stored = JSON.parse(flag!.value) as { lambda: number; coverageAtLambda: number };
+    const stored = JSON.parse(flag!.value) as { lambda: number; coverageAtLambda: number; alpha: number };
     expect(stored.lambda).toBe(0.9);
     expect(stored.coverageAtLambda).toBe(1);
+    expect(stored.alpha).toBe(0.05); // 210 pairs < 350 → the schedule's first tier
     const audit = await env.DB.prepare(`SELECT detail FROM audit_events WHERE event_type = 'risk_control_calibrated'`).first<{ detail: string }>();
-    expect(audit!.detail).toContain("P(wrong | acted) ≤ 0.015 guaranteed at 100% coverage");
+    expect(audit!.detail).toContain("P(wrong | acted) ≤ 0.05 guaranteed at 100% coverage");
   });
 });
 
@@ -169,7 +170,25 @@ describe("env-configurable budgets", () => {
     expect(parseBudget("0.01", 0.015, 0.05)).toBe(0.01);
     const arms = riskControlArms(createTestEnv({ LOOPOVER_RISK_CONTROL_CLOSE_ALPHA: "0.02" }));
     expect(arms.find((a) => a.arm === "close")!.alpha).toBe(0.02);
-    expect(arms.find((a) => a.arm === "merge")!.alpha).toBe(0.005);
+    expect(arms.find((a) => a.arm === "merge")!.alpha).toBeNull(); // unset env = follow the schedule
+  });
+
+  it("parseBudgetOrNull: null on absent/garbage/out-of-range means 'use the schedule'", () => {
+    expect(parseBudgetOrNull(undefined, 0.05)).toBeNull();
+    expect(parseBudgetOrNull("nope", 0.05)).toBeNull();
+    expect(parseBudgetOrNull("0.2", 0.05)).toBeNull();
+    expect(parseBudgetOrNull("0", 0.05)).toBeNull();
+    expect(parseBudgetOrNull("0.03", 0.05)).toBe(0.03);
+  });
+
+  it("scheduledAlpha: the pre-registered close-arm tightening tiers; merge stays fixed at 0.005", () => {
+    expect(scheduledAlpha("close", 0)).toBe(0.05);
+    expect(scheduledAlpha("close", 349)).toBe(0.05);
+    expect(scheduledAlpha("close", 350)).toBe(0.025);
+    expect(scheduledAlpha("close", 699)).toBe(0.025);
+    expect(scheduledAlpha("close", 700)).toBe(0.015);
+    expect(scheduledAlpha("merge", 0)).toBe(0.005);
+    expect(scheduledAlpha("merge", 5000)).toBe(0.005);
   });
 });
 

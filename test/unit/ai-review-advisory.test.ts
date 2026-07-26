@@ -803,6 +803,40 @@ describe("runAiReviewForAdvisory", () => {
     expect(aiCalls).toBe(12); // 3 attempts x the same 4 model slots — pre-#8790 behavior pinned for varying output
   });
 
+  it("#8791: a SINGLE-reviewer plan's inconclusive finding says one-reviewer-with-fallback, never 'dual-model'", async () => {
+    const adv = advisory();
+    const env = aiEnv(async () => ({ response: "### prose, never JSON" }));
+    // combine: "single" resolves dual=false (one reviewer slot) regardless of provider count.
+    const result = await runAiReviewForAdvisory(env, {
+      mode: "live",
+      settings: { aiReviewMode: "block", aiReviewCombine: "single" } as RepositorySettings,
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+    });
+    const finding = result?.findings.find((f) => f.code === "ai_review_inconclusive");
+    expect(finding?.detail).toContain("one reviewer, including its provider fallback chain");
+    expect(finding?.detail).not.toContain("dual-model");
+  });
+
+  it("#8791: the default dual plan's inconclusive finding still says 'dual-model'", async () => {
+    const adv = advisory();
+    const env = aiEnv(async () => ({ response: "### prose, never JSON" }));
+    const result = await runAiReviewForAdvisory(env, {
+      mode: "live",
+      settings: { aiReviewMode: "block" } as RepositorySettings,
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+    });
+    const finding = result?.findings.find((f) => f.code === "ai_review_inconclusive");
+    expect(finding?.detail).toContain("dual-model");
+  });
+
   it("uses the non-cacheable block-mode inconclusive note when no reviewer returns public text", async () => {
     const adv = advisory();
     const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: "" })), {

@@ -3372,6 +3372,18 @@ describe("pure helpers", () => {
     // Prefix-anchored, but must not match a longer look-alike token that merely starts with the same characters.
     expect(isStructuralProviderConfigError(new Error("codex_no_auth_pending"))).toBe(false);
     expect(isStructuralProviderConfigError(new Error("connection reset"))).toBe(false);
+  });
+
+  it("#8791: claude-code's own auth-failure shapes are structural too — expired tokens are as deterministic as codex_no_auth", () => {
+    expect(isStructuralProviderConfigError(new Error("claude_code_no_oauth_token"))).toBe(true);
+    expect(isStructuralProviderConfigError(new Error("claude_code_no_oauth_token: CLAUDE_CODE_OAUTH_TOKEN not set"))).toBe(true);
+    expect(isStructuralProviderConfigError(new Error("claude_code_error_401: authentication_error"))).toBe(true);
+    expect(isStructuralProviderConfigError(new Error("claude_code_error_403"))).toBe(true);
+    // A 429 is rate-limiting, not structural — it clears on its own and already has its own same-model break.
+    expect(isStructuralProviderConfigError(new Error("claude_code_error_429: rate_limit_error"))).toBe(false);
+    // Other claude_code error shapes (exit codes, stalls) stay transient.
+    expect(isStructuralProviderConfigError(new Error("claude_code_exit_1: something broke"))).toBe(false);
+    expect(isStructuralProviderConfigError(new Error("claude_stalled_no_output: no stdout within firstOutputTimeoutMs"))).toBe(false);
     // Anchored ("^codex_...") -- a wrapped/rethrown message doesn't match, only the exact provider-level throw does.
     expect(isStructuralProviderConfigError(new Error("wrapped: codex_auth_not_configured: nested"))).toBe(false);
     expect(isStructuralProviderConfigError("codex_auth_not_configured: not an Error instance")).toBe(false);

@@ -795,12 +795,18 @@ export async function runAiReviewForAdvisory(
     } else if (result.inconclusive) {
       // Fail-CLOSED (#ai-fail-closed): block-mode AI could not return a usable verdict. Hold the PR for a human
       // (an evaluation-blocker code → neutral gate) rather than letting it pass to auto-merge uncertified.
+      // #8791: the copy reflects the plan that ACTUALLY ran. This text unconditionally claimed "dual-model" —
+      // on a single-reviewer-with-fallback deployment (the AI_PROVIDER=a,b default without AI_DUAL_REVIEW)
+      // that misdescribed a provider-chain outage as a two-model disagreement and sent the 2026-07-26
+      // incident's debugging down the wrong path.
       findings.push({
         code: "ai_review_inconclusive",
         severity: "warning",
         title: "AI review could not be completed",
         detail:
-          "The dual-model AI review did not return a usable verdict for this change.",
+          result.plannedReviewerCount === 2
+            ? "The dual-model AI review did not return a usable verdict for this change."
+            : "The AI review (one reviewer, including its provider fallback chain) did not return a usable verdict for this change.",
         action:
           "The gate is held for a human reviewer rather than passed automatically; it re-evaluates on the next update.",
       });

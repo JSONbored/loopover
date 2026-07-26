@@ -416,6 +416,11 @@ export type LoopOverAiReviewResult =
       inconclusive: boolean;
       estimatedNeurons: number;
       reviewerCount: number;
+      /** #8791: how many INDEPENDENT reviewer slots the resolved plan ran (2 = genuine dual review, 1 =
+       *  single reviewer, possibly with a same-slot provider fallback). Distinct from reviewerCount (the
+       *  count that actually produced output — 0 on a fully-failed run) so the inconclusive finding's copy
+       *  can describe what actually happened instead of unconditionally claiming "dual-model". */
+      plannedReviewerCount: 1 | 2;
       /** Per-reviewer stances for the provider track records (#8229 stage 0). Attribution attaches at leg
        *  PRODUCTION time (a.review ↔ primary.model, b.review ↔ secondary.model), so the tie-break judge's
        *  order-swap — which operates downstream on copies — can never misattribute a vote. Block-mode only
@@ -1179,9 +1184,13 @@ export function isRateLimitError(error: unknown): boolean {
  *  short-circuit. Exported so `src/selfhost/ai.ts`'s circuit breaker can give this failure class a much longer
  *  cooldown than a genuinely transient one. */
 export function isStructuralProviderConfigError(error: unknown): boolean {
+  // #8791: the claude-code CLI's own auth-failure shapes join the codex ones — an expired/missing OAuth token
+  // (claude_code_no_oauth_token) or a 401/403 API rejection is exactly as deterministic as codex_no_auth: the
+  // same model fails the identical way on every retry until a human rotates the credential, so it deserves the
+  // same long structural circuit-breaker cooldown instead of burning the full retry budget on every review.
   return (
     error instanceof Error &&
-    /^codex_(?:auth_not_configured|no_auth|credential_isolation_required)(?::|$)/.test(error.message)
+    /^(?:codex_(?:auth_not_configured|no_auth|credential_isolation_required)|claude_code_(?:no_oauth_token|error_40[13]))(?::|$)/.test(error.message)
   );
 }
 
@@ -2661,6 +2670,7 @@ export async function runLoopOverAiReview(
     inconclusive,
     estimatedNeurons,
     reviewerCount: Math.max(reviewsForNotes.length, fallbackNotes.length),
+    plannedReviewerCount: dual ? 2 : 1,
     inlineFindings,
     valueAssessment,
     reviewDiagnostics,

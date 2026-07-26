@@ -4,8 +4,9 @@ import { createD1Adapter, nodeSqliteDriver } from "../../src/selfhost/d1-adapter
 import { bucketReasonCode, exportOrbBatch, getOrCreateAnonSecret } from "../../src/selfhost/orb-collector";
 import { resetMetrics, renderMetrics } from "../../src/selfhost/metrics";
 
-/** In-memory DB with the review_audit + orb_export_cursor tables the exporter reads. */
-function makeDb(): D1Database {
+/** In-memory DB with the review_audit + orb_export_cursor tables the exporter reads. `withAuditEvents:
+ *  false` drops the reuse-counter source table to prove the counter read fails SAFE (export still runs). */
+function makeDb(options: { withAuditEvents?: boolean } = {}): D1Database {
   const driver = nodeSqliteDriver(new DatabaseSync(":memory:") as never);
   driver.exec(`
     CREATE TABLE review_audit (
@@ -24,7 +25,19 @@ function makeDb(): D1Database {
       updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
     );
   `);
+  if (options.withAuditEvents !== false) {
+    driver.exec(`
+      CREATE TABLE audit_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, event_type TEXT NOT NULL, target_key TEXT,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+      );
+    `);
+  }
   return createD1Adapter(driver);
+}
+
+async function cacheEvent(db: D1Database, eventType: string, at: string): Promise<void> {
+  await db.prepare(`INSERT INTO audit_events (event_type, target_key, created_at) VALUES (?, 'o/r#1', ?)`).bind(eventType, at).run();
 }
 
 let seq = 0;
@@ -176,6 +189,47 @@ describe("exportOrbBatch() — always-on; reads review_audit, ships anonymized r
     let captured: { events: Array<{ reversal_flag: string }> } | undefined;
     await exportOrbBatch(db, 200, async (_u, init) => { captured = JSON.parse(init!.body as string); return new Response(null, { status: 200 }); });
     expect(captured!.events.map((e) => e.reversal_flag).sort()).toEqual(["reopened", "superseded"]);
+  });
+
+  it("ships day-bucketed reuse counters alongside the outcome events (#8820), bounded to the rolling window", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-02-10T12:00:00Z"));
+    try {
+      const db = makeDb();
+      await audit(db, "o/r", 1, "gate_decision", "merge", "2026-02-01T00:00:00Z");
+      await audit(db, "o/r", 1, "pr_outcome", "merged", "2026-02-01T01:00:00Z");
+      await cacheEvent(db, "github_app.grounding_cache_hit", "2026-02-01T02:00:00Z");
+      await cacheEvent(db, "github_app.review_memory_cache_hit", "2026-02-01T03:00:00Z");
+      await cacheEvent(db, "github_app.impact_map_cache_miss", "2026-02-01T04:00:00Z");
+      await cacheEvent(db, "github_app.ai_review_frozen_reuse", "2026-02-02T00:00:00Z"); // non-suffix reuse variant = hit
+      await cacheEvent(db, "github_app.grounding_cache_hit", "2020-01-01T00:00:00Z"); // far outside the window
+      let captured: { reuse_counters?: Array<{ day: string; hits: number; misses: number }> } | undefined;
+      await exportOrbBatch(db, 200, async (_u, init) => { captured = JSON.parse(init!.body as string); return new Response(null, { status: 200 }); });
+      expect(captured!.reuse_counters).toEqual([
+        { day: "2026-02-01", hits: 2, misses: 1 },
+        { day: "2026-02-02", hits: 1, misses: 0 },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("omits reuse_counters when the window has none — and a missing audit_events table fails SAFE (#8820)", async () => {
+    // No cache events at all → the field is absent, not an empty array.
+    const clean = makeDb();
+    await audit(clean, "o/r", 1, "gate_decision", "merge", "2026-02-01T00:00:00Z");
+    await audit(clean, "o/r", 1, "pr_outcome", "merged", "2026-02-01T01:00:00Z");
+    let captured: Record<string, unknown> | undefined;
+    await exportOrbBatch(clean, 200, async (_u, init) => { captured = JSON.parse(init!.body as string); return new Response(null, { status: 200 }); });
+    expect("reuse_counters" in captured!).toBe(false);
+    // A deployment whose ledger lacks the table entirely: the counter read degrades to none — the outcome
+    // export riding the same tick still succeeds.
+    const bare = makeDb({ withAuditEvents: false });
+    await audit(bare, "o/r", 2, "gate_decision", "merge", "2026-02-01T00:00:00Z");
+    await audit(bare, "o/r", 2, "pr_outcome", "merged", "2026-02-01T01:00:00Z");
+    captured = undefined;
+    expect(await exportOrbBatch(bare, 200, async (_u, init) => { captured = JSON.parse(init!.body as string); return new Response(null, { status: 200 }); })).toBe(1);
+    expect("reuse_counters" in captured!).toBe(false);
   });
 
   it("REGRESSION (#8820): a reversal recorded AFTER a PR was already exported re-exports that PR with the flag", async () => {

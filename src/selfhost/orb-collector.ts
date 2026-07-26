@@ -17,6 +17,7 @@
 // can never de-anonymize).
 import { createHash, createHmac } from "node:crypto";
 import { generateAnonSecret, hmacAnonymize } from "../../packages/loopover-engine/src/telemetry/anonymize.js";
+import { AI_REVIEW_REUSE_EVENT_TYPES } from "../services/public-reuse-rate-trend";
 import { incr } from "./metrics";
 
 /** Key under which the per-instance anonymization secret is persisted in system_flags. */
@@ -53,6 +54,45 @@ interface OrbExportPayload {
   instance_id: string;
   events: FleetEvent[];
   health?: { ok: boolean };
+  /** #8820: day-bucketed cache hit/miss aggregates for the public "AI work reused" trend. Counts only —
+   *  no repos, no PRs, no content. A rolling window re-sent every tick (the collector upserts per day),
+   *  so the field is self-healing and needs no cursor. Omitted when the window has no cache events. */
+  reuse_counters?: Array<{ day: string; hits: number; misses: number }>;
+}
+
+/** Rolling window the reuse counters cover — the public trend renders 8 weeks; the extra buffer keeps the
+ *  oldest visible bucket complete across week boundaries and export lag. */
+export const REUSE_COUNTER_WINDOW_DAYS = 70;
+
+/** Day-bucketed reuse counters from the local audit_events ledger. Same event population as
+ *  loadReuseRateDayRows (public-reuse-rate-trend.ts) — the LIKE convention plus ai_review's three
+ *  non-suffix-conforming reuse variants — so the fleet fold can never drift from the own-ledger count.
+ *  substr(created_at, 1, 10) is the portable day bucket (runs on the SQLite AND Postgres backends, and
+ *  tolerates this ledger's mixed 'YYYY-MM-DD hh:mm:ss' / ISO-with-T timestamp formats). */
+const REUSE_COUNTER_QUERY = `
+  SELECT substr(created_at, 1, 10) AS day,
+         SUM(CASE WHEN event_type LIKE 'github_app.%cache_hit' OR event_type IN (${AI_REVIEW_REUSE_EVENT_TYPES.map(() => "?").join(", ")}) THEN 1 ELSE 0 END) AS hits,
+         SUM(CASE WHEN event_type LIKE 'github_app.%cache_miss' THEN 1 ELSE 0 END) AS misses
+    FROM audit_events
+   WHERE (event_type LIKE 'github_app.%cache_hit' OR event_type LIKE 'github_app.%cache_miss' OR event_type IN (${AI_REVIEW_REUSE_EVENT_TYPES.map(() => "?").join(", ")}))
+     AND created_at >= ?
+   GROUP BY day`;
+
+/** Read the rolling reuse-counter window; fail-safe → [] (a counter hiccup must never block the outcome
+ *  export riding the same tick). */
+async function loadReuseCounters(db: D1Database, nowMs: number): Promise<Array<{ day: string; hits: number; misses: number }>> {
+  const sinceIso = new Date(nowMs - REUSE_COUNTER_WINDOW_DAYS * 86_400_000).toISOString();
+  try {
+    // The rows already carry exactly the export shape; SUM(CASE…) over a GROUP BY never yields SQL NULL,
+    // so no per-field fallback is needed (a missing table / failed query is the catch below).
+    const result = await db
+      .prepare(REUSE_COUNTER_QUERY)
+      .bind(...AI_REVIEW_REUSE_EVENT_TYPES, ...AI_REVIEW_REUSE_EVENT_TYPES, sinceIso)
+      .all<{ day: string; hits: number; misses: number }>();
+    return result.results;
+  } catch {
+    return [];
+  }
 }
 
 /** Stable instance identifier (hash of the Orb/App ID — no PII). A brokered instance holds no App id, so its
@@ -196,6 +236,10 @@ export async function exportOrbBatch(db: D1Database, batchSize = 200, fetchFn: t
   // otherwise, exactly as before, nothing new means nothing to do.
   if ((!results || results.length === 0) && healthOk === undefined) return 0;
 
+  // #8820: the reuse counters ride the same POST as the outcome events (same tick, same signature). Loaded
+  // AFTER the early "nothing to send" return above, so a truly idle tick still costs nothing extra.
+  const reuseCounters = await loadReuseCounters(db, Date.now());
+
   const payload: OrbExportPayload = {
     instance_id: instance,
     /* v8 ignore next -- D1's .all() always returns a `results` array (possibly empty), never omits the field;
@@ -215,6 +259,7 @@ export async function exportOrbBatch(db: D1Database, batchSize = 200, fetchFn: t
       outcome_timestamp: r.outcome_at,
     })),
     ...(healthOk !== undefined ? { health: { ok: healthOk } } : {}),
+    ...(reuseCounters.length > 0 ? { reuse_counters: reuseCounters } : {}),
   };
 
   const body = JSON.stringify(payload);

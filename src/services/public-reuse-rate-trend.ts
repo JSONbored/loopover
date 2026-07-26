@@ -26,8 +26,10 @@ export const PUBLIC_REUSE_RATE_TREND_WEEKS = 8;
 export const MIN_REUSE_RATE_TREND_SAMPLE = 5;
 
 /** ai_review reuse events that don't follow the `_cache_hit` suffix convention but are the SAME "avoided a
- *  redundant AI call" signal -- each one means the review pass reused a prior state instead of re-running. */
-const AI_REVIEW_REUSE_EVENT_TYPES = ["github_app.ai_review_frozen_reuse", "github_app.ai_review_paused_reuse", "github_app.ai_review_one_shot_reuse"] as const;
+ *  redundant AI call" signal -- each one means the review pass reused a prior state instead of re-running.
+ *  Exported for the self-host reuse-counter export (orb-collector.ts, #8820) so both sides count the exact
+ *  same event population -- a drifted copy there would silently skew the published fleet rate. */
+export const AI_REVIEW_REUSE_EVENT_TYPES = ["github_app.ai_review_frozen_reuse", "github_app.ai_review_paused_reuse", "github_app.ai_review_one_shot_reuse"] as const;
 
 export type PublicReuseRateTrendWeek = {
   /** UTC Monday (YYYY-MM-DD) that starts the bucket. */
@@ -104,11 +106,35 @@ async function loadReuseRateDayRows(env: Env, projects: string[], sinceIso: stri
   return rows.map((row) => ({ day: row.day, hits: row.hits ?? 0, misses: row.misses ?? 0 }));
 }
 
+/** Day-bucketed reuse counters exported by REGISTERED self-hosted instances (orb_reuse_counters, #8820) --
+ *  the LIVE side of this trend: the own-ledger audit_events below froze at the self-host cutover, so recent
+ *  weeks otherwise fall under the publish floor and the homepage tile renders a dash. Registration is the
+ *  same trust anchor computeFleetAnalytics uses -- open ingest stores everyone's counters, but an
+ *  unregistered stranger can't move the published rate. Deliberately NOT scoped by the own-ledger repo
+ *  allowlist (counters are instance-level counts only -- no repos to scope by), matching the fleet-accuracy
+ *  fold's own unconditional-regardless-of-allowlist behavior in public-stats.ts. */
+async function loadFleetReuseDayRows(env: Env, sinceIso: string): Promise<DayRow[]> {
+  const rows = await safeAll<{ day: string; hits: number; misses: number }>(
+    env,
+    `SELECT c.day AS day, SUM(c.hits) AS hits, SUM(c.misses) AS misses
+       FROM orb_reuse_counters c
+       JOIN orb_instances i ON i.instance_id = c.instance_id AND i.registered = 1
+      WHERE c.day >= ?
+      GROUP BY c.day`,
+    sinceIso.slice(0, 10),
+  );
+  /* v8 ignore next -- same guard shape as loadReuseRateDayRows above: SUM over a GROUP BY day of NOT NULL
+   *  integer columns always yields a defined integer, never SQL NULL; kept for defense against a future
+   *  query-shape change. */
+  return rows.map((row) => ({ day: row.day, hits: row.hits ?? 0, misses: row.misses ?? 0 }));
+}
+
 /** Assemble the public reuse-rate trend from the SAME live audit_events ledger every instrumented capability
- *  already writes to. */
+ *  already writes to, plus the registered fleet's exported day counters (#8820) -- buildPublicReuseRateTrend
+ *  sums overlapping days from both sources into the same weekly buckets. */
 export async function loadPublicReuseRateTrend(env: Env, nowMs: number = Date.now()): Promise<PublicReuseRateTrendWeek[]> {
   const projects = publicStatsProjects(env);
   const sinceIso = new Date(Date.parse(isoWeekStart(nowMs)) - (PUBLIC_REUSE_RATE_TREND_WEEKS - 1) * MS_PER_WEEK).toISOString();
-  const dayRows = await loadReuseRateDayRows(env, projects, sinceIso);
-  return buildPublicReuseRateTrend(dayRows, nowMs);
+  const [ownRows, fleetRows] = await Promise.all([loadReuseRateDayRows(env, projects, sinceIso), loadFleetReuseDayRows(env, sinceIso)]);
+  return buildPublicReuseRateTrend([...ownRows, ...fleetRows], nowMs);
 }

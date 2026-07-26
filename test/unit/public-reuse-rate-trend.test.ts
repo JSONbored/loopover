@@ -130,4 +130,26 @@ describe("loadPublicReuseRateTrend — end-to-end over the real live audit_event
     for (const week of trend) expect(week).toMatchObject({ hits: 0, misses: 0, reuseRatePct: null });
   });
 
+  it("folds REGISTERED fleet instances' day counters into the same weekly buckets; unregistered instances never count (#8820)", async () => {
+    const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "owner/repo" });
+    const thisMonday = isoWeekStart(NOW);
+    // Own-ledger event in the same week — the fold must SUM both sources, not replace one with the other.
+    await recordAuditEvent(env, { eventType: "github_app.grounding_cache_hit", targetKey: "owner/repo", outcome: "completed", createdAt: `${thisMonday}T09:00:00.000Z` });
+    await env.DB.prepare(`INSERT INTO orb_instances (instance_id, registered) VALUES ('reg-inst', 1), ('stranger', 0)`).run();
+    await env.DB.prepare(`INSERT INTO orb_reuse_counters (instance_id, day, hits, misses) VALUES ('reg-inst', ?, 6, 3), ('stranger', ?, 500, 500)`).bind(thisMonday, thisMonday).run();
+
+    const trend = await loadPublicReuseRateTrend(env, NOW);
+    const currentWeek = trend[trend.length - 1];
+    expect(currentWeek).toMatchObject({ weekStart: thisMonday, hits: 7, misses: 3 }); // 1 own + 6/3 registered; stranger excluded
+  });
+
+  it("fleet counters flow even with an EMPTY own-ledger allowlist (#8820) — the frozen-own-ledger deployment shape", async () => {
+    const env = createTestEnv();
+    const thisMonday = isoWeekStart(NOW);
+    await env.DB.prepare(`INSERT INTO orb_instances (instance_id, registered) VALUES ('reg-inst', 1)`).run();
+    await env.DB.prepare(`INSERT INTO orb_reuse_counters (instance_id, day, hits, misses) VALUES ('reg-inst', ?, 8, 2)`).bind(thisMonday).run();
+
+    const trend = await loadPublicReuseRateTrend(env, NOW);
+    expect(trend[trend.length - 1]).toMatchObject({ weekStart: thisMonday, hits: 8, misses: 2, reuseRatePct: 80 });
+  });
 });

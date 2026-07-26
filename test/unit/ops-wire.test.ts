@@ -28,6 +28,18 @@ function poisonDbPrepare(env: Env, pattern: RegExp): void {
   }) as typeof env.DB.prepare;
 }
 
+// Wrap env.DB.prepare so a statement matching `pattern` prepares and binds normally but its .run() REJECTS --
+// exercises a write-path fail-safe `.catch()` (unlike poisonDbPrepare's synchronous throw, which never reaches
+// a handler chained onto .run()'s promise because it happens before .bind()/.run() are even called).
+function poisonDbRun(env: Env, pattern: RegExp): void {
+  const realPrepare = env.DB.prepare.bind(env.DB);
+  env.DB.prepare = ((sql: string) => {
+    const statement = realPrepare(sql);
+    if (pattern.test(sql)) (statement as unknown as { run: () => Promise<unknown> }).run = () => Promise.reject(new Error("poisoned run"));
+    return statement;
+  }) as typeof env.DB.prepare;
+}
+
 // ── Pure detector fixtures ────────────────────────────────────────────────────────────────────────────────
 
 const healthySnapshot: RepoOutcomeSnapshot = {
@@ -335,6 +347,7 @@ async function seedGateFalsePositiveAnomaly(env: Env, repoFullName: string): Pro
 describe("runOpsAlerts — cron path over gittensory's outcome data", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
     resetMetrics();
     setSelfHostedMetricsMode(false);
   });
@@ -556,8 +569,8 @@ describe("runOpsAlerts — cron path over gittensory's outcome data", () => {
 
   // ── Experimental PagerDuty paging (#4937): fatigue-controlled wiring on top of the anomaly scan ──────────
   const PD_KEY = "a".repeat(32);
-  function stubPagerDutyFetch(status = 202): Array<{ body: { dedup_key: string; payload: { summary: string; severity: string } } }> {
-    const calls: Array<{ body: { dedup_key: string; payload: { summary: string; severity: string } } }> = [];
+  function stubPagerDutyFetch(status = 202): Array<{ body: { dedup_key: string; event_action: string; payload?: { summary: string; severity: string } } }> {
+    const calls: Array<{ body: { dedup_key: string; event_action: string; payload?: { summary: string; severity: string } } }> = [];
     vi.stubGlobal("fetch", async (_url: RequestInfo | URL, init?: RequestInit) => {
       calls.push({ body: JSON.parse(String(init?.body)) });
       return new Response(null, { status });
@@ -610,6 +623,130 @@ describe("runOpsAlerts — cron path over gittensory's outcome data", () => {
 
     expect(found["owner/repo"]?.some((a) => /review burst/.test(a))).toBe(true);
     expect(calls).toEqual([]);
+  });
+
+  // ── #8903: auto-resolve the PagerDuty incident once a previously-anomalous repo clears ─────────────────────
+
+  it("two consecutive ticks: pages on the anomalous tick, then sends a matching PagerDuty resolve once the review burst ages out of its window", async () => {
+    const calls = stubPagerDutyFetch();
+    const env = createTestEnv({ LOOPOVER_ENABLE_PAGERDUTY: "1", PAGERDUTY_ROUTING_KEY: PD_KEY });
+    await seedRegisteredRepo(env, "owner/repo");
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-01T00:00:00.000Z"));
+    for (let i = 0; i < 7; i += 1) {
+      await recordAuditEvent(env, { eventType: "github_app.pr_public_surface_published", actor: "contributor", targetKey: "owner/repo#99", outcome: "completed" });
+    }
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const tick1 = await runOpsAlerts(env);
+    expect(tick1["owner/repo"]?.some((a) => /review burst/.test(a))).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.body).toMatchObject({ dedup_key: "ops_anomaly:owner/repo", event_action: "trigger" });
+
+    // Advance past REVIEW_BURST_WINDOW_HOURS (2h) -- the same 7 publish events now fall outside the burst
+    // window, so this tick's own detector genuinely finds the repo healthy (no seeded-data mutation needed).
+    vi.setSystemTime(new Date("2026-07-01T03:00:00.000Z"));
+    const tick2 = await runOpsAlerts(env);
+    expect(tick2["owner/repo"]).toBeUndefined();
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.body).toMatchObject({ dedup_key: "ops_anomaly:owner/repo", event_action: "resolve" });
+    expect(calls[1]?.body.payload).toBeUndefined();
+  });
+
+  it("a healthy repo with no prior anomaly never sends a resolve (nothing to close)", async () => {
+    const calls = stubPagerDutyFetch();
+    const env = createTestEnv({ LOOPOVER_ENABLE_PAGERDUTY: "1", PAGERDUTY_ROUTING_KEY: PD_KEY });
+    await seedRegisteredRepo(env, "owner/clean");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const found = await runOpsAlerts(env);
+
+    expect(found["owner/clean"]).toBeUndefined();
+    expect(calls).toEqual([]);
+  });
+
+  it("a repo that stays anomalous across two ticks pages (trigger) each tick and never sends a resolve", async () => {
+    const calls = stubPagerDutyFetch();
+    const env = createTestEnv({ LOOPOVER_ENABLE_PAGERDUTY: "1", PAGERDUTY_ROUTING_KEY: PD_KEY });
+    await seedRegisteredRepo(env, "owner/repo");
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-01T00:00:00.000Z"));
+    // Error-grade (meets the default min-severity floor) so it actually pages, unlike a bare gate/calibration
+    // nudge (see the "does NOT page for a routine calibration nudge" test above).
+    for (let i = 0; i < 7; i += 1) {
+      await recordAuditEvent(env, { eventType: "github_app.pr_public_surface_published", actor: "contributor", targetKey: "owner/repo#99", outcome: "completed" });
+    }
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await runOpsAlerts(env); // tick 1
+
+    // +61 minutes: past the default 60-minute PagerDuty cooldown (so tick 2's page isn't cooldown-suppressed)
+    // but still well inside the 2h review-burst window (so the SAME 7 events still read as anomalous).
+    vi.setSystemTime(new Date("2026-07-01T01:01:00.000Z"));
+    await runOpsAlerts(env); // tick 2 -- still anomalous
+
+    expect(calls).toHaveLength(2);
+    expect(calls.every((c) => c.body.event_action === "trigger")).toBe(true);
+  });
+
+  it("fails safe: a system_flags READ error degrades to 'not previously active' -- never spuriously resolves, never crashes the scan", async () => {
+    const calls = stubPagerDutyFetch();
+    const env = createTestEnv({ LOOPOVER_ENABLE_PAGERDUTY: "1", PAGERDUTY_ROUTING_KEY: PD_KEY });
+    await seedRegisteredRepo(env, "owner/repo");
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-01T00:00:00.000Z"));
+    for (let i = 0; i < 7; i += 1) {
+      await recordAuditEvent(env, { eventType: "github_app.pr_public_surface_published", actor: "contributor", targetKey: "owner/repo#99", outcome: "completed" });
+    }
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await runOpsAlerts(env); // tick 1 (unpoisoned): pages and sets the flag active
+    expect(calls).toHaveLength(1);
+
+    vi.setSystemTime(new Date("2026-07-01T03:00:00.000Z")); // burst ages out -> tick 2's OWN detector is healthy
+    poisonDbPrepare(env, /SELECT value FROM system_flags/i);
+    const tick2 = await runOpsAlerts(env); // resolves (never throws) despite the poisoned read
+
+    expect(tick2["owner/repo"]).toBeUndefined();
+    // The read failing safe to "false" means tick2 believes there was nothing to resolve -- no second call.
+    expect(calls).toHaveLength(1);
+  });
+
+  it("fails safe: a poisoned system_flags INSERT (marking the flag active on a page) never breaks the scan", async () => {
+    const calls = stubPagerDutyFetch();
+    const env = createTestEnv({ LOOPOVER_ENABLE_PAGERDUTY: "1", PAGERDUTY_ROUTING_KEY: PD_KEY });
+    await seedRegisteredRepo(env, "owner/repo");
+    for (let i = 0; i < 7; i += 1) {
+      await recordAuditEvent(env, { eventType: "github_app.pr_public_surface_published", actor: "contributor", targetKey: "owner/repo#99", outcome: "completed" });
+    }
+    poisonDbRun(env, /INSERT OR REPLACE INTO system_flags/i);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const found = await runOpsAlerts(env); // resolves (never throws) despite the poisoned write
+
+    expect(found["owner/repo"]?.some((a) => /review burst/.test(a))).toBe(true);
+    expect(calls).toHaveLength(1); // the trigger page itself still fires -- only the flag persistence is poisoned
+    expect(calls[0]?.body.event_action).toBe("trigger");
+  });
+
+  it("fails safe: a poisoned system_flags DELETE (clearing the flag on resolve) never breaks the scan", async () => {
+    const calls = stubPagerDutyFetch();
+    const env = createTestEnv({ LOOPOVER_ENABLE_PAGERDUTY: "1", PAGERDUTY_ROUTING_KEY: PD_KEY });
+    await seedRegisteredRepo(env, "owner/repo");
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-01T00:00:00.000Z"));
+    for (let i = 0; i < 7; i += 1) {
+      await recordAuditEvent(env, { eventType: "github_app.pr_public_surface_published", actor: "contributor", targetKey: "owner/repo#99", outcome: "completed" });
+    }
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await runOpsAlerts(env); // tick 1 (unpoisoned): sets the flag active
+
+    vi.setSystemTime(new Date("2026-07-01T03:00:00.000Z")); // burst ages out -> tick 2 is healthy
+    poisonDbRun(env, /DELETE FROM system_flags/i);
+    const tick2 = await runOpsAlerts(env); // resolves (never throws) despite the poisoned DELETE
+
+    expect(tick2["owner/repo"]).toBeUndefined();
+    expect(calls).toHaveLength(2); // the resolve page itself still fires -- only the flag persistence is poisoned
+    expect(calls[1]?.body.event_action).toBe("resolve");
   });
 });
 

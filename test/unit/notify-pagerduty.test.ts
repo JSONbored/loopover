@@ -53,6 +53,15 @@ function trigger(env: Env, over: Partial<{ repoFullName: string; summary: string
   });
 }
 
+function resolve(env: Env, over: Partial<{ repoFullName: string; dedupKey: string }> = {}): Promise<void> {
+  return triggerPagerDutyIncident(env, {
+    repoFullName: "acme/widgets",
+    dedupKey: "ops_anomaly:acme/widgets",
+    eventAction: "resolve",
+    ...over,
+  });
+}
+
 describe("isPagerDutyEnabled", () => {
   it("accepts the codebase-standard truthy strings, case-insensitively", () => {
     for (const value of ["1", "true", "YES", "On"]) expect(isPagerDutyEnabled({ LOOPOVER_ENABLE_PAGERDUTY: value })).toBe(true);
@@ -282,5 +291,56 @@ describe("triggerPagerDutyIncident — HTTP delivery", () => {
     expect(await pagerDutyAudit(env)).toEqual([expect.objectContaining({ outcome: "error", detail: expect.stringContaining("network down") })]);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("pagerduty_trigger_failed"));
     warn.mockRestore();
+  });
+});
+
+// #8903: `eventAction: "resolve"` closes the incident once the underlying anomaly clears.
+describe("triggerPagerDutyIncident — eventAction: resolve (#8903)", () => {
+  it("still respects the flag/routing gate: flag off → no fetch and no audit row", async () => {
+    const calls = stubFetch();
+    const env = withEnv();
+    await resolve(env);
+    expect(calls).toEqual([]);
+    expect(await pagerDutyAudit(env)).toEqual([]);
+  });
+
+  it("still respects the flag/routing gate: flag on, no routing key resolves → no fetch, audited denied", async () => {
+    const calls = stubFetch();
+    const env = withEnv({ LOOPOVER_ENABLE_PAGERDUTY: "1" });
+    await resolve(env);
+    expect(calls).toEqual([]);
+    expect(await pagerDutyAudit(env)).toEqual([expect.objectContaining({ outcome: "denied", detail: "missing_global_key" })]);
+  });
+
+  it("bypasses the min-severity gate entirely — fires even below the default error floor (there is no severity to gate on)", async () => {
+    const calls = stubFetch();
+    await resolve(enabledEnv());
+    expect(calls).toHaveLength(1);
+  });
+
+  it("bypasses the cooldown gate entirely — fires right after the trigger that primed the SAME dedupKey's cooldown window", async () => {
+    const calls = stubFetch();
+    const env = enabledEnv();
+    await trigger(env);
+    await resolve(env);
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.body.event_action).toBe("resolve");
+  });
+
+  it("posts event_action: resolve with no payload key, and audits detail: resolved on success", async () => {
+    const calls = stubFetch(202);
+    const env = enabledEnv();
+    await resolve(env);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.body).toEqual({ routing_key: VALID_KEY, event_action: "resolve", dedup_key: "ops_anomaly:acme/widgets" });
+    expect(Object.prototype.hasOwnProperty.call(calls[0]!.body, "payload")).toBe(false);
+    expect(await pagerDutyAudit(env)).toEqual([expect.objectContaining({ outcome: "completed", detail: "resolved" })]);
+  });
+
+  it("a non-ok response is audited as an error and never throws", async () => {
+    stubFetch(500);
+    const env = enabledEnv();
+    await expect(resolve(env)).resolves.toBeUndefined();
+    expect(await pagerDutyAudit(env)).toEqual([expect.objectContaining({ outcome: "error" })]);
   });
 });

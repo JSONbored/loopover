@@ -94,6 +94,26 @@ export function resolvePagerDutyRoutingKey(env: Env, repoFullName: string): Page
  *  concept (#5119) instead of a PagerDuty-only copy. */
 export type PagerDutySeverity = LoopoverSeverity;
 
+/** {@link triggerPagerDutyIncident}'s params. A discriminated union on `eventAction` (mirrors this file's
+ *  own {@link PagerDutyRoutingResolution} union style): a `trigger` (the default, so every existing call
+ *  site needs no change) carries the incident's summary/severity/details; a `resolve` (#8903 -- closing
+ *  the incident once the underlying anomaly clears) carries neither -- PagerDuty's Events API v2 only
+ *  requires `payload` for `trigger`, and there is no "worst anomaly" to summarize once anomalies are gone. */
+export type PagerDutyIncidentParams =
+  | {
+      repoFullName: string;
+      dedupKey: string;
+      eventAction?: "trigger";
+      summary: string;
+      severity: PagerDutySeverity;
+      customDetails?: Record<string, unknown> | undefined;
+    }
+  | {
+      repoFullName: string;
+      dedupKey: string;
+      eventAction: "resolve";
+    };
+
 /** Resolve the minimum severity that pages for `repoFullName`: per-repo map entry, else the global override,
  *  else {@link DEFAULT_MIN_SEVERITY} — the quietest safe default, so an operator who never touches these vars
  *  still only gets paged for active-incident-grade conditions, never routine calibration nudges. Delegates to
@@ -148,16 +168,8 @@ async function auditPagerDutyNotification(
  *  a below-threshold/cooldown-suppressed page are audited as `denied` so they're discoverable, while the
  *  common "not opted in" case stays silent (no audit-log noise for every repo that never configured
  *  PagerDuty). */
-export async function triggerPagerDutyIncident(
-  env: Env,
-  params: {
-    repoFullName: string;
-    summary: string;
-    severity: PagerDutySeverity;
-    dedupKey: string;
-    customDetails?: Record<string, unknown> | undefined;
-  },
-): Promise<void> {
+export async function triggerPagerDutyIncident(env: Env, params: PagerDutyIncidentParams): Promise<void> {
+  const eventAction = params.eventAction ?? "trigger";
   const resolution = resolvePagerDutyRoutingKey(env, params.repoFullName);
   if (resolution.status === "disabled") {
     if (resolution.reason !== "flag_off") {
@@ -166,29 +178,35 @@ export async function triggerPagerDutyIncident(
     return;
   }
 
-  const minSeverity = resolvePagerDutyMinSeverity(env, params.repoFullName);
-  if (!meetsSeverityThreshold(params.severity, minSeverity)) {
-    await auditPagerDutyNotification(env, { repoFullName: params.repoFullName, dedupKey: params.dedupKey }, "denied", "below_min_severity", {
-      severity: params.severity,
-      minSeverity,
-    });
-    return;
-  }
+  // The two alert-fatigue controls (min-severity floor, repeat-page cooldown) exist only to stop a PAGE from
+  // crying wolf -- neither applies to a resolve. Gating a resolve behind "was a page sent for this dedupKey
+  // recently" would be actively wrong: it would suppress the exact resolve meant to follow the trigger that
+  // just primed the cooldown window.
+  if (params.eventAction !== "resolve") {
+    const minSeverity = resolvePagerDutyMinSeverity(env, params.repoFullName);
+    if (!meetsSeverityThreshold(params.severity, minSeverity)) {
+      await auditPagerDutyNotification(env, { repoFullName: params.repoFullName, dedupKey: params.dedupKey }, "denied", "below_min_severity", {
+        severity: params.severity,
+        minSeverity,
+      });
+      return;
+    }
 
-  const cooldownMinutes = resolvePagerDutyCooldownMinutes(env, params.repoFullName);
-  const cooldownSinceIso = new Date(Date.now() - cooldownMinutes * 60 * 1000).toISOString();
-  // Also count the pre-rebrand "gittensory" actor: a page recorded under the OLD actor value just before this
-  // rebrand deployed must still suppress a duplicate page after it, for as long as the configured cooldown
-  // window can reach back across the deploy boundary. Querying both actors costs one extra indexed count and
-  // removes the whole risk category rather than requiring a precisely-timed follow-up cleanup.
-  const [recentPagesNewActor, recentPagesLegacyActor] = await Promise.all([
-    countRecentAuditEventsForActorAndTarget(env, "loopover", "external_notification.pagerduty", params.dedupKey, cooldownSinceIso),
-    countRecentAuditEventsForActorAndTarget(env, "gittensory", "external_notification.pagerduty", params.dedupKey, cooldownSinceIso),
-  ]);
-  const recentPages = recentPagesNewActor + recentPagesLegacyActor;
-  if (recentPages > 0) {
-    await auditPagerDutyNotification(env, { repoFullName: params.repoFullName, dedupKey: params.dedupKey }, "denied", "cooldown_active", { cooldownMinutes });
-    return;
+    const cooldownMinutes = resolvePagerDutyCooldownMinutes(env, params.repoFullName);
+    const cooldownSinceIso = new Date(Date.now() - cooldownMinutes * 60 * 1000).toISOString();
+    // Also count the pre-rebrand "gittensory" actor: a page recorded under the OLD actor value just before this
+    // rebrand deployed must still suppress a duplicate page after it, for as long as the configured cooldown
+    // window can reach back across the deploy boundary. Querying both actors costs one extra indexed count and
+    // removes the whole risk category rather than requiring a precisely-timed follow-up cleanup.
+    const [recentPagesNewActor, recentPagesLegacyActor] = await Promise.all([
+      countRecentAuditEventsForActorAndTarget(env, "loopover", "external_notification.pagerduty", params.dedupKey, cooldownSinceIso),
+      countRecentAuditEventsForActorAndTarget(env, "gittensory", "external_notification.pagerduty", params.dedupKey, cooldownSinceIso),
+    ]);
+    const recentPages = recentPagesNewActor + recentPagesLegacyActor;
+    if (recentPages > 0) {
+      await auditPagerDutyNotification(env, { repoFullName: params.repoFullName, dedupKey: params.dedupKey }, "denied", "cooldown_active", { cooldownMinutes });
+      return;
+    }
   }
 
   try {
@@ -197,21 +215,26 @@ export async function triggerPagerDutyIncident(
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         routing_key: resolution.routingKey,
-        event_action: "trigger",
+        event_action: eventAction,
         dedup_key: params.dedupKey,
-        payload: {
-          summary: params.summary.slice(0, 1024),
-          source: "loopover",
-          severity: params.severity,
-          timestamp: new Date().toISOString(),
-          component: params.repoFullName,
-          custom_details: params.customDetails,
-        },
+        payload:
+          params.eventAction === "resolve"
+            ? undefined
+            : {
+                summary: params.summary.slice(0, 1024),
+                source: "loopover",
+                severity: params.severity,
+                timestamp: new Date().toISOString(),
+                component: params.repoFullName,
+                custom_details: params.customDetails,
+              },
       }),
       signal: AbortSignal.timeout(5000),
     });
     if (!response.ok) throw new Error(`pagerduty_events_http_${response.status}`);
-    await auditPagerDutyNotification(env, { repoFullName: params.repoFullName, dedupKey: params.dedupKey }, "completed", "triggered", { source: resolution.source });
+    await auditPagerDutyNotification(env, { repoFullName: params.repoFullName, dedupKey: params.dedupKey }, "completed", eventAction === "resolve" ? "resolved" : "triggered", {
+      source: resolution.source,
+    });
   } catch (error) {
     const message = errorMessage(error);
     console.warn(JSON.stringify({ event: "pagerduty_trigger_failed", repo: params.repoFullName, message: message.slice(0, 200) }));

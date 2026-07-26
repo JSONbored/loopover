@@ -136,6 +136,46 @@ const REVIEW_FAILURE_BURST_THRESHOLD = 3;
  *  same-tick anomaly to alert on. */
 const BYOK_USAGE_WINDOW_HOURS = 24;
 
+// ── Previous-tick anomaly state (#8903) — so a cleared anomaly can auto-resolve its PagerDuty incident ──────
+
+/** system_flags (migration 0054) key for "did `repoFullName` have anomalies on the PREVIOUS runOpsAlerts
+ *  tick?" -- reuses the SAME generic key/value table outcomes-wire.ts's readUntrustworthyRuleCodes /
+ *  writeUntrustworthyRuleCodes already do for an identical "cheap cron-tick state, no new migration" shape,
+ *  and the SAME `<family>:<scope>` key convention as that table's holdonly:/closehold: families. */
+function opsAnomalyActiveFlagKey(repoFullName: string): string {
+  return `ops_anomaly_active:${repoFullName}`;
+}
+
+/** Did `repoFullName` have anomalies on the PREVIOUS tick? FAIL-SAFE: a read error or missing row degrades
+ *  to `false` ("not previously active") so a D1 blip can never spuriously fire a PagerDuty resolve for an
+ *  incident that was never actually triggered. */
+async function readOpsAnomalyWasActive(env: Env, repoFullName: string): Promise<boolean> {
+  try {
+    const row = await env.DB.prepare("SELECT value FROM system_flags WHERE key = ?").bind(opsAnomalyActiveFlagKey(repoFullName)).first<{ value: string }>();
+    return row?.value === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** Persist whether `repoFullName` has anomalies on THIS tick, read back by {@link readOpsAnomalyWasActive} on
+ *  the next one. Best-effort (mirrors writeUntrustworthyRuleCodes): a write failure is swallowed -- the next
+ *  tick's read simply serves the last successfully-written value, and this tick's write is retried then. */
+async function writeOpsAnomalyActive(env: Env, repoFullName: string, active: boolean): Promise<void> {
+  const key = opsAnomalyActiveFlagKey(repoFullName);
+  if (active) {
+    await env.DB.prepare("INSERT OR REPLACE INTO system_flags (key, value, updated_at) VALUES (?, '1', CURRENT_TIMESTAMP)")
+      .bind(key)
+      .run()
+      .catch(() => undefined);
+  } else {
+    await env.DB.prepare("DELETE FROM system_flags WHERE key = ?")
+      .bind(key)
+      .run()
+      .catch(() => undefined);
+  }
+}
+
 /** One repo's outcome reports + the repo it covers — the input to the pure anomaly detector. `reviewBurst` and
  *  `reviewFailureBurst` are optional so existing snapshot-fixture tests need not be touched; absent/null means
  *  "not computed", not "healthy" -- the caller (runOpsAlerts/computeOpsStats) always populates both today. */
@@ -282,7 +322,18 @@ export async function runOpsAlerts(env: Env): Promise<Record<string, string[]>> 
           findHottestInconclusiveReviewTargetForRepo(env, repoFullName, reviewBurstSinceIso),
         ]);
         const anomalies = detectOutcomeAnomalies({ repoFullName, gatePrecision, calibration, reviewBurst, reviewFailureBurst });
-        if (anomalies.length === 0) continue;
+        if (anomalies.length === 0) {
+          // #8903: the repo is healthy THIS tick -- if it had anomalies LAST tick, close the loop by sending a
+          // matching PagerDuty resolve for the same dedupKey (triggerPagerDutyIncident itself is the no-op
+          // when PagerDuty isn't configured, exactly like the trigger call below). State tracking runs
+          // unconditionally (not gated on the PagerDuty flag) so enabling/disabling PagerDuty mid-incident can
+          // never desync from the actual anomaly history.
+          if (await readOpsAnomalyWasActive(env, repoFullName)) {
+            await writeOpsAnomalyActive(env, repoFullName, false);
+            await triggerPagerDutyIncident(env, { repoFullName, dedupKey: `ops_anomaly:${repoFullName}`, eventAction: "resolve" });
+          }
+          continue;
+        }
         found[repoFullName] = anomalies;
         // Structured log = loopover's notify path (no Discord/operator webhook exists) AND the Sentry path
         // (level:"error" + an `event` field reaches forwardStructuredLogToSentry). One line per repo.
@@ -301,9 +352,9 @@ export async function runOpsAlerts(env: Env): Promise<Record<string, string[]>> 
         // comment for why alert fatigue needed both controls, not just PagerDuty's own dedup_key. Awaited (not
         // fire-and-forget) so a page failure is captured within THIS tick's own error handling, not orphaned
         // after runOpsAlerts has already returned -- triggerPagerDutyIncident itself never throws and bounds
-        // its own HTTP call to a 5s timeout, so this cannot hang the scan. This does not yet send a matching
-        // "resolve" event once anomalies clear (would need tracking previous-tick state) -- an operator
-        // currently resolves the incident manually once the underlying condition is fixed.
+        // its own HTTP call to a 5s timeout, so this cannot hang the scan. #8903: a matching "resolve" event
+        // fires automatically on whichever future tick finds this repo healthy again -- see the
+        // readOpsAnomalyWasActive branch above -- so an operator no longer resolves the incident by hand.
         const worst = worstAnomaly(anomalies);
         await triggerPagerDutyIncident(env, {
           repoFullName,
@@ -312,6 +363,7 @@ export async function runOpsAlerts(env: Env): Promise<Record<string, string[]>> 
           dedupKey: `ops_anomaly:${repoFullName}`,
           customDetails: { anomalies },
         });
+        await writeOpsAnomalyActive(env, repoFullName, true);
         // #ops-anomaly-metric: Prometheus counterpart to the log line above so a self-host operator can alert on
         // /metrics instead of grepping Workers Logs. Scoped to reviewBurst/reviewFailureBurst -- the two anomalies
         // this module exists to catch fast (#orb-ci-stuck-repeat / #review-burst-blind-spot) -- rather than every

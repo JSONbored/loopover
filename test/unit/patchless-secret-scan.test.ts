@@ -902,7 +902,10 @@ describe("enrichSecretScanFilesWithPatchFallback", () => {
     });
     expect(enriched[0]?.payload.patch).toBeUndefined();
     expect(enriched[0]?.payload.secretScanIncomplete).toBe(true);
-    expect(incompletePatchLessSecretScanFinding(enriched)?.code).toBe("secret_leak");
+    // #9082: NOT "secret_leak" -- that code means a real credential was matched and always hard-blocks.
+    // Verification being incomplete is the opposite (absence of evidence, not evidence of a leak), so it gets
+    // its own code routed to a neutral hold instead of the unconditional block.
+    expect(incompletePatchLessSecretScanFinding(enriched)?.code).toBe("secret_scan_incomplete");
   });
 
   it("marks one patch-less file incomplete when its fetch rejects without blocking siblings", async () => {
@@ -1297,7 +1300,11 @@ describe("maybeAddSecretLeakFinding patch-less fallback wiring", () => {
     expect(adv.findings.map((f) => f.code)).toContain("secret_leak");
   });
 
-  it("blocks patch-less files when makeGithubFileFetcher rejects", async () => {
+  it("REGRESSION (#9082): holds (never one-shot-closes) patch-less files when makeGithubFileFetcher rejects", async () => {
+    // Previously this scenario -- an installation-token hiccup, not a found credential -- shared secret_leak's
+    // code and was routed through the SAME unconditional, breaker-exempt hard block as a real leak, closing a
+    // legitimate PR because ORB couldn't read its own diff. It must now produce secret_scan_incomplete (a
+    // neutral hold, re-evaluated automatically) and NEVER secret_leak, which stays reserved for a real match.
     const env = createTestEnv();
     const adv = advisory();
     const files = [
@@ -1327,7 +1334,8 @@ describe("maybeAddSecretLeakFinding patch-less fallback wiring", () => {
     });
     spy.mockRestore();
     expect(adv.findings.some((f) => f.title.includes("could not be fully scanned"))).toBe(true);
-    expect(adv.findings.map((f) => f.code)).toContain("secret_leak");
+    expect(adv.findings.map((f) => f.code)).toContain("secret_scan_incomplete");
+    expect(adv.findings.map((f) => f.code)).not.toContain("secret_leak");
   });
 
   it("still scans inline patches when makeGithubFileFetcher rejects", async () => {

@@ -156,10 +156,21 @@ export function incompletePatchLessSecretScanFinding(
       ? `${listedPaths.join(", ")}, and ${paths.length - INCOMPLETE_PATCH_LESS_PATH_DETAIL_MAX} more`
       : listedPaths.join(", ");
   return {
-    code: "secret_leak",
+    // #9082: a DIFFERENT code from `secret_leak` deliberately. `secret_leak` (secretLeakFinding, below) means a
+    // real, matched credential was found and always hard-blocks with no opt-in -- that contract must stay
+    // absolute. This finding means the opposite: verification is INCOMPLETE (GitHub omitted the diff and the
+    // fallback fetch failed, was rejected, or exceeded the scan cap) -- absence of evidence, not evidence of a
+    // leak. Sharing `secret_leak`'s code routed it through the same unconditional, breaker-exempt hard block
+    // (resolveConfiguredGateMode's "secret_leak" branch, advisory.ts), so a Contents API hiccup, a >4MB
+    // regenerated artifact, or a rate limit auto-closed a legitimate PR with no live re-check ever getting a
+    // chance to clear it. `secret_scan_incomplete` instead falls to resolveConfiguredGateMode's default "off"
+    // (advisory.ts) and is caught earlier, in evaluateGateCheckCore's no-deterministic-blocker branch, as a
+    // NEUTRAL hold -- like `ai_review_inconclusive`, deliberately checked only when nothing else already
+    // hard-blocked, so a REAL secret_leak match elsewhere in the same PR is never buried in this hold.
+    code: "secret_scan_incomplete",
     severity: "critical",
     title: `Patch-less file(s) could not be fully scanned for secrets (${paths.length})`,
-    detail: `GitHub omitted inline diff for: ${pathSummary}. Fetched content exceeded the ${SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS}-char scan cap or could not be retrieved completely, so leaked-secret verification is incomplete. Shrink the change, split the file, or ensure the diff is reviewable before merge.`,
+    detail: `GitHub omitted inline diff for: ${pathSummary}. Fetched content exceeded the ${SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS}-char scan cap or could not be retrieved completely, so leaked-secret verification is incomplete. The gate holds for a human reviewer rather than closing automatically; it re-evaluates once the content becomes retrievable, or shrink the change/split the file so the diff is reviewable.`,
     action: "Ensure patch-less files are within scan limits or split the change so secrets can be verified.",
   };
 }

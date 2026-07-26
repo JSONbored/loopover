@@ -41,7 +41,7 @@ type MaintainerCheckResult = "maintainer" | "not_maintainer" | "inconclusive";
 /** Whether `login` holds a maintainer-equivalent permission on `repoFullName` -- the literal repo owner,
  *  a fleet-operator in the global `ADMIN_GITHUB_LOGINS` allowlist, or a live GitHub collaborator with
  *  admin/maintain/write access (#priority-linked-issue-gate-ownership). Mirrors
- *  `hasMaintainerOrOwnerPermission` in `src/queue/processors.ts` (kept as its own copy here rather than
+ *  `hasMaintainerOrOwnerPermission` in `src/queue/review-evasion.ts` (kept as its own copy here rather than
  *  imported, since that one is private to a file this module's header comment explicitly must NOT pull
  *  into its import graph -- see the file-level comment above). A CONFIRMED answer (including a 404,
  *  `getRepositoryCollaboratorPermission`'s real "not a collaborator" signal) resolves deterministically;

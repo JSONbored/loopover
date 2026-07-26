@@ -2,9 +2,11 @@
 // the file's own module-split sequence, after transient-locks.ts, signal-snapshot.ts,
 // duplicate-detection.ts, and slop-detection.ts). Only the top-level "maybe*" entry points are
 // exported (each called from exactly one webhook-handler call site still in processors.ts) -- every other
-// function/type/constant here (withPrActuationLock, evaluateCloseEnforcementGate, hasMaintainerOrOwnerPermission,
-// the "close*If*" implementations, ReopenRecloseOutcome, REVIEW_EVASION_CLOSED_EVENT_TYPE) is private to this
-// file, since none of them had any caller outside this cluster in the original file either.
+// function/constant here (withPrActuationLock, evaluateCloseEnforcementGate, hasMaintainerOrOwnerPermission,
+// the "close*If*" implementations, REVIEW_EVASION_CLOSED_EVENT_TYPE) is private to this file, since none of
+// them had any caller outside this cluster in the original file either. The one exception is the exported
+// `ReopenRecloseOutcome` type, which processors.ts imports and consumes -- reshaping it needs a cross-file
+// impact check there.
 // maybeCloseSynchronizeAmendment (#synchronize-close-policy) is a later, 6th addition alongside the original
 // 5 extracted here -- same shape and reasoning as its siblings, added directly to this module rather than
 // growing processors.ts again.

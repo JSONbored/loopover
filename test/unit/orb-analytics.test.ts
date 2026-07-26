@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeFleetAnalytics, getFleetHealthSummary, HEALTH_STALE_HOURS } from "../../src/orb/analytics";
+import { computeFleetAnalytics, getFleetHealthSummary, HEALTH_STALE_HOURS, wilsonInterval } from "../../src/orb/analytics";
 import { createTestEnv, TestD1Database } from "../helpers/d1";
 
 let seq = 0;
@@ -27,6 +27,32 @@ async function register(env: Env, ...ids: string[]): Promise<void> {
     await env.DB.prepare(`INSERT INTO orb_instances (instance_id, registered) VALUES (?, 1) ON CONFLICT(instance_id) DO UPDATE SET registered=1`).bind(id).run();
   }
 }
+
+describe("wilsonInterval (#8829)", () => {
+  it("stays inside [0,1] and stays honest at the p->1 edge where Wald degenerates", () => {
+    const ci = wilsonInterval(59, 60)!;
+    expect(ci.hi).toBeLessThanOrEqual(1);
+    expect(ci.lo).toBeLessThan(59 / 60); // a real lower bound, not a point mass
+    expect(ci.hi).toBeGreaterThan(59 / 60);
+    const perfect = wilsonInterval(60, 60)!;
+    expect(perfect.hi).toBeCloseTo(1, 10);
+    expect(perfect.lo).toBeGreaterThan(0.9);
+    expect(perfect.lo).toBeLessThan(1); // 60/60 does NOT prove p=1 — that's the whole point
+  });
+
+  it("p->0 edge mirrors p->1, and more trials tighten the interval", () => {
+    const zero = wilsonInterval(0, 20)!;
+    expect(zero.lo).toBe(0);
+    expect(zero.hi).toBeGreaterThan(0); // 0/20 does not prove p=0
+    const small = wilsonInterval(8, 10)!;
+    const large = wilsonInterval(800, 1000)!;
+    expect(large.hi - large.lo).toBeLessThan(small.hi - small.lo);
+  });
+
+  it("zero trials -> null: no data is no claim, never a fabricated interval", () => {
+    expect(wilsonInterval(0, 0)).toBeNull();
+  });
+});
 
 describe("computeFleetAnalytics()", () => {
   it("empty store → zeroed report (and a custom/clamped window)", async () => {
@@ -150,6 +176,27 @@ describe("computeFleetAnalytics()", () => {
     expect(inst.closePrecision).toBeCloseTo(3 / 5);
     expect(inst.fnRate).toBeCloseTo(2 / 5);
     expect(inst.reversalRate).toBeCloseTo(2 / 5);
+  });
+
+  it("#8829: pooled counts sum across ELIGIBLE instances and coverage counts holds but not policy actions", async () => {
+    const env = createTestEnv();
+    await signals(env, "a", 6, { verdict: "merge", outcome: "merged" });
+    await signals(env, "a", 4, { verdict: "hold", outcome: "merged" });
+    await signals(env, "b", 4, { verdict: "close", outcome: "closed" });
+    await signals(env, "b", 1, { verdict: "close", outcome: "merged" });
+    await signals(env, "b", 5, { verdict: "close", outcome: "closed", bucket: "policy_action" });
+    await signals(env, "stranger", 9, { verdict: "merge", outcome: "closed" }); // unregistered — never pooled
+    await register(env, "a", "b");
+    const fleet = (await computeFleetAnalytics(env)).fleet;
+    expect(fleet.pooled).toEqual({
+      mergeVerdicts: 6,
+      mergeConfirmed: 6,
+      closeVerdicts: 5,
+      closeConfirmed: 4,
+      holds: 4,
+      policyActions: 5,
+      coverage: 11 / 15, // (6+5) verdicts over verdicts+holds; the 5 policy actions sit outside both
+    });
   });
 
   it("null precision when an instance made no merge verdicts", async () => {

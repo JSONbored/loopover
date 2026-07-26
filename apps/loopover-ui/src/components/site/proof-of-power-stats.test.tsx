@@ -206,7 +206,7 @@ describe("ProofOfPowerStats", () => {
       durationMs: 1,
       data: {
         ...PAYLOAD,
-        fleetAccuracy: { accuracyPct: 80, instanceCount: 3, windowDays: 90, gamingFlagsCaught: 2 },
+        fleetAccuracy: { accuracyPct: 80, coveragePct: 64.3, instanceCount: 3, windowDays: 90, gamingFlagsCaught: 2 },
       },
     });
     renderWithClient(<ProofOfPowerStats />);
@@ -217,7 +217,7 @@ describe("ProofOfPowerStats", () => {
     // rather than the retired "reversal-grounded" formula the surface no longer publishes.
     expect(
       screen.getByText(
-        "merge/close calls confirmed by outcome · 3 self-hosted instances · 2 gaming patterns flagged",
+        "merge/close calls confirmed by outcome · at 64.3% coverage · 3 self-hosted instances · 2 gaming patterns flagged",
       ),
     ).toBeTruthy();
     // No fleet-accuracy trend exists yet -- the tile's sparkline is omitted rather than showing a mismatched one.

@@ -76,6 +76,9 @@ export interface InstanceMetrics {
    *  copycat, review-nag, screenshot-table, linked-issue hard rule). Reported so the volume of policy actions
    *  stays visible instead of vanishing from every metric. */
   policyActions: number;
+  /** #8829: the raw confusion counts behind the ratios above, so callers can POOL across instances and put a
+   *  real interval on a published proportion. A ratio alone cannot be pooled (Simpson) or intervalled. */
+  counts: { mergeVerdicts: number; mergeConfirmed: number; closeVerdicts: number; closeConfirmed: number; holds: number };
 }
 
 /** #2350: one self-hosted instance whose combined volume/precision/reversal-rate pattern looks like it is
@@ -106,6 +109,11 @@ export interface FleetAnalytics {
     decisionAccuracy: number | null;
     cycleP50Ms: number | null;
     cycleP95Ms: number | null;
+    /** #8829: confusion counts POOLED over eligible instances. Medians are robust to a bad contributor but
+     *  cannot carry a sample size or an interval; the pooled counts can. With one registered instance (the
+     *  fleet today) pooled and median views coincide. Coverage = verdicts / (verdicts + holds): the share of
+     *  quality-scorable signals the gate actually decided — policy actions are enforcement, outside both. */
+    pooled: { mergeVerdicts: number; mergeConfirmed: number; closeVerdicts: number; closeConfirmed: number; holds: number; policyActions: number; coverage: number | null };
   };
   instances: InstanceMetrics[];
   outliers: Array<{ instanceId: string; metric: string; value: number; fleetMedian: number }>;
@@ -127,6 +135,21 @@ export function percentile(sorted: number[], p: number): number | null {
   // maximum). Clamp both ends so p=0 and p=100 stay in range.
   const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
   return sorted[idx]!;
+}
+
+/** #8829: Wilson score interval for a binomial proportion — the interval every published accuracy/precision
+ *  figure must carry. Wilson, never Wald: the Wald interval degenerates near p→0/1 (exactly where a gate
+ *  metric lives — at 59/60 confirmed Wald claims impossible certainty, Wilson stays honest), and Wilson never
+ *  leaves [0,1]. z defaults to 1.96 (95%). Returns null for zero trials — "no data" must render as no claim,
+ *  never as a fabricated interval. PURE. */
+export function wilsonInterval(successes: number, trials: number, z = 1.96): { lo: number; hi: number } | null {
+  if (trials <= 0) return null;
+  const p = successes / trials;
+  const z2 = z * z;
+  const denom = 1 + z2 / trials;
+  const center = (p + z2 / (2 * trials)) / denom;
+  const half = (z * Math.sqrt((p * (1 - p)) / trials + z2 / (4 * trials * trials))) / denom;
+  return { lo: Math.max(0, center - half), hi: Math.min(1, center + half) };
 }
 
 /** Fold the confusion-matrix cells for one instance into accuracy metrics (reversals count as the gate
@@ -174,10 +197,15 @@ export function foldInstance(instanceId: string, cells: Cell[]): InstanceMetrics
     reversalRate: reversals / decided, // decided ≥ 1 (the instance has at least one cell)
     decisionAccuracy: verdicts > 0 ? (mergeConfirmed + closeConfirmed) / verdicts : null,
     policyActions,
+    counts: { mergeVerdicts: wouldMerge, mergeConfirmed, closeVerdicts: wouldClose, closeConfirmed, holds: decided - verdicts - policyActions },
   };
 }
 
 /** Compute fleet calibration analytics over the collected orb_signals within the window. Fail-safe → empty. */
+function emptyPooled(): FleetAnalytics["fleet"]["pooled"] {
+  return { mergeVerdicts: 0, mergeConfirmed: 0, closeVerdicts: 0, closeConfirmed: 0, holds: 0, policyActions: 0, coverage: null };
+}
+
 export async function computeFleetAnalytics(env: Env, opts: { windowDays?: number } = {}): Promise<FleetAnalytics> {
   const windowDays = Number.isFinite(opts.windowDays) && (opts.windowDays as number) > 0 ? Math.min(opts.windowDays as number, 365) : 90;
   // Date-only cutoff (like computeGateEval) so it compares correctly whether received_at is ISO ('…T…Z')
@@ -213,7 +241,7 @@ export async function computeFleetAnalytics(env: Env, opts: { windowDays?: numbe
     const reg = await env.DB.prepare(`SELECT instance_id FROM orb_instances WHERE registered = 1`).all<{ instance_id: string }>();
     registered = new Set((reg.results ?? []).map((r) => r.instance_id));
   } catch {
-    return { windowDays, instanceCount: 0, fleet: { mergePrecision: null, closePrecision: null, fpRate: null, reversalRate: null, decisionAccuracy: null, cycleP50Ms: null, cycleP95Ms: null }, instances: [], outliers: [], gamingPatternFlags: [] };
+    return { windowDays, instanceCount: 0, fleet: { mergePrecision: null, closePrecision: null, fpRate: null, reversalRate: null, decisionAccuracy: null, cycleP50Ms: null, cycleP95Ms: null, pooled: emptyPooled() }, instances: [], outliers: [], gamingPatternFlags: [] };
   }
 
   // Group cells by instance, fold each.
@@ -268,6 +296,18 @@ export async function computeFleetAnalytics(env: Env, opts: { windowDays?: numbe
     }
   }
 
+  const pooled = emptyPooled();
+  for (const i of eligible) {
+    pooled.mergeVerdicts += i.counts.mergeVerdicts;
+    pooled.mergeConfirmed += i.counts.mergeConfirmed;
+    pooled.closeVerdicts += i.counts.closeVerdicts;
+    pooled.closeConfirmed += i.counts.closeConfirmed;
+    pooled.holds += i.counts.holds;
+    pooled.policyActions += i.policyActions;
+  }
+  const pooledVerdicts = pooled.mergeVerdicts + pooled.closeVerdicts;
+  pooled.coverage = pooledVerdicts + pooled.holds > 0 ? pooledVerdicts / (pooledVerdicts + pooled.holds) : null;
+
   return {
     windowDays,
     instanceCount: eligible.length,
@@ -279,6 +319,7 @@ export async function computeFleetAnalytics(env: Env, opts: { windowDays?: numbe
       decisionAccuracy: median(nums((i) => i.decisionAccuracy)),
       cycleP50Ms: percentile(cycle, 50),
       cycleP95Ms: percentile(cycle, 95),
+      pooled,
     },
     instances,
     outliers,

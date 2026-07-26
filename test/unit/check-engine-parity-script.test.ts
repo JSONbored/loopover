@@ -15,6 +15,7 @@ import {
   describeEngineVersionSkew,
   DIFF_FILE_PRIORITY_MARKERS,
   DIFF_FILE_PRIORITY_TWIN_PAIR,
+  DIFF_FILE_PRIORITY_GROUNDING_TWIN_PAIR,
   discoverEngineParityPairs,
   discoverGateDecisionTwinPair,
   enginePackageVersionIncreased,
@@ -348,12 +349,13 @@ describe("check-engine-parity script", () => {
   });
 
   describe("named twin-pair coverage (#4605)", () => {
-    it("registers the gate-decision, safe-url, diff-file-priority, shares-meaningful-file, and secret-detection pairs", () => {
+    it("registers the gate-decision, content-lane, diff-file-priority twins, shares-meaningful-file, and secret-detection pairs", () => {
       const areas = NAMED_TWIN_PAIRS.map(({ pair }) => pair.area);
       expect(areas).toEqual([
         "gate-decision",
         "content-lane",
         "diff-file-priority",
+        "diff-file-priority-grounding",
         "shares-meaningful-file",
         "secret-detection",
       ]);
@@ -369,7 +371,7 @@ describe("check-engine-parity script", () => {
       expect(scanned.some((discovered) => discovered.fileName === "safe-url.ts")).toBe(false);
     });
 
-    it("passes marker presence for all five named pairs against the real repo (regression guard)", () => {
+    it("passes marker presence for all named pairs against the real repo (regression guard)", () => {
       for (const { pair, markers } of NAMED_TWIN_PAIRS) {
         const result = checkGateDecisionTwinPresence({ root: process.cwd(), pair, markers });
         expect(result.failures).toEqual([]);
@@ -389,6 +391,7 @@ describe("check-engine-parity script", () => {
       const fixedHostBody =
         "export function diffFilePriority(path: string): number {\n" +
         "  if (isLockfile(path)) return 4;\n" +
+        "  if (/(^|\\/)(dist|build|out|coverage|vendor|vendored|third_party|third-party|node_modules|bower_components|jspm_packages)\\//i.test(path)) return 4;\n" +
         "  return 0;\n" +
         "}\n";
       const result = checkGateDecisionTwinPresence({
@@ -401,9 +404,39 @@ describe("check-engine-parity script", () => {
         pair: DIFF_FILE_PRIORITY_TWIN_PAIR,
         markers: DIFF_FILE_PRIORITY_MARKERS,
       });
-      expect(result.failures).toHaveLength(1);
+      expect(result.failures.length).toBeGreaterThanOrEqual(1);
       expect(result.failures[0]).toContain(DIFF_FILE_PRIORITY_TWIN_PAIR.engineRelative);
-      expect(result.failures[0]).toContain(JSON.stringify(DIFF_FILE_PRIORITY_MARKERS[1]));
+      expect(result.failures.some((f) => f.includes(JSON.stringify(DIFF_FILE_PRIORITY_MARKERS[1])))).toBe(true);
+    });
+
+    it("diffFilePriority markers fail when a host twin keeps the pre-#7526 vendored-directory regex (#8648)", () => {
+      const staleHostBody =
+        "export function diffFilePriority(path: string): number {\n" +
+        "  if (isLockfile(path)) return 4;\n" +
+        "  if (/(^|\\/)(dist|build|out|coverage|vendor|node_modules)\\//i.test(path)) return 4;\n" +
+        "  return 0;\n" +
+        "}\n";
+      const fixedEngineBody =
+        "export function diffFilePriority(path: string): number {\n" +
+        "  if (isLockfile(path)) return 4;\n" +
+        "  if (/(^|\\/)(dist|build|out|coverage|vendor|vendored|third_party|third-party|node_modules|bower_components|jspm_packages)\\//i.test(path)) return 4;\n" +
+        "  return 0;\n" +
+        "}\n";
+      for (const pair of [DIFF_FILE_PRIORITY_TWIN_PAIR, DIFF_FILE_PRIORITY_GROUNDING_TWIN_PAIR]) {
+        const result = checkGateDecisionTwinPresence({
+          root: "/fake",
+          readFile: (_root, relativePath) => {
+            if (relativePath === pair.hostRelative) return staleHostBody;
+            if (relativePath === pair.engineRelative) return fixedEngineBody;
+            throw new Error(`unexpected read: ${relativePath}`);
+          },
+          pair,
+          markers: DIFF_FILE_PRIORITY_MARKERS,
+        });
+        expect(result.failures).toHaveLength(1);
+        expect(result.failures[0]).toContain(pair.hostRelative);
+        expect(result.failures[0]).toContain(JSON.stringify(DIFF_FILE_PRIORITY_MARKERS[2]));
+      }
     });
 
     it("safe-url and shares-meaningful-file marker sets are non-empty and pair-specific", () => {
@@ -415,7 +448,7 @@ describe("check-engine-parity script", () => {
       );
     });
 
-    it("includes all five named pairs in runEngineParityChecks pairsChecked", () => {
+    it("includes all named pairs in runEngineParityChecks pairsChecked", () => {
       const result = runEngineParityChecks({ root: process.cwd() });
       const checkedAreas = result.pairsChecked.map((pair) => pair.area);
       for (const { pair } of NAMED_TWIN_PAIRS) {

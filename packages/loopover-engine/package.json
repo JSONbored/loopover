@@ -69,6 +69,18 @@
     "./signals/slop": {
       "types": "./dist/signals/slop.d.ts",
       "default": "./dist/signals/slop.js"
+    },
+    "./calibration/attester": {
+      "types": "./dist/calibration/attester.d.ts",
+      "default": "./dist/calibration/attester.js"
+    },
+    "./calibration/attestation-envelope": {
+      "types": "./dist/calibration/attestation-envelope.d.ts",
+      "default": "./dist/calibration/attestation-envelope.js"
+    },
+    "./calibration/backtest-corpus": {
+      "types": "./dist/calibration/backtest-corpus.d.ts",
+      "default": "./dist/calibration/backtest-corpus.js"
     }
   },
   "files": [

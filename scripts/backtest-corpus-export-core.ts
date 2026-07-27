@@ -3,7 +3,7 @@
 // without re-querying D1. No IO here — the CLI (backtest-corpus-export.ts) does the wrangler/D1 reads and the
 // file write — so this stays unit-testable. Mirrors scripts/export-d1-core.ts's pure-core / thin-IO split.
 import { createHash } from "node:crypto";
-import type { BacktestCase } from "@loopover/engine";
+import type { BacktestCase } from "@loopover/engine/calibration/backtest-corpus";
 
 export type BacktestCorpusManifest = {
   ruleId: string;

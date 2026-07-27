@@ -1,0 +1,112 @@
+# Reproducible replay-runner image CI (#9214, epic #8534). Proves the pinned, minimal attested-backtest-run
+# image actually BUILDS and RUNS correctly. The fast, cheap drift check (comparing the committed manifest's
+# declared-inputs digest against a fresh one) is already wired into `npm run test:ci` (per-PR, blocking) --
+# this workflow adds the one thing that check can't do without Docker: prove the pinned Dockerfile still
+# builds and the resulting image actually produces an attested run.
+#
+# Push-to-main only, same reasoning as selfhost.yml's own build-boot job: a full Docker build is a slow,
+# expensive check relative to this repo's PR volume, ci.yml's fast manifest-drift check already blocks the
+# common failure mode (a source/lockfile/Dockerfile edit without updating the committed manifest) on every
+# PR, and a build-breaking change is still caught within minutes of landing on main.
+name: replay-runner-image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/replay-runner/**"
+      - "scripts/attested-backtest-run.ts"
+      - "scripts/attested-backtest-run-core.ts"
+      - "scripts/backtest-corpus-export-core.ts"
+      - "scripts/snp-attester.ts"
+      - "scripts/replay-runner-image-manifest.ts"
+      - "scripts/replay-runner-image-manifest-core.ts"
+      - "scripts/replay-runner-image-manifest.json"
+      - "packages/loopover-engine/src/calibration/**"
+      - "packages/loopover-engine/package.json"
+      - ".github/workflows/replay-runner-image.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: replay-runner-image-${{ github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-run:
+    name: build + attested-run smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+          cache: "npm"
+
+      - name: Install deps
+        run: npm ci --ignore-scripts
+
+      - name: Verify the committed manifest matches the checked-out tree
+        run: npm run replay-runner-manifest:check
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - name: Build the replay-runner image
+        run: |
+          docker buildx build \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            --load \
+            -f scripts/replay-runner/Dockerfile \
+            -t loopover-replay-runner:ci .
+
+      - name: Confirm the runtime user is non-root
+        run: |
+          user="$(docker run --rm --entrypoint whoami loopover-replay-runner:ci)"
+          test "$user" = "replay-runner"
+
+      - name: Build a throwaway corpus fixture
+        run: |
+          node --experimental-strip-types -e '
+            import { buildBacktestCorpusManifest } from "./scripts/backtest-corpus-export-core.ts";
+            import { writeFileSync } from "node:fs";
+            const cases = [{ targetKey: "acme/widgets#1", ruleId: "linked_issue_scope_mismatch", fired: true, overridden: false }];
+            writeFileSync("/tmp/ci-corpus.json", JSON.stringify(buildBacktestCorpusManifest("linked_issue_scope_mismatch", cases)));
+          '
+
+      - name: Run an attested pass with the sample attester, with NO network access
+        run: |
+          docker run --rm --network none \
+            -v /tmp/ci-corpus.json:/data/corpus.json:ro \
+            loopover-replay-runner:ci \
+            --rule-id linked_issue_scope_mismatch --corpus /data/corpus.json \
+            --head-sha 0000000000000000000000000000000000000001 \
+            --base-sha 0000000000000000000000000000000000000002 \
+            --repo acme/widgets --pr 1 \
+          | tee /tmp/ci-result.json
+          outcome_status="$(node -e 'console.log(JSON.parse(require("node:fs").readFileSync("/tmp/ci-result.json","utf8")).status)')"
+          test "$outcome_status" = "attested"
+
+      - name: Confirm the fail-closed path (TEE claimed, no reachable hardware)
+        run: |
+          set +e
+          docker run --rm --network none \
+            -v /tmp/ci-corpus.json:/data/corpus.json:ro \
+            loopover-replay-runner:ci \
+            --rule-id linked_issue_scope_mismatch --corpus /data/corpus.json \
+            --head-sha 0000000000000000000000000000000000000001 \
+            --base-sha 0000000000000000000000000000000000000002 \
+            --repo acme/widgets --pr 1 \
+            --attester snp --measurement "$(printf 'a%.0s' {1..64})" --runtime-claim tee
+          code=$?
+          set -e
+          test "$code" -eq 1
+
+      - name: Free disk
+        if: always()
+        run: docker image prune -af

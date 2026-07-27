@@ -20,7 +20,15 @@ import { spawnSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 
-import { assembleAttestationEnvelope, createSampleAttester, type Attester, type BacktestCase } from "@loopover/engine";
+// Subpath imports, not the engine barrel (#9214): the barrel's `export *` graph is reachable from
+// miner/repo-map.ts, which has a top-level `import Parser from "web-tree-sitter"` -- a static import that
+// forces web-tree-sitter (and, via its own on-disk resolution at call time, tree-sitter-wasms) onto any
+// image that loads the barrel, even though this script never calls into repo-map's functions. The reproducible
+// replay-runner image (scripts/replay-runner/Dockerfile) is measured inside an eventual TEE; minimizing what
+// it depends on is a real security property (a smaller trusted computing base), not just a size optimization.
+// Same rationale + mechanism as src/db/repositories.ts's `@loopover/engine/parse-pull-request-target-key`.
+import { assembleAttestationEnvelope, createSampleAttester, type Attester } from "@loopover/engine/calibration/attester";
+import type { BacktestCase } from "@loopover/engine/calibration/backtest-corpus";
 
 import { checksumCases } from "./backtest-corpus-export-core";
 import {

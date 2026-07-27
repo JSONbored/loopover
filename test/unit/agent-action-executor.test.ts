@@ -2507,6 +2507,38 @@ describe("pre-merge contributor-cap re-check (#7284-fix, TOCTOU race)", () => {
     expect(outcomes[0]?.outcome).toBe("completed");
     expect(mergePullRequest).toHaveBeenCalled();
   });
+
+  it("REGRESSION (#9159): the lock stays held across the ACTUAL merge mutation, not just the re-check -- a concurrent claim attempt made WHILE the merge is in flight is denied", async () => {
+    const env = createTestEnv({});
+    const recheck = vi.fn(async () => true);
+    let claimWhileMerging: boolean | undefined;
+    vi.mocked(mergePullRequest).mockImplementationOnce(async () => {
+      // Simulate a concurrent sibling's cap-close/wake trying to claim the SAME per-author lock while this
+      // merge mutation is still in flight -- before #9159's fix, the lock was already released at this point
+      // (releaseContributorCapLock ran in a `finally` wrapping only the re-check, not the merge below it), so
+      // this claim would have wrongly succeeded and let a concurrent cap-close act on a stale view.
+      claimWhileMerging = await env.SELFHOST_TRANSIENT_CACHE?.claim?.("contributor-cap-lock:owner/repo:farmer99", "concurrent-cap-close-token", 30);
+      return { merged: true, sha: "merged-sha", suppressed: false };
+    });
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99", contributorCapMergeRecheck: recheck }), [merge]);
+    expect(outcomes[0]?.outcome).toBe("completed");
+    expect(claimWhileMerging).toBe(false); // the concurrent claim attempt was denied -- the lock was still held
+    // Released only AFTER the merge completed: a fresh claim attempt now succeeds.
+    const claimAfterMerge = await env.SELFHOST_TRANSIENT_CACHE?.claim?.("contributor-cap-lock:owner/repo:farmer99", "probe-token", 30);
+    expect(claimAfterMerge).toBe(true);
+  });
+
+  it("REGRESSION (#9159): the lock is released even when the merge mutation itself throws (finally spans success AND failure)", async () => {
+    const env = createTestEnv({});
+    const recheck = vi.fn(async () => true);
+    vi.mocked(mergePullRequest).mockImplementationOnce(async () => {
+      throw new Error("merge conflict");
+    });
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99", contributorCapMergeRecheck: recheck }), [merge]);
+    expect(outcomes[0]?.outcome).toBe("error");
+    const claimAfterFailure = await env.SELFHOST_TRANSIENT_CACHE?.claim?.("contributor-cap-lock:owner/repo:farmer99", "probe-token", 30);
+    expect(claimAfterFailure).toBe(true);
+  });
 });
 
 // #9134: six of seven executeAgentMaintenanceActions call sites wrote no decision record and no ledger row at

@@ -922,4 +922,97 @@ describe("fetchLinkedIssueLabelsForPropagation (#priority-linked-issue-gate)", (
       expectPropagation(result, []);
     });
   });
+
+  describe("reward-label gate on direct author/assignee match (#9161)", () => {
+    // An ADDITIVE mapping (removeOtherTypeLabels: false) composes a bonus label alongside the PR's type label
+    // rather than replacing it -- this is the reward-semantics signal src/review/linked-issue-label-propagation-fetch.ts's
+    // fetchLinkedIssueLabelsForPropagation derives `rewardLabels` from (see its own #9161 doc comment).
+    const REWARD_MAPPING = { issueLabel: "gittensor:priority", prLabel: "gittensor:priority", removeOtherTypeLabels: false, trustMaintainerAuthoredIssueForReward: true };
+    const TYPE_MAPPING = { issueLabel: "gittensor:bug", prLabel: "gittensor:bug", removeOtherTypeLabels: true };
+
+    it("REGRESSION (#9161): withholds the reward label from an issue-authoring contributor who is NOT a repo maintainer, keeping only the type label", async () => {
+      stubFetch((url) => {
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.endsWith("/issues/21"))
+          return Response.json({ number: 21, state: "open", user: { login: "contrib" }, assignees: [], labels: ["gittensor:bug", "gittensor:priority"] });
+        if (url.includes("/collaborators/contrib/permission")) return Response.json({ permission: "read" });
+        return new Response("not found", { status: 404 });
+      });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      const result = await fetchLinkedIssueLabelsForPropagation({
+        env,
+        repoFullName: "owner/repo",
+        linkedIssues: [21],
+        installationId: 123,
+        prAuthorLogin: "contrib",
+        mappings: [TYPE_MAPPING, REWARD_MAPPING],
+      });
+      // "read" permission is not_maintainer -> the reward label (gittensor:priority) is dropped even though the
+      // mapping opted into trustMaintainerAuthoredIssueForReward; the type label survives via the unconditional
+      // author-match unlock, since it carries no reward semantics.
+      expectPropagation(result, ["gittensor:bug"]);
+    });
+
+    it("REGRESSION (#9161): withholds the reward label for a PR author who is only ASSIGNED to (not the author of) the linked issue, same as the author-match case", async () => {
+      stubFetch((url) => {
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.endsWith("/issues/22"))
+          return Response.json({ number: 22, state: "open", user: { login: "someone-else" }, assignees: [{ login: "contrib" }], labels: ["gittensor:priority"] });
+        if (url.includes("/collaborators/someone-else/permission")) return Response.json({ permission: "read" });
+        return new Response("not found", { status: 404 });
+      });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      const result = await fetchLinkedIssueLabelsForPropagation({
+        env,
+        repoFullName: "owner/repo",
+        linkedIssues: [22],
+        installationId: 123,
+        prAuthorLogin: "contrib",
+        mappings: [REWARD_MAPPING],
+      });
+      expectPropagation(result, []);
+    });
+
+    it("propagates the reward label to its own issue's author when that author genuinely IS a repo maintainer (opt-in + maintainer check both satisfied)", async () => {
+      stubFetch((url) => {
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.endsWith("/issues/23"))
+          // "owner" is the literal repo owner -- isRepoMaintainerLogin short-circuits to "maintainer" without a
+          // live collaborator-permission fetch, so no signable key is required for this case.
+          return Response.json({ number: 23, state: "open", user: { login: "owner" }, assignees: [], labels: ["gittensor:bug", "gittensor:priority"] });
+        return new Response("not found", { status: 404 });
+      });
+      const env = createTestEnv({});
+      const result = await fetchLinkedIssueLabelsForPropagation({
+        env,
+        repoFullName: "owner/repo",
+        linkedIssues: [23],
+        installationId: 123,
+        prAuthorLogin: "owner",
+        mappings: [TYPE_MAPPING, REWARD_MAPPING],
+      });
+      expectPropagation(result, ["gittensor:bug", "gittensor:priority"]);
+    });
+
+    it("skips the maintainer-permission check entirely (zero added cost) when the direct-match issue carries no reward-semantic label at all", async () => {
+      const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.endsWith("/issues/24")) return Response.json({ number: 24, state: "open", user: { login: "contrib" }, assignees: [], labels: ["gittensor:bug"] });
+        return new Response("not found", { status: 404 });
+      });
+      vi.stubGlobal("fetch", fetchSpy);
+      const env = createTestEnv({});
+      const result = await fetchLinkedIssueLabelsForPropagation({
+        env,
+        repoFullName: "owner/repo",
+        linkedIssues: [24],
+        installationId: 123,
+        prAuthorLogin: "contrib",
+        mappings: [TYPE_MAPPING, REWARD_MAPPING],
+      });
+      expectPropagation(result, ["gittensor:bug"]);
+      expect(fetchSpy.mock.calls.some(([input]) => input.toString().includes("/collaborators/"))).toBe(false);
+    });
+  });
 });

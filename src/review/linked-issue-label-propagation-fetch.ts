@@ -136,6 +136,12 @@ async function resolveIssueLabelsForPropagation(
   prAuthorLogin: string | undefined,
   relaxableLabels: ReadonlySet<string>,
   prMergedAt: string | null,
+  // #9161: issueLabels named by at least one ADDITIVE mapping (`removeOtherTypeLabels !== true` -- see
+  // pr-type-label.ts's exclusive/additive split, e.g. `gittensor:priority` composing alongside bug/feature).
+  // An additive mapping carries reward weight by construction (it never replaces the PR's type label, it adds
+  // a bonus on top) -- author/assignee identity must NOT unlock one of these unconditionally the way it does
+  // for a plain type label; see the author/assignee branch below for why.
+  rewardLabels: ReadonlySet<string>,
 ): Promise<LinkedIssuePropagationLabels> {
   if (result.status === "fetch_error") {
     console.log(
@@ -204,7 +210,21 @@ async function resolveIssueLabelsForPropagation(
   const allLabels = result.facts.labels;
   const issueAuthorLogin = result.facts.authorLogin?.toLowerCase();
   const assignees = result.facts.assignees.map((login) => login.toLowerCase());
-  if (issueAuthorLogin === prAuthorLogin || assignees.includes(prAuthorLogin)) return { labels: allLabels, inconclusive: false };
+  const isDirectOwnershipMatch = issueAuthorLogin === prAuthorLogin || assignees.includes(prAuthorLogin);
+  // #9161: a direct author/assignee match unlocks a TYPE label (no reward-semantic mapping targets it)
+  // unconditionally -- the original, unchanged behavior. It must NOT also unlock a REWARD label
+  // (`rewardLabels`) the same way: that bypasses the reward-label trust gate (the `...ForReward` opt-in +
+  // maintainer-authorship check every OTHER path already requires) entirely, letting a contributor who simply
+  // authored (or was assigned) the linked issue self-award a reward multiplier with no opt-in and no
+  // maintainer check. A reward label ALWAYS falls through to the maintainer-check gate below, regardless of
+  // this match. When there is no direct match at all, every label is a "reward candidate" here -- identical to
+  // the pre-#9161 behavior for that branch (nothing changes for a non-owning contributor).
+  const directTypeLabels = isDirectOwnershipMatch ? allLabels.filter((label) => !rewardLabels.has(label.toLowerCase())) : [];
+  const rewardCandidateLabels = isDirectOwnershipMatch ? allLabels.filter((label) => rewardLabels.has(label.toLowerCase())) : allLabels;
+  // Zero added cost when this issue carries no reward-semantic label at all (the overwhelmingly common case
+  // for a repo that hasn't configured an additive mapping) -- skips the maintainer-permission GitHub API call
+  // entirely, mirroring relaxableLabels' own "byte-identical when no mapping opted in" contract.
+  if (isDirectOwnershipMatch && rewardCandidateLabels.length === 0) return { labels: directTypeLabels, inconclusive: false };
 
   const maintainerCheck: MaintainerCheckResult =
     relaxableLabels.size > 0 && !!issueAuthorLogin
@@ -222,7 +242,8 @@ async function resolveIssueLabelsForPropagation(
     return { labels: [], inconclusive: true };
   }
   const maintainerAuthored = maintainerCheck === "maintainer";
-  const kept = maintainerAuthored ? allLabels.filter((label) => relaxableLabels.has(label.toLowerCase())) : [];
+  const relaxedRewardLabels = maintainerAuthored ? rewardCandidateLabels.filter((label) => relaxableLabels.has(label.toLowerCase())) : [];
+  const kept = [...directTypeLabels, ...relaxedRewardLabels];
 
   if (kept.length < allLabels.length && allLabels.length > 0) {
     console.log(
@@ -230,7 +251,11 @@ async function resolveIssueLabelsForPropagation(
         event: "linked_issue_label_propagation_filtered",
         repoFullName: args.repoFullName,
         issueNumber: result.facts.number,
-        reason: maintainerAuthored ? "strict_label_requires_direct_ownership" : "no_direct_ownership_match",
+        reason: isDirectOwnershipMatch
+          ? "reward_label_requires_maintainer_authored_issue_and_opt_in"
+          : maintainerAuthored
+            ? "strict_label_requires_direct_ownership"
+            : "no_direct_ownership_match",
         droppedCount: allLabels.length - kept.length,
       }),
     );
@@ -314,6 +339,14 @@ export async function fetchLinkedIssueLabelsForPropagation(args: {
       )
       .map(([issueLabel]) => issueLabel),
   );
+  // #9161: issueLabels named by at least one ADDITIVE mapping (`removeOtherTypeLabels !== true`) -- see
+  // resolveIssueLabelsForPropagation's `rewardLabels` parameter doc comment for why this is the reward-
+  // semantics signal. `.some` (not `.every`, unlike relaxableLabels above): even ONE additive mapping
+  // targeting this issueLabel is enough to treat it as reward-bearing everywhere, so a repo cannot dilute the
+  // reward gate by also declaring an unrelated exclusive mapping for the same issueLabel name.
+  const rewardLabels = new Set(
+    [...mappingsByIssueLabel.entries()].filter(([, mappings]) => mappings.some((mapping) => mapping.removeOtherTypeLabels !== true)).map(([issueLabel]) => issueLabel),
+  );
   const results = await Promise.all(
     linkedIssues.map((issueNumber) =>
       fetchLinkedIssueFacts(
@@ -333,6 +366,7 @@ export async function fetchLinkedIssueLabelsForPropagation(args: {
         prAuthorLogin,
         relaxableLabels,
         prMergedAt,
+        rewardLabels,
       ),
     ),
   );

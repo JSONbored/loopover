@@ -1822,6 +1822,54 @@ describe("downgradeCloseToHold — close-precision circuit-breaker (#close-preci
     const label = held.find((a) => a.actionClass === "label" && a.label === AGENT_LABEL_NEEDS_REVIEW && a.labelOp === "add");
     expect(label?.autonomyClass).toBe("close");
   });
+
+  describe("#9158 (label-close-split-brain, breaker-downgrade half): dropping a downgradable close also drops its coupled label", () => {
+    it("REGRESSION: downgrading a review_nag close also drops the review_nag label coupled to it via closeKind", () => {
+      const reviewNagClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "review nag", closeKind: "review_nag" };
+      const reviewNagLabel: PlannedAgentAction = { actionClass: "label", requiresApproval: false, reason: "review nag", closeKind: "review_nag", label: DEFAULT_REVIEW_NAG_LABEL, labelOp: "add", autonomyClass: "close" };
+      const held = downgradeCloseToHold([reviewNagClose, reviewNagLabel], true);
+      expect(held.some((a) => a.actionClass === "close" && a.closeKind === "review_nag")).toBe(false);
+      // The orphaned coupled label must NOT survive the downgrade -- applying it would brand a PR that stays open.
+      expect(held.some((a) => a.actionClass === "label" && a.closeKind === "review_nag")).toBe(false);
+      // Manual-review hold still substitutes in for the dropped close, same as any other downgrade.
+      expect(held.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_NEEDS_REVIEW && a.labelOp === "add")).toBe(true);
+    });
+
+    it("REGRESSION: downgrading a copycat close also drops the copycat label coupled to it, leaving an UNCOUPLED label untouched", () => {
+      const copycatClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "copycat match", closeKind: "copycat" };
+      const copycatLabel: PlannedAgentAction = { actionClass: "label", requiresApproval: false, reason: "copycat match", closeKind: "copycat", label: DEFAULT_COPYCAT_LABEL, labelOp: "add", autonomyClass: "close" };
+      // An unrelated label with NO closeKind at all (e.g. a plain disposition-communication label) must survive
+      // untouched -- only a label whose closeKind matches one of the DROPPED closes is orphaned.
+      const unrelatedLabel: PlannedAgentAction = { actionClass: "label", requiresApproval: false, reason: "ready", label: AGENT_LABEL_READY, labelOp: "add" };
+      const held = downgradeCloseToHold([copycatClose, copycatLabel, unrelatedLabel], true);
+      expect(held.some((a) => a.actionClass === "close" && a.closeKind === "copycat")).toBe(false);
+      expect(held.some((a) => a.actionClass === "label" && a.closeKind === "copycat")).toBe(false);
+      expect(held.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_READY)).toBe(true);
+    });
+
+    it("a label-only copycat gate tier (closeKind set but NO matching close in the plan at all) is left untouched -- it was never coupled to a close", () => {
+      // maybePlanCopycatLabel's label-only tier: a copycat label with closeKind set but no close of that kind
+      // anywhere in the plan. droppedCloseKinds is empty (no downgradable close present), so isOrphanedCoupledLabel
+      // can never match this label, and the plan is returned as-is (no heuristic/downgradable close present).
+      const copycatLabelOnly: PlannedAgentAction = { actionClass: "label", requiresApproval: false, reason: "copycat match (label tier)", closeKind: "copycat", label: DEFAULT_COPYCAT_LABEL, labelOp: "add" };
+      const plan = [copycatLabelOnly];
+      const held = downgradeCloseToHold(plan, true);
+      expect(held).toBe(plan); // no downgradable close anywhere → whole plan returned unchanged
+      expect(held.some((a) => a.actionClass === "label" && a.closeKind === "copycat")).toBe(true);
+    });
+
+    it("a deterministic linked-issue-hard-rule close/label pair is left intact even while a sibling review_nag close/label pair is downgraded", () => {
+      const linkedIssueClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "ineligible issue", closeKind: "linked-issue-hard-rule" };
+      const linkedIssueLabel: PlannedAgentAction = { actionClass: "label", requiresApproval: false, reason: "ineligible issue", closeKind: "linked-issue-hard-rule", label: "maintainer-only", labelOp: "add" };
+      const reviewNagClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "review nag", closeKind: "review_nag" };
+      const reviewNagLabel: PlannedAgentAction = { actionClass: "label", requiresApproval: false, reason: "review nag", closeKind: "review_nag", label: DEFAULT_REVIEW_NAG_LABEL, labelOp: "add", autonomyClass: "close" };
+      const held = downgradeCloseToHold([linkedIssueClose, linkedIssueLabel, reviewNagClose, reviewNagLabel], true);
+      expect(held.some((a) => a.actionClass === "close" && a.closeKind === "linked-issue-hard-rule")).toBe(true);
+      expect(held.some((a) => a.actionClass === "label" && a.closeKind === "linked-issue-hard-rule")).toBe(true);
+      expect(held.some((a) => a.actionClass === "close" && a.closeKind === "review_nag")).toBe(false);
+      expect(held.some((a) => a.actionClass === "label" && a.closeKind === "review_nag")).toBe(false);
+    });
+  });
 });
 
 describe("closeConcreteEvidence — concrete-evidence exemption from the close-precision breaker (#hard-blockers-not-ai-judgment)", () => {

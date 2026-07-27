@@ -450,6 +450,60 @@ describe("advisory rules", () => {
     expect(advisory.findings.map((finding) => finding.code)).not.toContain("duplicate_pr_risk_unconfirmed");
   });
 
+  it("#9160: scopedLinkedIssueClaimedAt overrides pr's blended linkedIssueClaimedAt for the winner election, closing the backdating attack", () => {
+    // The attacker's PR carries a backdated BLENDED linkedIssueClaimedAt (from an old, unrelated linked issue
+    // whose overlap preserved it) that would make it win against the victim if the raw column were used
+    // directly -- see db-parsers.test.ts's REGRESSION (#9160) test for how the per-(PR, issue) ledger produces
+    // the correctly-scoped value the caller (queue/duplicate-detection.ts's resolveScopedLinkedIssueClaimedAt)
+    // passes in as scopedLinkedIssueClaimedAt.
+    const attacker: PullRequestRecord = {
+      repoFullName: repo.fullName,
+      number: 21,
+      title: "Backdated claim",
+      state: "open",
+      authorLogin: "attacker",
+      authorAssociation: "NONE",
+      headSha: "abc123",
+      labels: [],
+      linkedIssues: [7],
+      linkedIssueClaimedAt: "2026-06-29T10:00:00.000Z", // blended column: backdated via an unrelated issue #1
+    };
+    const victim: PullRequestRecord = { ...attacker, number: 22, title: "Victim's genuine claim", authorLogin: "victim", linkedIssueClaimedAt: "2026-07-01T00:00:00.000Z" };
+
+    // Without scoping, the attacker's blended (backdated) timestamp wins -- confirms the vulnerable baseline.
+    const unscoped = buildPullRequestAdvisory(repo, attacker, { otherOpenPullRequests: [victim], duplicateWinnerEnabled: true });
+    expect(unscoped.findings.map((finding) => finding.code)).not.toContain("duplicate_pr_risk");
+
+    // With the per-issue-scoped claim time (the attacker's OWN ledger row for issue #7, correctly dated AFTER
+    // the victim's genuine claim), the attacker is correctly demoted to loser.
+    const scoped = buildPullRequestAdvisory(repo, attacker, {
+      otherOpenPullRequests: [victim],
+      duplicateWinnerEnabled: true,
+      scopedLinkedIssueClaimedAt: "2026-07-20T09:00:00.000Z",
+    });
+    expect(scoped.findings.map((finding) => finding.code)).toContain("duplicate_pr_risk_unconfirmed");
+  });
+
+  it("#9160: scopedLinkedIssueClaimedAt undefined falls back to pr.linkedIssueClaimedAt, byte-identical to before this field existed", () => {
+    const winner: PullRequestRecord = {
+      repoFullName: repo.fullName,
+      number: 12,
+      title: "Add registry sync",
+      state: "open",
+      authorLogin: "oktofeesh1",
+      authorAssociation: "NONE",
+      headSha: "abc123",
+      labels: [],
+      linkedIssues: [4],
+      linkedIssueClaimedAt: "2026-06-29T10:00:00.000Z",
+    };
+    const higherSibling: PullRequestRecord = { ...winner, number: 13, title: "Alternative registry sync", linkedIssueClaimedAt: "2026-06-29T10:01:00.000Z" };
+
+    const advisory = buildPullRequestAdvisory(repo, winner, { otherOpenPullRequests: [higherSibling], duplicateWinnerEnabled: true, scopedLinkedIssueClaimedAt: undefined });
+
+    expect(advisory.findings.map((finding) => finding.code)).not.toContain("duplicate_pr_risk");
+  });
+
   it("keeps weak queue warnings advisory-only for the opt-in gate", () => {
     const pr: PullRequestRecord = {
       repoFullName: repo.fullName,

@@ -38,6 +38,8 @@ import {
   extractLinkedIssueNumbers,
   extractLinkedIssueNumbersWithOverflow,
   MAX_LINKED_ISSUE_NUMBERS,
+  recordLinkedIssueClaims,
+  getEarliestLinkedIssueClaim,
 } from "../../src/db/repositories";
 import { getDb } from "../../src/db/client";
 import { webhookEvents } from "../../src/db/schema";
@@ -263,6 +265,81 @@ describe("database row parser hardening", () => {
       linkedIssues: [],
       linkedIssueClaimedAt: null,
     });
+  });
+
+  it("REGRESSION (#9160): the per-(PR, issue) claim ledger gives a newly-added issue its OWN fresh claim time, immune to the blended column's overlap-preserve backdating", async () => {
+    const env = createTestEnv();
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-29T10:00:00.000Z"));
+    await upsertPullRequestFromGitHub(env, "owner/repo", {
+      number: 21,
+      title: "Placeholder claim",
+      state: "open",
+      user: { login: "attacker" },
+      labels: [],
+      body: "Fixes #1",
+    });
+    // #1's ledger row is stamped at the moment it was first observed.
+    await expect(getEarliestLinkedIssueClaim(env, "owner/repo", 21, [1])).resolves.toBe("2026-06-29T10:00:00.000Z");
+
+    // Weeks later, the attacker edits the body to ALSO claim a victim's valuable issue #7. The blended
+    // pull_requests.linked_issue_claimed_at column preserves the day-1 timestamp for the WHOLE PR (the
+    // #linked-issue-claim-overlap-preserve behavior, intentional for #1) -- but the per-issue ledger must give
+    // #7 its own fresh clock rather than inheriting #1's, since #7 was never linked to this PR before now.
+    vi.setSystemTime(new Date("2026-07-20T09:00:00.000Z"));
+    await upsertPullRequestFromGitHub(env, "owner/repo", {
+      number: 21,
+      title: "Backdating attempt",
+      state: "open",
+      user: { login: "attacker" },
+      labels: [],
+      body: "Fixes #1\nFixes #7",
+    });
+    const blended = (await listPullRequests(env, "owner/repo")).find((p) => p.number === 21);
+    // The blended column is unchanged (still day-1) -- this is the pre-existing, intentional behavior for #1.
+    expect(blended?.linkedIssueClaimedAt).toBe("2026-06-29T10:00:00.000Z");
+    // #1's OWN ledger row is untouched (immutable, ON CONFLICT DO NOTHING).
+    await expect(getEarliestLinkedIssueClaim(env, "owner/repo", 21, [1])).resolves.toBe("2026-06-29T10:00:00.000Z");
+    // #7 gets its OWN fresh claim time -- NOT the backdated day-1 value the blended column would suggest.
+    await expect(getEarliestLinkedIssueClaim(env, "owner/repo", 21, [7])).resolves.toBe("2026-07-20T09:00:00.000Z");
+
+    // A victim's genuine PR claiming #7 on day 1 (before the attacker's edit) keeps the earlier claim when the
+    // two are compared on issue #7 specifically -- exactly the comparison resolveScopedLinkedIssueClaimedAt
+    // (src/queue/duplicate-detection.ts) performs for the duplicate-winner election.
+    vi.setSystemTime(new Date("2026-07-01T00:00:00.000Z"));
+    await upsertPullRequestFromGitHub(env, "owner/repo", {
+      number: 22,
+      title: "Victim's genuine claim",
+      state: "open",
+      user: { login: "victim" },
+      labels: [],
+      body: "Fixes #7",
+    });
+    await expect(getEarliestLinkedIssueClaim(env, "owner/repo", 22, [7])).resolves.toBe("2026-07-01T00:00:00.000Z");
+    // Scoped to issue #7 only: the victim's 07-01 claim predates the attacker's 07-20 claim, so the victim
+    // would correctly win the duplicate-cluster election -- the blended column's day-1 value for PR #21 would
+    // have wrongly beaten the victim's genuine claim had it been used instead.
+    const attackerClaim7 = await getEarliestLinkedIssueClaim(env, "owner/repo", 21, [7]);
+    const victimClaim7 = await getEarliestLinkedIssueClaim(env, "owner/repo", 22, [7]);
+    expect(victimClaim7! < attackerClaim7!).toBe(true);
+  });
+
+  it("recordLinkedIssueClaims is a no-op for an empty issue list, and getEarliestLinkedIssueClaim returns null when nothing has ever been recorded", async () => {
+    const env = createTestEnv();
+    await expect(recordLinkedIssueClaims(env, "owner/repo", 30, [], "2026-01-01T00:00:00.000Z")).resolves.toBeUndefined();
+    await expect(getEarliestLinkedIssueClaim(env, "owner/repo", 30, [])).resolves.toBeNull();
+    await expect(getEarliestLinkedIssueClaim(env, "owner/repo", 30, [99])).resolves.toBeNull();
+  });
+
+  it("getEarliestLinkedIssueClaim returns the EARLIEST among several contested issue numbers, not merely the first row", async () => {
+    const env = createTestEnv();
+    await recordLinkedIssueClaims(env, "owner/repo", 40, [5, 6], "2026-02-02T00:00:00.000Z");
+    // A second call with an overlapping+new set never overwrites #5/#6's existing rows (ON CONFLICT DO
+    // NOTHING) but DOES seed a fresh row for the genuinely new #8.
+    await recordLinkedIssueClaims(env, "owner/repo", 40, [5, 6, 8], "2026-03-03T00:00:00.000Z");
+    await expect(getEarliestLinkedIssueClaim(env, "owner/repo", 40, [6, 8])).resolves.toBe("2026-02-02T00:00:00.000Z");
+    await expect(getEarliestLinkedIssueClaim(env, "owner/repo", 40, [8])).resolves.toBe("2026-03-03T00:00:00.000Z");
   });
 
   it("falls back to the observed linked-issue claim time when the existing same-claim timestamp is missing", async () => {

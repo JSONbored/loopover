@@ -1012,8 +1012,10 @@ export async function runAiReviewForAdvisory(
         inlineFindings,
       }),
       ...(degraded
-        ? /* v8 ignore next -- current review runner always supplies diagnostics for completed AI attempts; the `?? []` is a type-level fallback for the optional field. */
-          { reviewDiagnostics: formatReviewDiagnosticsForCapture(result.reviewDiagnostics ?? []) }
+        ? {
+            /* v8 ignore next -- current review runner always supplies diagnostics for completed AI attempts; the `?? []` is a type-level fallback for the optional field. */
+            reviewDiagnostics: formatReviewDiagnosticsForCapture(result.reviewDiagnostics ?? []),
+          }
         : {}),
     });
     if (result.inconclusive && hasPublicReviewAssessment(result.advisoryNotes)) {

@@ -666,7 +666,7 @@ describe("database row parser hardening", () => {
       // The `edited` delivery lands first and adds the linked issue.
       await upsertPullRequestFromGitHub(env, "owner/repo", {
         number: 32, title: "Add retry logic", state: "open", user: { login: "bob" }, head: { sha: "a1", ref: "feature-v2" },
-        base: { ref: "main" }, body: "Fixes #123", labels: [], updated_at: "2026-07-21T12:20:00.000Z",
+        base: { ref: "main" }, body: "Fixes #123", labels: [], author_association: "MEMBER", updated_at: "2026-07-21T12:20:00.000Z",
       });
       const afterEdit = await getPullRequest(env, "owner/repo", 32);
       expect(afterEdit?.linkedIssues).toEqual([123]);
@@ -674,7 +674,7 @@ describe("database row parser hardening", () => {
       // The delayed `synchronize` job finally dequeues carrying the PRE-edit snapshot.
       const stale = await upsertPullRequestFromGitHub(env, "owner/repo", {
         number: 32, title: "wip", state: "open", user: { login: "bob" }, head: { sha: "a0", ref: "old-branch" },
-        base: { ref: "develop" }, body: "no issue yet", labels: [], updated_at: "2026-07-21T12:10:00.000Z",
+        base: { ref: "develop" }, body: "no issue yet", labels: [], author_association: "FIRST_TIME_CONTRIBUTOR", updated_at: "2026-07-21T12:10:00.000Z",
       });
 
       // The linked issue survives — this is the one that drove the wrong close.
@@ -686,21 +686,31 @@ describe("database row parser hardening", () => {
       expect(stored?.title).toBe("Add retry logic");
       expect(stored?.baseRef).toBe("main");
       expect(stored?.headRef).toBe("feature-v2");
+      expect(stored?.authorAssociation).toBe("MEMBER");
+      // The RETURNED record must describe what was persisted too — in-process callers act on it directly, so a
+      // protected DB row plus a stale return value would still drive a wrong decision this same pass.
+      expect(stale).toMatchObject({
+        title: "Add retry logic",
+        baseRef: "main",
+        headRef: "feature-v2",
+        authorAssociation: "MEMBER",
+        body: "Fixes #123",
+      });
     });
 
     it("#9057: a NEWER webhook still updates body/linked issues/title/baseRef normally", async () => {
       const env = createTestEnv();
       await upsertPullRequestFromGitHub(env, "owner/repo", {
         number: 33, title: "wip", state: "open", user: { login: "bob" }, head: { sha: "a1", ref: "old-branch" },
-        base: { ref: "develop" }, body: "no issue yet", labels: [], updated_at: "2026-07-21T12:00:00.000Z",
+        base: { ref: "develop" }, body: "no issue yet", labels: [], author_association: "FIRST_TIME_CONTRIBUTOR", updated_at: "2026-07-21T12:00:00.000Z",
       });
       await upsertPullRequestFromGitHub(env, "owner/repo", {
         number: 33, title: "Add retry logic", state: "open", user: { login: "bob" }, head: { sha: "a2", ref: "feature-v2" },
-        base: { ref: "main" }, body: "Fixes #123", labels: [], updated_at: "2026-07-21T12:30:00.000Z",
+        base: { ref: "main" }, body: "Fixes #123", labels: [], author_association: "MEMBER", updated_at: "2026-07-21T12:30:00.000Z",
       });
       const stored = await getPullRequest(env, "owner/repo", 33);
       expect(stored?.linkedIssues).toEqual([123]);
-      expect(stored).toMatchObject({ title: "Add retry logic", baseRef: "main", headRef: "feature-v2", body: "Fixes #123" });
+      expect(stored).toMatchObject({ title: "Add retry logic", baseRef: "main", headRef: "feature-v2", body: "Fixes #123", authorAssociation: "MEMBER" });
     });
 
     it("a NEWER webhook (later updated_at) still applies normally", async () => {

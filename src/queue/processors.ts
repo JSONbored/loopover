@@ -5907,6 +5907,35 @@ async function maybeHandleForeignAppInstallationWebhookEvent(
 }
 
 /**
+ * #9056: resolve the PREVIOUS full name for a `repository.renamed` or `repository.transferred` delivery, or
+ * undefined when it cannot be determined (in which case the caller must do nothing rather than migrate toward
+ * a guessed identity). A rename changes the NAME under the same owner; a transfer changes the OWNER and keeps
+ * the name, carrying the old one in `changes.owner.from.{organization,user}.login`.
+ *
+ * Pure and exported so every shape — including the ones the live pipeline cannot reach, because the repository
+ * upsert running alongside this handler requires a full_name and would fail first — is directly testable.
+ * Returns undefined for a same-name result so an idempotent redelivery is a no-op.
+ */
+export function resolveRepositoryIdentityPredecessor(
+  action: string | undefined,
+  newFullName: string | undefined,
+  changes: GitHubWebhookPayload["changes"],
+): string | undefined {
+  if (!newFullName) return undefined;
+  const { owner: currentOwner, name: currentName } = repoParts(newFullName);
+  const oldFullName =
+    action === "transferred"
+      ? ((): string | undefined => {
+          const previousOwner = changes?.owner?.from?.organization?.login ?? changes?.owner?.from?.user?.login;
+          return previousOwner ? `${previousOwner}/${currentName}` : undefined;
+        })()
+      : changes?.repository?.name?.from
+        ? `${currentOwner}/${changes.repository.name.from}`
+        : undefined;
+  return oldFullName && oldFullName !== newFullName ? oldFullName : undefined;
+}
+
+/**
  * Handles a `repository` webhook with `action: "renamed"`: migrates the repo's identity forward across
  * every structural repo-identity column (see repo-identity-rename.ts) BEFORE the caller's normal
  * upsertRepositoryFromGitHub(payload.repository) runs, so that upsert correctly UPDATEs the now-renamed
@@ -5929,22 +5958,8 @@ async function maybeHandleRepositoryRenamedWebhookEvent(
   // nothing ever heals it.
   if (eventName !== "repository" || (payload.action !== "renamed" && payload.action !== "transferred")) return;
   const newFullName = payload.repository?.full_name;
-  if (!newFullName) return;
-  const currentOwner = payload.repository?.owner?.login ?? repoParts(newFullName).owner;
-  const currentName = payload.repository?.name ?? repoParts(newFullName).name;
-  // A rename changes the NAME under the same owner; a transfer changes the OWNER with the same name.
-  const previousOwner =
-    payload.changes?.owner?.from?.organization?.login ?? payload.changes?.owner?.from?.user?.login;
-  const oldFullName =
-    payload.action === "transferred"
-      ? previousOwner && currentName
-        ? `${previousOwner}/${currentName}`
-        : undefined
-      : payload.changes?.repository?.name?.from
-        ? `${currentOwner}/${payload.changes.repository.name.from}`
-        : undefined;
-  if (!oldFullName) return;
-  if (oldFullName === newFullName) return;
+  const oldFullName = resolveRepositoryIdentityPredecessor(payload.action, newFullName, payload.changes);
+  if (!oldFullName || !newFullName) return;
   await renameRepositoryIdentity(env, oldFullName, newFullName);
   await recordAuditEvent(env, {
     eventType: payload.action === "transferred" ? "github_app.repository_transferred" : "github_app.repository_renamed",

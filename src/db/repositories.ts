@@ -530,7 +530,7 @@ export async function upsertPullRequestFromGitHub(
     });
   // #9057: the returned record must describe what was PERSISTED, not the stale incoming payload — every caller
   // (handlePullRequestWebhookEvent's own closed-check, the gate pass that follows) acts on this in-process.
-  return { ...record, title: resolvedTitle, state: resolvedState, headSha: resolvedHeadSha, headRef: resolvedHeadRef ?? null, baseRef: resolvedBaseRef ?? null, mergedAt: resolvedMergedAt ?? null, labels: parseJson<string[]>(resolvedLabelsJson, []), body, linkedIssues, linkedIssueClaimedAt, bodyObservedAt, headShaObservedAt };
+  return { ...record, title: resolvedTitle, authorAssociation: resolvedAuthorAssociation ?? null, state: resolvedState, headSha: resolvedHeadSha, headRef: resolvedHeadRef ?? null, baseRef: resolvedBaseRef ?? null, mergedAt: resolvedMergedAt ?? null, labels: parseJson<string[]>(resolvedLabelsJson, []), body, linkedIssues, linkedIssueClaimedAt, bodyObservedAt, headShaObservedAt };
 }
 
 function resolveLinkedIssueClaimedAt(

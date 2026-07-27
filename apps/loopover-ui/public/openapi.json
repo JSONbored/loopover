@@ -16434,6 +16434,52 @@
             }
           }
         }
+      },
+      "ContributorWatchesResponse": {
+        "type": "object",
+        "properties": {
+          "watching": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "repoFullName": {
+                  "type": "string"
+                },
+                "labels": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "repoFullName",
+                "labels"
+              ]
+            }
+          },
+          "changed": {
+            "type": "string"
+          }
+        }
+      },
+      "ContributorWatchRequest": {
+        "type": "object",
+        "properties": {
+          "repoFullName": {
+            "type": "string"
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "repoFullName"
+        ]
       }
     },
     "parameters": {},
@@ -22485,6 +22531,131 @@
           },
           "403": {
             "description": "Forbidden repo access"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/contributors/{login}/watches": {
+      "get": {
+        "summary": "List a contributor's own issue-watch subscriptions — REST mirror of loopover_watch_issues (GET=list) (#9306)",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "login",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The contributor's own watch subscriptions (self-scoped): each repoFullName with its watched labels.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributorWatchesResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      },
+      "post": {
+        "summary": "Watch an issue label set for a contributor — REST mirror of loopover_watch_issues (POST=watch) (#9306)",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "login",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContributorWatchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated watch subscription list after adding the repo/label watch, with a changed marker.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributorWatchesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid watch subscription body"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      },
+      "delete": {
+        "summary": "Unwatch a contributor's issue subscription — REST mirror of loopover_watch_issues (DELETE=unwatch) (#9306)",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "login",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContributorWatchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated watch subscription list after removing the repo watch, with a changed marker.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributorWatchesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid watch subscription body"
           }
         },
         "security": [

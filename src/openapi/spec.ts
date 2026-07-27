@@ -37,6 +37,8 @@ import {
   IssueQualityReportSchema,
   IssueQualityResponseSchema,
   GateConfigEffectiveResponseSchema,
+  ContributorWatchesResponseSchema,
+  ContributorWatchRequestSchema,
   EligibilityPlanResponseSchema,
   ScoreBreakdownResponseSchema,
   FindOpportunitiesRequestSchema,
@@ -213,6 +215,8 @@ export function buildOpenApiSpec() {
   registry.register("IssueQualityReport", IssueQualityReportSchema);
   registry.register("IssueQualityResponse", IssueQualityResponseSchema);
   registry.register("GateConfigEffectiveResponse", GateConfigEffectiveResponseSchema);
+  registry.register("ContributorWatchesResponse", ContributorWatchesResponseSchema);
+  registry.register("ContributorWatchRequest", ContributorWatchRequestSchema);
   registry.register("SelftuneOverrideAuditResponse", SelftuneOverrideAuditResponseSchema);
   registry.register("ClearSelftuneOverrideResponse", ClearSelftuneOverrideResponseSchema);
   registry.register("EligibilityPlanResponse", EligibilityPlanResponseSchema);
@@ -1383,6 +1387,54 @@ export function buildOpenApiSpec() {
         content: { "application/json": { schema: NotificationsMarkedSchema } },
       },
       400: { description: "Invalid mark-read body" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/contributors/{login}/watches",
+    summary: "List a contributor's own issue-watch subscriptions — REST mirror of loopover_watch_issues (GET=list) (#9306)",
+    request: { params: z.object({ login: z.string() }) },
+    responses: {
+      200: {
+        description: "The contributor's own watch subscriptions (self-scoped): each repoFullName with its watched labels.",
+        content: { "application/json": { schema: ContributorWatchesResponseSchema } },
+      },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/contributors/{login}/watches",
+    summary: "Watch an issue label set for a contributor — REST mirror of loopover_watch_issues (POST=watch) (#9306)",
+    request: {
+      params: z.object({ login: z.string() }),
+      body: {
+        content: { "application/json": { schema: ContributorWatchRequestSchema } },
+      },
+    },
+    responses: {
+      200: {
+        description: "The updated watch subscription list after adding the repo/label watch, with a changed marker.",
+        content: { "application/json": { schema: ContributorWatchesResponseSchema } },
+      },
+      400: { description: "Invalid watch subscription body" },
+    },
+  });
+  registry.registerPath({
+    method: "delete",
+    path: "/v1/contributors/{login}/watches",
+    summary: "Unwatch a contributor's issue subscription — REST mirror of loopover_watch_issues (DELETE=unwatch) (#9306)",
+    request: {
+      params: z.object({ login: z.string() }),
+      body: {
+        content: { "application/json": { schema: ContributorWatchRequestSchema } },
+      },
+    },
+    responses: {
+      200: {
+        description: "The updated watch subscription list after removing the repo watch, with a changed marker.",
+        content: { "application/json": { schema: ContributorWatchesResponseSchema } },
+      },
+      400: { description: "Invalid watch subscription body" },
     },
   });
   registry.registerPath({

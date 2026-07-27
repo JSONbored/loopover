@@ -256,6 +256,18 @@ describe("runLoopEscalationSweep (#6349)", () => {
     expect(result.reason).toBe("invalid_global_webhook");
   });
 
+  it("continues when recording the missing-webhook 'denied' audit event itself throws (#9064)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(repositories, "recordAuditEvent").mockRejectedValueOnce(new Error("audit store unavailable"));
+    const result = await runLoopEscalationSweep(createTestEnv(), {
+      loadActiveLoops: () => [{ loopId: "broken", tenantId: "acme", runStatus: "error" }],
+    });
+    expect(result.notified).toBe(false);
+    expect(result.reason).toBe("missing_global_webhook");
+    expect(warnSpy.mock.calls.some((c) => String(c[0]).includes("loop_escalation_audit_failed"))).toBe(true);
+  });
+
   it("records an error when Discord returns a non-OK status", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);

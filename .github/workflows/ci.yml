@@ -699,6 +699,60 @@ jobs:
           override_commit: ${{ github.event.pull_request.head.sha }}
           override_pr: ${{ github.event.pull_request.number }}
           fail_ci_if_error: true
+      # @loopover/engine's own node:test suite (packages/loopover-engine/test/**/*.test.ts) has never run
+      # in this workflow before (#9064) -- only locally via `npm run test:ci`'s own `npm run test
+      # --workspace @loopover/engine`, and at release time via publish-engine.yml's workflow_dispatch-only
+      # validate job. So engine source was graded only by whatever vitest's root test/** suite happened to
+      # exercise, even though vitest.config.ts's coverage.include already counts packages/loopover-engine/
+      # src/** toward the total -- a PR touching, say, an engine module with a real node:test suite could
+      # satisfy codecov/patch with a thin, duplicate vitest test instead of ever running the real one.
+      # "Build engine package" above already produced dist/; this runs the package's real test script
+      # (which rebuilds dist/dist-test itself, same tsc-incremental cost as REES/control-plane's own
+      # install+test steps above).
+      - name: Engine package tests
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.engine == 'true' }}
+        run: npm run test --workspace @loopover/engine
+      # engine-coverage.ts re-runs the suite (dist-test/**/*.test.js, left in place by the step above)
+      # under c8, remapped through packages/loopover-engine/tsconfig.json's "sourceMap": true back to
+      # packages/loopover-engine/src/**.ts paths -- the same "node:test suite invisible to vitest" shape
+      # and c8 recipe as rees:coverage/control-plane:coverage above. The authoritative pass/fail for the
+      # suite is the uninstrumented step above; this harvest only needs to emit lcov.
+      - name: Engine coverage
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.engine == 'true' }}
+        run: npm run engine:coverage
+      - name: Verify engine coverage report exists
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.engine == 'true' }}
+        run: |
+          if [ ! -s packages/loopover-engine/coverage/lcov.info ]; then
+            echo "::error title=Engine coverage::packages/loopover-engine/coverage/lcov.info is missing or empty"
+            exit 1
+          fi
+      # Separate `engine` flag so codecov/patch actually gates packages/loopover-engine/src/** changes
+      # against the real node:test suite's coverage, not just whatever the root vitest suite happens to
+      # exercise. Same trusted vs. fork-tokenless split and override_* handling as REES/control-plane above.
+      - name: Upload engine coverage to Codecov
+        if: ${{ (github.event_name == 'push' || needs.changes.outputs.engine == 'true') && github.event.pull_request.head.repo.fork != true }}
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./packages/loopover-engine/coverage/lcov.info
+          flags: engine
+          disable_search: true
+          override_branch: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
+          override_commit: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          override_pr: ${{ github.event_name == 'pull_request' && github.event.pull_request.number || '' }}
+          fail_ci_if_error: true
+      - name: Upload engine coverage to Codecov (fork PR tokenless)
+        if: ${{ (github.event_name == 'push' || needs.changes.outputs.engine == 'true') && github.event.pull_request.head.repo.fork == true }}
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          files: ./packages/loopover-engine/coverage/lcov.info
+          flags: engine
+          disable_search: true
+          override_branch: ${{ github.event.pull_request.head.repo.owner.login }}:${{ github.event.pull_request.head.ref }}
+          override_commit: ${{ github.event.pull_request.head.sha }}
+          override_pr: ${{ github.event.pull_request.number }}
+          fail_ci_if_error: true
       - name: OpenAPI drift check
         if: ${{ github.event_name == 'push' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.uiContract == 'true' }}
         run: npm run ui:openapi:check

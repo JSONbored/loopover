@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { parse } from "yaml";
 
 function readYaml(path: string): Record<string, unknown> {
@@ -287,5 +288,133 @@ describe("Codecov policy", () => {
 
     const validateTests = nestedRecord(workflow, ["jobs", "validate-tests"]);
     expect(String(validateTests.if)).toContain("needs.changes.outputs.controlPlane == 'true'");
+  });
+});
+
+/** Mirrors vitest.config.ts's own coverage.include roots (kept in sync by hand, same discipline as that
+ *  file's own header comment) -- exactly the source trees Codecov gates on patch coverage, so a malformed
+ *  v8-ignore directive anywhere in them can silently widen an exempted range past what anyone intended,
+ *  precisely the bug this check exists to catch (#9064: src/scenarios/input-model.ts's `v8 ignore end` --
+ *  not a valid v8 terminator -- silently exempted everything from that point to EOF, ~30 lines wide of the
+ *  ~3 lines it was meant to cover). */
+const V8_IGNORE_SCAN_ROOTS = [
+  "src",
+  "packages/loopover-engine/src",
+  "packages/loopover-miner/lib",
+  "packages/loopover-miner/bin",
+  "packages/discovery-index/src",
+  "packages/loopover-mcp/lib",
+  "packages/loopover-mcp/bin",
+];
+
+function collectTsFiles(dir: string, out: string[] = []): string[] {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      collectTsFiles(path, out);
+    } else if (entry.isFile() && path.endsWith(".ts") && !path.endsWith(".d.ts")) {
+      out.push(path);
+    }
+  }
+  return out;
+}
+
+/** Every v8/c8 coverage-ignore hint this codebase actually uses (a bare `next`, `next N`, the `start`/
+ *  `stop` pair, whole-file `file`, and branch-shaped `else`) -- anything outside this set (e.g. `end`,
+ *  which is NOT a valid v8 terminator) is malformed, and worse, silently WIDENS the exempted range rather
+ *  than failing loudly: an unterminated `start` (a bad terminator keyword, or none at all before EOF)
+ *  keeps ignoring every subsequent line in the file, not just the intended block. */
+const VALID_V8_IGNORE_KEYWORDS = new Set(["next", "start", "stop", "file", "else"]);
+// Matched directly against the opening of a comment (`/*` + optional extra `*` for a `/**` doc-comment +
+// whitespace + "v8 ignore" + the keyword) -- deliberately NOT "find every /* ... */ span, then check its
+// contents": a real .ts file in this repo routinely contains a literal `/*` substring that is not a comment
+// opener at all (e.g. a route-path glob quoted in prose, `` `/v1/internal/*` ``, inside an ordinary `//`
+// line comment) -- naively pairing THAT `/*` with the next real `*/` anywhere later in the file merges two
+// unrelated comments into one bogus span and silently swallows whatever directive sits inside it (confirmed
+// empirically against src/api/routes.ts while building this check). Matching "v8 ignore" at the exact
+// position right after a real `/*` sidesteps the problem entirely: it needs no closing `*/` to be found.
+const V8_IGNORE_DIRECTIVE_RE = /\/\*\*?\s*v8 ignore\s+(\S+)/g;
+// Only consulted for the rare `file` directive, to check the same comment for an issue reference -- bounded
+// so a genuinely unrelated later `*/` (or none at all before EOF) can't runaway-scan the rest of the file.
+const COMMENT_TAIL_SEARCH_WINDOW = 500;
+
+function findMalformedV8IgnoreDirectives(filePath: string, content: string): string[] {
+  const problems: string[] = [];
+  let openStartLine: number | null = null;
+  V8_IGNORE_DIRECTIVE_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = V8_IGNORE_DIRECTIVE_RE.exec(content)) !== null) {
+    const keyword = match[1]!;
+    const line = content.slice(0, match.index).split("\n").length;
+    if (!VALID_V8_IGNORE_KEYWORDS.has(keyword)) {
+      problems.push(
+        `${filePath}:${line}: unrecognized "v8 ignore ${keyword}" -- not a valid v8 terminator (valid: ${[...VALID_V8_IGNORE_KEYWORDS].join(", ")})`,
+      );
+      continue;
+    }
+    if (keyword === "start") {
+      if (openStartLine !== null) {
+        problems.push(`${filePath}:${line}: "v8 ignore start" opened again before the one at line ${openStartLine} was closed with "stop"`);
+      }
+      openStartLine = line;
+    } else if (keyword === "stop") {
+      if (openStartLine === null) {
+        problems.push(`${filePath}:${line}: "v8 ignore stop" with no matching "v8 ignore start" before it`);
+      }
+      openStartLine = null;
+    } else if (keyword === "file") {
+      const tail = content.slice(match.index, match.index + COMMENT_TAIL_SEARCH_WINDOW);
+      const closeIndex = tail.indexOf("*/");
+      const comment = closeIndex === -1 ? tail : tail.slice(0, closeIndex);
+      if (!/#\d+/.test(comment)) {
+        problems.push(`${filePath}:${line}: whole-file "v8 ignore file" must reference an issue number (e.g. "#1234") justifying the exemption`);
+      }
+    }
+  }
+  if (openStartLine !== null) {
+    problems.push(
+      `${filePath}: "v8 ignore start" at line ${openStartLine} is never closed with a matching "v8 ignore stop" -- everything after it in the file is silently excluded from coverage`,
+    );
+  }
+  return problems;
+}
+
+describe("v8 ignore directive hygiene (#9064)", () => {
+  it("has no unterminated start, non-stop terminator, or unreferenced whole-file ignore", () => {
+    const problems = V8_IGNORE_SCAN_ROOTS.filter((root) => {
+      try {
+        return statSync(root).isDirectory();
+      } catch {
+        return false;
+      }
+    })
+      .flatMap((root) => collectTsFiles(root))
+      .flatMap((filePath) => findMalformedV8IgnoreDirectives(filePath, readFileSync(filePath, "utf8")));
+
+    expect(problems).toEqual([]);
+  });
+
+  it("flags the exact defect classes this check exists to catch (self-test)", () => {
+    expect(findMalformedV8IgnoreDirectives("fixture.ts", "/* v8 ignore end */\ncode();\n")).toEqual([
+      'fixture.ts:1: unrecognized "v8 ignore end" -- not a valid v8 terminator (valid: next, start, stop, file, else)',
+    ]);
+    expect(findMalformedV8IgnoreDirectives("fixture.ts", "/* v8 ignore start */\ncode();\n")).toEqual([
+      'fixture.ts: "v8 ignore start" at line 1 is never closed with a matching "v8 ignore stop" -- everything after it in the file is silently excluded from coverage',
+    ]);
+    expect(findMalformedV8IgnoreDirectives("fixture.ts", "code();\n/* v8 ignore stop */\n")).toEqual([
+      'fixture.ts:2: "v8 ignore stop" with no matching "v8 ignore start" before it',
+    ]);
+    expect(
+      findMalformedV8IgnoreDirectives("fixture.ts", "/* v8 ignore start */\ncode();\n/* v8 ignore start */\nmore();\n/* v8 ignore stop */\n"),
+    ).toEqual(['fixture.ts:3: "v8 ignore start" opened again before the one at line 1 was closed with "stop"']);
+    expect(findMalformedV8IgnoreDirectives("fixture.ts", "/* v8 ignore file */\ncode();\n")).toEqual([
+      'fixture.ts:1: whole-file "v8 ignore file" must reference an issue number (e.g. "#1234") justifying the exemption',
+    ]);
+    expect(findMalformedV8IgnoreDirectives("fixture.ts", "/* v8 ignore file -- see #1234 */\ncode();\n")).toEqual([]);
+    expect(findMalformedV8IgnoreDirectives("fixture.ts", "/* v8 ignore next */\ncode();\n")).toEqual([]);
+    expect(findMalformedV8IgnoreDirectives("fixture.ts", "/* v8 ignore next 3 */\ncode();\n")).toEqual([]);
+    expect(findMalformedV8IgnoreDirectives("fixture.ts", "/* v8 ignore start */\ncode();\n/* v8 ignore stop */\n")).toEqual([]);
+    expect(findMalformedV8IgnoreDirectives("fixture.ts", "/* v8 ignore else */\ncode();\n")).toEqual([]);
+    expect(findMalformedV8IgnoreDirectives("fixture.ts", "no ignores here\n")).toEqual([]);
   });
 });

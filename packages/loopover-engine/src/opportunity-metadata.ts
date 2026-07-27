@@ -121,6 +121,7 @@ export function computeMetadataPotential(issue: { labels: readonly string[] }): 
   if (labels.includes("refactor")) score += 0.05;
   return clamp01(score);
 }
+/* v8 ignore stop */
 
 /**
  * Estimate achievability from metadata-only cues: lower discussion load and fresher issues score higher.
@@ -235,4 +236,3 @@ export function rankMetadataOpportunities<T extends MetadataCandidateIssue>(
   /* v8 ignore next */
   return rankOpportunities(annotated) as Array<T & OpportunityRankInput & { rankScore: number }>;
 }
-/* v8 ignore stop */

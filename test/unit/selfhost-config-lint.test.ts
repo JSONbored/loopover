@@ -292,10 +292,11 @@ unknownSecretKey: super-secret-value
     // recognizedFieldsFor now applies the same JSON->YAML fallback as unknownTopLevelWarnings, so a flow-mapping
     // manifest that is valid YAML but invalid strict JSON reports its real recognized fields instead of [].
     expect(result.recognizedFields).toEqual(["wantedPaths"]);
-    expect(result.warnings).toEqual([
-      "Manifest content was not valid JSON; ignoring it and falling back to deterministic signals.",
-      "Manifest contains unknown top-level field: unknownSecretKey.",
-    ]);
+    // #9065: parseFocusManifestContent (the runtime parser lintManifestText now delegates its warnings to)
+    // ALSO retries YAML on a strict-JSON parse failure, matching this offline check's own long-standing
+    // fallback -- so this content is now genuinely accepted (no more spurious "not valid JSON" warning) and
+    // only the real unknown-field warning survives.
+    expect(result.warnings).toEqual(["Manifest contains unknown top-level field: unknownSecretKey."]);
     expect(JSON.stringify(result)).not.toContain("secret");
   });
 

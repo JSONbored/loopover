@@ -313,8 +313,8 @@ const ZERO_METER_TOTALS: AttemptMeterTotals = { tokens: 0, turns: 0, wallClockMs
 
 /** The result shape {@link runIterateLoopCore} itself returns -- everything BUT the meter fields, which the
  *  thin {@link runIterateLoop} wrapper attaches once, from `tracker`, at its own single always-reached return
- *  point (#5395). Keeps the core's own internal return statements -- including the `/* v8 ignore *\/`-guarded
- *  unreachable fallback -- byte-identical to their pre-#5395 shape, so that genuinely unreachable branch never
+ *  point (#5395). Keeps the core's own internal return statements -- including the v8-ignore-guarded
+ *  unreachable fallback below -- byte-identical to their pre-#5395 shape, so that genuinely unreachable branch never
  *  needs new fields threaded onto it (v8's ignore-comment suppresses vitest's OWN text-reporter percentage,
  *  but NOT the raw lcov Codecov reads -- a new field on that branch would show as a real uncovered patch line
  *  with no way to actually exercise it). */

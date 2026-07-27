@@ -434,6 +434,37 @@ describe("makeLocalManifestReader — review.shared_config overlay (#2046)", () 
     expect(parseFocusManifestContent(loaded!.content!).review.tone).toBe("repo-tone");
   });
 
+  // #9065: previously ONLY the shared-base layer's own parse failure was ever warned about -- a malformed
+  // global-default or per-repo layer was silently dropped with no warning, no log, no metric, so that repo
+  // silently demoted to whatever layer(s) remained with a clean-looking manifest.
+  it("warns (naming the candidate path) and ignores a malformed GLOBAL-default layer while still serving the shared base and per-repo layer", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-repo-config-"));
+    mkdirSync(join(dir, "_shared"));
+    writeFileSync(join(dir, "_shared", ".loopover.yml"), "review:\n  tone: house-tone\n");
+    writeFileSync(join(dir, ".loopover.yml"), "{ broken global");
+    mkdirSync(join(dir, "repo"));
+    writeFileSync(join(dir, "repo", ".loopover.yml"), "review:\n  profile: assertive\n");
+    const loaded = await readLocalManifestLoad(makeLocalManifestReader(dir)!, "owner/repo");
+    expect(loaded?.warnings.some((w) => w.includes("global-default") && w.includes(".loopover.yml"))).toBe(true);
+    const manifest = parseFocusManifestContent(loaded!.content!);
+    expect(manifest.review.tone).toBe("house-tone"); // shared base still contributes
+    expect(manifest.review.profile).toBe("assertive"); // per-repo layer still contributes
+  });
+
+  it("warns (naming the candidate path) and ignores a malformed PER-REPO layer while still serving the shared base and global default", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-repo-config-"));
+    mkdirSync(join(dir, "_shared"));
+    writeFileSync(join(dir, "_shared", ".loopover.yml"), "review:\n  tone: house-tone\n");
+    writeFileSync(join(dir, ".loopover.yml"), "gate:\n  enabled: true\n");
+    mkdirSync(join(dir, "repo"));
+    writeFileSync(join(dir, "repo", ".loopover.yml"), "{ broken repo");
+    const loaded = await readLocalManifestLoad(makeLocalManifestReader(dir)!, "owner/repo");
+    expect(loaded?.warnings.some((w) => w.includes("per-repo") && w.includes(join("repo", ".loopover.yml")))).toBe(true);
+    const manifest = parseFocusManifestContent(loaded!.content!);
+    expect(manifest.review.tone).toBe("house-tone"); // shared base still contributes
+    expect(manifest.gate.enabled).toBe(true); // global default still contributes
+  });
+
   it("fills review fields from the shared base when the per-repo file is silent on them", async () => {
     const dir = mkdtempSync(join(tmpdir(), "gt-repo-config-"));
     mkdirSync(join(dir, "_shared"));

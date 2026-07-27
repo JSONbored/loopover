@@ -338,6 +338,18 @@ describe("source-upload safety", () => {
     expect(JSON.stringify(input)).not.toMatch(/fileContent|sourceContent|upload/i);
   });
 
+  it("treats a whitespace-only branchName/baseRef as absent, not a blank string (optionalScenarioText's empty-after-trim fallback)", () => {
+    const input = scenarioInputFromLocalBranchMetadata({
+      scenarioType: "branch_preflight",
+      login: "miner",
+      repoFullName: "octo/demo",
+      branchName: "   ",
+      baseRef: "   ",
+    });
+    expect(input.branchState).toBeUndefined();
+    expect(input.facts.find((entry) => entry.id === "branch")).toBeUndefined();
+  });
+
   it("bounds local branch metadata before scenario validation", () => {
     const input = scenarioInputFromLocalBranchMetadata({
       scenarioType: "branch_preflight",

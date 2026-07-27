@@ -145,8 +145,27 @@ export class TestD1Database {
   }
 }
 
+/** One entry in the in-memory SELFHOST_TRANSIENT_CACHE mock below: the stored value plus the real
+ *  wall-clock ms (Date.now()) at which it expires. */
+type TransientCacheEntry = { value: string; expiresAtMs: number };
+
+/** True when `entry` exists and its TTL has not yet elapsed as of `nowMs` -- a type guard so callers can
+ *  narrow away the `| undefined` after checking. An expired entry reads back identically to an absent one
+ *  everywhere below, mirroring Redis's own server-side TTL expiry (a key past its EX either never existed
+ *  as far as GET/SET NX/compare-delete can tell). */
+function isLiveTransientCacheEntry(entry: TransientCacheEntry | undefined, nowMs: number): entry is TransientCacheEntry {
+  return entry !== undefined && entry.expiresAtMs > nowMs;
+}
+
 export function createTestEnv(overrides: Partial<Env> = {}): Env {
-  const transientCache = new Map<string, string>();
+  // #9063: previously a plain Map<string, string> whose set/claim silently discarded ttlSeconds
+  // entirely, so AI_REVIEW_LOCK_TTL_SECONDS (and every other lock namespace built on this shared
+  // cache) was a no-op in every test -- an orphaned-lock recovery, a starvation scenario, or a
+  // post-restart expiry was unrepresentable by construction. Storing a real expiresAtMs (read via the
+  // plain global Date.now(), which vitest's fake timers patch process-wide under
+  // vi.useFakeTimers()/vi.advanceTimersByTime()) makes all three ordinary, exactly the way the real
+  // Redis-backed cache (src/selfhost/redis-cache.ts's `SET key value EX ttlSeconds`) behaves.
+  const transientCache = new Map<string, TransientCacheEntry>();
   return {
     DB: new TestD1Database() as unknown as D1Database,
     JOBS: {
@@ -187,27 +206,40 @@ export function createTestEnv(overrides: Partial<Env> = {}): Env {
     MCP_READ_REPO_ALLOWLIST: "*",
     SELFHOST_TRANSIENT_CACHE: {
       async get(key: string) {
-        return transientCache.get(key) ?? null;
+        const entry = transientCache.get(key);
+        if (!isLiveTransientCacheEntry(entry, Date.now())) {
+          // Lazily sweep an expired entry on read -- not required for correctness (every accessor below
+          // re-checks expiry independently), just keeps the map from accumulating stale keys forever.
+          if (entry !== undefined) transientCache.delete(key);
+          return null;
+        }
+        return entry.value;
       },
-      async set(key: string, value: string) {
-        transientCache.set(key, value);
+      async set(key: string, value: string, ttlSeconds: number) {
+        transientCache.set(key, { value, expiresAtMs: Date.now() + ttlSeconds * 1000 });
       },
       async del(key: string) {
         transientCache.delete(key);
       },
       // Mirrors createRedisCache's atomic claim (#2129): the check-and-set below has no `await` between the
-      // `has` read and the `set` write, so it completes synchronously within one microtask — a concurrent
+      // expiry check and the `set` write, so it completes synchronously within one microtask — a concurrent
       // caller can never observe the key as absent partway through another caller's claim, matching Redis's
-      // SET NX server-side atomicity.
-      async claim(key: string, value: string) {
-        if (transientCache.has(key)) return false;
-        transientCache.set(key, value);
+      // SET NX server-side atomicity. An EXPIRED existing entry is treated exactly like an absent one, so a
+      // lock whose TTL has lapsed can be reclaimed -- the orphaned-lock recovery path this cache previously
+      // made unrepresentable.
+      async claim(key: string, value: string, ttlSeconds: number) {
+        const existing = transientCache.get(key);
+        if (isLiveTransientCacheEntry(existing, Date.now())) return false;
+        transientCache.set(key, { value, expiresAtMs: Date.now() + ttlSeconds * 1000 });
         return true;
       },
       // Mirrors createRedisCache's atomic compare-and-delete (#2129): only deletes when the stored value still
       // equals the caller's own token, so a stale holder's release can never delete a different, live claim.
+      // An already-expired entry reads back as "nothing to release" (false), matching a real Redis key whose
+      // TTL already lapsed server-side -- there is no longer anything for the compare-delete to find.
       async releaseIfValue(key: string, value: string) {
-        if (transientCache.get(key) !== value) return false;
+        const existing = transientCache.get(key);
+        if (!isLiveTransientCacheEntry(existing, Date.now()) || existing.value !== value) return false;
         transientCache.delete(key);
         return true;
       },

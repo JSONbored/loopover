@@ -1697,6 +1697,9 @@ const adminGetConfigOutputSchema = {
   found: z.boolean().optional(),
   path: z.string().nullable().optional(),
   content: z.string().nullable().optional(),
+  // #9065: only ever populated for scope "effective" (a dropped layer or an unknown-key parse warning); the
+  // "global"/"repo" scope branch reads a raw file with no merge/parse step to warn about.
+  warnings: z.array(z.string()).optional(),
 };
 const adminWriteConfigOutputSchema = {
   configured: z.boolean(),
@@ -4007,9 +4010,16 @@ export class LoopoverMcp {
       const reader = getLocalManifestReader();
       const loaded = reader ? await reader(repoFullName) : null;
       const content = typeof loaded === "string" ? loaded : (loaded?.content ?? null);
+      // #9065: previously extracted ONLY `.content`, discarding `.warnings` entirely -- an operator could ask
+      // this exact tool "what's effectively loaded for this repo" and see a clean-looking config even when a
+      // layer (shared/global/per-repo) had been silently dropped as malformed, or when the merged content
+      // itself carries unknown-key warnings. `loaded` is a plain string (no warnings field) on the LEGACY
+      // reader shape some tests/older readers still return -- only a LocalManifestLoadResult object carries
+      // `.warnings`.
+      const warnings = typeof loaded === "string" || loaded === null ? [] : loaded.warnings;
       return {
-        summary: content === null ? `LoopOver admin config: no effective config found for ${repoFullName}.` : `LoopOver admin config: effective config loaded for ${repoFullName}.`,
-        data: { configured: true, found: content !== null, path: null, content },
+        summary: content === null ? `LoopOver admin config: no effective config found for ${repoFullName}.` : `LoopOver admin config: effective config loaded for ${repoFullName}${warnings.length > 0 ? ` (${warnings.length} warning${warnings.length === 1 ? "" : "s"})` : ""}.`,
+        data: { configured: true, found: content !== null, path: null, content, warnings },
       };
     }
     const hit =

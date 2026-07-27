@@ -22,7 +22,6 @@ import {
   type FocusManifest,
   type FocusManifestSource,
 } from "./focus-manifest.js";
-import { unknownTopLevelWarnings } from "./config-lint.js";
 
 export type FocusManifestValidationStatus = "ok" | "warn" | "error";
 
@@ -40,10 +39,12 @@ export function buildFocusManifestValidation(input: {
   source?: FocusManifestSource | undefined;
 }): FocusManifestValidationResult {
   const manifest = parseFocusManifestContent(input.content, input.source ?? "repo_file");
-  // Warn on unrecognized top-level fields (e.g. a typo'd `gates:` instead of `gate:`), matching the
-  // selfhost config-lint validator — parseFocusManifestContent reads only known fields, so a mistyped
-  // block is otherwise silently dropped with no warning (#5929).
-  const warnings = [...manifest.warnings, ...unknownTopLevelWarnings(input.content)];
+  // #9065: parseFocusManifestContent's own manifest.warnings now ALREADY carries the unrecognized-top-level-
+  // field warnings (e.g. a typo'd `gates:` instead of `gate:`) -- parseFocusManifest calls
+  // unknownTopLevelManifestWarnings itself, wired in for the runtime load path, not just this offline
+  // validator (#5929). Concatenating a second, independent `unknownTopLevelWarnings(input.content)` call
+  // here would double the same warning; manifest.warnings alone is now sufficient.
+  const warnings = manifest.warnings;
   const normalized = focusManifestToNormalizedJson(manifest);
   return {
     present: manifest.present,

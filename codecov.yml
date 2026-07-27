@@ -49,6 +49,16 @@ flags:
     paths:
       - control-plane/
     carryforward: true
+  # @loopover/engine's real behavior suite is its own node:test suite (packages/loopover-engine/test/**),
+  # not vitest's root test/** -- that suite was invisible to Codecov entirely until now (#9064), even
+  # though packages/loopover-engine/src/** is already in vitest's coverage.include and counted by the
+  # unflagged `backend` upload for whatever a root test/** import happens to exercise. This flag is
+  # additive to that: both reports' hits are unioned for the same lines, so a PR touching engine source
+  # now gets credit from the suite that actually behavior-tests it, not just an incidental vitest import.
+  engine:
+    paths:
+      - packages/loopover-engine/src/
+    carryforward: true
 
 comment:
   layout: "condensed_header, diff, flags, files"

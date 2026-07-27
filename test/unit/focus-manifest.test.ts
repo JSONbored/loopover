@@ -95,7 +95,10 @@ describe("parseFocusManifest", () => {
       issueDiscoveryPolicy: "discouraged",
       publicNotes: ["Prefer small, focused PRs."],
     });
-    expect(manifest.warnings).toEqual([]);
+    // FULL_MANIFEST's legacy `blockedPaths` (retained here deliberately -- see "ignores legacy blockedPaths"
+    // below) is a RETIRED top-level field (#9065): parseFocusManifest now surfaces its migration warning
+    // instead of silently accepting it, matching the offline validator's own long-standing behavior.
+    expect(manifest.warnings).toEqual(["blockedPaths is retired; use settings.hardGuardrailGlobs for path holds."]);
   });
 
   it("treats null/undefined as an absent manifest", () => {
@@ -876,7 +879,8 @@ describe("compileFocusManifestPolicy", () => {
 
     // authenticated: private note count, no maintainer text in publicSafe
     expect(policy.authenticated.privateNoteCount).toBe(1);
-    expect(policy.authenticated.parseWarnings).toEqual([]);
+    // Same legacy `blockedPaths` migration warning as "normalizes a fully specified manifest" above (#9065).
+    expect(policy.authenticated.parseWarnings).toEqual(["blockedPaths is retired; use settings.hardGuardrailGlobs for path holds."]);
   });
 
   // ── Missing-field: partial manifest ───────────────────────────────────

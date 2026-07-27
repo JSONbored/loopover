@@ -539,6 +539,29 @@ export const NotificationsMarkedSchema = z
   })
   .openapi("NotificationsMarked");
 
+/**
+ * Response for /v1/contributors/{login}/watches (GET list + POST watch + DELETE unwatch). Field-level parity
+ * with `watchIssuesOutputSchema` (the `loopover_watch_issues` MCP tool `outputSchema`) in src/mcp/server.ts —
+ * #9306. GET returns just `watching`; a POST/DELETE mutation also echoes a `changed` marker.
+ */
+export const ContributorWatchesResponseSchema = z
+  .object({
+    watching: z.array(z.object({ repoFullName: z.string(), labels: z.array(z.string()) })).optional(),
+    changed: z.string().optional(),
+  })
+  .openapi("ContributorWatchesResponse");
+
+/**
+ * Request body for POST/DELETE /v1/contributors/{login}/watches. Mirrors `watchSubscriptionBodySchema`
+ * (src/api/routes.ts) — repoFullName plus POST-only labels; a DELETE ignores labels. #9306.
+ */
+export const ContributorWatchRequestSchema = z
+  .object({
+    repoFullName: z.string(),
+    labels: z.array(z.string()).optional(),
+  })
+  .openapi("ContributorWatchRequest");
+
 export const ContributorOpportunitySchema = z
   .object({
     repoFullName: z.string(),

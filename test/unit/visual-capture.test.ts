@@ -426,7 +426,7 @@ describe("visual capture preview discovery", () => {
     await buildCapture(
       env,
       "installation-token",
-      { repoFullName: "owner/repo", prNumber: 18, headSha: "absent-with-fallback-head", previewFromChecks: true, defaultBranchRef: "main" },
+      { repoFullName: "owner/repo", prNumber: 18, headSha: "absent-with-fallback-head", previewFromChecks: true, defaultBranchRef: "main", mode: "live" as const },
       ["apps/loopover-ui/src/routes/app.index.tsx"],
       undefined,
       { actionsFallback: true },
@@ -2673,7 +2673,7 @@ describe("review.visual.actions_fallback (#4112 GitHub-Actions build-and-serve f
     const result = await buildCapture(
       createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "" }),
       "installation-token",
-      { repoFullName: "owner/repo", prNumber: 20, headSha: "cafebabe", previewFromChecks: true, defaultBranchRef: "main" },
+      { repoFullName: "owner/repo", prNumber: 20, headSha: "cafebabe", previewFromChecks: true, defaultBranchRef: "main", mode: "live" as const },
       ["apps/loopover-ui/src/routes/app.index.tsx"],
       undefined,
       { actionsFallback: true },
@@ -2705,7 +2705,7 @@ describe("review.visual.actions_fallback (#4112 GitHub-Actions build-and-serve f
     const result = await buildCapture(
       env,
       "installation-token",
-      { repoFullName: "owner/repo", prNumber: 20, headSha: "cafebabecafebabecafebabecafebabecafebabe", previewFromChecks: true, defaultBranchRef: "main" },
+      { repoFullName: "owner/repo", prNumber: 20, headSha: "cafebabecafebabecafebabecafebabecafebabe", previewFromChecks: true, defaultBranchRef: "main", mode: "live" as const },
       ["apps/loopover-ui/src/routes/app.index.tsx"],
       undefined,
       { actionsFallback: true },
@@ -2713,6 +2713,57 @@ describe("review.visual.actions_fallback (#4112 GitHub-Actions build-and-serve f
 
     expect(dispatchCalled).toBe(false);
     expect(result.previewPending).toBe(true);
+  });
+
+  // #9067: this dispatch is a real GitHub WRITE — it starts an Actions run and burns CI minutes in the target
+  // repo — but it goes out via raw timeoutFetch, so it never passes makeInstallationOctokit's
+  // mutation-suppression hook, the structural check every other installation write relies on. runVisualCapture
+  // only short-circuited on `paused`, so under `dry_run` it fired for real, contradicting the documented
+  // dry-run contract ("suppresses the terminal GitHub-side write only").
+  it("#9067: does NOT dispatch under dry_run — the workflow_dispatch is a real write and must obey the mode", async () => {
+    let dispatchCalled = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (input.toString().includes("/dispatches")) {
+        dispatchCalled = true;
+        return new Response(null, { status: 204 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    const env = createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "", REVIEW_AUDIT: memoryReviewAudit() });
+
+    await buildCapture(
+      env,
+      "installation-token",
+      { repoFullName: "owner/repo", prNumber: 90, headSha: "drySha0000000000000000000000000000000000", previewFromChecks: true, defaultBranchRef: "main", mode: "dry_run" as const },
+      ["apps/loopover-ui/src/routes/app.index.tsx"],
+      undefined,
+      { actionsFallback: true },
+    );
+
+    expect(dispatchCalled).toBe(false);
+  });
+
+  it("#9067: does NOT dispatch when the mode is absent — an unknown mode is treated as non-live (fail-safe)", async () => {
+    let dispatchCalled = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (input.toString().includes("/dispatches")) {
+        dispatchCalled = true;
+        return new Response(null, { status: 204 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    const env = createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "", REVIEW_AUDIT: memoryReviewAudit() });
+
+    await buildCapture(
+      env,
+      "installation-token",
+      { repoFullName: "owner/repo", prNumber: 91, headSha: "nomode00000000000000000000000000000000000", previewFromChecks: true, defaultBranchRef: "main" },
+      ["apps/loopover-ui/src/routes/app.index.tsx"],
+      undefined,
+      { actionsFallback: true },
+    );
+
+    expect(dispatchCalled).toBe(false);
   });
 
   it("dispatches a NEW run when the persisted marker is for a DIFFERENT headSha (a later push)", async () => {
@@ -2733,7 +2784,7 @@ describe("review.visual.actions_fallback (#4112 GitHub-Actions build-and-serve f
     const result = await buildCapture(
       env,
       "installation-token",
-      { repoFullName: "owner/repo", prNumber: 20, headSha: "cafebabecafebabecafebabecafebabecafebabe", previewFromChecks: true, defaultBranchRef: "main" },
+      { repoFullName: "owner/repo", prNumber: 20, headSha: "cafebabecafebabecafebabecafebabecafebabe", previewFromChecks: true, defaultBranchRef: "main", mode: "live" as const },
       ["apps/loopover-ui/src/routes/app.index.tsx"],
       undefined,
       { actionsFallback: true },
@@ -2752,7 +2803,7 @@ describe("review.visual.actions_fallback (#4112 GitHub-Actions build-and-serve f
     const result = await buildCapture(
       createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "" }),
       "installation-token",
-      { repoFullName: "owner/repo", prNumber: 21, headSha: "cafebabe", previewFromChecks: true, defaultBranchRef: "main" },
+      { repoFullName: "owner/repo", prNumber: 21, headSha: "cafebabe", previewFromChecks: true, defaultBranchRef: "main", mode: "live" as const },
       ["apps/loopover-ui/src/routes/app.index.tsx"],
       undefined,
       { actionsFallback: true },
@@ -2774,7 +2825,7 @@ describe("review.visual.actions_fallback (#4112 GitHub-Actions build-and-serve f
     const result = await buildCapture(
       createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "" }),
       "installation-token",
-      { repoFullName: "owner/repo", prNumber: 22, headSha: "cafebabe", previewFromChecks: true, defaultBranchRef: "main" },
+      { repoFullName: "owner/repo", prNumber: 22, headSha: "cafebabe", previewFromChecks: true, defaultBranchRef: "main", mode: "live" as const },
       ["apps/loopover-ui/src/routes/app.index.tsx"],
     );
 
@@ -2797,7 +2848,7 @@ describe("review.visual.actions_fallback (#4112 GitHub-Actions build-and-serve f
     await buildCapture(
       createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "" }),
       "installation-token",
-      { repoFullName: "owner/repo", prNumber: 23, previewFromChecks: true, defaultBranchRef: "main" },
+      { repoFullName: "owner/repo", prNumber: 23, previewFromChecks: true, defaultBranchRef: "main", mode: "live" as const },
       ["apps/loopover-ui/src/routes/app.index.tsx"],
       undefined,
       { actionsFallback: true },
@@ -2841,7 +2892,7 @@ describe("review.visual.actions_fallback (#4112 GitHub-Actions build-and-serve f
     const result = await buildCapture(
       createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "" }),
       "installation-token",
-      { repoFullName: "owner/repo", prNumber: 25, headSha: "cafebabe", previewFailed: true, defaultBranchRef: "main" },
+      { repoFullName: "owner/repo", prNumber: 25, headSha: "cafebabe", previewFailed: true, defaultBranchRef: "main", mode: "live" as const },
       ["apps/loopover-ui/src/routes/app.index.tsx"],
       undefined,
       { actionsFallback: true },
@@ -2868,7 +2919,7 @@ describe("review.visual.actions_fallback (#4112 GitHub-Actions build-and-serve f
     const result = await buildCapture(
       createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "" }),
       "installation-token",
-      { repoFullName: "owner/repo", prNumber: 26, headSha: "cafebabe", previewFromChecks: true, defaultBranchRef: "main" },
+      { repoFullName: "owner/repo", prNumber: 26, headSha: "cafebabe", previewFromChecks: true, defaultBranchRef: "main", mode: "live" as const },
       ["apps/loopover-ui/src/routes/app.index.tsx"],
       undefined,
       { actionsFallback: true },
@@ -2891,7 +2942,7 @@ describe("review.visual.actions_fallback (#4112 GitHub-Actions build-and-serve f
     const result = await buildCapture(
       env,
       "installation-token",
-      { repoFullName: "owner/repo", prNumber: 27, headSha: "cafebabe", previewFromChecks: true, defaultBranchRef: "main" },
+      { repoFullName: "owner/repo", prNumber: 27, headSha: "cafebabe", previewFromChecks: true, defaultBranchRef: "main", mode: "live" as const },
       ["apps/loopover-ui/src/routes/app.index.tsx"],
       undefined,
       { actionsFallback: true },
@@ -2914,7 +2965,7 @@ describe("review.visual.actions_fallback (#4112 GitHub-Actions build-and-serve f
     const result = await buildCapture(
       env,
       "installation-token",
-      { repoFullName: "owner/repo", prNumber: 29, headSha: "cafebabe", previewFromChecks: true, defaultBranchRef: "main" },
+      { repoFullName: "owner/repo", prNumber: 29, headSha: "cafebabe", previewFromChecks: true, defaultBranchRef: "main", mode: "live" as const },
       ["apps/loopover-ui/src/routes/app.index.tsx"],
       undefined,
       { actionsFallback: true },
@@ -2936,7 +2987,7 @@ describe("review.visual.actions_fallback (#4112 GitHub-Actions build-and-serve f
     const result = await buildCapture(
       env,
       "installation-token",
-      { repoFullName: "owner/repo", prNumber: 31, headSha: "cafebabe", previewFromChecks: true, defaultBranchRef: "main" },
+      { repoFullName: "owner/repo", prNumber: 31, headSha: "cafebabe", previewFromChecks: true, defaultBranchRef: "main", mode: "live" as const },
       ["apps/loopover-ui/src/routes/app.index.tsx"],
       undefined,
       { actionsFallback: true },
@@ -2956,7 +3007,7 @@ describe("review.visual.actions_fallback (#4112 GitHub-Actions build-and-serve f
     const result = await buildCapture(
       env,
       "installation-token",
-      { repoFullName: "owner/repo", prNumber: 28, headSha: "cafebabe", previewFromChecks: true, defaultBranchRef: "main" },
+      { repoFullName: "owner/repo", prNumber: 28, headSha: "cafebabe", previewFromChecks: true, defaultBranchRef: "main", mode: "live" as const },
       ["apps/loopover-ui/src/routes/app.index.tsx"],
       undefined,
       { actionsFallback: true },
@@ -2976,7 +3027,7 @@ describe("review.visual.actions_fallback (#4112 GitHub-Actions build-and-serve f
     const result = await buildCapture(
       env,
       "installation-token",
-      { repoFullName: "owner/repo", prNumber: 30, headSha: "cafebabe", previewFromChecks: true, defaultBranchRef: "main" },
+      { repoFullName: "owner/repo", prNumber: 30, headSha: "cafebabe", previewFromChecks: true, defaultBranchRef: "main", mode: "live" as const },
       ["apps/loopover-ui/src/routes/app.index.tsx"],
       undefined,
       { actionsFallback: true },
@@ -2991,7 +3042,7 @@ describe("review.visual.actions_fallback (#4112 GitHub-Actions build-and-serve f
     const result = await buildCapture(
       createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com" }),
       "installation-token",
-      { repoFullName: "owner/repo", prNumber: 29, headSha: "cafebabe", previewFromChecks: true, defaultBranchRef: "main" },
+      { repoFullName: "owner/repo", prNumber: 29, headSha: "cafebabe", previewFromChecks: true, defaultBranchRef: "main", mode: "live" as const },
       ["apps/loopover-ui/src/routes/app.index.tsx"],
       undefined,
       { actionsFallback: true },

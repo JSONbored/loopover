@@ -6254,3 +6254,44 @@ describe("formatManifestValidationNotice (#2056)", () => {
     expect(formatManifestValidationNotice(valid.warnings)).toBeNull();
   });
 });
+
+// #9049 — verified live: the global default private-config layer carried `agentDryRun: false`, and because a
+// plain spread lets the manifest win, that silently discarded `agent_dry_run=1` on EVERY read for EVERY repo.
+// An operator flipping dry-run from the dashboard / PUT /settings / `loopover-mcp maintain` / the
+// `loopover_set_agent_dry_run` MCP tool got a SUCCESS message while ORB kept making real GitHub writes. Both
+// kill-switch flags are now ratchets: config-as-code may TIGHTEN safety, never loosen it.
+describe("kill-switch flags are ratchets, not overridable settings (#9049)", () => {
+  // Built through the REAL parse path, so this also proves the flags survive parseFocusManifest.
+  const manifestWith = (settings: Record<string, unknown>) => parseFocusManifest({ settings });
+
+  it("a manifest agentDryRun:false CANNOT clear a DB dry-run (the live fleet-wide bug)", () => {
+    const effective = resolveEffectiveSettings({ agentDryRun: true } as RepositorySettings, manifestWith({ agentDryRun: false }));
+    expect(effective.agentDryRun).toBe(true);
+  });
+
+  it("a manifest agentPaused:false CANNOT clear a DB pause", () => {
+    const effective = resolveEffectiveSettings({ agentPaused: true } as RepositorySettings, manifestWith({ agentPaused: false }));
+    expect(effective.agentPaused).toBe(true);
+  });
+
+  it("a manifest CAN still tighten: true wins even when the DB says false", () => {
+    const effective = resolveEffectiveSettings(
+      { agentPaused: false, agentDryRun: false } as RepositorySettings,
+      manifestWith({ agentPaused: true, agentDryRun: true }),
+    );
+    expect(effective).toMatchObject({ agentPaused: true, agentDryRun: true });
+  });
+
+  it("both off in both layers stays off (no accidental fleet-wide pause)", () => {
+    const effective = resolveEffectiveSettings(
+      { agentPaused: false, agentDryRun: false } as RepositorySettings,
+      manifestWith({}),
+    );
+    expect(effective).toMatchObject({ agentPaused: false, agentDryRun: false });
+  });
+
+  it("an absent manifest key leaves the DB value intact in both directions", () => {
+    expect(resolveEffectiveSettings({ agentDryRun: true } as RepositorySettings, manifestWith({})).agentDryRun).toBe(true);
+    expect(resolveEffectiveSettings({ agentDryRun: false } as RepositorySettings, manifestWith({})).agentDryRun).toBe(false);
+  });
+});

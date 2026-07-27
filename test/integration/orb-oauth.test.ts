@@ -32,7 +32,13 @@ describe("GET /v1/orb/oauth/callback (post-install landing)", () => {
   it("the new exemption + rate class are path-specific (a later orb path still routes)", async () => {
     // /v1/orb/ingest falls through PAST the new callback checks, exercising their FALSE side in both
     // requiresApiToken + routeClassForPath (the webhook path short-circuits earlier and wouldn't reach them).
-    const res = await app.request("/v1/orb/ingest", { method: "POST" }, createTestEnv());
+    // #9046: ingest now fails closed on an unset token, so present one — otherwise this would stop at 401 and
+    // no longer demonstrate that the request reaches the ingest handler's own BODY handling.
+    const res = await app.request(
+      "/v1/orb/ingest",
+      { method: "POST", headers: { authorization: "Bearer fleet-secret" } },
+      createTestEnv({ ORB_INGEST_TOKEN: "fleet-secret" }),
+    );
     expect([400, 413]).toContain(res.status); // reached the (exempt) ingest handler, failed only on the empty body
   });
 

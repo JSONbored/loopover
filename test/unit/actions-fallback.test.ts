@@ -344,6 +344,7 @@ describe("dispatchVisualCaptureFallback", () => {
       prNumber: 7,
       headSha: "deadbeef",
       routes: ["/", "/pricing"],
+      mode: "live",
     });
     expect(ok).toBe(true);
     expect(capturedUrl).toBe("https://api.github.com/repos/acme/widgets/actions/workflows/visual-capture-fallback.yml/dispatches");
@@ -351,6 +352,24 @@ describe("dispatchVisualCaptureFallback", () => {
       ref: "main",
       inputs: { pr_number: "7", head_sha: "deadbeef", routes: JSON.stringify(["/", "/pricing"]) },
     });
+  });
+
+  // #9067: this dispatch is a real GitHub write (it starts an Actions run and burns CI minutes) issued via raw
+  // timeoutFetch, so it never passes makeInstallationOctokit's mutation-suppression hook. Refusing in the
+  // writer itself — with an absent mode treated as non-live — keeps the guarantee structural rather than
+  // dependent on every caller remembering a check.
+  it("#9067: refuses to dispatch under any non-live mode, and when the mode is absent", async () => {
+    let called = false;
+    vi.stubGlobal("fetch", async () => {
+      called = true;
+      return new Response(null, { status: 204 });
+    });
+    const base = { token: "tok", repo: { owner: "acme", repo: "widgets" }, ref: "main", prNumber: 7, headSha: "deadbeef", routes: ["/"] };
+    for (const mode of ["dry_run", "paused"] as const) {
+      expect(await dispatchVisualCaptureFallback({ ...base, mode })).toBe(false);
+    }
+    expect(await dispatchVisualCaptureFallback(base)).toBe(false); // absent ⇒ non-live (fail-safe)
+    expect(called).toBe(false);
   });
 
   it("dispatches successfully when a rateLimitAdmissionKey is supplied", async () => {
@@ -363,6 +382,7 @@ describe("dispatchVisualCaptureFallback", () => {
       headSha: "deadbeef",
       routes: ["/"],
       rateLimitAdmissionKey: "installation:1",
+      mode: "live",
     });
     expect(ok).toBe(true);
   });

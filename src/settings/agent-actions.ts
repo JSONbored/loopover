@@ -612,10 +612,24 @@ export function downgradeCloseToHold(
   labelSettings: AgentDispositionLabelSettings = {},
   untrustworthyRuleCodes: ReadonlySet<string> = new Set(),
 ): PlannedAgentAction[] {
+  // #9086: the breaker exemption used to key on `closeKind === "heuristic"` alone, so all SIX non-heuristic
+  // close paths (blacklist, contributor_cap, review_nag, copycat, screenshot_table, and the linked-issue hard
+  // rule) were returned untouched by BOTH Reason A and Reason B — and none of them gets the executor-side live
+  // recheck either, which is likewise gated on "heuristic".
+  //
+  // The stated justification ("zero-hallucination, deterministic") holds for the IDENTITY-based closes:
+  // blacklist and contributor_cap read facts about an account, so a precision breaker has nothing to add. It
+  // does NOT hold for the CONTENT-INSPECTION closes, whose "determinism" is a regex heuristic over free-text
+  // markdown — screenshot_table is our single top close reason all-time. A deterministic rule can still be
+  // systematically wrong, which is precisely what the breaker exists to catch.
+  const CONTENT_INSPECTION_CLOSE_KINDS: ReadonlySet<string> = new Set(["screenshot_table", "review_nag", "copycat"]);
+  const isBreakerEligibleClose = (action: PlannedAgentAction): boolean =>
+    action.closeKind === "heuristic" || (action.closeKind !== undefined && CONTENT_INSPECTION_CLOSE_KINDS.has(action.closeKind));
+
   // Reason A (project-level, unchanged from before #7986): no concrete evidence at all, AND the project's
   // close-precision breaker has engaged.
   const noConcreteEvidenceUnderProjectBreaker = (action: PlannedAgentAction): boolean =>
-    action.actionClass === "close" && action.closeKind === "heuristic" && action.closeConcreteEvidence !== true && closeHoldOnly;
+    action.actionClass === "close" && isBreakerEligibleClose(action) && action.closeConcreteEvidence !== true && closeHoldOnly;
   // Reason B (#7986, per-rule, independent of closeHoldOnly): HAS concrete evidence, but every code that
   // justified it has its own bad track record. `.every` (not `.some`) so a close backed by a MIX of a
   // trustworthy code and an untrustworthy one keeps its exemption via the trustworthy code -- only a close
@@ -626,7 +640,7 @@ export function downgradeCloseToHold(
   };
   const isDowngradableClose = (action: PlannedAgentAction): boolean =>
     action.actionClass === "close" &&
-    action.closeKind === "heuristic" &&
+    isBreakerEligibleClose(action) &&
     (noConcreteEvidenceUnderProjectBreaker(action) || (action.closeConcreteEvidence === true && everyJustifyingCodeUntrustworthy(action)));
   if (!planned.some(isDowngradableClose)) return planned;
   const labels = resolveAgentDispositionLabels(labelSettings);

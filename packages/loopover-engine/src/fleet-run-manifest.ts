@@ -38,6 +38,14 @@ export type ParsedFleetRunManifest = {
   warnings: string[];
 };
 
+/**
+ * Default per-repo concurrent-worktree budget when a repos entry omits `maxConcurrentWorktrees`
+ * (bare `"owner/repo"` string, or an object without that field). Deliberately independent of
+ * {@link DEFAULT_FLEET_RUN_MANIFEST.totalConcurrentWorktrees} so a future change to the fleet-wide
+ * total default cannot silently rewrite every bare-string repo's per-repo cap (#9324).
+ */
+export const DEFAULT_FLEET_RUN_MANIFEST_REPO_MAX_CONCURRENT_WORKTREES = 1;
+
 /** Safe defaults applied when a field is absent (or the file is missing): no repos in scope, one worktree total.
  *  Deep-frozen shared singleton — clone before layering overrides. */
 export const DEFAULT_FLEET_RUN_MANIFEST: FleetRunManifest = Object.freeze({
@@ -93,13 +101,18 @@ function normalizeRepoList(value: unknown, warnings: string[]): FleetRunManifest
       break;
     }
     let repoFullName: string | null;
-    let maxConcurrentWorktrees = DEFAULT_FLEET_RUN_MANIFEST.totalConcurrentWorktrees;
+    let maxConcurrentWorktrees = DEFAULT_FLEET_RUN_MANIFEST_REPO_MAX_CONCURRENT_WORKTREES;
     if (typeof entry === "string") {
       repoFullName = normalizeRepoFullName(entry);
     } else if (entry && typeof entry === "object" && !Array.isArray(entry)) {
       const record = entry as Record<string, unknown>;
       repoFullName = normalizeRepoFullName(record.repoFullName);
-      maxConcurrentWorktrees = normalizePositiveInteger(record.maxConcurrentWorktrees, "maxConcurrentWorktrees", 1, warnings);
+      maxConcurrentWorktrees = normalizePositiveInteger(
+        record.maxConcurrentWorktrees,
+        "maxConcurrentWorktrees",
+        DEFAULT_FLEET_RUN_MANIFEST_REPO_MAX_CONCURRENT_WORKTREES,
+        warnings,
+      );
     } else {
       warnings.push(`FleetRunManifest "repos" skipped a non-string, non-mapping entry.`);
       continue;

@@ -1,6 +1,8 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_FLEET_RUN_MANIFEST,
+  DEFAULT_FLEET_RUN_MANIFEST_REPO_MAX_CONCURRENT_WORKTREES,
   parseFleetRunManifest,
   parseFleetRunManifestContent,
 } from "../../packages/loopover-engine/src/index";
@@ -106,5 +108,41 @@ describe("FleetRunManifest parser (#4299)", () => {
     expect(parseFleetRunManifestContent('{"repos": [invalid json}').warnings.join(" ")).toMatch(/not valid JSON/);
     expect(parseFleetRunManifestContent("repos:\n  - : :\n :bad").warnings.join(" ")).toMatch(/not valid YAML/);
     expect(parseFleetRunManifestContent("x".repeat(65_537)).warnings.join(" ")).toMatch(/exceeded 65536 bytes/);
+  });
+
+  it("#9324: bare-string per-repo default stays on the dedicated constant when the fleet-wide total default diverges", () => {
+    // DEFAULT_FLEET_RUN_MANIFEST is Object.freeze'd, so its totalConcurrentWorktrees can't be
+    // reassigned in place (there is no existing fixture hook that overrides it). Prove the two
+    // defaults are decoupled by (1) pinning that normalizeRepoList no longer seeds the per-repo
+    // default from totalConcurrentWorktrees and (2) asserting a bare-string entry keeps the
+    // dedicated per-repo constant even when the *parsed* fleet-wide total is set to something else.
+    expect(DEFAULT_FLEET_RUN_MANIFEST_REPO_MAX_CONCURRENT_WORKTREES).toBe(1);
+    expect(DEFAULT_FLEET_RUN_MANIFEST.totalConcurrentWorktrees).toBe(1);
+
+    const source = readFileSync("packages/loopover-engine/src/fleet-run-manifest.ts", "utf8");
+    expect(source).toMatch(/let maxConcurrentWorktrees = DEFAULT_FLEET_RUN_MANIFEST_REPO_MAX_CONCURRENT_WORKTREES;/);
+    expect(source).not.toMatch(/let maxConcurrentWorktrees = DEFAULT_FLEET_RUN_MANIFEST\.totalConcurrentWorktrees;/);
+    expect(source).toMatch(
+      /normalizePositiveInteger\(\s*record\.maxConcurrentWorktrees,\s*"maxConcurrentWorktrees",\s*DEFAULT_FLEET_RUN_MANIFEST_REPO_MAX_CONCURRENT_WORKTREES,/s,
+    );
+
+    const divergentFleetTotal = 99;
+    const parsed = parseFleetRunManifest({ repos: ["owner/a"], totalConcurrentWorktrees: divergentFleetTotal });
+    expect(parsed.manifest.totalConcurrentWorktrees).toBe(divergentFleetTotal);
+    expect(parsed.manifest.repos).toEqual([
+      {
+        repoFullName: "owner/a",
+        maxConcurrentWorktrees: DEFAULT_FLEET_RUN_MANIFEST_REPO_MAX_CONCURRENT_WORKTREES,
+      },
+    ]);
+    expect(parsed.manifest.repos[0]?.maxConcurrentWorktrees).not.toBe(divergentFleetTotal);
+
+    const omittedObject = parseFleetRunManifest({
+      repos: [{ repoFullName: "owner/b" }],
+      totalConcurrentWorktrees: divergentFleetTotal,
+    });
+    expect(omittedObject.manifest.repos[0]?.maxConcurrentWorktrees).toBe(
+      DEFAULT_FLEET_RUN_MANIFEST_REPO_MAX_CONCURRENT_WORKTREES,
+    );
   });
 });

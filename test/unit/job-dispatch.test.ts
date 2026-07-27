@@ -104,3 +104,43 @@ describe("processJob backfill-registered-repos fan-out isolation (#8355)", () =>
     expect(errorLogs.some((line) => line.includes("backfill_registered_repos_fanout_send_failed"))).toBe(false);
   });
 });
+
+// #9032: the approval-queue staleness pass rides the re-gate sweep's own fan-out tick rather than adding a job
+// type and a cron entry for a bounded DB scan. It must be best-effort and must run BEFORE the fan-out — a
+// failure sweeping the queue cannot be allowed to cost the tick its actual re-gate work.
+describe("agent-regate-sweep also sweeps the stale approval queue (#9032)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("logs what it swept when a pending row was reminded or expired", async () => {
+    const env = createTestEnv();
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => void logs.push(String(args[0])));
+    const approvalQueue = await import("../../src/services/agent-approval-queue");
+    vi.spyOn(approvalQueue, "sweepStaleApprovalQueue").mockResolvedValue({ reminded: 2, expired: 1 });
+
+    await processJob(env, { type: "agent-regate-sweep", requestedBy: "schedule" });
+
+    const swept = logs.map((line) => JSON.parse(line) as Record<string, unknown>).find((log) => log.event === "approval_queue_staleness_swept");
+    expect(swept).toMatchObject({ reminded: 2, expired: 1 });
+  });
+
+  it("stays quiet when there was nothing to sweep", async () => {
+    const env = createTestEnv();
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => void logs.push(String(args[0])));
+
+    await processJob(env, { type: "agent-regate-sweep", requestedBy: "schedule" });
+
+    expect(logs.map((line) => JSON.parse(line) as Record<string, unknown>).some((log) => log.event === "approval_queue_staleness_swept")).toBe(false);
+  });
+
+  it("still fans out the re-gate work when the approval sweep throws", async () => {
+    const env = createTestEnv();
+    const approvalQueue = await import("../../src/services/agent-approval-queue");
+    vi.spyOn(approvalQueue, "sweepStaleApprovalQueue").mockRejectedValue(new Error("db down"));
+
+    await expect(processJob(env, { type: "agent-regate-sweep", requestedBy: "schedule" })).resolves.toBeUndefined();
+  });
+});

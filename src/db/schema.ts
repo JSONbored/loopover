@@ -377,10 +377,24 @@ export const pullRequests = sqliteTable(
     copycatMatchedPullNumber: integer("copycat_matched_pull_number"),
     // RC3 terminal-fail merges: failed-merge attempt count + the head SHA at which the merge is terminally
     // blocked (perms/required-check/conflict) so the planner stops planning a merge. Keyed to head SHA → a new
-    // commit auto-clears it. loopover-computed (executor-written), omitted from the GitHub-sync SET clause.
+    // commit auto-clears it. loopover-computed (executor-written), omitted from the GitHub-sync SET clause --
+    // except merge_attempt_count, which the sync clause DOES reset when the head advances (#9012), because
+    // "a new commit's attempts start fresh" was documented here from the start but never actually implemented,
+    // leaving every head after the first exhaustion one-strike-terminal on any transient failure.
     mergeAttemptCount: integer("merge_attempt_count").notNull().default(0),
     mergeBlockedSha: text("merge_blocked_sha"),
     mergeBlockedReason: text("merge_blocked_reason"),
+    // #9012: expiry for an INFRA-scoped block (rejected installation token, exhausted rate-limit window) --
+    // causes that belong to the installation rather than to the commit, so waiting for a commit that will never
+    // come is the wrong recovery. NULL = commit-scoped: blocked until the head advances, as before.
+    mergeBlockedUntil: text("merge_blocked_until"),
+    // #9034: how many distinct heads of this PR have been parked in the AI-review low-confidence hold, plus the
+    // head the last one was counted for (so a re-gate of the SAME commit is the same hold, not a new one).
+    // Deliberately NOT reset by a new commit -- unlike merge_attempt_count above, repeated low-confidence holds
+    // are the pattern being capped, so letting a push zero the counter would hand back exactly the unbounded
+    // survival this exists to end. loopover-computed, omitted from the GitHub-sync SET clause.
+    lowConfidenceHoldCount: integer("low_confidence_hold_count").notNull().default(0),
+    lowConfidenceHoldHeadSha: text("low_confidence_hold_head_sha"),
     // Review-evasion: repeated ready<->draft cycling (#gaming-tactic-draft-cycle). Counts every converted_to_draft
     // webhook ever processed for this PR NUMBER -- deliberately NOT scoped to head SHA like mergeAttemptCount,
     // since cycling back to draft after a fresh push is exactly the same evasion shape a new commit must not

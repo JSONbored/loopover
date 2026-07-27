@@ -50,6 +50,7 @@ import { generateSignalSnapshots } from "./signal-snapshot";
 import { isDecisionAuditEnabled, runDecisionAuditSample } from "../review/decision-audit";
 import { isRiskControlEnabled, runRiskControlRecalibration } from "../review/risk-control-wire";
 import { runRetentionPrune } from "./retention";
+import { sweepStaleApprovalQueue } from "../services/agent-approval-queue";
 // The 15 handlers below have no reason to move -- each is only reachable via this dispatcher (or, for
 // mapWithConcurrency, ALSO used by other still-in-processors.ts code), so they stay put and are exported
 // there purely for this one-directional import-back (processors.ts itself never calls processJob).
@@ -272,6 +273,13 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
     }
     case "agent-regate-sweep":
       if (!message.repoFullName && message.requestedBy !== "test") {
+        // #9032: piggyback the approval-queue staleness pass on the sweep's own fan-out tick rather than adding
+        // a job type and a cron entry for a bounded DB scan. Best-effort and deliberately BEFORE the fan-out:
+        // a failure here must not cost the tick its re-gate work, which is the sweep's actual job.
+        const staleness = await sweepStaleApprovalQueue(env).catch(() => null);
+        if (staleness && (staleness.reminded > 0 || staleness.expired > 0)) {
+          console.log(JSON.stringify({ event: "approval_queue_staleness_swept", ...staleness }));
+        }
         await fanOutAgentRegateSweepJobs(env, message.requestedBy);
         return;
       }

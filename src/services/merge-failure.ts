@@ -64,21 +64,84 @@ function httpStatus(error: unknown): number | undefined {
   return typeof status === "number" ? status : undefined;
 }
 
-/** Classify a failed merge. `terminal: true` → never re-plan this merge for the current commit (hold for a
- *  human). `terminal: false` → possibly transient; the caller retries up to MERGE_RETRY_CAP. `reason` is a
- *  short human-readable summary persisted on the PR + audit record. */
-export function classifyMergeFailure(error: unknown): { terminal: boolean; reason: string } {
+/**
+ * How long a merge held for an `infra`-scoped cause stays suppressed before the planner is allowed to try the
+ * merge again for the SAME commit (#9012). Long enough that a re-probe cannot hot-loop against a still-broken
+ * installation (each expiry costs at most one merge call per PR per window), short enough that a token rotation
+ * or a secondary-rate-limit window does not strand a green, approved PR for the rest of its life.
+ */
+export const INFRA_MERGE_BLOCK_TTL_MS = 30 * 60 * 1000;
+
+/**
+ * Which *thing* a terminal merge failure is terminal ABOUT (#9012).
+ *
+ *   • `"commit"` — the failure is a property of this commit and only a new commit can change it: a real base
+ *     conflict, a repo merge policy that forbids an App merge, an absent required check. Re-probing cannot
+ *     help, so the block persists until the head advances. This is the pre-#9012 behavior for every class.
+ *   • `"infra"` — the failure is a property of the INSTALLATION or of GitHub's current state, not of the code:
+ *     a rejected token (App suspended, key rotated) or an exhausted secondary-rate-limit window. These are
+ *     fleet-wide and self-healing — every in-flight merge fails at once and every one of them recovers at once.
+ *     Persisting a head-scoped block for such a cause strands green, approved PRs permanently, since the only
+ *     documented escape is a contributor pushing a commit they have no reason to push. So an infra block gets
+ *     an expiry (INFRA_MERGE_BLOCK_TTL_MS) instead: still terminal for THIS pass — no hot-looping against a
+ *     known-bad credential, which is the whole point of failing fast on a 401 — but re-probed once the window
+ *     passes, so recovery is autonomous.
+ */
+export type MergeFailureScope = "commit" | "infra";
+
+/** Classify a failed merge. `terminal: true` → do not re-plan this merge now (hold for a human, subject to
+ *  `scope`). `terminal: false` → possibly transient; the caller retries up to MERGE_RETRY_CAP. `reason` is a
+ *  short human-readable summary persisted on the PR + audit record. `scope` says whether a terminal block is
+ *  commit-scoped (clears only on a new commit) or infra-scoped (also clears on a TTL re-probe) — see
+ *  MergeFailureScope. It is meaningful on the non-terminal classes too: the executor carries it through the
+ *  retry-cap exhaustion path, so a sustained rate-limit window that burns MERGE_RETRY_CAP still recovers on
+ *  its own rather than terminally stranding everything that passed through it. */
+export function classifyMergeFailure(error: unknown): { terminal: boolean; reason: string; scope: MergeFailureScope } {
   const message = errorMessage(error);
   const status = httpStatus(error);
-  if (status === 401) return { terminal: true, reason: `installation token rejected: App suspended or key rotated (401): ${message}` };
-  if (status === 403 && isConvergenceForbiddenMessage(message)) return { terminal: false, reason: `merge forbidden for now (403 — branch protection or GitHub permission visibility may still be converging): ${message}` };
-  if (status === 403) return { terminal: true, reason: `merge forbidden (403): ${message}` };
+  if (status === 401) return { terminal: true, scope: "infra", reason: `installation token rejected: App suspended or key rotated (401): ${message}` };
+  if (status === 403 && isConvergenceForbiddenMessage(message))
+    return { terminal: false, scope: "infra", reason: `merge forbidden for now (403 — branch protection or GitHub permission visibility may still be converging): ${message}` };
+  if (status === 403) return { terminal: true, scope: "commit", reason: `merge forbidden (403): ${message}` };
   // A 405 "Base branch was modified" is a benign TOCTOU race, not a policy rejection — retry against the new base
   // (the executor caps retries at MERGE_RETRY_CAP before escalating to the same terminal hold).
-  if (status === 405 && isBaseBranchMovedMessage(message)) return { terminal: false, reason: `base branch moved during merge — retrying: ${message}` };
-  if (status === 405 && isMergeAlreadyInProgressMessage(message)) return { terminal: false, reason: `a merge for this PR was already in progress — retrying: ${message}` };
-  if (status === 405) return { terminal: true, reason: `merge not allowed (405 — repo merge policy forbids an automated merge): ${message}` };
-  if (status === 409) return { terminal: true, reason: `merge conflict / required check absent (409): ${message}` };
-  if (isMergeConflictMessage(message)) return { terminal: true, reason: `branch conflicts with base — contributor must rebase: ${message}` };
-  return { terminal: false, reason: message };
+  if (status === 405 && isBaseBranchMovedMessage(message)) return { terminal: false, scope: "commit", reason: `base branch moved during merge — retrying: ${message}` };
+  if (status === 405 && isMergeAlreadyInProgressMessage(message)) return { terminal: false, scope: "commit", reason: `a merge for this PR was already in progress — retrying: ${message}` };
+  if (status === 405) return { terminal: true, scope: "commit", reason: `merge not allowed (405 — repo merge policy forbids an automated merge): ${message}` };
+  if (status === 409) return { terminal: true, scope: "commit", reason: `merge conflict / required check absent (409): ${message}` };
+  if (isMergeConflictMessage(message)) return { terminal: true, scope: "commit", reason: `branch conflicts with base — contributor must rebase: ${message}` };
+  return { terminal: false, scope: "commit", reason: message };
+}
+
+/** Whether a persisted merge block still suppresses the `merge` disposition, given the live head and clock
+ *  (#9012). Pure, so the planner stays clock-free: the caller resolves this and passes through only a block
+ *  that is still in effect. A block with no expiry is commit-scoped and lasts until the head advances; one with
+ *  an expiry is infra-scoped and additionally lapses at that instant. An unparseable expiry is treated as
+ *  expired: a malformed timestamp must not be the thing that strands a green PR forever, which is the exact
+ *  failure this fix exists to remove. */
+export function isMergeBlockInEffect(
+  block: { mergeBlockedSha?: string | null | undefined; mergeBlockedUntil?: string | null | undefined },
+  headSha: string | null | undefined,
+  nowMs: number,
+): boolean {
+  if (block.mergeBlockedSha == null || headSha == null || block.mergeBlockedSha !== headSha) return false;
+  if (block.mergeBlockedUntil == null) return true;
+  const expiry = Date.parse(block.mergeBlockedUntil);
+  return Number.isFinite(expiry) && nowMs < expiry;
+}
+
+/** The merge-block head SHA the planner should see: the stored one while the block is still in effect, else
+ *  `null` (#9012). The planner compares this to the live head and is deliberately clock-free, so resolving the
+ *  infra-scoped expiry has to happen out here, on the way in. Returning `null` rather than omitting the field
+ *  matches how an unblocked PR already looks to the planner, so a lapsed block is indistinguishable from never
+ *  having been blocked — which is exactly the intent: re-probe it like any other mergeable PR. */
+export function activeMergeBlockedSha(
+  block: { mergeBlockedSha?: string | null | undefined; mergeBlockedUntil?: string | null | undefined },
+  headSha: string | null | undefined,
+  nowMs: number,
+): string | null {
+  // Normalized before the check, not inside the true arm: an absent block is `undefined` on the record but
+  // `null` on the wire the planner reads, and folding that in here keeps this a total function over both.
+  const blockedSha = block.mergeBlockedSha ?? null;
+  return isMergeBlockInEffect(block, headSha, nowMs) ? blockedSha : null;
 }

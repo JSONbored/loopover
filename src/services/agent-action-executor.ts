@@ -15,7 +15,7 @@ import {
   upsertGlobalContributorBlacklist,
 } from "../db/repositories";
 import { isAuthorBlacklisted } from "../settings/contributor-blacklist";
-import { classifyMergeFailure, isMergeConflictMessage, isNoNewBaseCommitsMessage, MERGE_RETRY_CAP } from "./merge-failure";
+import { classifyMergeFailure, INFRA_MERGE_BLOCK_TTL_MS, isMergeConflictMessage, isNoNewBaseCommitsMessage, MERGE_RETRY_CAP } from "./merge-failure";
 import { notifyActionToDiscord, notifyActionToSlack, type NotifyOutcome } from "./notify-discord";
 import { recordTerminalActionOutcome, resolveDispositionReason } from "../review/outcomes-wire";
 import { cancelInFlightWorkflowRunsForHeadSha, createInstallationToken, githubErrorStatus, isGitHubRateLimitedError } from "../github/app";
@@ -974,7 +974,7 @@ async function handleMergeFailure(env: Env, ctx: AgentActionExecutionContext, er
   /* v8 ignore next -- guarded at the call site; defensive. */
   if (!headSha) return;
   const message = errorMessage(error);
-  const { terminal: classifiedTerminal, reason: classifiedReason } = classifyMergeFailure(error);
+  const { terminal: classifiedTerminal, reason: classifiedReason, scope } = classifyMergeFailure(error);
   let terminal = classifiedTerminal;
   let reason = classifiedReason;
   if (!terminal) {
@@ -986,7 +986,12 @@ async function handleMergeFailure(env: Env, ctx: AgentActionExecutionContext, er
     }
   }
   if (!terminal) return;
-  await markPullRequestMergeBlocked(env, ctx.repoFullName, ctx.pullNumber, headSha, reason);
+  // #9012: an infra-scoped cause (rejected token, exhausted rate-limit window) is fleet-wide and self-healing,
+  // so its block expires and is re-probed; a commit-scoped one still lasts until the contributor pushes. The
+  // scope carries through the retry-cap path above deliberately — a sustained secondary-rate-limit window is
+  // exactly the case that used to burn MERGE_RETRY_CAP and then permanently strand every PR it caught.
+  const expiresAt = scope === "infra" ? new Date(Date.now() + INFRA_MERGE_BLOCK_TTL_MS).toISOString() : undefined;
+  await markPullRequestMergeBlocked(env, ctx.repoFullName, ctx.pullNumber, headSha, reason, expiresAt);
   // A merge held for a human is the terminal outcome of this whole retry sequence -- exactly the "a real
   // failure the maintainer must see" case capturePostHogReviewFailure already covers for an exhausted AI
   // review pass. Fires once per hold (not per retry attempt), so a transient failure that resolves within
@@ -1001,7 +1006,7 @@ async function handleMergeFailure(env: Env, ctx: AgentActionExecutionContext, er
     targetKey: `${ctx.repoFullName}#${ctx.pullNumber}`,
     outcome: "denied",
     detail: `merge held for human — ${reason}`,
-    metadata: { repoFullName: ctx.repoFullName, pullNumber: ctx.pullNumber, headSha, reason: reason.slice(0, 280) },
+    metadata: { repoFullName: ctx.repoFullName, pullNumber: ctx.pullNumber, headSha, reason: reason.slice(0, 280), scope, ...(expiresAt !== undefined ? { expiresAt } : {}) },
   }).catch(() => undefined);
 }
 

@@ -312,6 +312,7 @@ import { isFairnessAnalyticsEnabled, resolveFairnessAnalyticsManifestOverride } 
 import { isRagEnabled } from "../review/rag-wire";
 import { loadPublicDecisionRecord, loadPublicLedgerRow, verifyDecisionLedger } from "../review/decision-record";
 import { buildEvalScoreRecordsFromRulePrecision, filterEvalScoreRecords } from "../review/eval-score-records";
+import { currentAnchorKey, parseAnchorPublicKeys } from "../review/ledger-anchor";
 import { getPublicStats, isPublicStatsEnabled, resolvePublicStatsManifestOverride } from "../review/public-stats";
 import { loadPublicAccuracyTrend } from "../services/public-accuracy-trend";
 import { loadPublicRulePrecision } from "../review/public-rule-precision";
@@ -1301,6 +1302,21 @@ export function createApp() {
     if (!row) return c.json({ error: "not_found" }, 404);
     c.header("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
     return c.json(row);
+  });
+
+  // #9270 (epic #9267): the anchor-signing public keys, with their rotation history. A verifier holding an
+  // anchor published elsewhere (transparency log, public git repo) fetches this to check that anchor's
+  // signature. The FULL history is served, not just the current key, because an anchor signed in 2026 must
+  // stay verifiable after a 2027 rotation -- retired keys are published forever rather than replaced.
+  // Unauthenticated by design, like every /v1/public/* sibling: a public key is public, and a verifier who had
+  // to authenticate to US in order to check OUR anchors would not be independently verifying anything.
+  // Unconfigured yields an empty list + null currentKeyId rather than an error -- "nothing is claimed to be
+  // verifiable yet" is the honest answer before the signing key is provisioned, and a verifier can tell that
+  // apart from a key that exists.
+  app.get("/v1/public/decision-ledger/anchor-key", (c) => {
+    const keys = parseAnchorPublicKeys(c.env.LOOPOVER_LEDGER_ANCHOR_KEYS);
+    c.header("Cache-Control", "public, max-age=300, stale-while-revalidate=3600");
+    return c.json({ keys, currentKeyId: currentAnchorKey(keys)?.keyId ?? null });
   });
 
   // #9123: the decision record itself was persisted (decision_records) but never published anywhere a
@@ -6790,6 +6806,9 @@ function requiresApiToken(path: string): boolean {
   // #9269: the single-row read, added in the SAME PR as its route so the two can never drift the way #9120's
   // sibling did. Regex (not a literal) because of the :seq path parameter.
   if (/^\/v1\/public\/decision-ledger\/row\/[^/]+$/.test(path)) return false;
+  // #9270: the published anchor-signing public keys, added in the SAME PR as its route so the two cannot
+  // drift the way #9120's sibling did.
+  if (path === "/v1/public/decision-ledger/anchor-key") return false;
   // #9123: the new public decision-record read route — same unauthenticated posture as its ledger-verify
   // sibling immediately above, added in the SAME PR so the two can never drift apart the way #9120 did. The
   // pull segment matches any non-slash text (not just digits): an invalid pull number is the ROUTE's 400 to

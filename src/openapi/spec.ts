@@ -1018,6 +1018,14 @@ export function buildOpenApiSpec() {
   });
   registry.registerPath({
     method: "get",
+    path: "/v1/public/decision-ledger/anchor-key",
+    summary: "Published anchor-signing public keys with their full rotation history, for verifying an externally-published ledger anchor",
+    responses: {
+      200: { description: "{ keys: [{ keyId, publicKeySpki, notBefore, notAfter }], currentKeyId } — retired keys are retained so anchors signed under them stay verifiable; currentKeyId is null when unconfigured or the rotation state is ambiguous" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
     path: "/v1/public/decision-records/{owner}/{repo}/{pull}",
     summary: "Fetch the latest published decision record for a PR, verbatim, plus its content digest",
     request: { params: z.object({ owner: z.string(), repo: z.string(), pull: z.string() }) },

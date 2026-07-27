@@ -423,4 +423,27 @@ describe("registry normalization", () => {
     expect(snapshot.warnings.length).toBeGreaterThan(0);
     expect(snapshot.repositories[0]?.repo).toBe("JSONbored/loopover");
   });
+
+  it("marks the sync run as error when every registry source fails (#9314)", async () => {
+    // Cover both warning-push branches: non-OK responses and thrown fetch errors.
+    let probeIndex = 0;
+    vi.stubGlobal("fetch", async () => {
+      probeIndex += 1;
+      if (probeIndex % 2 === 0) throw new Error(`network down ${probeIndex}`);
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv();
+    await expect(refreshRegistry(env)).rejects.toThrow("No registry source returned usable data.");
+
+    const row = await env.DB.prepare("SELECT status, warnings_json, error_summary FROM sync_runs WHERE job_type = ? ORDER BY rowid DESC LIMIT 1")
+      .bind("refresh-registry")
+      .first<{ status: string; warnings_json: string; error_summary: string }>();
+    expect(row?.status).toBe("error");
+    expect(row?.error_summary).toContain("No registry source returned usable data.");
+    const warnings = JSON.parse(row?.warnings_json ?? "[]") as string[];
+    // 6 API candidates + the GITTENSOR_REGISTRY_URL raw fallback.
+    expect(warnings).toHaveLength(7);
+    expect(warnings.every((warning) => warning.startsWith("Registry probe failed:"))).toBe(true);
+  });
 });

@@ -306,9 +306,13 @@ describe("governor-state reputation history (#5134)", () => {
           updated_at TEXT NOT NULL
         )
       `);
-      legacy.exec(
-        "INSERT INTO governor_reputation_history (repo_full_name, decided, unfavorable, updated_at) VALUES ('acme/widgets', 7, 2, '2026-01-01T00:00:00.000Z')",
-      );
+      // #9062: updated_at deliberately close to "now" (not a fixed past date) -- this test is about the
+      // migration preserving rows across the table rebuild, not about the reputation-history decay this same
+      // change introduces; a stale hardcoded timestamp would let decay shave these counts down and break the
+      // exact toEqual assertions below for reasons unrelated to what this test actually covers.
+      legacy
+        .prepare("INSERT INTO governor_reputation_history (repo_full_name, decided, unfavorable, updated_at) VALUES ('acme/widgets', 7, 2, ?)")
+        .run(new Date().toISOString());
       legacy.close();
 
       const state = openGovernorState(dbPath);
@@ -344,12 +348,15 @@ describe("governor-state reputation history (#5134)", () => {
           updated_at TEXT NOT NULL
         )
       `);
+      // #9062: updated_at close to "now" for the same reason as the migration test above -- this test covers
+      // the corrupt-row-dropped behavior, not reputation-history decay.
+      const recentIso = new Date().toISOString();
       legacy
         .prepare("INSERT INTO governor_reputation_history (repo_full_name, decided, unfavorable, updated_at) VALUES (?, NULL, NULL, ?)")
-        .run("acme/corrupt", "2026-01-01T00:00:00.000Z");
+        .run("acme/corrupt", recentIso);
       legacy
         .prepare("INSERT INTO governor_reputation_history (repo_full_name, decided, unfavorable, updated_at) VALUES (?, ?, ?, ?)")
-        .run("acme/widgets", 3, 1, "2026-01-01T00:00:00.000Z");
+        .run("acme/widgets", 3, 1, recentIso);
       legacy.close();
 
       let opened: ReturnType<typeof openGovernorState> | undefined;
@@ -463,6 +470,94 @@ describe("governor-state reputation-history increment atomicity (#8855)", () => 
     );
     expect(written).toEqual({ decided: 3, unfavorable: 1 });
     expect(loadReputationHistory("acme/widgets", "https://ghe.example.com/api/v3")).toEqual(written);
+  });
+});
+
+describe("governor-state reputation-history decay (#9062)", () => {
+  // #9062: governor_reputation_history was a cumulative, never-decaying counter -- three bad early
+  // contributions meant a permanent, unrecoverable throttle since submissions were the only source of new
+  // decided outcomes and the ratio could only ever go up. These pin the decay math directly against the raw
+  // table (bypassing the public API, which always stamps updated_at as "now") so the elapsed-time math is
+  // actually exercised rather than always hitting the near-zero-elapsed no-op path every other test in this
+  // file runs at.
+  function seedRawReputationRow(dbPath: string, decided: number, unfavorable: number, updatedAt: string) {
+    const raw = new DatabaseSync(dbPath);
+    raw
+      .prepare(
+        "INSERT INTO governor_reputation_history (api_base_url, repo_full_name, decided, unfavorable, updated_at) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run("https://api.github.com", "acme/widgets", decided, unfavorable, updatedAt);
+    raw.close();
+  }
+
+  it("loadReputationHistory decays a row untouched for two half-lives (28 days) to a quarter of its counts", () => {
+    const state = tempState();
+    const now = Date.now();
+    const twentyEightDaysAgo = new Date(now - 28 * 86_400_000).toISOString();
+    seedRawReputationRow(state.dbPath, 100, 80, twentyEightDaysAgo);
+    // decayReputationHistory reads Date.now() again internally -- freeze the clock to the SAME instant
+    // `twentyEightDaysAgo` was computed against, so elapsed-days lands at exactly 28.0 regardless of how much
+    // real wall-clock time this test itself takes to run (an un-frozen clock made this flaky: any execution
+    // delay pushes elapsed slightly past 28 days, so decayFactor lands fractionally under 0.25 and
+    // Math.floor rounds 100*decayFactor down to 24, not 25).
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    try {
+      // decayFactor = 2^(-28/14) = 0.25 exactly, so no rounding ambiguity: 100*0.25=25, 80*0.25=20.
+      expect(state.loadReputationHistory("acme/widgets")).toEqual({ decided: 25, unfavorable: 20 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("loadReputationHistory does not decay a row less than a day old", () => {
+    const state = tempState();
+    const twelveHoursAgo = new Date(Date.now() - 12 * 3_600_000).toISOString();
+    seedRawReputationRow(state.dbPath, 10, 8, twelveHoursAgo);
+    expect(state.loadReputationHistory("acme/widgets")).toEqual({ decided: 10, unfavorable: 8 });
+  });
+
+  it("incrementReputationHistory decays the prior count before folding in the new delta", () => {
+    const state = tempState();
+    const now = Date.now();
+    const twentyEightDaysAgo = new Date(now - 28 * 86_400_000).toISOString();
+    seedRawReputationRow(state.dbPath, 100, 80, twentyEightDaysAgo);
+    // Same clock-freeze rationale as the load-side test above -- pins elapsed-days at exactly 28.0 so the
+    // prior's decay (and thus the post-increment total) is deterministic regardless of test execution time.
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    try {
+      // Prior decays to {decided: 25, unfavorable: 20} (see the load-side test above), THEN the delta folds in.
+      expect(state.incrementReputationHistory("acme/widgets", { decided: 1, unfavorable: 0 })).toEqual({
+        decided: 26,
+        unfavorable: 20,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("REGRESSION (#9062): a floored ratio is no longer a permanent ban -- it ages below minSampleSize and fails back open", async () => {
+    const { selfReputationThrottle } = await import("@loopover/engine");
+    const state = tempState();
+    // ratio 9/10 = 0.9 >= floorAtRatio (0.9 default) -- hard-floored under the OLD never-decaying counter, with
+    // no way for `decided`/`unfavorable` to ever shrink since submissions were the only source of new outcomes
+    // and a floored miner could never submit one.
+    const freshFloored = { decided: 10, unfavorable: 9 };
+    expect(selfReputationThrottle(freshFloored).reason).toBe("floored");
+
+    // 30 days later (over two half-lives) with ZERO new submissions -- decay alone, not a new clean outcome --
+    // ages the sample size below minSampleSize (5), so the calculator fails OPEN instead of staying floored
+    // forever: the "recovering ratio restores it -- never a hard permanent ban" contract the module's own doc
+    // comment already promised.
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 86_400_000).toISOString();
+    seedRawReputationRow(state.dbPath, 10, 9, thirtyDaysAgo);
+    const decayed = state.loadReputationHistory("acme/widgets");
+    expect(decayed.decided).toBeLessThan(5); // below the default minSampleSize
+    const decision = selfReputationThrottle(decayed);
+    expect(decision.reason).toBe("insufficient_history");
+    expect(decision.throttled).toBe(false);
+    expect(decision.cadenceFactor).toBe(1);
   });
 });
 

@@ -33,7 +33,62 @@ export const RETENTION_POLICY: readonly RetentionRule[] = [
   // driven growth -- predicted-gate-calls.ts deliberately never dedups at write time, see that file's own
   // header comment) -- same 90-day append-only-log window as audit_events/ai_usage_events above.
   { table: "predicted_gate_calls", column: "created_at", days: 90 },
+  // #9083: four read-side caches with a TTL enforced only at the READ site (getCachedGroundingFileContent /
+  // getCachedAiReview / getCachedAiSlopFinding / getCachedLinkedIssueSatisfaction) and NO delete path at
+  // all -- every row lives forever once written. grounding_file_content_cache keys on (repo, path,
+  // head_sha), so every push mints a fresh head_sha and permanently strands the prior push's blobs (a 20-push
+  // PR with 15 files leaves 300 dead rows) -- hence the much shorter 2-day window (its own read-side TTL is
+  // 24h, so 2 days never deletes a row a read could still legitimately hit). The other three key on
+  // (repo, pull, head_sha[, ...]) with the same "new head_sha orphans the old row" shape but a lower
+  // per-row footprint (JSON, not file bodies), so they get the same 30-day window as the other
+  // moderate-volume caches.
+  { table: "grounding_file_content_cache", column: "fetched_at", days: 2 },
+  { table: "ai_review_cache", column: "created_at", days: 30 },
+  { table: "ai_slop_cache", column: "created_at", days: 30 },
+  { table: "linked_issue_satisfaction_cache", column: "created_at", days: 30 },
+  // #9083: shadow-parity audit trail (src/review/parity.ts) -- pure history once a decision is recorded,
+  // same append-only-log shape and window as audit_events/webhook_events.
+  { table: "review_audit", column: "created_at", days: 90 },
+  // #9083: content-addressed decision records (#8836) are a contributor's evidentiary trail for "clause X
+  // closed me" -- kept longer than the plain operational logs above so a dispute raised weeks after a
+  // close still has its record, matching product_usage_events' 180-day window for the same reason.
+  { table: "decision_records", column: "created_at", days: 180 },
+  // #9083: the central Orb App's OWN webhook delivery/dedup log (separate from webhook_events, which is the
+  // per-repo review app's) -- identical short-lived-idempotency shape, same 90d window.
+  { table: "orb_webhook_events", column: "received_at", days: 90 },
 ];
+
+// #9083: a real, single-column, indexable primary key for the ordered-range delete below, keyed by table
+// name -- NOT the SQLite rowid / Postgres ctid pseudo-column pruneExpiredRecords used to delete by
+// exclusively. ctid is a physical row locator, not a value an index can be built over, so
+// `ctid IN (SELECT ctid ... LIMIT n)` forces Postgres to Seq-Scan the ENTIRE outer table for every batch
+// (the TID-scan fast path only fires for a constant qual, not a correlated subquery) -- on a
+// multi-hundred-thousand-row table that scan alone can exceed prune-retention's 30-minute job timeout,
+// permanently stalling retention. Every table above with a genuine single-column id gets that column here,
+// paired with a leading index on its retention timestamp column (see the accompanying migration) so the
+// inner SELECT is an index range scan, not a scan of its own. A table absent from this map (a composite
+// primary key, or a caller-supplied ad-hoc rule in a test) falls back to rowid/ctid -- still correct, just
+// not scan-optimal, which is acceptable for the lower row counts of the tables that fall back today.
+const RETENTION_PK_COLUMN: Readonly<Record<string, string>> = {
+  audit_events: "id",
+  ai_usage_events: "id",
+  product_usage_events: "id",
+  github_rate_limit_observations: "id",
+  signal_snapshots: "id",
+  score_previews: "id",
+  repo_snapshots: "id",
+  agent_context_snapshots: "id",
+  webhook_events: "delivery_id",
+  notification_deliveries: "id",
+  predicted_gate_calls: "id",
+  review_audit: "id",
+  decision_records: "id",
+  orb_webhook_events: "delivery_id",
+};
+
+function pkColumnFor(table: string): string {
+  return RETENTION_PK_COLUMN[table] ?? "rowid";
+}
 
 export type PruneResult = { table: string; column: string; cutoff: string; deleted: number };
 
@@ -87,9 +142,14 @@ export async function pruneExpiredRecords(
     }
 
     let deleted = 0;
-    // Batched delete by rowid so each statement is bounded; loop until a short batch or the per-run cap.
+    // Batched delete by a real indexable PK (see RETENTION_PK_COLUMN) ordered by the retention column, so
+    // each statement is bounded AND the inner SELECT is an index range scan on Postgres, not a ctid-keyed
+    // correlated subquery that forces a full seq scan of the outer table (#9083).
+    const pk = pkColumnFor(rule.table);
     for (;;) {
-      const result = await env.DB.prepare(`DELETE FROM ${rule.table} WHERE rowid IN (SELECT rowid FROM ${rule.table} WHERE ${retentionWhere(rule)} LIMIT ${batchSize})`)
+      const result = await env.DB.prepare(
+        `DELETE FROM ${rule.table} WHERE ${pk} IN (SELECT ${pk} FROM ${rule.table} WHERE ${retentionWhere(rule)} ORDER BY ${rule.column} LIMIT ${batchSize})`,
+      )
         .bind(cutoff)
         .run();
       const changes = Number(result.meta?.changes ?? 0);

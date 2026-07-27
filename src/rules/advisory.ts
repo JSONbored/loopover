@@ -36,6 +36,14 @@ import type { GuardrailPathMatch } from "../signals/change-guardrail";
 import { isCodeFile } from "../signals/local-branch";
 import { isTestPath } from "../signals/test-evidence";
 import { nowIso } from "../utils/json";
+// #9085: an ABSENT `finding.confidence` used to degrade to 1.0 (maximum certainty) at every gate-side
+// consumption site below -- exactly the "silence is not certainty" anti-pattern CONFIDENCE_WHEN_UNSTATED's own
+// doc comment (ai-review.ts) already fixed at the model-parsing layer (parseReviewConfidence). These sites sit
+// one layer downstream of that parser -- reading `finding.confidence` off an AdvisoryFinding object -- and can
+// still see it absent/undefined via a path the parser never touches: a producer that forgot to set it, or the
+// unvalidated `AdvisoryFinding[]` JSON parse at the advisory cache read site (`src/db/repositories.ts`). Reusing
+// the SAME constant (rather than a second hardcoded 0.5) keeps the "what does silence mean" answer singular.
+import { CONFIDENCE_WHEN_UNSTATED } from "../services/ai-review";
 import { LOOPOVER_GATE_CHECK_NAME } from "../review/check-names";
 import { CLA_CHECK_UNRESOLVED_CODE, CLA_CONSENT_MISSING_CODE } from "../review/cla-check";
 import { REVIEW_THREAD_BLOCKER_CODE } from "../review/review-thread-findings";
@@ -258,7 +266,9 @@ export function resolveAiReviewLowConfidenceHold(
   if ((policy.aiReviewLowConfidenceDisposition ?? "hold_for_review") !== "hold_for_review") return undefined;
   if (!isAiJudgmentOnlyFailure(evaluation)) return undefined;
   const floor = policy.aiReviewCloseConfidence ?? DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE;
-  const belowFloor = evaluation.blockers.some((blocker) => (blocker.confidence ?? 1) < floor);
+  // #9085: an absent confidence must never read as maximum certainty -- see the CONFIDENCE_WHEN_UNSTATED
+  // import's doc comment above.
+  const belowFloor = evaluation.blockers.some((blocker) => (blocker.confidence ?? CONFIDENCE_WHEN_UNSTATED) < floor);
   if (!belowFloor) return undefined;
   // #8849: name the calibrated-abstention source when the floor in force is a live risk-control λ̂.
   const floorSource = policy.aiReviewCloseConfidenceCalibrated === true ? "calibrated risk-control threshold" : "configured close-confidence floor";
@@ -289,7 +299,9 @@ export function resolveAiReviewSalvageableHold(
   if ((policy.aiReviewLowConfidenceDisposition ?? "hold_for_review") !== "hold_for_review") return undefined;
   if (!isAiJudgmentOnlyFailure(evaluation)) return undefined;
   const floor = policy.aiReviewCloseConfidence ?? DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE;
-  if (evaluation.blockers.some((blocker) => (blocker.confidence ?? 1) < floor)) return undefined;
+  // #9085: same fail-safe as resolveAiReviewLowConfidenceHold above -- an absent confidence is never
+  // maximum certainty.
+  if (evaluation.blockers.some((blocker) => (blocker.confidence ?? CONFIDENCE_WHEN_UNSTATED) < floor)) return undefined;
   if (salvageability.score < minScore) return undefined;
   return {
     reason: `the flagged defect looks fixable and the author's record clears the salvageability floor (${salvageability.score} ≥ ${minScore}: ${salvageability.factors.join("; ")})`,
@@ -398,11 +410,18 @@ export function buildPullRequestAdvisory(
   const findings: AdvisoryFinding[] = [];
   if (!repo) {
     findings.push({
-      code: "repo_not_registered",
+      // #9085: renamed from `repo_not_registered` -- one character away from, and with the OPPOSITE gate
+      // consequence of, `repo_unregistered` below (addRepoFindings): this code fires when LoopOver has NO
+      // repo record cached at all (app-state hold, see isEvaluationBlocker) and mirrors pr_not_cached/
+      // issue_not_cached's naming for the identical "not yet synced" shape; `repo_unregistered` fires when a
+      // repo record EXISTS but isn't in the Gittensor registry snapshot (a plain non-blocking advisory
+      // warning, no hold). Same taxonomy-drift shape CONFIGURED_GATE_BLOCKER_SIGNAL_CODES's own doc comment
+      // above already calls out for slop_risk_above_threshold/surface_lane_reject.
+      code: "repo_not_cached",
       severity: "warning",
-      title: "Repository registration is unknown",
-      detail: "LoopOver cannot evaluate repo-specific rules until registry data is available.",
-      action: "Refresh the Gittensor registry snapshot.",
+      title: "Repository is not yet cached",
+      detail: "LoopOver has not synced this repository yet, so repo-specific rules cannot be evaluated.",
+      action: "Wait for the next repo sync, or re-deliver the installation webhook.",
     });
   } else {
     addRepoFindings(repo, findings);
@@ -438,11 +457,12 @@ export function buildIssueAdvisory(repo: RepositoryRecord | null, issue: IssueRe
   const targetKey = issue ? `${repoFullName}#${issue.number}` : `${repoFullName}#unknown`;
   const findings: AdvisoryFinding[] = [];
   if (!repo) {
+    // #9085: renamed from `repo_not_registered` -- see buildPullRequestAdvisory's identical finding above.
     findings.push({
-      code: "repo_not_registered",
+      code: "repo_not_cached",
       severity: "warning",
-      title: "Repository registration is unknown",
-      detail: "LoopOver cannot evaluate repo-specific issue rules until registry data is available.",
+      title: "Repository is not yet cached",
+      detail: "LoopOver has not synced this repository yet, so repo-specific issue rules cannot be evaluated.",
     });
   } else {
     addRepoFindings(repo, findings);
@@ -512,6 +532,24 @@ function severityToAnnotationLevel(severity: AdvisorySeverity): CheckRunAnnotati
   return "notice";
 }
 
+/** #9085: a finding's OWN authored `severity` is set at creation time and never reconsidered against the
+ *  ACTUAL gate outcome it ends up producing -- the exact drift the issue identified (a `warning`-labeled
+ *  `missing_linked_issue`/`slop_risk_above_threshold` finding that really does one-shot-close the PR,
+ *  alongside a `critical`-labeled `ai_consensus_defect` that, by default (`aiReviewGateMode: advisory`), has
+ *  no gate effect at all). `blockerCodes` -- when the caller has a `GateCheckEvaluation` for this SAME
+ *  advisory in hand (`evaluation.blockers.map(b => b.code)`) -- lets the public check-run rendering below
+ *  correct for that: a finding whose code is a REAL blocker in this evaluation always renders at the most
+ *  prominent level, regardless of its authored severity; a finding that is NOT actually blocking is capped at
+ *  `warning` even if authored `critical`, so a non-enforcing signal never cries wolf louder than a genuine
+ *  one. `blockerCodes` omitted (every existing caller before this change) preserves today's exact
+ *  authored-severity-only rendering -- purely additive, never a behavior change for a caller that doesn't
+ *  pass it. */
+function effectiveDisplaySeverity(finding: AdvisoryFinding, blockerCodes: ReadonlySet<string> | undefined): AdvisorySeverity {
+  if (!blockerCodes) return finding.severity;
+  if (blockerCodes.has(finding.code)) return "critical";
+  return finding.severity === "critical" ? "warning" : finding.severity;
+}
+
 function isCodePath(path: string): boolean {
   return /\.(ts|tsx|js|jsx|py|go|rs|java|rb|php|cs|cpp|cc|c|h|hpp|swift|kt|m|sql|yaml|yml|json|toml|md|vue|svelte|astro|dart)$/i.test(path);
 }
@@ -550,6 +588,8 @@ export function buildCheckRunAnnotations(
   advisoryResult: Advisory,
   annotationContext: CheckRunAnnotationContext | undefined,
   detailLevel: "minimal" | "standard" = "minimal",
+  // #9085: see effectiveDisplaySeverity's doc comment above. Optional and additive.
+  blockerCodes?: ReadonlySet<string>,
 ): CheckRunAnnotationBuildResult {
   if (detailLevel === "minimal" || !annotationContext) {
     return { annotations: [], omittedCount: 0 };
@@ -621,7 +661,7 @@ export function buildCheckRunAnnotations(
       addCandidate(
         path,
         annotationLineForFile(annotatableFiles.find((file) => file.path === path)!) ?? 1,
-        severityToAnnotationLevel(finding.severity),
+        severityToAnnotationLevel(effectiveDisplaySeverity(finding, blockerCodes)),
         finding.title,
         finding.publicText,
         finding.alreadyPublicSafe ?? false,
@@ -637,6 +677,11 @@ export function formatCheckRunOutput(
   advisoryResult: Advisory,
   detailLevel: "minimal" | "standard" = "minimal",
   annotationContext?: CheckRunAnnotationContext,
+  // #9085: see effectiveDisplaySeverity's doc comment above. Optional and additive -- pass
+  // `new Set(gate.blockers.map(b => b.code))` from the SAME evaluation's GateCheckEvaluation when the caller
+  // has one, so a finding that actually closes the PR is never rendered with a lower-alarm icon than one that
+  // doesn't.
+  blockerCodes?: ReadonlySet<string>,
 ): CheckRunOutput {
   const title = advisoryResult.conclusion === "success" ? "LoopOver context checked" : "LoopOver context posted";
   const summary = "LoopOver public check output is intentionally minimal. Detailed maintainer context is available only through private API/MCP surfaces.";
@@ -649,7 +694,11 @@ export function formatCheckRunOutput(
   } else {
     const publicLines = advisoryResult.findings.flatMap((f) => {
       if (!f.publicText) return [];
-      const label = f.severity === "warning" ? "⚠️" : "ℹ️";
+      // #9085: a finding that is an ACTUAL blocker in this evaluation always gets the most alarming icon,
+      // regardless of its own authored severity -- a contributor must never read a ⚠️/ℹ️ on the exact finding
+      // that is about to close their PR. Falls back to the pre-#9085 two-icon scheme (⚠️ for `warning`, ℹ️
+      // otherwise) when `blockerCodes` is undefined, byte-identical to every caller that doesn't pass it.
+      const label = blockerCodes?.has(f.code) ? "🚫" : effectiveDisplaySeverity(f, blockerCodes) === "warning" ? "⚠️" : "ℹ️";
       // `alreadyPublicSafe` (#7981): a fixed, engineer-authored message with no interpolated contributor/AI
       // content skips the scrub — see AdvisoryFinding's own doc comment for why (the same reasoning
       // unified-comment-bridge.ts's gateBlockerLines applies to the PR-comment rendering of this same finding).
@@ -658,7 +707,7 @@ export function formatCheckRunOutput(
     text = publicLines.length === 0 ? "No detailed findings are published in check runs." : publicLines.join("\n");
   }
 
-  const { annotations, omittedCount } = buildCheckRunAnnotations(advisoryResult, annotationContext, detailLevel);
+  const { annotations, omittedCount } = buildCheckRunAnnotations(advisoryResult, annotationContext, detailLevel, blockerCodes);
   if (omittedCount > 0) {
     text = `${text}\n\n…${omittedCount} more hotspot annotation(s) omitted from inline check output.`;
   }
@@ -1207,7 +1256,8 @@ function isEvaluationBlocker(code: string, policy: GateCheckPolicy): boolean {
   // pre_merge_check_unresolved: an enforced path-gated pre-merge check whose changed-file set could not be
   // resolved — loopover cannot evaluate it yet, so the gate is NEUTRAL (held) and re-evaluates on the next
   // sync, rather than auto-merging past the unverified requirement or hard-closing on a transient miss. (#review-audit)
-  if (code === "repo_not_registered" || code === "repo_not_seen" || code === "pr_not_cached" || code === "pre_merge_check_unresolved") return true;
+  // #9085: renamed from `repo_not_registered`.
+  if (code === "repo_not_cached" || code === "repo_not_seen" || code === "pr_not_cached" || code === "pre_merge_check_unresolved") return true;
   // cla_check_unresolved (#2564): the CLA-bot check-run's conclusion could not be resolved. Unlike the codes
   // above (which are never mode-gated), evaluateClaCheck runs for BOTH claGateMode "advisory" and "block" (so
   // the finding surfaces either way) — only "block" should ever HOLD the gate on an unresolved check-run.
@@ -1266,7 +1316,9 @@ function resolveConfiguredGateMode(finding: AdvisoryFinding, policy: GateCheckPo
     if (mode !== "block") return mode;
     if ((policy.aiReviewLowConfidenceDisposition ?? "hold_for_review") === "advisory_only") {
       const floor = policy.aiReviewCloseConfidence ?? DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE;
-      const confidence = finding.confidence ?? 1;
+      // #9085: an absent confidence must not silently clear the floor -- see the CONFIDENCE_WHEN_UNSTATED
+      // import's doc comment above.
+      const confidence = finding.confidence ?? CONFIDENCE_WHEN_UNSTATED;
       if (confidence < floor) return "advisory";
     }
     return "block";

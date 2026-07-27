@@ -163,14 +163,32 @@ describe("evaluateGovernorChokepointGate (#2340)", () => {
     expect(result.rateLimitBackoffAttempts).toEqual({});
   });
 
-  it("a reputation-throttle denial records to the ledger as throttled before self-plagiarism runs", () => {
+  // #9062: a non-floored "throttled" ratio no longer hard-denies (it scales the per-repo rate-limit window
+  // instead -- see chokepoint.ts) -- discarding cadenceFactor and denying on ANY throttled verdict was
+  // exactly what turned a recoverable soft throttle into a permanent self-ban, since submissions are the
+  // miner's only source of new decided outcomes and a denied miner can never submit one.
+  it("a degraded (non-floored) reputation ratio no longer denies -- it reaches allow with a scaled cadence recorded", () => {
     const ledger = openLedger();
     const result = evaluateGovernorChokepointGate(baseInput({ reputationHistory: { decided: 10, unfavorable: 8 } }), {
       append: (event) => ledger.appendGovernorEvent(event),
     });
 
+    expect(result.decision.allowed).toBe(true);
+    expect(result.decision.stage).toBe("allow");
+    expect(result.decision.detail.reputation?.reason).toBe("throttled");
+    expect(result.decision.detail.reputation?.cadenceFactor).toBeLessThan(1);
+    expect(result.recorded.eventType).toBe("allowed");
+  });
+
+  it("a floored reputation ratio (the extreme case) still denies to the ledger as throttled before self-plagiarism runs", () => {
+    const ledger = openLedger();
+    const result = evaluateGovernorChokepointGate(baseInput({ reputationHistory: { decided: 10, unfavorable: 9 } }), {
+      append: (event) => ledger.appendGovernorEvent(event),
+    });
+
     expect(result.decision.allowed).toBe(false);
     expect(result.decision.stage).toBe("reputation_throttle");
+    expect(result.decision.detail.reputation?.reason).toBe("floored");
     expect(result.recorded.eventType).toBe("throttled");
     expect(result.decision.detail.selfPlagiarism).toBeUndefined();
     expect(result.rateLimitBuckets).toEqual({ global: {}, perRepo: {} });

@@ -187,8 +187,8 @@ describe("advisory rules", () => {
   });
 
   it("handles uncached PR and issue advisories for unknown repositories", () => {
-    expect(buildPullRequestAdvisory(null, null).findings.map((finding) => finding.code)).toEqual(["repo_not_registered", "pr_not_cached"]);
-    expect(buildIssueAdvisory(null, null).findings.map((finding) => finding.code)).toEqual(["repo_not_registered", "issue_not_cached"]);
+    expect(buildPullRequestAdvisory(null, null).findings.map((finding) => finding.code)).toEqual(["repo_not_cached", "pr_not_cached"]);
+    expect(buildIssueAdvisory(null, null).findings.map((finding) => finding.code)).toEqual(["repo_not_cached", "issue_not_cached"]);
   });
 
   it("warns when an issue already has linked PRs", () => {
@@ -541,7 +541,7 @@ describe("advisory rules", () => {
 
     // App-state findings (repo not synced, PR not cached) must NOT block a contributor on the app's
     // own state — the gate is neutral and re-evaluates automatically.
-    expect(advisory.findings.map((finding) => finding.code)).toEqual(expect.arrayContaining(["repo_not_registered", "pr_not_cached"]));
+    expect(advisory.findings.map((finding) => finding.code)).toEqual(expect.arrayContaining(["repo_not_cached", "pr_not_cached"]));
     expect(gate.conclusion).toBe("neutral");
     expect(gate.blockers).toEqual([]);
     expect(output.title).toBe("LoopOver Orb Review Agent — not evaluated yet");
@@ -746,12 +746,16 @@ describe("advisory rules", () => {
       expect(evaluateGateCheck(advisory, { aiReviewGateMode: "block", aiReviewLowConfidenceDisposition: "advisory_only", aiReviewCloseConfidence: 0.4 }).conclusion).toBe("failure");
     });
 
-    it("an absent confidence degrades to 1.0 (at-or-above any floor), matching an at-or-above-floor confidence", () => {
+    // #9085: an absent confidence used to degrade to 1.0 (maximum certainty) here -- "the model said nothing"
+    // silently cleared even a custom close-confidence floor. It now degrades to CONFIDENCE_WHEN_UNSTATED
+    // (0.5), which sits BELOW the 0.93 default floor, so `advisory_only` now correctly treats a sub-floor
+    // absent confidence the same as any other sub-floor confidence: non-blocking.
+    it("an absent confidence degrades to CONFIDENCE_WHEN_UNSTATED (0.5) — sub-floor, matching any other sub-floor confidence", () => {
       const advisory = {
         ...buildPullRequestAdvisory(repo, null),
         findings: [{ code: "ai_consensus_defect", title: "t", severity: "critical" as const, detail: "d" }],
       };
-      expect(evaluateGateCheck(advisory, { aiReviewGateMode: "block", aiReviewLowConfidenceDisposition: "advisory_only" }).conclusion).toBe("failure");
+      expect(evaluateGateCheck(advisory, { aiReviewGateMode: "block", aiReviewLowConfidenceDisposition: "advisory_only" }).conclusion).toBe("success");
     });
 
     it("aiReviewGateMode !== block stays non-blocking regardless of disposition (unchanged from today)", () => {
@@ -832,9 +836,12 @@ describe("advisory rules", () => {
       expect(resolveAiReviewLowConfidenceHold(evaluation, {})).toBeDefined();
     });
 
-    it("an absent confidence degrades to 1.0 — never holds", () => {
+    // #9085: an absent confidence used to degrade to 1.0 (never below the default 0.93 floor, so it never
+    // held). It now degrades to CONFIDENCE_WHEN_UNSTATED (0.5) -- below the floor -- so the default
+    // `hold_for_review` disposition correctly holds it, the same as any other sub-floor confidence.
+    it("an absent confidence degrades to CONFIDENCE_WHEN_UNSTATED (0.5) — sub-floor, so it holds under the default disposition", () => {
       const evaluation = failure([finding("ai_consensus_defect")]);
-      expect(resolveAiReviewLowConfidenceHold(evaluation, {})).toBeUndefined();
+      expect(resolveAiReviewLowConfidenceHold(evaluation, {})).toBeDefined();
     });
 
     it("never holds a non-failure conclusion or an empty blocker list", () => {
@@ -1343,6 +1350,86 @@ describe("advisory rules", () => {
     expect(output.title).toBe("LoopOver context posted");
     expect(output.text).toContain("No detailed findings are published");
     expect(output.text).not.toContain("Critical finding");
+  });
+
+  // #9085: severity is otherwise decorative -- a `warning`-labeled finding can be the exact reason the gate
+  // closed the PR, while a `critical`-labeled one (e.g. ai_consensus_defect under the advisory-only default)
+  // can have no gate effect at all. `blockerCodes` -- the real blocker codes from this SAME advisory's
+  // GateCheckEvaluation, when the caller has one -- lets the public check-run text correct for that.
+  describe("formatCheckRunOutput blockerCodes (#9085)", () => {
+    const advisory = buildPullRequestAdvisory(null, null);
+    const withFindings = (findings: import("../../src/types").AdvisoryFinding[]) => ({ ...advisory, findings });
+
+    it("omitting blockerCodes preserves today's exact two-icon rendering (byte-identical for every existing caller)", () => {
+      const output = formatCheckRunOutput(
+        withFindings([
+          { code: "missing_linked_issue", title: "t", severity: "warning", detail: "d", publicText: "warn text" },
+          { code: "ai_consensus_defect", title: "t", severity: "critical", detail: "d", publicText: "critical text" },
+        ]),
+        "standard",
+      );
+      expect(output.text).toBe("⚠️ warn text\nℹ️ critical text");
+    });
+
+    it("a warning-labeled finding that IS an actual blocker in this evaluation renders with the most alarming icon", () => {
+      const output = formatCheckRunOutput(
+        withFindings([{ code: "missing_linked_issue", title: "t", severity: "warning", detail: "d", publicText: "warn text" }]),
+        "standard",
+        undefined,
+        new Set(["missing_linked_issue"]),
+      );
+      expect(output.text).toBe("🚫 warn text");
+    });
+
+    it("a critical-labeled finding that is NOT actually blocking is capped at the warning icon, never crying wolf", () => {
+      const output = formatCheckRunOutput(
+        withFindings([{ code: "ai_consensus_defect", title: "t", severity: "critical", detail: "d", publicText: "critical text" }]),
+        "standard",
+        undefined,
+        new Set(), // no real blockers in this evaluation
+      );
+      expect(output.text).toBe("⚠️ critical text");
+    });
+
+    it("an info-labeled finding stays info even when blockerCodes is provided and it isn't a blocker", () => {
+      const output = formatCheckRunOutput(
+        withFindings([{ code: "some_info_code", title: "t", severity: "info", detail: "d", publicText: "info text" }]),
+        "standard",
+        undefined,
+        new Set(),
+      );
+      expect(output.text).toBe("ℹ️ info text");
+    });
+  });
+
+  describe("buildCheckRunAnnotations blockerCodes (#9085)", () => {
+    const repoForAnnotations: RepositoryRecord = repo;
+    const files: PullRequestFileRecord[] = [
+      { repoFullName: repo.fullName, pullNumber: 50, path: "src/a.ts", additions: 3, deletions: 0, changes: 3, payload: {} },
+    ];
+
+    it("a non-blocker finding still maps to its own authored annotation level when blockerCodes is provided", () => {
+      const advisory = {
+        ...buildPullRequestAdvisory(repoForAnnotations, null),
+        findings: [{ code: "some_warning_code", title: "t", severity: "warning" as const, detail: "d", publicText: "warn text" }],
+      };
+      const { annotations } = buildCheckRunAnnotations(advisory, { files, collisions: emptyCollisions(), pullNumber: 50 }, "standard", new Set());
+      expect(annotations.find((a) => a.message === "warn text")?.annotation_level).toBe("warning");
+    });
+
+    it("a finding that IS an actual blocker in this evaluation always maps to 'failure', regardless of its authored severity", () => {
+      const advisory = {
+        ...buildPullRequestAdvisory(repoForAnnotations, null),
+        findings: [{ code: "missing_linked_issue", title: "t", severity: "warning" as const, detail: "d", publicText: "warn text" }],
+      };
+      const { annotations } = buildCheckRunAnnotations(
+        advisory,
+        { files, collisions: emptyCollisions(), pullNumber: 50 },
+        "standard",
+        new Set(["missing_linked_issue"]),
+      );
+      expect(annotations.find((a) => a.message === "warn text")?.annotation_level).toBe("failure");
+    });
   });
 
   it("separates issue-discovery-only issues from clean split-lane issue advisories", () => {

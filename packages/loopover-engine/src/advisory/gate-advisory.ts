@@ -39,6 +39,11 @@ function sanitizeForCheckRun(text: string): string {
 }
 
 const DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE = 0.93;
+// #9085 (host-parity): mirrors CONFIDENCE_WHEN_UNSTATED (src/services/ai-review.ts) -- kept as a local constant
+// rather than an import, matching this file's own divergence design (it deliberately never pulls in the host's
+// signals/services subsystem). An ABSENT `finding.confidence` must never read as maximum certainty (1.0):
+// "silence is not certainty" (#8833).
+const CONFIDENCE_WHEN_UNSTATED = 0.5;
 /** Exported to mirror the src twin (#8224): loopover's LOOSENABLE_KNOBS registry anchors the slop knob's
  *  shipped value on this constant (divided by 100 onto the corpus's confidence scale). Value unchanged. */
 export const DEFAULT_SLOP_BLOCK_THRESHOLD = 60;
@@ -196,12 +201,15 @@ export function buildPullRequestAdvisory(
   const targetKey = pr ? `${repoFullName}#${pr.number}` : `${repoFullName}#unknown`;
   const findings: AdvisoryFinding[] = [];
   if (!repo) {
+    // #9085 (host-parity): renamed from `repo_not_registered` -- one character away from, and with the
+    // OPPOSITE gate consequence of, `repo_unregistered` below (addRepoFindings). See the host copy
+    // (src/rules/advisory.ts) for the full rename rationale.
     findings.push({
-      code: "repo_not_registered",
+      code: "repo_not_cached",
       severity: "warning",
-      title: "Repository registration is unknown",
-      detail: "LoopOver cannot evaluate repo-specific rules until registry data is available.",
-      action: "Refresh the Gittensor registry snapshot.",
+      title: "Repository is not yet cached",
+      detail: "LoopOver has not synced this repository yet, so repo-specific rules cannot be evaluated.",
+      action: "Wait for the next repo sync, or re-deliver the installation webhook.",
     });
   } else {
     addRepoFindings(repo, findings);
@@ -634,7 +642,8 @@ function isEvaluationBlocker(code: string, policy: GateCheckPolicy): boolean {
   // pre_merge_check_unresolved: an enforced path-gated pre-merge check whose changed-file set could not be
   // resolved — loopover cannot evaluate it yet, so the gate is NEUTRAL (held) and re-evaluates on the next
   // sync, rather than auto-merging past the unverified requirement or hard-closing on a transient miss. (#review-audit)
-  if (code === "repo_not_registered" || code === "repo_not_seen" || code === "pr_not_cached" || code === "pre_merge_check_unresolved") return true;
+  // #9085 (host-parity): renamed from `repo_not_registered`.
+  if (code === "repo_not_cached" || code === "repo_not_seen" || code === "pr_not_cached" || code === "pre_merge_check_unresolved") return true;
   // cla_check_unresolved (#2564): the CLA-bot check-run's conclusion could not be resolved. Unlike the codes
   // above (which are never mode-gated), evaluateClaCheck runs for BOTH claGateMode "advisory" and "block" (so
   // the finding surfaces either way) — only "block" should ever HOLD the gate on an unresolved check-run.
@@ -678,7 +687,7 @@ function isConfiguredGateBlocker(finding: AdvisoryFinding, policy: GateCheckPoli
     if (!gatePolicyBlocks(policy.aiReviewGateMode, "advisory")) return false;
     if ((policy.aiReviewLowConfidenceDisposition ?? "hold_for_review") === "advisory_only") {
       const floor = policy.aiReviewCloseConfidence ?? DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE;
-      const confidence = finding.confidence ?? 1;
+      const confidence = finding.confidence ?? CONFIDENCE_WHEN_UNSTATED;
       if (confidence < floor) return false;
     }
     return true;

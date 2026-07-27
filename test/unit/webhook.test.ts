@@ -4,6 +4,7 @@ import { enqueueWebhookByEnv, handleGitHubWebhook, handleOrbRelay } from "../../
 import { getWebhookEvent, recordWebhookEvent } from "../../src/db/repositories";
 import { relaySignature } from "../../src/orb/relay";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
+import { sha256Hex } from "../../src/utils/crypto";
 import {
   clearSelfHostRequestTraceParent,
   setSelfHostRequestTraceParent,
@@ -258,6 +259,92 @@ describe("github webhook dedup (#789)", () => {
     await expect(response.json()).resolves.toMatchObject({ status: "duplicate" });
     expect(sendCount).toBe(0); // not re-enqueued
     expect(await renderMetrics()).toContain('loopover_webhook_enqueue_total{action="opened",event="pull_request",result="duplicate"} 1');
+  });
+
+  // #9054: a 'queued'/'superseded' row with no staleness escape was PERMANENTLY un-redeliverable -- every
+  // GitHub retry and every operator "Redeliver" click carried the identical delivery_id + payload and was
+  // silently discarded as a no-op duplicate forever, because the guard above only ever excluded 'error' rows.
+  it("re-enqueues a delivery stuck 'queued' past the stale window instead of suppressing it as a duplicate (#9054)", async () => {
+    const env = createTestEnv();
+    let sendCount = 0;
+    env.WEBHOOKS = {
+      send: async () => {
+        sendCount += 1;
+      },
+    } as unknown as Queue;
+    const rawBody = JSON.stringify({ action: "completed", repository: { full_name: "JSONbored/gittensory" } });
+    const payloadHash = await sha256Hex(rawBody);
+    await recordWebhookEvent(env, { deliveryId: "stuck-queued-1", eventName: "check_suite", payloadHash, status: "queued" });
+    // Backdate receivedAt past the 10-minute staleness window -- recordWebhookEvent always stamps "now".
+    await env.DB.prepare("UPDATE webhook_events SET received_at = ? WHERE delivery_id = ?")
+      .bind(new Date(Date.now() - 11 * 60 * 1000).toISOString(), "stuck-queued-1")
+      .run();
+
+    const result = await enqueueWebhookByEnv(env, "stuck-queued-1", "check_suite", rawBody);
+
+    expect(result).toBe("queued");
+    expect(sendCount).toBe(1); // actually re-enqueued, not silently discarded
+    const event = await getWebhookEvent(env, "stuck-queued-1");
+    expect(event?.status).toBe("queued");
+  });
+
+  it("re-enqueues a delivery stuck 'superseded' past the stale window instead of suppressing it as a duplicate (#9054)", async () => {
+    const env = createTestEnv();
+    let sendCount = 0;
+    env.WEBHOOKS = {
+      send: async () => {
+        sendCount += 1;
+      },
+    } as unknown as Queue;
+    const rawBody = JSON.stringify({ action: "synchronize", repository: { full_name: "JSONbored/gittensory" } });
+    const payloadHash = await sha256Hex(rawBody);
+    await recordWebhookEvent(env, { deliveryId: "stuck-superseded-1", eventName: "pull_request", payloadHash, status: "superseded" });
+    await env.DB.prepare("UPDATE webhook_events SET received_at = ? WHERE delivery_id = ?")
+      .bind(new Date(Date.now() - 11 * 60 * 1000).toISOString(), "stuck-superseded-1")
+      .run();
+
+    const result = await enqueueWebhookByEnv(env, "stuck-superseded-1", "pull_request", rawBody);
+
+    expect(result).toBe("queued");
+    expect(sendCount).toBe(1);
+  });
+
+  it("still suppresses a 'queued' row as a duplicate while inside the stale window (no regression)", async () => {
+    const env = createTestEnv();
+    let sendCount = 0;
+    env.WEBHOOKS = {
+      send: async () => {
+        sendCount += 1;
+      },
+    } as unknown as Queue;
+    const rawBody = JSON.stringify({ action: "completed", repository: { full_name: "JSONbored/gittensory" } });
+    const payloadHash = await sha256Hex(rawBody);
+    // recordWebhookEvent stamps receivedAt as "now" -- freshly queued, well inside the 10-minute window.
+    await recordWebhookEvent(env, { deliveryId: "fresh-queued-1", eventName: "check_suite", payloadHash, status: "queued" });
+
+    const result = await enqueueWebhookByEnv(env, "fresh-queued-1", "check_suite", rawBody);
+
+    expect(result).toBe("duplicate");
+    expect(sendCount).toBe(0);
+  });
+
+  it("treats an unparseable receivedAt as not-stale (defensive fail-closed branch)", async () => {
+    const env = createTestEnv();
+    let sendCount = 0;
+    env.WEBHOOKS = {
+      send: async () => {
+        sendCount += 1;
+      },
+    } as unknown as Queue;
+    const rawBody = JSON.stringify({ action: "completed", repository: { full_name: "JSONbored/gittensory" } });
+    const payloadHash = await sha256Hex(rawBody);
+    await recordWebhookEvent(env, { deliveryId: "garbage-received-at-1", eventName: "check_suite", payloadHash, status: "queued" });
+    await env.DB.prepare("UPDATE webhook_events SET received_at = 'not-a-timestamp' WHERE delivery_id = ?").bind("garbage-received-at-1").run();
+
+    const result = await enqueueWebhookByEnv(env, "garbage-received-at-1", "check_suite", rawBody);
+
+    expect(result).toBe("duplicate"); // Date.parse -> NaN -> isStaleUnprocessedWebhook fails closed to false
+    expect(sendCount).toBe(0);
   });
 });
 

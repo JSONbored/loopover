@@ -6726,6 +6726,10 @@ export async function getWebhookEvent(
   deliveryId: string;
   payloadHash: string;
   status: string;
+  // #9054: receivedAt lets the dedup guard (src/github/webhook.ts) tell a genuinely fresh duplicate apart
+  // from a row permanently stuck at 'queued'/'superseded' -- without it, a stuck row could never be
+  // redelivered (every retry/manual "Redeliver" was silently discarded as a no-op duplicate, forever).
+  receivedAt: string;
 } | null> {
   const db = getDb(env.DB);
   const [row] = await db.select().from(webhookEvents).where(eq(webhookEvents.deliveryId, deliveryId)).limit(1);
@@ -6734,6 +6738,7 @@ export async function getWebhookEvent(
     deliveryId: row.deliveryId,
     payloadHash: row.payloadHash,
     status: row.status,
+    receivedAt: row.receivedAt,
   };
 }
 

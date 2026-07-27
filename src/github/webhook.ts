@@ -10,6 +10,20 @@ import { getSelfHostRequestTraceParent } from "../selfhost/trace-context";
 import { isNonActionableWebhookNoise } from "./self-authored";
 
 const DEFAULT_MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;
+// #9054: how long a 'queued'/'superseded' webhook_events row may sit unprocessed before a redelivery of the
+// SAME delivery_id is allowed to bypass the dedup guard below. Real processing (record row -> WEBHOOKS.send)
+// completes in well under a second, so 10 minutes is generous headroom against a merely-slow-but-still-
+// in-flight delivery while still being far short of "permanently stuck."
+const STALE_QUEUED_WEBHOOK_MS = 10 * 60 * 1000;
+
+/** True once `receivedAt` is older than {@link STALE_QUEUED_WEBHOOK_MS}. A malformed/unparseable timestamp
+ *  (should never happen -- receivedAt is always written by nowIso()) fails closed to "not stale" so it never
+ *  weakens the existing dedup guard. */
+function isStaleUnprocessedWebhook(receivedAt: string): boolean {
+  const receivedMs = Date.parse(receivedAt);
+  if (Number.isNaN(receivedMs)) return false;
+  return Date.now() - receivedMs > STALE_QUEUED_WEBHOOK_MS;
+}
 const WEBHOOK_METRIC_EVENTS = new Set([
   "check_run",
   "check_suite",
@@ -157,11 +171,20 @@ export async function enqueueWebhookByEnv(env: Env, deliveryId: string, eventNam
   }
 
   const existingEvent = await getWebhookEvent(env, deliveryId);
+  // #9054: a 'queued'/'superseded' row that has sat unprocessed past STALE_QUEUED_WEBHOOK_MS is treated the
+  // same as an 'error' row below -- never suppressed. The queued-insert-then-WEBHOOKS.send() window (or a
+  // coalesce supersede in pg-queue.ts) can lose the underlying job with no error ever recorded, and without
+  // this escape hatch that row was PERMANENTLY un-redeliverable: every GitHub retry and every operator
+  // "Redeliver" click carries the same delivery_id + payload hash, hits this guard, and is silently
+  // discarded as a no-op duplicate forever. A delivery this stale always wins over reprocessing risk --
+  // the request already has the current payload in hand, so re-recording and re-enqueuing it is strictly an
+  // improvement over leaving the row stuck.
+  const isStaleStuck = !!existingEvent && (existingEvent.status === "queued" || existingEvent.status === "superseded") && isStaleUnprocessedWebhook(existingEvent.receivedAt);
   // Suppress redelivery of an already-processed event (on success its payloadHash is overwritten to a
   // "processed" sentinel, so a hash match alone misses it and the event re-runs its side effects) or one
   // still in flight with the same payload. "error" rows are never suppressed so a failed enqueue/processing
   // can still be retried (#789).
-  if (existingEvent && existingEvent.status !== "error" && (existingEvent.status === "processed" || existingEvent.payloadHash === payloadHash)) {
+  if (existingEvent && !isStaleStuck && existingEvent.status !== "error" && (existingEvent.status === "processed" || existingEvent.payloadHash === payloadHash)) {
     recordWebhookEnqueueMetric(eventName, payload.action, "duplicate");
     return "duplicate";
   }

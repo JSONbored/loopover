@@ -115,6 +115,40 @@ const DEFAULT_CAP_USAGE: Readonly<GovernorCapUsage> = Object.freeze({ budgetSpen
 const DEFAULT_REPUTATION_HISTORY: Readonly<RepoOutcomeHistory> = Object.freeze({ decided: 0, unfavorable: 0 });
 let defaultGovernorState: GovernorState | null = null;
 
+// #9062: governor_reputation_history was a cumulative, never-decaying counter -- reputation-throttle.ts's own
+// doc comment promises "a recovering ratio restores it -- never a hard permanent ban", but with no decay and
+// no window the ratio could only ever go UP (submissions are the only source of new decided outcomes, and a
+// "floored" ratio hard-denies open_pr, so a miner that hits the floor could never generate the new clean
+// outcomes needed to dilute it back down -- an absorbing state). Applying a time-based half-life decays the
+// weight of OLD history independent of whether any new submissions happen, so even a fully floored miner's
+// ratio recovers automatically over real calendar time and eventually clears the floor/throttle bands on its
+// own -- the "recovering ratio" the module's doc already promises, actually delivered.
+const REPUTATION_HISTORY_HALF_LIFE_DAYS = 14;
+const MS_PER_DAY = 86_400_000;
+// Below one full day of elapsed wall-clock time, skip decay entirely rather than applying a near-1.0 factor:
+// floating-point truncation in decayReputationHistory's Math.floor could otherwise shave a count off a
+// same-process (or same-second) read/write pair -- exactly the cadence every existing round-trip test in this
+// file runs at.
+const REPUTATION_HISTORY_DECAY_MIN_ELAPSED_DAYS = 1;
+
+/** Decay `history` by a half-life of {@link REPUTATION_HISTORY_HALF_LIFE_DAYS} for however long has elapsed
+ *  since `updatedAt`, so `governor_reputation_history` (see the module doc above) cannot become an absorbing
+ *  state. Halving preserves the observed ratio while shrinking its absolute weight, so a handful of fresh
+ *  outcomes can outweigh a stale bad streak far sooner than if counts simply accumulated forever. A malformed
+ *  `updatedAt` (should never happen -- it is always written as `new Date().toISOString()`) or an elapsed span
+ *  under the one-day floor returns `history` unchanged. */
+function decayReputationHistory(history: RepoOutcomeHistory, updatedAt: string, nowMs: number): RepoOutcomeHistory {
+  const updatedMs = Date.parse(updatedAt);
+  if (!Number.isFinite(updatedMs)) return history;
+  const elapsedDays = (nowMs - updatedMs) / MS_PER_DAY;
+  if (elapsedDays < REPUTATION_HISTORY_DECAY_MIN_ELAPSED_DAYS) return history;
+  const decayFactor = 2 ** (-elapsedDays / REPUTATION_HISTORY_HALF_LIFE_DAYS);
+  return {
+    decided: Math.floor(history.decided * decayFactor),
+    unfavorable: Math.floor(history.unfavorable * decayFactor),
+  };
+}
+
 export function resolveGovernorStateDbPath(env: Record<string, string | undefined> = process.env): string {
   return resolveLocalStoreDbPath(defaultDbFileName, "LOOPOVER_MINER_GOVERNOR_STATE_DB", env);
 }
@@ -401,7 +435,10 @@ export function openGovernorState(dbPath: string = resolveGovernorStateDbPath())
       const normalizedRepo = normalizeRepoFullName(repoFullName);
       const row = getReputationStatement.get(normalizedForge, normalizedRepo) as ReputationHistoryRow | undefined;
       if (!row) return { ...DEFAULT_REPUTATION_HISTORY };
-      return { decided: row.decided, unfavorable: row.unfavorable };
+      // #9062: decay at READ time too (not just on the next increment) so a miner that never submits again --
+      // exactly the "floored" hard-deny scenario reputation-throttle.ts's chokepoint consumer enforces -- still
+      // sees its ratio recover purely from elapsed time, without needing a write to trigger it.
+      return decayReputationHistory({ decided: row.decided, unfavorable: row.unfavorable }, row.updated_at, Date.now());
     },
     saveReputationHistory(repoFullName: string, history: RepoOutcomeHistory, apiBaseUrl?: string): RepoOutcomeHistory {
       const normalizedForge = normalizeApiBaseUrl(apiBaseUrl);
@@ -422,7 +459,9 @@ export function openGovernorState(dbPath: string = resolveGovernorStateDbPath())
       const unfavorableDelta = Number.isInteger(delta?.unfavorable) ? Number(delta.unfavorable) : 0;
       return withTransaction(() => {
         const row = getReputationStatement.get(normalizedForge, normalizedRepo) as ReputationHistoryRow | undefined;
-        const prior = row ? { decided: row.decided, unfavorable: row.unfavorable } : { ...DEFAULT_REPUTATION_HISTORY };
+        // #9062: decay the PRIOR count before folding in this increment's delta, so the accumulation itself
+        // never becomes an absorbing 1:1-forever counter.
+        const prior = row ? decayReputationHistory({ decided: row.decided, unfavorable: row.unfavorable }, row.updated_at, Date.now()) : { ...DEFAULT_REPUTATION_HISTORY };
         const decided = prior.decided + decidedDelta;
         const unfavorable = prior.unfavorable + unfavorableDelta;
         upsertReputationStatement.run(normalizedForge, normalizedRepo, decided, unfavorable, new Date().toISOString());

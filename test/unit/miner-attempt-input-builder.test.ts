@@ -78,7 +78,38 @@ describe("buildAttemptGovernorContext (#5132)", () => {
     expect(buildAttemptGovernorContext({}, DEFAULT_AMS_POLICY_SPEC)).not.toHaveProperty("reputationHistory");
   });
 
+  // #9062: a non-floored ratio (0.8, below the 0.9 floorAtRatio default) no longer hard-denies at the
+  // reputation-throttle stage -- it scales the per-repo rate-limit window instead. The extreme "floored"
+  // ratio (0.9) still does, which is what this test now pins to keep proving real history reaches and
+  // actually gates the chokepoint.
   it("REGRESSION (#5675): a repo's real unfavorable-outcome streak, threaded through the governor context, throttles the chokepoint", () => {
+    const ctx = buildAttemptGovernorContext(
+      { LOOPOVER_MINER_LIVE_MODE: "live" },
+      DEFAULT_AMS_POLICY_SPEC,
+      false,
+      undefined,
+      { decided: 10, unfavorable: 9 },
+    );
+    const decision = evaluateGovernorChokepoint({
+      actionClass: "open_pr",
+      repoFullName: "acme/widgets",
+      nowMs: 10_000,
+      wouldBeAction: { action: "open_pr", title: "Fix bug" },
+      liveModeRepoOptIn: "live",
+      rateLimitBuckets: { global: {}, perRepo: {} },
+      rateLimitBackoffAttempts: {},
+      capUsage: { budgetSpent: 0, turnsTaken: 0, elapsedMs: 0 },
+      ...ctx,
+    });
+    expect(decision.allowed).toBe(false);
+    expect(decision.stage).toBe("reputation_throttle");
+    expect(decision.detail.reputation?.reason).toBe("floored");
+  });
+
+  // #9062: pins the NEW behavior for the common (non-floored) case -- cadenceFactor is consumed to scale
+  // the per-repo rate-limit window rather than discarded via an outright deny, so the miner can keep
+  // submitting (at a degraded cadence) and dilute its ratio back down with fresh outcomes.
+  it("REGRESSION (#9062): a non-floored unfavorable-outcome streak no longer denies -- it reaches allow with a degraded cadenceFactor recorded", () => {
     const ctx = buildAttemptGovernorContext(
       { LOOPOVER_MINER_LIVE_MODE: "live" },
       DEFAULT_AMS_POLICY_SPEC,
@@ -97,8 +128,9 @@ describe("buildAttemptGovernorContext (#5132)", () => {
       capUsage: { budgetSpent: 0, turnsTaken: 0, elapsedMs: 0 },
       ...ctx,
     });
-    expect(decision.allowed).toBe(false);
-    expect(decision.stage).toBe("reputation_throttle");
+    expect(decision.allowed).toBe(true);
+    expect(decision.detail.reputation?.reason).toBe("throttled");
+    expect(decision.detail.reputation?.cadenceFactor).toBeLessThan(1);
   });
 
   it("omits rateLimitBuckets/rateLimitBackoffAttempts/capUsage so the persisted governor-state store auto-supplies them", () => {

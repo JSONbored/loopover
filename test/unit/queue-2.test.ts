@@ -2321,9 +2321,11 @@ describe("queue processors", () => {
     await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 3, title: "Healthy PR, still waiting on required CI", state: "open", user: { login: "contributor" }, head: { sha: "pending-sha" }, base: { ref: "main" }, labels: [], body: "" });
     const targetKey = "owner/agent-repo#3#pending-sha";
     vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
-    // Same fixture shape as "keeps deferring a missing-required-context PR" (queue.test.ts): a required
-    // status check has simply not posted yet -- prReadyForReview's own #3947 design defers this
-    // UNCONDITIONALLY and INDEFINITELY (no finalize escape), by design, for exactly this case.
+    // Same fixture shape as the missing-required-context tests in queue.test.ts: a required status check has
+    // simply not posted yet. Time is frozen for this whole test (vi.setSystemTime, never advanced) and no
+    // ci-pending-first-seen marker is pre-seeded, so every tick reads zero elapsed time against the 2-minute
+    // missing-required-context cap (#9011) -- prReadyForReview correctly keeps deferring throughout, exactly
+    // as it should for a PR that (as far as this test can tell) only just started waiting.
     const requiredContextsSpy = vi.spyOn(backfillModule, "fetchRequiredStatusContexts").mockResolvedValue(null);
     const liveCiSpy = vi.spyOn(backfillModule, "fetchLiveCiAggregatePreferGraphQl").mockResolvedValue({
       ciState: "pending",

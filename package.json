@@ -48,6 +48,7 @@
     "control-plane:install": "npm ci --prefix control-plane --prefer-offline --no-audit --no-fund",
     "control-plane:test": "npm run control-plane:install && npm --prefix control-plane test",
     "control-plane:coverage": "node scripts/control-plane-coverage.mjs",
+    "engine:coverage": "node scripts/engine-coverage.mjs",
     "db:migrations:check": "tsx scripts/check-migrations.ts",
     "db:schema-drift:check": "tsx scripts/check-schema-drift.ts",
     "actionlint": "node --experimental-strip-types scripts/actionlint.ts",

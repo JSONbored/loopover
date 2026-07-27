@@ -525,6 +525,14 @@ export async function upsertPullRequestFromGitHub(
         lastSeenOpenAt,
         payloadJson: jsonString(payload),
         githubUpdatedAt: resolvedGithubUpdatedAt,
+        // #9012: a new commit starts the failed-merge budget fresh. This is what mergeAttemptCount's own schema
+        // and function docs have always PROMISED ("a new commit's attempts start fresh once the row's head
+        // advances") -- bumpPullRequestMergeAttempt scopes the *increment* to the head SHA, which stops a stale
+        // head from bumping the counter but never resets the counter itself, so the value survived every push.
+        // The consequence was cumulative: once one head exhausted MERGE_RETRY_CAP, every later head was
+        // one-strike-terminal on the first transient failure it met. Only reset on a REAL head change, so an
+        // ordinary resync (same head) cannot hand a genuinely failing merge an unlimited retry budget.
+        ...(headShaChanged ? { mergeAttemptCount: 0 } : {}),
         updatedAt: syncedAt,
       },
     });
@@ -4246,13 +4254,65 @@ export async function bumpPullRequestDraftConversionCount(env: Env, fullName: st
 
 /** Mark a PR terminally merge-blocked for its current head SHA: the planner skips the `merge` disposition while
  *  merge_blocked_sha == headSha. Scoped to headSha so a later commit (a pushed fix) auto-clears the block (the
- *  guard compares it to the live head). Records the human-readable terminal reason. */
-export async function markPullRequestMergeBlocked(env: Env, fullName: string, number: number, headSha: string, reason: string): Promise<void> {
+ *  guard compares it to the live head). Records the human-readable terminal reason.
+ *
+ *  `expiresAt` (#9012) additionally lapses the block at an instant, for an INFRA-scoped cause — a rejected
+ *  installation token or an exhausted secondary-rate-limit window, which is a property of the installation and
+ *  not of the code, and which therefore cannot be cleared by the only escape a commit-scoped block offers. It
+ *  also zeroes merge_attempt_count so the post-expiry re-probe starts from a full retry budget rather than
+ *  being one-strike-terminal on the next hiccup. Omitted (undefined) = commit-scoped: unchanged behavior. */
+export async function markPullRequestMergeBlocked(
+  env: Env,
+  fullName: string,
+  number: number,
+  headSha: string,
+  reason: string,
+  expiresAt?: string | undefined,
+): Promise<void> {
   const db = getDb(env.DB);
   await db
     .update(pullRequests)
-    .set({ mergeBlockedSha: headSha, mergeBlockedReason: reason.slice(0, 280), updatedAt: nowIso() })
+    .set({
+      mergeBlockedSha: headSha,
+      mergeBlockedReason: reason.slice(0, 280),
+      mergeBlockedUntil: expiresAt ?? null,
+      ...(expiresAt !== undefined ? { mergeAttemptCount: 0 } : {}),
+      updatedAt: nowIso(),
+    })
     .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number), eq(pullRequests.headSha, headSha)));
+}
+
+/** #9034: count this PR into the AI-review low-confidence hold tally and return the new total.
+ *
+ *  Idempotent per HEAD, which is what makes the number mean "rolls", not "passes": the re-gate sweep, a CI
+ *  event, and a label webhook can all re-evaluate the same commit within minutes, and every one of them would
+ *  otherwise bump the counter and burn the cap against a single genuine hold. Only a head the counter has not
+ *  already seen advances it.
+ *
+ *  Deliberately NOT reset when the head changes (contrast bumpPullRequestMergeAttempt, whose whole point is
+ *  that a new commit earns a fresh budget): a PR that keeps drawing low-confidence blockers across successive
+ *  pushes is exactly the shape being capped, so a push must not buy another life. Mirrors
+ *  bumpPullRequestDraftConversionCount's same reasoning for the same reason.
+ *
+ *  Returns the pre-existing total unchanged when the head was already counted, so callers can compare against
+ *  the cap on every pass without needing to know whether this particular pass advanced anything. */
+export async function bumpPullRequestLowConfidenceHold(env: Env, fullName: string, number: number, headSha: string | null | undefined): Promise<number> {
+  const db = getDb(env.DB);
+  const where = and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number));
+  const [existing] = await db
+    .select({ count: pullRequests.lowConfidenceHoldCount, countedHead: pullRequests.lowConfidenceHoldHeadSha })
+    .from(pullRequests)
+    .where(where)
+    .limit(1);
+  if (!existing) return 0;
+  // `low_confidence_hold_count` is NOT NULL DEFAULT 0, so the row always carries a number here.
+  const current = Number(existing.count);
+  // An absent head SHA cannot be deduped against, so it must not count -- otherwise a stretch of sparse
+  // payloads would silently exhaust the cap and close a PR that was only ever held once.
+  if (headSha == null || existing.countedHead === headSha) return current;
+  const next = current + 1;
+  await db.update(pullRequests).set({ lowConfidenceHoldCount: next, lowConfidenceHoldHeadSha: headSha, updatedAt: nowIso() }).where(where);
+  return next;
 }
 
 // Linked-issue hard-rule violation memory (#linked-issue-hard-rule-persistence).
@@ -6903,6 +6963,9 @@ function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): Pull
     mergeAttemptCount: row.mergeAttemptCount,
     mergeBlockedSha: row.mergeBlockedSha,
     mergeBlockedReason: row.mergeBlockedReason,
+    mergeBlockedUntil: row.mergeBlockedUntil,
+    lowConfidenceHoldCount: row.lowConfidenceHoldCount,
+    lowConfidenceHoldHeadSha: row.lowConfidenceHoldHeadSha,
     approvedHeadSha: row.approvedHeadSha,
     // Read straight from the row, NEVER the GitHub payload — this is a loopover-internal sweep marker.
     lastRegatedAt: row.lastRegatedAt,

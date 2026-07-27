@@ -476,6 +476,10 @@ export type AgentActionPlanInput = {
     // (perms/required-check/conflict). When they match, the merge can't complete for this commit → suppress it.
     headSha?: string | null | undefined;
     mergeBlockedSha?: string | null | undefined;
+    // #9012: the human-readable reason the merge is blocked. Purely for surfacing — with review_state_label on,
+    // a terminally-blocked PR used to keep a ready-to-merge label and no other signal anywhere, so a contributor
+    // looking at a green, approved, "ready" PR had no way to learn it would never merge and no reason to push.
+    mergeBlockedReason?: string | null | undefined;
     // Re-approval idempotency: the head SHA the bot last auto-approved. When it equals the live headSha this
     // exact commit is already bot-approved → suppress the `approve` disposition (a GitHub App's own approval
     // does NOT reliably flip reviewDecision to APPROVED, so without this the bot re-approves every sweep). A new
@@ -1077,6 +1081,8 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   const ciUnverified = input.ciState === "unverified";
   // RC3: a prior merge attempt failed terminally for THIS exact head SHA (403/405/409/conflict) → never re-plan
   // the merge; it can't complete for this commit. A new commit makes the live head differ from mergeBlockedSha.
+  // The caller passes through only a block that is still IN EFFECT (#9012 — isMergeBlockInEffect resolves the
+  // infra-scoped expiry against the clock), so this stays a plain head comparison and the planner stays pure.
   const mergeTerminallyBlocked = input.pr.mergeBlockedSha != null && input.pr.headSha != null && input.pr.mergeBlockedSha === input.pr.headSha;
   // Re-approval idempotency: this exact commit is already bot-approved when the stored approved-head SHA equals
   // the live head SHA → never re-post an approval for it (a GitHub App's own approval does not reliably flip
@@ -1257,7 +1263,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
         ? labels.changesRequested
         : input.migrationCollisionHold !== undefined
           ? labels.migrationCollision
-          : heldForManualReview
+          : heldForManualReview || mergeTerminallyBlocked
             ? labels.manualReview
             : labels.readyToMerge;
     const reason = linkedIssueCloseInFlight
@@ -1278,7 +1284,14 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
                     ? `verdict=${conclusion}; ${mergeUnstableHoldReason(input.nonRequiredCheckFailures)}`
                     : heldForManualReview
                       ? `verdict=${conclusion}; ${guardrailReason}`
-                      : `verdict=${conclusion}; CI green`;
+                      : mergeTerminallyBlocked
+                        ? // #9012: the ONE place a terminal merge block becomes visible to a human. Everything
+                          // else about this PR reads healthy — gate passing, CI green, bot-approved — so
+                          // without naming the block here the label says "needs review" with no reason and the
+                          // maintainer has nothing to act on. mergeBlockedReason is executor-written and
+                          // already length-capped at persist time (280 chars).
+                          `verdict=${conclusion}; CI green, but a prior merge attempt failed and is held: ${input.pr.mergeBlockedReason ?? "reason unrecorded"}`
+                        : `verdict=${conclusion}; CI green`;
     if (label !== null && !hasLabelOrPlanned(input.pr.labels, actions, label)) {
       actions.push({
         actionClass: "label",

@@ -1,4 +1,14 @@
-import { claimPendingAgentActionDecision, getInstallation, getPullRequest, getPendingAgentAction, recordAuditEvent, setPendingAgentActionStatus } from "../db/repositories";
+import {
+  claimPendingAgentActionDecision,
+  getInstallation,
+  getPullRequest,
+  getPendingAgentAction,
+  insertNotificationDeliveryIfAbsent,
+  listPendingAgentActions,
+  recordAuditEvent,
+  setPendingAgentActionStatus,
+} from "../db/repositories";
+import { APPROVAL_EXPIRY_MS, planApprovalQueueMaintenance } from "./agent-approval-staleness";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { createInstallationToken } from "../github/app";
 import { loadLinkedIssueHardRules, resolveLinkedIssueHardRule } from "../review/linked-issue-hard-rules";
@@ -466,4 +476,65 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
     metadata: { ...baseMetadata, executionOutcome: execOutcome },
   });
   return { status: finalStatus, action: { ...pending, status: finalStatus, decidedBy: input.decidedBy }, executionOutcome: execOutcome };
+}
+
+/**
+ * #9032 — sweep the approval queue for rows nobody has acted on.
+ *
+ * Staging notifies the maintainer exactly once, forever (stageForApproval's dedup key is per (PR, actionClass)),
+ * so a missed badge meant a staged action waited indefinitely with nothing anywhere saying so. This pass runs on
+ * the same cron tick as the re-gate fan-out and gives every pending row two escapes it never had: a periodic
+ * reminder badge, and a hard expiry once reminders have plainly not worked.
+ *
+ * Expiry is deliberately NOT a rejection. Rejection is a maintainer's judgment that the action is wrong and it
+ * feeds the trust loop as such; expiry only records that consent was never given. Nothing executes either way,
+ * but a later pass that re-plans the same action stages a fresh row with a fresh notification, because a
+ * genuinely still-correct action should not be silenced by the fact that a human was on vacation once.
+ *
+ * Every step is best-effort and independent: one repo's notification failure must not stop another row from
+ * expiring. Returns per-outcome counts for the caller's structured log.
+ */
+export async function sweepStaleApprovalQueue(env: Env, nowMs: number = Date.now()): Promise<{ reminded: number; expired: number }> {
+  const pending = await listPendingAgentActions(env, { status: "pending", limit: 500 });
+  let reminded = 0;
+  let expired = 0;
+  for (const row of pending) {
+    const plan = planApprovalQueueMaintenance(row.createdAt, nowMs);
+    if (plan.kind === "none") continue;
+    /* v8 ignore next -- a repo full name always has an owner segment; mirrors stageForApproval's own fallback. */
+    const recipientLogin = row.repoFullName.split("/")[0] ?? "";
+    if (plan.kind === "remind") {
+      const ageDays = plan.bucket;
+      const { created } = await insertNotificationDeliveryIfAbsent(env, {
+        // The bucket index is what makes this fire again at all: the dedup key changes once per interval, so
+        // the ~2-minute sweep cadence collapses to exactly one badge per interval with no extra persisted state.
+        dedupKey: `agent.pending_action.reminder:${row.repoFullName}#${row.pullNumber}:${row.actionClass}:${plan.bucket}`,
+        channel: "badge",
+        recipientLogin,
+        eventType: "agent.pending_action",
+        repoFullName: row.repoFullName,
+        pullNumber: row.pullNumber,
+        title: `Still waiting: a ${row.actionClass.replace(/_/g, " ")} staged ${ageDays} day${ageDays === 1 ? "" : "s"} ago needs your approval`,
+        body: `${row.reason ?? "A staged action"} — accept to execute it, or reject to cancel. It expires after ${Math.round(APPROVAL_EXPIRY_MS / (24 * 60 * 60 * 1000))} days.`,
+        deeplink: `https://github.com/${row.repoFullName}/pull/${row.pullNumber}`,
+        actorLogin: "loopover",
+      }).catch(() => ({ created: false }));
+      if (created) reminded += 1;
+      continue;
+    }
+    // Atomic pending→expired, so a maintainer accepting at the exact moment the sweep expires the row still
+    // wins: their claim and this one contend on the same conditional UPDATE and only one lands (#2423-concurrent).
+    const claimed = await claimPendingAgentActionDecision(env, row.id, { status: "expired", decidedBy: "loopover" }).catch(() => false);
+    if (!claimed) continue;
+    expired += 1;
+    await recordAuditEvent(env, {
+      eventType: "agent.pending_action.expired",
+      actor: "loopover",
+      targetKey: `${row.repoFullName}#${row.pullNumber}`,
+      outcome: "denied",
+      detail: `staged ${row.actionClass} expired unapproved after ${Math.round(APPROVAL_EXPIRY_MS / (24 * 60 * 60 * 1000))} days`,
+      metadata: { repoFullName: row.repoFullName, pullNumber: row.pullNumber, actionClass: row.actionClass, stagedAt: row.createdAt },
+    }).catch(() => undefined);
+  }
+  return { reminded, expired };
 }

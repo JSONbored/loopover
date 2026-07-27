@@ -299,6 +299,8 @@ import {
   executeIssueMaintenanceActions,
   pendingClosureLabelApplied,
 } from "../services/agent-action-executor";
+import { activeMergeBlockedSha } from "../services/merge-failure";
+import { applyLowConfidenceHoldCap } from "../review/low-confidence-hold-cap";
 import { loadIssueQualityReportMap } from "../services/issue-quality";
 import { generateAndSendReviewRecap } from "../services/review-recap";
 import {
@@ -2660,7 +2662,12 @@ function buildAgentMaintenancePlanInput(args: {
         pr.createdAt,
       ),
       headSha: pr.headSha,
-      mergeBlockedSha: pr.mergeBlockedSha,
+      // #9012: pass through only a block that is STILL IN EFFECT. An infra-scoped block (rejected installation
+      // token, exhausted rate-limit window) carries an expiry; once it lapses the planner must see no block at
+      // all and re-probe the merge, so a fleet-wide token blip stops stranding green, approved PRs forever.
+      // Resolved here rather than in the planner so the planner stays a pure function of its inputs, clock-free.
+      mergeBlockedSha: activeMergeBlockedSha(pr, pr.headSha, Date.now()),
+      mergeBlockedReason: pr.mergeBlockedReason,
       approvedHeadSha: pr.approvedHeadSha,
       authorLogin: pr.authorLogin,
       linkedIssues: pr.linkedIssues,
@@ -3248,7 +3255,14 @@ async function runAgentMaintenancePlanAndExecute(
   // (no extra network/DB call, unlike migrationCollisionHold/unlinkedIssueMatchHold above) -- undefined unless the
   // gate failed SOLELY on a sub-aiReviewCloseConfidence-floor ai_consensus_defect/ai_review_split finding under
   // the (default) hold_for_review disposition. See resolveAiReviewLowConfidenceHold's own doc comment.
-  const aiReviewLowConfidenceHold = resolveAiReviewLowConfidenceHold(gate, settings);
+  const aiReviewLowConfidenceHoldCandidate = resolveAiReviewLowConfidenceHold(gate, settings);
+  // #9034: the hold is bounded. Confidence-parking a close is the right call while the verdict is genuinely
+  // uncertain, but repeated across independent rolls of the SAME PR it becomes an indefinite open hold that
+  // never escalates -- the PR survives, each roll costs a maintainer, and nothing counts. Past the cap the
+  // sub-floor finding has been reproduced enough times that the close is no longer the uncertain call the hold
+  // protects against, so it fires. The counter only advances on a head it has not already seen, so this budget
+  // is spent by real rolls rather than by the several re-gate passes a single commit attracts.
+  const aiReviewLowConfidenceHold = await applyLowConfidenceHoldCap(env, { repoFullName, pullNumber: pr.number, headSha: pr.headSha }, aiReviewLowConfidenceHoldCandidate);
   // #8962 salvageability hold — the OTHER side of the floor: an at/above-floor AI-judgment close routed to
   // hold-with-guidance when the deterministic salvageability score clears gate.aiReview.salvageabilityMinScore.
   // Knob unset (the default) short-circuits before any IO; the low-confidence hold keeps precedence.

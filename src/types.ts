@@ -679,6 +679,17 @@ export type PullRequestRecord = {
   mergeAttemptCount?: number | null | undefined;
   mergeBlockedSha?: string | null | undefined;
   mergeBlockedReason?: string | null | undefined;
+  /** #9012: expiry of an INFRA-scoped merge block (rejected installation token, exhausted rate-limit window).
+   *  Those causes belong to the installation, not the commit, so "push a new commit" is not a real escape —
+   *  the block lapses at this instant and the merge is re-probed. `null` = commit-scoped, blocked until the
+   *  head advances. Read through isMergeBlockInEffect (src/services/merge-failure.ts), never compared raw. */
+  mergeBlockedUntil?: string | null | undefined;
+  /** #9034: count of distinct heads parked in the AI-review low-confidence hold, and the head the last one was
+   *  counted for. Once the count passes AI_REVIEW_LOW_CONFIDENCE_HOLD_CAP the hold stops converting a close
+   *  into an indefinite open hold and the close fires. Never reset by a new commit — repeated holds ARE the
+   *  pattern being capped. */
+  lowConfidenceHoldCount?: number | null | undefined;
+  lowConfidenceHoldHeadSha?: string | null | undefined;
   /** Re-approval idempotency: the head SHA the bot last auto-approved. The planner skips the `approve`
    *  disposition while approvedHeadSha === headSha (this commit is already approved by the bot); a new commit
    *  clears the match so the bot may re-approve the new code. Mirrors mergeBlockedSha. */
@@ -1769,7 +1780,10 @@ export type AgentPendingActionParams = {
 // executor, but the mutation itself threw (a real GitHub-call failure), as opposed to a clean "accepted" outcome
 // where the executor's own gates (autonomy/dry-run/freshness) declined to act -- that's an intentional policy
 // result, not a failure, and stays "accepted" (#2423).
-export type AgentPendingActionStatus = "pending" | "accepted" | "rejected" | "errored";
+/** #9032: `expired` = staged, reminded, and never decided within APPROVAL_EXPIRY_MS. Distinct from `rejected`
+ *  on purpose — a rejection is a maintainer's judgment that the action was wrong and feeds the trust loop as
+ *  such, while an expiry only records that consent was never given. Neither executes anything. */
+export type AgentPendingActionStatus = "pending" | "accepted" | "rejected" | "errored" | "expired";
 
 /** Approval-queue row (#779): an `auto_with_approval` action the write-actions layer staged for a one-tap
  *  maintainer accept (→ execute) or reject (→ cancel). */

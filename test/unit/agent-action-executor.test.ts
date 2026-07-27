@@ -1455,6 +1455,47 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     captureSpy.mockRestore();
   });
 
+  // #9012: a 401 is terminal for the pass (the token really is bad), but it belongs to the INSTALLATION, not to
+  // the commit — every in-flight merge in the fleet fails at once and every one recovers at once. Writing a
+  // head-scoped block with no expiry meant the only escape was a commit the contributor had no reason to push,
+  // so one key rotation stranded every green, approved PR it caught, permanently and silently.
+  it("gives a 401-blocked merge an expiry so it recovers without a new commit (#9012)", async () => {
+    const env = createTestEnv({});
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "c" }, head: { sha: "sha7" }, labels: [], body: "" });
+    vi.mocked(mergePullRequest).mockRejectedValueOnce(Object.assign(new Error("Bad credentials"), { status: 401 }));
+
+    await executeAgentMaintenanceActions(env, ctx(), [merge]);
+
+    const row = await env.DB.prepare(
+      "select merge_blocked_sha as sha, merge_blocked_until as until, merge_attempt_count as attempts from pull_requests where repo_full_name = ? and number = ?",
+    )
+      .bind("owner/repo", 7)
+      .first<{ sha: string | null; until: string | null; attempts: number }>();
+    expect(row?.sha).toBe("sha7");
+    expect(Date.parse(row?.until ?? "")).toBeGreaterThan(Date.now());
+    // Zeroed so the post-expiry re-probe gets a full retry budget rather than being one-strike-terminal.
+    expect(row?.attempts).toBe(0);
+    const audit = await env.DB.prepare("select metadata_json as metadata from audit_events where event_type = ?").bind("agent.action.merge_blocked").first<{ metadata: string }>();
+    expect(JSON.parse(audit?.metadata ?? "{}")).toMatchObject({ scope: "infra" });
+  });
+
+  it("leaves a genuinely commit-scoped block with no expiry, so it lasts until the contributor rebases (#9012)", async () => {
+    const env = createTestEnv({});
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "c" }, head: { sha: "sha7" }, labels: [], body: "" });
+    vi.mocked(mergePullRequest).mockRejectedValueOnce(Object.assign(new Error("Pull Request is not mergeable"), { status: 405 }));
+
+    await executeAgentMaintenanceActions(env, ctx(), [merge]);
+
+    const row = await env.DB.prepare("select merge_blocked_sha as sha, merge_blocked_until as until from pull_requests where repo_full_name = ? and number = ?")
+      .bind("owner/repo", 7)
+      .first<{ sha: string | null; until: string | null }>();
+    expect({ sha: row?.sha, until: row?.until }).toEqual({ sha: "sha7", until: null });
+    const audit = await env.DB.prepare("select metadata_json as metadata from audit_events where event_type = ?").bind("agent.action.merge_blocked").first<{ metadata: string }>();
+    const metadata = JSON.parse(audit?.metadata ?? "{}") as Record<string, unknown>;
+    expect(metadata.scope).toBe("commit");
+    expect(metadata).not.toHaveProperty("expiresAt");
+  });
+
   it("opportunistically refreshes installation health when a PR-write mutation fails with a 403 (#2265)", async () => {
     const env = createTestEnv({});
     vi.mocked(closePullRequest).mockRejectedValueOnce(Object.assign(new Error("Resource not accessible by integration"), { status: 403 }));

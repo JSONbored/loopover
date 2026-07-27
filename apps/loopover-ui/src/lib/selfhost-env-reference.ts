@@ -338,6 +338,10 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/selfhost/maintenance-admission.ts",
   },
   {
+    name: "MAINTENANCE_ADMISSION_PRESSURE_CACHE_TTL_MS",
+    firstReference: "src/selfhost/maintenance-admission.ts",
+  },
+  {
     name: "MIGRATIONS_DIR",
     firstReference: "src/server.ts",
   },
@@ -729,6 +733,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `MAINTENANCE_ADMISSION_MAX_LIVE_AGE_MS` | `src/selfhost/maintenance-admission.ts` |",
   "| `MAINTENANCE_ADMISSION_MAX_LIVE_PENDING` | `src/selfhost/maintenance-admission.ts` |",
   "| `MAINTENANCE_ADMISSION_MAX_PENDING` | `src/selfhost/maintenance-admission.ts` |",
+  "| `MAINTENANCE_ADMISSION_PRESSURE_CACHE_TTL_MS` | `src/selfhost/maintenance-admission.ts` |",
   "| `MIGRATIONS_DIR` | `src/server.ts` |",
   "| `OBSERVABILITY_SMOKE_POLL_MS` | `scripts/smoke-observability-traces.ts` |",
   "| `OBSERVABILITY_SMOKE_TIMEOUT_MS` | `scripts/smoke-observability-traces.ts` |",

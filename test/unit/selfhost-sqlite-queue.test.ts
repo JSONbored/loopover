@@ -3666,6 +3666,7 @@ describe("createSqliteQueue (durable #980)", () => {
       "MAINTENANCE_ADMISSION_DEFER_MS",
       "MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS",
       "MAINTENANCE_ADMISSION_DRAIN_AGE_MS",
+      "MAINTENANCE_ADMISSION_PRESSURE_CACHE_TTL_MS",
     ] as const;
     const saved: Record<string, string | undefined> = {};
 
@@ -4046,6 +4047,112 @@ describe("createSqliteQueue (durable #980)", () => {
       expect(signals.livePendingCount).toBe(3);
       expect(signals.liveRunnableNowCount).toBe(0);
       expect(signals.oldestLiveRunnableAgeMs).toBeNull();
+    });
+
+    it("REGRESSION (#9155): a normal in-flight PROCESSING job does not by itself age into oldestLiveRunnableAgeMs — only due-and-unclaimed pending rows do", async () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      const now = Date.now();
+      // A job that has been PROCESSING for a long time -- a normal, still-running AI review (routinely takes
+      // minutes), not a stuck one. Before the fix this alone would dominate oldestLiveRunnableAgeMs and could
+      // trip live_job_age_high on its own, collapsing the whole maintenance lane.
+      driver.query(
+        `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
+         VALUES (?, 'processing', 0, ?, ?, 10, NULL, 0)`,
+        [JSON.stringify(msg("github-webhook")), now, now - 600_000], // "processing" for 10 minutes
+      );
+      // A genuinely due-but-unclaimed row, much younger.
+      driver.query(
+        `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
+         VALUES (?, 'pending', 0, ?, ?, 10, NULL, 0)`,
+        [JSON.stringify(msg("github-webhook")), now - 1_000, now - 5_000],
+      );
+      const signals = await q.pressureSignals();
+      // Both rows still count toward runnable-now (processing OR due) -- that check is unchanged.
+      expect(signals.liveRunnableNowCount).toBe(2);
+      // But the AGE signal reflects only the due-and-unclaimed row (~5s), not the 10-minute-old processing row.
+      expect(signals.oldestLiveRunnableAgeMs).toBeGreaterThanOrEqual(5_000);
+      expect(signals.oldestLiveRunnableAgeMs).toBeLessThan(600_000);
+    });
+
+    it("REGRESSION (#9155): oldestLiveRunnableAgeMs is null when every runnable row is PROCESSING (none due-and-unclaimed)", async () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      const now = Date.now();
+      driver.query(
+        `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
+         VALUES (?, 'processing', 0, ?, ?, 10, NULL, 0)`,
+        [JSON.stringify(msg("github-webhook")), now, now - 600_000],
+      );
+      const signals = await q.pressureSignals();
+      expect(signals.liveRunnableNowCount).toBe(1); // still counted as runnable (in-flight resource use)
+      expect(signals.oldestLiveRunnableAgeMs).toBeNull(); // nothing WAITING, so no age signal to gate on
+    });
+
+    // REGRESSION (#9155, part 2): a denied maintenance job returns `true` from processOne(), so the pump's
+    // drain loop immediately claims the next due maintenance row and re-evaluates admission -- without
+    // memoization this recomputes the pressure aggregate queries on EVERY denied job (four query round-trips
+    // per denial, in one tight loop for a burst of N due maintenance rows). Two maintenance jobs denied by the
+    // SAME live-pending-high pressure reading in the same drain() pass must share ONE computation.
+    it("memoizes maintenancePressureSignals across denied jobs claimed in quick succession, instead of recomputing per denial", async () => {
+      const driver = makeDriver();
+      const started: string[] = [];
+      // The queue is created FIRST (so its startup DDL creates _selfhost_jobs), and the two due maintenance
+      // rows are inserted DIRECTLY afterward (not via binding.send) — send()'s own kickOne() fires a background
+      // pump immediately, which would otherwise race a claim against these inserts and consume both jobs before
+      // the spy below is even installed (see the #9153 regression tests above in this file for the same race).
+      const q = createSqliteQueue(driver, async (m) => void started.push(typeOf(m)));
+      const now = Date.now();
+      driver.query(
+        `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
+         VALUES (?, 'pending', 0, 0, ?, 0, NULL, 1)`,
+        [JSON.stringify(msg("build-contributor-evidence")), now],
+      );
+      driver.query(
+        `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
+         VALUES (?, 'pending', 0, 0, ?, 0, NULL, 1)`,
+        [JSON.stringify(msg("rollup-product-usage")), now],
+      );
+      seedLiveRows(driver, 6); // over the default live-pending threshold of 5 -- every maintenance claim denied
+      const querySpy = vi.spyOn(driver, "query");
+      await q.drain();
+
+      expect(started).toEqual([]); // both denied
+      // The live-pressure aggregate ("AS cnt, MIN(created_at) as oldest ... SUM(CASE") is the query text unique
+      // to ONE computeMaintenancePressureSignals computation's live-lane read. One call means one shared
+      // computation across both denied jobs, not two (one computation's worth per denial).
+      const liveAggregateCalls = querySpy.mock.calls.filter(([sql]) =>
+        typeof sql === "string" && sql.includes("SUM(CASE WHEN status='processing' OR run_after<=? THEN 1 ELSE 0 END) as runnable_cnt"),
+      );
+      expect(liveAggregateCalls).toHaveLength(1);
+    });
+
+    it("recomputes maintenancePressureSignals once the cache TTL has elapsed, not indefinitely", async () => {
+      process.env.MAINTENANCE_ADMISSION_PRESSURE_CACHE_TTL_MS = "0"; // effectively disables memoization
+      const driver = makeDriver();
+      const started: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void started.push(typeOf(m)));
+      const now = Date.now();
+      driver.query(
+        `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
+         VALUES (?, 'pending', 0, 0, ?, 0, NULL, 1)`,
+        [JSON.stringify(msg("build-contributor-evidence")), now],
+      );
+      driver.query(
+        `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
+         VALUES (?, 'pending', 0, 0, ?, 0, NULL, 1)`,
+        [JSON.stringify(msg("rollup-product-usage")), now],
+      );
+      seedLiveRows(driver, 6);
+      const querySpy = vi.spyOn(driver, "query");
+      await q.drain();
+
+      expect(started).toEqual([]);
+      const liveAggregateCalls = querySpy.mock.calls.filter(([sql]) =>
+        typeof sql === "string" && sql.includes("SUM(CASE WHEN status='processing' OR run_after<=? THEN 1 ELSE 0 END) as runnable_cnt"),
+      );
+      // TTL of zero: every claim attempt recomputes -- one call per denied job, not one shared computation.
+      expect(liveAggregateCalls).toHaveLength(2);
     });
 
     it("backfills the is_maintenance flag on startup for jobs enqueued by an older version", async () => {

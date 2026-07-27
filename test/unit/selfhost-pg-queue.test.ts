@@ -4077,6 +4077,48 @@ describe("createPgQueue (durable #977)", () => {
       expect(signals.liveRunnableNowCount).toBe(0);
       expect(signals.oldestLiveRunnableAgeMs).toBeNull();
     });
+
+    // REGRESSION (#9155): oldest_runnable's own FILTER clause must exclude 'processing' rows -- a normal
+    // in-flight job (routinely minutes long) must never, by merely running, age into live_job_age_high. The
+    // mock pool doesn't apply real SQL semantics, so this asserts the query TEXT itself carries the fix rather
+    // than relying on a numeric outcome (see selfhost-sqlite-queue.test.ts for an end-to-end behavioral version
+    // against a real driver).
+    it("computes oldest_runnable from a filter that excludes 'processing' rows", async () => {
+      const m = makePool();
+      const q = createPgQueue(m.pool, async () => undefined);
+      await q.pressureSignals();
+      expect(m.pool.query).toHaveBeenCalledWith(
+        expect.stringContaining("MIN(created_at) FILTER (WHERE status='pending' AND run_after<=$2) AS oldest_runnable"),
+        expect.anything(),
+      );
+    });
+
+    // REGRESSION (#9155): a denied maintenance job returns `true` from processOne(), so the pump's drain loop
+    // immediately claims the next due maintenance row and re-evaluates admission -- without memoization this
+    // recomputes the four pressure aggregate queries on EVERY denied job (4N scans for N due maintenance rows
+    // in one burst). Two maintenance jobs claimed in the same drain() pass, both denied by the SAME pressure
+    // reading, must share ONE computation.
+    it("memoizes maintenancePressureSignals across denied jobs claimed in quick succession, instead of recomputing per denial", async () => {
+      const m = makePool();
+      m.setPressureSignals({ backlogConvergence: { cnt: 11 } }); // over the default threshold of 10
+      m.enqueueResult({ rows: [], rowCount: 0 }); // empty foreground claim (job 1)
+      m.enqueueResult({ rows: [{ ...maintenanceRow, id: "m1" }], rowCount: 1 }); // background claim (job 1)
+      m.enqueueResult({ rows: [], rowCount: 0 }); // empty foreground claim (job 2)
+      m.enqueueResult({ rows: [{ ...maintenanceRow, id: "m2" }], rowCount: 1 }); // background claim (job 2)
+      const started: string[] = [];
+      const q = createPgQueue(m.pool, async (j) => void started.push(typeOf(j)));
+      await q.drain();
+
+      expect(started).toEqual([]); // both denied
+      // "AS cnt, MIN(created_at) AS oldest" matches BOTH the live and maintenance aggregate reads that make up
+      // ONE computeMaintenancePressureSignals computation (the mock's own pressure branch distinguishes them by
+      // "is_maintenance=1") -- 2 calls means ONE shared computation across both denied jobs, not 4 (one
+      // computation's worth per denial).
+      const pressureCalls = (m.fn as unknown as { mock: { calls: unknown[][] } }).mock.calls.filter(
+        ([sql]) => typeof sql === "string" && sql.includes("AS cnt, MIN(created_at) AS oldest"),
+      );
+      expect(pressureCalls).toHaveLength(2); // one computation's worth, not once per denied job
+    });
   });
 
   describe("installation-concurrency admission (#selfhost-installation-concurrency)", () => {

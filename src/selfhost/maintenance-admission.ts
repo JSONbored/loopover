@@ -96,10 +96,13 @@ export interface MaintenancePressureSignals {
    *  keeps finding stale work every sweep). This is the field evaluateMaintenanceAdmission's live_pending_high
    *  check actually gates on. */
   liveRunnableNowCount: number;
-  /** Age in ms of the oldest genuinely-active (processing, or pending AND due) foreground job -- null when
-   *  none qualifies right now. Distinct from oldestLivePendingAgeMs, which is dominated by a job intentionally
-   *  scheduled far in the future and says nothing about how long already-active work has sat unclaimed/running.
-   *  This is the field evaluateMaintenanceAdmission's live_job_age_high check actually gates on. */
+  /** Age in ms of the oldest DUE-AND-UNCLAIMED (status='pending', run_after<=now) foreground job -- null when
+   *  none qualifies right now. Deliberately EXCLUDES 'processing' rows (#9155): a job actively being worked (a
+   *  normal in-flight AI review routinely takes minutes) must not, by merely running, trip live_job_age_high
+   *  and collapse the entire maintenance lane -- including the watchdog/alerter that would report an actual
+   *  overload -- to the 4-hour trickle backstop. Distinct from oldestLivePendingAgeMs, which is dominated by a
+   *  job intentionally scheduled far in the future and says nothing about how long work has sat unclaimed. This
+   *  is the field evaluateMaintenanceAdmission's live_job_age_high check actually gates on. */
   oldestLiveRunnableAgeMs: number | null;
   maintenancePendingCount: number;
   oldestMaintenancePendingAgeMs: number | null;
@@ -129,6 +132,14 @@ export interface MaintenanceAdmissionConfig {
   deferMs: number;
   maxDeferAgeMs: number;
   maintenanceDrainAgeMs: number;
+  /** #9155: how long a computed MaintenancePressureSignals snapshot may be reused across successive claim
+   *  attempts before it must be recomputed. A denied maintenance job returns `true` from processOne(), so the
+   *  pump's drain loop immediately claims the next due maintenance row and re-evaluates admission -- without
+   *  this, a burst of N due maintenance rows means 4N sequential aggregate scans in one tight loop (more
+   *  denials -> more scans -> higher DB/host load -> higher hostLoadAvg1PerCore -> more denials, a positive
+   *  feedback loop). A short TTL, not "once per drain pass": pressure is still re-measured often enough to
+   *  react to a genuinely changing queue instead of latching a stale reading for a whole burst. */
+  pressureSignalsCacheTtlMs: number;
 }
 
 const DEFAULT_MAX_LIVE_PENDING_COUNT = 5;
@@ -143,6 +154,9 @@ const DEFAULT_MAX_BACKLOG_CONVERGENCE_PENDING_COUNT = 10;
 const DEFAULT_DEFER_MS = 3 * 60_000;
 const DEFAULT_MAX_DEFER_AGE_MS = 4 * 60 * 60_000;
 const DEFAULT_MAINTENANCE_DRAIN_AGE_MS = 10 * 60_000;
+// #9155: within the suggested 1-2s memoization window -- long enough to collapse a burst of denials sharing
+// one drain pass, short enough that a real pressure change is still visible within a couple of poll ticks.
+const DEFAULT_PRESSURE_SIGNALS_CACHE_TTL_MS = 1_500;
 
 function maintenanceAdmissionEnabled(): boolean {
   const raw = (process.env.MAINTENANCE_ADMISSION_ENABLED ?? "").trim().toLowerCase();
@@ -195,6 +209,10 @@ export function resolveMaintenanceAdmissionConfig(): MaintenanceAdmissionConfig 
     // Never longer than the trickle backstop itself -- a misconfigured drain age above maxDeferAgeMs would be a
     // no-op (the trickle would always win first), so clamp it down rather than let it silently do nothing.
     maintenanceDrainAgeMs: Math.min(requestedDrainAgeMs, maxDeferAgeMs),
+    pressureSignalsCacheTtlMs: parsePositiveIntEnv("MAINTENANCE_ADMISSION_PRESSURE_CACHE_TTL_MS", {
+      min: 0,
+      fallback: DEFAULT_PRESSURE_SIGNALS_CACHE_TTL_MS,
+    }),
   };
 }
 

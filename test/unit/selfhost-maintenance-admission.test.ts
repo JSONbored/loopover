@@ -33,6 +33,7 @@ const CONFIG: MaintenanceAdmissionConfig = {
   deferMs: 180_000,
   maxDeferAgeMs: 4 * 60 * 60_000,
   maintenanceDrainAgeMs: 600_000,
+  pressureSignalsCacheTtlMs: 1_500,
 };
 
 describe("isMaintenanceJobType", () => {
@@ -386,6 +387,7 @@ describe("resolveMaintenanceAdmissionConfig", () => {
     "MAINTENANCE_ADMISSION_DEFER_MS",
     "MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS",
     "MAINTENANCE_ADMISSION_DRAIN_AGE_MS",
+    "MAINTENANCE_ADMISSION_PRESSURE_CACHE_TTL_MS",
   ] as const;
   const saved: Record<string, string | undefined> = {};
 
@@ -414,6 +416,7 @@ describe("resolveMaintenanceAdmissionConfig", () => {
       deferMs: 180_000,
       maxDeferAgeMs: 4 * 60 * 60_000,
       maintenanceDrainAgeMs: 600_000,
+      pressureSignalsCacheTtlMs: 1_500,
     });
   });
 
@@ -426,6 +429,7 @@ describe("resolveMaintenanceAdmissionConfig", () => {
     process.env.MAINTENANCE_ADMISSION_DEFER_MS = "5000";
     process.env.MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS = "3600000";
     process.env.MAINTENANCE_ADMISSION_DRAIN_AGE_MS = "60000";
+    process.env.MAINTENANCE_ADMISSION_PRESSURE_CACHE_TTL_MS = "2000";
     const config = resolveMaintenanceAdmissionConfig();
     expect(config.maxLivePendingCount).toBe(10);
     expect(config.maxLiveJobAgeMs).toBe(60_000);
@@ -435,6 +439,20 @@ describe("resolveMaintenanceAdmissionConfig", () => {
     expect(config.deferMs).toBe(5_000);
     expect(config.maxDeferAgeMs).toBe(3_600_000);
     expect(config.maintenanceDrainAgeMs).toBe(60_000);
+    expect(config.pressureSignalsCacheTtlMs).toBe(2_000);
+  });
+
+  // #9155: the memoization TTL is independently configurable (not clamped against maxDeferAgeMs the way
+  // maintenanceDrainAgeMs is -- there is no equivalent "would otherwise never fire" failure mode for a cache
+  // TTL, so a misconfigured value just means more or fewer redundant scans, never a stuck admission decision).
+  it("falls back to the default pressure-signals cache TTL on an invalid value", () => {
+    process.env.MAINTENANCE_ADMISSION_PRESSURE_CACHE_TTL_MS = "not-a-number";
+    expect(resolveMaintenanceAdmissionConfig().pressureSignalsCacheTtlMs).toBe(1_500);
+  });
+
+  it("allows a pressure-signals cache TTL of zero (memoization effectively disabled)", () => {
+    process.env.MAINTENANCE_ADMISSION_PRESSURE_CACHE_TTL_MS = "0";
+    expect(resolveMaintenanceAdmissionConfig().pressureSignalsCacheTtlMs).toBe(0);
   });
 
   it("clamps a drain age above the max defer age down to the max defer age", () => {

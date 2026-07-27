@@ -119,6 +119,11 @@ const JOB_KEY_INDEX_DDL = `
 CREATE INDEX IF NOT EXISTS ${TABLE}_pending_job_key ON ${TABLE}(job_key, status);`;
 const LANE_INDEX_DDL = `
 CREATE INDEX IF NOT EXISTS ${TABLE}_lane_claim ON ${TABLE}(status, foreground_lane, run_after);`;
+// #9155: mirrors pg-queue.ts's ${TABLE}_maintenance_status index -- maintenancePressureSignals' maintenance-lane
+// COUNT/MIN scan (WHERE is_maintenance=1 AND status IN (...)) had no supporting index; partial (is_maintenance=1
+// only) since the maintenance lane is a small minority of rows and non-maintenance jobs never need it.
+const MAINTENANCE_INDEX_DDL = `
+CREATE INDEX IF NOT EXISTS ${TABLE}_maintenance_status ON ${TABLE}(is_maintenance, status) WHERE is_maintenance=1;`;
 
 interface JobRow {
   id: number;
@@ -245,6 +250,7 @@ export function createSqliteQueue(
   driver.exec(CLAIM_INDEX_DDL);
   driver.exec(JOB_KEY_INDEX_DDL);
   driver.exec(LANE_INDEX_DDL);
+  driver.exec(MAINTENANCE_INDEX_DDL);
   driver.exec(DEAD_LETTER_INDEX_DDL);
   driver.exec(FAIRNESS_DDL);
   driver.exec(`INSERT OR IGNORE INTO ${FAIRNESS_TABLE} (id, claim_sequence) VALUES ('singleton', 0)`);
@@ -292,6 +298,29 @@ export function createSqliteQueue(
   const foregroundLivenessConfig: ForegroundLivenessConfig = resolveForegroundLivenessConfig();
   const installationConcurrencyConfig = resolveInstallationConcurrencyConfig();
   const installationConcurrencyTracker = new InstallationConcurrencyTracker();
+  // #9155: memoization state for maintenancePressureSignals below -- same feedback-loop rationale as
+  // pg-queue.ts's cache (see maintenanceAdmissionConfig's pressureSignalsCacheTtlMs doc comment): a denied
+  // maintenance job returns `true` from processOne(), so the pump's drain loop immediately claims the next due
+  // maintenance row and re-evaluates admission, recomputing all four aggregate scans per denial without this.
+  // Unlike pg-queue.ts's version, no separate in-flight-promise dedup is needed: node:sqlite's queries are
+  // synchronous, so a cache check followed by a (synchronous) recompute can never interleave with another call
+  // the way concurrent async Postgres round-trips could.
+  let cachedPressureSignals: { value: MaintenancePressureSignals; computedAtMs: number } | null = null;
+
+  /** Cached wrapper around maintenancePressureSignals -- the actual four-aggregate-query read. Every caller
+   *  (maintenance-admission gating in processOne, and the binding.pressureSignals() observability method) goes
+   *  through this, so both benefit from -- and share -- the same short-TTL cache. */
+  function getMaintenancePressureSignals(now: number): MaintenancePressureSignals {
+    if (
+      cachedPressureSignals &&
+      now - cachedPressureSignals.computedAtMs < maintenanceAdmissionConfig.pressureSignalsCacheTtlMs
+    ) {
+      return cachedPressureSignals.value;
+    }
+    const value = maintenancePressureSignals(driver, now);
+    cachedPressureSignals = { value, computedAtMs: now };
+    return value;
+  }
   // Recover jobs a crashed previous run left mid-flight → make them claimable again.
   const recovered = recoverProcessingJobs(driver);
   if (recovered) {
@@ -1019,7 +1048,7 @@ export function createSqliteQueue(
       }
       if (!isForegroundJobPriority(job.priority) && isMaintenanceJobType(message.type)) {
         const decision = evaluateMaintenanceAdmission(
-          maintenancePressureSignals(driver, Date.now()),
+          getMaintenancePressureSignals(Date.now()),
           maintenanceAdmissionConfig,
           job.created_at,
           Date.now(),
@@ -1414,7 +1443,7 @@ export function createSqliteQueue(
     reviveDeadLetterJobs,
     releaseStaleForegroundDeferrals,
     async pressureSignals() {
-      return maintenancePressureSignals(driver, Date.now());
+      return getMaintenancePressureSignals(Date.now());
     },
     topBacklogRepos,
     listDeadLetterJobs,
@@ -1514,14 +1543,17 @@ function backfillJobForegroundLanes(driver: SqliteDriver): number {
  *  distinguishes "queue large but intentionally deferred" from "queue stuck, nothing runnable" without manual
  *  SQL. Host load is an independent, optional signal (see host-pressure.ts). */
 function maintenancePressureSignals(driver: SqliteDriver, now: number): MaintenancePressureSignals {
-  // runnable_cnt/oldest_runnable count a row as genuinely active RIGHT NOW when it's either already
-  // 'processing' (real, in-flight resource use) or 'pending' AND due (run_after<=now) -- NOT merely present
-  // in the outer pending/processing set, which also includes work deliberately deferred to the future (see
-  // maintenance-admission.ts's MaintenancePressureSignals doc comments).
+  // runnable_cnt counts a row as genuinely active RIGHT NOW when it's either already 'processing' (real,
+  // in-flight resource use) or 'pending' AND due (run_after<=now) -- NOT merely present in the outer
+  // pending/processing set, which also includes work deliberately deferred to the future. oldest_runnable is
+  // narrower still (#9155): it excludes 'processing' rows entirely, so a normal in-flight job (routinely
+  // minutes long) never by itself ages past maxLiveJobAgeMs and trips live_job_age_high -- only a due row
+  // that's still WAITING to be claimed counts toward that signal (see maintenance-admission.ts's
+  // MaintenancePressureSignals doc comments).
   const live = driver.query(
     `SELECT COUNT(*) as cnt, MIN(created_at) as oldest,
             SUM(CASE WHEN status='processing' OR run_after<=? THEN 1 ELSE 0 END) as runnable_cnt,
-            MIN(CASE WHEN status='processing' OR run_after<=? THEN created_at ELSE NULL END) as oldest_runnable
+            MIN(CASE WHEN status='pending' AND run_after<=? THEN created_at ELSE NULL END) as oldest_runnable
        FROM ${TABLE} WHERE status IN ('pending','processing') AND priority>=?`,
     [now, now, FOREGROUND_QUEUE_PRIORITY_FLOOR],
   ).rows[0] as { cnt: number; oldest: number | null; runnable_cnt: number | null; oldest_runnable: number | null };

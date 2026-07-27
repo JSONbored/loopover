@@ -60,9 +60,8 @@ export function SiteFooter() {
             <span aria-hidden>ittensory</span>
           </Link>
           <p className="mt-3 max-w-sm text-token-sm text-muted-foreground">
-            Closed loop, open receipts — agents write, review, and merge, and every outcome trains
-            the next pass. Gittensor-native intelligence included; not affiliated with the official
-            subnet.
+            The good kind of infinite loop — agents write, review, merge, and learn, end to end.
+            Gittensor-native intelligence included; not affiliated with the official subnet.
           </p>
           <div className="mt-5 flex items-center gap-3">
             <a

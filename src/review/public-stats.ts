@@ -281,7 +281,8 @@ export const PUBLISHED_PR_KEYS = `
     CAST(substr(target_key, instr(target_key, '#') + 1) AS INTEGER) AS number,
     created_at
   FROM audit_events
-  WHERE event_type = 'github_app.pr_public_surface_published' AND instr(target_key, '#') > 0`;
+  WHERE event_type = 'github_app.pr_public_surface_published' AND instr(target_key, '#') > 0
+                  AND length(target_key) - length(replace(target_key, '#', '')) = 1`;
 
 /** Assemble the public-safe payload from the LIVE review ledger: distinct PRs the bot published a review for
  *  (audit_events) joined to their terminal disposition (pull_requests state). Realtime behind the 60s HTTP cache
@@ -330,6 +331,7 @@ export async function getPublicStats(
            FROM audit_events
           WHERE event_type IN ('reversal_reopened', 'reversal_reverted', 'reversal_superseded')
             AND outcome = 'completed' AND instr(target_key, '#') > 0
+                  AND length(target_key) - length(replace(target_key, '#', '')) = 1
        ) ev
         WHERE LOWER(ev.project) IN (${inList})
         GROUP BY project`,
@@ -353,6 +355,19 @@ export async function getPublicStats(
     ),
     // review-effort minutes (#1955/#2070): sum each distinct published PR's persisted estimate, using
     // MINUTES_SAVED_PER_PR only for PRs whose metadata lacks reviewEffortMinutes (mixed-rollout safe).
+    // #9084: two dialect hazards this SQL used to walk straight into on the Postgres self-host, both silent.
+    //
+    // json_extract translates to `->>`, which yields TEXT, so the enclosing AVG resolved to `avg(text)` — a
+    // function Postgres does not have. The error was swallowed by the fail-safe read wrapper, so the published
+    // "review effort / minutes saved" number was permanently zero and nothing said so. CAST(... AS REAL) is
+    // valid in both dialects; NULLIF guards the empty string, which Postgres would otherwise reject outright.
+    //
+    // And target_key is not uniformly two-segment: regateRepairTargetKey mints `repo#pr#headSha`. On SQLite the
+    // INTEGER cast of `pr#sha` is lenient garbage; on Postgres it aborts the WHOLE query, so a single
+    // three-segment row among the filtered event types took the entire public-stats read to [] and the homepage
+    // counters silently to zero. Excluding those keys before the cast keeps one row from erasing every number.
+    // The separator count is written as length()-length(replace()) rather than a nested instr(): `length` and
+    // `replace` mean the same thing in both dialects and need no translation at all.
     safeAll<{ totalMinutes: number | null }>(
       env,
       `SELECT SUM(COALESCE(minutes, ?)) AS totalMinutes
@@ -361,11 +376,12 @@ export async function getPublicStats(
              FROM (
                SELECT LOWER(substr(target_key, 1, instr(target_key, '#') - 1)) AS repo,
                       CAST(substr(target_key, instr(target_key, '#') + 1) AS INTEGER) AS number,
-                      json_extract(metadata_json, '$.reviewEffortMinutes') AS minutes
+                      CAST(NULLIF(json_extract(metadata_json, '$.reviewEffortMinutes'), '') AS REAL) AS minutes
                  FROM audit_events
                 WHERE event_type = 'github_app.pr_public_surface_published'
                   AND LOWER(substr(target_key, 1, instr(target_key, '#') - 1)) IN (${inList})
                   AND instr(target_key, '#') > 0
+                  AND length(target_key) - length(replace(target_key, '#', '')) = 1
              )
             GROUP BY repo, number
          )`,

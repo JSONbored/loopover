@@ -3,7 +3,7 @@ import { buildAiReviewDiff, claimAiReviewLock, runAiReviewForAdvisory, shouldSta
 import { resolveAiReviewableAuthor } from "../../src/queue/ai-review-orchestration";
 import { BEST_REVIEW_MODELS, INCOHERENT_DIFF_ASSESSMENT } from "../../src/services/ai-review";
 import * as posthogModule from "../../src/selfhost/posthog";
-import { upsertRepositoryAiKey } from "../../src/db/repositories";
+import { recordAiUsageEvent, upsertRepositoryAiKey } from "../../src/db/repositories";
 import type { Advisory, PullRequestFileRecord, RepositorySettings } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 import { setLocalManifestReader } from "../../src/signals/focus-manifest-loader";
@@ -1033,7 +1033,103 @@ describe("runAiReviewForAdvisory", () => {
     expect(run).toHaveBeenCalled(); // Workers AI used instead
   });
 
-  it("is fail-safe: a thrown error (e.g. broken DB) yields no finding and no notes", async () => {
+  // #9061: the per-repo ceiling on the FREE/default chain. A per-repo daily limit existed only for BYOK, so on
+  // the self-host — where reviews run on the free chain — one runaway repo could drain the entire instance-wide
+  // allowance with no per-repo limit anywhere.
+  it("#9061: stops before the prologue once the repo hits its own daily AI-call limit", async () => {
+    const adv = advisory();
+    const aiRun = vi.fn(async () => ({ response: defectJson() }));
+    const env = createTestEnv({ AI: { run: aiRun } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_REPO_CALL_LIMIT: "1" });
+    await recordAiUsageEvent(env, { feature: "review", route: "r", model: "m", status: "ok", estimatedNeurons: 1, metadata: { repoFullName: "acme/widgets" } });
+
+    const result = await runAiReviewForAdvisory(env, {
+      mode: "live",
+      settings: { aiReviewMode: "block" } as RepositorySettings,
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+    });
+
+    // No model call at all — the point is that the ceiling lands BEFORE the expensive prologue, not after it.
+    expect(aiRun).not.toHaveBeenCalled();
+    expect({ cacheable: result?.cacheable, persistable: result?.persistable }).toEqual({ cacheable: false, persistable: true });
+    expect(result?.findings?.[0]?.detail).toContain("daily AI-call limit");
+  });
+
+  it("#9060: the global budget ceiling also lands before the prologue", async () => {
+    const adv = advisory();
+    const aiRun = vi.fn(async () => ({ response: defectJson() }));
+    const env = createTestEnv({ AI: { run: aiRun } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "0" });
+
+    const result = await runAiReviewForAdvisory(env, {
+      mode: "live",
+      settings: { aiReviewMode: "block" } as RepositorySettings,
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+    });
+
+    expect(aiRun).not.toHaveBeenCalled();
+    expect(result?.findings?.[0]?.detail).toContain("budget is exhausted");
+  });
+
+  it("#9060: 'no provider bound' stays a configuration state, not a recorded failure", async () => {
+    const adv = advisory();
+    // Flags ON but no AI binding at all → runLoopOverAiReview reports `unavailable`. Nothing was ever going to
+    // run here, so this must keep returning undefined: recording it would hold PRs for a review the operator
+    // never configured, and would fill the cache with rows describing a permanent state rather than a blip.
+    const env = createTestEnv({ AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
+
+    const result = await runAiReviewForAdvisory(env, {
+      mode: "live",
+      settings: { aiReviewMode: "block" } as RepositorySettings,
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+    });
+
+    expect(result).toBeUndefined();
+    expect(adv.findings).toEqual([]);
+  });
+
+  it("#9060: a single call whose ESTIMATE exceeds the remaining budget still records a cooldown", async () => {
+    const adv = advisory();
+    const aiRun = vi.fn(async () => ({ response: defectJson() }));
+    // The cheap pre-check asks "is the budget already spent" — with zero usage so far it correctly says no. The
+    // full gate inside runLoopOverAiReview then prices THIS call and finds it does not fit. That is the path
+    // that must still leave a cooldown row behind, or a PR whose prompt is simply too big for the remaining
+    // allowance re-runs the whole prologue on every tick for the rest of the day.
+    const env = createTestEnv({ AI: { run: aiRun } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "1" });
+
+    const result = await runAiReviewForAdvisory(env, {
+      mode: "live",
+      settings: { aiReviewMode: "block" } as RepositorySettings,
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+    });
+
+    expect({ cacheable: result?.cacheable, persistable: result?.persistable, notes: result?.notes }).toEqual({ cacheable: false, persistable: true, notes: "" });
+    expect(result?.findings?.[0]?.detail).toContain("quota_exceeded");
+  });
+
+  // POLICY REVERSAL (#9060). This asserted that a thrown error yields NOTHING — no result, no finding. That is
+  // fail-safe in the sense of "never fabricates a verdict", and it was also the bug: the caller only writes a
+  // cache row for a DEFINED result, so returning undefined meant the failure was never recorded, and the next
+  // tick two minutes later re-ran the whole expensive prologue (list files, up to 96k chars of grounding
+  // content from GitHub, RAG and impact-map embeddings, culture profile, the external enrichment POST) and
+  // failed again. Forever. The result returned now is still not a verdict — cacheable:false, empty notes — it
+  // exists so the failure itself gets a cooldown, and so a repo requiring blocking AI review holds for a human
+  // instead of passing on deterministic checks alone.
+  it("records a non-verdict failure result so the failure itself gets a cooldown", async () => {
     const adv = advisory();
     const env = aiEnv(async () => ({ response: defectJson() }));
     const result = await runAiReviewForAdvisory({ ...env, DB: undefined } as unknown as Env, {
@@ -1045,7 +1141,8 @@ describe("runAiReviewForAdvisory", () => {
       author: "alice",
       confirmedContributor: true,
     });
-    expect(result).toBeUndefined();
-    expect(adv.findings).toEqual([]);
+    expect({ cacheable: result?.cacheable, notes: result?.notes, reviewerCount: result?.reviewerCount }).toEqual({ cacheable: false, notes: "", reviewerCount: 0 });
+    // Held for a human rather than silently passed — and never mistaken for a real assessment.
+    expect(adv.findings).toEqual([expect.objectContaining({ code: "ai_review_inconclusive" })]);
   });
 });

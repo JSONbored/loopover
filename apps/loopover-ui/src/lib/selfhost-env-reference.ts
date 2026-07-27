@@ -38,6 +38,10 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/services/ai-review.ts",
   },
   {
+    name: "AI_DAILY_REPO_CALL_LIMIT",
+    firstReference: "src/services/ai-review.ts",
+  },
+  {
     name: "AI_DUAL_REVIEW",
     firstReference: "src/selfhost/ai.ts",
   },
@@ -638,6 +642,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `AI_BYOK_DAILY_REPO_LIMIT` | `src/services/ai-review.ts` |",
   "| `AI_COMBINE` | `src/selfhost/ai.ts` |",
   "| `AI_DAILY_NEURON_BUDGET` | `src/services/ai-review.ts` |",
+  "| `AI_DAILY_REPO_CALL_LIMIT` | `src/services/ai-review.ts` |",
   "| `AI_DUAL_REVIEW` | `src/selfhost/ai.ts` |",
   "| `AI_EMBED_API_KEY` | `src/server.ts` |",
   "| `AI_EMBED_BASE_URL` | `src/selfhost/ai.ts` |",

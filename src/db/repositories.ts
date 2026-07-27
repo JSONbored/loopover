@@ -3977,7 +3977,21 @@ const BYOK_SPEND_ATTEMPT_STATUSES = ["ok", "error"] as const;
  * count; excluding attempted-but-failed calls would turn a flaky or misconfigured provider into a way to
  * bypass this cap entirely via forced failures. See BYOK_SPEND_ATTEMPT_STATUSES for why this is an allowlist.
  */
+/** #9061: count ALL AI spend attempts for a repo since `sinceIso`, BYOK or not. Its sibling
+ *  countByokAiEventsForRepoSince is filtered to `byok:%` models, which is why the per-repo ceiling it powers has
+ *  only ever bound the BYOK path -- on the self-host, where reviews run on the free/default chain, one runaway
+ *  repo could consume the entire instance-wide allowance with no per-repo limit anywhere. */
+export async function countAiEventsForRepoSince(env: Env, repoFullName: string, sinceIso: string): Promise<number> {
+  return countRepoAiEventsSince(env, repoFullName, sinceIso, false);
+}
+
 export async function countByokAiEventsForRepoSince(env: Env, repoFullName: string, sinceIso: string): Promise<number> {
+  return countRepoAiEventsSince(env, repoFullName, sinceIso, true);
+}
+
+/** Shared body for the two per-repo AI-spend counters above — identical apart from the `byok:%` model filter,
+ *  which is exactly the difference that left the free/default chain with no per-repo ceiling (#9061). */
+async function countRepoAiEventsSince(env: Env, repoFullName: string, sinceIso: string, byokOnly: boolean): Promise<number> {
   const db = getDb(env.DB);
   const [row] = await db
     .select({ total: sql<number>`count(*)` })
@@ -3986,7 +4000,7 @@ export async function countByokAiEventsForRepoSince(env: Env, repoFullName: stri
       and(
         gte(aiUsageEvents.createdAt, sinceIso),
         inArray(aiUsageEvents.status, BYOK_SPEND_ATTEMPT_STATUSES),
-        sql`${aiUsageEvents.model} like 'byok:%'`,
+        ...(byokOnly ? [sql`${aiUsageEvents.model} like 'byok:%'`] : []),
         sql`json_extract(${aiUsageEvents.metadataJson}, '$.repoFullName') = ${repoFullName}`,
       ),
     );

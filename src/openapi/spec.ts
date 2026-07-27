@@ -65,6 +65,10 @@ import {
   CheckIssueSlopResponseSchema,
   ValidateFocusManifestRequestSchema,
   ValidateFocusManifestResponseSchema,
+  FindOpportunitiesRequestSchema,
+  FindOpportunitiesResponseSchema,
+  IssueRagRetrieveRequestSchema,
+  IssueRagRetrieveResponseSchema,
   LabelAuditSchema,
   LaneAdviceSchema,
   LiveGateThresholdsResponseSchema,
@@ -235,6 +239,8 @@ export function buildOpenApiSpec() {
   registry.register("CheckIssueSlopResponse", CheckIssueSlopResponseSchema);
   registry.register("ValidateFocusManifestRequest", ValidateFocusManifestRequestSchema);
   registry.register("ValidateFocusManifestResponse", ValidateFocusManifestResponseSchema);
+  registry.register("FindOpportunitiesResponse", FindOpportunitiesResponseSchema);
+  registry.register("IssueRagRetrieveResponse", IssueRagRetrieveResponseSchema);
   registry.register("LiveGateThresholdsResponse", LiveGateThresholdsResponseSchema);
   registry.register("BurdenForecast", BurdenForecastSchema);
   registry.register("ContributorScoringProfile", ContributorScoringProfileSchema);
@@ -1429,6 +1435,44 @@ export function buildOpenApiSpec() {
     responses: {
       200: { description: "Persisted agent run bundle", content: { "application/json": { schema: AgentRunBundleSchema } } },
       404: { description: "Agent run not found" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/opportunities/find",
+    summary: "Find cross-repo contribution opportunities (#9310)",
+    request: {
+      body: {
+        content: { "application/json": { schema: FindOpportunitiesRequestSchema } },
+      },
+    },
+    responses: {
+      200: {
+        description: "Ranked, AI-policy-filtered opportunity candidates for the given targets or search query",
+        content: { "application/json": { schema: FindOpportunitiesResponseSchema } },
+      },
+      400: { description: "Invalid opportunities request (missing targets/searchQuery, or a field failed validation)" },
+      401: { description: "Unauthorized" },
+      403: { description: "Forbidden — target repo access denied, or cross-repo search requires discovery access" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/issue-rag/retrieve",
+    summary: "Retrieve issue-centric RAG context for the miner analyze phase (#9310)",
+    request: {
+      body: {
+        content: { "application/json": { schema: IssueRagRetrieveRequestSchema } },
+      },
+    },
+    responses: {
+      200: {
+        description: "Retrieved-path telemetry for the issue query — never chunk bodies or source text",
+        content: { "application/json": { schema: IssueRagRetrieveResponseSchema } },
+      },
+      400: { description: "Invalid issue-rag request (missing owner/repo/title, or a field failed validation)" },
+      401: { description: "Unauthorized" },
+      403: { description: "Forbidden repo access" },
     },
   });
   for (const [path, summary] of [

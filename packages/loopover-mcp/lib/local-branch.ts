@@ -105,6 +105,25 @@ export function parseGitRemote(remoteUrl: unknown): string | undefined {
   return undefined;
 }
 
+// GHSA-v3j4-j27j-fxw6: a `baseRef` (or a ref value derived from it, e.g. the ORIGIN_BRANCH extracted from
+// "origin/ORIGIN_BRANCH") starting with '-' is parsed by git as an OPTION, not a revision -- e.g.
+// `git diff --name-status -M -z "--output=/some/path" --` silently writes/truncates an arbitrary file,
+// because gitOutput (below) swallows all errors. Checked at this single choke point AND, separately, in
+// the zod input schemas in bin/loopover-mcp.ts (defense in depth -- the schema is not the only entry
+// point into this function; see resolveWorkspaceCwd's own "outside the MCP roots" throw for the same
+// pattern applied to `cwd`).
+const LEADING_DASH_REF = /^-/;
+
+export function isSafeGitRef(ref: string): boolean {
+  return !LEADING_DASH_REF.test(ref);
+}
+
+export function assertSafeGitRef(ref: string, label = "baseRef"): void {
+  if (!isSafeGitRef(ref)) {
+    throw new Error(`${label} must not start with '-' (git would parse ${JSON.stringify(ref)} as an option, not a revision).`);
+  }
+}
+
 export function collectLocalDiff(cwd: string, baseRef: string, workspaceRoots?: McpRootInput[]): LocalDiff {
   const metadata = collectLocalBranchMetadata({ cwd, baseRef, login: "local", workspaceRoots });
   return {
@@ -130,19 +149,33 @@ export function collectLocalBranchMetadata(input: CollectLocalBranchMetadataInpu
   const workspace = resolveWorkspaceCwd(input);
   const cwd = workspace.cwd;
   const baseRef = input.baseRef ?? defaultBaseRef(cwd);
+  // Defense in depth (GHSA-v3j4-j27j-fxw6): reject a leading-dash baseRef here too, not only in the zod
+  // input schemas -- this function has other direct callers (buildBranchAnalysisPayload, and any future
+  // one) that don't necessarily go through zod validation first.
+  assertSafeGitRef(baseRef);
   const remoteUrl = gitLines(cwd, ["config", "--get", "remote.origin.url"])[0] ?? "";
   const repoFullName = input.repoFullName ?? parseGitRemote(remoteUrl);
   if (!repoFullName) throw new Error("Could not infer repoFullName from git remote; pass --repo owner/repo.");
   const branchName = input.branchName ?? gitLines(cwd, ["branch", "--show-current"])[0] ?? "local-branch";
   const headRef = input.headRef ?? gitLines(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])[0] ?? branchName;
-  const baseSha = gitLines(cwd, ["rev-parse", "--verify", baseRef])[0];
-  const headSha = gitLines(cwd, ["rev-parse", "--verify", "HEAD"])[0];
-  const mergeBaseSha = gitLines(cwd, ["merge-base", baseRef, "HEAD"])[0];
+  // GHSA-v3j4-j27j-fxw6 fix item 3: pre-resolve baseRef to a real SHA ONCE here, and pass that SHA (never
+  // the raw, caller-supplied string) to every downstream git invocation below that takes a revision --
+  // `--end-of-options` on every one of those invocations is the belt, this is the suspenders. Falls back
+  // to the (already leading-dash-checked) baseRef itself when it doesn't resolve, matching this file's
+  // existing graceful-degradation behavior (an invalid ref simply yields empty diff/log output, not a
+  // thrown error) for e.g. a not-yet-fetched remote branch.
+  const baseSha = gitLines(cwd, ["rev-parse", "--verify", "--end-of-options", baseRef])[0];
+  const resolvedBaseRef = baseSha ?? baseRef;
+  const headSha = gitLines(cwd, ["rev-parse", "--verify", "--end-of-options", "HEAD"])[0];
+  const mergeBaseSha = gitLines(cwd, ["merge-base", "--end-of-options", resolvedBaseRef, "HEAD"])[0];
+  // collectRemoteTrackingSha needs the ORIGINAL baseRef (e.g. "origin/main") to pattern-match the remote
+  // branch name out of it -- a resolved SHA has no such structure. It applies its own leading-dash guard
+  // to the extracted branch name before ever calling git (see below).
   const remoteTrackingSha = collectRemoteTrackingSha(cwd, baseRef);
-  const changedFiles = collectChangedFiles(cwd, baseRef);
-  const pendingCommitCount = input.pendingCommitCount ?? collectPendingCommitCount(cwd, baseRef);
-  const ciStatusHints = input.ciStatusHints ?? collectCiStatusHints(cwd, baseRef, changedFiles);
-  const commitMessages = input.commitMessages ?? collectCommitMessages(cwd, baseRef);
+  const changedFiles = collectChangedFiles(cwd, resolvedBaseRef);
+  const pendingCommitCount = input.pendingCommitCount ?? collectPendingCommitCount(cwd, resolvedBaseRef);
+  const ciStatusHints = input.ciStatusHints ?? collectCiStatusHints(cwd, resolvedBaseRef, changedFiles);
+  const commitMessages = input.commitMessages ?? collectCommitMessages(cwd, resolvedBaseRef);
   const title = input.title ?? titleFromBranch(branchName) ?? firstCommitTitle(commitMessages);
   const linkedIssues = [...new Set([...(input.linkedIssues ?? []), ...extractLinkedIssues([branchName, title, input.body, ...commitMessages].filter(Boolean).join("\n"))])].sort(
     (left, right) => left - right,

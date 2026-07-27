@@ -26,6 +26,10 @@ const HUMAN_OVERRIDE_EVENT_TYPE_PREFIX = "signal.human_override:";
 export type PublicRulePrecisionRow = {
   ruleId: string;
   decided: number;
+  /** Raw count, always defined regardless of the sample floor -- unlike `precision`, this is never rounded
+   *  and never null, so a consumer needing the exact count (eval-score-records.ts, #9266) never has to
+   *  reconstruct it by inverting a value that's already been rounded to 3 decimals. */
+  confirmed: number;
   /** confirmed / decided, rounded to 3 decimals; null below {@link PUBLIC_PRECISION_MIN_DECIDED}. */
   precision: number | null;
 };
@@ -62,10 +66,12 @@ export async function loadPublicRulePrecision(env: Env, nowMs: number = Date.now
        * future query-shape change, mirroring loadOverrideDayRows' identical note. */
       const reversed = row.reversed ?? 0;
       const decided = row.decided;
+      const confirmed = decided - reversed;
       return {
         ruleId: row.rule_id,
         decided,
-        precision: decided >= PUBLIC_PRECISION_MIN_DECIDED ? Math.round(((decided - reversed) / decided) * 1000) / 1000 : null,
+        confirmed,
+        precision: decided >= PUBLIC_PRECISION_MIN_DECIDED ? Math.round((confirmed / decided) * 1000) / 1000 : null,
       };
     })
     .sort((a, b) => a.ruleId.localeCompare(b.ruleId));

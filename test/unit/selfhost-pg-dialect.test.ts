@@ -46,6 +46,30 @@ describe("pg-dialect (#977 SQLite → Postgres)", () => {
     expect(translateFunctions("candidate(x)")).toBe("candidate(x)");
   });
 
+  it("REGRESSION: translates json_each(col) array iteration to json_array_elements_text (crash-looped self-host Postgres boot, beta.9)", () => {
+    // migrations/0191_linked_issue_claims.sql's backfill reads je.value after `FROM pull_requests pr,
+    // json_each(pr.linked_issues_json) je` — untranslated, Postgres's own json_each() only accepts JSON
+    // OBJECTS (and rejects a TEXT column outright: "function json_each(text) does not exist"), which crashed
+    // the self-host Postgres migration runner in a boot loop in production. json_array_elements_text is the
+    // array-expansion equivalent; the column alias list `(value)` keeps `je.value` readable unchanged.
+    expect(translateFunctions("json_each(pr.linked_issues_json) je")).toBe("json_array_elements_text((pr.linked_issues_json)::json) AS je(value)");
+    // The bare (no `AS`) alias form is what the migration actually uses; the `AS` form must also translate.
+    expect(translateFunctions("json_each(col) AS alias")).toBe("json_array_elements_text((col)::json) AS alias(value)");
+    expect(
+      translateDdl(
+        "INSERT INTO linked_issue_claims (repo_full_name, pull_number, issue_number, claimed_at)\n" +
+          "SELECT pr.repo_full_name, pr.number, CAST(je.value AS INTEGER), pr.updated_at\n" +
+          "FROM pull_requests pr, json_each(pr.linked_issues_json) je\n" +
+          "WHERE pr.linked_issues_json != '[]';",
+      ),
+    ).toBe(
+      "INSERT INTO linked_issue_claims (repo_full_name, pull_number, issue_number, claimed_at)\n" +
+        "SELECT pr.repo_full_name, pr.number, CAST(je.value AS INTEGER), pr.updated_at\n" +
+        "FROM pull_requests pr, json_array_elements_text((pr.linked_issues_json)::json) AS je(value)\n" +
+        "WHERE pr.linked_issues_json != '[]';",
+    );
+  });
+
   it("REGRESSION: translates instr(haystack, needle) to Postgres's strpos (SQLite has no `instr` on Postgres)", () => {
     expect(translateFunctions("instr(x, '#')")).toBe("strpos(x, '#')");
     expect(translateFunctions("instr(ra.target_id, '#') > 0")).toBe("strpos(ra.target_id, '#') > 0");

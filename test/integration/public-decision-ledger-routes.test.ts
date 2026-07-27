@@ -80,6 +80,7 @@ describe("public decision-ledger/decision-records routes answer WITHOUT credenti
     ["repos/:owner/:repo/badge.svg", "/v1/public/repos/acme/widgets/badge.svg"],
     ["repos/:owner/:repo/badge.json", "/v1/public/repos/acme/widgets/badge.json"],
     ["repos/:owner/:repo/quality", "/v1/public/repos/acme/widgets/quality"],
+    ["eval-scores", "/v1/public/eval-scores"],
   ];
 
   it.each(exemptPublicRoutes)("%s answers without credentials (never 401)", async (_name, path) => {

@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_FOREGROUND_LANE_MAX_STARVE_AGE_MS,
   DEFAULT_FOREGROUND_LANE_RATIO,
   backlogRepoCandidatesFromJobKeys,
   foregroundLaneForJob,
   nextForegroundLane,
   pickBacklogRepo,
+  shouldEscapeLanePriorityGate,
 } from "../../src/selfhost/queue-fairness";
 
 function webhookPayload(eventName: string, action?: string): string {
@@ -167,6 +169,33 @@ describe("pickBacklogRepo (#selfhost-backlog-convergence)", () => {
       { repo: "owner/a", oldestPendingAgeMs: 1000 },
     ];
     expect(pickBacklogRepo(candidates, null)).toBe("owner/a");
+  });
+});
+
+describe("shouldEscapeLanePriorityGate (#9153)", () => {
+  it("does not escape when the lane has no due candidate at all", () => {
+    expect(shouldEscapeLanePriorityGate(null)).toBe(false);
+  });
+
+  it("does not escape when the oldest due lane row is younger than the starve threshold", () => {
+    expect(shouldEscapeLanePriorityGate(DEFAULT_FOREGROUND_LANE_MAX_STARVE_AGE_MS - 1)).toBe(false);
+  });
+
+  it("escapes once the oldest due lane row has waited exactly the starve threshold", () => {
+    expect(shouldEscapeLanePriorityGate(DEFAULT_FOREGROUND_LANE_MAX_STARVE_AGE_MS)).toBe(true);
+  });
+
+  it("escapes when the oldest due lane row has waited well past the starve threshold", () => {
+    expect(shouldEscapeLanePriorityGate(DEFAULT_FOREGROUND_LANE_MAX_STARVE_AGE_MS + 60_000)).toBe(true);
+  });
+
+  it("honors a custom maxStarveAgeMs instead of the default", () => {
+    expect(shouldEscapeLanePriorityGate(5_000, 10_000)).toBe(false);
+    expect(shouldEscapeLanePriorityGate(10_000, 10_000)).toBe(true);
+  });
+
+  it("the exported default matches the documented 10-minute bound", () => {
+    expect(DEFAULT_FOREGROUND_LANE_MAX_STARVE_AGE_MS).toBe(10 * 60_000);
   });
 });
 

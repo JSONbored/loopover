@@ -28,7 +28,9 @@ import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { resolveLoopOverSelfRepoFullName } from "../config/loopover-repo-focus-manifest";
 import { errorMessage } from "../utils/json";
 
-const ALLOWED_DISCORD_HOSTS = new Set(["discord.com", "discordapp.com"]);
+// Byte-faithful with src/review/alerts.ts and src/services/notify-discord.ts (#9288): the two extra
+// subdomains (canary/ptb) are valid Discord webhook hosts the sibling validators already accept.
+const ALLOWED_DISCORD_HOSTS = new Set(["discord.com", "discordapp.com", "canary.discord.com", "ptb.discord.com"]);
 const DEFAULT_COOLDOWN_MINUTES = 60;
 const AUDIT_EVENT_TYPE = "loop_escalation_notification.discord";
 const AUDIT_TARGET_KEY = "fleet:loop-escalation";
@@ -88,7 +90,7 @@ function envString(env: Env, name: string): string | undefined {
   return typeof fromEnv === "string" && fromEnv.trim().length > 0 ? fromEnv.trim() : undefined;
 }
 
-function isValidDiscordWebhook(url: string): boolean {
+export function isValidDiscordWebhook(url: string): boolean {
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== "https:") return false;

@@ -45,6 +45,12 @@ export const DEFAULT_FLEET_RUN_MANIFEST: FleetRunManifest = Object.freeze({
   totalConcurrentWorktrees: 1,
 });
 
+/** Default per-repo worktree budget for a repo entry that doesn't specify its own `maxConcurrentWorktrees`. Its own
+ *  dedicated source of truth: a *per-repo* cap, deliberately distinct from the *fleet-wide*
+ *  {@link DEFAULT_FLEET_RUN_MANIFEST.totalConcurrentWorktrees} even though both currently equal `1`, so a future
+ *  change to the fleet-wide total default can never silently move the per-repo default. */
+export const DEFAULT_FLEET_RUN_MANIFEST_REPO_MAX_CONCURRENT_WORKTREES = 1;
+
 const MAX_FLEET_RUN_MANIFEST_BYTES = 65_536;
 const MAX_MANIFEST_REPOS = 500;
 
@@ -93,13 +99,18 @@ function normalizeRepoList(value: unknown, warnings: string[]): FleetRunManifest
       break;
     }
     let repoFullName: string | null;
-    let maxConcurrentWorktrees = DEFAULT_FLEET_RUN_MANIFEST.totalConcurrentWorktrees;
+    let maxConcurrentWorktrees = DEFAULT_FLEET_RUN_MANIFEST_REPO_MAX_CONCURRENT_WORKTREES;
     if (typeof entry === "string") {
       repoFullName = normalizeRepoFullName(entry);
     } else if (entry && typeof entry === "object" && !Array.isArray(entry)) {
       const record = entry as Record<string, unknown>;
       repoFullName = normalizeRepoFullName(record.repoFullName);
-      maxConcurrentWorktrees = normalizePositiveInteger(record.maxConcurrentWorktrees, "maxConcurrentWorktrees", 1, warnings);
+      maxConcurrentWorktrees = normalizePositiveInteger(
+        record.maxConcurrentWorktrees,
+        "maxConcurrentWorktrees",
+        DEFAULT_FLEET_RUN_MANIFEST_REPO_MAX_CONCURRENT_WORKTREES,
+        warnings,
+      );
     } else {
       warnings.push(`FleetRunManifest "repos" skipped a non-string, non-mapping entry.`);
       continue;

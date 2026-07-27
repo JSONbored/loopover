@@ -574,6 +574,7 @@ export {
 } from "./ams-policy-spec.js";
 export {
   DEFAULT_FLEET_RUN_MANIFEST,
+  DEFAULT_FLEET_RUN_MANIFEST_REPO_MAX_CONCURRENT_WORKTREES,
   parseFleetRunManifest,
   parseFleetRunManifestContent,
   type FleetRunManifest,

@@ -1001,8 +1001,19 @@ export function buildOpenApiSpec() {
     path: "/v1/public/decision-ledger/verify",
     summary: "Verify a window of the hash-chained decision ledger (resumable via afterSeq)",
     responses: {
-      200: { description: "Window verified clean; nextAfterSeq is the resume cursor (null at the tip)" },
-      409: { description: "First break found: sequence_gap | predecessor_mismatch | row_hash_mismatch" },
+      200: { description: "Window verified clean; nextAfterSeq is the resume cursor (null at the tip). Every response also carries tipSeq/tipHash/totalCount for third-party checkpointing." },
+      409: { description: "First break found: sequence_gap | predecessor_mismatch | row_hash_mismatch | short_tail (a record exists past the verified tip with no chain entry)" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/public/decision-records/{owner}/{repo}/{pull}",
+    summary: "Fetch the latest published decision record for a PR, verbatim, plus its content digest",
+    request: { params: z.object({ owner: z.string(), repo: z.string(), pull: z.string() }) },
+    responses: {
+      200: { description: "The latest DecisionRecord for this PR + its recordDigest" },
+      400: { description: "Invalid pull number" },
+      404: { description: "No decision record persisted yet for this PR" },
     },
   });
   registry.registerPath({

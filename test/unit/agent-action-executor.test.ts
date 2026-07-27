@@ -72,6 +72,7 @@ import {
   clearInstallationHealthRefreshCooldownForTest,
   clearWritePermissionDenialCooldownForTest,
   writePermissionDenialCooldownSizeForTest,
+  defaultDecisionRecordReasonCode,
   executeAgentMaintenanceActions,
   executeIssueMaintenanceActions,
   pendingActionToPlanned,
@@ -81,6 +82,7 @@ import {
   type IssueActionExecutionContext,
 } from "../../src/services/agent-action-executor";
 import type { PlannedAgentAction } from "../../src/settings/agent-actions";
+import type { DecisionRecord } from "../../src/review/decision-record";
 import { STRUCTURED_CLOSE_REASONS_MAX_COUNT } from "../../src/settings/agent-execution";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../../src/review/linked-issue-hard-rules";
 import { clearProcessLocalGlobalAgentFrozenCacheForTest, getGlobalContributorBlacklist, isGlobalAgentFrozen, setGlobalAgentFrozen, upsertGlobalModerationConfig, upsertPullRequestFile, upsertPullRequestFromGitHub } from "../../src/db/repositories";
@@ -100,6 +102,9 @@ function ctx(over: Partial<AgentActionExecutionContext> = {}): AgentActionExecut
     agentPaused: false,
     agentDryRun: false,
     installationPermissions: { pull_requests: "write", contents: "write", issues: "write" },
+    // #9134: required on every context — default keeps every pre-existing test byte-identical; tests that
+    // care about the decision-record side effect itself override this explicitly.
+    decisionRecord: { configDigest: "test-config-digest" },
     ...over,
   };
 }
@@ -2296,5 +2301,101 @@ describe("pre-merge contributor-cap re-check (#7284-fix, TOCTOU race)", () => {
     const outcomes = await executeAgentMaintenanceActions(env, ctx({ authorLogin: undefined, contributorCapMergeRecheck: recheck }), [merge]);
     expect(outcomes[0]?.outcome).toBe("completed");
     expect(mergePullRequest).toHaveBeenCalled();
+  });
+});
+
+// #9134: six of seven executeAgentMaintenanceActions call sites wrote no decision record and no ledger row at
+// all for a real, completed merge/close — silently biasing the risk-control calibration join away from
+// exactly the closes a contributor is most likely to dispute (cap, review-nag) plus every approval-gated
+// merge. The fix hoists record-building into this SHARED executor rather than patching each call site, so it
+// cannot be bypassed by a new call site that forgets. This is the structural test for that guarantee: it
+// exercises the executor DIRECTLY (not any one caller) across every action class, and asserts the
+// decision_records/decision_ledger invariant holds for ALL of them at once -- a future call site that adds a
+// new action class without updating this table would fail here rather than silently shipping unrecorded.
+describe("decision record emission is structural, not per-call-site (#9134)", () => {
+  async function decisionRecordCount(env: Env): Promise<{ records: number; ledgerRows: number }> {
+    const records = (await env.DB.prepare("select count(*) as n from decision_records").first<{ n: number }>())?.n ?? 0;
+    const ledgerRows = (await env.DB.prepare("select count(*) as n from decision_ledger").first<{ n: number }>())?.n ?? 0;
+    return { records, ledgerRows };
+  }
+
+  const everyActionClass: PlannedAgentAction[] = [label, requestChanges, approve, merge, close, updateBranch, { actionClass: "assign", requiresApproval: false, reason: "auto-assign PR opener", assignee: "alice" }];
+
+  it.each(everyActionClass.map((action) => [action.actionClass, action] as const))(
+    "a completed %s action emits a decision record + ledger row IF AND ONLY IF it is merge/close",
+    async (actionClass, action) => {
+      const env = createTestEnv({});
+      // "assign" has no entry in ctx()'s default autonomy map (unlike the other six classes) -- every OTHER
+      // "LIVE assign" test in this file grants it explicitly the same way.
+      const autonomyOverride = actionClass === "assign" ? { assign: "auto" as const } : undefined;
+      const outcomes = await executeAgentMaintenanceActions(env, ctx({ decisionRecord: { configDigest: "cfg-digest" }, ...(autonomyOverride ? { autonomy: autonomyOverride } : {}) }), [action]);
+      expect(outcomes[0]?.outcome).toBe("completed");
+      const { records, ledgerRows } = await decisionRecordCount(env);
+      const shouldRecord = actionClass === "merge" || actionClass === "close";
+      expect(records).toBe(shouldRecord ? 1 : 0);
+      expect(ledgerRows).toBe(shouldRecord ? 1 : 0);
+    },
+  );
+
+  it("a completed merge persists a record whose action/configDigest/reasonCode reflect the ctx, chained into the ledger", async () => {
+    const env = createTestEnv({});
+    await executeAgentMaintenanceActions(env, ctx({ decisionRecord: { configDigest: "cfg-abc", gatePack: "oss-anti-slop", reasonCode: "custom_reason" } }), [merge]);
+    const row = await env.DB.prepare("select action, reason_code, record_json from decision_records").first<{ action: string; reason_code: string; record_json: string }>();
+    expect(row).toMatchObject({ action: "merge", reason_code: "custom_reason" });
+    const parsed = JSON.parse(row!.record_json) as { configDigest: string; gatePack: string | null };
+    expect(parsed.configDigest).toBe("cfg-abc");
+    expect(parsed.gatePack).toBe("oss-anti-slop");
+    const ledgerRow = await env.DB.prepare("select record_digest from decision_ledger").first<{ record_digest: string }>();
+    expect(ledgerRow).toBeTruthy();
+  });
+
+  it("afterPersist is called once with the persisted record's id + body — the hook a richer caller (e.g. a decision-replay input) uses to key its own sibling row", async () => {
+    const env = createTestEnv({});
+    const afterPersist = vi.fn(async (_recordId: string, _record: DecisionRecord) => undefined);
+    await executeAgentMaintenanceActions(env, ctx({ decisionRecord: { configDigest: "cfg-digest", afterPersist } }), [close]);
+    expect(afterPersist).toHaveBeenCalledTimes(1);
+    const [recordId, record] = afterPersist.mock.calls[0]!;
+    expect(recordId).toMatch(/^record:owner\/repo#7@/);
+    expect(record).toMatchObject({ repoFullName: "owner/repo", pullNumber: 7, action: "close" });
+  });
+
+  it("a NON-completed merge/close (denied) emits NO decision record — only a real, completed mutation counts", async () => {
+    const env = createTestEnv({});
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ decisionRecord: { configDigest: "cfg-digest" }, agentPaused: true }), [merge]);
+    expect(outcomes[0]?.outcome).toBe("denied");
+    expect((await decisionRecordCount(env)).records).toBe(0);
+  });
+
+  it("`managedByCaller: true` is a deliberate opt-out — a caller that already records its own decision independently is never double-recorded", async () => {
+    const env = createTestEnv({});
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ decisionRecord: { managedByCaller: true } }), [merge]);
+    expect(outcomes[0]?.outcome).toBe("completed");
+    expect((await decisionRecordCount(env)).records).toBe(0);
+  });
+
+  it("a persist failure inside the hook never surfaces as the action's own outcome (best-effort, mirrors persistDecisionRecord's own posture)", async () => {
+    const env = createTestEnv({});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    vi.spyOn(env.DB, "prepare").mockImplementation((sql: string) => {
+      if (sql.includes("INSERT INTO decision_records")) throw new Error("db down");
+      return realPrepare(sql);
+    });
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ decisionRecord: { configDigest: "cfg-digest" } }), [merge]);
+    expect(outcomes[0]?.outcome).toBe("completed");
+    expect(mergePullRequest).toHaveBeenCalled();
+    vi.restoreAllMocks();
+    warn.mockRestore?.();
+  });
+});
+
+describe("defaultDecisionRecordReasonCode (#9134)", () => {
+  it("a policy-tagged close (any closeKind) publishes policy_close:<kind>; anything else publishes success", () => {
+    expect(defaultDecisionRecordReasonCode({ actionClass: "close", requiresApproval: false, reason: "r", closeKind: "contributor_cap" })).toBe("policy_close:contributor_cap");
+    expect(defaultDecisionRecordReasonCode({ actionClass: "close", requiresApproval: false, reason: "r", closeKind: "review_nag" })).toBe("policy_close:review_nag");
+    expect(defaultDecisionRecordReasonCode({ actionClass: "close", requiresApproval: false, reason: "r", closeKind: "heuristic" })).toBe("policy_close:heuristic");
+    // A close with no closeKind at all, and a plain merge, both publish "success" -- there is no blocker to name.
+    expect(defaultDecisionRecordReasonCode({ actionClass: "close", requiresApproval: false, reason: "r" })).toBe("success");
+    expect(defaultDecisionRecordReasonCode({ actionClass: "merge", requiresApproval: false, reason: "r", mergeMethod: "squash" })).toBe("success");
   });
 });

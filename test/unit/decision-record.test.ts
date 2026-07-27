@@ -9,7 +9,7 @@ import {
   sha256Hex,
   type DecisionRecord,
 } from "../../src/review/decision-record";
-import { appendDecisionLedger, LEDGER_GENESIS_HASH, loadDecisionRecordCollapsible, verifyDecisionLedger } from "../../src/review/decision-record";
+import { appendDecisionLedger, buildLedgerAnchorPayload, LEDGER_GENESIS_HASH, loadDecisionRecordCollapsible, loadPublicDecisionRecord, verifyDecisionLedger } from "../../src/review/decision-record";
 import { createTestEnv } from "../helpers/d1";
 
 // #8836: the digests are commitments a contributor can challenge — key-order invariance and unicode
@@ -83,50 +83,114 @@ describe("buildDecisionRecord / persistDecisionRecord", () => {
     expect(withConf.aiConfidence).toBe(0);
   });
 
-  it("persists with latest-finalize-wins per (target, head sha)", async () => {
+  it("a re-persist at the SAME (repo, pull, head) is a NEW revisioned row, never an overwrite (#9123)", async () => {
     const env = createTestEnv();
     const first = await buildDecisionRecord(recordInput({ action: "merge", reasonCode: "success", decidedAt: "2026-07-26T00:00:00Z" } as never));
-    await persistDecisionRecord(env, first.record, first.recordDigest);
+    const firstId = await persistDecisionRecord(env, first.record, first.recordDigest);
+    // The FIRST record for a head keeps the plain, no-suffix id every existing consumer (the replay CLI's
+    // documented extract query) already expects.
+    expect(firstId).toBe(`record:o/r#7@abc1234def`);
     const second = await buildDecisionRecord(recordInput({ action: "close", reasonCode: "policy_close:contributor_cap", decidedAt: "2026-07-26T01:00:00Z" } as never));
-    await persistDecisionRecord(env, second.record, second.recordDigest);
-    const rows = await env.DB.prepare("SELECT action, reason_code, record_digest, record_json FROM decision_records").all<{ action: string; reason_code: string; record_digest: string; record_json: string }>();
-    expect(rows.results).toHaveLength(1);
-    expect(rows.results![0]).toMatchObject({ action: "close", reason_code: "policy_close:contributor_cap", record_digest: second.recordDigest });
-    // The stored JSON is the canonical form — re-digesting it reproduces the stored digest (the replay check).
-    expect(await sha256Hex(rows.results![0]!.record_json)).toBe(second.recordDigest);
+    const secondId = await persistDecisionRecord(env, second.record, second.recordDigest);
+    expect(secondId).toBe(`record:o/r#7@abc1234def:rev2`);
+    const rows = (
+      await env.DB.prepare("SELECT id, action, reason_code, record_digest, record_json FROM decision_records ORDER BY id").all<{ id: string; action: string; reason_code: string; record_digest: string; record_json: string }>()
+    ).results!;
+    // BOTH rows exist -- the compounding bug this fixes was the second write silently overwriting the first.
+    expect(rows).toHaveLength(2);
+    const firstRow = rows.find((row) => row.id === firstId)!;
+    expect(firstRow).toMatchObject({ action: "merge", reason_code: "success", record_digest: first.recordDigest });
+    // The FIRST record's preimage is still fully intact and re-hashes to the digest the ledger chained for it.
+    expect(await sha256Hex(firstRow.record_json)).toBe(first.recordDigest);
+    const secondRow = rows.find((row) => row.id === secondId)!;
+    expect(secondRow).toMatchObject({ action: "close", reason_code: "policy_close:contributor_cap", record_digest: second.recordDigest });
+    // Both writes chained into the ledger as their OWN rows (two appends, not a rewrite of one).
+    const ledgerRecordIds = (await env.DB.prepare("SELECT record_id AS recordId FROM decision_ledger ORDER BY seq").all<{ recordId: string }>()).results!.map((row) => row.recordId);
+    expect(ledgerRecordIds).toEqual([firstId, secondId]);
   });
 
-  it("a persist failure is swallowed (legibility must never break finalization)", async () => {
+  it("a third persist at the same head keeps counting revisions (:rev2, :rev3, ...)", async () => {
+    const env = createTestEnv();
+    const one = await buildDecisionRecord(recordInput({ decidedAt: "2026-07-26T00:00:00Z" } as never));
+    const two = await buildDecisionRecord(recordInput({ decidedAt: "2026-07-26T01:00:00Z" } as never));
+    const three = await buildDecisionRecord(recordInput({ decidedAt: "2026-07-26T02:00:00Z" } as never));
+    const idOne = await persistDecisionRecord(env, one.record, one.recordDigest);
+    const idTwo = await persistDecisionRecord(env, two.record, two.recordDigest);
+    const idThree = await persistDecisionRecord(env, three.record, three.recordDigest);
+    expect([idOne, idTwo, idThree]).toEqual([`record:o/r#7@abc1234def`, `record:o/r#7@abc1234def:rev2`, `record:o/r#7@abc1234def:rev3`]);
+  });
+
+  it("a persist failure is swallowed (legibility must never break finalization) and resolves null", async () => {
     const env = createTestEnv();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(env.DB, "prepare").mockImplementation(() => {
       throw new Error("db down");
     });
     const { record, recordDigest } = await buildDecisionRecord(recordInput());
-    await expect(persistDecisionRecord(env, record, recordDigest)).resolves.toBeUndefined();
+    await expect(persistDecisionRecord(env, record, recordDigest)).resolves.toBeNull();
+    expect(warn).toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
+  it("an INSERT collision (a concurrent supersession racing the count-then-insert) retries and lands on the next revision", async () => {
+    const env = createTestEnv();
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    let insertAttempts = 0;
+    vi.spyOn(env.DB, "prepare").mockImplementation((sql: string) => {
+      if (sql.includes("INSERT INTO decision_records")) {
+        insertAttempts += 1;
+        if (insertAttempts === 1) {
+          return { bind: () => ({ run: async () => { throw new Error("UNIQUE constraint failed: decision_records.id"); } }) } as never;
+        }
+      }
+      return realPrepare(sql);
+    });
+    const { record, recordDigest } = await buildDecisionRecord(recordInput());
+    const id = await persistDecisionRecord(env, record, recordDigest);
+    expect(id).toBe(`record:o/r#7@abc1234def`);
+    expect(insertAttempts).toBe(2);
+    vi.restoreAllMocks();
+  });
+
+  it("an exhausted INSERT retry budget rethrows, swallowed by the outer best-effort catch (resolves null, warns)", async () => {
+    const env = createTestEnv();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    vi.spyOn(env.DB, "prepare").mockImplementation((sql: string) => {
+      if (sql.includes("INSERT INTO decision_records")) {
+        return { bind: () => ({ run: async () => { throw new Error("UNIQUE constraint failed: decision_records.id"); } }) } as never;
+      }
+      return realPrepare(sql);
+    });
+    const { record, recordDigest } = await buildDecisionRecord(recordInput());
+    await expect(persistDecisionRecord(env, record, recordDigest, 2)).resolves.toBeNull();
     expect(warn).toHaveBeenCalled();
     vi.restoreAllMocks();
   });
 });
 
 describe("renderDecisionRecordSection", () => {
-  it("renders the claim + truncated digests; model line only when an AI review contributed", async () => {
+  it("renders the claim + FULL 64-hex digests (#9123 -- a prefix is not a commitment); model line only when an AI review contributed", async () => {
     const { record, recordDigest } = await buildDecisionRecord(recordInput());
     const body = renderDecisionRecordSection(record, recordDigest);
     // The section body carries no <details> chrome — the bridge's UnifiedCollapsible renders the title.
     expect(body).not.toContain("<details>");
     expect(body).toContain("`ci_readiness`");
-    expect(body).toContain(record.configDigest.slice(0, 12));
-    expect(body).toContain(recordDigest.slice(0, 12));
+    // Full digests, not a 12-char prefix -- a challenger must be able to re-hash and compare the WHOLE value.
+    expect(body).toContain(`\`${record.configDigest}\``);
+    expect(record.configDigest).toHaveLength(64);
+    expect(body).toContain(`\`${recordDigest}\``);
     expect(body).not.toContain("**model**");
+    // The head sha keeps its conventional 7-char git-abbreviation — a display convention, not a digest.
+    expect(body).toContain(`\`${record.headSha.slice(0, 7)}\``);
 
     const ai = await buildDecisionRecord(recordInput({ modelId: "claude-sonnet-5", promptDigest: "p".repeat(64), aiConfidence: 0.97 }));
     const aiBody = renderDecisionRecordSection(ai.record, ai.recordDigest);
     expect(aiBody).toContain("**model**: claude-sonnet-5");
-    expect(aiBody).toContain("`pppppppppppp`");
+    expect(aiBody).toContain(`\`${"p".repeat(64)}\``);
     expect(aiBody).toContain("**confidence**: 0.97");
-    // Bounded: a record section must stay a small fixed-size block.
-    expect(aiBody.length).toBeLessThan(700);
+    // Bounded: a record section must stay a small fixed-size block even with three full 64-hex digests inline.
+    expect(aiBody.length).toBeLessThan(900);
 
     // Null pack/ci render nothing for those segments; a prompt digest without a model id renders "n/a".
     const bare = await buildDecisionRecord(recordInput({ gatePack: null, ciState: null, modelId: null, promptDigest: "q".repeat(64) }));
@@ -134,7 +198,7 @@ describe("renderDecisionRecordSection", () => {
     expect(bareBody).not.toContain("**pack**");
     expect(bareBody).not.toContain("**ci**");
     expect(bareBody).toContain("**model**: n/a");
-    expect(bareBody).toContain("`qqqqqqqqqqqq`");
+    expect(bareBody).toContain(`\`${"q".repeat(64)}\``);
     // Model id present with NO prompt digest: the model line renders without a prompt segment.
     const modelOnly = await buildDecisionRecord(recordInput({ modelId: "claude-sonnet-5" }));
     expect(renderDecisionRecordSection(modelOnly.record, modelOnly.recordDigest)).toContain("**model**: claude-sonnet-5");
@@ -161,6 +225,58 @@ describe("loadDecisionRecordCollapsible", () => {
   });
 });
 
+describe("loadPublicDecisionRecord (#9123)", () => {
+  it("returns the latest record verbatim + its digest for the public route; null when none exists yet", async () => {
+    const env = createTestEnv();
+    expect(await loadPublicDecisionRecord(env, "o/r", 7)).toBeNull();
+    const { record, recordDigest } = await buildDecisionRecord(recordInput());
+    await persistDecisionRecord(env, record, recordDigest);
+    const published = await loadPublicDecisionRecord(env, "o/r", 7);
+    expect(published!.recordDigest).toBe(recordDigest);
+    // Verbatim -- every field survives, not the bounded/truncated markdown summary.
+    expect(published!.record).toEqual(record);
+    expect(published!.record.decidedAt).toBeTruthy();
+    expect(published!.record.baseSha).toBe("base999");
+  });
+
+  it("returns the LATEST revision after a supersession, not the superseded first record", async () => {
+    const env = createTestEnv();
+    const first = await buildDecisionRecord(recordInput({ action: "merge", decidedAt: "2026-07-26T00:00:00Z" } as never));
+    await persistDecisionRecord(env, first.record, first.recordDigest);
+    const second = await buildDecisionRecord(recordInput({ action: "close", decidedAt: "2026-07-26T01:00:00Z" } as never));
+    await persistDecisionRecord(env, second.record, second.recordDigest);
+    const published = await loadPublicDecisionRecord(env, "o/r", 7);
+    expect(published!.recordDigest).toBe(second.recordDigest);
+    expect(published!.record.action).toBe("close");
+  });
+
+  it("fails safe (null) on unreadable stored JSON rather than throwing", async () => {
+    const env = createTestEnv();
+    const { record, recordDigest } = await buildDecisionRecord(recordInput());
+    await persistDecisionRecord(env, record, recordDigest);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await env.DB.prepare("UPDATE decision_records SET record_json = '{not json' WHERE pull_number = 7").run();
+    expect(await loadPublicDecisionRecord(env, "o/r", 7)).toBeNull();
+    expect(warn).toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+});
+
+describe("buildLedgerAnchorPayload (#9122)", () => {
+  it("returns exactly {seq, rowHash, at} from a tip, using a caller-supplied timestamp", () => {
+    const payload = buildLedgerAnchorPayload({ seq: 5, rowHash: "a".repeat(64) }, "2026-01-01T00:00:00.000Z");
+    expect(payload).toEqual({ seq: 5, rowHash: "a".repeat(64), at: "2026-01-01T00:00:00.000Z" });
+  });
+
+  it("defaults `at` to the current time when the caller omits it", () => {
+    const beforeMs = Date.now();
+    const payload = buildLedgerAnchorPayload({ seq: 1, rowHash: LEDGER_GENESIS_HASH });
+    expect(payload.seq).toBe(1);
+    expect(payload.rowHash).toBe(LEDGER_GENESIS_HASH);
+    expect(Date.parse(payload.at)).toBeGreaterThanOrEqual(beforeMs);
+  });
+});
+
 describe("decision ledger (#8837)", () => {
   const persist = async (env: Env, pull: number, action = "close") => {
     const { record, recordDigest } = await buildDecisionRecord(recordInput({ pullNumber: pull, action }));
@@ -181,6 +297,52 @@ describe("decision ledger (#8837)", () => {
     expect(rows[2]!.prevHash).toBe(rows[1]!.rowHash);
     const verified = await verifyDecisionLedger(env);
     expect(verified).toMatchObject({ ok: true, checked: 3, nextAfterSeq: null });
+    // #9122: the current global tip + total row count are always returned, so a third party can checkpoint.
+    expect(verified.tipSeq).toBe(3);
+    expect(verified.tipHash).toBe(rows[2]!.rowHash);
+    expect(verified.totalCount).toBe(3);
+  });
+
+  it("verifying a completely empty ledger returns ok:true with a zero tip, and skips the tail-truncation check (nothing to anchor against yet)", async () => {
+    const env = createTestEnv();
+    const verified = await verifyDecisionLedger(env);
+    expect(verified).toEqual({ ok: true, checked: 0, nextAfterSeq: null, tipSeq: 0, tipHash: LEDGER_GENESIS_HASH, totalCount: 0 });
+  });
+
+  it("TAIL TRUNCATION now breaks verify instead of passing clean (#9122): dropping the newest ledger rows leaves an orphaned decision_records tail", async () => {
+    const env = createTestEnv();
+    // Force well-separated, deterministic timestamps via fake system time (not a post-hoc created_at UPDATE --
+    // that would desync row_hash, which is computed OVER createdAt at write time, from the stored value and
+    // make every row after it look like a row_hash_mismatch instead of exercising the real, timing-independent
+    // tail-truncation bug this test pins). Five persists in a tight loop could otherwise land in the same
+    // millisecond on a fast in-memory harness, which would make the reconciliation's strict `created_at >`
+    // comparison flaky.
+    vi.useFakeTimers();
+    try {
+      for (let i = 1; i <= 5; i += 1) {
+        vi.setSystemTime(new Date(2026, 0, 1, 0, 0, i));
+        await persist(env, i);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+    // Drop the newest 2 ledger rows (the most disputable, per the issue) -- their decision_records rows
+    // (pulls 4 and 5) are untouched, since the DELETE only targets decision_ledger.
+    await env.DB.prepare("DELETE FROM decision_ledger WHERE seq > 3").run();
+    const verified = await verifyDecisionLedger(env);
+    expect(verified.ok).toBe(false);
+    expect(verified.break).toEqual({ kind: "short_tail", atSeq: 3 });
+    expect(verified.checked).toBe(3); // rows 1-3 verify perfectly clean on their own
+    expect(verified.totalCount).toBe(3); // the ledger itself only knows about what's left
+  });
+
+  it("a genuinely short ledger with NO orphaned records still verifies clean (both sides of the reconciliation)", async () => {
+    const env = createTestEnv();
+    await persist(env, 1);
+    await persist(env, 2);
+    const verified = await verifyDecisionLedger(env);
+    expect(verified.ok).toBe(true);
+    expect(verified.break).toBeUndefined();
   });
 
   it("verification is RESUMABLE: a full window returns the cursor, the next call continues from it", async () => {

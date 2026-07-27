@@ -93,6 +93,8 @@ function ctx(over: Partial<AgentActionExecutionContext> = {}): AgentActionExecut
     agentPaused: false,
     agentDryRun: false,
     installationPermissions: { contents: "write", pull_requests: "write", issues: "write" },
+    // #9134: required on every context — default keeps every pre-existing test byte-identical.
+    decisionRecord: { configDigest: "test-config-digest" },
     ...over,
   };
 }
@@ -166,6 +168,12 @@ describe("agent approval queue (#779)", () => {
     expect((await getPendingAgentAction(env, action.id))?.status).toBe("accepted");
     const audit = await env.DB.prepare("select outcome, actor from audit_events where event_type = ?").bind("agent.pending_action.accepted").first<{ outcome: string; actor: string }>();
     expect(audit).toMatchObject({ outcome: "completed", actor: "owner" });
+    // #9134 REGRESSION: an approval-queue-accepted merge previously wrote NO decision record at all -- every
+    // approval-gated merge was invisible to the risk-control calibration join.
+    const decisionRecord = await env.DB.prepare("select action, reason_code from decision_records where repo_full_name = ? and pull_number = 7").bind("owner/repo").first<{ action: string; reason_code: string }>();
+    expect(decisionRecord).toMatchObject({ action: "merge", reason_code: "success" });
+    const ledgerRows = await env.DB.prepare("select count(*) as n from decision_ledger").first<{ n: number }>();
+    expect(ledgerRows?.n).toBeGreaterThanOrEqual(1);
   });
 
   it("accept supersedes a staged merge when the live head moved after staging (force-push fail-safe)", async () => {
@@ -341,6 +349,11 @@ describe("agent approval queue (#779)", () => {
     expect(result.executionOutcome).toBe("completed");
     const { closePullRequest: closeStillBlacklisted } = await import("../../src/github/pr-actions");
     expect(closeStillBlacklisted).toHaveBeenCalledWith(env, 5, "owner/repo", 7);
+    // #9134 REGRESSION: an approval-queue-accepted close previously wrote NO decision record at all.
+    const decisionRecord = await env.DB.prepare("select action, reason_code from decision_records where repo_full_name = ? and pull_number = 7").bind("owner/repo").first<{ action: string; reason_code: string }>();
+    expect(decisionRecord).toMatchObject({ action: "close", reason_code: "policy_close:blacklist" });
+    const ledgerRows = await env.DB.prepare("select count(*) as n from decision_ledger").first<{ n: number }>();
+    expect(ledgerRows?.n).toBeGreaterThanOrEqual(1);
   });
 
   it("REGRESSION: accept rechecks blacklist closes against the effective global blacklist", async () => {

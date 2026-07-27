@@ -2907,6 +2907,12 @@ async function maybeCloseForContributorCapOnOpen(
           moderationWarningLabel: settings.moderationWarningLabel,
           moderationBannedLabel: settings.moderationBannedLabel,
         },
+        // #9134: this early cap-on-open close previously wrote NO decision record at all — the exact bias the
+        // issue flagged (a contributor most likely to dispute a cap close had nothing joinable in the
+        // risk-control calibration set). The generic policy_close:contributor_cap reasonCode derivation
+        // (agent-action-executor.ts's defaultDecisionRecordReasonCode) is exactly right here — this path has
+        // no gate evaluation to derive a richer blockerClass-based code from.
+        decisionRecord: { configDigest: await contentDigest(settings) },
       },
       planned,
     );
@@ -3438,11 +3444,18 @@ async function runAgentMaintenancePlanAndExecute(
   // #8836/#8834: the content-addressed decision record — the public commitment that lets a contributor
   // argue "clause X of config abc123 decided this". Persist-only here (best-effort inside); the same
   // reasonCode expression as recordNativeGateDecision above so the record and the calibration row can never
-  // disagree about WHY. When an AI JUDGMENT shaped this decision (an AI_JUDGMENT_BLOCKER_CODES finding is
-  // present), the record carries the prompt-template commitment and the finding's calibrated confidence —
-  // the confidence is what joins every decision to the risk-control calibration set (#8835). modelId stays
-  // null at this site: the finding does not carry which concrete models ran, and recording a guess would be
-  // worse than recording nothing (the reviewDiagnostics ledger holds the per-run model identities).
+  // disagree about WHY. Built and persisted UNCONDITIONALLY for whatever disposition.actionClass this pass
+  // resolved to (merge/close/HOLD) — a hold never reaches executeAgentMaintenanceActions at all (this function
+  // returns early below once holdoutOnPlan is empty), so this is the only place a hold's decision record can
+  // be written; merge/close records built here stay independent of whether the ACTUAL mutation below ends up
+  // completing (#9134: this site's own ctx sets `decisionRecord: { managedByCaller: true }` on its
+  // executeAgentMaintenanceActions call, deliberately opting OUT of that executor's own completed-action
+  // record hook, to avoid double-recording the same decision here and there). When an AI JUDGMENT shaped this
+  // decision (an AI_JUDGMENT_BLOCKER_CODES finding is present), the record carries the prompt-template
+  // commitment and the finding's calibrated confidence — the confidence is what joins every decision to the
+  // risk-control calibration set (#8835). modelId stays null at this site: the finding does not carry which
+  // concrete models ran, and recording a guess would be worse than recording nothing (the reviewDiagnostics
+  // ledger holds the per-run model identities).
   {
     const aiJudgment = gate.blockers.find((blocker) => AI_JUDGMENT_BLOCKER_CODES.has(blocker.code));
     // #8962: recomputed here (two cheap reads, only when an AI judgment shaped the decision) rather than
@@ -3465,11 +3478,13 @@ async function runAgentMaintenancePlanAndExecute(
       aiConfidence: aiJudgment?.confidence ?? null,
       salvageability,
     });
-    await persistDecisionRecord(env, record, recordDigest);
+    const recordId = await persistDecisionRecord(env, record, recordDigest);
     // #8838: persist the evaluation's own exact inputs beside the record (PRIVATE sibling, migration 0181)
     // so the replay harness can re-derive this decision bit-exactly. Best-effort, like the record itself;
-    // the no-replay no-op (synthetic content-lane/bridge evaluations) lives inside the helper.
-    await persistDecisionReplayInputForGate(env, `record:${record.repoFullName}#${record.pullNumber}@${record.headSha}`.slice(0, 250), gate, policyCloseKind ?? null);
+    // the no-replay no-op (synthetic content-lane/bridge evaluations) lives inside the helper. Keyed to the
+    // id persistDecisionRecord actually wrote (#9123: a supersession at the same head gets a revisioned id,
+    // not the base one this used to always recompute independently).
+    if (recordId !== null) await persistDecisionReplayInputForGate(env, recordId, gate, policyCloseKind ?? null);
   }
   // #2349 (PR 1): additive per-contributor calibration data, gated identically to recordNativeGateDecision
   // above -- see src/review/contributor-calibration.ts's doc comment. Currently write-only; nothing reads
@@ -3661,6 +3676,11 @@ async function runAgentMaintenancePlanAndExecute(
       // #3472 split-brain: the executor's own live manual-review hold guard (immediately before approve/merge)
       // must check the SAME configured label the planner itself resolves labels.manualReview from.
       manualReviewLabel: settings.manualReviewLabel,
+      // #9134: this site already builds + persists its own decision record UNCONDITIONALLY, above (for every
+      // disposition — hold included, since a hold never even reaches this call) — see that block's own doc
+      // comment for why. `managedByCaller: true` deliberately opts OUT of the executor's generic
+      // completed-action record hook here, so the same decision is never recorded twice.
+      decisionRecord: { managedByCaller: true },
     },
     holdoutOnPlan,
   );
@@ -4020,6 +4040,9 @@ async function prReadyForReview(
         agentDryRun: settings.agentDryRun,
         installationPermissions: installation?.permissions ?? null,
         authorLogin: pr.authorLogin,
+        // #9134: required on every ctx, though this path only ever plans `update_branch` (never merge/close),
+        // so the decision-record path inside the executor is never actually exercised for it.
+        decisionRecord: { configDigest: await contentDigest(settings) },
       },
       [
         {
@@ -4464,6 +4487,9 @@ async function maybeForceFreshRebase(
       /* v8 ignore next -- an installed-App PR webhook always carries an installation record; the null is defensive (mirrors runAgentMaintenancePlanAndExecute's own identical merge-time read). */
       installationPermissions: installation?.permissions ?? null,
       authorLogin: pr.authorLogin,
+      // #9134: required on every ctx, though this path only ever plans `update_branch` (never merge/close), so
+      // the decision-record path inside the executor is never actually exercised for it.
+      decisionRecord: { configDigest: await contentDigest(settings) },
     },
     [
       {
@@ -14008,6 +14034,9 @@ async function maybeThrottleReviewNagPing(
       installationPermissions: installation?.permissions ?? null,
       authorLogin: pr.authorLogin,
       moderationSettings: { moderationGateMode: settings.moderationGateMode, moderationRules: settings.moderationRules, moderationWarningLabel: settings.moderationWarningLabel, moderationBannedLabel: settings.moderationBannedLabel },
+      // #9134: this review-nag close previously wrote NO decision record at all -- exactly the kind of
+      // contributor-disputable close the issue flagged as biasing the risk-control calibration join.
+      decisionRecord: { configDigest: await contentDigest(settings) },
     },
     planned,
   );
@@ -14199,6 +14228,9 @@ async function maybeThrottleMonitoredMentions(
       installationPermissions: installation?.permissions ?? null,
       authorLogin: pr.authorLogin,
       moderationSettings: { moderationGateMode: settings.moderationGateMode, moderationRules: settings.moderationRules, moderationWarningLabel: settings.moderationWarningLabel, moderationBannedLabel: settings.moderationBannedLabel },
+      // #9134: this review-nag close (the @loopover-mention variant) previously wrote NO decision record at
+      // all -- the same gap as its comment-thread-cooldown sibling immediately above.
+      decisionRecord: { configDigest: await contentDigest(settings) },
     },
     planned,
   );

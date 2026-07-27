@@ -43,6 +43,7 @@ import { incr } from "../selfhost/metrics";
 import { shouldWaitForOlderSiblings } from "../review/merge-train";
 import { capturePostHogError } from "../selfhost/posthog";
 import { claimContributorCapLock, releaseContributorCapLock } from "../queue/transient-locks";
+import { buildDecisionRecord, persistDecisionRecord, type DecisionRecord } from "../review/decision-record";
 
 // The agent actor name on every audit record — the App acts on the maintainer's behalf per their configured
 // autonomy (the config IS the authorization; there is no human commenter to authorize, unlike #824).
@@ -226,7 +227,100 @@ export type AgentActionExecutionContext = {
   // `pull_request_files` cache already populated). Absent/undefined degrades the merge-train overlap check to
   // linked-issue-only for this PR, never to "no overlap possible".
   pullRequestChangedFiles?: readonly string[] | undefined;
+  // #9134: every completed merge/close MUST emit a decision record + chained ledger row -- resolved by the
+  // CALLER (same "the executor has no settings access" shape as contributorCapCancelCi/manualReviewLabel
+  // above) and REQUIRED (not optional), so a NEW call site cannot compile without deciding what its record
+  // should carry. Before this field existed, buildDecisionRecord/persistDecisionRecord ran at exactly ONE of
+  // this executor's seven call sites (the gate-evaluation plan-and-execute path) -- and there UNCONDITIONALLY,
+  // for the disposition it PLANNED regardless of hold/merge/close and regardless of whether the plan actually
+  // executes cleanly (that site's own doc comment explains why: a hold never even reaches this executor, so
+  // its record has to be built before that early return). The other six call sites -- a contributor-cap close
+  // on PR open, two review-nag closes, an approval-queue accept, and two forced-rebase update_branch calls --
+  // wrote no record and no ledger row at all, silently biasing the risk-control calibration join
+  // (loadCalibrationPairs) away from exactly the closes a contributor is most likely to dispute. Set
+  // `managedByCaller: true` ONLY for a call site that already builds its own record independently of this
+  // executor's completed-action outcome (today: just the one gate-evaluation site, for the hold reason above)
+  // -- passing it silently is a deliberate, self-documenting override, not an accidental omission, which is
+  // the actual property this field being required protects.
+  decisionRecord: DecisionRecordContext;
 };
+
+/** See `AgentActionExecutionContext.decisionRecord`'s doc comment for why this exists, is required, and has an
+ *  explicit opt-out. */
+export type DecisionRecordContext =
+  | { managedByCaller: true }
+  | {
+      managedByCaller?: false | undefined;
+      /** Digest of the RESOLVED effective settings in force for this decision (canonical JSON) -- the ONE
+       *  field every caller must actually resolve; every other field defaults to null/a generic derivation
+       *  below when a caller has nothing richer to say. Compute via `contentDigest(settings)`
+       *  (decision-record.ts) the SAME way the gate-evaluation call site already does. */
+      configDigest: string;
+      gatePack?: string | null | undefined;
+      ciState?: string | null | undefined;
+      baseSha?: string | null | undefined;
+      modelId?: string | null | undefined;
+      promptDigest?: string | null | undefined;
+      aiConfidence?: number | null | undefined;
+      salvageability?: { score: number; factors: string[] } | null | undefined;
+      /** Override the generic reasonCode derivation (see `defaultDecisionRecordReasonCode` below) -- a caller
+       *  with richer blockerClass/gate.conclusion context this executor has no way to derive generically
+       *  passes its own `deriveDecisionReasonCode` result here instead. */
+      reasonCode?: string | undefined;
+      /** Called once, best-effort, immediately after a completed merge/close action's record is persisted --
+       *  lets a caller with a sibling private row to write (e.g. a decision-replay input, keyed to the exact
+       *  SAME record id) act on the id this call actually wrote, including a supersession's revisioned id
+       *  (#9123) rather than recomputing a possibly-stale base id independently. Never invoked when the
+       *  persist itself failed (persistDecisionRecord already swallows that and warns; recordCompletedDecision
+       *  below treats a null id the same way). */
+      afterPersist?: ((recordId: string, record: DecisionRecord) => Promise<void> | void) | undefined;
+    };
+
+/** Generic reasonCode when the caller has no richer derivation of its own (see DecisionRecordContext.reasonCode
+ *  above). A policy-tagged close (contributor_cap / blacklist / review_nag / heuristic / whatever closeKind the
+ *  planner attached) publishes as `policy_close:<kind>`, the SAME convention deriveDecisionReasonCode
+ *  (decision-replay.ts) already uses for a policy close's blockerClass-less case; a plain merge, or a close
+ *  with no closeKind at all, publishes as "success" -- there is no blocker to name and the action itself IS
+ *  the verdict. Exported for direct unit testing. */
+export function defaultDecisionRecordReasonCode(action: PlannedAgentAction): string {
+  return action.closeKind !== undefined ? `policy_close:${action.closeKind}` : "success";
+}
+
+/**
+ * #9134: emit the decision record + chained ledger row for a JUST-COMPLETED merge/close action, by
+ * construction -- called from the SAME "completed" branch every call site's mutation funnels through (step 9
+ * below), so a new call site cannot add a merge/close outcome without also going through this (unless it
+ * opted out via `managedByCaller: true` — see DecisionRecordContext's doc comment for the one site that does).
+ * Best-effort, mirroring persistDecisionRecord's own posture: recording legibility must never fail a mutation
+ * that already succeeded on GitHub -- callers wrap this in `.catch(() => undefined)`.
+ */
+async function recordCompletedDecision(env: Env, ctx: AgentActionExecutionContext, action: PlannedAgentAction): Promise<void> {
+  if (ctx.decisionRecord.managedByCaller === true) return;
+  const dr = ctx.decisionRecord;
+  /* v8 ignore next -- the step-5 freshness guard above already denies a merge/close (this function only ever
+   * runs for those two classes) whenever action.expectedHeadSha ?? ctx.headSha is falsy, so this is always a
+   * truthy string by the time a completed merge/close reaches here; the "unknown" fallback only satisfies
+   * buildDecisionRecord's required string headSha field, mirroring the exact same defensive pattern the
+   * merge/approve cases in performAction already use for this identical expression. */
+  const headSha = action.expectedHeadSha ?? ctx.headSha ?? "unknown";
+  const { record, recordDigest } = await buildDecisionRecord({
+    repoFullName: ctx.repoFullName,
+    pullNumber: ctx.pullNumber,
+    headSha,
+    baseSha: dr.baseSha ?? null,
+    action: action.actionClass,
+    reasonCode: dr.reasonCode ?? defaultDecisionRecordReasonCode(action),
+    configDigest: dr.configDigest,
+    gatePack: dr.gatePack ?? null,
+    ciState: dr.ciState ?? null,
+    modelId: dr.modelId ?? null,
+    promptDigest: dr.promptDigest ?? null,
+    aiConfidence: dr.aiConfidence ?? null,
+    salvageability: dr.salvageability ?? null,
+  });
+  const recordId = await persistDecisionRecord(env, record, recordDigest);
+  if (recordId !== null && dr.afterPersist) await dr.afterPersist(recordId, record);
+}
 
 export type ModerationContextSettings = {
   moderationGateMode?: "inherit" | "off" | "enabled" | undefined;
@@ -598,6 +692,12 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
     try {
       const detailOverride = await performAction(env, ctx, action);
       await audit("completed", detailOverride ?? action.reason);
+      // #9134: every completed merge/close emits a decision record + chained ledger row, by construction --
+      // see DecisionRecordContext's doc comment on why this lives HERE instead of at each call site. Never
+      // throws: recording legibility must never retroactively fail a mutation that already succeeded.
+      if (action.actionClass === "merge" || action.actionClass === "close") {
+        await recordCompletedDecision(env, ctx, action).catch(() => undefined);
+      }
       // CI-run cancellation on an anti-abuse close (#2462 contributor_cap; extended to blacklist #6659): stop
       // burning CI minutes on a PR that was just closed for exceeding the contributor cap, or for a banned
       // login. contributor_cap stays opt-in (contributorCapCancelCi) since a repo may want the cap to bite

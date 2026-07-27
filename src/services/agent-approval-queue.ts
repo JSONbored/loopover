@@ -13,6 +13,7 @@ import { resolveRepositorySettings } from "../settings/repository-settings";
 import { createInstallationToken } from "../github/app";
 import { loadLinkedIssueHardRules, resolveLinkedIssueHardRule } from "../review/linked-issue-hard-rules";
 import { executeAgentMaintenanceActions, pendingActionToPlanned } from "./agent-action-executor";
+import { contentDigest } from "../review/decision-record";
 import { downgradeCloseToHold, downgradeMergeToHold, isProtectedAutomationAuthor, type PlannedAgentAction } from "../settings/agent-actions";
 import { findBlacklistEntry } from "../settings/contributor-blacklist";
 import { isCloseHoldOnly, isHoldOnly, readUntrustworthyRuleCodes } from "../review/outcomes-wire";
@@ -449,6 +450,13 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
       // manual-review hold on this same PR/head before the maintainer accepts — the executor's own live guard
       // (step 7b of executeAgentMaintenanceActions) needs the configured label to check for.
       manualReviewLabel: settings.manualReviewLabel,
+      // #9134: the approval-queue accept path previously wrote NO decision record at all for a staged
+      // merge/close — every approval-gated action was invisible to the risk-control calibration join. closeKind
+      // round-trips through actionParams/pendingActionToPlanned (see their doc comments), so the executor's
+      // generic policy_close:<kind> reasonCode derivation still applies here — coarser than the immediate
+      // gate-evaluation path's blockerClass-based reasonCode for a replayed HEURISTIC close (this path has no
+      // `gate` object to re-derive that from), an accepted, documented gap rather than a re-run evaluation.
+      decisionRecord: { configDigest: await contentDigest(settings) },
     },
     plan,
   );

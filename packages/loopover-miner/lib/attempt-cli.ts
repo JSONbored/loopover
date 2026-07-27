@@ -98,6 +98,7 @@ type CommonAttemptResultFields = {
 export type AttemptCliResult =
   | (CommonAttemptResultFields & { outcome: "dry_run" })
   | (CommonAttemptResultFields & { outcome: "blocked_rejection_signaled"; reason: string })
+  | (CommonAttemptResultFields & { outcome: "blocked_own_open_pr"; reason: string; existingPullRequestNumber: number })
   | (CommonAttemptResultFields & { outcome: "blocked_worktree_preparation_failed"; reason: string })
   | (CommonAttemptResultFields & {
       outcome: "blocked_infeasible";

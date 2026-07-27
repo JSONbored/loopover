@@ -2578,6 +2578,39 @@ describe("screenshot-table gate short-circuit (#2006)", () => {
     expect(classes(planAgentMaintenanceActions(missingTable({ screenshotTableMatch: { matched: false, reason: null } })))).not.toContain("close");
   });
 
+  // #9462 regression: while the bot's own capture pipeline has a bounded retry pending for this head, the gate's
+  // evidence is UNRESOLVED, not absent. Deferring only the close left the plan falling through to ordinary
+  // merit/CI evaluation, so a green PR planned a MERGE and the gate was silently bypassed — a disposition
+  // inversion (the PR the gate would have CLOSED merged instead). It must hold: no close AND no merge.
+  const evidenceUnresolved = (extra: Partial<AgentActionPlanInput> = {}) =>
+    missingTable({ screenshotTableMatch: undefined, screenshotTableEvidenceUnresolved: true, ...extra });
+
+  it("#9462 holds — plans NEITHER a merge NOR a close while capture evidence is unresolved", () => {
+    const plan = planAgentMaintenanceActions(evidenceUnresolved());
+    expect(plan).toEqual([]);
+    expect(classes(plan)).not.toContain("merge");
+    expect(classes(plan)).not.toContain("close");
+  });
+
+  it("#9462 holds even with a fully green gate and merge autonomy (the exact auto-merge bypass)", () => {
+    const plan = planAgentMaintenanceActions(
+      evidenceUnresolved({ conclusion: "success", ciState: "passed", autonomy: { close: "auto", approve: "auto", merge: "auto" } }),
+    );
+    expect(classes(plan)).not.toContain("merge");
+  });
+
+  it("#9462 does NOT hold for the owner, an admin, or an automation bot (same standing rule as the close)", () => {
+    // The unresolved-evidence hold is a CONTRIBUTOR protection; these authors fall through to normal disposition.
+    expect(planAgentMaintenanceActions(evidenceUnresolved({ authorIsOwner: true }))).not.toEqual([]);
+    expect(planAgentMaintenanceActions(evidenceUnresolved({ authorIsAdmin: true }))).not.toEqual([]);
+    expect(planAgentMaintenanceActions(evidenceUnresolved({ authorIsAutomationBot: true }))).not.toEqual([]);
+  });
+
+  it("#9462 an explicit false (or absent) unresolved flag leaves the close path untouched", () => {
+    expect(classes(planAgentMaintenanceActions(missingTable({ screenshotTableEvidenceUnresolved: false })))).toEqual(["close"]);
+    expect(classes(planAgentMaintenanceActions(missingTable()))).toEqual(["close"]);
+  });
+
   it("plans nothing when `close` autonomy is not acting", () => {
     expect(planAgentMaintenanceActions(missingTable({ autonomy: {} }))).toEqual([]);
     expect(classes(planAgentMaintenanceActions(missingTable({ autonomy: { close: "auto" } })))).toEqual(["close"]);

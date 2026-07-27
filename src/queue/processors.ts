@@ -56,6 +56,7 @@ import {
   markPullRequestReviewsInvalidated,
   markPullRequestSurfacePublished,
   markPullRequestVisualCaptureSatisfied,
+  clearPullRequestVisualCaptureRetryPending,
   markPullRequestVisualCaptureRetryPending,
   markPullRequestScreenshotTablePresenceSatisfied,
   getLatestRegatedAt,
@@ -2759,6 +2760,7 @@ function buildAgentMaintenancePlanInput(args: {
   requiredContexts: Set<string> | null;
   blacklistEntry: ReturnType<typeof findBlacklistEntry>;
   screenshotTableMatch: AgentActionPlanInput["screenshotTableMatch"];
+  screenshotTableEvidenceUnresolved: AgentActionPlanInput["screenshotTableEvidenceUnresolved"];
   contributorCapMatch: AgentActionPlanInput["contributorCapMatch"];
   linkedIssueHardRule: AgentActionPlanInput["linkedIssueHardRule"];
   linkedIssueRulesConfig: Awaited<ReturnType<typeof loadLinkedIssueHardRules>>;
@@ -2790,6 +2792,7 @@ function buildAgentMaintenancePlanInput(args: {
     requiredContexts,
     blacklistEntry,
     screenshotTableMatch,
+    screenshotTableEvidenceUnresolved,
     contributorCapMatch,
     linkedIssueHardRule,
     linkedIssueRulesConfig,
@@ -2856,6 +2859,7 @@ function buildAgentMaintenancePlanInput(args: {
       : {}),
     copycatGateMode: settings.copycatGateMode,
     ...(screenshotTableMatch !== undefined ? { screenshotTableMatch } : {}),
+    ...(screenshotTableEvidenceUnresolved !== undefined ? { screenshotTableEvidenceUnresolved } : {}),
     ...(contributorCapMatch !== undefined ? { contributorCapMatch } : {}),
     // Always threaded (the DB layer populates it, default "over-contributor-limit"); the planner applies its
     // own fallback.
@@ -3451,7 +3455,11 @@ async function runAgentMaintenancePlanAndExecute(
     screenshotTableGateResult.violated && screenshotTableGateConfig.action === "close" && !botCaptureRetryPending
       ? { matched: true, reason: screenshotTableGateResult.reason }
       : undefined;
-  if (screenshotTableGateResult.violated && screenshotTableGateConfig.action === "close" && botCaptureRetryPending) {
+  // #9462: deferring the CLOSE is only half a deferral -- on its own it let the plan fall through to a MERGE.
+  // Thread the unresolved state into the planner so it holds the PR instead of silently skipping the gate.
+  const screenshotTableEvidenceUnresolved =
+    screenshotTableGateResult.violated && screenshotTableGateConfig.action === "close" && botCaptureRetryPending;
+  if (screenshotTableEvidenceUnresolved) {
     await recordAuditEvent(env, {
       eventType: "github_app.screenshot_table_close_deferred_capture_retry",
       actor: null,
@@ -3592,6 +3600,7 @@ async function runAgentMaintenancePlanAndExecute(
       requiredContexts,
       blacklistEntry,
       screenshotTableMatch,
+      screenshotTableEvidenceUnresolved,
       contributorCapMatch,
       linkedIssueHardRule,
       linkedIssueRulesConfig,
@@ -9476,7 +9485,26 @@ async function scheduleVisualCaptureRetry(
     previewPollAttempt: number;
   },
 ): Promise<void> {
-  if (args.previewPollAttempt >= MAX_PREVIEW_POLL_ATTEMPTS) return;
+  if (args.previewPollAttempt >= MAX_PREVIEW_POLL_ATTEMPTS) {
+    // #9462: the budget is spent, so the marker the PREVIOUS attempt wrote must be cleared here. Returning
+    // without clearing only skips re-writing it -- it left `visualCaptureRetryPendingSha === headSha` standing
+    // forever (the sole other clear needs a successful capture, which by definition never came), which silently
+    // and permanently disabled the screenshotTableGate's close for that head. Best-effort, matching the mark
+    // write below: a failed clear only means the gate stays deferred until the head moves, never a crash.
+    if (args.pr.headSha) {
+      await clearPullRequestVisualCaptureRetryPending(env, args.repoFullName, args.pr.number, args.pr.headSha).catch((error) => {
+        console.log(
+          JSON.stringify({
+            event: "visual_capture_retry_pending_clear_failed",
+            repoFullName: args.repoFullName,
+            pull: args.pr.number,
+            message: errorMessage(error).slice(0, 200),
+          }),
+        );
+      });
+    }
+    return;
+  }
   if (args.pr.headSha) {
     await markPullRequestVisualCaptureRetryPending(env, args.repoFullName, args.pr.number, args.pr.headSha).catch((error) => {
       console.log(

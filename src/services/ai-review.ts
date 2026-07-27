@@ -2576,6 +2576,37 @@ function synthesizeDefect(
   return { title, detail: title, confidence: source.confidence };
 }
 
+/**
+ * #9460: resolve "these reviewers named a blocker" into a defect — or, when that blocker cannot be published,
+ * into a HOLD rather than a silent pass. `synthesizeDefect` returns null for two situations that must NOT share
+ * an outcome: nobody named a real blocker (a genuine clean pass), and a real blocker whose title `toPublicSafe`
+ * refuses to publish because it carries ordinary review vocabulary (`score`, `ranking`, `reward`, `cohort`, …
+ * see src/queue-intelligence.ts). Collapsing both to `{defect: null, inconclusive: false}` let the second case
+ * auto-MERGE a change a reviewer had explicitly blocked — on this deployment's own live strategy, since
+ * AI_PROVIDER=claude-code,ollama resolves to `single` (resolveAiReviewerPlan, src/selfhost/ai.ts).
+ *
+ * Resolves to `inconclusive` rather than `split` deliberately: the situation genuinely IS "no usable public
+ * verdict for this head", which is `ai_review_inconclusive`'s own semantics and user-facing copy, and it routes
+ * to a neutral gate → human hold (src/queue/ai-review-orchestration.ts). `ai_review_split`'s copy instead
+ * asserts that one reviewer flagged a defect and another did not — a disagreement that never happened here, and
+ * which would be actively misleading in single-reviewer mode. `consensus` already fails closed for this case via
+ * its own `split` arm below; these two strategies did not.
+ */
+function defectOrHold(flagged: readonly ModelReview[]): {
+  defect: AiConsensusDefect | null;
+  split: boolean;
+  inconclusive: boolean;
+} {
+  // A blockers array holding only blank strings is NOT a flag (realBlockersOf filters them) — that stays a
+  // clean pass, exactly as before. Only a genuinely-named-but-unpublishable blocker becomes a hold.
+  if (flagged.every((review) => realBlockersOf(review).length === 0))
+    return { defect: null, split: false, inconclusive: false };
+  const defect = synthesizeDefect(flagged);
+  if (defect) return { defect, split: false, inconclusive: false };
+  incr("loopover_ai_review_unpublishable_blocker_total");
+  return { defect: null, split: false, inconclusive: true };
+}
+
 /** Combine the independent reviewer opinions into ONE gate decision per the configured strategy (#dual-ai-combiner).
  *  `reviews` carries one slot per reviewer; a slot is `null` when that reviewer errored or returned unparseable
  *  output. Returns the gate-relevant trio: a `defect` (→ blocker), `split` (reviewers disagree → HOLD), and
@@ -2600,11 +2631,7 @@ export function combineReviews(
     // missing review can't certify the change → hold.
     const r = present[0];
     if (!r) return { defect: null, split: false, inconclusive: true };
-    return {
-      defect: r.blockers.length > 0 ? synthesizeDefect([r]) : null,
-      split: false,
-      inconclusive: false,
-    };
+    return defectOrHold([r]);
   }
 
   if (opts.strategy === "synthesis") {
@@ -2615,20 +2642,13 @@ export function combineReviews(
       if (missing > 0)
         return { defect: null, split: false, inconclusive: true };
       const all = present.length > 0 && flagged.length === present.length;
-      return {
-        defect: all ? synthesizeDefect(present) : null,
-        split: false,
-        inconclusive: false,
-      };
+      return all
+        ? defectOrHold(present)
+        : { defect: null, split: false, inconclusive: false };
     }
     // `either`: any present reviewer's blocker blocks. With no present blocker but a missing opinion we cannot
     // certify the change is clean → hold (fail-closed).
-    if (flagged.length > 0)
-      return {
-        defect: synthesizeDefect(flagged),
-        split: false,
-        inconclusive: false,
-      };
+    if (flagged.length > 0) return defectOrHold(flagged);
     return { defect: null, split: false, inconclusive: missing > 0 };
   }
 

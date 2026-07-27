@@ -4448,9 +4448,10 @@ export function createApp() {
 
   // LoopOver Orb (#1255) — central fleet-calibration collector. Receives anonymized, reversal-aware outcome
   // batches from self-hosted instances. Sender-side HMAC anonymization is for privacy, not authentication.
-  // OPTIONAL shared-token gate (#1285): unset ⇒ OPEN ingress (the live fleet keeps working, as before); set
-  // ⇒ the collector REQUIRES it, so an operator can lock the write path down after distributing the matching
-  // ORB_COLLECTOR_TOKEN to exporters. Bounded by a hard body ceiling, and dedup'd via UNIQUE(instance_id, repo_hash, pr_hash).
+  // #9046/#9166: FAILS CLOSED when ORB_INGEST_TOKEN is unset — isAuthorizedIngest (below, shared with
+  // /v1/ams/ingest) requires an exact bearer match against the configured token; an unconfigured collector
+  // rejects rather than accepting anonymous writes. Bounded by a hard body ceiling, and dedup'd via
+  // UNIQUE(instance_id, repo_hash, pr_hash).
   app.post("/v1/orb/ingest", async (c) => {
     if (!(await isAuthorizedIngest(c.env.ORB_INGEST_TOKEN, extractBearerToken(c.req.header("authorization"))))) return c.json({ error: "unauthorized" }, 401);
     const body = await readOrbIngestBody(c.req.raw, c.req.header("content-length"));
@@ -6690,10 +6691,6 @@ function toIsoQueryDate(value: string): string | undefined {
 }
 
 
-// Optional Orb-ingest auth (#1285). FAIL-OPEN by default: with no ORB_INGEST_TOKEN configured the ingress stays
-// OPEN (matching today's live fleet — deploying this is non-breaking). Once the operator sets the token, the
-// collector REQUIRES an exact bearer match, so the write path can be locked down after the matching
-// ORB_COLLECTOR_TOKEN is rolled out to exporters.
 /**
  * #9046: the SINGLE authorization rule for every telemetry-collector ingest endpoint (Orb and AMS), so the two
  * products cannot drift apart again. They previously had separate, near-identical copies — and AMS ended up

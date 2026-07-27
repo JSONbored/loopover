@@ -28,6 +28,7 @@ import {
 } from "@loopover/engine";
 import { isSafeHttpUrl } from "../review/content-lane/safe-url";
 import { buildFederatedBundle, FEDERATED_BUNDLE_SCHEMA_VERSION, type FederatedSignalBundle } from "./federated-bundle";
+import { readOrbIngestBody } from "./ingest";
 import type { FocusManifest } from "../signals/focus-manifest";
 
 /** Matches every other outbound call in this subsystem (orb-collector.ts:215's 30s export tick). */
@@ -38,6 +39,10 @@ const DEFAULT_MAX_ATTEMPTS = 3;
 const RETRY_BASE_MS = 500;
 /** A best-effort background sync has no business hammering a peer's collector. */
 const RATE_LIMIT: { limit: number; windowMs: number } = { limit: 6, windowMs: 60_000 };
+/** #9148: cap on how many pulled entries are even shape-checked, independent of the byte ceiling below — a
+ *  hostile/misconfigured collector can't make this instance do unbounded per-element work just by staying
+ *  under the byte cap with many tiny objects. Comfortably above any realistic peer count for this feature. */
+const MAX_PULLED_BUNDLES = 200;
 
 type ManifestSlice = Pick<FocusManifest, "federatedIntelligence"> | null | undefined;
 
@@ -50,10 +55,32 @@ export type CollectorOpts = {
   sleepFn?: (ms: number) => Promise<unknown>;
   /** Injected random for the jitter — jitteredBackoffMs never reads Math.random itself. */
   randomFn?: () => number;
-  /** Caller-owned rolling-window bucket. Omitted ⇒ no local rate limiting is applied. */
+  /** Caller-owned rolling-window bucket. Omitted ⇒ falls back to this module's own default bucket for the
+   *  given direction (#9166) — the limiter is never opt-in, so a caller can't accidentally forget to pass
+   *  one and lose rate limiting entirely (which is exactly what happened before: the only production caller,
+   *  buildFederatedBenchmark's routes.ts call site, never supplied a bucket at all). Tests may still inject
+   *  their own bucket for isolation from the module-level default. */
   bucket?: LocalRateBucket;
   now?: number;
 };
+
+/** #9166: module-level default buckets, one per direction, so the rate limit engages even when a caller
+ *  supplies no `opts.bucket` of its own. `evaluateLocalRateLimit` is pure (it only reads a bucket, never
+ *  advances it) — {@link rateLimitAllows} is what mutates these in place after an allowed attempt. */
+const defaultRateLimitBuckets: Record<"push" | "pull", LocalRateBucket> = {
+  push: { count: 0, windowStartMs: 0 },
+  pull: { count: 0, windowStartMs: 0 },
+};
+
+/** TEST-ONLY: reset the module-level default buckets between test cases. Production code never calls this —
+ *  the whole point of the default is that it persists for the life of the isolate. Exported purely so tests in
+ *  the same file (which otherwise share this module-level state) stay isolated from each other. */
+export function __resetFederatedCollectorRateLimitForTest(): void {
+  defaultRateLimitBuckets.push.count = 0;
+  defaultRateLimitBuckets.push.windowStartMs = 0;
+  defaultRateLimitBuckets.pull.count = 0;
+  defaultRateLimitBuckets.pull.windowStartMs = 0;
+}
 
 /**
  * The collector endpoint armed for `direction`, or null when this instance must not talk to anyone: not opted
@@ -74,10 +101,20 @@ export function resolveCollectorEndpoint(manifest: ManifestSlice, direction: "pu
   return url;
 }
 
-/** True when the caller's bucket still permits an attempt. No bucket ⇒ unlimited. */
-function rateLimitAllows(opts: CollectorOpts, now: number): boolean {
-  if (!opts.bucket) return true;
-  return evaluateLocalRateLimit(opts.bucket, RATE_LIMIT, now).allowed;
+/** True when the bucket for `direction` still permits an attempt at `now` — and, when it does, ADVANCES that
+ *  bucket's count/window in place (#9166: evaluateLocalRateLimit itself never mutates its input, so this is
+ *  the one place that turns an allowed decision into actual consumption). A caller-supplied `opts.bucket`
+ *  always wins (test isolation); otherwise this module's own per-direction default bucket is used, so the
+ *  limit is enforced even when nobody passes one in. */
+function rateLimitAllows(direction: "push" | "pull", opts: CollectorOpts, now: number): boolean {
+  const bucket = opts.bucket ?? defaultRateLimitBuckets[direction];
+  const decision = evaluateLocalRateLimit(bucket, RATE_LIMIT, now);
+  if (decision.allowed) {
+    const windowElapsed = now - bucket.windowStartMs >= RATE_LIMIT.windowMs;
+    bucket.count = (windowElapsed ? 0 : bucket.count) + 1;
+    if (windowElapsed) bucket.windowStartMs = now;
+  }
+  return decision.allowed;
 }
 
 /** A 4xx is the operator's own misconfiguration and will fail identically on a retry; only 5xx/network is
@@ -140,7 +177,7 @@ export async function pushFederatedBundle(manifest: ManifestSlice, db: D1Databas
 
   try {
     const now = Number.isFinite(opts.now) ? (opts.now as number) : Date.now();
-    if (!rateLimitAllows(opts, now)) return false;
+    if (!rateLimitAllows("push", opts, now)) return false;
 
     const bundle = await buildFederatedBundle(manifest, db, opts.now === undefined ? {} : { now: opts.now });
     // The builder already fails safe to null; nothing to send is not a failure worth retrying.
@@ -168,6 +205,11 @@ export async function pushFederatedBundle(manifest: ManifestSlice, db: D1Databas
  * signature-verified or trust-gated — that is #6480's job, shipped in ./federated-import.ts (the peerKeys
  * allowlist). Returns [] rather than throwing on any failure, so an unreachable or hostile collector is
  * indistinguishable from "no peers yet" to every caller.
+ *
+ * #9148: the response body is read through the SAME bounded reader the /v1/orb/ingest path uses
+ * (readOrbIngestBody — both a Request and a Response satisfy its structural input type), so a hostile or
+ * misconfigured collector can't make this instance buffer an unbounded response; the parsed array is then
+ * capped at MAX_PULLED_BUNDLES before any per-element shape check runs.
  */
 export async function pullPeerBundles(manifest: ManifestSlice, opts: CollectorOpts = {}): Promise<FederatedSignalBundle[]> {
   const endpoint = resolveCollectorEndpoint(manifest, "pull");
@@ -175,14 +217,21 @@ export async function pullPeerBundles(manifest: ManifestSlice, opts: CollectorOp
 
   try {
     const now = Number.isFinite(opts.now) ? (opts.now as number) : Date.now();
-    if (!rateLimitAllows(opts, now)) return [];
+    if (!rateLimitAllows("pull", opts, now)) return [];
 
     const response = await fetchWithRetry(endpoint, { method: "GET", headers: { accept: "application/json" } }, opts);
     if (response === null) return [];
 
-    const payload: unknown = await response.json();
+    const text = await readOrbIngestBody(response, response.headers.get("content-length"));
+    if (!text) return [];
+    let payload: unknown;
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      return [];
+    }
     if (!Array.isArray(payload)) return [];
-    return payload.filter(isBundleShaped);
+    return payload.slice(0, MAX_PULLED_BUNDLES).filter(isBundleShaped);
   } catch (error) {
     console.error(
       JSON.stringify({ level: "error", event: "federated_pull_failed", message: String(error).slice(0, 200) }),

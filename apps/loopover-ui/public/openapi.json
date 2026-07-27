@@ -14652,6 +14652,80 @@
           "privateSummary"
         ]
       },
+      "PullRequestAiReviewFindings": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "not_found",
+              "ai_review_off"
+            ]
+          },
+          "repoFullName": {
+            "type": "string"
+          },
+          "pullNumber": {
+            "type": "number"
+          },
+          "login": {
+            "type": "string"
+          },
+          "headSha": {
+            "type": "string",
+            "nullable": true
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "category": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "blocker",
+                    "nit"
+                  ]
+                },
+                "line": {
+                  "type": "number"
+                },
+                "body": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "category",
+                "path",
+                "severity",
+                "line",
+                "body"
+              ]
+            }
+          },
+          "categoryCounts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          }
+        },
+        "required": [
+          "status",
+          "repoFullName",
+          "pullNumber",
+          "login",
+          "findings",
+          "categoryCounts"
+        ]
+      },
       "FindingTaxonomyDocument": {
         "type": "object",
         "properties": {
@@ -17438,6 +17512,77 @@
                 }
               }
             }
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/pulls/{number}/ai-review-findings": {
+      "get": {
+        "summary": "A PR author's own structured, published AI-review findings",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "number",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "jsonbored"
+            },
+            "required": true,
+            "description": "GitHub login of the pull request's author -- the caller must be this same login.",
+            "name": "login",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Structured, published AI-review findings for the caller's own pull request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullRequestAiReviewFindings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing login"
+          },
+          "403": {
+            "description": "The pull request belongs to a different contributor"
+          },
+          "404": {
+            "description": "Pull request not found"
           }
         },
         "security": [

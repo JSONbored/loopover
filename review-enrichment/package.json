@@ -20,7 +20,7 @@
   "dependencies": {
     "@hono/node-server": "^2.0.11",
     "@posthog/cli": "0.9.1",
-    "hono": "^4.12.31",
+    "hono": "^4.12.32",
     "posthog-node": "^5.46.1"
   },
   "devDependencies": {

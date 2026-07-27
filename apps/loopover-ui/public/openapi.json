@@ -15330,6 +15330,62 @@
         "required": [
           "ok"
         ]
+      },
+      "EligibilityPlanResponse": {
+        "type": "object",
+        "properties": {
+          "eligible": {
+            "type": "boolean"
+          },
+          "linkedIssueStatus": {
+            "type": "string"
+          },
+          "branchEligibilityStatus": {
+            "type": "string"
+          },
+          "blockers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cleanupPaths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "linkedIssueProjection": {
+            "type": "string",
+            "nullable": true
+          },
+          "publicSummary": {
+            "type": "string"
+          }
+        }
+      },
+      "ScoreBreakdownResponse": {
+        "type": "object",
+        "properties": {
+          "repoFullName": {
+            "type": "string"
+          },
+          "scoreabilityStatus": {
+            "type": "string"
+          },
+          "effectiveEstimatedScore": {
+            "type": "number"
+          },
+          "components": {
+            "nullable": true
+          },
+          "gateHighlights": {
+            "nullable": true
+          },
+          "highestLeverageLever": {
+            "nullable": true
+          }
+        }
       }
     },
     "parameters": {},
@@ -20156,6 +20212,62 @@
           },
           "400": {
             "description": "Invalid plan-idea-claims request body, or an empty/malformed idea submission (actionable error list returned)"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/scoring/eligibility-plan": {
+      "post": {
+        "summary": "Derive a contributor eligibility plan from a scoring preview — REST mirror of loopover_get_eligibility_plan (#9301)",
+        "responses": {
+          "200": {
+            "description": "Structured eligibility plan over a server-built score preview — mirrors the loopover_get_eligibility_plan MCP tool. Advisory only; it explains eligibility, it does not open issues or PRs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EligibilityPlanResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid scoring preview input"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/scoring/explain-breakdown": {
+      "post": {
+        "summary": "Explain a score breakdown from a scoring preview — REST mirror of loopover_explain_score_breakdown (#9301)",
+        "responses": {
+          "200": {
+            "description": "Score multiplier breakdown and gate highlights over a server-built score preview — mirrors the loopover_explain_score_breakdown MCP tool. Requires contributorLogin in the request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScoreBreakdownResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid scoring preview input or missing contributorLogin"
           }
         },
         "security": [

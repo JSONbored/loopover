@@ -10,6 +10,8 @@ import {
   intakeIdeaShape,
   intakeIdeaOutputSchema,
   planIdeaClaimsOutputSchema,
+  eligibilityPlanOutputSchema,
+  scoreBreakdownOutputSchema,
 } from "../../src/mcp/server";
 
 describe("OpenAPI contract", () => {
@@ -50,6 +52,8 @@ describe("OpenAPI contract", () => {
     expect(spec.paths["/v1/agent/explain-blockers"]).toBeDefined();
     expect(spec.paths["/v1/scoring/model"]).toBeDefined();
     expect(spec.paths["/v1/scoring/preview"]).toBeDefined();
+    expect(spec.paths["/v1/scoring/eligibility-plan"]).toBeDefined();
+    expect(spec.paths["/v1/scoring/explain-breakdown"]).toBeDefined();
     expect(spec.paths["/v1/upstream/status"]).toBeDefined();
     expect(spec.paths["/v1/upstream/ruleset"]).toBeDefined();
     expect(spec.paths["/v1/upstream/drift"]).toBeDefined();
@@ -227,6 +231,39 @@ describe("OpenAPI contract", () => {
 
     // request-apr-transfer is explicitly out of scope for this batch and must stay undocumented here.
     expect(spec.paths["/v1/loop/request-apr-transfer"]).toBeUndefined();
+  });
+
+  // #9301: the two /v1/scoring/* composer routes backed by loopover_get_eligibility_plan and
+  // loopover_explain_score_breakdown. Assert each is a documented POST path whose 200 response
+  // component stays field-for-field in parity with the MCP tool outputSchema.
+  it("documents the /v1/scoring/eligibility-plan and /v1/scoring/explain-breakdown routes with tool-parity schemas (#9301)", () => {
+    const spec = buildOpenApiSpec();
+    const schemas = spec.components?.schemas ?? {};
+
+    const propKeys = (name: string) =>
+      Object.keys((schemas[name] as { properties?: Record<string, unknown> }).properties ?? {}).sort();
+
+    const cases = [
+      {
+        path: "/v1/scoring/eligibility-plan",
+        response: "EligibilityPlanResponse",
+        outputShape: eligibilityPlanOutputSchema,
+      },
+      {
+        path: "/v1/scoring/explain-breakdown",
+        response: "ScoreBreakdownResponse",
+        outputShape: scoreBreakdownOutputSchema,
+      },
+    ];
+
+    for (const { path, response, outputShape } of cases) {
+      const op = spec.paths[path]?.post;
+      expect(op, `${path} should be a documented POST path`).toBeDefined();
+      expect(op?.responses?.["200"], `${path} should document a 200 response`).toBeDefined();
+
+      expect(schemas[response], `${response} component should be registered`).toBeDefined();
+      expect(propKeys(response)).toEqual(Object.keys(outputShape).sort());
+    }
   });
 
   it("declares an `in: path` parameter for every {templated} path segment (Cloudflare schema-validation warning 30046)", () => {

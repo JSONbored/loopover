@@ -1927,6 +1927,37 @@ export const GateConfigEffectiveResponseSchema = z
   .openapi("GateConfigEffectiveResponse");
 
 /**
+ * Response body for POST /v1/scoring/eligibility-plan. Field-level parity with `eligibilityPlanOutputSchema`
+ * (the `loopover_get_eligibility_plan` MCP tool `outputSchema`) in src/mcp/server.ts — #9301.
+ */
+export const EligibilityPlanResponseSchema = z
+  .object({
+    eligible: z.boolean().optional(),
+    linkedIssueStatus: z.string().optional(),
+    branchEligibilityStatus: z.string().optional(),
+    blockers: z.array(z.string()).optional(),
+    cleanupPaths: z.array(z.string()).optional(),
+    linkedIssueProjection: z.string().nullable().optional(),
+    publicSummary: z.string().optional(),
+  })
+  .openapi("EligibilityPlanResponse");
+
+/**
+ * Response body for POST /v1/scoring/explain-breakdown. Field-level parity with `scoreBreakdownOutputSchema`
+ * (the `loopover_explain_score_breakdown` MCP tool `outputSchema`) in src/mcp/server.ts — #9301.
+ */
+export const ScoreBreakdownResponseSchema = z
+  .object({
+    repoFullName: z.string().optional(),
+    scoreabilityStatus: z.string().optional(),
+    effectiveEstimatedScore: z.number().optional(),
+    components: z.unknown().optional(),
+    gateHighlights: z.unknown().optional(),
+    highestLeverageLever: z.unknown().optional(),
+  })
+  .openapi("ScoreBreakdownResponse");
+
+/**
  * Request body for POST /v1/loop/evaluate-escalation. Field-level parity with `evaluateEscalationShape`
  * (the `loopover_evaluate_escalation` MCP tool `inputSchema`) in src/mcp/server.ts — #9309.
  */

@@ -3,11 +3,14 @@ import { describe, expect, it, vi } from "vitest";
 
 import { canonicalizeFederatedBundleBody, FEDERATED_BUNDLE_SCHEMA_VERSION, type FederatedSignalBundle } from "../../src/orb/federated-bundle";
 import {
+  applyFederatedPeerWatermarks,
   importPeerBundles,
   isFederatedImportEnabled,
+  matchingFederatedKey,
   verifyFederatedBundle,
   type FederatedRejection,
 } from "../../src/orb/federated-import";
+import { createTestEnv, type TestD1Database } from "../helpers/d1";
 import type { FocusManifest } from "../../src/signals/focus-manifest";
 
 // Fake 64-hex keys — the shape generateAnonSecret produces. Not secrets: locally-invented test fixtures.
@@ -15,10 +18,16 @@ const PEER_KEY_A = "a".repeat(64);
 const PEER_KEY_B = "b".repeat(64);
 const UNTRUSTED_KEY = "c".repeat(64);
 
+// Computed at call time (not a fixed literal) so every test bundle is fresh relative to whatever `now`
+// importPeerBundles defaults to (real Date.now()) — the freshness gate (#9148) would otherwise reject a
+// fixed past date as the test suite ages. Tests that specifically exercise staleness pass an explicit
+// `generatedAt` (and/or an explicit `now` opt) instead of relying on this default.
+const FRESH_GENERATED_AT = () => new Date(Date.now() - 60_000).toISOString();
+
 const body = (over: Partial<FederatedSignalBundle> = {}) => ({
   schemaVersion: FEDERATED_BUNDLE_SCHEMA_VERSION,
   instanceId: "abc123def4567890",
-  generatedAt: "2026-02-01T00:00:00.000Z",
+  generatedAt: FRESH_GENERATED_AT(),
   windowDays: 90,
   decided: 40,
   mergePrecision: 0.9,
@@ -217,5 +226,183 @@ describe("importPeerBundles (#6480)", () => {
   it("treats an absent manifest as opted out", () => {
     expect(importPeerBundles(null, [signedWith(PEER_KEY_A)], { log: () => undefined }).rejected[0]!.reason).toBe("not_opted_in");
     expect(importPeerBundles(undefined, [], { log: () => undefined })).toEqual({ accepted: [], rejected: [] });
+  });
+
+  it("#9148: keeps only the LAST bundle per instanceId within a batch (Sybil dedup)", () => {
+    const first = signedWith(PEER_KEY_A, { mergePrecision: 0.5 });
+    const second = signedWith(PEER_KEY_A, { mergePrecision: 0.99 }); // same instanceId, re-signed
+    const result = importPeerBundles(manifest(), [first, second], { log: () => undefined });
+    expect(result.accepted).toEqual([second]);
+    expect(result.rejected).toEqual([]); // the superseded duplicate is silently dropped, not logged as a rejection
+  });
+
+  it("#9148: rejects every numeric field outside its valid range", () => {
+    const cases: Partial<FederatedSignalBundle>[] = [
+      { mergePrecision: -0.01 },
+      { mergePrecision: 1.01 },
+      { closePrecision: -1 },
+      { fpRate: 2 },
+      { fnRate: -0.5 },
+      { reversalRate: 1.5 },
+      { slopRate: -0.1 },
+      { copycatRate: 1.5 },
+      { decided: -1 },
+      { windowDays: 0 },
+      { windowDays: -90 },
+      { cycleP50Ms: -1 },
+      { cycleP95Ms: -1 },
+      { cycleP50Ms: 5000, cycleP95Ms: 1000 }, // p50 can never exceed p95 of the same sample
+    ];
+    for (const over of cases) {
+      const result = importPeerBundles(manifest(), [signedWith(PEER_KEY_A, over)], { log: () => undefined });
+      expect(result.rejected[0]?.reason, JSON.stringify(over)).toBe("out_of_range");
+    }
+  });
+
+  it("#9148: accepts the boundary values 0 and 1 for a unit-rate field (inclusive range)", () => {
+    const zero = importPeerBundles(manifest(), [signedWith(PEER_KEY_A, { instanceId: "i-zero", mergePrecision: 0, fpRate: 0 })], { log: () => undefined });
+    expect(zero.accepted).toHaveLength(1);
+    const one = importPeerBundles(manifest(), [signedWith(PEER_KEY_A, { instanceId: "i-one", mergePrecision: 1, fpRate: 1 })], { log: () => undefined });
+    expect(one.accepted).toHaveLength(1);
+  });
+
+  it("#9148: rejects a windowDays that does not match the local instance's own resolved window", () => {
+    const result = importPeerBundles(manifest(), [signedWith(PEER_KEY_A, { windowDays: 30 })], { log: () => undefined }, );
+    expect(result.rejected).toEqual([{ instanceId: "abc123def4567890", reason: "window_mismatch" }]);
+  });
+
+  it("#9148: honors an explicit localWindowDays override instead of the DEFAULT_WINDOW_DAYS default", () => {
+    const bundle = signedWith(PEER_KEY_A, { windowDays: 30 });
+    const result = importPeerBundles(manifest(), [bundle], { log: () => undefined, localWindowDays: 30 });
+    expect(result.accepted).toEqual([bundle]);
+  });
+
+  it("#9148: rejects an unparseable generatedAt", () => {
+    const result = importPeerBundles(manifest(), [signedWith(PEER_KEY_A, { generatedAt: "not-a-date" })], { log: () => undefined });
+    expect(result.rejected).toEqual([{ instanceId: "abc123def4567890", reason: "stale_or_future" }]);
+  });
+
+  it("#9148: rejects a bundle older than the max age, and one too far in the future — accepts one just inside each edge", () => {
+    const now = Date.parse("2026-03-01T00:00:00.000Z");
+    const eightDaysStale = signedWith(PEER_KEY_A, { generatedAt: "2026-02-21T00:00:00.000Z" }); // > 7 days old
+    const sixDaysStale = signedWith(PEER_KEY_A, { generatedAt: "2026-02-23T00:00:00.000Z" }); // < 7 days old
+    const tenMinutesFuture = signedWith(PEER_KEY_A, { generatedAt: "2026-03-01T00:10:00.000Z" }); // > 5 min skew
+    const oneMinuteFuture = signedWith(PEER_KEY_A, { generatedAt: "2026-03-01T00:01:00.000Z" }); // < 5 min skew
+    expect(importPeerBundles(manifest(), [eightDaysStale], { log: () => undefined, now }).rejected[0]?.reason).toBe("stale_or_future");
+    expect(importPeerBundles(manifest(), [sixDaysStale], { log: () => undefined, now }).accepted).toEqual([sixDaysStale]);
+    expect(importPeerBundles(manifest(), [tenMinutesFuture], { log: () => undefined, now }).rejected[0]?.reason).toBe("stale_or_future");
+    expect(importPeerBundles(manifest(), [oneMinuteFuture], { log: () => undefined, now }).accepted).toEqual([oneMinuteFuture]);
+  });
+
+  it("#9148: enforces MIN_DECIDED receiver-side, regardless of what the sender claims", () => {
+    // A hostile/buggy peer self-reporting a real mergePrecision despite decided being below MIN_DECIDED (5).
+    const underclaimed = signedWith(PEER_KEY_A, { decided: 3, mergePrecision: 1.0 });
+    const result = importPeerBundles(manifest(), [underclaimed], { log: () => undefined });
+    expect(result.rejected).toEqual([{ instanceId: "abc123def4567890", reason: "below_min_decided" }]);
+  });
+
+  it("#9148: accepts a decided count exactly at MIN_DECIDED", () => {
+    const bundle = signedWith(PEER_KEY_A, { decided: 5 });
+    expect(importPeerBundles(manifest(), [bundle], { log: () => undefined }).accepted).toEqual([bundle]);
+  });
+});
+
+describe("matchingFederatedKey (#9148)", () => {
+  it("returns the specific key that verified, not just a boolean", () => {
+    expect(matchingFederatedKey(signedWith(PEER_KEY_B), [PEER_KEY_A, PEER_KEY_B])).toBe(PEER_KEY_B);
+  });
+
+  it("returns null when no allowlisted key verifies", () => {
+    expect(matchingFederatedKey(signedWith(UNTRUSTED_KEY), [PEER_KEY_A, PEER_KEY_B])).toBeNull();
+  });
+});
+
+describe("applyFederatedPeerWatermarks (#9148, the persisted gates)", () => {
+  const env = () => createTestEnv();
+  const db = (e: Env) => e.DB as unknown as TestD1Database;
+  const okResult = (bundles: FederatedSignalBundle[]): { accepted: FederatedSignalBundle[]; rejected: [] } => ({ accepted: bundles, rejected: [] });
+
+  it("admits a brand-new instanceId and persists its watermark", async () => {
+    const e = env();
+    const bundle = signedWith(PEER_KEY_A);
+    const result = await applyFederatedPeerWatermarks(e.DB, okResult([bundle]), [PEER_KEY_A], { now: Date.parse(bundle.generatedAt) });
+    expect(result.accepted).toEqual([bundle]);
+    expect(result.rejected).toEqual([]);
+    const row = await db(e).prepare("SELECT value FROM system_flags WHERE key = 'orb:federated_peer_state'").first<{ value: string }>();
+    expect(JSON.parse(row?.value ?? "{}")).toHaveProperty(bundle.instanceId);
+  });
+
+  it("admits a newer bundle for an already-known instanceId, refreshing the watermark", async () => {
+    const e = env();
+    const first = signedWith(PEER_KEY_A, { generatedAt: "2026-03-01T00:00:00.000Z" });
+    await applyFederatedPeerWatermarks(e.DB, okResult([first]), [PEER_KEY_A], { now: Date.parse(first.generatedAt) });
+    const second = signedWith(PEER_KEY_A, { generatedAt: "2026-03-02T00:00:00.000Z" });
+    const result = await applyFederatedPeerWatermarks(e.DB, okResult([second]), [PEER_KEY_A], { now: Date.parse(second.generatedAt) });
+    expect(result.accepted).toEqual([second]);
+  });
+
+  it("rejects a replay: the same or an older generatedAt for an instanceId already on record", async () => {
+    const e = env();
+    const fresh = signedWith(PEER_KEY_A, { generatedAt: "2026-03-05T00:00:00.000Z" });
+    await applyFederatedPeerWatermarks(e.DB, okResult([fresh]), [PEER_KEY_A], { now: Date.parse(fresh.generatedAt) });
+    const replay = signedWith(PEER_KEY_A, { generatedAt: "2026-03-01T00:00:00.000Z" }); // same instanceId, OLDER generatedAt
+    const result = await applyFederatedPeerWatermarks(e.DB, okResult([replay]), [PEER_KEY_A], { now: Date.parse(fresh.generatedAt) });
+    expect(result.accepted).toEqual([]);
+    expect(result.rejected).toEqual([{ instanceId: "abc123def4567890", reason: "replayed_or_rollback" }]);
+  });
+
+  it("caps a single key at MAX_INSTANCES_PER_KEY distinct instanceIds, admitting the first N and rejecting the rest", async () => {
+    const e = env();
+    let accepted: FederatedSignalBundle[] = [];
+    let lastRejectedReason: string | undefined;
+    for (let i = 0; i < 11; i += 1) {
+      const bundle = signedWith(PEER_KEY_A, { instanceId: `sybil-instance-${i}` });
+      const result = await applyFederatedPeerWatermarks(e.DB, okResult([bundle]), [PEER_KEY_A], { now: Date.parse(bundle.generatedAt) });
+      accepted = accepted.concat(result.accepted);
+      if (result.rejected.length > 0) lastRejectedReason = result.rejected[0]?.reason;
+    }
+    expect(accepted).toHaveLength(10); // MAX_INSTANCES_PER_KEY
+    expect(lastRejectedReason).toBe("sybil_cap_exceeded");
+  });
+
+  it("a DIFFERENT verifying key gets its own independent cap", async () => {
+    const e = env();
+    for (let i = 0; i < 10; i += 1) {
+      const bundle = signedWith(PEER_KEY_A, { instanceId: `key-a-instance-${i}` });
+      await applyFederatedPeerWatermarks(e.DB, okResult([bundle]), [PEER_KEY_A, PEER_KEY_B], { now: Date.parse(bundle.generatedAt) });
+    }
+    // PEER_KEY_A is now at its cap, but PEER_KEY_B has contributed nothing yet — a new instance under B must
+    // still be admitted, proving the cap is scoped per-key rather than a single shared global counter.
+    const underB = signedWith(PEER_KEY_B, { instanceId: "key-b-instance-0" });
+    const result = await applyFederatedPeerWatermarks(e.DB, okResult([underB]), [PEER_KEY_A, PEER_KEY_B], { now: Date.parse(underB.generatedAt) });
+    expect(result.accepted).toEqual([underB]);
+  });
+
+  it("prunes a peer-state entry that hasn't been refreshed in a very long time, freeing its key's cap slot", async () => {
+    const e = env();
+    const veryOldEntry = { "stale-instance": { keyFingerprint: "x".repeat(64), lastGeneratedAtMs: 0, lastSeenAtMs: 0, firstSeenAtMs: 0 } };
+    await db(e).prepare("INSERT INTO system_flags (key, value, updated_at) VALUES ('orb:federated_peer_state', ?, CURRENT_TIMESTAMP)").bind(JSON.stringify(veryOldEntry)).run();
+    const bundle = signedWith(PEER_KEY_A, { instanceId: "fresh-instance" });
+    const farFuture = Date.parse(bundle.generatedAt) + 500 * 86_400_000; // well past PEER_STATE_PRUNE_AFTER_MS
+    await applyFederatedPeerWatermarks(e.DB, okResult([bundle]), [PEER_KEY_A], { now: farFuture });
+    const row = await db(e).prepare("SELECT value FROM system_flags WHERE key = 'orb:federated_peer_state'").first<{ value: string }>();
+    expect(JSON.parse(row?.value ?? "{}")).not.toHaveProperty("stale-instance"); // pruned, not just superseded
+  });
+
+  it("degrades to treating every instanceId as new when the persisted state is corrupt JSON", async () => {
+    const e = env();
+    await db(e).prepare("INSERT INTO system_flags (key, value, updated_at) VALUES ('orb:federated_peer_state', 'not-json', CURRENT_TIMESTAMP)").run();
+    const bundle = signedWith(PEER_KEY_A);
+    const result = await applyFederatedPeerWatermarks(e.DB, okResult([bundle]), [PEER_KEY_A], { now: Date.parse(bundle.generatedAt) });
+    expect(result.accepted).toEqual([bundle]); // fail-safe: corrupt cache never blocks a legitimate peer
+  });
+
+  it("passes through prior rejections untouched alongside its own", async () => {
+    const e = env();
+    const priorRejection: FederatedRejection = { instanceId: "already-rejected", reason: "malformed" };
+    const bundle = signedWith(PEER_KEY_A);
+    const result = await applyFederatedPeerWatermarks(e.DB, { accepted: [bundle], rejected: [priorRejection] }, [PEER_KEY_A], { now: Date.parse(bundle.generatedAt) });
+    expect(result.rejected).toContainEqual(priorRejection);
+    expect(result.accepted).toEqual([bundle]);
   });
 });

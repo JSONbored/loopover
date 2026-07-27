@@ -14,6 +14,7 @@ import { isLoopEscalationSweepEnabled } from "./review/loop-escalation-wire";
 import { isAprRepoTransferPollEnabled } from "./orb/apr-repo-transfer";
 import { isPrReconciliationEnabled, resolvePrReconciliationManifestOverride } from "./review/pr-reconciliation";
 import { isActiveReviewReconciliationEnabled, resolveActiveReviewReconciliationManifestOverride } from "./review/active-review-reconciliation";
+import { resolveFederatedIntelligenceManifestOverride } from "./orb/federated-benchmark";
 import { isRagEnabled } from "./review/rag-wire";
 import { isDecisionAuditEnabled } from "./review/decision-audit";
 import { isRiskControlEnabled } from "./review/risk-control-wire";
@@ -225,6 +226,16 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
     if (isActiveReviewReconciliationEnabled(env, activeReviewReconciliationManifestOverride)) {
       jobs.push({ type: "reconcile-active-review-tracking", requestedBy: "schedule" });
     }
+  }
+  // Federated peer-sync tick (#9148/#9166). Same 10-minute cadence as the reconciliation jobs above — a
+  // best-effort background sync has no business running any more often than that, and the collector's own
+  // module-level rate limiter (federated-collector.ts, 6/min) further bounds any single tick's calls. Opt-in
+  // via the loopover self-repo's `.loopover.yml federatedIntelligence:` block only — there is no env-var
+  // equivalent for this one (unlike prReconciliation/activeReviewReconciliation above), since federated intel
+  // has never had one; flag-OFF (default, `present: false`) this job is never created.
+  if (isReconciliationWindow) {
+    const federatedIntelligenceManifestOverride = await resolveFederatedIntelligenceManifestOverride(env);
+    if (federatedIntelligenceManifestOverride.enabled) jobs.push({ type: "federated-peer-sync", requestedBy: "schedule" });
   }
   if (isHourly) {
     // Isolation (#experimental-gittensor-plugin): on self-host, refresh-registry both FETCHES from and

@@ -1761,14 +1761,15 @@ export function createApp() {
     });
     // Federated benchmark (#6481): "your gate precision vs peer median". Reads the opt-in from the loopover
     // self-repo's manifest (mirrors prReconciliation/publicStats/etc.'s fleet-wide override lookup) rather
-    // than any of the maintainer's own repos — federatedIntelligence is operator-level, not per-repo. Bounded
-    // to a single, short-timeout attempt so an unreachable or slow collector degrades the panel to its
-    // existing empty state instead of holding up the whole dashboard load.
+    // than any of the maintainer's own repos — federatedIntelligence is operator-level, not per-repo.
+    // #9148: buildFederatedBenchmark no longer pulls a peer collector on this request path at all — the
+    // local half is a single fast DB query, and the peer half is read from a cache the "federated-peer-sync"
+    // background queue job refreshes on its own cadence. This used to be a live, rate-limited network call
+    // on every dashboard load (N maintainers hitting refresh was N requests/second at the peer collector);
+    // now a slow/unreachable collector can only make the CACHE stale, never hold up this request.
     const federatedIntelligenceManifest = await loadRepoFocusManifest(c.env, resolveLoopOverSelfRepoFullName(c.env));
     const federatedBenchmark = await buildFederatedBenchmark(federatedIntelligenceManifest, c.env.DB, {
       now: Date.parse(generatedAt),
-      timeoutMs: 5_000,
-      maxAttempts: 1,
     });
     const qualityDashboard = {
       ...buildMaintainerQualityDashboard({

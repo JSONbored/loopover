@@ -1453,7 +1453,7 @@ function buildQualityGateWarning(policy: GateCheckPolicy): AdvisoryFinding | nul
 export const DEFAULT_SLOP_BLOCK_THRESHOLD = 60;
 
 function buildSlopGateBlocker(policy: GateCheckPolicy): AdvisoryFinding | null {
-  if (gateMode(policy.slopGateMode) !== "block") return null;
+  if (gateMode(policy.slopGateMode ?? "advisory") !== "block") return null;
   const risk = normalizeScore(policy.slopRisk);
   if (risk === null) return null;
   const minScore = normalizeScore(policy.slopGateMinScore) ?? DEFAULT_SLOP_BLOCK_THRESHOLD;
@@ -1481,29 +1481,33 @@ function gateMode(value: GateRuleMode | null | undefined): GateRuleMode {
   return "block";
 }
 
-// #551: the master merge-readiness composite. When mergeReadinessGateMode is set (advisory/block) it fills
-// in the enforceable sub-gates that the operator left UNSET, so a maintainer who never touched
-// linked-issue/duplicate/slop individually can flip one switch instead of three; when off, the policy is
+// #551: the master merge-readiness composite. When mergeReadinessGateMode is set (advisory/block) it
+// OVERRIDES the three enforceable sub-gates (linked-issue, duplicate, slop) to its mode, so a maintainer
+// who never touched them individually can flip one switch instead of three; when off, the policy is
 // returned unchanged. Readiness/quality is intentionally excluded: readiness is always advisory/
 // informational, even if an older config still says `readiness: block`.
 //
-// #9167: this used to unconditionally OVERRIDE all three sub-gates to the composite's mode, which meant
-// `mergeReadinessGateMode: "advisory"` silently DEMOTED an explicitly-configured `linkedIssueGateMode:
-// "block"` (etc.) down to advisory -- an operator who read their own manifest back would see
-// `linkedIssueGateMode: "block"` and reasonably conclude the gate was still enforced. Now the composite
-// only fills in a sub-gate mode that was left unset; an explicitly-authored mode (whether stricter or
-// looser than the composite) always wins. This is the least-surprising semantic: your own explicit
-// setting is never silently overridden by a convenience default for the gates you didn't configure.
-// config-lint.ts's mergeReadinessCompositeWarnings flags the case where an operator sets both, so the
-// authored-vs-effective distinction is never silently invisible even though it's no longer a demotion.
+// #9167 considered making this only FILL IN a sub-gate mode left unset (so an explicit `block` could never
+// be silently demoted by a looser composite) instead of always overriding. That is unreachable in
+// practice: by the time a sub-gate mode reaches this function it has already passed through
+// `RepositorySettings` (src/types.ts's `linkedIssueGateMode`/etc. are non-optional `GateRuleMode`, DB-
+// defaulted to a concrete value -- src/db/repositories.ts) and `gateCheckPolicy()` (a straight passthrough,
+// src/queue/gate-checks.ts), so it is NEVER actually `undefined` here -- "explicitly authored" vs. "resolved
+// to the shipped default" is indistinguishable at this layer, and a `?? composite` fill-in can never fire.
+// That distinction genuinely exists only one layer up, on the raw, pre-default-resolution manifest (a
+// literal absent YAML key) -- which is exactly where config-lint.ts's mergeReadinessCompositeWarnings
+// operates, flagging the demotion case there instead. So the fix actually taken is: keep the override
+// (restoring the original, fully-reachable, well-tested behavior below), and rely on that config-lint
+// warning for visibility -- the operator who reads their manifest back and sees `linkedIssueGateMode:
+// "block"` now gets a loud warning that `gate.mergeReadiness` will demote it, instead of a silent surprise.
 function applyMergeReadinessGate(policy: GateCheckPolicy): GateCheckPolicy {
   const composite = gateMode(policy.mergeReadinessGateMode ?? "off");
   if (composite === "off") return policy;
   return {
     ...policy,
-    linkedIssueGateMode: policy.linkedIssueGateMode ?? composite,
-    duplicatePrGateMode: policy.duplicatePrGateMode ?? composite,
-    slopGateMode: policy.slopGateMode ?? composite,
+    linkedIssueGateMode: composite,
+    duplicatePrGateMode: composite,
+    slopGateMode: composite,
   };
 }
 

@@ -756,25 +756,29 @@ describe("advisory rules", () => {
       findings: [{ code: "missing_linked_issue", title: "No linked issue detected", severity: "warning" as const, detail: "No linked issue." }],
     };
 
-    it("does not demote an EXPLICITLY-configured block sub-gate to the composite's looser mode", () => {
-      // Before #9167 the composite unconditionally overrode every sub-gate, so mergeReadinessGateMode:
-      // "advisory" would have silently demoted this explicit linkedIssueGateMode: "block" down to
-      // advisory and let the PR merge. Now the explicit "block" wins.
+    // #9167 considered making the composite only FILL IN a sub-gate mode left unset, so an explicit
+    // "block" could never be silently demoted by a looser composite. That's unreachable in practice: every
+    // sub-gate mode is already a concrete, DB-defaulted value (RepositorySettings's linkedIssueGateMode/etc.
+    // are non-optional) by the time it reaches GateCheckPolicy, so "explicitly authored" vs. "resolved to
+    // the shipped default" can't be told apart here -- the composite keeps its original override behavior,
+    // and the demotion is now made VISIBLE via config-lint.ts's mergeReadinessCompositeWarnings instead
+    // (which operates on the raw, pre-default manifest, where "unset" is a real, meaningful state).
+    it("demotes an explicitly-configured block sub-gate to the composite's looser mode (the demotion is now surfaced via a config-lint warning, not prevented here)", () => {
       const gate = evaluateGateCheck(missingLinkedIssueAdvisory, { mergeReadinessGateMode: "advisory", linkedIssueGateMode: "block" });
-      expect(gate.conclusion).toBe("failure");
-      expect(gate.blockers.map((finding) => finding.code)).toContain("missing_linked_issue");
+      expect(gate.conclusion).toBe("success");
+      expect(gate.blockers).toEqual([]);
     });
 
-    it("still FILLS IN a sub-gate mode the operator left unset (unchanged behavior)", () => {
+    it("fills in a sub-gate mode the operator left unset", () => {
       const gate = evaluateGateCheck(missingLinkedIssueAdvisory, { mergeReadinessGateMode: "block" });
       expect(gate.conclusion).toBe("failure");
       expect(gate.blockers.map((finding) => finding.code)).toContain("missing_linked_issue");
     });
 
-    it("an explicit looser sub-gate mode (advisory) is never escalated by a stricter composite either", () => {
+    it("escalates an explicit looser sub-gate mode (advisory) when the composite is stricter", () => {
       const gate = evaluateGateCheck(missingLinkedIssueAdvisory, { mergeReadinessGateMode: "block", linkedIssueGateMode: "advisory" });
-      expect(gate.conclusion).toBe("success");
-      expect(gate.blockers).toEqual([]);
+      expect(gate.conclusion).toBe("failure");
+      expect(gate.blockers.map((finding) => finding.code)).toContain("missing_linked_issue");
     });
 
     it("a merge-readiness composite of off leaves sub-gates exactly as configured (no-op)", () => {

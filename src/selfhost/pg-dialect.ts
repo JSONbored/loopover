@@ -88,6 +88,13 @@ export function translateFunctions(sql: string): string {
       .replace(/json_extract\(\s*([^,]+?)\s*,\s*'\$\.((?:[A-Za-z0-9_]+\.)+[A-Za-z0-9_]+)'\s*\)/gi, (_m, col, path) => `((${col})::jsonb #>> '{${path.split(".").join(",")}}')`)
       // json_extract(col, '$.key') → (col::jsonb ->> 'key')  (single-level paths)
       .replace(/json_extract\(\s*([^,]+?)\s*,\s*'\$\.([A-Za-z0-9_]+)'\s*\)/gi, `(($1)::jsonb ->> '$2')`)
+      // json_each(col) alias → SQLite's json_each() on a JSON ARRAY yields one row per element with a
+      // `value` column (migrations/0191's linked-issue-claims backfill reads je.value); untranslated on
+      // Postgres, json_each() there decomposes JSON OBJECTS only and rejects a bare TEXT column outright
+      // ("function json_each(text) does not exist"), crash-looping the self-host Postgres migration runner
+      // on startup. json_array_elements_text is Postgres's array-expansion equivalent — cast the column to
+      // `json` and alias the single output column back to `value` so `je.value` keeps working unchanged.
+      .replace(/\bjson_each\(\s*([^()]+?)\s*\)\s*(?:AS\s+)?([A-Za-z_][A-Za-z0-9_]*)\b/gi, (_m, col, alias) => `json_array_elements_text((${col})::json) AS ${alias}(value)`)
       // instr(haystack, needle) → strpos(haystack, needle): both are 1-based first-occurrence index, 0 if
       // absent -- a direct semantic match, no formula adjustment needed. Postgres has no `instr` builtin at
       // all (unlike substr, which is SQL-standard and needs no translation) -- every instr() call reaching

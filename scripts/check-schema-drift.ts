@@ -43,6 +43,7 @@ export const RAW_SQL_ONLY_TABLES: Set<string> = new Set([
   "contributor_gate_history",
   "decision_audit_labels",
   "decision_ledger",
+  "decision_ledger_anchors",
   "decision_records",
   "decision_replay_inputs",
   "ai_review_verdict_flips",

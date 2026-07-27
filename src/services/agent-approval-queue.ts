@@ -4,6 +4,7 @@ import {
   getPullRequest,
   getPendingAgentAction,
   insertNotificationDeliveryIfAbsent,
+  latestCompletedAuditEventDetail,
   listPendingAgentActions,
   recordAuditEvent,
   setPendingAgentActionStatus,
@@ -19,6 +20,10 @@ import { findBlacklistEntry } from "../settings/contributor-blacklist";
 import { isCloseHoldOnly, isHoldOnly, readUntrustworthyRuleCodes } from "../review/outcomes-wire";
 import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestReviewDecision, fetchLivePullRequestState, fetchLiveReviewThreadBlockers, fetchRequiredStatusContexts, mergeRequiredCiContexts, REVIEW_DECISION_UNREADABLE } from "../github/backfill";
 import { githubRateLimitAdmissionKeyForToken } from "../github/client";
+import { resolvePerRepoContributorCapMatch } from "../queue/processors";
+import { isBelowAccountAgeThreshold } from "../queue/account-age-throttle";
+import { isAutoCloseExempt } from "../settings/auto-close-exempt";
+import { isPerTenantAdmin } from "../auth/security";
 import type { AgentPendingActionParams, AgentPendingActionRecord } from "../types";
 
 export type ApprovalDecision = "accept" | "reject";
@@ -61,6 +66,34 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
     const current = await getPendingAgentAction(env, pending.id);
     /* v8 ignore next -- the row was just read moments ago and this system never deletes pending-action rows; the pending fallback guards a theoretical concurrent-delete only. */
     return { status: "already_decided", action: current ?? pending };
+  }
+
+  // #9158 (label-close-split-brain, approval-queue half): a label COUPLED to a close (autonomyClass ===
+  // "close" AND closeKind set -- see planContributorCapClose's/the blacklist/review-nag/copycat closes' own
+  // doc comments: the close is always pushed BEFORE its label, tagged with the SAME closeKind and
+  // autonomyClass "close") must never post unless its paired close has ACTUALLY completed. The executor's own
+  // same-batch correlation guard (agent-action-executor.ts's coupledCloseOutcome) only ever sees a close
+  // staged in the SAME plan -- but this queue stages one action per row (createPendingAgentActionIfAbsent
+  // conflicts on actionClass), so an independently rejected/never-accepted close has nothing correlating it to
+  // this label here. Re-derive it from the audit trail -- the ONE record every execution entry point (live
+  // pass, breaker downgrade, this same accept path) writes through, regardless of which path the close took.
+  // `autonomyClass` is the disambiguator that keeps this from misfiring on a label-only enforcement tier (e.g.
+  // maybePlanCopycatLabel's copycat "label" gate mode, which sets closeKind with NO autonomyClass at all,
+  // since it rides its own generic `label` autonomy and never has -- or needs -- a paired close).
+  if (pending.actionClass === "label" && pending.params.autonomyClass === "close" && pending.params.closeKind !== undefined) {
+    const pairedCloseCompleted = (await latestCompletedAuditEventDetail(env, "loopover", "agent.action.close", targetKey)) !== null;
+    if (!pairedCloseCompleted) {
+      await setPendingAgentActionStatus(env, pending.id, { status: "rejected", decidedBy: input.decidedBy });
+      await recordAuditEvent(env, {
+        eventType: "agent.pending_action.superseded",
+        actor: input.decidedBy,
+        targetKey,
+        outcome: "denied",
+        detail: `superseded ${pending.params.closeKind} label: its paired close has not completed — applying it would brand a PR that remains open`,
+        metadata: baseMetadata,
+      });
+      return { status: "rejected", action: { ...pending, status: "rejected", decidedBy: input.decidedBy }, executionOutcome: "paired_close_not_completed" };
+    }
   }
 
   // accept → execute the staged action live, then record the result.
@@ -422,6 +455,38 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
     .then((branchProtectionContexts) => mergeRequiredCiContexts(branchProtectionContexts, settings.expectedCiContexts))
     .catch(() => mergeRequiredCiContexts(null, settings.expectedCiContexts));
 
+  // #9159: pre-merge contributor-cap re-check, threaded into the accept-replay path for the first time -- the
+  // executor's own step-8c re-check (agent-action-executor.ts) only ever runs when THIS field is set, and this
+  // accept path previously never set it at all, so a staged merge accepted here skipped the #7284 re-check
+  // entirely. Constructed the SAME way runAgentMaintenancePlanAndExecute (src/queue/processors.ts) gates its
+  // own live-path recheck -- only when the POST-downgrade plan still contains a merge, a per-repo cap is
+  // configured, and the author isn't owner/admin/automation-bot/exempt -- so "who gets rechecked" never drifts
+  // between the live webhook path and this replay path.
+  let contributorCapMergeRecheck: (() => Promise<boolean>) | undefined;
+  if (plan.some((action) => action.actionClass === "merge") && pr && typeof settings.contributorOpenPrCap === "number" && pr.authorLogin && !isAutoCloseExempt(pr.authorLogin, settings.autoCloseExemptLogins)) {
+    const repoOwner = pending.repoFullName.includes("/") ? pending.repoFullName.slice(0, pending.repoFullName.indexOf("/")) : "";
+    const authorIsOwner = pr.authorLogin.toLowerCase() === repoOwner.toLowerCase();
+    const authorIsAutomationBot = isProtectedAutomationAuthor(pr.authorLogin, env);
+    const authorIsAdmin = await isPerTenantAdmin(env, pending.installationId, pending.repoFullName, pr.authorLogin);
+    if (!authorIsOwner && !authorIsAdmin && !authorIsAutomationBot) {
+      const isNewAccount = await isBelowAccountAgeThreshold(env, pending.installationId, pr.authorLogin, settings.accountAgeThresholdDays);
+      contributorCapMergeRecheck = async () => {
+        const recheckMatch = await resolvePerRepoContributorCapMatch(
+          env,
+          `approval-accept:${pending.repoFullName}#${pending.pullNumber}`,
+          pending.installationId,
+          pending.repoFullName,
+          pr,
+          settings,
+          executionCiToken,
+          executionAdmissionKey,
+          isNewAccount,
+        );
+        return recheckMatch?.matched !== true;
+      };
+    }
+  }
+
   const outcomes = await executeAgentMaintenanceActions(
     env,
     {
@@ -441,6 +506,10 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
       // approval (close autonomy = auto_with_approval), so the accept-replay path needs this resolved the
       // same way the live webhook path does (src/queue/processors.ts) for the cancel hook to fire here too.
       contributorCapCancelCi: settings.contributorCapCancelCi ?? env.CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT === "true",
+      // #9159: see contributorCapMergeRecheck's own construction above -- absent (undefined) exactly when the
+      // live path would also leave it absent (no cap configured, no merge in the post-downgrade plan, or an
+      // exempt author), zero added cost in the common case.
+      contributorCapMergeRecheck,
       // #selfhost-ci-verification: the executor's OWN final pre-mutation live-CI re-check (step 8 of
       // executeAgentMaintenanceActions) needs the same effective required contexts this accept-time re-check
       // (above) evaluated against. Re-fetch so branch-protection changes remain authoritative at accept time.

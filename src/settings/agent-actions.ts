@@ -652,8 +652,23 @@ export function downgradeCloseToHold(
     (noConcreteEvidenceUnderProjectBreaker(action) || (action.closeConcreteEvidence === true && everyJustifyingCodeUntrustworthy(action)));
   if (!planned.some(isDowngradableClose)) return planned;
   const labels = resolveAgentDispositionLabels(labelSettings);
-  // Drop ONLY the downgradable close(s); a deterministic linked-issue-hard-rule close (if any) is left intact.
-  const next = planned.filter((action) => !isDowngradableClose(action));
+  // #9158 (label-close-split-brain, breaker-downgrade half): dropping a close here must ALSO drop any label
+  // COUPLED to it -- the anti-abuse label pushed alongside a blacklist/contributor_cap/review_nag/copycat
+  // close carries the SAME closeKind and is inseparable metadata on that close (see planContributorCapClose's/
+  // the blacklist/review-nag/copycat closes' own doc comments: close is always pushed BEFORE its label, same
+  // batch). The executor's own #label-close-split-brain correlation guard (agent-action-executor.ts's
+  // coupledCloseOutcome) only fires when the close is STILL in the plan and denied/errored this pass -- once
+  // the close is removed from the plan entirely (exactly what downgrading does), there is nothing left for
+  // that guard to correlate against, so it silently lets the orphaned label through. Filtering it out HERE,
+  // at the one place the close is actually dropped, closes that gap without needing the executor to guess
+  // whether an absent close means "never coupled" (e.g. maybePlanCopycatLabel's label-only copycat tier, which
+  // legitimately has no close to drop) or "was coupled but just got downgraded".
+  const droppedCloseKinds = new Set(planned.filter(isDowngradableClose).map((action) => action.closeKind).filter((kind): kind is NonNullable<PlannedAgentAction["closeKind"]> => kind !== undefined));
+  const isOrphanedCoupledLabel = (action: PlannedAgentAction): boolean => action.actionClass === "label" && action.closeKind !== undefined && droppedCloseKinds.has(action.closeKind);
+  // Drop the downgradable close(s) AND any label coupled to one of them; a deterministic linked-issue-hard-rule
+  // close/label pair (if any) is left intact -- isDowngradableClose never matches that closeKind (see this
+  // function's own doc comment above), so it can never end up in droppedCloseKinds.
+  const next = planned.filter((action) => !isDowngradableClose(action) && !isOrphanedCoupledLabel(action));
   // The dropped close means the PR is held for a person — surface the manual-review label. Idempotent: only add when
   // absent (e.g. a guarded-but-passing plan may already carry it). NEVER adds a merge/approve.
   const alreadyNeedsReview = labels.manualReview !== null && next.some((action) => action.actionClass === "label" && action.label === labels.manualReview && action.labelOp !== "remove");

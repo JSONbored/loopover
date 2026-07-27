@@ -22,6 +22,7 @@ import type {
   AdvisoryFinding,
   AdvisorySeverity,
   AiReviewLowConfidenceDisposition,
+  CopycatGateMode,
   GateRuleMode,
   IssueRecord,
   PullRequestFileRecord,
@@ -29,6 +30,7 @@ import type {
   RepositoryRecord,
 } from "../types";
 import type { CollisionCluster, CollisionReport } from "../signals/engine";
+import { resolveCopycatDuplicateSibling } from "../signals/copycat-duplicate";
 import { isDuplicateClusterWinnerByClaim } from "../signals/duplicate-winner";
 import type { GuardrailPathMatch } from "../signals/change-guardrail";
 import { isCodeFile } from "../signals/local-branch";
@@ -376,6 +378,14 @@ export function buildPullRequestAdvisory(
      *  — this is fail-open by construction: the caller only ever sets it true after a live check confirms
      *  every reference is dead, never on ambiguity. */
     confirmedNoOpenLinkedIssue?: boolean;
+    /** #9033: the repo's EFFECTIVE `copycatGateMode`/`copycatGateMinScore` (already resolved by the caller via
+     *  `resolveRepositorySettings` — reward-eligible repos default this to `warn` even with no `.loopover.yml`
+     *  entry, see `settings/copycat-gate-mode.ts`). Used ONLY to decide whether `pr`'s own persisted copycat
+     *  containment match ({@link resolveCopycatDuplicateSibling}) should ALSO count as a duplicate-cluster
+     *  overlap, even when the matched sibling cites a different linked issue (or none). Absent/`off` ⇒ byte-
+     *  identical to before this field existed — the duplicate finding stays linked-issue-overlap only. */
+    copycatGateMode?: CopycatGateMode | null | undefined;
+    copycatGateMinScore?: number | null | undefined;
   } = {},
 ): Advisory {
   const repoFullName = pr?.repoFullName ?? repo?.fullName ?? "unknown/unknown";
@@ -401,7 +411,18 @@ export function buildPullRequestAdvisory(
       action: "Re-deliver the webhook or wait for the next sync.",
     });
   } else {
-    addPullRequestFindings(repo, pr, findings, context.otherOpenPullRequests ?? [], Boolean(context.requireLinkedIssue), Boolean(context.duplicateWinnerEnabled), context.linkedIssueAuthorLogins ?? [], Boolean(context.confirmedNoOpenLinkedIssue));
+    addPullRequestFindings(
+      repo,
+      pr,
+      findings,
+      context.otherOpenPullRequests ?? [],
+      Boolean(context.requireLinkedIssue),
+      Boolean(context.duplicateWinnerEnabled),
+      context.linkedIssueAuthorLogins ?? [],
+      Boolean(context.confirmedNoOpenLinkedIssue),
+      context.copycatGateMode,
+      context.copycatGateMinScore,
+    );
   }
   return advisory("pull_request", targetKey, repoFullName, findings, "Pull request advisory generated.", pr?.number, undefined, pr?.headSha ?? undefined);
 }
@@ -940,8 +961,15 @@ function addRepoFindings(repo: RepositoryRecord, findings: AdvisoryFinding[]): v
  *  the issue and force a close). Absent `changedFiles` data on either side — the common case today, since the
  *  open-PR file-collision enrichment (`enrichOpenPullRequestsWithChangedFiles`, #2653) is deliberately scoped
  *  away from the gate's own `otherOpenPullRequests` input (see its own scoping note in processors.ts) — degrades
- *  to "uncorroborated", the safe default: it can never manufacture false corroboration from missing data. PURE. */
-function hasDuplicateOverlapCorroboration(pr: PullRequestRecord, otherPr: PullRequestRecord): boolean {
+ *  to "uncorroborated", the safe default: it can never manufacture false corroboration from missing data.
+ *
+ *  #9033: `otherPr` being the PR's own persisted COPYCAT containment match ALSO corroborates it directly, even
+ *  with no changed-file-path evidence at all — the deterministic containment engine (src/signals/copycat.ts)
+ *  already requires the best-scoring candidate to clear a maintainer-configured similarity threshold with an
+ *  unambiguous (earlier-submission) direction before it ever names a match, which is itself concrete, code-level
+ *  evidence, strictly stronger than a bare path overlap. PURE. */
+function hasDuplicateOverlapCorroboration(pr: PullRequestRecord, otherPr: PullRequestRecord, isCopycatMatch: boolean): boolean {
+  if (isCopycatMatch) return true;
   const mineFiles = pr.changedFiles;
   const theirsFiles = otherPr.changedFiles;
   if (mineFiles && mineFiles.length > 0 && theirsFiles && theirsFiles.length > 0) {
@@ -960,6 +988,8 @@ function addPullRequestFindings(
   duplicateWinnerEnabled: boolean,
   linkedIssueAuthorLogins: (string | null | undefined)[],
   confirmedNoOpenLinkedIssue: boolean,
+  copycatGateMode: CopycatGateMode | null | undefined,
+  copycatGateMinScore: number | null | undefined,
 ): void {
   if (pr.state !== "open") {
     findings.push({
@@ -988,9 +1018,19 @@ function addPullRequestFindings(
       action: "If this PR is intended to solve an issue, link it explicitly in the PR body.",
     });
   } else {
-    const overlappingPrs = otherOpenPullRequests.filter((otherPr) =>
+    const linkedIssueOverlapPrs = otherOpenPullRequests.filter((otherPr) =>
       otherPr.linkedIssues.some((issueNumber) => pr.linkedIssues.includes(issueNumber)),
     );
+    // #9033: a cross-issue content match — this PR's own persisted copycat containment assessment names an
+    // OPEN sibling above the configured threshold, EVEN THOUGH the two PRs cite different linked issues (or this
+    // PR cites none at all). Two colluding accounts filing near-identical fixes under different linked issues
+    // is exactly the reward-farming gap this closes: without it, neither PR is ever considered a duplicate-
+    // cluster candidate of the other, regardless of how similar their added code is.
+    const copycatSibling = resolveCopycatDuplicateSibling(pr, otherOpenPullRequests, copycatGateMode, copycatGateMinScore);
+    const overlappingPrs =
+      copycatSibling !== undefined && !linkedIssueOverlapPrs.some((otherPr) => otherPr.number === copycatSibling.number)
+        ? [...linkedIssueOverlapPrs, copycatSibling]
+        : linkedIssueOverlapPrs;
     // Duplicate-winner adjudication (#dup-winner): when the flag is ON and this PR is the earliest observed
     // linked-issue claimant, SKIP the duplicate finding — suppressing it suppresses the gate failure, so the
     // winner survives while later claimants keep the finding. Sparse legacy rows fail closed instead of
@@ -1003,15 +1043,16 @@ function addPullRequestFindings(
       // gate that fails solely on it (#9129, see the duplicate-only hold below). A PURELY body-text overlap gets
       // a SEPARATE, always-non-blocking code (`duplicate_pr_risk_unconfirmed`, see resolveConfiguredGateMode) —
       // an adversary who cites the same issue number in a throwaway PR body, with no code required, can never
-      // manufacture a hold or a close through this path.
-      const corroboratedPrs = overlappingPrs.filter((otherPr) => hasDuplicateOverlapCorroboration(pr, otherPr));
-      const uncorroboratedPrs = overlappingPrs.filter((otherPr) => !hasDuplicateOverlapCorroboration(pr, otherPr));
+      // manufacture a hold or a close through this path. #9033: the copycat-matched sibling is corroborated by
+      // construction (isCopycatMatch), regardless of its changed-file overlap.
+      const corroboratedPrs = overlappingPrs.filter((otherPr) => hasDuplicateOverlapCorroboration(pr, otherPr, otherPr.number === copycatSibling?.number));
+      const uncorroboratedPrs = overlappingPrs.filter((otherPr) => !hasDuplicateOverlapCorroboration(pr, otherPr, otherPr.number === copycatSibling?.number));
       if (corroboratedPrs.length > 0) {
         findings.push({
           code: "duplicate_pr_risk",
           severity: "warning",
           title: "Linked issue overlaps another open PR with corroborating changes",
-          detail: `Other open pull requests reference the same linked issue set AND show corroborating changed-file overlap or a non-trivial diff: ${corroboratedPrs.map((otherPr) => `#${otherPr.number}`).join(", ")}.`,
+          detail: `Other open pull requests show corroborating overlap (shared linked issue with changed-file/diff evidence, and/or a content-similarity match): ${corroboratedPrs.map((otherPr) => `#${otherPr.number}`).join(", ")}.`,
           action: "This looks like a genuine race for the same issue. Coordinate with the other contributor, or wait for a maintainer to triage before assuming priority.",
         });
       }

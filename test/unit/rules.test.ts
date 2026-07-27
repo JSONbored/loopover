@@ -333,6 +333,81 @@ describe("advisory rules", () => {
     expect(advisory.findings.map((finding) => finding.code)).toContain("duplicate_pr_risk_unconfirmed");
   });
 
+  // #9033: a cross-issue copycat containment match must feed the SAME duplicate_pr_risk finding a shared linked
+  // issue does -- the exact reward-farming gap where two colluding accounts file near-identical fixes under
+  // DIFFERENT linked issues and both merge independently.
+  describe("copycat cross-issue duplicate overlap (#9033)", () => {
+    function candidatePr(over: Partial<PullRequestRecord> = {}): PullRequestRecord {
+      return {
+        repoFullName: repo.fullName,
+        number: 12,
+        title: "Add registry sync",
+        state: "open",
+        authorLogin: "oktofeesh1",
+        authorAssociation: "NONE",
+        headSha: "abc123",
+        labels: [],
+        linkedIssues: [4],
+        ...over,
+      };
+    }
+
+    it("flags a CONFIRMED duplicate risk against a sibling citing a DIFFERENT linked issue, once the copycat containment match clears the threshold", () => {
+      const pr = candidatePr({ linkedIssues: [4], copycatScore: 92, copycatMatchedPullNumber: 13 });
+      const sibling = candidatePr({ number: 13, title: "Alternative registry sync", linkedIssues: [999] });
+
+      const advisory = buildPullRequestAdvisory(repo, pr, { otherOpenPullRequests: [sibling], copycatGateMode: "warn", copycatGateMinScore: 85 });
+
+      expect(advisory.findings.map((finding) => finding.code)).toContain("duplicate_pr_risk");
+      expect(advisory.findings.map((finding) => finding.code)).not.toContain("duplicate_pr_risk_unconfirmed");
+    });
+
+    it("does NOT flag a duplicate risk when copycatGateMode is off, even with a high containment score", () => {
+      const pr = candidatePr({ linkedIssues: [4], copycatScore: 92, copycatMatchedPullNumber: 13 });
+      const sibling = candidatePr({ number: 13, title: "Alternative registry sync", linkedIssues: [999] });
+
+      const advisory = buildPullRequestAdvisory(repo, pr, { otherOpenPullRequests: [sibling], copycatGateMode: "off", copycatGateMinScore: 85 });
+
+      expect(advisory.findings.map((finding) => finding.code)).not.toContain("duplicate_pr_risk");
+      expect(advisory.findings.map((finding) => finding.code)).not.toContain("duplicate_pr_risk_unconfirmed");
+    });
+
+    it("does NOT flag a duplicate risk when the containment score is below the resolved threshold", () => {
+      const pr = candidatePr({ linkedIssues: [4], copycatScore: 40, copycatMatchedPullNumber: 13 });
+      const sibling = candidatePr({ number: 13, title: "Alternative registry sync", linkedIssues: [999] });
+
+      const advisory = buildPullRequestAdvisory(repo, pr, { otherOpenPullRequests: [sibling], copycatGateMode: "warn", copycatGateMinScore: 85 });
+
+      expect(advisory.findings.map((finding) => finding.code)).not.toContain("duplicate_pr_risk");
+    });
+
+    it("#dup-winner + copycat: the cluster winner is spared even when the overlap is a cross-issue copycat match", () => {
+      const winner = candidatePr({ number: 12, linkedIssues: [4], linkedIssueClaimedAt: "2026-06-29T10:00:00.000Z", copycatScore: 92, copycatMatchedPullNumber: 13 });
+      const laterSibling = candidatePr({ number: 13, title: "Alternative registry sync", linkedIssues: [999], linkedIssueClaimedAt: "2026-06-29T10:01:00.000Z" });
+
+      const advisory = buildPullRequestAdvisory(repo, winner, {
+        otherOpenPullRequests: [laterSibling],
+        duplicateWinnerEnabled: true,
+        copycatGateMode: "warn",
+        copycatGateMinScore: 85,
+      });
+
+      expect(advisory.findings.map((finding) => finding.code)).not.toContain("duplicate_pr_risk");
+    });
+
+    it("a sibling that is BOTH the linked-issue overlap AND the copycat match is not double-counted", () => {
+      const pr = candidatePr({ linkedIssues: [4], copycatScore: 92, copycatMatchedPullNumber: 13 });
+      const sibling = candidatePr({ number: 13, title: "Alternative registry sync", linkedIssues: [4] }); // SAME linked issue
+
+      const advisory = buildPullRequestAdvisory(repo, pr, { otherOpenPullRequests: [sibling], copycatGateMode: "warn", copycatGateMinScore: 85 });
+
+      const duplicateFindings = advisory.findings.filter((finding) => finding.code === "duplicate_pr_risk");
+      expect(duplicateFindings).toHaveLength(1);
+      expect(duplicateFindings[0]?.detail).toContain("#13");
+      expect(duplicateFindings[0]?.detail.match(/#13/g)).toHaveLength(1);
+    });
+  });
+
   it("#dup-winner: flag OFF + would-be-winner ⇒ duplicate finding STILL present (byte-identical)", () => {
     const wouldBeWinner: PullRequestRecord = {
       repoFullName: repo.fullName,

@@ -1607,6 +1607,8 @@ export async function sweepRepoRegate(
       duplicateWinnerEnabled,
       linkedIssueAuthorLogins,
       confirmedNoOpenLinkedIssue,
+      copycatGateMode: settings.copycatGateMode,
+      copycatGateMinScore: settings.copycatGateMinScore,
     });
     const gate = evaluateGateCheck(
       advisory,
@@ -4089,6 +4091,8 @@ export async function reReviewStoredPullRequest(
     duplicateWinnerEnabled: resolveDuplicateWinnerEnabled(isDuplicateWinnerEnabledGlobally(env), settings.duplicateWinnerMode),
     confirmedNoOpenLinkedIssue,
     linkedIssueAuthorLogins,
+    copycatGateMode: settings.copycatGateMode,
+    copycatGateMinScore: settings.copycatGateMinScore,
   });
   await persistAdvisory(env, advisory);
   // #2537 follow-up (gate-flagged): the durable review cache's only invalidation path is markPullRequestReviewsInvalidated
@@ -6944,6 +6948,8 @@ async function handlePullRequestWebhookEvent(
       duplicateWinnerEnabled: resolveDuplicateWinnerEnabled(isDuplicateWinnerEnabledGlobally(env), settings.duplicateWinnerMode),
       confirmedNoOpenLinkedIssue,
       linkedIssueAuthorLogins,
+      copycatGateMode: settings.copycatGateMode,
+      copycatGateMinScore: settings.copycatGateMinScore,
     });
     await persistAdvisory(env, advisory);
     // Auto-project/milestone matching (#3183): independent of the gate/disposition entirely -- a missed or
@@ -14296,6 +14302,8 @@ export async function buildAuthorizedPrActionAdvisory(
     duplicateWinnerEnabled: resolveDuplicateWinnerEnabled(isDuplicateWinnerEnabledGlobally(env), settings.duplicateWinnerMode),
     confirmedNoOpenLinkedIssue,
     linkedIssueAuthorLogins,
+    copycatGateMode: settings.copycatGateMode,
+    copycatGateMinScore: settings.copycatGateMinScore,
   });
   return { repo, advisory, otherOpenPullRequests };
 }

@@ -1,14 +1,22 @@
 import { DatabaseSync } from "node:sqlite";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createD1Adapter, nodeSqliteDriver } from "../../src/selfhost/d1-adapter";
 import { FEDERATED_BUNDLE_SCHEMA_VERSION, type FederatedSignalBundle } from "../../src/orb/federated-bundle";
 import {
+  __resetFederatedCollectorRateLimitForTest,
   pullPeerBundles,
   pushFederatedBundle,
   resolveCollectorEndpoint,
   type CollectorOpts,
 } from "../../src/orb/federated-collector";
 import type { FederatedCollectorMode, FocusManifest } from "../../src/signals/focus-manifest";
+
+// #9166: pullPeerBundles/pushFederatedBundle now fall back to a module-level default rate-limit bucket when
+// no `opts.bucket` is supplied. Reset it between tests so the many call sites in this file that omit a
+// bucket (deliberately, to exercise the "no bucket" default arm) don't leak count across test cases.
+afterEach(() => {
+  __resetFederatedCollectorRateLimitForTest();
+});
 
 const URL_OK = "https://collector.example.org/v1/federated";
 
@@ -104,8 +112,12 @@ function bundle(over: Partial<FederatedSignalBundle> = {}): Record<string, unkno
   };
 }
 
+// #9148: a REAL Response (Node's global fetch API), not a hand-rolled fake — pullPeerBundles now reads
+// `.headers`/`.body` (via readOrbIngestBody's bounded reader) in addition to `.ok`/`.status`/`.json()`, so a
+// fixture missing those would break every test that goes through the pull path for reasons unrelated to what
+// each test actually means to exercise.
 function jsonResponse(body: unknown, status = 200): Response {
-  return { ok: status >= 200 && status < 300, status, json: async () => body } as unknown as Response;
+  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
 describe("resolveCollectorEndpoint()", () => {
@@ -229,18 +241,8 @@ describe("push/pull — failure handling never reaches the gate", () => {
   });
 
   it("returns [] when the response body is not JSON at all", async () => {
-    const err = vi.spyOn(console, "error").mockImplementation(() => {});
-    const fetchFn = (async () =>
-      ({
-        ok: true,
-        status: 200,
-        json: async () => {
-          throw new SyntaxError("Unexpected token < in JSON");
-        },
-      }) as unknown as Response) as unknown as typeof fetch;
+    const fetchFn = (async () => new Response("<html>not json</html>", { status: 200 })) as unknown as typeof fetch;
     await expect(pullPeerBundles(manifest(), { ...DETERMINISTIC, fetchFn })).resolves.toEqual([]);
-    expect(err).toHaveBeenCalled();
-    err.mockRestore();
   });
 });
 
@@ -278,6 +280,21 @@ describe("pullPeerBundles()", () => {
     expect(got[0]!.signature).toBe("f".repeat(64));
   });
 
+  it("#9148: caps the number of pulled entries even shape-checked, independent of the byte ceiling", async () => {
+    const many = Array.from({ length: 250 }, (_, i) => bundle({ instanceId: `inst-${i}` }));
+    const fetchFn = (async () => jsonResponse(many)) as unknown as typeof fetch;
+    const got = await pullPeerBundles(manifest(), { ...DETERMINISTIC, fetchFn });
+    expect(got).toHaveLength(200); // MAX_PULLED_BUNDLES, not the 250 the collector claimed to have
+    expect(got[0]!.instanceId).toBe("inst-0");
+    expect(got[199]!.instanceId).toBe("inst-199");
+  });
+
+  it("#9148: rejects a response over the ingest body's byte ceiling instead of buffering it", async () => {
+    const oversized = JSON.stringify([bundle()]).padEnd(2 * 1_048_576, " ");
+    const fetchFn = (async () => new Response(oversized, { status: 200 })) as unknown as typeof fetch;
+    expect(await pullPeerBundles(manifest(), { ...DETERMINISTIC, fetchFn })).toEqual([]);
+  });
+
   it("returns [] for a non-array payload", async () => {
     const fetchFn = (async () => jsonResponse({ bundles: [bundle()] })) as unknown as typeof fetch;
     expect(await pullPeerBundles(manifest(), { ...DETERMINISTIC, fetchFn })).toEqual([]);
@@ -301,6 +318,70 @@ describe("rate limiting — a best-effort sync must not hammer a peer", () => {
     const fresh = { count: 0, windowStartMs: NOW };
     expect(await pushFederatedBundle(manifest(), db, { ...DETERMINISTIC, fetchFn, bucket: fresh })).toBe(true);
     expect(await pullPeerBundles(manifest(), { ...DETERMINISTIC, fetchFn })).toEqual([]);
+  });
+
+  // #9166: the rate limiter was inert at every real call site because the only production caller
+  // (buildFederatedBenchmark) never supplied a bucket, and `!opts.bucket` meant "unlimited". These prove the
+  // module-level default actually engages and blocks once exhausted, with no caller-supplied bucket at all.
+  describe("#9166: the default bucket (no opts.bucket supplied) actually engages", () => {
+    it("blocks pull after the limit within one window, using only the module-level default", async () => {
+      const fetchFn = (async () => jsonResponse([])) as unknown as typeof fetch;
+      let calls = 0;
+      const countingFetch = (async (...args: Parameters<typeof fetch>) => {
+        calls += 1;
+        return fetchFn(...args);
+      }) as unknown as typeof fetch;
+      for (let i = 0; i < 6; i++) {
+        expect(await pullPeerBundles(manifest(), { now: NOW, fetchFn: countingFetch })).toEqual([]);
+      }
+      expect(calls).toBe(6); // all 6 within the limit went through
+      // The 7th, same window, same instant — no bucket supplied by the caller — must now be blocked.
+      expect(await pullPeerBundles(manifest(), { now: NOW, fetchFn: countingFetch })).toEqual([]);
+      expect(calls).toBe(6); // the 7th never reached fetch at all
+    });
+
+    it("blocks push after the limit within one window, using only the module-level default", async () => {
+      const db = makeDb();
+      await resolved(db, 1);
+      let calls = 0;
+      const countingFetch = (async () => {
+        calls += 1;
+        return jsonResponse({ ok: true });
+      }) as unknown as typeof fetch;
+      for (let i = 0; i < 6; i++) {
+        expect(await pushFederatedBundle(manifest(), db, { now: NOW, fetchFn: countingFetch })).toBe(true);
+      }
+      expect(calls).toBe(6);
+      expect(await pushFederatedBundle(manifest(), db, { now: NOW, fetchFn: countingFetch })).toBe(false);
+      expect(calls).toBe(6);
+    });
+
+    it("push and pull are independent default buckets — exhausting one never blocks the other", async () => {
+      const db = makeDb();
+      await resolved(db, 1);
+      const fetchFn = (async () => jsonResponse({ ok: true })) as unknown as typeof fetch;
+      for (let i = 0; i < 6; i++) expect(await pushFederatedBundle(manifest(), db, { now: NOW, fetchFn })).toBe(true);
+      expect(await pushFederatedBundle(manifest(), db, { now: NOW, fetchFn })).toBe(false); // push exhausted
+
+      const pullFetch = (async () => jsonResponse([])) as unknown as typeof fetch;
+      expect(await pullPeerBundles(manifest(), { now: NOW, fetchFn: pullFetch })).toEqual([]); // pull untouched
+    });
+
+    it("resets after the window elapses", async () => {
+      const fetchFn = (async () => jsonResponse([])) as unknown as typeof fetch;
+      for (let i = 0; i < 6; i++) expect(await pullPeerBundles(manifest(), { now: NOW, fetchFn })).toEqual([]);
+      // Same instant again — still exhausted.
+      let calls = 0;
+      const countingFetch = (async () => {
+        calls += 1;
+        return jsonResponse([]);
+      }) as unknown as typeof fetch;
+      expect(await pullPeerBundles(manifest(), { now: NOW, fetchFn: countingFetch })).toEqual([]);
+      expect(calls).toBe(0);
+      // A full window later, the bucket resets and the request goes through again.
+      expect(await pullPeerBundles(manifest(), { now: NOW + 61_000, fetchFn: countingFetch })).toEqual([]);
+      expect(calls).toBe(1);
+    });
   });
 });
 

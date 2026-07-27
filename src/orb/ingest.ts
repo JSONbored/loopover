@@ -26,17 +26,23 @@ function parseContentLength(header: string | null | undefined): number | null {
   return Number.isInteger(n) && n >= 0 ? n : null;
 }
 
-/** Read the request body with a hard byte ceiling so a hostile sender can't make us buffer unbounded
+/** The minimal shape {@link readOrbIngestBody} needs from its input: a byte stream. Both `Request` and
+ *  `Response` satisfy this structurally (the Fetch API gives both a `.body: ReadableStream<Uint8Array> |
+ *  null`), so this reader works unmodified over either — #9148 reuses it for a collector `Response` body
+ *  (src/orb/federated-collector.ts's pullPeerBundles) instead of writing a second bounded reader. */
+export type BoundedBodySource = { body: ReadableStream<Uint8Array> | null };
+
+/** Read a request/response body with a hard byte ceiling so a hostile sender can't make us buffer unbounded
  *  input. Returns null when the body exceeds MAX_ORB_INGEST_BODY_BYTES OR when the underlying stream
  *  itself errors (a dropped connection / network reset mid-read, mirrors readOrbRelayRegisterBody in
- *  ../orb/relay.ts) — both callers (/v1/orb/ingest, /v1/ams/ingest) already treat null identically to
- *  "reject this request", so a transient read failure degrades the same way an oversized payload does,
- *  instead of throwing UNCAUGHT out of this function as a bare framework 500. */
-export async function readOrbIngestBody(request: Request, contentLengthHeader: string | null | undefined): Promise<string | null> {
+ *  ../orb/relay.ts) — every caller (/v1/orb/ingest, /v1/ams/ingest, and #9148's federated-collector pull)
+ *  already treats null identically to "reject this", so a transient read failure degrades the same way an
+ *  oversized payload does, instead of throwing UNCAUGHT out of this function as a bare framework 500. */
+export async function readOrbIngestBody(source: BoundedBodySource, contentLengthHeader: string | null | undefined): Promise<string | null> {
   const declared = parseContentLength(contentLengthHeader);
   if (declared !== null && declared > MAX_ORB_INGEST_BODY_BYTES) return null;
 
-  const stream = request.body;
+  const stream = source.body;
   if (!stream) return "";
   const reader = stream.getReader();
   const decoder = new TextDecoder();

@@ -300,6 +300,14 @@ export type JobMessage =
       requestedBy: "schedule" | "test";
     }
   | {
+      // Federated peer-sync tick (#9148/#9166): pulls + trust-gates + persists peer bundles into the
+      // maintainer-dashboard benchmark cache, AND pushes this instance's own bundle to its configured
+      // collector. Moves that work off the dashboard's own request path onto a background cadence. Enqueued
+      // by the cron ONLY when the loopover self-repo's `.loopover.yml federatedIntelligence.enabled` is true.
+      type: "federated-peer-sync";
+      requestedBy: "schedule" | "test";
+    }
+  | {
       // APR repo-transfer acceptance/expiry detection (#7741): resolve every pending APR transfer — probe GitHub,
       // mark accepted / accepted-and-departed / expired (>7 days), reconcile the per-repo AMS pause. Enqueued by
       // the cron hourly ONLY when LOOPOVER_APR_TRANSFER_POLL is set; flag-OFF (default) it is never created.

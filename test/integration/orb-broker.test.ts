@@ -3,12 +3,14 @@ import { createApp } from "../../src/api/routes";
 import { hashToken } from "../../src/auth/security";
 import {
   brokerOrbToken,
+  countLiveEnrollmentsForInstallation,
   isOrbBrokerEnabled,
   issueOrbEnrollment,
   issueOrbStoredSecret,
   ORB_SECRET_TYPE_AMS_GITHUB_TOKEN,
   ORB_SECRET_TYPE_GITHUB_TOKEN,
   ORB_SECRET_TYPE_TENANT_DB_CREDENTIAL,
+  revokeAllLiveEnrollmentsForInstallation,
   revokeOrbEnrollment,
 } from "../../src/orb/broker";
 import { MAX_ORB_RELAY_REGISTER_BODY_BYTES } from "../../src/orb/relay";
@@ -87,6 +89,80 @@ describe("issueOrbEnrollment", () => {
     await issueOrbEnrollment(e, 203, undefined, ORB_SECRET_TYPE_AMS_GITHUB_TOKEN);
     const row = await db(e).prepare("SELECT secret_type, installation_id FROM orb_enrollments WHERE installation_id=203").first<{ secret_type: string; installation_id: number }>();
     expect(row).toMatchObject({ secret_type: ORB_SECRET_TYPE_AMS_GITHUB_TOKEN, installation_id: 203 });
+  });
+
+  it("#9149: re-enrolling WITHOUT rotate mints an additional secret, leaving the prior one live (blue/green default)", async () => {
+    const e = await brokerEnv();
+    await seedInstall(e, 210, { registered: 1 });
+    const first = (await issueOrbEnrollment(e, 210)) as { enrollId: string; secret: string };
+    const second = (await issueOrbEnrollment(e, 210)) as { enrollId: string; secret: string };
+    expect(first.enrollId).not.toBe(second.enrollId);
+    expect(await countLiveEnrollmentsForInstallation(e, 210)).toBe(2);
+    const firstRow = await db(e).prepare("SELECT state FROM orb_enrollments WHERE enroll_id = ?").bind(first.enrollId).first<{ state: string }>();
+    expect(firstRow?.state).toBe("enrolled"); // untouched — the leaked-secret bug this closes is the OPPOSITE default
+  });
+
+  it("#9149: re-enrolling WITH rotate:true revokes every prior live enrollment before minting the new one", async () => {
+    const e = await brokerEnv();
+    await seedInstall(e, 211, { registered: 1 });
+    const first = (await issueOrbEnrollment(e, 211)) as { enrollId: string; secret: string };
+    const second = (await issueOrbEnrollment(e, 211, undefined, ORB_SECRET_TYPE_GITHUB_TOKEN, { rotate: true })) as { enrollId: string; secret: string };
+    expect(await countLiveEnrollmentsForInstallation(e, 211)).toBe(1);
+    const firstRow = await db(e).prepare("SELECT state, revoked_at FROM orb_enrollments WHERE enroll_id = ?").bind(first.enrollId).first<{ state: string; revoked_at: string | null }>();
+    expect(firstRow).toMatchObject({ state: "revoked" });
+    expect(firstRow?.revoked_at).not.toBeNull();
+    expect(await brokerOrbToken(e, first.secret)).toEqual({ error: "invalid_enrollment" }); // the leaked/superseded secret no longer mints
+    const secondRow = await db(e).prepare("SELECT state FROM orb_enrollments WHERE enroll_id = ?").bind(second.enrollId).first<{ state: string }>();
+    expect(secondRow?.state).toBe("enrolled");
+  });
+
+  it("#9149: rotate on a FIRST enrollment (nothing prior to revoke) is a no-op revoke, not an error", async () => {
+    const e = await brokerEnv();
+    await seedInstall(e, 212, { registered: 1 });
+    const issued = await issueOrbEnrollment(e, 212, undefined, ORB_SECRET_TYPE_GITHUB_TOKEN, { rotate: true });
+    expect(issued).toMatchObject({ enrollId: expect.stringMatching(/^orbenr_/) });
+    expect(await countLiveEnrollmentsForInstallation(e, 212)).toBe(1);
+  });
+});
+
+describe("revokeAllLiveEnrollmentsForInstallation + countLiveEnrollmentsForInstallation (#9149)", () => {
+  it("counts 0 for an installation with no enrollments at all", async () => {
+    const e = await brokerEnv();
+    expect(await countLiveEnrollmentsForInstallation(e, 9999)).toBe(0);
+  });
+
+  it("revokes every live enrollment for an installation and returns the count, leaving OTHER installations untouched", async () => {
+    const e = await brokerEnv();
+    await seedInstall(e, 220, { registered: 1 });
+    await seedInstall(e, 221, { registered: 1 });
+    const a = (await issueOrbEnrollment(e, 220)) as { enrollId: string };
+    const b = (await issueOrbEnrollment(e, 220)) as { enrollId: string };
+    await issueOrbEnrollment(e, 221);
+
+    expect(await revokeAllLiveEnrollmentsForInstallation(e, 220)).toBe(2);
+    expect(await countLiveEnrollmentsForInstallation(e, 220)).toBe(0);
+    const [rowA, rowB] = await Promise.all([
+      db(e).prepare("SELECT state FROM orb_enrollments WHERE enroll_id = ?").bind(a.enrollId).first<{ state: string }>(),
+      db(e).prepare("SELECT state FROM orb_enrollments WHERE enroll_id = ?").bind(b.enrollId).first<{ state: string }>(),
+    ]);
+    expect(rowA?.state).toBe("revoked");
+    expect(rowB?.state).toBe("revoked");
+    // A different installation's enrollment is untouched by another installation's revoke-all.
+    expect(await countLiveEnrollmentsForInstallation(e, 221)).toBe(1);
+  });
+
+  it("revoking an installation with no live enrollments returns 0, not an error", async () => {
+    const e = await brokerEnv();
+    await seedInstall(e, 222, { registered: 1 });
+    expect(await revokeAllLiveEnrollmentsForInstallation(e, 222)).toBe(0);
+  });
+
+  it("works on a SUSPENDED/disabled installation — revoking access is never blocked by unrelated admin state", async () => {
+    const e = await brokerEnv();
+    await seedInstall(e, 223, { registered: 1, suspended_at: "2026-01-01T00:00:00Z", self_enrollment_disabled: 1 });
+    const enrolled = (await issueOrbEnrollment(e, 223)) as { enrollId: string };
+    expect(enrolled).toMatchObject({ enrollId: expect.stringMatching(/^orbenr_/) });
+    expect(await revokeAllLiveEnrollmentsForInstallation(e, 223)).toBe(1);
   });
 });
 
@@ -436,6 +512,22 @@ describe("broker endpoints", () => {
     const tokRes = await app.request("/v1/orb/token", { method: "POST", headers: { authorization: `Bearer ${secret}` } }, e);
     expect(tokRes.status).toBe(200);
     expect(await tokRes.json()).toMatchObject({ token: "ghs_flow", installationId: 400 });
+  });
+
+  it("#9149: POST /v1/internal/orb/enrollments defaults to append (no rotate); { rotate: true } revokes prior live enrollments first", async () => {
+    const e = await brokerEnv();
+    await seedInstall(e, 401, { registered: 1 });
+    const first = (await (await app.request("/v1/internal/orb/enrollments", { method: "POST", headers: auth, body: JSON.stringify({ installationId: 401 }) }, e)).json()) as { secret: string };
+    // Default (no rotate field at all) — append, matching every existing caller's unaffected behavior.
+    await app.request("/v1/internal/orb/enrollments", { method: "POST", headers: auth, body: JSON.stringify({ installationId: 401 }) }, e);
+    expect(await db(e).prepare("SELECT COUNT(*) AS n FROM orb_enrollments WHERE installation_id=401 AND state='enrolled'").first<{ n: number }>()).toMatchObject({ n: 2 });
+    tokenFetch("ghs_before_rotate");
+    expect((await app.request("/v1/orb/token", { method: "POST", headers: { authorization: `Bearer ${first.secret}` } }, e)).status).toBe(200); // first secret still valid
+
+    // rotate: true — revokes both prior live rows, mints exactly one fresh one.
+    await app.request("/v1/internal/orb/enrollments", { method: "POST", headers: auth, body: JSON.stringify({ installationId: 401, rotate: true }) }, e);
+    expect(await db(e).prepare("SELECT COUNT(*) AS n FROM orb_enrollments WHERE installation_id=401 AND state='enrolled'").first<{ n: number }>()).toMatchObject({ n: 1 });
+    expect((await app.request("/v1/orb/token", { method: "POST", headers: { authorization: `Bearer ${first.secret}` } }, e)).status).toBe(401); // superseded
   });
 
   it("/v1/orb/token: 401 without a Bearer secret, 401 on a bad secret, 403 when the install became ineligible", async () => {

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../src/api/routes";
 import * as githubClientModule from "../../src/github/client";
 import { exchangeOrbOAuthCode, fetchOrbOAuthUser, verifyInstallationAdmin } from "../../src/orb/oauth";
+import { issueOrbEnrollment } from "../../src/orb/broker";
 import { createTestEnv, type TestD1Database } from "../helpers/d1";
 
 const asFetch = (fn: (url: string) => Promise<Response>): typeof fetch => ((url: RequestInfo | URL) => fn(String(url))) as typeof fetch;
@@ -127,12 +128,102 @@ describe("maintainer self-enrollment via the OAuth callback", () => {
     stubGitHub();
     const res = await app.request("/v1/orb/oauth/callback?code=abc&installation_id=500", {}, e);
     expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("no-store"); // #9149: a plaintext secret must never be cacheable
     const html = await res.text();
     expect(html).toContain("Your enrollment secret");
     expect(html).toMatch(/orbsec_/);
+    expect(html).toContain("1</strong> live enrollment secret,"); // #9149: live-enrollment count surfaced, singular form
     const row = await db(e).prepare("SELECT maintainer_login, maintainer_github_id FROM orb_enrollments WHERE installation_id=500").first<{ maintainer_login: string; maintainer_github_id: number }>();
     expect(row).toMatchObject({ maintainer_login: "alice", maintainer_github_id: 7 });
   });
+
+  it("#9149: the secret page's live-enrollment count reflects an earlier enrollment, and pluralizes correctly", async () => {
+    const e = brokeredEnv();
+    await seedInstall(e, { installation_id: 510, account_login: "acme", account_type: "Organization", account_id: 20, registered: 1 });
+    stubGitHub();
+    await app.request("/v1/orb/oauth/callback?code=abc1&installation_id=510", {}, e);
+    const res = await app.request("/v1/orb/oauth/callback?code=abc2&installation_id=510", {}, e);
+    const html = await res.text();
+    expect(html).toContain("2</strong> live enrollment secrets,"); // plural
+    expect(html).toMatch(/state=510%3Arotate/); // the Rotate link carries installation 510
+    expect(html).toMatch(/state=510%3Arevoke/); // the Revoke-all link carries installation 510
+  });
+
+  it("#9149: state=<id>:rotate revokes every PRIOR live enrollment and mints exactly one fresh secret", async () => {
+    const e = brokeredEnv();
+    await seedInstall(e, { installation_id: 511, account_login: "acme", account_type: "Organization", account_id: 20, registered: 1 });
+    stubGitHub();
+    await app.request("/v1/orb/oauth/callback?code=abc1&installation_id=511", {}, e); // first, ordinary enrollment
+    const rotateRes = await app.request("/v1/orb/oauth/callback?code=abc2&state=511:rotate", {}, e); // no installation_id query param — carried in state
+    expect(rotateRes.status).toBe(200);
+    const html = await rotateRes.text();
+    expect(html).toContain("Your enrollment secret");
+    expect(html).toContain("1</strong> live enrollment secret,"); // back down to one after rotating
+    const rows = await db(e).prepare("SELECT state FROM orb_enrollments WHERE installation_id=511 ORDER BY rowid").all<{ state: string }>();
+    expect(rows.results.map((r) => r.state)).toEqual(["revoked", "enrolled"]);
+  });
+
+  it("#9149: state=<id>:revoke revokes every live enrollment and mints nothing new", async () => {
+    const e = brokeredEnv();
+    await seedInstall(e, { installation_id: 512, account_login: "acme", account_type: "Organization", account_id: 20, registered: 1 });
+    stubGitHub();
+    await app.request("/v1/orb/oauth/callback?code=abc1&installation_id=512", {}, e);
+    await app.request("/v1/orb/oauth/callback?code=abc2&installation_id=512", {}, e);
+    const revokeRes = await app.request("/v1/orb/oauth/callback?code=abc3&state=512:revoke", {}, e);
+    expect(revokeRes.status).toBe(200);
+    const html = await revokeRes.text();
+    expect(html).toContain("Enrollment secrets revoked");
+    expect(html).toContain("<strong>2</strong> live enrollment secrets have been revoked");
+    expect(await db(e).prepare("SELECT COUNT(*) AS n FROM orb_enrollments WHERE installation_id=512 AND state='enrolled'").first<{ n: number }>()).toMatchObject({ n: 0 });
+    // No new row was minted by a revoke request.
+    expect(await db(e).prepare("SELECT COUNT(*) AS n FROM orb_enrollments WHERE installation_id=512").first<{ n: number }>()).toMatchObject({ n: 2 });
+  });
+
+  it("#9149: a REVOKE request still requires admin-of-installation — a non-admin revokes nothing", async () => {
+    const e = brokeredEnv();
+    await seedInstall(e, { installation_id: 513, account_login: "acme", account_type: "Organization", account_id: 20, registered: 1 });
+    await issueOrbEnrollment(e, 513);
+    stubGitHub({ membership: { role: "member", state: "active", organization: { id: 20 } } });
+    const res = await app.request("/v1/orb/oauth/callback?code=abc&state=513:revoke", {}, e);
+    expect(res.status).toBe(403);
+    expect(await db(e).prepare("SELECT COUNT(*) AS n FROM orb_enrollments WHERE installation_id=513 AND state='enrolled'").first<{ n: number }>()).toMatchObject({ n: 1 });
+  });
+
+  it("#9149: revoke works EVEN ON a suspended/self-enrollment-disabled installation — unrelated admin state never blocks it", async () => {
+    const e = brokeredEnv();
+    await seedInstall(e, { installation_id: 514, account_login: "acme", account_type: "Organization", account_id: 20, registered: 1, suspended_at: "2026-01-01T00:00:00Z", self_enrollment_disabled: 1 });
+    await issueOrbEnrollment(e, 514);
+    stubGitHub();
+    const res = await app.request("/v1/orb/oauth/callback?code=abc&state=514:revoke", {}, e);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("<strong>1</strong> live enrollment secret has been revoked");
+  });
+
+  it("#9149: revoking an installation with no live enrollments still succeeds, reporting 0", async () => {
+    const e = brokeredEnv();
+    await seedInstall(e, { installation_id: 515, account_login: "acme", account_type: "Organization", account_id: 20, registered: 1 });
+    stubGitHub();
+    const res = await app.request("/v1/orb/oauth/callback?code=abc&state=515:revoke", {}, e);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("<strong>0</strong> live enrollment secrets have been revoked");
+  });
+
+  it("#9149: an unrecognized state action falls back to a plain enrollment (defensive default)", async () => {
+    const e = brokeredEnv();
+    await seedInstall(e, { installation_id: 516, account_login: "acme", account_type: "Organization", account_id: 20, registered: 1 });
+    stubGitHub();
+    const res = await app.request("/v1/orb/oauth/callback?code=abc&state=516:bogus", {}, e);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("Your enrollment secret");
+  });
+
+  it("#9149: a malformed state (non-numeric id, no installation_id query either) falls through to the generic landing page", async () => {
+    const e = brokeredEnv();
+    stubGitHub();
+    const res = await app.request("/v1/orb/oauth/callback?code=abc&state=not-a-number:rotate", {}, e);
+    expect(await res.text()).toContain("LoopOver Orb connected");
+  });
+
 
   it("a NON-admin is refused (403), NO enrollment created, and the install is NOT auto-registered — the escalation gate", async () => {
     const e = brokeredEnv();

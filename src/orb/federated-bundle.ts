@@ -3,7 +3,8 @@
 // This is the EXPORT side only: it packages a subset of this instance's own local calibration data into a
 // signed, anonymized bundle an operator can choose to hand to a peer. It performs NO network call — the
 // transport (push/pull against an operator-configured collector) is #6479, the receiving/trust-gating side is
-// #6480, and the key-trust scheme is #6477's design (see the TODO on the signing key below).
+// #6480, and the key-trust scheme is #6477's design (see signFederatedBundle's own doc comment below for the
+// dedicated signing key #9147 introduced).
 //
 // NOT the same thing as the #1255 orb export (src/selfhost/orb-collector.ts:155). That path is deliberately
 // distinct on five axes, and this module exists precisely because none of them can be retrofitted onto it:
@@ -25,8 +26,8 @@
 // #6481 renders "this instance's gate precision vs the peer median", so a bundle's mergePrecision must be
 // computed by the exact same confusion-matrix definition the fleet median uses, or the comparison is
 // apples-to-oranges. Same reason MIN_DECIDED gates the published precision here.
-import { createHmac } from "node:crypto";
-import { bucketReasonCode, cycleTimeMs, getOrCreateAnonSecret, instanceId } from "../selfhost/orb-collector";
+import { createHmac, randomBytes } from "node:crypto";
+import { bucketReasonCode, cycleTimeMs, getOrCreateInstanceIdentitySecret, instanceId } from "../selfhost/orb-collector";
 import { foldInstance, MIN_DECIDED, percentile, type Cell as FleetCell } from "./analytics";
 import type { FocusManifest } from "../signals/focus-manifest";
 
@@ -35,9 +36,20 @@ import type { FocusManifest } from "../signals/focus-manifest";
 export const FEDERATED_BUNDLE_SCHEMA_VERSION = 1;
 
 /** Default calibration window. Mirrors computeFleetAnalytics' 90-day default and 365-day clamp so a bundle's
- *  window is directly comparable to the fleet's. */
-const DEFAULT_WINDOW_DAYS = 90;
-const MAX_WINDOW_DAYS = 365;
+ *  window is directly comparable to the fleet's. Exported (#9148) so the import side can range-check a peer's
+ *  `windowDays` and the benchmark side can compare a peer's window against this instance's own, without
+ *  duplicating the clamp. */
+export const DEFAULT_WINDOW_DAYS = 90;
+export const MAX_WINDOW_DAYS = 365;
+
+/** Resolve the effective window (days) from a caller-supplied override, exactly as {@link buildFederatedBundle}
+ *  does internally — extracted so {@link buildFederatedBenchmark} (federated-benchmark.ts) can compute the
+ *  SAME value to pass to the import side's window-match check (#9148) without forking the clamp logic. */
+export function resolveFederatedWindowDays(windowDaysOverride: number | undefined): number {
+  return Number.isFinite(windowDaysOverride) && (windowDaysOverride as number) > 0
+    ? Math.min(windowDaysOverride as number, MAX_WINDOW_DAYS)
+    : DEFAULT_WINDOW_DAYS;
+}
 
 /**
  * The signed payload of a federated calibration bundle: every field except the signature itself.
@@ -163,14 +175,44 @@ export function canonicalizeFederatedBundleBody(body: FederatedSignalBundleBody)
  * HMAC-sign a bundle body so a receiving instance can verify it was not tampered with in transit.
  *
  * KEY-TRUST (#6477, ratified as an allowlist design — NOT a PKI/reputation system): the signing key is this
- * instance's dedicated anonymization secret (getOrCreateAnonSecret), which makes the bundle tamper-evident to
- * anyone holding that key. Peer trust itself is established on the RECEIVING side, where #6480 has SHIPPED
- * (src/orb/federated-import.ts): an importing operator explicitly adds a peer's verification key to
- * `federatedIntelligence.peerKeys` (fail-closed when unset), and only an allowlisted key can verify a bundle.
- * So this signature is the tamper-evidence layer; the receiver's allowlist is what turns it into peer trust.
+ * instance's DEDICATED federated-signing secret (getOrCreateFederatedSigningSecret) — a symmetric HMAC key a
+ * peer must hold verbatim to verify a bundle. #9147: this is deliberately a SEPARATE secret from the always-on
+ * #1255 orb export's anonymization secret (getOrCreateAnonSecret in ../selfhost/orb-collector.ts). Handing a
+ * peer the federated signing key must never also hand them the key that de-anonymizes this instance's
+ * unrelated, always-on telemetry — the two secrets share no value and are rotatable independently. Peer trust
+ * itself is established on the RECEIVING side, where #6480 has SHIPPED (src/orb/federated-import.ts): an
+ * importing operator explicitly adds a peer's verification key to `federatedIntelligence.peerKeys`
+ * (fail-closed when unset), and only an allowlisted key can verify a bundle. So this signature is the
+ * tamper-evidence layer; the receiver's allowlist is what turns it into peer trust.
  */
 export function signFederatedBundle(body: FederatedSignalBundleBody, key: string): string {
   return createHmac("sha256", key).update(canonicalizeFederatedBundleBody(body)).digest("hex");
+}
+
+/** system_flags key for the federated bundle's OWN signing secret (#9147) — never `orb:anon_secret`. */
+const FEDERATED_SIGNING_SECRET_FLAG = "orb:federated_signing_secret";
+
+/**
+ * The instance's DEDICATED federated-signing secret (#9147): a 256-bit random key generated once and
+ * persisted in system_flags, distinct from every other secret this codebase mints (the App private key, the
+ * webhook-verification secret, and — the specific bug this closes — the always-on orb export's anonymization
+ * secret). An operator enrolling a peer only ever hands out THIS value, so a peer can never use it to
+ * de-anonymize the unrelated #1255 telemetry export, and rotating either secret never affects the other.
+ */
+export async function getOrCreateFederatedSigningSecret(db: D1Database): Promise<string> {
+  const read = async (): Promise<string | undefined> => {
+    const row = await db.prepare(`SELECT value FROM system_flags WHERE key = ?`).bind(FEDERATED_SIGNING_SECRET_FLAG).first<{ value: string }>();
+    return row?.value;
+  };
+  const existing = await read();
+  if (existing) return existing;
+  const generated = randomBytes(32).toString("hex"); // 256-bit, 64 hex chars — same shape as generateAnonSecret
+  await db
+    .prepare(`INSERT OR IGNORE INTO system_flags (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)`)
+    .bind(FEDERATED_SIGNING_SECRET_FLAG, generated)
+    .run();
+  /* v8 ignore next -- a row always exists after INSERT OR IGNORE, so the ?? fallback is unreachable */
+  return (await read()) ?? generated;
 }
 
 /** Is the federated export opted in for this deployment? Absent block ⇒ false ⇒ byte-identical behavior. */
@@ -198,17 +240,16 @@ export async function buildFederatedBundle(
   if (!isFederatedIntelligenceEnabled(manifest)) return null;
 
   try {
-    const windowDays =
-      Number.isFinite(opts.windowDays) && (opts.windowDays as number) > 0
-        ? Math.min(opts.windowDays as number, MAX_WINDOW_DAYS)
-        : DEFAULT_WINDOW_DAYS;
+    const windowDays = resolveFederatedWindowDays(opts.windowDays);
     const now = Number.isFinite(opts.now) ? (opts.now as number) : Date.now();
     // Date-only cutoff, like computeFleetAnalytics — compares correctly whether created_at is ISO ('…T…Z') or
     // SQLite's CURRENT_TIMESTAMP space format ('YYYY-MM-DD HH:MM:SS').
     const cutoff = new Date(now - windowDays * 86_400_000).toISOString().slice(0, 10);
 
-    const secret = await getOrCreateAnonSecret(db);
-    const instance = instanceId(secret);
+    // #9147: instanceId is derived from the dedicated IDENTITY secret (shared with the #1255 orb export, so
+    // both pipelines dedup the same instance under the same handle) — never from the anon secret or the
+    // federated signing secret below, so rotating either never changes this instance's identity.
+    const instance = instanceId(await getOrCreateInstanceIdentitySecret(db));
 
     const { results } = await db.prepare(LOCAL_CALIBRATION_QUERY).bind(cutoff).all<LocalRow>();
     const rows = results ?? [];
@@ -255,7 +296,11 @@ export async function buildFederatedBundle(
       copycatRate: bucketShare("duplicate_risk"),
     };
 
-    return { ...body, signature: signFederatedBundle(body, secret) };
+    // #9147: signed with the DEDICATED federated signing secret — never the anon secret above, and never
+    // shared with any other credential — so handing this key to a peer can only ever verify federated
+    // bundles, not de-anonymize the unrelated always-on orb export.
+    const signingSecret = await getOrCreateFederatedSigningSecret(db);
+    return { ...body, signature: signFederatedBundle(body, signingSecret) };
   } catch (error) {
     console.error(
       JSON.stringify({ level: "error", event: "federated_bundle_failed", message: String(error).slice(0, 200) }),

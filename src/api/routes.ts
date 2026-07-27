@@ -166,6 +166,7 @@ import {
   isOrbBrokerEnabled,
   issueOrbEnrollment,
   issueOrbStoredSecret,
+  ORB_SECRET_TYPE_GITHUB_TOKEN,
   ORB_SECRET_TYPE_TENANT_DB_CREDENTIAL,
   revokeOrbEnrollment,
 } from "../orb/broker";
@@ -1761,14 +1762,15 @@ export function createApp() {
     });
     // Federated benchmark (#6481): "your gate precision vs peer median". Reads the opt-in from the loopover
     // self-repo's manifest (mirrors prReconciliation/publicStats/etc.'s fleet-wide override lookup) rather
-    // than any of the maintainer's own repos — federatedIntelligence is operator-level, not per-repo. Bounded
-    // to a single, short-timeout attempt so an unreachable or slow collector degrades the panel to its
-    // existing empty state instead of holding up the whole dashboard load.
+    // than any of the maintainer's own repos — federatedIntelligence is operator-level, not per-repo.
+    // #9148: buildFederatedBenchmark no longer pulls a peer collector on this request path at all — the
+    // local half is a single fast DB query, and the peer half is read from a cache the "federated-peer-sync"
+    // background queue job refreshes on its own cadence. This used to be a live, rate-limited network call
+    // on every dashboard load (N maintainers hitting refresh was N requests/second at the peer collector);
+    // now a slow/unreachable collector can only make the CACHE stale, never hold up this request.
     const federatedIntelligenceManifest = await loadRepoFocusManifest(c.env, resolveLoopOverSelfRepoFullName(c.env));
     const federatedBenchmark = await buildFederatedBenchmark(federatedIntelligenceManifest, c.env.DB, {
       now: Date.parse(generatedAt),
-      timeoutMs: 5_000,
-      maxAttempts: 1,
     });
     const qualityDashboard = {
       ...buildMaintainerQualityDashboard({
@@ -4441,16 +4443,19 @@ export function createApp() {
     } catch {
       ack = undefined; // tolerate an empty/invalid body — just no ack this round
     }
-    const events = await pullRelayPending(c.env, enrollment.installationId, { ack }).catch(dbBrokerError);
+    // #9150: scope the drain to THIS enrollment (or untagged/legacy rows) — not merely the installation — so a
+    // second live enrollment for the same install can never steal and destructively-ack this one's events.
+    const events = await pullRelayPending(c.env, enrollment.installationId, { ack, enrollId: enrollment.enrollId }).catch(dbBrokerError);
     if (events === null) return c.json({ error: "broker_error" }, 503);
     return c.json({ events }, 200);
   });
 
   // LoopOver Orb (#1255) — central fleet-calibration collector. Receives anonymized, reversal-aware outcome
   // batches from self-hosted instances. Sender-side HMAC anonymization is for privacy, not authentication.
-  // OPTIONAL shared-token gate (#1285): unset ⇒ OPEN ingress (the live fleet keeps working, as before); set
-  // ⇒ the collector REQUIRES it, so an operator can lock the write path down after distributing the matching
-  // ORB_COLLECTOR_TOKEN to exporters. Bounded by a hard body ceiling, and dedup'd via UNIQUE(instance_id, repo_hash, pr_hash).
+  // #9046/#9166: FAILS CLOSED when ORB_INGEST_TOKEN is unset — isAuthorizedIngest (below, shared with
+  // /v1/ams/ingest) requires an exact bearer match against the configured token; an unconfigured collector
+  // rejects rather than accepting anonymous writes. Bounded by a hard body ceiling, and dedup'd via
+  // UNIQUE(instance_id, repo_hash, pr_hash).
   app.post("/v1/orb/ingest", async (c) => {
     if (!(await isAuthorizedIngest(c.env.ORB_INGEST_TOKEN, extractBearerToken(c.req.header("authorization"))))) return c.json({ error: "unauthorized" }, 401);
     const body = await readOrbIngestBody(c.req.raw, c.req.header("content-length"));
@@ -4575,15 +4580,22 @@ export function createApp() {
   // records lands at registered=0; only REGISTERED ones count toward the global public counter (getOrbGlobalStats)
   // and are eligible for token brokering. Bearer-gated by the `/v1/internal/*` middleware (INTERNAL_JOB_TOKEN). The
   // list shows pending + registered installs so an operator knows what they're opting in.
+  //
+  // liveEnrollmentCount (#9149): how many enrollment secrets are currently live ('enrolled', not revoked) for
+  // this install — an operator previously had no way to see that a re-enrollment (issueOrbEnrollment was a bare
+  // INSERT, never revoking) had accumulated a second standing credential. A correlated subquery rather than a
+  // JOIN: each installation has at most a handful of enrollment rows, so this stays cheap without reshaping the
+  // one-row-per-installation result set a GROUP BY would require.
   app.get("/v1/internal/orb/installations", async (c) => {
     const rows = await c.env.DB
       .prepare(
         `SELECT installation_id AS installationId, account_login AS accountLogin, account_type AS accountType,
                 repository_selection AS repositorySelection, registered, suspended_at AS suspendedAt,
-                removed_at AS removedAt, first_seen_at AS firstSeenAt, last_event_at AS lastEventAt
+                removed_at AS removedAt, first_seen_at AS firstSeenAt, last_event_at AS lastEventAt,
+                (SELECT COUNT(*) FROM orb_enrollments oe WHERE oe.installation_id = orb_github_installations.installation_id AND oe.state = 'enrolled' AND oe.revoked_at IS NULL) AS liveEnrollmentCount
          FROM orb_github_installations ORDER BY last_event_at DESC`,
       )
-      .all<{ installationId: number; accountLogin: string | null; accountType: string | null; repositorySelection: string | null; registered: number; suspendedAt: string | null; removedAt: string | null; firstSeenAt: string; lastEventAt: string }>();
+      .all<{ installationId: number; accountLogin: string | null; accountType: string | null; repositorySelection: string | null; registered: number; suspendedAt: string | null; removedAt: string | null; firstSeenAt: string; lastEventAt: string; liveEnrollmentCount: number }>();
     return c.json({ installations: (rows.results ?? []).map((r) => ({ ...r, registered: r.registered === 1 })) });
   });
 
@@ -4619,9 +4631,15 @@ export function createApp() {
   // secret issuance path control-plane's hosted provisioning core (#7180/#8066) calls instead, for a credential
   // that already exists (a tenant's Postgres connection string) rather than a GitHub installation to bind.
   // `installationId` is irrelevant to that path (see issueOrbStoredSecret's own header comment for why).
+  //
+  // Also accepts an optional `{ rotate: true }` (#9149): when set, every PRIOR live enrollment for this
+  // installation is revoked before the new one is minted, mirroring the OAuth landing page's `state=<id>:rotate`
+  // flow (oauth.ts) for the operator-issued path. Defaults to false (append, not replace) -- unchanged behavior
+  // for every existing caller, since a blue/green container swap legitimately relies on two live enrollments
+  // briefly overlapping (see #9150's sibling fix, which makes that overlap safe rather than assuming away).
   app.post("/v1/internal/orb/enrollments", async (c) => {
     if (!isOrbBrokerEnabled(c.env)) return c.json({ error: "not_found" }, 404);
-    const payload = (await c.req.json().catch(() => null)) as { installationId?: unknown; secretType?: unknown; secretValue?: unknown } | null;
+    const payload = (await c.req.json().catch(() => null)) as { installationId?: unknown; secretType?: unknown; secretValue?: unknown; rotate?: unknown } | null;
     if (payload?.secretType === ORB_SECRET_TYPE_TENANT_DB_CREDENTIAL) {
       const secretValue = typeof payload.secretValue === "string" ? payload.secretValue : "";
       const result = await issueOrbStoredSecret(c.env, ORB_SECRET_TYPE_TENANT_DB_CREDENTIAL, secretValue);
@@ -4630,7 +4648,7 @@ export function createApp() {
     }
     const installationId = Number(payload?.installationId);
     if (!Number.isInteger(installationId) || installationId <= 0) return c.json({ error: "installationId required" }, 400);
-    const result = await issueOrbEnrollment(c.env, installationId);
+    const result = await issueOrbEnrollment(c.env, installationId, undefined, ORB_SECRET_TYPE_GITHUB_TOKEN, { rotate: payload?.rotate === true });
     if ("error" in result) return c.json(result, result.error === "installation_not_found" ? 404 : 409);
     return c.json(result); // { enrollId, secret } — secret shown exactly once
   });
@@ -6690,10 +6708,6 @@ function toIsoQueryDate(value: string): string | undefined {
 }
 
 
-// Optional Orb-ingest auth (#1285). FAIL-OPEN by default: with no ORB_INGEST_TOKEN configured the ingress stays
-// OPEN (matching today's live fleet — deploying this is non-breaking). Once the operator sets the token, the
-// collector REQUIRES an exact bearer match, so the write path can be locked down after the matching
-// ORB_COLLECTOR_TOKEN is rolled out to exporters.
 /**
  * #9046: the SINGLE authorization rule for every telemetry-collector ingest endpoint (Orb and AMS), so the two
  * products cannot drift apart again. They previously had separate, near-identical copies — and AMS ended up

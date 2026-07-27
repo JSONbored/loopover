@@ -4,11 +4,13 @@ import { recordGitHubRateLimitObservation } from "../../src/db/repositories";
 import { scheduledEnqueueDelaySeconds } from "../../src/selfhost/queue-common";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { clearOpsManifestOverrideCacheForTest } from "../../src/review/ops-wire";
+import { clearFederatedIntelligenceManifestOverrideCacheForTest } from "../../src/orb/federated-benchmark";
 import { createTestEnv } from "../helpers/d1";
 
 describe("worker entrypoint", () => {
   beforeEach(() => {
     clearOpsManifestOverrideCacheForTest();
+    clearFederatedIntelligenceManifestOverrideCacheForTest();
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -1000,6 +1002,37 @@ describe("worker entrypoint", () => {
     await worker.scheduled(controllerFor("2026-05-25T05:14:00.000Z"), env, executionContext(waitUntil)); // not a 10-minute boundary
     await Promise.all(waitUntil);
     expect(sent.some((m) => m.type === "reconcile-active-review-tracking")).toBe(false);
+  });
+
+  it("enqueues federated-peer-sync every 10 minutes ONLY when the loopover self-repo manifest opts in (#9148) — absent-manifest default is byte-identical", async () => {
+    const sentFor = async (enabled?: boolean, isoTime = "2026-05-25T05:10:00.000Z"): Promise<Array<import("../../src/types").JobMessage>> => {
+      clearFederatedIntelligenceManifestOverrideCacheForTest(); // each sub-case below is a fresh env; don't let the prior case's cached override leak in
+      const sent: Array<import("../../src/types").JobMessage> = [];
+      const env = createTestEnv({ LOOPOVER_DRIFT_ISSUE_REPO: "JSONbored/loopover", JOBS: { async send(message: import("../../src/types").JobMessage) { sent.push(message); } } as unknown as Queue });
+      if (enabled !== undefined) await upsertRepoFocusManifest(env, "JSONbored/loopover", { federatedIntelligence: { enabled } });
+      const waitUntil: Promise<unknown>[] = [];
+      await worker.scheduled(controllerFor(isoTime), env, executionContext(waitUntil));
+      await Promise.all(waitUntil);
+      return sent;
+    };
+
+    // No manifest block at all (absent federatedIntelligence, the fleet-wide default) → never enqueued.
+    expect((await sentFor(undefined)).some((m) => m.type === "federated-peer-sync")).toBe(false);
+    // Manifest present but explicitly disabled → still never enqueued.
+    expect((await sentFor(false)).some((m) => m.type === "federated-peer-sync")).toBe(false);
+    // Opted in, on a 10-minute boundary → exactly one federated-peer-sync job.
+    const on = await sentFor(true);
+    expect(on.filter((m) => m.type === "federated-peer-sync")).toEqual([{ type: "federated-peer-sync", requestedBy: "schedule" }]);
+  });
+
+  it("does NOT enqueue federated-peer-sync outside the 10-minute window even when opted in", async () => {
+    const sent: Array<import("../../src/types").JobMessage> = [];
+    const env = createTestEnv({ LOOPOVER_DRIFT_ISSUE_REPO: "JSONbored/loopover", JOBS: { async send(message: import("../../src/types").JobMessage) { sent.push(message); } } as unknown as Queue });
+    await upsertRepoFocusManifest(env, "JSONbored/loopover", { federatedIntelligence: { enabled: true } });
+    const waitUntil: Promise<unknown>[] = [];
+    await worker.scheduled(controllerFor("2026-05-25T05:14:00.000Z"), env, executionContext(waitUntil)); // not a 10-minute boundary
+    await Promise.all(waitUntil);
+    expect(sent.some((m) => m.type === "federated-peer-sync")).toBe(false);
   });
 
   it("enqueues selftune hourly only when LOOPOVER_REVIEW_SELFTUNE is ON", async () => {

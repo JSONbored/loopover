@@ -102,42 +102,67 @@ async function loadReuseCounters(db: D1Database, nowMs: number): Promise<Array<{
   }
 }
 
-/** Stable instance identifier (hash of the Orb/App ID — no PII). A brokered instance holds no App id, so its
- *  dedicated anonymization secret becomes the stable identity so ORB_ENROLLMENT_SECRET is never reused as
- *  a correlatable telemetry identifier.
+/** Stable instance identifier (hash of the Orb/App ID — no PII). A brokered instance holds no App id, so a
+ *  dedicated identity secret (getOrCreateInstanceIdentitySecret) becomes the stable identity instead — NOT the
+ *  anonymization secret (#9147): the anon secret must stay independently rotatable, and deriving the instance's
+ *  own identity from it would make rotating it break every dedup key (the export cursor here, and the peer
+ *  median's per-instance accounting in federated-import.ts) keyed on the OLD instanceId.
  *
  *  Exported so the federated bundle export (#1970, src/orb/federated-bundle.ts) reuses this exact opaque handle
  *  rather than minting a second instance identity with different de-anonymization properties. */
-export function instanceId(anonSecret: string): string {
-  const seed = process.env.ORB_APP_ID ?? process.env.GITHUB_APP_ID ?? `anon:${anonSecret}`;
+export function instanceId(identitySecret: string): string {
+  const seed = process.env.ORB_APP_ID ?? process.env.GITHUB_APP_ID ?? `anon:${identitySecret}`;
   return createHash("sha256").update(seed).digest("hex").slice(0, 16);
+}
+
+/** Read-or-generate-and-persist a single-purpose, per-instance 256-bit secret under `flagKey` in system_flags.
+ *  Shared by every dedicated secret this file mints (the anonymization secret, the instance identity secret) so
+ *  each stays its own independent value — never derived from, or reused as, another (#9147's key-separation
+ *  fix). Race-safe across instances sharing a Postgres DB: OR IGNORE keeps the first writer's value; the
+ *  re-read returns whichever value won, so every instance converges on the same secret. */
+async function getOrCreateSystemSecret(db: D1Database, flagKey: string, seed?: string): Promise<string> {
+  const read = async (): Promise<string | undefined> => {
+    const row = await db.prepare(`SELECT value FROM system_flags WHERE key = ?`).bind(flagKey).first<{ value: string }>();
+    return row?.value;
+  };
+  const existing = await read();
+  if (existing) return existing;
+  const generated = seed ?? generateAnonSecret(); // 256-bit, 64 hex chars
+  await db
+    .prepare(`INSERT OR IGNORE INTO system_flags (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)`)
+    .bind(flagKey, generated)
+    .run();
+  /* v8 ignore next -- a row always exists after INSERT OR IGNORE, so the ?? fallback is unreachable */
+  return (await read()) ?? generated;
 }
 
 /**
  * The instance's DEDICATED anonymization secret: a 256-bit random key generated once and persisted in
  * system_flags, then reused on every export. Stable across restarts so a repo/PR always hashes the same
- * way (the collector can dedup), per-instance, and SINGLE-PURPOSE — never the App private key or the
- * webhook-verification secret (key separation). The collector never holds it, so it cannot de-anonymize.
+ * way (the collector can dedup), per-instance, and SINGLE-PURPOSE — never the App private key, the
+ * webhook-verification secret, or (since #9147) the federated bundle signing key (key separation). The
+ * collector never holds it, so it cannot de-anonymize.
  */
 export async function getOrCreateAnonSecret(db: D1Database): Promise<string> {
-  const read = async (): Promise<string | undefined> => {
-    const row = await db
-      .prepare(`SELECT value FROM system_flags WHERE key = ?`)
-      .bind(ANON_SECRET_FLAG)
-      .first<{ value: string }>();
-    return row?.value;
-  };
-  const existing = await read();
-  if (existing) return existing;
-  const generated = generateAnonSecret(); // 256-bit, 64 hex chars
-  // Race-safe across instances sharing a Postgres DB: OR IGNORE keeps the first writer's key; the re-read
-  // returns whichever value won, so every instance converges on the same secret.
-  await db
-    .prepare(`INSERT OR IGNORE INTO system_flags (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)`)
-    .bind(ANON_SECRET_FLAG, generated)
-    .run();
-  /* v8 ignore next -- a row always exists after INSERT OR IGNORE, so the ?? fallback is unreachable */
-  return (await read()) ?? generated;
+  return getOrCreateSystemSecret(db, ANON_SECRET_FLAG);
+}
+
+/** system_flags key for the instance identity secret (#9147) — deliberately distinct from ANON_SECRET_FLAG. */
+const INSTANCE_IDENTITY_SECRET_FLAG = "orb:instance_identity_secret";
+
+/**
+ * The instance's DEDICATED identity secret (#9147): what `instanceId` hashes for a brokered instance with no
+ * App id, kept in its OWN system_flags row so rotating the anonymization secret can never change a brokered
+ * instance's identity (and therefore never resets the export watermark or the federated peer-median's
+ * per-instance accounting keyed on it). On FIRST read (no row yet — every instance that upgraded from before
+ * this secret existed, or a never-yet-exported instance), it seeds from the CURRENT anon secret: an
+ * already-live instance keeps the exact instanceId it already has (no disruptive identity change on deploy),
+ * and a brand-new instance's anon secret is just as freshly generated, so reusing it here costs it nothing.
+ * From that point on the two secrets are independent rows and can be rotated separately.
+ */
+export async function getOrCreateInstanceIdentitySecret(db: D1Database): Promise<string> {
+  const anonSecret = await getOrCreateAnonSecret(db);
+  return getOrCreateSystemSecret(db, INSTANCE_IDENTITY_SECRET_FLAG, anonSecret);
 }
 
 /** Map the gate's free-text reasonCode to a fixed, low-cardinality category — done at the source so the raw
@@ -233,7 +258,9 @@ export async function exportOrbBatch(db: D1Database, batchSize = 200, fetchFn: t
   const collectorUrl = process.env.ORB_COLLECTOR_URL ?? "https://api.loopover.ai/v1/orb/ingest";
   const secret = await getOrCreateAnonSecret(db);
   const anonymize = (process.env.ORB_ANONYMIZE ?? "true").toLowerCase() !== "false";
-  const instance = instanceId(secret);
+  // #9147: instanceId is derived from the DEDICATED identity secret, never the anon secret above — so
+  // rotating ORB_ANONYMIZE's key can never change this instance's identity or reset its export watermark.
+  const instance = instanceId(await getOrCreateInstanceIdentitySecret(db));
 
   // Read this instance's export watermark (resumes where the last run left off).
   const cursorRow = await db

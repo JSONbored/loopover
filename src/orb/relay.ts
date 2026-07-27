@@ -9,6 +9,7 @@ import { githubWebhookCoalesceKey } from "../github/webhook-coalesce";
 import { isSafeHttpUrl } from "../review/content-lane/safe-url";
 import type { GitHubWebhookPayload } from "../types";
 import { decryptSecret, encryptSecret } from "../utils/crypto";
+import { incr } from "../selfhost/metrics";
 
 // The events a brokered container needs to review/act on. Installation-lifecycle + other Orb-internal events are
 // deliberately NOT forwarded (the container runs under the CENTRAL Orb App, not its own, so it must not treat
@@ -322,18 +323,24 @@ export async function pruneRelayPending(env: Env): Promise<number> {
 
 /** Enqueue a pull-mode event for an installation. Idempotent on delivery_id (mirrors storeRelayFailure) — a GitHub
  *  redelivery reaching the Orb twice never double-queues. Prunes expired rows and caps each install's backlog first so
- *  an offline/malicious pull enrollment cannot retain raw webhook bodies indefinitely. */
+ *  an offline/malicious pull enrollment cannot retain raw webhook bodies indefinitely.
+ *
+ *  `enrollId` (#9150) tags the row with the specific enrollment forwardOrbEvent picked as the current winner
+ *  for this installation, so pullRelayPending can later scope its drain to that same enrollment instead of
+ *  "any enrollment secret valid for this installation" — closing the hole where a stale re-enrolled container
+ *  could drain and destructively-ack a live one's queue. Optional so config_push (installation-wide, not
+ *  consumer-specific) can keep enqueueing with no enrollment context at all. */
 export async function enqueueRelayPending(
   env: Env,
-  args: { deliveryId: string; installationId: number; eventName: string; rawBody: string },
+  args: { deliveryId: string; installationId: number; eventName: string; rawBody: string; enrollId?: string | null },
 ): Promise<void> {
   await pruneRelayPending(env);
   const coalesceKey = relayPendingCoalesceKey(args.eventName, args.rawBody);
   const inserted = await env.DB
     .prepare(
-      "INSERT INTO orb_relay_pending (delivery_id, installation_id, event_name, raw_body, coalesce_key) VALUES (?, ?, ?, ?, ?) ON CONFLICT(delivery_id) DO NOTHING",
+      "INSERT INTO orb_relay_pending (delivery_id, installation_id, event_name, raw_body, coalesce_key, enroll_id) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(delivery_id) DO NOTHING",
     )
-    .bind(args.deliveryId, args.installationId, args.eventName, args.rawBody, coalesceKey)
+    .bind(args.deliveryId, args.installationId, args.eventName, args.rawBody, coalesceKey, args.enrollId ?? null)
     .run();
   if (coalesceKey && inserted.meta.changes > 0) {
     await env.DB
@@ -418,21 +425,31 @@ function relayPendingCoalesceKey(eventName: string, rawBody: string): string | n
 /** Drain pending pull-mode events for an installation. The engine calls this outbound (it can't be pushed to):
  *  1) prune TTL-expired rows fleet-wide, 2) delete rows the caller ACKs (scoped to this install so one container
  *  can never ack another's), then 3) return the next ordered batch. `ack` and `limit` are both capped at the batch
- *  size to bound the SQL and the response. */
+ *  size to bound the SQL and the response.
+ *
+ *  #9150: `enrollId`, when supplied, scopes BOTH the ack-delete and the select to rows tagged for that specific
+ *  enrollment (or untagged legacy/config_push rows) — not merely `installation_id`. Without it, any enrollment
+ *  secret valid for the installation could drain (and destructively-ack) another live enrollment's queue, e.g.
+ *  a stale re-enrolled container still holding a valid-but-superseded secret. Optional (and defaults to
+ *  matching only untagged rows when omitted) so a caller that hasn't threaded an enrollId through yet degrades
+ *  to the narrower, safer set rather than erroring. */
 export async function pullRelayPending(
   env: Env,
   installationId: number,
-  opts?: { ack?: string[] | undefined; limit?: number | undefined },
+  opts?: { ack?: string[] | undefined; limit?: number | undefined; enrollId?: string | null | undefined },
 ): Promise<RelayPendingEvent[]> {
   // Prune rows the engine never came back for (same datetime() comparison style as retryFailedRelays).
   await pruneRelayPending(env);
 
+  const enrollId = opts?.enrollId ?? null;
   const ack = opts?.ack?.slice(0, RELAY_PENDING_BATCH_SIZE) ?? [];
   if (ack.length) {
     const placeholders = ack.map(() => "?").join(", ");
     await env.DB
-      .prepare(`DELETE FROM orb_relay_pending WHERE installation_id = ? AND delivery_id IN (${placeholders})`)
-      .bind(installationId, ...ack)
+      .prepare(
+        `DELETE FROM orb_relay_pending WHERE installation_id = ? AND (enroll_id = ? OR enroll_id IS NULL) AND delivery_id IN (${placeholders})`,
+      )
+      .bind(installationId, enrollId, ...ack)
       .run();
   }
 
@@ -445,8 +462,10 @@ export async function pullRelayPending(
       : RELAY_PENDING_BATCH_SIZE;
   const limit = Math.min(requestedLimit, RELAY_PENDING_BATCH_SIZE);
   const { results } = await env.DB
-    .prepare("SELECT delivery_id, event_name, raw_body, kind FROM orb_relay_pending WHERE installation_id = ? ORDER BY created_at, delivery_id LIMIT ?")
-    .bind(installationId, limit)
+    .prepare(
+      "SELECT delivery_id, event_name, raw_body, kind FROM orb_relay_pending WHERE installation_id = ? AND (enroll_id = ? OR enroll_id IS NULL) ORDER BY created_at, delivery_id LIMIT ?",
+    )
+    .bind(installationId, enrollId, limit)
     .all<{ delivery_id: string; event_name: string; raw_body: string; kind: string }>();
   return results.map((r) => ({ deliveryId: r.delivery_id, eventName: r.event_name, rawBody: r.raw_body, kind: r.kind }));
 }
@@ -536,16 +555,26 @@ export async function forwardOrbEvent(
   // then the newest relay registration, then the newest enrollment. The final tie-break is the implicit rowid
   // (monotonic insertion order) — enroll_id is a random opaque token, and CURRENT_TIMESTAMP ties at second
   // resolution, so rowid is the only stable "most recently inserted" key when those collide (#1783).
-  const row = await env.DB
+  //
+  // #9150: fetch every LIVE row (not just the winner via .first()) so a second, briefly-overlapping live
+  // enrollment for the same installation (a blue/green swap, or a secret rotated but not yet revoked) is
+  // OBSERVABLE — the sibling revoke-on-reissue fix (#9149) narrows the window this can happen in, but a
+  // rollout swap can still produce two live consumers for a short time, and that should never be silent.
+  const { results: liveRows } = await env.DB
     .prepare(
-      "SELECT relay_mode, relay_url, relay_secret_enc, relay_secret_iv, relay_secret_salt FROM orb_enrollments WHERE installation_id = ? AND state = 'enrolled' AND revoked_at IS NULL ORDER BY (relay_registered_at IS NOT NULL) DESC, relay_registered_at DESC, enrolled_at DESC, rowid DESC",
+      "SELECT enroll_id, relay_mode, relay_url, relay_secret_enc, relay_secret_iv, relay_secret_salt FROM orb_enrollments WHERE installation_id = ? AND state = 'enrolled' AND revoked_at IS NULL ORDER BY (relay_registered_at IS NOT NULL) DESC, relay_registered_at DESC, enrolled_at DESC, rowid DESC",
     )
     .bind(args.installationId)
-    .first<{ relay_mode: string; relay_url: string | null; relay_secret_enc: string | null; relay_secret_iv: string | null; relay_secret_salt: string | null }>();
+    .all<{ enroll_id: string; relay_mode: string; relay_url: string | null; relay_secret_enc: string | null; relay_secret_iv: string | null; relay_secret_salt: string | null }>();
+  const row = liveRows[0];
   if (!row) return "ignored"; // not a brokered self-host (or revoked) — nothing to relay to
+  if (liveRows.length > 1) incr("loopover_orb_relay_multiple_live_enrollments_total");
   // Pull mode (#16): a tailnet container can't be pushed to, so ENQUEUE the event for it to drain outbound.
+  // Tagged with the WINNING enrollment's id (#9150) so pullRelayPending can later scope its drain to exactly
+  // this enrollment instead of "any secret valid for this installation" — closing the hole where a second,
+  // stale-but-still-valid enrollment could drain and destructively-ack this event first.
   if (row.relay_mode === "pull") {
-    await enqueueRelayPending(env, { deliveryId: args.deliveryId, installationId: args.installationId, eventName: args.eventName, rawBody: args.rawBody });
+    await enqueueRelayPending(env, { deliveryId: args.deliveryId, installationId: args.installationId, eventName: args.eventName, rawBody: args.rawBody, enrollId: row.enroll_id });
     return "queued";
   }
   // Push mode with nothing registered (relay_url null) or no decryption key → skip. relay_secret_enc/iv are written

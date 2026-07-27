@@ -37,6 +37,9 @@ import { runSelfTuneBreaker } from "../review/outcomes-wire";
 import { isRagEnabled } from "../review/rag-wire";
 import { processSubmitDraft } from "../services/draft";
 import { retryFailedRelays } from "../orb/relay";
+import { resolveFederatedIntelligenceManifestOverride, runFederatedPeerSyncTick } from "../orb/federated-benchmark";
+import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
+import { resolveLoopOverSelfRepoFullName } from "../config/loopover-repo-focus-manifest";
 import {
   loadPendingAprRepoTransfers,
   pollPendingAprRepoTransfers,
@@ -500,6 +503,20 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       // an empty table). Never throws.
       await retryFailedRelays(env);
       return;
+    case "federated-peer-sync": {
+      // Federated peer-sync tick (#9148/#9166): pulls + trust-gates + persists peer bundles into the
+      // maintainer-dashboard benchmark cache, and pushes this instance's own bundle to its configured
+      // collector. Defense-in-depth (same pattern as ops-alerts above): the cron only enqueues this when
+      // federatedIntelligence.enabled is true, but a stale in-flight job that lands after the operator flips
+      // it off must still no-op. The cheap override check runs first; the FULL manifest (peerKeys,
+      // collectorUrl/collectorMode — fields the lightweight override doesn't carry) is only loaded once armed.
+      const federatedOverride = await resolveFederatedIntelligenceManifestOverride(env);
+      if (federatedOverride.enabled) {
+        const federatedManifest = await loadRepoFocusManifest(env, resolveLoopOverSelfRepoFullName(env));
+        await runFederatedPeerSyncTick(federatedManifest, env.DB);
+      }
+      return;
+    }
     /* v8 ignore start -- live-loop wiring: binds the injectable, unit-tested pollPendingAprRepoTransfers (#7741)
        to its real dependencies. The detection/expiry/pause logic is covered directly in
        test/unit/orb-apr-repo-transfer.test.ts; this arm is a no-op today (loadPendingAprRepoTransfers fail-empties

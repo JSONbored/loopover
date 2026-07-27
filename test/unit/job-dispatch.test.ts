@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { processJob } from "../../src/queue/job-dispatch";
 import { createTestEnv } from "../helpers/d1";
 import { upsertInstallation, upsertRepositoryFromGitHub } from "../../src/db/repositories";
+import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
+import { clearFederatedIntelligenceManifestOverrideCacheForTest } from "../../src/orb/federated-benchmark";
 import type { JobMessage } from "../../src/types";
 
 describe("processJob unknown job type (#5836)", () => {
@@ -38,6 +40,34 @@ describe("processJob unknown job type (#5836)", () => {
     await processJob(env, { type: "retry-orb-relay" } as JobMessage);
 
     expect(warnLogs.some((line) => line.includes("unknown_job_type_ignored"))).toBe(false);
+  });
+});
+
+describe("processJob federated-peer-sync (#9148/#9166)", () => {
+  afterEach(() => {
+    clearFederatedIntelligenceManifestOverrideCacheForTest();
+    vi.unstubAllGlobals();
+  });
+
+  it("is a no-op — never writes the peer-benchmark cache — when the loopover self-repo manifest has not opted in", async () => {
+    const env = createTestEnv({ LOOPOVER_DRIFT_ISSUE_REPO: "JSONbored/loopover" });
+    // The manifest override lookup itself may still fall through to a network read when nothing is cached
+    // (the same "config-as-code override" pattern every sibling scheduled job uses, e.g. resolveOpsManifestOverride)
+    // — stub it to a harmless empty response so this test exercises the GATE, not GitHub reachability.
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("null", { status: 200 })));
+    await expect(processJob(env, { type: "federated-peer-sync", requestedBy: "schedule" } as JobMessage)).resolves.toBeUndefined();
+    const row = await env.DB.prepare("SELECT 1 AS x FROM system_flags WHERE key = 'orb:federated_benchmark_cache'").first();
+    expect(row ?? null).toBeNull();
+  });
+
+  it("re-checks the FULL manifest at dispatch time and runs the sync tick when opted in, defense-in-depth against a stale enqueue", async () => {
+    const env = createTestEnv({ LOOPOVER_DRIFT_ISSUE_REPO: "JSONbored/loopover" });
+    // No collectorUrl configured, so both push and pull resolve to a no-op with zero fetch calls — this proves
+    // the job runs the real tick (which writes the peer cache) without needing a live network mock.
+    await upsertRepoFocusManifest(env, "JSONbored/loopover", { federatedIntelligence: { enabled: true } });
+    await expect(processJob(env, { type: "federated-peer-sync", requestedBy: "schedule" } as JobMessage)).resolves.toBeUndefined();
+    const row = await env.DB.prepare("SELECT value FROM system_flags WHERE key = 'orb:federated_benchmark_cache'").first<{ value: string }>();
+    expect(JSON.parse(row?.value ?? "{}")).toMatchObject({ peerCount: 0, peerMedianMergePrecision: null });
   });
 });
 

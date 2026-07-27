@@ -73,9 +73,24 @@ export function hasPromptInjection(text: string | null | undefined): boolean {
 export function neutralizePromptInjection(text: string): { text: string; injected: boolean } {
   if (!text) return { text, injected: false };
   let injected = false;
-  const cleaned = text.replace(new RegExp(INJECTION_SOURCE, "gi"), () => {
+  const cleaned = text.replace(new RegExp(INJECTION_SOURCE, "gi"), (match) => {
     injected = true;
-    return "[external-instruction-redacted]";
+    // #9076: LINE-COUNT PRESERVING. The `[^.]{0,N}` gaps above deliberately span newlines (see the header),
+    // so one match can swallow two or three diff lines -- including their leading `+`/`-`/space markers and,
+    // worst case, an `@@` hunk header or a `### path` file header. Replacing all of that with a single-line
+    // literal collapsed those newlines away.
+    //
+    // That mattered far beyond readability. The reviewer is instructed to derive an inline finding's `line` by
+    // counting forward from the `+` start of the nearest `@@` header -- over THIS text -- but the finding is
+    // then validated and posted against the ORIGINAL patch. Every anchor after a multi-line redaction was
+    // therefore shifted by the number of collapsed newlines, and a shifted anchor that still landed inside the
+    // commentable set passed validation and posted publicly on the WRONG line of a contributor's PR.
+    //
+    // Re-emitting one newline per newline consumed keeps the defanged text line-for-line congruent with the
+    // original, so the two coordinate systems cannot drift apart. The redaction itself is unchanged: the
+    // attacker's literal text still never reaches the model.
+    const newlines = (match.match(/\n/g) ?? []).length;
+    return `[external-instruction-redacted]${"\n".repeat(newlines)}`;
   });
   return { text: cleaned, injected };
 }

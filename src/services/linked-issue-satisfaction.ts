@@ -15,7 +15,15 @@
 //   • A LOW-CONFIDENCE "unaddressed" verdict is never published as unaddressed — it degrades to no finding,
 //     so an uncertain model never manufactures a false "you didn't fix this" call that could spook a
 //     contributor. "addressed"/"partial" are not similarly gated: a false-positive "looks addressed" is a much
-//     lower-stakes error than a false "unaddressed" (advisory-only either way; no gate can read this yet).
+//     lower-stakes error than a false "unaddressed".
+//   • An "unaddressed" verdict computed over a TRUNCATED diff degrades to "partial" (#9075). Absence of
+//     evidence in a window that never contained the whole change is not evidence of absence — the same
+//     reasoning #8961 already applies to truncated PR bodies elsewhere.
+//
+// #9075 correction to this header: "NO gate wiring, NO disposition change… advisory-only either way" WAS true
+// when this module was written and is not any more. Under `linkedIssueSatisfactionGateMode: "block"` an
+// `unaddressed` verdict pushes a critical-path finding reading "this PR does not appear to satisfy its linked
+// issue's scope." The fail-safes below are load-bearing, not merely tidy.
 //   • Every public string is forced through the public-safe filter; anything tripping the boundary is dropped.
 import { toPublicSafe } from "./ai-review";
 
@@ -104,9 +112,29 @@ export function buildLinkedIssueSatisfactionPrompt(input: LinkedIssueSatisfactio
     `Pull request: ${input.prTitle}`,
     input.prBody?.trim() ? `Description:\n${input.prBody.trim().slice(0, MAX_BODY_CHARS)}` : "Description: (none)",
     "",
-    "Unified diff (truncated if large):",
+    // #9075: state the FACT rather than hedging. "truncated if large" leaves the model to guess whether it is
+    // looking at the whole change, and a model that guesses "whole" will confidently report a fix as missing.
+    diffWasTruncated(input.diff) ? "Unified diff — TRUNCATED. You are NOT seeing the whole change:" : "Unified diff (complete):",
     input.diff.slice(0, MAX_DIFF_CHARS),
   ].join("\n");
+}
+
+/** In-band markers the review diff builder emits when it drops files or hunks (src/review/review-diff.ts). */
+const DIFF_TRUNCATION_MARKERS = [/…diff truncated \(\d+ files total\)/, /… \(\d+ lower-signal hunk\(s\) dropped\)/, /… \(this file's diff truncated\)/];
+
+/**
+ * Whether the diff handed to this module is known to be incomplete (#9075) — either it was cut at this
+ * module's own MAX_DIFF_CHARS re-slice, or the review diff builder upstream already dropped files or hunks and
+ * said so in band.
+ *
+ * This matters because the verdict is not advisory any more. A PR whose issue-satisfying change sits in a
+ * lower-signal hunk, a lower-priority file, or past character 60,000 would otherwise receive a confident,
+ * public "you did not fix the issue" computed from a window that never contained the fix. The confidence floor
+ * does not help: it guards against a model being unsure, not against a model being sure about the wrong input.
+ */
+export function diffWasTruncated(diff: string): boolean {
+  if (diff.length > MAX_DIFF_CHARS) return true;
+  return DIFF_TRUNCATION_MARKERS.some((marker) => marker.test(diff));
 }
 
 /** Parse the model's raw JSON text response into a {@link LinkedIssueSatisfactionResult}, or null when the
@@ -149,6 +177,9 @@ export function buildLinkedIssueSatisfactionResult(
   issueText: string | null | undefined,
   modelResponseText: string,
   confidenceFloor: number = LINKED_ISSUE_SATISFACTION_CONFIDENCE_FLOOR,
+  // #9075: the diff the verdict was computed over. Optional so existing callers keep today's behavior exactly;
+  // supplying it lets an `unaddressed` call be checked against whether the evidence could even have been visible.
+  diff?: string | undefined,
 ): LinkedIssueSatisfactionResult | null {
   if (!(issueText ?? "").trim()) return null;
   try {
@@ -156,7 +187,13 @@ export function buildLinkedIssueSatisfactionResult(
     if (!opinion) return null;
     const safeRationale = toPublicSafe(opinion.rationale);
     if (!safeRationale) return null;
-    return { status: opinion.status, rationale: safeRationale, confidence: opinion.confidence };
+    // Degrade rather than drop: "partial" still tells a maintainer the model could not confirm the issue was
+    // satisfied, without publishing a definitive "you did not fix it" derived from a window that may never
+    // have contained the fix. Only `unaddressed` is affected -- "addressed" over a truncated diff is the model
+    // finding POSITIVE evidence, which truncation cannot manufacture.
+    const truncated = diff !== undefined && diffWasTruncated(diff);
+    const status = opinion.status === "unaddressed" && truncated ? "partial" : opinion.status;
+    return { status, rationale: safeRationale, confidence: opinion.confidence };
   } catch {
     return null;
   }

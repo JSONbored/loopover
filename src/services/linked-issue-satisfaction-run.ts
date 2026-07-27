@@ -78,6 +78,9 @@ async function runWorkersSatisfactionOpinion(
   user: string,
   maxTokens: number,
   confidenceFloor?: number,
+  // #9075: the diff the verdict is computed over, so an `unaddressed` call made against a window that could
+  // not have contained the fix degrades to `partial` instead of publishing a definitive "you did not fix it".
+  diff?: string | undefined,
 ): Promise<WorkersSatisfactionOpinionResult> {
   const ai = env.AI as unknown as AiRunner | undefined;
   if (!ai || typeof ai.run !== "function") return { result: null };
@@ -99,7 +102,7 @@ async function runWorkersSatisfactionOpinion(
           extra,
         );
         const text = coerceAiText(raw);
-        const result = buildLinkedIssueSatisfactionResult(issueText, text, confidenceFloor);
+        const result = buildLinkedIssueSatisfactionResult(issueText, text, confidenceFloor, diff);
         if (result) return { result, usage: coerceAiUsage(raw), rawText: text };
       } catch (error) {
         if (isRateLimitError(error)) break;
@@ -164,11 +167,11 @@ export async function runLoopOverLinkedIssueSatisfaction(env: Env, input: Linked
   let rawModelText: string | undefined;
   if (input.providerKey) {
     const { text, usage: byokUsage } = await callAiProvider(input.providerKey, SATISFACTION_SYSTEM_PROMPT, user, maxTokens);
-    result = text ? buildLinkedIssueSatisfactionResult(input.issueText, text, confidenceFloor) : null;
+    result = text ? buildLinkedIssueSatisfactionResult(input.issueText, text, confidenceFloor, input.diff) : null;
     usage = byokUsage;
     rawModelText = text || undefined;
   } else {
-    ({ result, usage, rawText: rawModelText } = await runWorkersSatisfactionOpinion(env, input.issueText, SATISFACTION_SYSTEM_PROMPT, user, maxTokens, confidenceFloor));
+    ({ result, usage, rawText: rawModelText } = await runWorkersSatisfactionOpinion(env, input.issueText, SATISFACTION_SYSTEM_PROMPT, user, maxTokens, confidenceFloor, input.diff));
   }
   await record(env, input, "ok", estimatedNeurons, result ? `advisory finding (${result.status})` : "no usable output", { status: result?.status ?? null, surfaced: Boolean(result), byok: Boolean(input.providerKey) }, usage);
   return { status: "ok", result, estimatedNeurons, ...(rawModelText ? { rawModelText } : {}) };

@@ -559,7 +559,7 @@ import {
 } from "../review/inline-comments";
 import { evaluateClaCheck } from "../review/cla-check";
 import { evaluatePreMergeChecks } from "../review/pre-merge-checks";
-import { secretLeakFinding } from "../review/safety";
+import { reviewInputHasPromptInjection, secretLeakFinding } from "../review/safety";
 import { lockfileTamperRiskFinding } from "../review/lockfile-tamper";
 import {
   buildIssuePlanComment,
@@ -7504,6 +7504,46 @@ export function maybeAddRequiredAutoReviewSkipHold(
 }
 
 /**
+ * #9035 — a DETECTED prompt-injection attempt holds the PR for a human.
+ *
+ * Until now the defense was defang alone, which by design never touched the verdict: a caught attacker got a
+ * completely normal roll, and if a paraphrase slipped past the regex, nothing else stood between the attacker
+ * and the reviewer. That is the wrong shape for a signal this strong. Manipulation text aimed at the reviewer
+ * is not an ordinary code-quality observation — it is evidence of intent, and the one thing it must not buy is
+ * an automated decision.
+ *
+ * Held, never closed. The detector is a regex over a repository whose own subject matter is AI review, so a
+ * false positive on a legitimate PR discussing prompt handling is entirely possible, and a hold costs that
+ * contributor a wait while a close would cost them their PR. Fires only where the repo requires blocking AI
+ * review, matching its two sibling holds exactly.
+ *
+ * PURE (mutates the advisory it is given, like its siblings); the caller owns the detection input.
+ */
+export function maybeAddPromptInjectionHold(
+  env: Env,
+  args: {
+    settings: RepositorySettings;
+    advisory: Pick<Awaited<ReturnType<typeof buildPullRequestAdvisory>>, "headSha" | "findings">;
+    repoFullName: string;
+    author: string | null;
+    confirmedContributor: boolean;
+    skipAiReview?: boolean | undefined;
+    injectionDetected: boolean;
+  },
+): boolean {
+  if (!args.injectionDetected || !shouldRequirePublicAiReviewForAdvisory(env, args)) return false;
+  args.advisory.findings.push({
+    code: "ai_review_inconclusive",
+    severity: "warning",
+    title: "Reviewer-manipulation text detected in this pull request",
+    detail:
+      "This pull request's title, description, or diff contains text addressed at an automated reviewer (for example instructions to ignore prior rules or to approve the change). That content is treated as data and was redacted before review, but the attempt itself means this pull request is held for a person rather than decided automatically.",
+    action: "A maintainer should review this pull request manually and confirm the content is legitimate.",
+  });
+  return true;
+}
+
+/**
  * #9015 — the REPUTATION skip's fail-closed hold, the exact sibling of the contributor-controlled skip
  * above. A reputation downgrade (low signal, or the submissions>=8/merged<1 burst) suppresses AI review
  * entirely; without this hold the PR then proceeds on deterministic checks alone — none of which read code
@@ -10126,6 +10166,19 @@ async function maybePublishPrPublicSurface(
       confirmedContributor,
       skipAiReview: webhook.skipAiReview,
       reputationSkipped: preComputedReputationSkip === true,
+    });
+    // #9035: a caught reviewer-manipulation attempt is evidence of intent, not a code-quality observation, and
+    // must not buy an automated decision. Same fail-closed shape as the two holds above.
+    maybeAddPromptInjectionHold(env, {
+      settings,
+      advisory,
+      repoFullName,
+      author,
+      confirmedContributor,
+      skipAiReview: webhook.skipAiReview,
+      // Title and body only: those are the author-controlled fields available at this point, and they are
+      // the ones an attacker actually writes prose into. The diff is fenced and defanged on its own path.
+      injectionDetected: reviewInputHasPromptInjection({ title: pr.title, body: pr.body }),
     });
     // #one-shot-review-cadence: only even attempts the lookup when the review would otherwise be eligible to
     // run fresh this pass (mirrors how the frozen/paused branches below are similarly mutually exclusive) --

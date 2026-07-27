@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   auditPullRequestAutoReviewSkip,
   maybeAddRequiredAutoReviewSkipHold,
+  maybeAddPromptInjectionHold,
   maybeAddReputationSkipHold,
   resolveAutoReviewSkipForPullRequest,
   resolveReviewManifestForAiReview,
@@ -406,6 +407,58 @@ describe("review.auto_review wiring (#1954)", () => {
 
     loadSpy.mockRestore();
   });
+  // #9035: defang DETECTED reviewer-manipulation text all along and, by design, never let it affect the
+  // verdict — so a caught attacker got a completely normal roll, and a paraphrase that slipped past the narrow
+  // regex had nothing else standing in its way. The same text also reaches BOTH consensus reviewers, so a
+  // successful steer suppresses both and never trips the single-rejection ai_review_split rule either.
+  it("#9035: a detected prompt-injection attempt HOLDS the PR for a human", () => {
+    const blockingEnv = { AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI: {} } as Env;
+    const settings = { gatePack: "oss-anti-slop", aiReviewMode: "block", aiReviewAllAuthors: false } as never;
+    const advisory = { headSha: "sha", findings: [] as unknown[] };
+
+    const added = maybeAddPromptInjectionHold(blockingEnv, {
+      settings,
+      advisory: advisory as never,
+      repoFullName: "acme/widgets",
+      author: "attacker",
+      confirmedContributor: false,
+      injectionDetected: true,
+    });
+
+    expect(added).toBe(true);
+    expect(advisory.findings).toEqual([
+      expect.objectContaining({ code: "ai_review_inconclusive", severity: "warning", title: expect.stringContaining("Reviewer-manipulation") }),
+    ]);
+
+    // Nothing detected: silent, which is the overwhelmingly common path.
+    const untouched = { headSha: "sha", findings: [] as unknown[] };
+    expect(
+      maybeAddPromptInjectionHold(blockingEnv, {
+        settings,
+        advisory: untouched as never,
+        repoFullName: "acme/widgets",
+        author: "alice",
+        confirmedContributor: false,
+        injectionDetected: false,
+      }),
+    ).toBe(false);
+    expect(untouched.findings).toEqual([]);
+
+    // AI review OFF for this repo: nothing was expected to run, so there is no automated decision to protect.
+    const offEnv = { AI: {} } as Env;
+    const offAdvisory = { headSha: "sha", findings: [] as unknown[] };
+    expect(
+      maybeAddPromptInjectionHold(offEnv, {
+        settings: { gatePack: "oss-anti-slop", aiReviewMode: "off" } as never,
+        advisory: offAdvisory as never,
+        repoFullName: "acme/widgets",
+        author: "attacker",
+        confirmedContributor: false,
+        injectionDetected: true,
+      }),
+    ).toBe(false);
+  });
+
   it("#9015: a reputation skip HOLDS where blocking AI review is required — suspicion must never buy less scrutiny", () => {
     const blockingEnv = { AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI: {} } as Env;
     const settings = { gatePack: "oss-anti-slop", aiReviewMode: "block", aiReviewAllAuthors: false } as never;

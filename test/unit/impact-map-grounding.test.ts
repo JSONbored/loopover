@@ -62,7 +62,9 @@ describe("impact map wired into the AI reviewer's user prompt (#2186)", () => {
     expect(user).toContain("src/review/impact-map.ts");
     expect(user).toContain("src/queue/processors.ts");
     // Additive, not a replacement: the original diff section is still present.
-    expect(user).toContain("Unified diff (truncated if large):");
+    // #9035 reworded this header when the diff became a fenced untrusted region; these suites care that
+    // the diff section is present, not about its exact prose.
+    expect(user).toContain("Unified diff");
   });
 
   it("FLAG-OFF (impactMapContext absent): the prompt is byte-identical to the no-impact-map prompt", async () => {

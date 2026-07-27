@@ -290,9 +290,18 @@
   ],
   "d1_databases": [
     {
+      // #9435/#9459 cutover (2026-07-27): the previous database_id (b2c79dd6-7771-4b1f-aa6b-085d5f3e9528,
+      // internally named "gittensory" pre-rename) had grown to 8.96 GB of its 10 GB cap -- D1 never runs
+      // VACUUM (cloudflare/workerd#1618), so a large batch of now-pruned rows (contributor-decision-pack,
+      // #9459) left the file bloated with reusable-but-never-reclaimed free pages that would only grow back.
+      // This id (da7537cc-ab54-4dc1-8c38-2713f03f1130) is a fresh database, correctly named "loopover"
+      // throughout (matching the 2026-07-14 repo/app rename), populated from a verified export of the old
+      // database taken AFTER the decision-pack prune: every table's row count matched exactly except for
+      // ordinary live-write drift on actively-written tables (webhook/audit/usage logs), confirmed against
+      // d1_migrations (202/202) and the retention-pruned signal type (213/213 rows).
       "binding": "DB",
       "database_name": "loopover",
-      "database_id": "b2c79dd6-7771-4b1f-aa6b-085d5f3e9528",
+      "database_id": "da7537cc-ab54-4dc1-8c38-2713f03f1130",
       "migrations_dir": "migrations",
     },
   ],

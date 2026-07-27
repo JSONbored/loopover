@@ -244,7 +244,13 @@ describe("ProofOfPowerStats", () => {
           windowDays: 90,
           gamingFlagsCaught: null, // #9068: below the fleet's own eligibility floor
           guaranteed: {
-            close: { alpha: 0.05, lambda: 0.9, aiJudgedCoveragePct: 57.1, n: 129, backfilledPct: 98.7 },
+            close: {
+              alpha: 0.05,
+              lambda: 0.9,
+              aiJudgedCoveragePct: 57.1,
+              n: 129,
+              backfilledPct: 98.7,
+            },
             merge: null,
           },
         },

@@ -44,8 +44,20 @@ export type PublicStats = {
      *  `coveragePct` above) -- render the population it's actually over, not a bare percentage.
      *  `backfilledPct` is null when the stored calibration predates that field. */
     guaranteed?: {
-      close: { alpha: number; lambda: number; aiJudgedCoveragePct: number; n: number; backfilledPct: number | null } | null;
-      merge: { alpha: number; lambda: number; aiJudgedCoveragePct: number; n: number; backfilledPct: number | null } | null;
+      close: {
+        alpha: number;
+        lambda: number;
+        aiJudgedCoveragePct: number;
+        n: number;
+        backfilledPct: number | null;
+      } | null;
+      merge: {
+        alpha: number;
+        lambda: number;
+        aiJudgedCoveragePct: number;
+        n: number;
+        backfilledPct: number | null;
+      } | null;
     };
     instanceCount: number;
     windowDays: number;

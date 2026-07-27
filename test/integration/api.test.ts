@@ -2354,7 +2354,9 @@ describe("api routes", () => {
           account: { login: "JSONbored", id: 1, type: "User" },
           repository_selection: "selected",
           permissions: { metadata: "read", pull_requests: "write", issues: "write", checks: "write" },
-          events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
+          // #9169 promoted pull_request_review/check_run/check_suite to REQUIRED_INSTALLATION_EVENTS, so a
+          // "healthy" refresh now needs all of them subscribed, not just the pre-#9169 required set.
+          events: ["issues", "issue_comment", "pull_request", "pull_request_review", "repository", "check_run", "check_suite", "installation_repositories"],
         });
       }
       return new Response("not found", { status: 404 });

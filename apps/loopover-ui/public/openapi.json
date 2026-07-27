@@ -15591,6 +15591,448 @@
           }
         }
       },
+      "LintPrTextRequest": {
+        "type": "object",
+        "properties": {
+          "commitMessages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "prBody": {
+            "type": "string"
+          },
+          "linkedIssue": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true
+          }
+        }
+      },
+      "LintPrTextResponse": {
+        "type": "object",
+        "properties": {
+          "verdict": {
+            "type": "string"
+          },
+          "score": {
+            "type": "number"
+          },
+          "components": {
+            "nullable": true
+          },
+          "fixes": {
+            "nullable": true
+          },
+          "summary": {
+            "type": "string"
+          },
+          "generatedAt": {
+            "type": "string"
+          }
+        }
+      },
+      "CheckSlopRiskRequest": {
+        "type": "object",
+        "properties": {
+          "changedFiles": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "additions": {
+                  "type": "integer"
+                },
+                "deletions": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "path"
+              ]
+            }
+          },
+          "description": {
+            "type": "string"
+          },
+          "tests": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "testFiles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "commitMessages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "hasLinkedIssue": {
+            "type": "boolean"
+          },
+          "issueDiscoveryLane": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "changedFiles"
+        ]
+      },
+      "CheckSlopRiskResponse": {
+        "type": "object",
+        "properties": {
+          "slopRisk": {
+            "type": "number"
+          },
+          "band": {
+            "type": "string",
+            "enum": [
+              "clean",
+              "low",
+              "elevated",
+              "high"
+            ]
+          },
+          "findings": {
+            "nullable": true
+          },
+          "rubric": {
+            "type": "string"
+          }
+        }
+      },
+      "CheckImprovementPotentialRequest": {
+        "type": "object",
+        "properties": {
+          "changedFiles": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "additions": {
+                  "type": "integer"
+                },
+                "deletions": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "path"
+              ]
+            }
+          },
+          "tests": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "testFiles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "patchCoverageDeltaPercent": {
+            "type": "number"
+          },
+          "complexityDeltas": {
+            "type": "array",
+            "items": {
+              "nullable": true
+            }
+          },
+          "duplicationDeltas": {
+            "type": "array",
+            "items": {
+              "nullable": true
+            }
+          }
+        }
+      },
+      "CheckImprovementPotentialResponse": {
+        "type": "object",
+        "properties": {
+          "improvementScore": {
+            "type": "number"
+          },
+          "band": {
+            "type": "string",
+            "enum": [
+              "insufficient-signal",
+              "none",
+              "minor",
+              "moderate",
+              "significant"
+            ]
+          },
+          "findings": {
+            "nullable": true
+          }
+        }
+      },
+      "SimulateOpenPrPressureRequest": {
+        "type": "object",
+        "properties": {
+          "repoFullName": {
+            "type": "string"
+          },
+          "generatedAt": {
+            "type": "string"
+          },
+          "queueHealth": {
+            "nullable": true
+          },
+          "roleContext": {
+            "type": "object",
+            "properties": {
+              "maintainerLane": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "maintainerLane"
+            ]
+          },
+          "contributorOpenPrCount": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "repoFullName",
+          "generatedAt",
+          "roleContext"
+        ]
+      },
+      "SimulateOpenPrPressureResponse": {
+        "type": "object",
+        "properties": {
+          "repoFullName": {
+            "type": "string"
+          },
+          "generatedAt": {
+            "type": "string"
+          },
+          "lane": {
+            "type": "string"
+          },
+          "queuePressure": {
+            "type": "string"
+          },
+          "recommendedOption": {
+            "type": "string"
+          },
+          "scenarios": {
+            "type": "array",
+            "items": {
+              "nullable": true
+            }
+          },
+          "summary": {
+            "type": "string"
+          }
+        }
+      },
+      "SuggestBoundaryTestsRequest": {
+        "type": "object",
+        "properties": {
+          "changedFiles": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ]
+            }
+          },
+          "boundaryTouches": {
+            "type": "array",
+            "items": {
+              "nullable": true
+            }
+          },
+          "tests": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "testFiles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "changedFiles"
+        ]
+      },
+      "SuggestBoundaryTestsResponse": {
+        "type": "object",
+        "properties": {
+          "finding": {
+            "nullable": true
+          },
+          "spec": {
+            "nullable": true
+          }
+        }
+      },
+      "CheckTestEvidenceRequest": {
+        "type": "object",
+        "properties": {
+          "changedPaths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "testFiles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tests": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "changedPaths"
+        ]
+      },
+      "CheckTestEvidenceResponse": {
+        "type": "object",
+        "properties": {
+          "classification": {
+            "type": "string",
+            "enum": [
+              "strong",
+              "adequate",
+              "weak",
+              "absent"
+            ]
+          },
+          "changedFileCount": {
+            "type": "number"
+          },
+          "codeFileCount": {
+            "type": "number"
+          },
+          "testFileCount": {
+            "type": "number"
+          },
+          "guidance": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "CheckIssueSlopRequest": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          }
+        }
+      },
+      "CheckIssueSlopResponse": {
+        "type": "object",
+        "properties": {
+          "slopRisk": {
+            "type": "number"
+          },
+          "band": {
+            "type": "string",
+            "enum": [
+              "clean",
+              "low",
+              "elevated",
+              "high"
+            ]
+          },
+          "findings": {
+            "nullable": true
+          },
+          "rubric": {
+            "type": "string"
+          }
+        }
+      },
+      "ValidateFocusManifestRequest": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "repo_file",
+              "api_record",
+              "none"
+            ]
+          }
+        },
+        "required": [
+          "content"
+        ]
+      },
+      "ValidateFocusManifestResponse": {
+        "type": "object",
+        "properties": {
+          "present": {
+            "type": "boolean"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "normalized": {
+            "type": "object",
+            "additionalProperties": {
+              "nullable": true
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "warn",
+              "error"
+            ]
+          }
+        }
+      },
       "SelftuneOverrideAuditResponse": {
         "type": "object",
         "properties": {
@@ -20677,6 +21119,302 @@
           },
           "409": {
             "description": "Pending action was already decided"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/lint/pr-text": {
+      "post": {
+        "summary": "Lint a PR's commit messages + body — REST mirror of loopover_lint_pr_text (#9308)",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LintPrTextRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "PR-text lint verdict, score, and fix suggestions — mirrors the loopover_lint_pr_text MCP tool",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LintPrTextResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid lint/pr-text request body"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/lint/slop-risk": {
+      "post": {
+        "summary": "Assess a changeset's slop risk — REST mirror of loopover_check_slop_risk (#9308)",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckSlopRiskRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Slop-risk band and findings over the caller-supplied changed files — mirrors the loopover_check_slop_risk MCP tool",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckSlopRiskResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid lint/slop-risk request body"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/lint/improvement-potential": {
+      "post": {
+        "summary": "Score a changeset's structural improvement potential — REST mirror of loopover_check_improvement_potential (#9308)",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckImprovementPotentialRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Improvement-potential score, band, and findings — mirrors the loopover_check_improvement_potential MCP tool",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckImprovementPotentialResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid lint/improvement-potential request body"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/lint/open-pr-pressure": {
+      "post": {
+        "summary": "Simulate open-PR queue pressure for a repo — REST mirror of loopover_simulate_open_pr_pressure (#9308)",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SimulateOpenPrPressureRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Queue-pressure scenarios and the recommended option over caller-supplied queue health — mirrors the loopover_simulate_open_pr_pressure MCP tool",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SimulateOpenPrPressureResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid lint/open-pr-pressure request body"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/lint/boundary-tests": {
+      "post": {
+        "summary": "Suggest boundary tests for a changeset — REST mirror of loopover_suggest_boundary_tests (#9308)",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuggestBoundaryTestsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Boundary-test finding and suggested test spec — mirrors the loopover_suggest_boundary_tests MCP tool",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuggestBoundaryTestsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid lint/boundary-tests request body"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/lint/test-evidence": {
+      "post": {
+        "summary": "Classify a changeset's test evidence — REST mirror of loopover_check_test_evidence (#9308)",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckTestEvidenceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Test-evidence classification, file counts, and guidance over caller-supplied changed paths — mirrors the loopover_check_test_evidence MCP tool",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckTestEvidenceResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid lint/test-evidence request body"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/lint/issue-slop": {
+      "post": {
+        "summary": "Assess an issue's slop risk from its title/body — REST mirror of loopover_check_issue_slop (#9308)",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckIssueSlopRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Slop-risk band and findings over the caller-supplied issue title/body — mirrors the loopover_check_issue_slop MCP tool",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckIssueSlopResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid lint/issue-slop request body"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/validate/focus-manifest": {
+      "post": {
+        "summary": "Validate a .loopover focus-manifest config — REST mirror of loopover_validate_config (#9308)",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ValidateFocusManifestRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Focus-manifest presence, normalized config, warnings, and status — mirrors the loopover_validate_config MCP tool",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidateFocusManifestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid validate/focus-manifest request body"
           }
         },
         "security": [

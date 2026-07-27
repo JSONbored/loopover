@@ -16,7 +16,14 @@ async function seed(env: Env) {
   await db.insert(webhookEvents).values([
     { deliveryId: "wh-old-1", eventName: "push", payloadHash: "h", status: "processed", receivedAt: daysAgo(100) },
     { deliveryId: "wh-old-2", eventName: "push", payloadHash: "h", status: "processed", receivedAt: daysAgo(95) },
-    { deliveryId: "wh-recent", eventName: "push", payloadHash: "h", status: "processed", receivedAt: daysAgo(1) },
+    // Anchored to REAL now, not the fixed NOW the `daysAgo` rows use: the pruneExpiredRecords tests below
+    // pass an explicit `nowMs: NOW`, but the processJob and preview-route tests do not and so evaluate the
+    // policy against actual wall-clock time. A `daysAgo(1)` "recent" row is ~45 days before real now, which
+    // survived the old 90-day webhook_events window purely by accident and stopped surviving when that
+    // window tightened to 14 days. Real-now keeps this row genuinely recent under BOTH clocks (it is also
+    // after NOW, so it is never past a NOW-based cutoff either) and keeps each test's "recent rows are
+    // kept" intent independent of how wide the window happens to be.
+    { deliveryId: "wh-recent", eventName: "push", payloadHash: "h", status: "processed", receivedAt: new Date().toISOString() },
   ]);
   // ai_usage_events window = 90d; one old + one recent.
   await db.insert(aiUsageEvents).values([
@@ -119,6 +126,56 @@ describe("pruneExpiredRecords", () => {
     expect(results[0]?.deleted).toBe(1);
     const rows = await env.DB.prepare("SELECT id FROM agent_context_snapshots").all<{ id: string }>();
     expect(rows.results.map((row) => row.id)).toEqual(["ctx-recent"]);
+  });
+
+  // The hosted D1 reached its 10GB ceiling because these five tables had NO retention rule at all: every
+  // write then failed with `D1_ERROR: Exceeded maximum DB size`, including recordOrbWebhookEvent's INSERT,
+  // so /v1/orb/webhook returned 500 to GitHub and inbound webhook delivery stopped fleet-wide. Pinning the
+  // exact column names matters as much as the windows -- pruneExpiredRecords builds `<column> < ?` from
+  // this policy, so a column that does not exist on the table makes the rule a permanent silent no-op and
+  // the table resumes growing without bound exactly as before.
+  it("covers the five previously-unbounded high-growth tables (D1 ceiling regression)", () => {
+    const expected = [
+      { table: "check_summaries", column: "updated_at", days: 30 },
+      { table: "pull_request_files", column: "updated_at", days: 30 },
+      { table: "repo_github_totals_snapshots", column: "fetched_at", days: 30 },
+      { table: "recent_merged_pull_requests", column: "updated_at", days: 30 },
+      { table: "orb_pr_outcomes", column: "occurred_at", days: 90 },
+    ];
+    for (const want of expected) {
+      expect(RETENTION_POLICY).toContainEqual(want);
+    }
+  });
+
+  // Both webhook logs are short-lived idempotency lookups (minutes-old at most), cut 90d -> 14d as the
+  // single largest avoidable contributor to the same ceiling.
+  it("keeps both webhook idempotency logs on the tightened 14-day window", () => {
+    expect(RETENTION_POLICY).toContainEqual({ table: "webhook_events", column: "received_at", days: 14 });
+    expect(RETENTION_POLICY).toContainEqual({ table: "orb_webhook_events", column: "received_at", days: 14 });
+  });
+
+  // check_summaries was the largest single consumer in the database at the time of the outage (100,459 rows
+  // / 0.30GB of payload_json). Exercises the REAL policy window rather than an ad-hoc override, so dropping
+  // or re-widening the entry fails here.
+  it("prunes check_summaries past its policy window and keeps recent rows", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare(
+      `INSERT INTO check_summaries (id, repo_full_name, pull_number, head_sha, name, status, conclusion, payload_json, updated_at)
+       VALUES
+         ('cs-old-1', 'acme/widgets', 1, 'sha1', 'ci', 'completed', 'success', '{}', ?),
+         ('cs-old-2', 'acme/widgets', 2, 'sha2', 'ci', 'completed', 'failure', '{}', ?),
+         ('cs-recent', 'acme/widgets', 3, 'sha3', 'ci', 'completed', 'success', '{}', ?)`,
+    )
+      .bind(daysAgo(60), daysAgo(31), daysAgo(1))
+      .run();
+
+    const rule = RETENTION_POLICY.find((r) => r.table === "check_summaries");
+    expect(rule).toBeDefined();
+
+    const results = await pruneExpiredRecords(env, { nowMs: NOW, policy: [rule as (typeof RETENTION_POLICY)[number]] });
+    expect(results[0]?.deleted).toBe(2);
+    const rows = await env.DB.prepare("SELECT id FROM check_summaries").all<{ id: string }>();
+    expect(rows.results.map((row) => row.id)).toEqual(["cs-recent"]);
   });
 
   it("the policy only targets append-only/log/snapshot tables (no current-state tables)", () => {
@@ -299,7 +356,7 @@ describe("pruneExpiredRecords", () => {
     expect(rows.results.map((row) => row.id)).toEqual(["dr-recent"]);
   });
 
-  it("prunes orb_webhook_events older than its 90-day window and keeps recent rows (#9083)", async () => {
+  it("prunes orb_webhook_events older than its 14-day window and keeps recent rows (#9083)", async () => {
     const env = createTestEnv();
     await env.DB.prepare(
       `INSERT INTO orb_webhook_events (delivery_id, event_name, payload_hash, status, received_at)
@@ -311,7 +368,7 @@ describe("pruneExpiredRecords", () => {
       .run();
 
     const rule = RETENTION_POLICY.find((r) => r.table === "orb_webhook_events");
-    expect(rule).toEqual({ table: "orb_webhook_events", column: "received_at", days: 90 });
+    expect(rule).toEqual({ table: "orb_webhook_events", column: "received_at", days: 14 });
 
     const results = await pruneExpiredRecords(env, { nowMs: NOW, policy: [rule!] });
     expect(results[0]?.deleted).toBe(1);

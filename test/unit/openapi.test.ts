@@ -308,6 +308,90 @@ describe("OpenAPI contract", () => {
     expect(spec.paths["/v1/loop/request-apr-transfer"]).toBeUndefined();
   });
 
+  // #9308: the eight /v1/lint/* + /v1/validate/focus-manifest advisory-check routes are each backed by an MCP
+  // tool whose Zod input/output shapes live in src/mcp/server.ts. Assert every route is a documented POST path
+  // whose request/response components expose exactly the tool's top-level keys (the MCP table in #9308), so a
+  // future field added to a tool but not the spec (or a mis-registered component) fails loudly here.
+  it("documents the /v1/lint/* + /v1/validate/focus-manifest advisory-check family with tool-parity schemas (#9308)", () => {
+    const spec = buildOpenApiSpec();
+    const schemas = spec.components?.schemas ?? {};
+
+    const propKeys = (name: string) =>
+      Object.keys((schemas[name] as { properties?: Record<string, unknown> }).properties ?? {}).sort();
+
+    const cases = [
+      {
+        path: "/v1/lint/pr-text",
+        request: "LintPrTextRequest",
+        response: "LintPrTextResponse",
+        inputKeys: ["commitMessages", "prBody", "linkedIssue"],
+        outputKeys: ["verdict", "score", "components", "fixes", "summary", "generatedAt"],
+      },
+      {
+        path: "/v1/lint/slop-risk",
+        request: "CheckSlopRiskRequest",
+        response: "CheckSlopRiskResponse",
+        inputKeys: ["changedFiles", "description", "tests", "testFiles", "commitMessages", "hasLinkedIssue", "issueDiscoveryLane"],
+        outputKeys: ["slopRisk", "band", "findings", "rubric"],
+      },
+      {
+        path: "/v1/lint/improvement-potential",
+        request: "CheckImprovementPotentialRequest",
+        response: "CheckImprovementPotentialResponse",
+        inputKeys: ["changedFiles", "tests", "testFiles", "patchCoverageDeltaPercent", "complexityDeltas", "duplicationDeltas"],
+        outputKeys: ["improvementScore", "band", "findings"],
+      },
+      {
+        path: "/v1/lint/open-pr-pressure",
+        request: "SimulateOpenPrPressureRequest",
+        response: "SimulateOpenPrPressureResponse",
+        inputKeys: ["repoFullName", "generatedAt", "queueHealth", "roleContext", "contributorOpenPrCount"],
+        outputKeys: ["repoFullName", "generatedAt", "lane", "queuePressure", "recommendedOption", "scenarios", "summary"],
+      },
+      {
+        path: "/v1/lint/boundary-tests",
+        request: "SuggestBoundaryTestsRequest",
+        response: "SuggestBoundaryTestsResponse",
+        inputKeys: ["changedFiles", "boundaryTouches", "tests", "testFiles"],
+        outputKeys: ["finding", "spec"],
+      },
+      {
+        path: "/v1/lint/test-evidence",
+        request: "CheckTestEvidenceRequest",
+        response: "CheckTestEvidenceResponse",
+        inputKeys: ["changedPaths", "testFiles", "tests"],
+        outputKeys: ["classification", "changedFileCount", "codeFileCount", "testFileCount", "guidance"],
+      },
+      {
+        // issue-slop's MCP output is an alias of checkSlopRiskOutputSchema, so its keys match slop-risk's response.
+        path: "/v1/lint/issue-slop",
+        request: "CheckIssueSlopRequest",
+        response: "CheckIssueSlopResponse",
+        inputKeys: ["title", "body"],
+        outputKeys: ["slopRisk", "band", "findings", "rubric"],
+      },
+      {
+        path: "/v1/validate/focus-manifest",
+        request: "ValidateFocusManifestRequest",
+        response: "ValidateFocusManifestResponse",
+        inputKeys: ["content", "source"],
+        outputKeys: ["present", "warnings", "normalized", "status"],
+      },
+    ];
+
+    for (const { path, request, response, inputKeys, outputKeys } of cases) {
+      const op = spec.paths[path]?.post;
+      expect(op, `${path} should be a documented POST path`).toBeDefined();
+      expect(op?.requestBody, `${path} should document a request body`).toBeDefined();
+
+      expect(schemas[request], `${request} component should be registered`).toBeDefined();
+      expect(schemas[response], `${response} component should be registered`).toBeDefined();
+
+      expect(propKeys(request)).toEqual([...inputKeys].sort());
+      expect(propKeys(response)).toEqual([...outputKeys].sort());
+    }
+  });
+
   // #9301: the two /v1/scoring/* composer routes backed by loopover_get_eligibility_plan and
   // loopover_explain_score_breakdown. Assert each is a documented POST path whose 200 response
   // component stays field-for-field in parity with the MCP tool outputSchema.

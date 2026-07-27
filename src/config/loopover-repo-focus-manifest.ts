@@ -115,22 +115,6 @@ settings:
         trustMaintainerAuthoredIssueForReward: true
   reviewEvasionProtection: close
   draftPrClosePolicy: close
-  # Before/after screenshot-table gate (#2006), re-enabled after the 2026-07-26 false-close incident --
-  # config-as-code this time so the scoping survives DB moves and is reviewable in git history. The incident:
-  # the gate was enabled with over-broad path scoping that swept in apps/loopover-ui/public/**, and
-  # public/openapi.json is a GENERATED artifact this repo's own contribution rules require regenerating on
-  # every API change (\`npm run ui:openapi\`) -- so perfectly good non-visual API PRs were auto-closed for
-  # missing screenshots (5 PRs recovered by hand). whenPaths below therefore names only paths whose changes
-  # are genuinely visual, and deliberately EXCLUDES apps/loopover-ui/public/** (generated + static assets)
-  # and src/routeTree.gen.ts (generated, sits outside routes/). A PR touching only excluded paths is simply
-  # out of scope -- the gate never evaluates it.
-  screenshotTableGate:
-    enabled: true
-    action: close
-    whenPaths:
-      - "apps/loopover-ui/src/components/**"
-      - "apps/loopover-ui/src/routes/**"
-      - "apps/loopover-ui/src/styles.css"
   # Agent-layer autonomy dial (#773): without this block every action class defaults to "observe"
   # (deny-by-default) -- loopover had NO repository_settings DB row at all, so merge/close/approve
   # actions were silently never taken regardless of review verdict (#6401, #6402 sat fully reviewed,

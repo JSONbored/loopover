@@ -1,9 +1,10 @@
 // Unit tests for data-retention pruning (src/db/retention.ts) against the Postgres backend (#977). Mocks
 // pg.Pool so no real DB is needed — real-Postgres integration coverage lives in test/integration/selfhost-pg.test.ts.
-// retention.ts itself is unchanged: it still emits SQLite-dialect SQL (rowid, `?1`-style numbered
-// placeholders); src/selfhost/pg-dialect.ts's translateSql() is what makes it Postgres-safe, same as every
-// other query path on this backend. These tests exercise that translation end-to-end through the real
-// pruneExpiredRecords()/processJob() call path, not just the dialect translator in isolation.
+// retention.ts emits SQLite-dialect SQL (`?1`-style numbered placeholders; `rowid` only as a fallback for
+// tables without a mapped single-column PK — #9083 prefers a real indexable PK like `id`/`delivery_id`);
+// src/selfhost/pg-dialect.ts's translateSql() is what makes it Postgres-safe (including rowid→ctid), same
+// as every other query path on this backend. These tests exercise that translation end-to-end through the
+// real pruneExpiredRecords()/processJob() call path, not just the dialect translator in isolation.
 import { describe, expect, it, vi } from "vitest";
 import type { Pool } from "pg";
 import { createPgAdapter } from "../../src/selfhost/pg-adapter";
@@ -18,7 +19,9 @@ interface MockPgPool {
 
 /** A minimal fake Postgres that also acts as a regression guard: if untranslated SQLite SQL (the `rowid`
  *  pseudo-column) ever reaches it again, it throws the exact error a real Postgres raised in the live
- *  self-host incident (dead-lettered job `_selfhost_jobs.id = 61132`, `prune-retention`, 5 attempts). */
+ *  self-host incident (dead-lettered job `_selfhost_jobs.id = 61132`, `prune-retention`, 5 attempts).
+ *  #9083: production deletes by a real PK (`id` / `delivery_id`) when mapped; the mock must accept that
+ *  shape (and the rowid→ctid fallback for unmapped tables), not only the pre-#9083 `ctid`-only form. */
 function makeRetentionPgPool(remaining: Record<string, number> = {}): MockPgPool {
   const calls: string[] = [];
   const fn = vi.fn().mockImplementation(async (sql: unknown) => {
@@ -32,10 +35,14 @@ function makeRetentionPgPool(remaining: Record<string, number> = {}): MockPgPool
       return { rows: [{ n: remaining[table] ?? 0 }], rowCount: 1 };
     }
 
-    const deleteMatch = /^DELETE FROM (\w+) WHERE ctid IN \(SELECT ctid FROM \1 WHERE .*? LIMIT (\d+)\)$/i.exec(q);
+    // #9083 PK-ordered delete: `DELETE FROM t WHERE <pk> IN (SELECT <pk> FROM t WHERE … LIMIT n)`
+    // (pk is usually `id`/`delivery_id`; unmapped tables fall back to rowid→ctid after dialect translate).
+    const deleteMatch =
+      /^DELETE FROM (\w+) WHERE (\w+) IN \(SELECT \2 FROM \1 WHERE .*? LIMIT (\d+)\)$/i.exec(q) ??
+      /^DELETE FROM (\w+) WHERE ctid IN \(SELECT ctid FROM \1 WHERE .*? LIMIT (\d+)\)$/i.exec(q);
     if (deleteMatch) {
       const table = deleteMatch[1] as string;
-      const limit = Number(deleteMatch[2]);
+      const limit = Number(deleteMatch[deleteMatch.length - 1]);
       const have = remaining[table] ?? 0;
       const changes = Math.min(have, limit);
       remaining[table] = have - changes;

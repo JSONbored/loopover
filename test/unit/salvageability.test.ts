@@ -81,11 +81,15 @@ describe("resolveAiReviewSalvageableHold", () => {
     expect(hold!.comment).toContain("HELD with guidance");
   });
 
-  it("defaults: no configured floor uses the gate default, and a confidence-less blocker counts as certainty (at/above floor)", () => {
+  it("defaults: no configured floor uses the gate default; a confidence-less blocker is sub-floor (#9085), so salvageability stands down", () => {
+    // With an explicit high confidence and no configured floor, the default close floor (0.93) applies and
+    // the salvageability hold fires.
+    expect(resolveAiReviewSalvageableHold(aiEval(0.99), { aiReviewSalvageabilityMinScore: 60 }, salv)).toBeDefined();
+    // #9085: an ABSENT confidence degrades to CONFIDENCE_WHEN_UNSTATED (0.5), below the default floor — the
+    // low-confidence hold owns that case; salvageability must not treat silence as certainty.
     const noConfidence = aiEval(0.99);
     delete (noConfidence.blockers[0] as { confidence?: number }).confidence;
-    const hold = resolveAiReviewSalvageableHold(noConfidence, { aiReviewSalvageabilityMinScore: 60 }, salv);
-    expect(hold).toBeDefined();
+    expect(resolveAiReviewSalvageableHold(noConfidence, { aiReviewSalvageabilityMinScore: 60 }, salv)).toBeUndefined();
   });
 
   it("knob unset (the default) or no score: never changes a disposition", () => {

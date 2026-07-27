@@ -1660,6 +1660,18 @@ describe("GitHub backfill", () => {
   // (`liveReviewDecision ?? pr.reviewDecision`), so a PR approved at backfill time and later flipped to
   // CHANGES_REQUESTED still read as APPROVED -> approvalsSatisfied -> merge. The sentinel is a real VALUE
   // precisely so it survives that `??` and the stale stored decision can never be substituted.
+  describe("fetchLivePullRequestReviewDecision — repoFullName guard (#9317)", () => {
+    it("returns undefined for extra-segment and whitespace-padded slugs before any GraphQL call", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      const fetchSpy = vi.fn(async () => Response.json({ data: { repository: { pullRequest: { reviewDecision: "APPROVED" } } } }));
+      vi.stubGlobal("fetch", fetchSpy);
+      for (const repoFullName of ["owner/repo/extra", "owner/ repo", " owner/repo"]) {
+        expect(await fetchLivePullRequestReviewDecision(env, repoFullName, 7, "public-token")).toBeUndefined();
+      }
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+  });
+
   describe("fetchLivePullRequestReviewDecision — partial-response guard (#9052)", () => {
     it("returns the unreadable sentinel on a 200-with-errors response, so the stale stored decision cannot win the ?? fallback", async () => {
       const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
@@ -2527,6 +2539,10 @@ describe("GitHub backfill", () => {
       await expect(fetchLiveReviewThreadBlockers(env, "JSONbored/gittensory", 1, undefined)).resolves.toEqual([]);
       expect(fetchSpy).not.toHaveBeenCalled();
       await expect(fetchLiveReviewThreadBlockers(env, "malformed", 1, "public-token")).resolves.toEqual([]);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      for (const repoFullName of ["owner/repo/extra", "owner/ repo", " owner/repo"]) {
+        await expect(fetchLiveReviewThreadBlockers(env, repoFullName, 1, "public-token")).resolves.toEqual([]);
+      }
       expect(fetchSpy).not.toHaveBeenCalled();
       await expect(fetchLiveReviewThreadBlockers(env, "JSONbored/gittensory", 1, "public-token")).resolves.toEqual([]);
       expect(fetchSpy).toHaveBeenCalledTimes(1);

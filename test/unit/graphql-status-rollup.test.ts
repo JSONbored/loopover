@@ -76,6 +76,16 @@ describe("fetchLiveCiAggregateViaGraphQl — verdicts", () => {
     expect(await fetchLiveCiAggregateViaGraphQl(env, "no-slash", SHA, TOKEN)).toBeNull();
   });
 
+  // #9317: segment-count + whitespace guard, matching pr-actions.ts/assignees.ts/labels.ts (#8311).
+  it("returns null for extra-segment and whitespace-padded repo slugs before any GraphQL call (#9317)", async () => {
+    const fetchSpy = vi.fn(async () => Response.json(graphqlBody({ runs: [{ name: "build", conclusion: "SUCCESS", status: "COMPLETED" }] })));
+    vi.stubGlobal("fetch", fetchSpy);
+    for (const repoFullName of ["owner/repo/extra", "owner/ repo", " owner/repo"]) {
+      expect(await fetchLiveCiAggregateViaGraphQl(env, repoFullName, SHA, TOKEN)).toBeNull();
+    }
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("returns null on a GraphQL error or an unexpected/absent commit (→ REST fallback)", async () => {
     stubGraphql(graphqlBody(), { status: 500 });
     expect(await fetchLiveCiAggregateViaGraphQl(env, REPO, SHA, TOKEN)).toBeNull();

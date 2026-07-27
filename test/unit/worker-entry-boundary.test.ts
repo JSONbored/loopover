@@ -72,14 +72,34 @@ describe("worker entry boundary", () => {
     expect(forbidden, `worker entry must not reach agent-only modules: ${forbidden.join(", ")}`).toEqual([]);
   });
 
-  it("does not reference pixelmatch, pngjs, visual-diff, gifenc, or sharp in worker-reachable source", () => {
+  // Scans MODULE SPECIFIERS, not raw file text. What this guards is the Worker BUNDLE: a Node-only dep can
+  // only get bundled by being imported (statically or dynamically), so parsing the same specifiers
+  // collectReachableSources already walks catches every real inclusion path. Grepping whole-file content
+  // instead produced a false positive the moment ordinary English prose contained one of these words --
+  // #9230 added the user-facing string "route(s) crossed the visual-diff threshold" to
+  // src/review/visual/visual-findings.ts (a file worker-reachable since #4120, importing none of these deps),
+  // and the raw-content regex failed a green tree over a sentence. Bending correct user-facing copy to dodge
+  // a test regex would have been the wrong repair; narrowing the check to what it actually means is the right
+  // one.
+  it("does not import pixelmatch, pngjs, visual-diff, gifenc, or sharp from worker-reachable source", () => {
     const hits = collectReachableSources(WORKER_ENTRY)
       .map((file) => {
-        const content = readFileSync(file, "utf8");
-        return FORBIDDEN_IDENTIFIERS.test(content) ? relativeToRoot(file) : null;
+        const offending = parseImportSpecifiers(file).filter((specifier) => FORBIDDEN_IDENTIFIERS.test(specifier));
+        return offending.length > 0 ? `${relativeToRoot(file)} (${offending.join(", ")})` : null;
       })
       .filter((entry): entry is string => entry !== null);
-    expect(hits, `worker-reachable files must not mention Node-only visual diff/GIF/image deps: ${hits.join(", ")}`).toEqual([]);
+    expect(hits, `worker-reachable files must not import Node-only visual diff/GIF/image deps: ${hits.join(", ")}`).toEqual([]);
+  });
+
+  // Proves the specifier-scoped check above is still DISCRIMINATING, not vacuously passing: the same regex
+  // must still flag a real dependency import, and must still ignore the same word in prose. Without this, a
+  // future edit that broke the matching entirely would look identical to a clean tree.
+  it("the forbidden-identifier check still flags a real import specifier and still ignores prose", () => {
+    expect(["sharp", "pixelmatch", "gifenc", "pngjs", "@foo/visual-diff"].every((specifier) => FORBIDDEN_IDENTIFIERS.test(specifier))).toBe(true);
+    expect(["./capture", "../../types", "node:fs", "hono"].some((specifier) => FORBIDDEN_IDENTIFIERS.test(specifier))).toBe(false);
+    // The exact #9230 prose that broke the old whole-file scan is not a module specifier, so it is correctly
+    // invisible to a specifier-scoped check -- while the bare dep name it contains still is not.
+    expect(parseImportSpecifiers(join(srcRoot, "review/visual/visual-findings.ts")).some((s) => FORBIDDEN_IDENTIFIERS.test(s))).toBe(false);
   });
 
   it("does not reference visual diff or GIF modules in the published MCP bin bundle", () => {

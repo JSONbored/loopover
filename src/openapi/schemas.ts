@@ -1991,6 +1991,23 @@ export const GateConfigEffectiveResponseSchema = z
   })
   .openapi("GateConfigEffectiveResponse");
 
+/** #9303: mirrors selftuneOverrideAuditOutputSchema (src/mcp/server.ts) — audit rows stay z.unknown(),
+ * listOverrideAudit is the single source of truth for the event fields. */
+export const SelftuneOverrideAuditResponseSchema = z
+  .object({
+    repoFullName: z.string().optional(),
+    audit: z.array(z.unknown()).optional(),
+  })
+  .openapi("SelftuneOverrideAuditResponse");
+
+/** #9303: mirrors clearSelftuneOverrideOutputSchema (src/mcp/server.ts) — the write-side confirmation shape. */
+export const ClearSelftuneOverrideResponseSchema = z
+  .object({
+    repoFullName: z.string().optional(),
+    cleared: z.boolean().optional(),
+  })
+  .openapi("ClearSelftuneOverrideResponse");
+
 /**
  * Response body for POST /v1/scoring/eligibility-plan. Field-level parity with `eligibilityPlanOutputSchema`
  * (the `loopover_get_eligibility_plan` MCP tool `outputSchema`) in src/mcp/server.ts — #9301.

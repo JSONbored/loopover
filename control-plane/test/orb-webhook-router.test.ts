@@ -53,6 +53,125 @@ function baseConfig(overrides: Partial<OrbWebhookRouterConfig> & { registry: Ten
   return { binding: fakeNamespace({}), webhookSecret: WEBHOOK_SECRET, ...overrides };
 }
 
+function streamBody(chunk: string): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(chunk));
+      controller.close();
+    },
+  });
+}
+
+// #9143 (defect 6): this route used to buffer an UNBOUNDED body TWICE (a `.clone()` plus a `request.text()`)
+// before ever checking the signature -- no content-length precheck, no streaming limit at all -- even though
+// it sits OUTSIDE the admin Bearer wall (its declared twin, src/orb/webhook.ts#handleOrbWebhook, has both,
+// governed by GITHUB_WEBHOOK_MAX_BODY_BYTES, fixed there by #8888). `maxBodyBytes` overrides keep these tests
+// fast/deterministic without allocating megabyte-sized strings.
+test("routeOrbWebhook: a Content-Length exceeding maxBodyBytes is rejected (413) before ever reading the body", async () => {
+  const registry = createFakeTenantRegistry();
+  let lookups = 0;
+  const spiedRegistry: TenantRegistry = { ...registry, getByOrbInstallationId: (id) => { lookups += 1; return registry.getByOrbInstallationId(id); } };
+  const request = new Request("https://control-plane.example/v1/orb/webhook", {
+    method: "POST",
+    headers: { "content-length": "1000", "x-hub-signature-256": githubSignature("ignored") },
+    body: "ignored",
+  });
+
+  const response = await routeOrbWebhook(baseConfig({ registry: spiedRegistry, maxBodyBytes: 10 }), request);
+
+  assert.equal(response.status, 413);
+  assert.deepEqual(await response.json(), { error: "payload_too_large", maxBytes: 10 });
+  assert.equal(lookups, 0);
+});
+
+test("routeOrbWebhook: a body exceeding maxBodyBytes with NO Content-Length header is still rejected (413) via the streaming limit", async () => {
+  const registry = createFakeTenantRegistry();
+  const request = new Request("https://control-plane.example/v1/orb/webhook", {
+    method: "POST",
+    headers: { "x-hub-signature-256": githubSignature("ignored") },
+    body: streamBody("a".repeat(20)),
+    duplex: "half",
+  } as RequestInit);
+
+  const response = await routeOrbWebhook(baseConfig({ registry, maxBodyBytes: 10 }), request);
+
+  assert.equal(response.status, 413);
+  assert.deepEqual(await response.json(), { error: "payload_too_large", maxBytes: 10 });
+});
+
+test("routeOrbWebhook: a non-numeric Content-Length header is ignored by the precheck, falling through to the streaming limit", async () => {
+  const registry = createFakeTenantRegistry();
+  const request = new Request("https://control-plane.example/v1/orb/webhook", {
+    method: "POST",
+    headers: { "content-length": "not-a-number", "x-hub-signature-256": githubSignature("ignored") },
+    body: "ignored",
+  });
+
+  const response = await routeOrbWebhook(baseConfig({ registry, maxBodyBytes: 10_000 }), request);
+
+  // Not rejected by the (skipped) precheck -- the correctly-signed body verifies fine and proceeds all the way
+  // to the (non-JSON) payload check, proving the malformed header didn't crash or silently reject anything.
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: "invalid_json" });
+});
+
+test("routeOrbWebhook: a Content-Length of '0' parses to null (not a positive int), falling through to the streaming limit", async () => {
+  const registry = createFakeTenantRegistry();
+  const request = new Request("https://control-plane.example/v1/orb/webhook", {
+    method: "POST",
+    headers: { "content-length": "0", "x-hub-signature-256": githubSignature("ignored") },
+    body: "ignored",
+  });
+
+  const response = await routeOrbWebhook(baseConfig({ registry, maxBodyBytes: 10_000 }), request);
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: "invalid_json" });
+});
+
+test("routeOrbWebhook: an absent request body reads as an empty string, not null (no stream to read)", async () => {
+  const registry = createFakeTenantRegistry();
+  const request = new Request("https://control-plane.example/v1/orb/webhook", { method: "POST" });
+
+  const response = await routeOrbWebhook(baseConfig({ registry, maxBodyBytes: 10_000 }), request);
+
+  // Empty body verifies against an empty signature only if the secret matches an empty string's HMAC -- here
+  // it won't, so this proves readBodyWithLimit's `!stream` branch returns "" rather than throwing.
+  assert.equal(response.status, 401);
+});
+
+test("routeOrbWebhook: skips undefined stream chunks while reading the body", async () => {
+  const registry = createFakeTenantRegistry();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(undefined as unknown as Uint8Array);
+      controller.close();
+    },
+  });
+  const request = new Request("https://control-plane.example/v1/orb/webhook", {
+    method: "POST",
+    headers: { "x-hub-signature-256": "sha256=bad" },
+    body: stream,
+    duplex: "half",
+  } as RequestInit);
+
+  const response = await routeOrbWebhook(baseConfig({ registry, maxBodyBytes: 10_000 }), request);
+
+  assert.equal(response.status, 401); // empty (undefined-skipped) body + bad sig
+});
+
+test("routeOrbWebhook: a body within maxBodyBytes is processed normally", async () => {
+  const registry = createFakeTenantRegistry();
+  await registry.upsert({ tenant: { name: "acme" }, product: "orb", state: "active", createdAt: "t0", updatedAt: "t0", orbInstallationId: 42 });
+  const containerResponse = Response.json({ ok: true }, { status: 202 });
+  const binding = fakeNamespace({ "orb:acme": fakeStub(containerResponse) });
+  const request = webhookRequest({ installation: { id: 42 } });
+
+  const response = await routeOrbWebhook(baseConfig({ registry, binding, maxBodyBytes: 10_000 }), request);
+
+  assert.equal(response.status, 202);
+});
+
 test("routeOrbWebhook: a missing x-hub-signature-256 header is rejected (401), no registry lookup happens", async () => {
   const registry = createFakeTenantRegistry();
   let lookups = 0;

@@ -34,7 +34,7 @@ import {
   provisionTenant,
   type ProvisioningPagerDutyOptions,
 } from "./provisioning.js";
-import type { Product, TenantLifecycleState, TenantProvisioningDriver } from "./tenant-provisioning-driver.js";
+import type { TenantLifecycleState, TenantProvisioningDriver } from "./tenant-provisioning-driver.js";
 import type { AmsCycleSchedule, TenantRegistry, TenantRegistryRecord } from "./tenant-registry.js";
 
 /** States that do NOT block re-creating a tenant of the same name+product (or re-claiming its installation
@@ -109,29 +109,6 @@ function parseOrbInstallationId(value: unknown): number | string | undefined {
     return "orbInstallationId must be a positive integer";
   }
   return value;
-}
-
-/** Validated body of `POST /v1/tenants/rollout` (#4898): an explicit tenant-name list (no percentage/canary
- *  selector — no such primitive exists elsewhere in this codebase to build on) plus the version to pin.
- *  `pinnedVersion: null` is an explicit unpin (revert to the release channel's default). Scoped to a single
- *  `product` for the whole batch (#8024: a name is no longer globally unique across products, and a version
- *  rollout is naturally a per-product-fleet operation anyway -- ORB and AMS ship independently versioned
- *  images, so mixing them in one rollout call was never a meaningful use case even before #8024). */
-type RolloutRequest = { names: string[]; product: Product; pinnedVersion: string | null };
-
-function parseRolloutRequest(body: unknown): RolloutRequest | string {
-  if (body === null || typeof body !== "object" || Array.isArray(body)) return "body must be a JSON object";
-  const { names, product, pinnedVersion } = body as Record<string, unknown>;
-  if (!Array.isArray(names) || names.length === 0) return "names must be a non-empty array of tenant names";
-  if (!names.every((name): name is string => typeof name === "string" && name.trim() !== "")) {
-    return "names must be a non-empty array of tenant names";
-  }
-  if (new Set(names).size !== names.length) return "names must not repeat a tenant";
-  if (typeof product !== "string" || !product.trim()) return "product is required";
-  if (pinnedVersion !== null && (typeof pinnedVersion !== "string" || !pinnedVersion.trim())) {
-    return "pinnedVersion must be a non-blank string, or null to unpin";
-  }
-  return { names, product: product.trim(), pinnedVersion: pinnedVersion === null ? null : pinnedVersion.trim() };
 }
 
 export function createTenantHttpApp(deps: TenantHttpAppDeps): Hono {
@@ -225,40 +202,67 @@ export function createTenantHttpApp(deps: TenantHttpAppDeps): Hono {
     return c.json({ tenants: records.map((record) => ({ ...safeRecord(record), createdAt: record.createdAt, updatedAt: record.updatedAt })) });
   });
 
-  // #4898: rollout/rollback = updating one or more tenants' pinnedVersion via an explicit list. Validates the
-  // WHOLE list before touching any record (all-or-nothing) so a typo'd name can never leave a fleet half
-  // rolled out; each updated tenant's container picks its new version up at its next (re)start
-  // (container-driver.ts's PINNED_VERSION_ENV_VAR). Every unlisted tenant is untouched by construction —
-  // the per-tenant-independence guarantee this endpoint exists to keep.
-  app.post("/v1/tenants/rollout", async (c) => {
+  // #9143 (defect 3): DISABLED, not implemented. #4898's rollout/rollback route used to silently no-op on
+  // every one of its four promised effects: (1) it only ever wrote the registry's own `pinnedVersion` field
+  // and restarted nothing; (2) `createTenantContainer` early-returns once `isProvisioned()`, so a "rollout"
+  // against an already-running tenant never even reaches the one call site that injects
+  // `PINNED_VERSION_ENV_VAR`; (3) `provisionTenant({name}, ...)` constructs a FRESH `Tenant` carrying only
+  // `name`, dropping any previously-stored `pinnedVersion` the moment a tenant is next (re)provisioned anyway;
+  // and (4) nothing anywhere in this repo ever reads `LOOPOVER_PINNED_VERSION` back out of a container. "Rollback
+  // is the control you least want to discover is fake" — until the image side of a real rollout mechanism
+  // exists (a restart-and-repin path through createContainer, or a pin baked into the image at build time),
+  // this returns an explicit 501 rather than accepting a request that changes nothing any caller can observe.
+  // `Tenant.pinnedVersion` and `PINNED_VERSION_ENV_VAR` (tenant-provisioning-driver.ts/container-driver.ts) are
+  // left in place, unused by any route now — exactly what a real rollout mechanism would build on later.
+  app.post("/v1/tenants/rollout", (c) => c.json({ error: "not_implemented", message: "tenant rollout is not implemented yet (#9143)" }, 501));
+
+  // #9143 (defect 2 manual recovery): re-links an EXISTING tenant's `orbInstallationId`. tenant-registry.ts's
+  // `upsert` used to unconditionally delete the OLD installation-ID index entry whenever a tenant's own
+  // `orbInstallationId` changed (or was cleared) between upserts — without checking whether that index entry
+  // still actually pointed at THIS tenant. Since `isRecreatableState` deliberately lets a "failed"/"torn down"
+  // tenant's installation claim be taken over by a brand-new tenant of a different name, a stale tenant being
+  // re-created or torn down LONG after its installation ID was reclaimed by someone else could silently delete
+  // the CURRENT claimant's live routing pointer — leaving that tenant ACTIVE but permanently unreachable by
+  // webhook (`orbInstallationId` is otherwise settable only at create; a create against an existing tenant
+  // 409s). `upsert` itself is now fixed to never do this going forward (see its own header comment), but a
+  // tenant whose pointer was ALREADY wiped by the pre-fix bug has no other way back — this route is that path.
+  app.patch("/v1/tenants/:name/orb-installation", async (c) => {
+    const name = c.req.param("name");
+    // Product is required so the registry can resolve the same `${product}:${name}` key used at create (#8024).
+    const product = c.req.query("product");
+    if (typeof product !== "string" || !product.trim()) {
+      return c.json({ error: "invalid_request", message: "product query parameter is required" }, 400);
+    }
+    if (product !== "orb") {
+      return c.json({ error: "invalid_request", message: 'orbInstallationId is only valid for product "orb"' }, 400);
+    }
+
+    const existing = await deps.registry.get(name, product);
+    if (!existing) return c.json({ error: "tenant_not_found" }, 404);
+
     const body: unknown = await c.req.json().catch(() => null);
-    if (body === null) return c.json({ error: "invalid_json" }, 400);
-    const parsed = parseRolloutRequest(body);
-    if (typeof parsed === "string") return c.json({ error: "invalid_request", message: parsed }, 400);
+    if (body === null || typeof body !== "object") return c.json({ error: "invalid_json" }, 400);
+    const { orbInstallationId: orbInstallationIdInput } = body as Record<string, unknown>;
+    if (orbInstallationIdInput === undefined) {
+      return c.json({ error: "invalid_request", message: "orbInstallationId is required" }, 400);
+    }
+    const orbInstallationId = parseOrbInstallationId(orbInstallationIdInput);
+    if (typeof orbInstallationId === "string") return c.json({ error: "invalid_request", message: orbInstallationId }, 400);
 
-    const existing = new Map<string, TenantRegistryRecord>();
-    for (const name of parsed.names) {
-      const record = await deps.registry.get(name, parsed.product);
-      if (!record) return c.json({ error: "tenant_not_found", message: `unknown tenant "${name}"` }, 404);
-      // A torn-down tenant has no container to ever read the pin — surfacing the mistake beats silently
-      // stamping a version onto a terminated record (same conflict posture as the create route's 409).
-      if (record.state === "torn down") return c.json({ error: "tenant_torn_down", message: `tenant "${name}" is torn down` }, 409);
-      existing.set(name, record);
+    // Refuse to steal an installation ID a DIFFERENT, currently-claiming tenant still legitimately holds —
+    // same conflict posture as the create route's own check, just excluding this tenant's own current record
+    // (re-linking to the ID it already has, or recovering one it lost, must not 409 against itself).
+    const conflicting = await deps.registry.getByOrbInstallationId(orbInstallationId!);
+    if (conflicting && conflicting.tenant.name !== existing.tenant.name && !isRecreatableState(conflicting.state)) {
+      return c.json(
+        { error: "installation_already_claimed", message: `installation ${orbInstallationId} is already claimed by tenant "${conflicting.tenant.name}"` },
+        409,
+      );
     }
 
-    const now = new Date().toISOString();
-    const updated: TenantRegistryRecord[] = [];
-    for (const name of parsed.names) {
-      const record = existing.get(name)!;
-      const next: TenantRegistryRecord = {
-        ...record,
-        tenant: { ...record.tenant, pinnedVersion: parsed.pinnedVersion },
-        updatedAt: now,
-      };
-      await deps.registry.upsert(next);
-      updated.push(next);
-    }
-    return c.json({ tenants: updated.map((record) => ({ ...safeRecord(record), createdAt: record.createdAt, updatedAt: record.updatedAt })) });
+    const record: TenantRegistryRecord = { ...existing, orbInstallationId, updatedAt: new Date().toISOString() };
+    await deps.registry.upsert(record);
+    return c.json(safeRecord(record));
   });
 
   app.delete("/v1/tenants/:name", async (c) => {
@@ -271,6 +275,17 @@ export function createTenantHttpApp(deps: TenantHttpAppDeps): Hono {
 
     const existing = await deps.registry.get(name, product);
     if (!existing) return c.json({ error: "tenant_not_found" }, 404);
+    // #9143 (defect 8 minimum): a tenant still standing up has no container/database/secrets settled yet --
+    // tearing it down mid-provision races the in-flight provisionTenant call (which is still writing its OWN
+    // "active"/"failed" transition to this same record, #7677) and there is nothing durable yet to actually
+    // revoke/drop/destroy. KV's eventual consistency means even THIS read-then-act check is advisory, not a
+    // real compare-and-swap (see tenant-registry.ts's own header comment on why a real serialized claim needs
+    // a Durable Object or D1) -- but refusing the request while the record is observably "provisioning" is
+    // strictly better than racing it silently, and costs nothing: the caller can simply retry once the
+    // in-flight create settles to "active" or "failed".
+    if (existing.state === "provisioning") {
+      return c.json({ error: "tenant_provisioning", message: `tenant "${name}" is still provisioning; retry once it settles` }, 409);
+    }
 
     const result = await deprovisionTenant(existing.tenant, existing.product, deps.driver, deps.pagerDuty ?? {}, existing.secretRef);
     await deps.registry.upsert({ tenant: result.tenant, product: result.product, state: result.state, createdAt: existing.createdAt, updatedAt: new Date().toISOString() });

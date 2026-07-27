@@ -30,6 +30,9 @@ export type AmsWakeConfig = {
   /** Overridable for tests only -- production always uses real wall-clock time and real delays. */
   pollIntervalMs?: number;
   pollTimeoutMs?: number;
+  /** Caps how many due tenants ONE tick will wake (#9143, defect 7) -- production always uses
+   *  {@link DEFAULT_MAX_TENANTS_PER_TICK}; overridable for tests only. */
+  maxTenantsPerTick?: number;
   now?: () => Date;
 };
 
@@ -45,10 +48,23 @@ export type AmsWakeResult = {
 
 const HOSTED_ENTRY_BIN = "loopover-miner-hosted";
 const DEFAULT_POLL_INTERVAL_MS = 1_000;
-// A generous ceiling for a real discover/manage-poll/attempt cycle -- long enough that a real, working run
-// almost never hits it, short enough that a genuinely hung container doesn't block this tick's remaining
-// tenants indefinitely (this loop processes due tenants one at a time, not in parallel; see wakeDueAmsTenants).
-const DEFAULT_POLL_TIMEOUT_MS = 10 * 60 * 1000;
+// #9143 (defect 7): wrangler.jsonc's own Cron Trigger fires this module's `scheduled()` caller every 5
+// minutes (`*/5 * * * *`). The OLD 10-minute default here GUARANTEED an overlapping tick: nextDueAt used to
+// advance only AFTER a woken tenant's poll resolved (see wakeDueAmsTenants's own header comment on the fix),
+// so one hung tenant's poll alone could still be running when the NEXT tick fired 5 minutes later -- which
+// would then see that SAME tenant's nextDueAt untouched (still overdue) and wake it a SECOND time
+// concurrently, with no lock/in-flight marker anywhere to stop it, racing both ticks' upserts against the
+// same record. Capped well under the cron interval, AND `wakeDueAmsTenants` now claims each tenant's next
+// nextDueAt BEFORE starting its poll (not after) so a genuinely-overlapping tick observes the claim and skips
+// it regardless of this timeout's exact value -- but a short timeout is still what keeps a normal, non-
+// overlapping tick's wall-clock budget sane across every due tenant it processes sequentially, not just one.
+const DEFAULT_POLL_TIMEOUT_MS = 2 * 60 * 1000;
+// #9143 (defect 7): bounds how many due tenants ONE tick will wake. Sequential-by-design (see
+// wakeDueAmsTenants's own comment on why not Promise.all) means a fleet with more due tenants than this in a
+// single 5-minute window would otherwise risk the WHOLE tick running long even when every individual tenant
+// behaves within DEFAULT_POLL_TIMEOUT_MS -- deferring the excess to the next tick (their nextDueAt is already
+// in the past, so nothing is lost, only delayed) keeps one tick's total wall-clock bounded too.
+const DEFAULT_MAX_TENANTS_PER_TICK = 20;
 
 /** Same `${product}:${name}` composite container-driver.ts's own `instanceNameFor` derives -- duplicated
  *  (not imported) because container-driver.ts's version takes a `TenantProvisioningRequest`, a shape this
@@ -82,21 +98,42 @@ async function pollForExitCode(stub: WakeStubLike, pollIntervalMs: number, timeo
 /** Wakes every currently-due AMS tenant, one at a time (deliberately sequential, not `Promise.all` -- a
  *  single Cloudflare Cron Trigger invocation has a bounded wall-clock budget shared across every tenant this
  *  tick processes; running them concurrently would trade a slow tick for cross-tenant resource contention on
- *  shared infra this module has no visibility into). Advances each woken tenant's `nextDueAt` from the tick's
- *  OWN start time (not the run's completion time) so schedule drift doesn't accumulate when a cycle runs long.
- */
+ *  shared infra this module has no visibility into), up to {@link DEFAULT_MAX_TENANTS_PER_TICK} (#9143, defect
+ *  7) per invocation.
+ *
+ *  #9143: `nextDueAt` is now advanced BEFORE the poll starts, not after it resolves -- the pre-#9143 order
+ *  (advance only once `pollForExitCode` returned) meant a hung/slow tenant's `nextDueAt` stayed in the past
+ *  for the ENTIRE poll, so a genuinely-overlapping tick (the 5-minute cron firing again while a >5-minute poll
+ *  from the prior tick was still running, or any other concurrent invocation) would see the same tenant still
+ *  due and wake it a SECOND time, racing both ticks' upserts against the same record with no lock or in-flight
+ *  marker anywhere. Claiming the slot up front means an overlapping tick observes `nextDueAt` already moved
+ *  and skips it -- from the tick's OWN start time (not the run's completion time), so schedule drift doesn't
+ *  accumulate when a cycle runs long, exactly as before. */
 export async function wakeDueAmsTenants(config: AmsWakeConfig): Promise<AmsWakeResult[]> {
   const now = config.now ?? (() => new Date());
   const pollIntervalMs = config.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   const pollTimeoutMs = config.pollTimeoutMs ?? DEFAULT_POLL_TIMEOUT_MS;
+  const maxTenantsPerTick = config.maxTenantsPerTick ?? DEFAULT_MAX_TENANTS_PER_TICK;
   const tickStartedAt = now();
 
   const records = await config.registry.list();
   const results: AmsWakeResult[] = [];
+  let woken = 0;
 
   for (const record of records) {
+    if (woken >= maxTenantsPerTick) break;
     if (!isDue(record, tickStartedAt)) continue;
     const schedule = record.amsSchedule!;
+    woken += 1;
+
+    // Claim this tenant's next slot BEFORE starting its poll (#9143) -- see this function's own header
+    // comment on why.
+    const claimedNextDueAt = new Date(tickStartedAt.getTime() + schedule.intervalMs).toISOString();
+    await config.registry.upsert({
+      ...record,
+      amsSchedule: { ...schedule, nextDueAt: claimedNextDueAt },
+      updatedAt: now().toISOString(),
+    });
 
     const stub = config.binding.getByName(instanceNameFor(record.tenant.name, record.product));
     await stub.start({ entrypoint: [HOSTED_ENTRY_BIN, schedule.command, ...schedule.args] });
@@ -109,7 +146,7 @@ export async function wakeDueAmsTenants(config: AmsWakeConfig): Promise<AmsWakeR
         ...schedule,
         lastRunAt: ranAt,
         lastExitCode: exitCode,
-        nextDueAt: new Date(tickStartedAt.getTime() + schedule.intervalMs).toISOString(),
+        nextDueAt: claimedNextDueAt,
       },
       updatedAt: ranAt,
     });

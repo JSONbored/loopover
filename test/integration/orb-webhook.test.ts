@@ -1,6 +1,7 @@
 import type { Context } from "hono";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../src/api/routes";
+import { resetHostedWebhookSecretCacheForTests } from "../../src/orb/hosted-webhook-secret";
 import { handleOrbWebhook } from "../../src/orb/webhook";
 import { createTestEnv, type TestD1Database } from "../helpers/d1";
 
@@ -96,6 +97,41 @@ describe("handleOrbWebhook (POST /v1/orb/webhook)", () => {
     expect((await post(env(), INSTALL, { sig: "sha256=deadbeef" })).status).toBe(401);
     const noSecret = createTestEnv(); // ORB_GITHUB_WEBHOOK_SECRET unset
     expect((await post(noSecret, INSTALL)).status).toBe(401);
+  });
+
+  describe("a HOSTED control-plane tenant container (#9143, defect 5)", () => {
+    afterEach(() => {
+      resetHostedWebhookSecretCacheForTests();
+      vi.unstubAllGlobals();
+    });
+
+    it("resolves its own webhook secret via the broker (LOOPOVER_TENANT_SECRET_TOKEN, no ORB_GITHUB_WEBHOOK_SECRET) and verifies a real delivery end to end", async () => {
+      resetHostedWebhookSecretCacheForTests();
+      const brokeredSecret = "whsec_from_broker";
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => Response.json({ secretValue: JSON.stringify({ database: { host: "h" }, orbWebhookSecret: brokeredSecret }) })),
+      );
+      const e = createTestEnv({ LOOPOVER_TENANT_SECRET_TOKEN: "orbsec_tenant" }); // ORB_GITHUB_WEBHOOK_SECRET unset
+
+      const res = await post(e, INSTALL, { delivery: "hosted-1", sig: await sign(INSTALL, brokeredSecret) });
+
+      expect(res.status).toBe(202);
+      expect(await row(e, "hosted-1")).toMatchObject({ status: "received" });
+    });
+
+    it("still 401s a delivery signed with the WRONG secret, even when a bootstrap token is configured", async () => {
+      resetHostedWebhookSecretCacheForTests();
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => Response.json({ secretValue: JSON.stringify({ orbWebhookSecret: "whsec_real" }) })),
+      );
+      const e = createTestEnv({ LOOPOVER_TENANT_SECRET_TOKEN: "orbsec_tenant" });
+
+      const res = await post(e, INSTALL, { sig: await sign(INSTALL, "whsec_wrong") });
+
+      expect(res.status).toBe(401);
+    });
   });
 
   it("401 when the signature header is absent entirely", async () => {

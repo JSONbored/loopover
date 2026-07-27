@@ -14,21 +14,56 @@ import { createKvTenantRegistry } from "./tenant-registry.js";
 
 const PROVISIONED_STORAGE_KEY = "provisioned";
 
+// #9143 (defect 4): the env map createTenantContainer (container-driver.ts) hands to a tenant's ONE-TIME
+// cold-boot `start({envVars})` call is otherwise only ever held in the vendored `@cloudflare/containers`
+// SDK's own `this.envVars` instance property (a plain class field, default `{}`) -- confirmed against that
+// package's source (node_modules/@cloudflare/containers/dist/lib/container.js): `doStartContainer` resolves
+// `options?.envVars ?? this.envVars`, and NOTHING in the SDK ever assigns `this.envVars` from a bare
+// `start(options)` call -- only this class's OWN constructor `options` (never supplied here) does. A tenant
+// container's auto-wake-on-request path after it sleeps (`containerFetch`'s implicit restart, which calls
+// `start()` with NO options at all) therefore falls through to `this.envVars`, which resets to `{}` on every
+// FRESH instance of this class -- a Durable Object's in-memory fields do not survive eviction, only
+// `ctx.storage` does. A tenant's pinned version / bootstrap secret / central PostHog key would silently
+// vanish from its container's environment on its very next restart. Fixed the same way
+// PROVISIONED_STORAGE_KEY already is: persisted in this DO's own durable storage and reloaded into
+// `this.envVars` in the constructor, via `ctx.blockConcurrencyWhile` -- the exact pattern the base `Container`
+// class's own constructor already uses for its own async setup -- so no request or implicit restart can ever
+// reach `doStartContainer` before the persisted value is back in place.
+const ENV_VARS_STORAGE_KEY = "envVars";
+
 /** Shared base for both product-specific Container classes below: tracks whether THIS tenant's container has
  *  been explicitly provisioned, in the DO's own durable storage -- independent of Cloudflare's own transient
  *  container run-state (`getState()`'s running/stopped/stopped_with_code/etc). That distinction is
  *  load-bearing, concretely for AMS: its one-shot CLI image (see AmsTenantContainer below) is EXPECTED to sit
  *  in a "stopped"-shaped run state almost all the time by design (#7182), indistinguishable from "never
  *  provisioned" using run-state alone -- container-driver.ts's header comment covers this in full. */
-class ProvisionedContainer extends Container {
+class ProvisionedContainer extends Container<Env> {
+  // `DurableObjectState<Record<string, never>>` matches the vendored SDK's own `Container<Env>`'s inherited
+  // `ctx` type exactly (it extends `cloudflare:workers`' `DurableObject<Env, Props = {}>`, whose `Props`
+  // defaults to an empty-object shape) -- `DurableObjectState` alone defaults its own generic to `unknown`,
+  // which `super(ctx, env)` below then rejects as too loose.
+  constructor(ctx: DurableObjectState<Record<string, never>>, env: Env) {
+    super(ctx, env);
+    // Not awaited (constructors can't be async) -- `ctx.blockConcurrencyWhile` itself is what defers every
+    // future request/alarm on this DO until the callback resolves, same fire-and-forget shape the base
+    // `Container` constructor already uses internally for its own setup.
+    ctx.blockConcurrencyWhile(async () => {
+      const persisted = await ctx.storage.get<Record<string, string>>(ENV_VARS_STORAGE_KEY);
+      if (persisted) this.envVars = persisted;
+    });
+  }
   async isProvisioned(): Promise<boolean> {
     return (await this.ctx.storage.get<boolean>(PROVISIONED_STORAGE_KEY)) === true;
   }
-  async markProvisioned(): Promise<void> {
+  async markProvisioned(envVars?: Record<string, string>): Promise<void> {
     await this.ctx.storage.put(PROVISIONED_STORAGE_KEY, true);
+    if (envVars && Object.keys(envVars).length > 0) {
+      await this.ctx.storage.put(ENV_VARS_STORAGE_KEY, envVars);
+    }
   }
   async markDeprovisioned(): Promise<void> {
     await this.ctx.storage.delete(PROVISIONED_STORAGE_KEY);
+    await this.ctx.storage.delete(ENV_VARS_STORAGE_KEY);
   }
 }
 

@@ -34,13 +34,61 @@ export type OrbWebhookRouterConfig = {
    *  blank ⇒ every delivery fails closed with 401, matching http-app.ts's own `adminToken` convention and the
    *  main app's own "inert until the secret is injected" comment on this exact check. */
   webhookSecret: string | undefined;
+  /** Body-size ceiling (#9143, defect 6) -- mirrors the main app's OWN `src/orb/webhook.ts#handleOrbWebhook`
+   *  (`GITHUB_WEBHOOK_MAX_BODY_BYTES`-driven, fixed there by #8888), which this route's own header comment
+   *  claims to mirror end-to-end but never actually applied: this route used to buffer an UNBOUNDED body
+   *  TWICE before ever checking the signature (once via `request.clone()`, once via `request.text()`), with no
+   *  content-length precheck and no streaming limit at all -- an unauthenticated caller (this route sits
+   *  OUTSIDE the admin Bearer wall by design) could exhaust memory with an arbitrarily large POST before the
+   *  HMAC check ever ran. Optional so every existing caller/test that doesn't care about the limit gets
+   *  {@link DEFAULT_MAX_ORB_WEBHOOK_BODY_BYTES}. */
+  maxBodyBytes?: number;
 };
+
+/** Same default as `src/orb/webhook.ts`'s own `DEFAULT_MAX_ORB_WEBHOOK_BODY_BYTES` (#9143) -- duplicated, not
+ *  imported, for the same "separate workspace, no cross-package dependency" reason `verifyGitHubSignature`
+ *  below already is. */
+const DEFAULT_MAX_ORB_WEBHOOK_BODY_BYTES = 1024 * 1024;
 
 /** Same `${product}:${name}` composite container-driver.ts's own `instanceNameFor` derives -- duplicated (not
  *  imported) for the same reason ams-wake.ts's own copy is: this module has no `TenantProvisioningRequest` to
  *  construct, just a name/product pair already in hand from the registry lookup below. */
 function instanceNameFor(name: string, product: Product): string {
   return `${product}:${name}`;
+}
+
+/** Same shape as `src/utils/json.ts`'s own `parsePositiveInt` -- duplicated locally for the same
+ *  no-cross-package-import reason as everything else in this file. */
+function parsePositiveInt(value: string | null | undefined): number | null {
+  if (!value) return null;
+  if (!/^\d+$/.test(value)) return null;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
+/** Reads the request body incrementally, aborting with `null` the instant the running total exceeds
+ *  `maxBytes` -- rather than buffering the whole thing (however large) and checking its length only
+ *  afterward. Same shape as `src/orb/webhook.ts`'s own `readBodyWithLimit`, duplicated for the same
+ *  no-cross-package-import reason. An absent body (`request.body === null`, e.g. a GET-shaped request) is a
+ *  valid empty string, matching that file's own convention. */
+async function readBodyWithLimit(request: Request, maxBytes: number): Promise<string | null> {
+  const stream = request.body;
+  if (!stream) return "";
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > maxBytes) return null;
+    chunks.push(decoder.decode(value, { stream: true }));
+  }
+  chunks.push(decoder.decode());
+  return chunks.join("");
 }
 
 /** Verifies a GitHub webhook's `x-hub-signature-256` HMAC-SHA256 against the raw request body -- the exact
@@ -81,10 +129,22 @@ function hexToBytes(hex: string): Uint8Array | null {
  *  it can't. `request` is consumed for signature verification (its raw body text) but a `.clone()` taken
  *  BEFORE that read is what actually gets forwarded -- the tenant's container re-verifies the same signature
  *  against the same untouched body, so a body-reconstruction bug here can't silently diverge from what GitHub
- *  actually signed. */
+ *  actually signed. This route sits OUTSIDE the admin Bearer wall (GitHub authenticates via its own HMAC
+ *  signature, checked below) -- so the body-size limit (#9143, defect 6) is checked BEFORE that clone/read
+ *  ever buffers anything: a cheap content-length precheck first (works whenever the real transport sets the
+ *  header), then a hard ceiling enforced while streaming the body incrementally either way. */
 export async function routeOrbWebhook(config: OrbWebhookRouterConfig, request: Request): Promise<Response> {
+  const maxBodyBytes = config.maxBodyBytes ?? DEFAULT_MAX_ORB_WEBHOOK_BODY_BYTES;
+  const contentLength = parsePositiveInt(request.headers.get("content-length"));
+  if (contentLength !== null && contentLength > maxBodyBytes) {
+    return Response.json({ error: "payload_too_large", maxBytes: maxBodyBytes }, { status: 413 });
+  }
+
   const forwardRequest = request.clone();
-  const rawBody = await request.text();
+  const rawBody = await readBodyWithLimit(request, maxBodyBytes);
+  if (rawBody === null) {
+    return Response.json({ error: "payload_too_large", maxBytes: maxBodyBytes }, { status: 413 });
+  }
   const signature = request.headers.get("x-hub-signature-256");
 
   const verified = await verifyGitHubSignature(rawBody, signature, config.webhookSecret);

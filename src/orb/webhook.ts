@@ -11,6 +11,7 @@ import type { Context } from "hono";
 import type { GitHubWebhookPayload } from "../types";
 import { sha256Hex, verifyGitHubSignature } from "../utils/crypto";
 import { parsePositiveInt } from "../utils/json";
+import { resolveOrbWebhookSecret } from "./hosted-webhook-secret";
 import { upsertOrbInstallation } from "./installations";
 import { recordOrbPrOutcome } from "./outcomes";
 import { forwardOrbEvent, persistRelayForwardOutcome } from "./relay";
@@ -35,9 +36,13 @@ export async function handleOrbWebhook(c: Context<{ Bindings: Env }>): Promise<R
   if (rawBody === null) {
     return c.json({ error: "payload_too_large", maxBytes: maxBodyBytes }, 413);
   }
-  // The Orb App's OWN webhook secret — distinct from the review app's GITHUB_WEBHOOK_SECRET. Absent secret →
-  // verifyGitHubSignature returns false → 401 (fail-closed), so this route is inert until the secret is injected.
-  const verified = await verifyGitHubSignature(rawBody, signature, c.env.ORB_GITHUB_WEBHOOK_SECRET ?? "");
+  // The Orb App's OWN webhook secret — distinct from the review app's GITHUB_WEBHOOK_SECRET. A direct env
+  // value (manual self-host/cloud) short-circuits with zero network calls; a HOSTED control-plane tenant
+  // container resolves its own value via the broker instead (#9143, defect 5 -- see
+  // ./hosted-webhook-secret.ts's own header comment). Absent either way → verifyGitHubSignature returns false
+  // → 401 (fail-closed), so this route is inert until a secret is available one way or the other.
+  const webhookSecret = await resolveOrbWebhookSecret(c.env);
+  const verified = await verifyGitHubSignature(rawBody, signature, webhookSecret ?? "");
   if (!verified) {
     return c.json({ error: "invalid_signature" }, 401);
   }

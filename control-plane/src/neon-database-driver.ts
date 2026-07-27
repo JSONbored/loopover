@@ -50,27 +50,40 @@ type NeonEndpoint = { host: string };
 
 type NeonRole = { name: string; password?: string };
 
-// #8026: the unconditional .slice(0, 63) below used to have no collision guard -- two distinct tenant names
+// #8026: the unconditional .slice(0, 63) used to have no collision guard -- two distinct tenant names
 // sharing the same first ~54 characters (after the "tenant-<product>-" prefix and sanitization) would
 // truncate to the IDENTICAL Neon branch name. findBranchByName would then find the OTHER tenant's already-
 // existing branch and hand back its connection/role/password to the new tenant -- a cross-tenant data-
-// isolation bug. Only names that actually need truncating get the suffix, so a short tenant name's branch
-// name is completely unchanged (this repo has never deployed against a live Neon project yet -- see this
-// file's own header comment -- so there is no pre-existing long-name branch a suffix could orphan).
+// isolation bug. #8026 only appended a collision suffix past the 63-char truncation threshold.
+//
+// #9143: that guard missed a SHORTER, much more common collision -- two tenant names that are distinct as
+// registry keys (raw strings, validated only as `typeof name === "string" && !!name.trim()` at http-app.ts)
+// but sanitize down to the IDENTICAL string well under 63 characters: "Acme" and "acme" both lowercase to
+// "acme"; "acme.corp", "acme-corp", and "acme corp" all collapse `[^a-z0-9_-]+` runs to the same single
+// hyphen. None of these ever reached the truncation branch, so they shared one branch/database/role/password
+// exactly like the pre-#8026 long-name bug. The suffix now (a) is APPENDED UNCONDITIONALLY, not only when
+// truncating, and (b) is hashed from the RAW, pre-sanitization `${product}:${tenant.name}` composite -- not
+// from `sanitized` (hashing the already-lowercased/collapsed string can't distinguish "Acme" from "acme": by
+// the time `sanitized` exists, the information that made them different is already gone). Hashing the raw
+// identity instead means the registry key (product + exact tenant name) and the derived branch name are
+// effectively 1:1 -- two names that sanitize identically still need to actually BE the same raw name to
+// produce the same suffix, and therefore the same branch.
 const NEON_BRANCH_NAME_MAX_LENGTH = 63;
 const NEON_BRANCH_NAME_COLLISION_SUFFIX_LENGTH = 8;
 
-/** Neon branch names are case-sensitive but this keeps them predictable and collision-free across products
- *  sharing a tenant name, and safely truncated well under Neon's own length limit. A name that would
- *  otherwise be truncated gets a short hash-of-the-untruncated-name suffix instead, so two long,
- *  prefix-similar tenant names can never collide on the same truncated branch name (#8026). */
+/** Neon branch names are case-sensitive but this keeps them predictable, collision-free across products and
+ *  across sanitize-colliding tenant names (#8026, #9143), and safely truncated well under Neon's own length
+ *  limit. Every name gets a short hash-of-the-raw-identity suffix, so two distinct tenant names -- whether
+ *  they collide by sharing a long common prefix past the truncation point (#8026) or by sanitizing down to
+ *  the same short string (#9143, e.g. differing only in case or punctuation) -- can never resolve to the
+ *  same branch. */
 function branchNameFor(request: TenantProvisioningRequest): string {
   const raw = `tenant-${request.product}-${request.tenant.name}`.toLowerCase();
   const sanitized = raw.replaceAll(/[^a-z0-9_-]+/g, "-").replaceAll(/-{2,}/g, "-").replace(/^-+|-+$/g, "");
-  if (sanitized.length <= NEON_BRANCH_NAME_MAX_LENGTH) return sanitized;
-  const suffix = createHash("sha256").update(sanitized).digest("hex").slice(0, NEON_BRANCH_NAME_COLLISION_SUFFIX_LENGTH);
+  const suffix = createHash("sha256").update(`${request.product}:${request.tenant.name}`).digest("hex").slice(0, NEON_BRANCH_NAME_COLLISION_SUFFIX_LENGTH);
   const prefixLength = NEON_BRANCH_NAME_MAX_LENGTH - 1 - suffix.length;
-  return `${sanitized.slice(0, prefixLength)}-${suffix}`;
+  const prefix = sanitized.length > prefixLength ? sanitized.slice(0, prefixLength) : sanitized;
+  return `${prefix}-${suffix}`;
 }
 
 /** A tenant-scoped role gets the SAME derived name as its branch -- one branch, one role, one database, no

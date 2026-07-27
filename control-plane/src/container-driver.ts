@@ -25,7 +25,15 @@ export type ContainerStubLike = {
   start(options?: { envVars?: Record<string, string>; entrypoint?: string[]; enableInternet?: boolean }): Promise<void>;
   stop(): Promise<void>;
   isProvisioned(): Promise<boolean>;
-  markProvisioned(): Promise<void>;
+  /** `envVars` (#9143, defect 4): the SAME map just passed to `start()` above, so the real DO-backed
+   *  implementation (worker.ts's `ProvisionedContainer`) can persist it in its own durable storage and reload
+   *  it into the base `Container` class's `this.envVars` on every future construction -- the vendored
+   *  `@cloudflare/containers` SDK only ever applies `envVars` from the CALLER's own `start()` options or from
+   *  `this.envVars`, never durably remembering a past `start({envVars})` call itself, so a container's
+   *  auto-wake-on-request path after it sleeps (`containerFetch`'s own restart, which calls `start()` with NO
+   *  options at all) would otherwise silently boot with an empty environment on every restart after the
+   *  first. Optional so a fresh (no envVars at all) create still matches the exact pre-#9143 call shape. */
+  markProvisioned(envVars?: Record<string, string>): Promise<void>;
   markDeprovisioned(): Promise<void>;
 };
 
@@ -104,10 +112,13 @@ export async function createTenantContainer(config: ContainerDriverConfig, reque
   if (config.centralPosthogKey) envVars[CENTRAL_POSTHOG_KEY_ENV_VAR] = config.centralPosthogKey;
   if (Object.keys(envVars).length > 0) {
     await stub.start({ envVars });
+    // #9143 (defect 4): hand the SAME envVars to markProvisioned so the real DO-backed implementation can
+    // persist them durably and survive a later implicit restart -- see ContainerStubLike's own doc comment.
+    await stub.markProvisioned(envVars);
   } else {
     await stub.start();
+    await stub.markProvisioned();
   }
-  await stub.markProvisioned();
 }
 
 /** Idempotent: a tenant that was never provisioned (or already torn down) is a safe no-op, matching every

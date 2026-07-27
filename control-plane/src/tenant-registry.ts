@@ -137,7 +137,22 @@ export function createKvTenantRegistry(kv: KvNamespaceLike): TenantRegistry {
       const previousRaw = await kv.get(primaryKey);
       const previous = previousRaw ? (JSON.parse(previousRaw) as TenantRegistryRecord) : undefined;
       if (previous?.orbInstallationId !== undefined && previous.orbInstallationId !== record.orbInstallationId) {
-        await kv.delete(installationIndexKeyFor(previous.orbInstallationId));
+        // #9143: only clear the index entry if it STILL points at THIS tenant's own primary key. http-app.ts's
+        // `isRecreatableState` deliberately lets a "failed"/"torn down" tenant's installation claim be taken
+        // over by a brand-new tenant of a different name -- so by the time a stale record (tenant A, still
+        // carrying the old installationId because it was only ever written at create time) is finally
+        // re-created or torn down, the SAME installationId may already belong to a different, currently-ACTIVE
+        // tenant B (whose own later upsert already repointed this index key at B's primary key). Deleting it
+        // unconditionally here would rip out B's live webhook-routing pointer even though B never changed its
+        // own installationId -- every subsequent webhook for B then 404s forever, with no way to re-claim it
+        // (create 409s since B already exists; orbInstallationId is settable only at create). Reading the
+        // index before deleting makes the delete a compare-and-delete: it only ever removes an entry this
+        // exact upsert is the rightful owner of.
+        const indexKey = installationIndexKeyFor(previous.orbInstallationId);
+        const currentIndexValue = await kv.get(indexKey);
+        if (currentIndexValue === primaryKey) {
+          await kv.delete(indexKey);
+        }
       }
       await kv.put(primaryKey, JSON.stringify(record));
       if (record.orbInstallationId !== undefined) {

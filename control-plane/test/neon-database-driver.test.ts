@@ -23,7 +23,9 @@ const CONFIG: NeonDatabaseDriverConfig = {
 };
 
 const REQUEST: TenantProvisioningRequest = { tenant: { name: "acme" }, product: "orb" };
-const BRANCH_NAME = "tenant-orb-acme";
+// #9143: branchNameFor now ALWAYS appends a hash-of-the-raw-identity suffix (not only past the 63-char
+// truncation threshold, #8026) -- this is that suffix for REQUEST's exact `orb:acme` identity.
+const BRANCH_NAME = "tenant-orb-acme-a124aa31";
 
 let originalFetch: typeof fetch;
 
@@ -171,7 +173,7 @@ test("provisionNeonDatabase: idempotent re-provision resolves an existing branch
   });
   assert.equal(calls.length, 3);
   assert.ok(calls.every((call) => call.init.method === "GET" || call.init.method === undefined));
-  assert.equal(calls[2]?.url, "https://console.neon.tech/api/v2/projects/proj-1/branches/br-existing/roles/tenant-orb-acme/reveal_password");
+  assert.equal(calls[2]?.url, `https://console.neon.tech/api/v2/projects/proj-1/branches/br-existing/roles/${BRANCH_NAME}/reveal_password`);
 });
 
 test("provisionNeonDatabase: throws when an existing branch's role has no revealable password", async () => {
@@ -272,7 +274,7 @@ test("provisionNeonDatabase: two long, prefix-similar tenant names produce DIFFE
   assert.ok(branchNameB.length <= 63);
 });
 
-test("provisionNeonDatabase: a short tenant name's branch name is completely unaffected by the collision-suffix logic", async () => {
+test("provisionNeonDatabase: a short tenant name still gets the unconditional collision suffix (#9143)", async () => {
   const { calls } = mockFetchSequence([
     { body: { branches: [] } },
     { body: { branch: { id: "br-1", name: BRANCH_NAME }, endpoints: [{ host: "ep-1.neon.tech" }], operations: [] } },
@@ -282,5 +284,42 @@ test("provisionNeonDatabase: a short tenant name's branch name is completely una
 
   await provisionNeonDatabase(CONFIG, REQUEST);
 
-  assert.equal((bodyOf(calls[1]!.init) as { branch: { name: string } }).branch.name, BRANCH_NAME);
+  const branchName = (bodyOf(calls[1]!.init) as { branch: { name: string } }).branch.name;
+  assert.equal(branchName, BRANCH_NAME);
+  assert.match(branchName, /^tenant-orb-acme-[0-9a-f]{8}$/);
+});
+
+// #9143 (defect 1, deploy blocker): "Acme", "acme", "acme.corp", "acme-corp", and "acme corp" are all DISTINCT
+// registry keys (http-app.ts's create-route validation is only `typeof name === "string" && !!name.trim()`) but
+// used to sanitize+lowercase down to the IDENTICAL branch name, since the pre-#9143 suffix only ever applied
+// past the 63-char truncation threshold (#8026) and, even then, was hashed from the ALREADY-sanitized string --
+// which had already thrown away the case/punctuation differences. provisionNeonDatabase's idempotent-reuse path
+// (findBranchByName) would then resolve the FIRST tenant's already-existing branch for the second tenant,
+// handing back its live database/role/password. This is the load-bearing isolation regression test: distinct
+// raw tenant names must NEVER produce the same branch name, whether or not they sanitize identically.
+test("provisionNeonDatabase: sanitize-colliding tenant names ('Acme' vs 'acme' vs 'acme.corp' vs 'acme-corp' vs 'acme corp') never share a branch (#9143 isolation)", async () => {
+  const variants: TenantProvisioningRequest[] = [
+    { tenant: { name: "Acme" }, product: "orb" },
+    { tenant: { name: "acme" }, product: "orb" },
+    { tenant: { name: "acme.corp" }, product: "orb" },
+    { tenant: { name: "acme-corp" }, product: "orb" },
+    { tenant: { name: "acme corp" }, product: "orb" },
+  ];
+
+  const branchNames: string[] = [];
+  for (const [index, request] of variants.entries()) {
+    const { calls } = mockFetchSequence([
+      { body: { branches: [] } },
+      { body: { branch: { id: `br-${index}`, name: "placeholder" }, endpoints: [{ host: `ep-${index}.neon.tech` }], operations: [] } },
+      { body: { role: { name: "placeholder", password: `pw-${index}` }, operations: [] } },
+      { body: { operations: [] } },
+    ]);
+    await provisionNeonDatabase(CONFIG, request);
+    branchNames.push((bodyOf(calls[1]!.init) as { branch: { name: string } }).branch.name);
+  }
+
+  // Every one of the 5 distinct raw tenant names produces a UNIQUE branch name -- including "acme.corp",
+  // "acme-corp", and "acme corp", which all sanitize down to the identical "acme-corp" prefix.
+  assert.equal(new Set(branchNames).size, variants.length);
+  for (const branchName of branchNames) assert.ok(branchName.length <= 63, branchName);
 });

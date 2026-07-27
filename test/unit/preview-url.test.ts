@@ -561,7 +561,7 @@ describe("deploymentStatusToPreview branch logic (#9292)", () => {
     expect(
       deploymentStatusToPreview({
         deployment_status: successStatus,
-        deployment: { payload: { pr: undefined } },
+        deployment: { payload: { pr: 0 } },
       }),
     ).toBeNull();
     expect(

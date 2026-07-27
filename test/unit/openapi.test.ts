@@ -39,13 +39,10 @@ describe("OpenAPI contract", () => {
     expect(spec.paths["/v1/repos/{owner}/{repo}/issue-quality"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/outcome-patterns"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/gate-config/effective"]).toBeDefined();
-<<<<<<< HEAD
     expect(spec.paths["/v1/opportunities/find"]).toBeDefined();
     expect(spec.paths["/v1/issue-rag/retrieve"]).toBeDefined();
-=======
     expect(spec.paths["/v1/repos/{owner}/{repo}/selftune/overrides/audit"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/selftune/overrides"]).toBeDefined();
->>>>>>> main
     expect(spec.paths["/v1/repos/{owner}/{repo}/maintainer-noise"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/ams-miner-cohort"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/gate-precision"]).toBeDefined();

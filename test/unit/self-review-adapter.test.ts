@@ -160,13 +160,16 @@ describe("runSelfReview", () => {
     expect(result.predictedGateVerdict).toEqual(direct);
   });
 
-  it("a genuinely blocked synthetic diff (duplicate PR) is a failure conclusion and passesPredictedGate is false", () => {
-    const context = baseContext({ pullRequests: [openPr(42, "Retry uploads on 5xx responses", [7])] });
+  it("a genuinely held synthetic diff (corroborated duplicate PR) is a neutral conclusion and passesPredictedGate is false", () => {
+    // #9129: the sibling carries resolved changedFiles (corroborated) -- predicted-gate's own synthetic "self"
+    // PR never carries changedFiles (pre-submission, no diff on that side), so the sibling-alone corroboration
+    // arm is the only one reachable here. Corroborated + duplicates:block now HOLDS (neutral), never closes.
+    const context = baseContext({ pullRequests: [{ ...openPr(42, "Retry uploads on 5xx responses", [7]), changedFiles: ["src/upload.ts"] }] });
     const result = runSelfReview(BASE_DIFF_STATE, context, { runSlopAssessment: () => noopSlop });
 
-    expect(result.predictedGateVerdict.conclusion).toBe("failure");
+    expect(result.predictedGateVerdict.conclusion).toBe("neutral");
     expect(result.passesPredictedGate).toBe(false);
-    expect(result.predictedGateVerdict.blockers.some((b) => b.code === "duplicate_pr_risk")).toBe(true);
+    expect(result.predictedGateVerdict.warnings.some((w) => w.code === "duplicate_pr_risk")).toBe(true);
 
     const direct = buildPredictedGateVerdict({
       input: buildSelfReviewPredictedGateInput(BASE_DIFF_STATE),
@@ -183,7 +186,8 @@ describe("runSelfReview", () => {
     const passing = runSelfReview(BASE_DIFF_STATE, baseContext(), { runSlopAssessment: () => noopSlop });
     expect(passing.passesPredictedGate).toBe(true);
 
-    const blocked = runSelfReview(BASE_DIFF_STATE, baseContext({ pullRequests: [openPr(42, "dup", [7])] }), {
+    // #9129: corroborated (resolved changedFiles) so this is a genuine HOLD (neutral), not a silent success.
+    const blocked = runSelfReview(BASE_DIFF_STATE, baseContext({ pullRequests: [{ ...openPr(42, "dup", [7]), changedFiles: ["src/upload.ts"] }] }), {
       runSlopAssessment: () => noopSlop,
     });
     expect(blocked.predictedGateVerdict.conclusion).not.toBe(SELF_REVIEW_PASSING_CONCLUSION);

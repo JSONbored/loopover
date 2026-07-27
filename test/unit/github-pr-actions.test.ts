@@ -132,7 +132,7 @@ describe("GitHub PR action primitives (#778)", () => {
       return new Response("unexpected", { status: 500 });
     });
     const result = await mergePullRequest(envWithKey(), 123, "owner/repo", 7, { mergeMethod: "squash", sha: "head1" });
-    expect(result).toEqual({ merged: true, sha: "abc" });
+    expect(result).toEqual({ merged: true, sha: "abc", suppressed: false });
     expect(calls[0]).toMatchObject({ method: "PUT", body: { merge_method: "squash", sha: "head1" } });
   });
 
@@ -147,7 +147,29 @@ describe("GitHub PR action primitives (#778)", () => {
     const result = await mergePullRequest(envWithKey(), 123, "owner/repo", 7, { mergeMethod: "merge" });
     expect(sent).toMatchObject({ merge_method: "merge" });
     expect(sent).not.toHaveProperty("sha");
-    expect(result).toEqual({ merged: true, sha: null });
+    expect(result).toEqual({ merged: true, sha: null, suppressed: false });
+  });
+
+  // #9130: a merge issued while the instance-wide kill switch is set never reaches GitHub -- the octokit hook
+  // returns the synthetic { merged: true, sha: null, dryRunSuppressed: true } shadow, which mergePullRequest
+  // must surface as suppressed: true rather than letting it look identical to a real merge.
+  it("#9130: SELFHOST_DEPLOYMENT_MODE=dry-run suppresses the merge write and marks the result suppressed, with ZERO merge-endpoint calls", async () => {
+    let mergeCallCount = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.endsWith("/pulls/7/merge")) {
+        mergeCallCount += 1;
+        return Response.json({ merged: true, sha: "abc" });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    const env = { ...envWithKey(), SELFHOST_DEPLOYMENT_MODE: "dry-run" } as ReturnType<typeof envWithKey>;
+    const result = await mergePullRequest(env, 123, "owner/repo", 7, { mergeMethod: "squash" });
+    expect(result).toEqual({ merged: true, sha: null, suppressed: true });
+    // The suppression fires inside the octokit request hook, BEFORE the actual merge write ever reaches
+    // GitHub -- the installation-token mint (a GET) still runs, but the real PUT /merge never does.
+    expect(mergeCallCount).toBe(0);
   });
 
   it("closes a PR via PATCH state=closed", async () => {

@@ -98,14 +98,22 @@ export async function createPullRequestReviewComments(
 }
 
 /** Merge a pull request with the configured method. Pass `sha` to make the merge fail (409) if the head moved
- *  since we evaluated it — a guard against merging a PR that changed under us. */
+ *  since we evaluated it — a guard against merging a PR that changed under us.
+ *
+ *  `suppressed` (#9130): true when the instance-wide SELFHOST_DEPLOYMENT_MODE kill switch (or a per-call
+ *  non-"live" mode) suppressed this write at the makeInstallationOctokit hook, so `merged: true` is a SYNTHETIC
+ *  shadow response, never a real GitHub mutation. Under the normal production call path (executor gates on its
+ *  own resolved mode BEFORE ever calling this, #9130) this is structurally unreachable -- included as defense
+ *  in depth so a future caller that reaches this function without going through that gate can never mistake a
+ *  suppressed shadow for a genuine merge. The caller MUST check this before recording a terminal outcome,
+ *  sending a notification, or escalating moderation off this result. */
 export async function mergePullRequest(
   env: Env,
   installationId: number,
   repoFullName: string,
   pullNumber: number,
   options: { mergeMethod: AutoMergeMethod; sha?: string | undefined },
-): Promise<{ merged: boolean; sha: string | null }> {
+): Promise<{ merged: boolean; sha: string | null; suppressed: boolean }> {
   const { owner, repo } = splitRepo(repoFullName);
   return withInstallationTokenRetry(env, installationId, async (token) => {
     const octokit = makeInstallationOctokit(env, token, "live", githubRateLimitAdmissionKeyForInstallation(installationId));
@@ -116,8 +124,8 @@ export async function mergePullRequest(
       merge_method: options.mergeMethod,
       ...(options.sha ? { sha: options.sha } : {}),
     });
-    const data = response.data as { merged?: boolean; sha?: string };
-    return { merged: data.merged ?? true, sha: data.sha ?? null };
+    const data = response.data as { merged?: boolean; sha?: string; dryRunSuppressed?: boolean };
+    return { merged: data.merged ?? true, sha: data.sha ?? null, suppressed: data.dryRunSuppressed === true };
   });
 }
 

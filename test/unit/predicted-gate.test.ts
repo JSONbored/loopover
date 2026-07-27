@@ -67,13 +67,33 @@ describe("buildPredictedGateVerdict", () => {
     expect(result.blockers).toHaveLength(0);
   });
 
-  it("predicts a BLOCK when a duplicate PR exists and duplicates:block (the default)", () => {
-    // Another open PR already targets the same linked issue → duplicate_pr_risk.
+  // #9129: an UNCORROBORATED duplicate citation (no changedFiles resolved on either side, the common case for
+  // a pre-submission prediction) is never a configured gate blocker, regardless of duplicates:block -- an
+  // adversary could otherwise cite the same issue number in a throwaway sibling PR, no code required, to
+  // force-close the real one. Renamed from "...duplicates:block (the default)": duplicatePrGateMode's
+  // code-level default is now "advisory", so "the default" no longer describes "block" at all.
+  it("does NOT block on an uncorroborated duplicate PR even with duplicates:block explicitly set (#9129)", () => {
+    // Another open PR already cites the same linked issue in its body text, but neither side has changedFiles
+    // resolved (pre-submission prediction never has diff content) -- uncorroborated.
     const result = verdict({ gate: { duplicates: "block" }, pullRequests: [openPr(42, "Retry uploads on 5xx responses", [7])] });
-    expect(result.conclusion).toBe("failure");
-    expect(result.blockers.some((b) => b.code === "duplicate_pr_risk")).toBe(true);
-    // Public-safe: blocker text carries a fix and no raw internal markers.
+    expect(result.conclusion).toBe("success");
+    expect(result.blockers.some((b) => b.code === "duplicate_pr_risk")).toBe(false);
+    // Public-safe: text carries no raw internal markers regardless.
     expect(result.title.toLowerCase()).toContain("loopover orb review agent");
+  });
+
+  // #9129: once corroborated -- here via the sibling alone being a non-trivial real change (it has resolved
+  // changed files), the ALTERNATE corroboration arm since predicted-gate's own synthetic PR never carries
+  // changedFiles pre-submission -- duplicatePrGateMode: "block" now HOLDS the gate (neutral) rather than
+  // closing it outright ("prefer holding both over closing either").
+  it("HOLDS (never closes) a CORROBORATED duplicate PR even with duplicates:block explicitly set (#9129)", () => {
+    const corroborated = verdict({
+      gate: { duplicates: "block" },
+      pullRequests: [{ ...openPr(42, "Retry uploads on 5xx responses", [7]), changedFiles: ["src/upload-client.ts"] }],
+    });
+    expect(corroborated.conclusion).toBe("neutral");
+    expect(corroborated.blockers).toHaveLength(0);
+    expect(corroborated.warnings.some((w) => w.code === "duplicate_pr_risk")).toBe(true);
   });
 
   it("does NOT raise duplicate_pr_risk for an open PR in a different repo sharing the same issue number (repo-scoped parity)", () => {
@@ -146,12 +166,15 @@ describe("buildPredictedGateVerdict", () => {
   });
 
   it("honors public gate.mergeReadiness when predicting blockers", () => {
+    // #9129: corroborated (the sibling carries resolved changedFiles) so duplicate_pr_risk is the concrete
+    // code the mergeReadiness composite can escalate at all -- an uncorroborated citation is hard-wired to
+    // "off" regardless of any gate mode, mergeReadiness included. Corroborated + block now HOLDS (neutral).
     const result = verdict({
       gate: { duplicates: "off", mergeReadiness: "block" },
-      pullRequests: [openPr(42, "Retry uploads on 5xx responses", [7])],
+      pullRequests: [{ ...openPr(42, "Retry uploads on 5xx responses", [7]), changedFiles: ["src/upload-client.ts"] }],
     });
-    expect(result.conclusion).toBe("failure");
-    expect(result.blockers.some((b) => b.code === "duplicate_pr_risk")).toBe(true);
+    expect(result.conclusion).toBe("neutral");
+    expect(result.warnings.some((w) => w.code === "duplicate_pr_risk")).toBe(true);
   });
 
   it("surfaces the missing-linked-issue blocker under composite mergeReadiness even when linkedIssue is unset (#merge-readiness-parity)", () => {
@@ -172,19 +195,22 @@ describe("buildPredictedGateVerdict", () => {
   it("matches author history case-insensitively, like the live gate (#audit-§4)", () => {
     // The merged PR's author is "MINER1" (different case from the contributor "miner1"). The predictor still
     // counts it as history, but blocker disposition never depends on it (#2411).
+    // #9129: the duplicate sibling carries resolved changedFiles (corroborated) -- an uncorroborated citation
+    // has zero gate effect regardless of duplicatePrGateMode, so it wouldn't exercise this path at all.
     const mixedCase = verdict({
       gate: { duplicates: "block" },
       pullRequests: [
-        openPr(42, "Retry uploads on 5xx responses", [7], "someone-else"),
+        { ...openPr(42, "Retry uploads on 5xx responses", [7], "someone-else"), changedFiles: ["src/upload-client.ts"] },
         { ...openPr(9, "Earlier fix", [], "MINER1"), state: "merged", mergedAt: "2026-06-01T00:00:00.000Z" },
       ],
     });
-    expect(mixedCase.conclusion).toBe("failure");
+    expect(mixedCase.conclusion).toBe("neutral");
   });
 
   it("keeps duplicate blockers for repeat offenders via the closed-unmerged author-count path", () => {
     // The author has 3 prior CLOSED-unmerged PRs (state === "closed" && !mergedAt) in this repo. Blocker
     // disposition no longer depends on first-time grace, so the gate blocks either way.
+    // #9129: the duplicate sibling carries resolved changedFiles (corroborated) -- "block" now holds, never closes.
     const closedUnmerged = (number: number, title: string): PullRequestRecord => ({
       ...openPr(number, title, [], "miner1"),
       state: "closed",
@@ -192,28 +218,29 @@ describe("buildPredictedGateVerdict", () => {
     const result = verdict({
       gate: { duplicates: "block" },
       pullRequests: [
-        openPr(42, "Retry uploads on 5xx responses", [7], "someone-else"),
+        { ...openPr(42, "Retry uploads on 5xx responses", [7], "someone-else"), changedFiles: ["src/upload-client.ts"] },
         closedUnmerged(11, "Abandoned attempt one"),
         closedUnmerged(12, "Abandoned attempt two"),
         closedUnmerged(13, "Abandoned attempt three"),
       ],
     });
-    expect(result.conclusion).toBe("failure");
-    expect(result.blockers.some((b) => b.code === "duplicate_pr_risk")).toBe(true);
+    expect(result.conclusion).toBe("neutral");
+    expect(result.warnings.some((w) => w.code === "duplicate_pr_risk")).toBe(true);
   });
 
   it("counts a closed-but-merged PR as merge history via the mergedAt fallback (not state === merged)", () => {
     // The prior PR has state "closed" yet carries a mergedAt timestamp, so it is still counted as merge history.
     // Blocker disposition no longer depends on first-time grace, so the gate blocks either way.
+    // #9129: the duplicate sibling carries resolved changedFiles (corroborated) -- "block" now holds, never closes.
     const result = verdict({
       gate: { duplicates: "block" },
       pullRequests: [
-        openPr(42, "Retry uploads on 5xx responses", [7], "someone-else"),
+        { ...openPr(42, "Retry uploads on 5xx responses", [7], "someone-else"), changedFiles: ["src/upload-client.ts"] },
         { ...openPr(9, "Earlier merged fix", [], "miner1"), state: "closed", mergedAt: "2026-06-01T00:00:00.000Z" },
       ],
     });
-    expect(result.conclusion).toBe("failure");
-    expect(result.blockers.some((b) => b.code === "duplicate_pr_risk")).toBe(true);
+    expect(result.conclusion).toBe("neutral");
+    expect(result.warnings.some((w) => w.code === "duplicate_pr_risk")).toBe(true);
   });
 
   it("predicts a non-confirmed contributor NORMALLY — a blocker → failure, matching the real gate (#gate-nonconfirmed)", () => {

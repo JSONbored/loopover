@@ -1840,18 +1840,31 @@ describe("closeConcreteEvidence — concrete-evidence exemption from the close-p
     expect(closeOf(plan)).toMatchObject({ closeKind: "heuristic", closeConcreteEvidence: true, closeRequiresMergeableState: true });
   });
 
-  it("a deterministic linked-issue-overlap duplicate (linkedDuplicateCount > 0) is concrete evidence, but NOT conflict-justified — and IS duplicate-still-open-justified (#dup-winner-staleness)", () => {
+  it("#9129: a deterministic linked-issue-overlap duplicate (linkedDuplicateCount > 0) is NOT concrete evidence — the breaker must be able to catch it — but IS duplicate-still-open-justified (#dup-winner-staleness)", () => {
     const plan = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, ciState: "passed", pr: { labels: [], linkedDuplicateCount: 1 } }));
-    // Concrete evidence (duplicate) does NOT imply closeRequiresMergeableState -- that field is specifically
-    // about whether a base conflict was part of the reason, not whether the close is "trustworthy" in general.
-    // closeRequiresDuplicateStillOpen IS true here -- this close's justification depends on a sibling PR's live
-    // state, so the executor/approval-queue's live recheck (#dup-winner-staleness) must fire for it.
-    expect(closeOf(plan)).toMatchObject({ closeKind: "heuristic", closeConcreteEvidence: true, closeRequiresMergeableState: false, closeRequiresDuplicateStillOpen: true });
+    // #9129: a duplicate-PR link is DELIBERATELY excluded from concrete evidence (see hasConcreteCloseEvidence's
+    // own doc comment) — it is a fact about a SIBLING PR's author-controlled body text, not something loopover
+    // itself can verify the way CI/conflict state can. closeRequiresDuplicateStillOpen is STILL true here -- this
+    // close's justification depends on a sibling PR's live state, so the executor/approval-queue's live recheck
+    // (#dup-winner-staleness) must still fire for it, independent of the concrete-evidence classification.
+    expect(closeOf(plan)).toMatchObject({ closeKind: "heuristic", closeConcreteEvidence: false, closeRequiresMergeableState: false, closeRequiresDuplicateStillOpen: true });
   });
 
   it("linkedDuplicateCount absent (nullish ?? 0) does NOT count as concrete on its own, and closeRequiresDuplicateStillOpen is explicitly false (#dup-winner-staleness)", () => {
     const plan = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, ciState: "passed", pr: { labels: [] } }));
     expect(closeOf(plan)).toMatchObject({ closeKind: "heuristic", closeConcreteEvidence: false, closeRequiresDuplicateStillOpen: false });
+  });
+
+  // #9129: the whole point of dropping duplicate-link evidence from hasConcreteCloseEvidence -- the
+  // close-precision breaker can now actually downgrade a duplicate-driven close to a hold, exactly like any
+  // other non-concrete heuristic close. Before this fix, this close SURVIVED the breaker unconditionally.
+  it("#9129: the close-precision breaker can now DOWNGRADE a duplicate-link-only close to a hold", () => {
+    const plan = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto", review_state_label: "auto" }, ciState: "passed", pr: { labels: [], linkedDuplicateCount: 1 } }));
+    expect(closeOf(plan)).toMatchObject({ closeKind: "heuristic", closeConcreteEvidence: false });
+    const held = downgradeCloseToHold(plan, true);
+    expect(held.some((a) => a.actionClass === "close")).toBe(false);
+    const label = held.find((a) => a.actionClass === "label" && a.label === AGENT_LABEL_NEEDS_REVIEW && a.labelOp === "add");
+    expect(label?.autonomyClass).toBe("close");
   });
 
   it("a named duplicate-cluster winner (linkedDuplicateWinnerNumber) is persisted as duplicateWinnerPrNumber so the live recheck knows which sibling to re-verify (#dup-winner-staleness)", () => {
@@ -1955,9 +1968,9 @@ describe("closeConcreteEvidence — concrete-evidence exemption from the close-p
     expect(closeOf(plan)).toMatchObject({ closeConcreteEvidence: true, closeConcreteEvidenceCodes: [] });
   });
 
-  it("closeConcreteEvidenceCodes is EMPTY for a duplicate-link-justified concrete evidence", () => {
+  it("#9129: closeConcreteEvidenceCodes is EMPTY for a duplicate-link close, which is no longer concrete evidence at all", () => {
     const plan = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, ciState: "passed", pr: { labels: [], linkedDuplicateCount: 1 } }));
-    expect(closeOf(plan)).toMatchObject({ closeConcreteEvidence: true, closeConcreteEvidenceCodes: [] });
+    expect(closeOf(plan)).toMatchObject({ closeConcreteEvidence: false, closeConcreteEvidenceCodes: [] });
   });
 
   it("closeConcreteEvidenceCodes excludes an AI-judgment code even when a real concrete code is also present", () => {

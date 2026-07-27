@@ -94,9 +94,13 @@ interface MockPool {
    *  githubRateLimitAdmissionTargetForJob returns null for it and the rate-limit-clear OR-condition is
    *  trivially/always true, isolating the AGE condition cleanly for tests that aren't specifically about
    *  rate-limit clearing. Pass an explicit `payload` (e.g. a github-webhook message) plus `setRateLimitRows`
-   *  to test the rate-limit-clear condition itself, or "not valid json" to test the unparseable-payload path. */
+   *  to test the rate-limit-clear condition itself, or "not valid json" to test the unparseable-payload path.
+   *  `deferred_by` defaults to `"rate_limit"` (#9127): the real candidate SELECT filters on
+   *  `deferred_by IS NOT NULL`, so a row must carry SOME admission-gate provenance tag to be a candidate at all
+   *  -- pass `deferred_by: null` explicitly to model a row deferred by enqueue()'s own delaySeconds instead
+   *  (which must never be released, see the dedicated #9127 provenance tests). */
   setForegroundLivenessCandidates(
-    rows: Array<{ id: string; created_at: number; payload?: string }>,
+    rows: Array<{ id: string; created_at: number; payload?: string; deferred_by?: string | null }>,
     updateRowCounts?: number[],
   ): void;
   /** Like setForegroundLivenessCandidates, but programs the OLDEST-ordered and NEWEST-ordered candidate windows
@@ -108,8 +112,8 @@ interface MockPool {
    *  windows are genuinely independent -- i.e. a candidate present in one window but not the other -- must use
    *  this instead. */
   setForegroundLivenessCandidatesByWindow(
-    oldestRows: Array<{ id: string; created_at: number; payload?: string }>,
-    newestRows: Array<{ id: string; created_at: number; payload?: string }>,
+    oldestRows: Array<{ id: string; created_at: number; payload?: string; deferred_by?: string | null }>,
+    newestRows: Array<{ id: string; created_at: number; payload?: string; deferred_by?: string | null }>,
     updateRowCounts?: number[],
   ): void;
 }
@@ -126,8 +130,8 @@ function makePool(): MockPool {
   let pressureMaintenance: { cnt: number; oldest: number | null } = { cnt: 0, oldest: null };
   let pressureBacklogConvergence: { cnt: number } = { cnt: 0 };
   let pressureFreshIntake: { cnt: number } = { cnt: 0 };
-  let foregroundLivenessOldestCandidates: Array<{ id: string; created_at: number; payload?: string }> = [];
-  let foregroundLivenessNewestCandidates: Array<{ id: string; created_at: number; payload?: string }> = [];
+  let foregroundLivenessOldestCandidates: Array<{ id: string; created_at: number; payload?: string; deferred_by?: string | null }> = [];
+  let foregroundLivenessNewestCandidates: Array<{ id: string; created_at: number; payload?: string; deferred_by?: string | null }> = [];
   const foregroundLivenessUpdateRowCounts: number[] = [];
   const DEFAULT_FOREGROUND_LIVENESS_PAYLOAD = JSON.stringify({
     type: "recapture-preview",
@@ -138,22 +142,28 @@ function makePool(): MockPool {
   });
   const fn = vi.fn().mockImplementation(async (sql: unknown, params?: unknown[]) => {
     const q = String(sql);
-    if (q.includes("SELECT id, payload, created_at FROM") && q.includes("priority>=$1 AND run_after>$2")) {
+    if (q.includes("SELECT id, payload, created_at, deferred_by FROM") && q.includes("priority>=$1 AND run_after>$2")) {
       // #selfhost-queue-liveness clear-bucket starvation fix: releaseStaleForegroundDeferrals issues an OLDEST-
       // ordered window and a NEWEST-ordered window as two independent queries -- match on ORDER BY direction so
       // setForegroundLivenessCandidatesByWindow can program them differently (setForegroundLivenessCandidates
       // programs both windows identically, matching this repo's other tests that don't care about the split).
-      const rows = q.includes("ORDER BY created_at DESC") ? foregroundLivenessNewestCandidates : foregroundLivenessOldestCandidates;
-      return {
-        rows: rows.map((row) => ({
+      const candidates = q.includes("ORDER BY created_at DESC") ? foregroundLivenessNewestCandidates : foregroundLivenessOldestCandidates;
+      // #9127: default deferred_by to "rate_limit" (so existing tests that don't care about provenance keep
+      // exercising the age/rate-limit-clear conditions unchanged), then FILTER out anything explicitly tagged
+      // `deferred_by: null` -- faithfully simulating the real candidate SELECT's own `deferred_by IS NOT NULL`
+      // predicate, which structurally excludes an enqueue-time delay (never admission-gate-tagged) from ever
+      // reaching the eligibility pass at all, regardless of age or rate-limit state.
+      const rows = candidates
+        .map((row) => ({
           id: row.id,
           payload: row.payload ?? DEFAULT_FOREGROUND_LIVENESS_PAYLOAD,
           created_at: row.created_at,
-        })),
-        rowCount: rows.length,
-      };
+          deferred_by: row.deferred_by === undefined ? "rate_limit" : row.deferred_by,
+        }))
+        .filter((row) => row.deferred_by !== null);
+      return { rows, rowCount: rows.length };
     }
-    if (q.includes("SET run_after=$1 WHERE id=$2 AND status='pending' AND run_after>$1")) {
+    if (q.includes("SET run_after=$1, deferred_by=NULL WHERE id=$2 AND status='pending' AND run_after>$1")) {
       const rowCount =
         foregroundLivenessUpdateRowCounts.length > 0 ? (foregroundLivenessUpdateRowCounts.shift() ?? 1) : 1;
       return { rows: [], rowCount };
@@ -2325,11 +2335,11 @@ describe("createPgQueue (durable #977)", () => {
 
       expect(released).toBe(1);
       expect(m.fn).toHaveBeenCalledWith(
-        expect.stringContaining("SELECT id, payload, created_at FROM _selfhost_jobs WHERE status='pending' AND priority>=$1 AND run_after>$2"),
+        expect.stringContaining("SELECT id, payload, created_at, deferred_by FROM _selfhost_jobs WHERE status='pending' AND priority>=$1 AND run_after>$2"),
         expect.arrayContaining([8]),
       );
       expect(m.fn).toHaveBeenCalledWith(
-        expect.stringContaining("SET run_after=$1 WHERE id=$2 AND status='pending' AND run_after>$1"),
+        expect.stringContaining("SET run_after=$1, deferred_by=NULL WHERE id=$2 AND status='pending' AND run_after>$1"),
         expect.arrayContaining(["fg-1"]),
       );
       expect(await renderMetrics()).toContain("loopover_jobs_foreground_liveness_released_total 1");
@@ -2365,7 +2375,7 @@ describe("createPgQueue (durable #977)", () => {
 
       expect(released).toBe(0);
       expect(m.fn).not.toHaveBeenCalledWith(
-        expect.stringContaining("SET run_after=$1 WHERE id=$2 AND status='pending' AND run_after>$1"),
+        expect.stringContaining("SET run_after=$1, deferred_by=NULL WHERE id=$2 AND status='pending' AND run_after>$1"),
         expect.arrayContaining(["fg-fresh"]),
       );
       expect(await renderMetrics()).not.toContain("loopover_jobs_foreground_liveness_released_total");
@@ -2472,7 +2482,7 @@ describe("createPgQueue (durable #977)", () => {
 
       expect(released).toBe(0);
       expect(m.fn).not.toHaveBeenCalledWith(
-        expect.stringContaining("SELECT id, payload, created_at FROM _selfhost_jobs WHERE status='pending' AND priority>=$1 AND run_after>$2"),
+        expect.stringContaining("SELECT id, payload, created_at, deferred_by FROM _selfhost_jobs WHERE status='pending' AND priority>=$1 AND run_after>$2"),
         expect.anything(),
       );
       expect(await renderMetrics()).not.toContain("loopover_jobs_foreground_liveness_released_total");
@@ -2503,7 +2513,7 @@ describe("createPgQueue (durable #977)", () => {
       expect(released).toBe(3);
       for (const id of ["stuck-1", "stuck-2", "stuck-3"]) {
         expect(m.fn).toHaveBeenCalledWith(
-          expect.stringContaining("SET run_after=$1 WHERE id=$2 AND status='pending' AND run_after>$1"),
+          expect.stringContaining("SET run_after=$1, deferred_by=NULL WHERE id=$2 AND status='pending' AND run_after>$1"),
           expect.arrayContaining([id]),
         );
       }
@@ -2547,13 +2557,13 @@ describe("createPgQueue (durable #977)", () => {
       );
       for (const id of ["oldest", "second-oldest"]) {
         expect(m.fn).toHaveBeenCalledWith(
-          expect.stringContaining("SET run_after=$1 WHERE id=$2 AND status='pending' AND run_after>$1"),
+          expect.stringContaining("SET run_after=$1, deferred_by=NULL WHERE id=$2 AND status='pending' AND run_after>$1"),
           expect.arrayContaining([id]),
         );
       }
       for (const id of ["newer", "newest"]) {
         expect(m.fn).not.toHaveBeenCalledWith(
-          expect.stringContaining("SET run_after=$1 WHERE id=$2 AND status='pending' AND run_after>$1"),
+          expect.stringContaining("SET run_after=$1, deferred_by=NULL WHERE id=$2 AND status='pending' AND run_after>$1"),
           expect.arrayContaining([id]),
         );
       }
@@ -2593,12 +2603,12 @@ describe("createPgQueue (durable #977)", () => {
       expect(released).toBe(2);
       for (const id of ["clear-newer", "blocked-oldest"]) {
         expect(m.fn).toHaveBeenCalledWith(
-          expect.stringContaining("SET run_after=$1 WHERE id=$2 AND status='pending' AND run_after>$1"),
+          expect.stringContaining("SET run_after=$1, deferred_by=NULL WHERE id=$2 AND status='pending' AND run_after>$1"),
           expect.arrayContaining([id]),
         );
       }
       expect(m.fn).not.toHaveBeenCalledWith(
-        expect.stringContaining("SET run_after=$1 WHERE id=$2 AND status='pending' AND run_after>$1"),
+        expect.stringContaining("SET run_after=$1, deferred_by=NULL WHERE id=$2 AND status='pending' AND run_after>$1"),
         expect.arrayContaining(["blocked-second"]),
       );
     });
@@ -2651,12 +2661,12 @@ describe("createPgQueue (durable #977)", () => {
       expect(released).toBe(2);
       for (const id of ["clear-newer", "blocked-oldest"]) {
         expect(m.fn).toHaveBeenCalledWith(
-          expect.stringContaining("SET run_after=$1 WHERE id=$2 AND status='pending' AND run_after>$1"),
+          expect.stringContaining("SET run_after=$1, deferred_by=NULL WHERE id=$2 AND status='pending' AND run_after>$1"),
           expect.arrayContaining([id]),
         );
       }
       expect(m.fn).not.toHaveBeenCalledWith(
-        expect.stringContaining("SET run_after=$1 WHERE id=$2 AND status='pending' AND run_after>$1"),
+        expect.stringContaining("SET run_after=$1, deferred_by=NULL WHERE id=$2 AND status='pending' AND run_after>$1"),
         expect.arrayContaining(["blocked-second"]),
       );
     });
@@ -2690,10 +2700,10 @@ describe("createPgQueue (durable #977)", () => {
       // than propagate NaN (mirrors init()'s own "handles null rowCount from the recovery query" test).
       const fn = vi.fn().mockImplementation(async (sql: unknown) => {
         const q = String(sql);
-        if (q.includes("SELECT id, payload, created_at FROM") && q.includes("priority>=$1 AND run_after>$2")) {
-          return { rows: [{ id: "fg-null", created_at: now - 5 * 60_000 }], rowCount: 1 };
+        if (q.includes("SELECT id, payload, created_at, deferred_by FROM") && q.includes("priority>=$1 AND run_after>$2")) {
+          return { rows: [{ id: "fg-null", created_at: now - 5 * 60_000, deferred_by: "rate_limit" }], rowCount: 1 };
         }
-        if (q.includes("SET run_after=$1 WHERE id=$2 AND status='pending' AND run_after>$1")) {
+        if (q.includes("SET run_after=$1, deferred_by=NULL WHERE id=$2 AND status='pending' AND run_after>$1")) {
           return { rows: [], rowCount: null };
         }
         return { rows: [], rowCount: 0 };
@@ -2704,6 +2714,88 @@ describe("createPgQueue (durable #977)", () => {
 
       expect(released).toBe(0); // null ?? 0 -- no metric recorded, no crash
       expect(await renderMetrics()).not.toContain("loopover_jobs_foreground_liveness_released_total");
+    });
+
+    // INVARIANT (#9127): a row with NO admission-gate provenance tag -- e.g. one whose future run_after came from
+    // enqueue(message, delaySeconds), never from a rate-limit/maintenance-admission/installation-concurrency
+    // defer -- must never be released, regardless of how age-stale it is. Before #9127 the candidate SELECT had
+    // no provenance filter at all, so ANY pending foreground row scheduled in the future qualified and
+    // isRateLimitAdmissionNowClear degraded to "clear" for a job type with no rate-limit bucket (like
+    // recapture-preview): the very next sweep tick released it regardless of delaySeconds. Uses a created_at far
+    // older than FOREGROUND_LIVENESS_MAX_DEFER_MS -- old enough that the AGE arm alone would have released it
+    // pre-fix -- to prove the deferred_by filter excludes it BEFORE either eligibility condition is even
+    // evaluated, not just that the rate-limit-clear arm happens not to fire.
+    it("INVARIANT (#9127): a row with no deferred_by provenance tag is never released, even when far past the age-stale ceiling", async () => {
+      process.env.FOREGROUND_LIVENESS_MAX_DEFER_MS = "60000"; // 1m floor
+      const m = makePool();
+      const now = Date.now();
+      // deferred_by: null models a job enqueued with delaySeconds -- never admission-gate-deferred.
+      m.setForegroundLivenessCandidates([{ id: "delay-not-admission", created_at: now - 30 * 60_000, deferred_by: null }]);
+      const q = createPgQueue(m.pool, async () => undefined);
+
+      const released = await q.releaseStaleForegroundDeferrals();
+
+      expect(released).toBe(0);
+      expect(m.fn).not.toHaveBeenCalledWith(
+        expect.stringContaining("SET run_after=$1, deferred_by=NULL WHERE id=$2 AND status='pending' AND run_after>$1"),
+        expect.arrayContaining(["delay-not-admission"]),
+      );
+      expect(await renderMetrics()).not.toContain("loopover_jobs_foreground_liveness_released_total");
+    });
+
+    // REGRESSION (#9127): the contributor-facing trigger. processors.ts's linked-issue flag-then-close grace
+    // window enqueues a "recapture-preview" job via env.JOBS.send(verifyJob, { delaySeconds }) (up to 300s,
+    // closeDelaySeconds) after applying the pending-closure label -- never through an admission gate, so it must
+    // never carry a deferred_by tag and must survive a liveness sweep regardless of how aggressively configured.
+    it("REGRESSION (#9127): the linked-issue flag-then-close grace-window job type survives a liveness sweep even when it is the ONLY candidate", async () => {
+      process.env.FOREGROUND_LIVENESS_MAX_DEFER_MS = "60000"; // deliberately aggressive
+      const m = makePool();
+      const now = Date.now();
+      const graceWindowPayload = JSON.stringify({
+        type: "recapture-preview",
+        deliveryId: "linked-issue-verify:o/r#42",
+        repoFullName: "o/r",
+        prNumber: 42,
+        installationId: 1,
+        attempt: 0,
+      });
+      m.setForegroundLivenessCandidates([
+        { id: "grace-window", created_at: now - 10 * 60_000, payload: graceWindowPayload, deferred_by: null },
+      ]);
+      const q = createPgQueue(m.pool, async () => undefined);
+
+      const released = await q.releaseStaleForegroundDeferrals();
+
+      expect(released).toBe(0);
+    });
+
+    // The rate-limit-clear recheck is scoped to deferred_by==='rate_limit' ONLY (#9127): a row deferred by
+    // maintenance-admission or installation-concurrency has no rate-limit bucket either, so treating it as
+    // trivially "clear" would release it on the very next sweep regardless of whether ITS OWN gate cleared --
+    // the same false-premise bug this issue fixes, just for a different admission kind. Covers both outcomes:
+    // the age-stale row (deferred_by='installation_concurrency') releases via the AGE arm alone, and the fresh
+    // row (deferred_by='maintenance_admission') stays parked since neither arm applies to it.
+    it("scopes the rate-limit-clear recheck to deferred_by='rate_limit' -- other admission-gate tags only release via the age arm", async () => {
+      process.env.FOREGROUND_LIVENESS_MAX_DEFER_MS = "60000"; // 1m floor
+      const m = makePool();
+      const now = Date.now();
+      m.setForegroundLivenessCandidates([
+        { id: "concurrency-stale", created_at: now - 5 * 60_000, deferred_by: "installation_concurrency" },
+        { id: "maintenance-fresh", created_at: now - 1_000, deferred_by: "maintenance_admission" },
+      ]);
+      const q = createPgQueue(m.pool, async () => undefined);
+
+      const released = await q.releaseStaleForegroundDeferrals();
+
+      expect(released).toBe(1);
+      expect(m.fn).toHaveBeenCalledWith(
+        expect.stringContaining("SET run_after=$1, deferred_by=NULL WHERE id=$2 AND status='pending' AND run_after>$1"),
+        expect.arrayContaining(["concurrency-stale"]),
+      );
+      expect(m.fn).not.toHaveBeenCalledWith(
+        expect.stringContaining("SET run_after=$1, deferred_by=NULL WHERE id=$2 AND status='pending' AND run_after>$1"),
+        expect.arrayContaining(["maintenance-fresh"]),
+      );
     });
   });
 

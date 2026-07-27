@@ -34,10 +34,28 @@ export function isGlobalAgentPause(env: { AGENT_ACTIONS_PAUSED?: string | undefi
  * THE single gate the action layer (#778) consults before executing any action, alongside resolveAutonomy.
  * Precedence (safest wins): a global OR per-repo pause halts everything (`paused`); else a per-repo dry-run
  * logs what would happen without executing (`dry_run`); else `live`. Deny-toward-safety. Pure.
- */
-export function resolveAgentActionMode(input: { globalPaused: boolean; agentPaused?: boolean | null | undefined; agentDryRun?: boolean | null | undefined }): AgentActionMode {
-  if (input.globalPaused || input.agentPaused === true) return "paused";
-  if (input.agentDryRun === true) return "dry_run";
+ *
+ * `instanceMode` (#9130) is the INSTANCE-WIDE self-host kill switch (`SELFHOST_DEPLOYMENT_MODE`, resolved by the
+ * caller via `forcedSelfhostMode(env)` in src/github/client.ts) — the first precedence term, not an HTTP-layer
+ * afterthought. Before #9130 this switch was consulted ONLY inside `makeInstallationOctokit`, one layer below
+ * every decision that depends on the mode: the executor computed its OWN mode from `globalPaused`/`agentPaused`/
+ * `agentDryRun` alone, believed it was "live" under a dry-run instance, and drove real non-GitHub-API side effects
+ * (a persisted `pr_outcome` row, Discord/Slack notifications, `maybeEscalateModeration`'s `mode !== "live"` check)
+ * off that false belief — even though the actual GitHub write was correctly suppressed by the octokit hook.
+ * Every caller of this function that has `env` in scope now threads `forcedSelfhostMode(env)` through here, so a
+ * "dry-run"/"disabled" instance is `dry_run`/`paused` EVERYWHERE a mode decision is made, not just at the wire.
+ * Folded in via the SAME "most restrictive wins" precedence as the other two terms (instanceMode: "paused" beats
+ * a per-repo dry-run; instanceMode: "dry_run" beats a live per-repo config) — never the reverse, so a per-repo
+ * override can never re-enable a mutation the instance-wide switch means to suppress. `undefined`/`null`/"live"
+ * (the cloud Worker never sets SELFHOST_DEPLOYMENT_MODE) behaves exactly as before this parameter existed. */
+export function resolveAgentActionMode(input: {
+  globalPaused: boolean;
+  agentPaused?: boolean | null | undefined;
+  agentDryRun?: boolean | null | undefined;
+  instanceMode?: AgentActionMode | null | undefined;
+}): AgentActionMode {
+  if (input.globalPaused || input.agentPaused === true || input.instanceMode === "paused") return "paused";
+  if (input.agentDryRun === true || input.instanceMode === "dry_run") return "dry_run";
   return "live";
 }
 

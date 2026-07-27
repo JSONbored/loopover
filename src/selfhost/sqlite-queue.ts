@@ -233,6 +233,14 @@ export function createSqliteQueue(
   } catch {
     /* column already present */
   }
+  // #9127: provenance tag for releaseStaleForegroundDeferrals' rate-limit-clear recheck. Set ONLY at an admission
+  // gate's own defer site (rate-limit / maintenance-admission / installation-concurrency), NEVER by enqueue()'s
+  // delaySeconds -- see foreground-liveness.ts's module header for the full rationale.
+  try {
+    driver.exec(`ALTER TABLE ${TABLE} ADD COLUMN deferred_by TEXT`);
+  } catch {
+    /* column already present */
+  }
   driver.exec(CLAIM_INDEX_DDL);
   driver.exec(JOB_KEY_INDEX_DDL);
   driver.exec(LANE_INDEX_DDL);
@@ -389,20 +397,30 @@ export function createSqliteQueue(
   }
 
   /** See foreground-liveness.ts for the full rationale. A bounded candidate SELECT (foreground-priority, pending,
-   *  not currently due), an eligibility pass, a ramp-up CAP, then a per-row conditional UPDATE only for the
-   *  capped subset -- mirroring reviveEligibleDeadJobs' shape but with the extra ramp-up step. Each candidate is
-   *  ELIGIBLE on EITHER of two independent conditions: it has genuinely been waiting past the age-based trickle
-   *  ceiling (isForegroundDeferralStale, unconditional backstop), OR -- CONDITION-BASED recovery
-   *  (#selfhost-queue-liveness VPS incident) -- re-evaluating rate-limit admission against CURRENT observations
-   *  right now says it would be admitted immediately. The age floor alone can leave a job pinned to a stale
-   *  reset timestamp for up to its full original delay (observed up to ~15m) even when a fresher, healthier
-   *  observation arrived moments after it was deferred; the condition check recovers it on the NEXT sweep tick
-   *  instead (bounded by FOREGROUND_LIVENESS_CHECK_INTERVAL_MS, default 60s) whenever the underlying rate-limit
-   *  pressure has actually cleared, regardless of job age. When more jobs are eligible than maxReleasePerSweep
-   *  allows, selectForegroundDeferralsToRelease picks the oldest first -- a large inherited backlog drains
-   *  gradually over several sweep ticks instead of flooding GitHub with every re-attempt at once. Logs +
-   *  records a metric ONCE per sweep (aggregate count), not per row, so a large release batch cannot spam the
-   *  log.
+   *  not currently due, ADMISSION-GATE-DEFERRED -- see below), an eligibility pass, a ramp-up CAP, then a per-row
+   *  conditional UPDATE only for the capped subset -- mirroring reviveEligibleDeadJobs' shape but with the extra
+   *  ramp-up step. Each candidate is ELIGIBLE on EITHER of two independent conditions: it has genuinely been
+   *  waiting past the age-based trickle ceiling (isForegroundDeferralStale, unconditional backstop), OR --
+   *  CONDITION-BASED recovery (#selfhost-queue-liveness VPS incident), restricted to rows an admission gate itself
+   *  deferred for a rate-limit reason (`deferred_by='rate_limit'`) -- re-evaluating rate-limit admission against
+   *  CURRENT observations right now says it would be admitted immediately. The age floor alone can leave a job
+   *  pinned to a stale reset timestamp for up to its full original delay (observed up to ~15m) even when a
+   *  fresher, healthier observation arrived moments after it was deferred; the condition check recovers it on the
+   *  NEXT sweep tick instead (bounded by FOREGROUND_LIVENESS_CHECK_INTERVAL_MS, default 60s) whenever the
+   *  underlying rate-limit pressure has actually cleared, regardless of job age. When more jobs are eligible than
+   *  maxReleasePerSweep allows, selectForegroundDeferralsToRelease picks the oldest first -- a large inherited
+   *  backlog drains gradually over several sweep ticks instead of flooding GitHub with every re-attempt at once.
+   *  Logs + records a metric ONCE per sweep (aggregate count), not per row, so a large release batch cannot spam
+   *  the log.
+   *
+   *  #9127 -- PROVENANCE filter (`deferred_by IS NOT NULL`, enforced by the candidate SELECT's own WHERE clause,
+   *  not by an application-side check on the returned rows): only a row an admission gate itself deferred
+   *  (rate-limit / maintenance-admission / installation-concurrency -- see the three defer sites' own
+   *  `deferred_by=coalesce(deferred_by, ...)` writes) is EVER a release candidate. A row whose future run_after
+   *  came from enqueue(message, delaySeconds) -- a deliberate delay, e.g. the linked-issue flag-then-close grace
+   *  window -- never has deferred_by set, so it is structurally excluded here regardless of age or rate-limit
+   *  state. See pg-queue.ts's twin (and foreground-liveness.ts's module header) for the full incident writeup --
+   *  this and pg-queue.ts's own copy must stay in lockstep (verified twin, see foreground-liveness.ts).
    *
    *  Candidate selection queries an OLDEST window AND a NEWEST window (#selfhost-queue-liveness clear-bucket
    *  starvation fix), not just one oldest-first window. A single `ORDER BY created_at ASC LIMIT` window can be
@@ -418,22 +436,26 @@ export function createSqliteQueue(
     const now = Date.now();
     const candidateLimit = foregroundLivenessConfig.maxReleasePerSweep;
     const oldest = driver.query(
-      `SELECT id, payload, created_at FROM ${TABLE} WHERE status='pending' AND priority>=? AND run_after>? ORDER BY created_at ASC, id ASC LIMIT ?`,
+      `SELECT id, payload, created_at, deferred_by FROM ${TABLE} WHERE status='pending' AND priority>=? AND run_after>? AND deferred_by IS NOT NULL ORDER BY created_at ASC, id ASC LIMIT ?`,
       [FOREGROUND_QUEUE_PRIORITY_FLOOR, now, candidateLimit],
     ).rows;
     const newest = driver.query(
-      `SELECT id, payload, created_at FROM ${TABLE} WHERE status='pending' AND priority>=? AND run_after>? ORDER BY created_at DESC, id DESC LIMIT ?`,
+      `SELECT id, payload, created_at, deferred_by FROM ${TABLE} WHERE status='pending' AND priority>=? AND run_after>? AND deferred_by IS NOT NULL ORDER BY created_at DESC, id DESC LIMIT ?`,
       [FOREGROUND_QUEUE_PRIORITY_FLOOR, now, candidateLimit],
     ).rows;
-    const candidateRowsById = new Map<number, { id: number; payload: string; created_at: number }>();
-    for (const row of [...oldest, ...newest] as Array<{ id: number; payload: string; created_at: number }>) {
+    const candidateRowsById = new Map<number, { id: number; payload: string; created_at: number; deferred_by: string | null }>();
+    for (const row of [...oldest, ...newest] as Array<{ id: number; payload: string; created_at: number; deferred_by: string | null }>) {
       candidateRowsById.set(row.id, row);
     }
     const eligible: Array<{ id: number; pendingSinceMs: number; ageStale: boolean; rateLimitClear: boolean }> = [];
     const admissionCache = new Map<string, boolean>();
     for (const row of candidateRowsById.values()) {
       const ageStale = isForegroundDeferralStale(foregroundLivenessConfig, row.created_at, now);
-      const rateLimitClear = isRateLimitAdmissionNowClear(row.payload, admissionCache);
+      // See pg-queue.ts's twin: the rate-limit-clear recheck is only trusted for a row deferred SPECIFICALLY for
+      // a rate-limit reason -- a maintenance-admission or installation-concurrency deferral has no rate-limit
+      // bucket either, and isRateLimitAdmissionNowClear degrading to "clear" for it would release it on the very
+      // next sweep tick regardless of whether its OWN gate has actually cleared.
+      const rateLimitClear = row.deferred_by === "rate_limit" && isRateLimitAdmissionNowClear(row.payload, admissionCache);
       if (!ageStale && !rateLimitClear) continue;
       eligible.push({ id: row.id, pendingSinceMs: row.created_at, ageStale, rateLimitClear });
     }
@@ -442,8 +464,11 @@ export function createSqliteQueue(
     let releasedByAge = 0;
     let releasedByRateLimitClear = 0;
     for (const candidate of toRelease) {
+      // Clears deferred_by on release too (not just run_after): the row is no longer deferred by anything, so a
+      // FUTURE re-defer (of whatever kind next applies) writes its own fresh tag via coalesce(deferred_by, ...)
+      // instead of inheriting a stale tag from whichever admission gate deferred it this time.
       const { changes } = driver.query(
-        `UPDATE ${TABLE} SET run_after=? WHERE id=? AND status='pending' AND run_after>?`,
+        `UPDATE ${TABLE} SET run_after=?, deferred_by=NULL WHERE id=? AND status='pending' AND run_after>?`,
         [now, candidate.id, now],
       );
       released += changes;
@@ -564,7 +589,7 @@ export function createSqliteQueue(
             `UPDATE ${TABLE}
                SET payload=?, run_after=max(run_after, ?), created_at=?, priority=max(priority, ?), job_key=?,
                    claim_sort_key=CASE WHEN claim_sort_key>0 THEN min(claim_sort_key, ?) ELSE ? END,
-                   last_error=NULL
+                   last_error=NULL, deferred_by=NULL
              WHERE id=?`,
             [mergedPayload, runAfter, now, priority, mergedKey, claimSortKey, claimSortKey, mergeCandidate.id],
           );
@@ -593,7 +618,7 @@ export function createSqliteQueue(
           `UPDATE ${TABLE}
              SET payload=?, run_after=max(run_after, ?), priority=max(priority, ?), job_key=?, foreground_lane=?,
                  claim_sort_key=CASE WHEN claim_sort_key>0 THEN min(claim_sort_key, ?) ELSE ? END,
-                 last_error=NULL
+                 last_error=NULL, deferred_by=NULL
            WHERE id=?`,
           [payload, runAfter, priority, key, lane, claimSortKey, claimSortKey, existing.id],
         );
@@ -625,7 +650,7 @@ export function createSqliteQueue(
           `UPDATE ${TABLE}
              SET payload=?, run_after=max(run_after, ?), priority=max(priority, ?), foreground_lane=?,
                  claim_sort_key=CASE WHEN claim_sort_key>0 THEN min(claim_sort_key, ?) ELSE ? END,
-                 last_error=NULL
+                 last_error=NULL, deferred_by=NULL
            WHERE id=?`,
           [payload, runAfter, priority, lane, claimSortKey, claimSortKey, existing.id],
         );
@@ -932,7 +957,7 @@ export function createSqliteQueue(
             );
             const lastError = `github rate-limit ${rateLimitAdmission.kind} admission`;
             const { changes } = driver.query(
-              `UPDATE ${TABLE} SET status='pending', run_after=max(run_after, ?), last_error=coalesce(last_error, ?) WHERE id=?`,
+              `UPDATE ${TABLE} SET status='pending', run_after=max(run_after, ?), last_error=coalesce(last_error, ?), deferred_by=coalesce(deferred_by, 'rate_limit') WHERE id=?`,
               [retryAfter, lastError, job.id],
             );
             if (changes) {
@@ -970,7 +995,7 @@ export function createSqliteQueue(
                 `${job.job_key ?? ""}:${job.id}:${job.payload}`,
               );
               const { changes } = driver.query(
-                `UPDATE ${TABLE} SET status='pending', run_after=max(run_after, ?), last_error=coalesce(last_error, ?) WHERE id=?`,
+                `UPDATE ${TABLE} SET status='pending', run_after=max(run_after, ?), last_error=coalesce(last_error, ?), deferred_by=coalesce(deferred_by, 'maintenance_admission') WHERE id=?`,
                 [retryAfter, `maintenance admission deferred: ${decision.reason}`, job.id],
               );
               if (changes) {
@@ -1046,7 +1071,7 @@ export function createSqliteQueue(
                 `${job.job_key ?? ""}:${job.id}:${job.payload}`,
               );
               const { changes } = driver.query(
-                `UPDATE ${TABLE} SET status='pending', run_after=max(run_after, ?), last_error=coalesce(last_error, ?) WHERE id=?`,
+                `UPDATE ${TABLE} SET status='pending', run_after=max(run_after, ?), last_error=coalesce(last_error, ?), deferred_by=coalesce(deferred_by, 'installation_concurrency') WHERE id=?`,
                 [retryAfter, `installation concurrency admission deferred: ${decision.reason}`, job.id],
               );
               if (changes) {
@@ -1117,7 +1142,7 @@ export function createSqliteQueue(
             recordQueueMetric(driver, "loopover_jobs_coalesced_total");
           } else {
             driver.query(
-              `UPDATE ${TABLE} SET status='pending', run_after=?, last_error=? WHERE id=?`,
+              `UPDATE ${TABLE} SET status='pending', run_after=?, last_error=?, deferred_by='rate_limit' WHERE id=?`,
               [retryAfter, errMsg, job.id],
             );
           }
@@ -1573,7 +1598,7 @@ function deferPendingJobsForRateLimit(
     if (!matchesGitHubRateLimitAdmissionTarget(candidate, blocked)) continue;
     const runAfter = now + rateLimitRetryDelayWithJitter(delayMs, `${row.job_key ?? ""}:${row.id}:${row.payload}`);
     const { changes } = driver.query(
-      `UPDATE ${TABLE} SET run_after=max(run_after, ?), last_error=coalesce(last_error, ?) WHERE id=? AND status='pending'`,
+      `UPDATE ${TABLE} SET run_after=max(run_after, ?), last_error=coalesce(last_error, ?), deferred_by=coalesce(deferred_by, 'rate_limit') WHERE id=? AND status='pending'`,
       [runAfter, "github rate-limit budget deferred", row.id],
     );
     changed += changes;
@@ -1650,7 +1675,7 @@ function mergeRescheduledJobIntoPending(
   ).rows[0] as { id: number } | undefined;
   if (!existing) return false;
   driver.query(
-    `UPDATE ${TABLE} SET run_after=max(run_after, ?), last_error=? WHERE id=?`,
+    `UPDATE ${TABLE} SET run_after=max(run_after, ?), last_error=?, deferred_by=coalesce(deferred_by, 'rate_limit') WHERE id=?`,
     [runAfter, errMsg, existing.id],
   );
   driver.query(`DELETE FROM ${TABLE} WHERE id=?`, [job.id]);

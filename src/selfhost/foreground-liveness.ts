@@ -2,16 +2,29 @@
 // agent-regate-pr, agent-regate-sweep, recapture-preview -- everything at or above FOREGROUND_QUEUE_PRIORITY_FLOOR,
 // see queue-common.ts) must always have a BOUNDED runnable trickle, mirroring the maintenance lane's own
 // maxDeferAgeMs escape hatch (maintenance-admission.ts). Unlike maintenance jobs, foreground jobs never go through
-// an admission gate of their own -- only the GitHub rate-limit admission check (processOne, before consume()) and
-// the rate-limit BUDGET sweep (deferPendingJobsForRateLimit) can push a foreground job's run_after into the
-// future, and NEITHER exempts foreground priority the way maintenance-admission exempts it entirely: a
-// GITHUB_BUDGET_BACKGROUND_TYPES job like agent-regate-pr (a literal "contributor PR review", priority 9,
-// foreground) is rate-limited with the SAME conservative headroom as genuine maintenance sweeps
-// (MAINTENANCE_RESERVED_HEADROOM, see queue-common.ts's githubRateLimitAdmissionTargetForJob), so a shared REST
-// budget drained by a post-deploy catch-up burst can defer it for the full rate-limit reset window (up to
-// MAX_GITHUB_RATE_LIMIT_RETRY_MS = 65 minutes) with no floor. Without this module, that lane can silently starve
-// entirely: hundreds of pending contributor-PR-review jobs, zero processing, zero runnable, requiring manual
-// intervention -- the production incident this module exists to make structurally impossible.
+// an admission gate that EXEMPTS them the way maintenance-admission exempts maintenance jobs entirely -- but three
+// distinct ADMISSION GATES (not just rate-limiting) can each independently push a foreground job's run_after into
+// the future: the GitHub rate-limit admission check (processOne, before consume(), plus the rate-limit BUDGET
+// sweep, deferPendingJobsForRateLimit), the per-installation concurrency admission check, and (for jobs sharing a
+// priority band with maintenance work) the maintenance-admission check itself. A GITHUB_BUDGET_BACKGROUND_TYPES
+// job like agent-regate-pr (a literal "contributor PR review", priority 9, foreground) is rate-limited with the
+// SAME conservative headroom as genuine maintenance sweeps (MAINTENANCE_RESERVED_HEADROOM, see queue-common.ts's
+// githubRateLimitAdmissionTargetForJob), so a shared REST budget drained by a post-deploy catch-up burst can defer
+// it for the full rate-limit reset window (up to MAX_GITHUB_RATE_LIMIT_RETRY_MS = 65 minutes) with no floor.
+// Without this module, that lane can silently starve entirely: hundreds of pending contributor-PR-review jobs,
+// zero processing, zero runnable, requiring manual intervention -- the production incident this module exists to
+// make structurally impossible.
+//
+// #9127 -- CORRECTION: an earlier version of this comment claimed admission gates were the ONLY way a foreground
+// job's run_after could land in the future. That premise was false: enqueue(message, delaySeconds) sets
+// run_after = now + delaySeconds*1000 for foreground job types too -- e.g. the linked-issue flag-then-close grace
+// window (processors.ts) enqueues a delayed "recapture-preview" verify job the exact same way. Because the
+// candidate SELECT below had no provenance filter, it could not tell a deliberate enqueue-time delay from an
+// admission-gate defer, and released BOTH -- collapsing a promised multi-minute grace window to one sweep tick
+// (as little as FOREGROUND_LIVENESS_CHECK_INTERVAL_MS, 60s default). The `deferred_by` column (set ONLY at the
+// three admission-gate defer sites, never by enqueue()) is the provenance filter that fixes this: the candidate
+// SELECT now requires `deferred_by IS NOT NULL`, so an enqueue-time delay is structurally ineligible for release
+// regardless of age or rate-limit state, no matter how long it is pending.
 //
 // The queue backends (pg-queue.ts / sqlite-queue.ts) run releaseStaleForegroundDeferrals() periodically (see
 // start()) AND once at boot (init()), so a restart/deploy self-heals inherited over-deferral instead of needing

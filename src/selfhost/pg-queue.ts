@@ -197,6 +197,10 @@ ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS claim_sort_key BIGINT NOT NULL DEF
 ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS is_maintenance INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS foreground_lane TEXT;
 ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS dead_at BIGINT;
+-- #9127: provenance tag for releaseStaleForegroundDeferrals' rate-limit-clear recheck. Set ONLY at an admission
+-- gate's own defer site (rate-limit / maintenance-admission / installation-concurrency), NEVER by enqueue()'s
+-- delaySeconds -- see foreground-liveness.ts's module header for the full rationale.
+ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS deferred_by TEXT;
 DROP INDEX IF EXISTS ${TABLE}_claim;
 CREATE INDEX IF NOT EXISTS ${TABLE}_claim ON ${TABLE}(status, priority, claim_sort_key, run_after);
 CREATE INDEX IF NOT EXISTS ${TABLE}_pending_job_key ON ${TABLE}(job_key, status);
@@ -779,20 +783,32 @@ export function createPgQueue(
   }
 
   /** See foreground-liveness.ts for the full rationale. A bounded candidate SELECT (foreground-priority, pending,
-   *  not currently due), an eligibility pass, a ramp-up CAP, then a per-row conditional UPDATE only for the
-   *  capped subset -- mirroring reviveEligibleDeadJobs' shape but with the extra ramp-up step. Each candidate is
-   *  ELIGIBLE on EITHER of two independent conditions: it has genuinely been waiting past the age-based trickle
-   *  ceiling (isForegroundDeferralStale, unconditional backstop), OR -- CONDITION-BASED recovery
-   *  (#selfhost-queue-liveness VPS incident) -- re-evaluating rateLimitAdmissionDelayMs against CURRENT
-   *  observations right now says it would be admitted immediately. The age floor alone can leave a job pinned to
-   *  a stale reset timestamp for up to its full original delay (observed up to ~15m) even when a fresher,
-   *  healthier observation arrived moments after it was deferred; the condition check recovers it on the NEXT
-   *  sweep tick instead (bounded by FOREGROUND_LIVENESS_CHECK_INTERVAL_MS, default 60s) whenever the underlying
-   *  rate-limit pressure has actually cleared, regardless of job age. When more jobs are eligible than
+   *  not currently due, ADMISSION-GATE-DEFERRED -- see below), an eligibility pass, a ramp-up CAP, then a per-row
+   *  conditional UPDATE only for the capped subset -- mirroring reviveEligibleDeadJobs' shape but with the extra
+   *  ramp-up step. Each candidate is ELIGIBLE on EITHER of two independent conditions: it has genuinely been
+   *  waiting past the age-based trickle ceiling (isForegroundDeferralStale, unconditional backstop), OR --
+   *  CONDITION-BASED recovery (#selfhost-queue-liveness VPS incident), restricted to rows an admission gate itself
+   *  deferred for a rate-limit reason (`deferred_by='rate_limit'`) -- re-evaluating rateLimitAdmissionDelayMs
+   *  against CURRENT observations right now says it would be admitted immediately. The age floor alone can leave a
+   *  job pinned to a stale reset timestamp for up to its full original delay (observed up to ~15m) even when a
+   *  fresher, healthier observation arrived moments after it was deferred; the condition check recovers it on the
+   *  NEXT sweep tick instead (bounded by FOREGROUND_LIVENESS_CHECK_INTERVAL_MS, default 60s) whenever the
+   *  underlying rate-limit pressure has actually cleared, regardless of job age. When more jobs are eligible than
    *  maxReleasePerSweep allows, selectForegroundDeferralsToRelease picks the oldest first -- a large inherited
    *  backlog drains gradually over several sweep ticks instead of flooding GitHub with every re-attempt at once.
    *  Logs + records a metric ONCE per sweep (aggregate count), not per row, so a large release batch cannot spam
    *  the log.
+   *
+   *  #9127 -- PROVENANCE filter (`deferred_by IS NOT NULL`, enforced by the candidate SELECT's own WHERE clause,
+   *  not by an application-side check on the returned rows): only a row an admission gate itself deferred
+   *  (rate-limit / maintenance-admission / installation-concurrency -- see the three defer sites' own
+   *  `deferred_by=COALESCE(deferred_by, ...)` writes) is EVER a release candidate. A row whose future run_after
+   *  came from enqueue(message, delaySeconds) -- a deliberate delay, e.g. the linked-issue flag-then-close grace
+   *  window -- never has deferred_by set, so it is structurally excluded here regardless of age or rate-limit
+   *  state. Without this filter, EVERY pending foreground row scheduled in the future qualified, and
+   *  isRateLimitAdmissionNowClear degrades to "clear" for any job with no rate-limit bucket at all (most enqueue-
+   *  time delays), so a deliberate delay was released on the very next sweep tick almost regardless of its
+   *  intended duration -- see foreground-liveness.ts's module header for the full incident writeup.
    *
    *  Candidate selection queries an OLDEST window AND a NEWEST window (#selfhost-queue-liveness clear-bucket
    *  starvation fix), not just one oldest-first window. A single `ORDER BY created_at ASC LIMIT` window can be
@@ -809,16 +825,16 @@ export function createPgQueue(
     const candidateLimit = foregroundLivenessConfig.maxReleasePerSweep;
     const [oldestRes, newestRes] = await Promise.all([
       pool.query(
-        `SELECT id, payload, created_at FROM ${TABLE} WHERE status='pending' AND priority>=$1 AND run_after>$2 ORDER BY created_at ASC, id ASC LIMIT $3`,
+        `SELECT id, payload, created_at, deferred_by FROM ${TABLE} WHERE status='pending' AND priority>=$1 AND run_after>$2 AND deferred_by IS NOT NULL ORDER BY created_at ASC, id ASC LIMIT $3`,
         [FOREGROUND_QUEUE_PRIORITY_FLOOR, now, candidateLimit],
       ),
       pool.query(
-        `SELECT id, payload, created_at FROM ${TABLE} WHERE status='pending' AND priority>=$1 AND run_after>$2 ORDER BY created_at DESC, id DESC LIMIT $3`,
+        `SELECT id, payload, created_at, deferred_by FROM ${TABLE} WHERE status='pending' AND priority>=$1 AND run_after>$2 AND deferred_by IS NOT NULL ORDER BY created_at DESC, id DESC LIMIT $3`,
         [FOREGROUND_QUEUE_PRIORITY_FLOOR, now, candidateLimit],
       ),
     ]);
-    const candidateRowsById = new Map<string, { id: string; payload: string; created_at: number | string }>();
-    for (const row of [...oldestRes.rows, ...newestRes.rows] as Array<{ id: string; payload: string; created_at: number | string }>) {
+    const candidateRowsById = new Map<string, { id: string; payload: string; created_at: number | string; deferred_by: string | null }>();
+    for (const row of [...oldestRes.rows, ...newestRes.rows] as Array<{ id: string; payload: string; created_at: number | string; deferred_by: string | null }>) {
       candidateRowsById.set(row.id, row);
     }
     const eligible: Array<{ id: string; pendingSinceMs: number; ageStale: boolean; rateLimitClear: boolean }> = [];
@@ -826,7 +842,13 @@ export function createPgQueue(
     for (const row of candidateRowsById.values()) {
       const pendingSinceMs = Number(row.created_at);
       const ageStale = isForegroundDeferralStale(foregroundLivenessConfig, pendingSinceMs, now);
-      const rateLimitClear = await isRateLimitAdmissionNowClear(row.payload, admissionCache);
+      // The rate-limit-clear recheck only makes sense -- and is only trusted -- for a row an admission gate
+      // deferred SPECIFICALLY for a rate-limit reason; a maintenance-admission or installation-concurrency
+      // deferral has no rate-limit bucket either, and isRateLimitAdmissionNowClear degrading to "clear" for it
+      // would release it on the very next sweep tick regardless of whether its OWN gate has actually cleared
+      // (the same false-premise bug #9127 fixes for enqueue-time delays, just for a different admission kind).
+      const rateLimitClear =
+        row.deferred_by === "rate_limit" ? await isRateLimitAdmissionNowClear(row.payload, admissionCache) : false;
       if (!ageStale && !rateLimitClear) continue;
       eligible.push({ id: row.id, pendingSinceMs, ageStale, rateLimitClear });
     }
@@ -835,8 +857,11 @@ export function createPgQueue(
     let releasedByAge = 0;
     let releasedByRateLimitClear = 0;
     for (const candidate of toRelease) {
+      // Clears deferred_by on release (not just run_after): the row is no longer deferred by anything, so a
+      // FUTURE re-defer (of whatever kind next applies) writes its own fresh tag via COALESCE(deferred_by, ...)
+      // instead of inheriting a stale tag from whichever admission gate deferred it this time.
       const update = await pool.query(
-        `UPDATE ${TABLE} SET run_after=$1 WHERE id=$2 AND status='pending' AND run_after>$1`,
+        `UPDATE ${TABLE} SET run_after=$1, deferred_by=NULL WHERE id=$2 AND status='pending' AND run_after>$1`,
         [now, candidate.id],
       );
       const rowsChanged = update.rowCount ?? 0;
@@ -987,7 +1012,7 @@ export function createPgQueue(
             `UPDATE ${TABLE}
                SET payload=$1, run_after=GREATEST(run_after, $2), created_at=$3, priority=GREATEST(priority, $4), job_key=$5,
                    claim_sort_key=CASE WHEN claim_sort_key>0 THEN LEAST(claim_sort_key, $8) ELSE $8 END,
-                   last_error=NULL
+                   last_error=NULL, deferred_by=NULL
              WHERE id=$6 AND status='pending' AND job_key=$7`,
             [mergedPayload, runAfter, now, priority, mergedKey, mergeCandidate.id, mergeCandidate.job_key, claimSortKey],
           );
@@ -1018,7 +1043,7 @@ export function createPgQueue(
         await pool.query(
           `UPDATE ${TABLE}
              SET payload=$1, run_after=GREATEST(run_after, $2), priority=GREATEST(priority, $3), job_key=$4,
-                 foreground_lane=$5, claim_sort_key=CASE WHEN claim_sort_key>0 THEN LEAST(claim_sort_key, $7) ELSE $7 END, last_error=NULL
+                 foreground_lane=$5, claim_sort_key=CASE WHEN claim_sort_key>0 THEN LEAST(claim_sort_key, $7) ELSE $7 END, last_error=NULL, deferred_by=NULL
            WHERE id=$6`,
           [payload, runAfter, priority, key, lane, existing.id, claimSortKey],
         );
@@ -1051,7 +1076,7 @@ export function createPgQueue(
         await pool.query(
           `UPDATE ${TABLE}
              SET payload=$1, run_after=GREATEST(run_after, $2), priority=GREATEST(priority, $3),
-                 foreground_lane=$4, claim_sort_key=CASE WHEN claim_sort_key>0 THEN LEAST(claim_sort_key, $6) ELSE $6 END, last_error=NULL
+                 foreground_lane=$4, claim_sort_key=CASE WHEN claim_sort_key>0 THEN LEAST(claim_sort_key, $6) ELSE $6 END, last_error=NULL, deferred_by=NULL
            WHERE id=$5`,
           [payload, runAfter, priority, lane, existing.id, claimSortKey],
         );
@@ -1268,7 +1293,7 @@ export function createPgQueue(
             const update = await retryPoolUpdateOrLeaveForReclaim(
               () =>
                 pool.query(
-                  `UPDATE ${TABLE} SET status='pending', run_after=GREATEST(run_after, $1), last_error=COALESCE(last_error, $2) WHERE id=$3`,
+                  `UPDATE ${TABLE} SET status='pending', run_after=GREATEST(run_after, $1), last_error=COALESCE(last_error, $2), deferred_by=COALESCE(deferred_by, 'rate_limit') WHERE id=$3`,
                   [retryAfter, lastError, job.id],
                 ),
               job.id,
@@ -1311,7 +1336,7 @@ export function createPgQueue(
               const update = await retryPoolUpdateOrLeaveForReclaim(
                 () =>
                   pool.query(
-                    `UPDATE ${TABLE} SET status='pending', run_after=GREATEST(run_after, $1), last_error=COALESCE(last_error, $2) WHERE id=$3`,
+                    `UPDATE ${TABLE} SET status='pending', run_after=GREATEST(run_after, $1), last_error=COALESCE(last_error, $2), deferred_by=COALESCE(deferred_by, 'maintenance_admission') WHERE id=$3`,
                     [retryAfter, `maintenance admission deferred: ${decision.reason}`, job.id],
                   ),
                 job.id,
@@ -1392,7 +1417,7 @@ export function createPgQueue(
               const update = await retryPoolUpdateOrLeaveForReclaim(
                 () =>
                   pool.query(
-                    `UPDATE ${TABLE} SET status='pending', run_after=GREATEST(run_after, $1), last_error=COALESCE(last_error, $2) WHERE id=$3`,
+                    `UPDATE ${TABLE} SET status='pending', run_after=GREATEST(run_after, $1), last_error=COALESCE(last_error, $2), deferred_by=COALESCE(deferred_by, 'installation_concurrency') WHERE id=$3`,
                     [retryAfter, `installation concurrency admission deferred: ${decision.reason}`, job.id],
                   ),
                 job.id,
@@ -1503,7 +1528,7 @@ export function createPgQueue(
             await recordQueueMetric("loopover_jobs_coalesced_total");
           } else {
             await pool.query(
-              `UPDATE ${TABLE} SET status='pending', run_after=$1, last_error=$2 WHERE id=$3`,
+              `UPDATE ${TABLE} SET status='pending', run_after=$1, last_error=$2, deferred_by='rate_limit' WHERE id=$3`,
               [retryAfter, errMsg, job.id],
             );
           }
@@ -1800,7 +1825,7 @@ export function createPgQueue(
       if (!matchesGitHubRateLimitAdmissionTarget(candidate, blocked)) continue;
       const runAfter = now + rateLimitRetryDelayWithJitter(delayMs, `${row.job_key ?? ""}:${row.id}:${row.payload}`);
       const update = await pool.query(
-        `UPDATE ${TABLE} SET run_after=GREATEST(run_after, $1), last_error=COALESCE(last_error, $2) WHERE id=$3 AND status='pending'`,
+        `UPDATE ${TABLE} SET run_after=GREATEST(run_after, $1), last_error=COALESCE(last_error, $2), deferred_by=COALESCE(deferred_by, 'rate_limit') WHERE id=$3 AND status='pending'`,
         [runAfter, "github rate-limit budget deferred", row.id],
       );
       changed += update.rowCount ?? 0;
@@ -1846,7 +1871,7 @@ export function createPgQueue(
     ).rows[0] as { id: string } | undefined;
     if (!existing) return false;
     await pool.query(
-      `UPDATE ${TABLE} SET run_after=GREATEST(run_after, $1), last_error=$2 WHERE id=$3`,
+      `UPDATE ${TABLE} SET run_after=GREATEST(run_after, $1), last_error=$2, deferred_by=COALESCE(deferred_by, 'rate_limit') WHERE id=$3`,
       [runAfter, errMsg, existing.id],
     );
     await pool.query(`DELETE FROM ${TABLE} WHERE id=$1`, [job.id]);

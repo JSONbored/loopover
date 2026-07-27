@@ -207,7 +207,9 @@ describe("advisory rules", () => {
     expect(advisory.findings.map((finding) => finding.code)).toContain("issue_has_linked_prs");
   });
 
-  it("flags duplicate risk when another open PR references the same linked issue", () => {
+  // #9129: a plain body-text overlap (neither side has changedFiles resolved) is UNCORROBORATED -- it gets the
+  // separate, always-non-blocking duplicate_pr_risk_unconfirmed code, never the concrete duplicate_pr_risk code.
+  it("flags an UNCONFIRMED duplicate risk when another open PR references the same linked issue with no corroborating diff evidence (#9129)", () => {
     const pr: PullRequestRecord = {
       repoFullName: repo.fullName,
       number: 12,
@@ -224,6 +226,64 @@ describe("advisory rules", () => {
       number: 13,
       title: "Alternative registry sync",
       linkedIssues: [4],
+    };
+
+    const advisory = buildPullRequestAdvisory(repo, pr, { otherOpenPullRequests: [otherPr] });
+
+    expect(advisory.findings.map((finding) => finding.code)).toContain("duplicate_pr_risk_unconfirmed");
+    expect(advisory.findings.map((finding) => finding.code)).not.toContain("duplicate_pr_risk");
+  });
+
+  // #9129: a genuine changed-file-path overlap CORROBORATES the same scenario -- now the concrete duplicate_pr_risk
+  // code fires instead, and it stays configurable via duplicatePrGateMode (see the gate-mode tests below).
+  it("flags a CONFIRMED duplicate risk when the overlapping open PR shares a changed-file path (#9129)", () => {
+    const pr: PullRequestRecord = {
+      repoFullName: repo.fullName,
+      number: 12,
+      title: "Add registry sync",
+      state: "open",
+      authorLogin: "oktofeesh1",
+      authorAssociation: "NONE",
+      headSha: "abc123",
+      labels: [],
+      linkedIssues: [4],
+      changedFiles: ["src/registry/sync.ts"],
+    };
+    const otherPr: PullRequestRecord = {
+      ...pr,
+      number: 13,
+      title: "Alternative registry sync",
+      linkedIssues: [4],
+      changedFiles: ["src/registry/sync.ts", "src/registry/other.ts"],
+    };
+
+    const advisory = buildPullRequestAdvisory(repo, pr, { otherOpenPullRequests: [otherPr] });
+
+    expect(advisory.findings.map((finding) => finding.code)).toContain("duplicate_pr_risk");
+    expect(advisory.findings.map((finding) => finding.code)).not.toContain("duplicate_pr_risk_unconfirmed");
+  });
+
+  // #9129: the ALTERNATE corroboration path -- the sibling has a resolved, non-empty changed-file set of its own
+  // (a real diff exists), even though it shares no path with this PR's own changes.
+  it("flags a CONFIRMED duplicate risk when the sibling PR is a non-trivial real change, even without shared file paths (#9129)", () => {
+    const pr: PullRequestRecord = {
+      repoFullName: repo.fullName,
+      number: 12,
+      title: "Add registry sync",
+      state: "open",
+      authorLogin: "oktofeesh1",
+      authorAssociation: "NONE",
+      headSha: "abc123",
+      labels: [],
+      linkedIssues: [4],
+      // This PR's own changedFiles are unresolved -- corroboration must still work off the sibling alone.
+    };
+    const otherPr: PullRequestRecord = {
+      ...pr,
+      number: 13,
+      title: "Alternative registry sync",
+      linkedIssues: [4],
+      changedFiles: ["src/registry/other-approach.ts"],
     };
 
     const advisory = buildPullRequestAdvisory(repo, pr, { otherOpenPullRequests: [otherPr] });
@@ -268,7 +328,9 @@ describe("advisory rules", () => {
 
     const advisory = buildPullRequestAdvisory(repo, loser, { otherOpenPullRequests: [lowerSibling], duplicateWinnerEnabled: true });
 
-    expect(advisory.findings.map((finding) => finding.code)).toContain("duplicate_pr_risk");
+    // Neither PR has changedFiles resolved here, so the finding is the UNCONFIRMED code (#9129) -- the
+    // duplicate-winner suppression logic itself is what this test covers, orthogonal to corroboration.
+    expect(advisory.findings.map((finding) => finding.code)).toContain("duplicate_pr_risk_unconfirmed");
   });
 
   it("#dup-winner: flag OFF + would-be-winner ⇒ duplicate finding STILL present (byte-identical)", () => {
@@ -288,7 +350,8 @@ describe("advisory rules", () => {
 
     const advisory = buildPullRequestAdvisory(repo, wouldBeWinner, { otherOpenPullRequests: [higherSibling], duplicateWinnerEnabled: false });
 
-    expect(advisory.findings.map((finding) => finding.code)).toContain("duplicate_pr_risk");
+    // Neither PR has changedFiles resolved here (#9129: uncorroborated code).
+    expect(advisory.findings.map((finding) => finding.code)).toContain("duplicate_pr_risk_unconfirmed");
   });
 
   it("#dup-winner: flag ON + no overlap ⇒ no duplicate finding (alone in cluster)", () => {
@@ -309,6 +372,7 @@ describe("advisory rules", () => {
     const advisory = buildPullRequestAdvisory(repo, lonePr, { otherOpenPullRequests: [unrelated], duplicateWinnerEnabled: true });
 
     expect(advisory.findings.map((finding) => finding.code)).not.toContain("duplicate_pr_risk");
+    expect(advisory.findings.map((finding) => finding.code)).not.toContain("duplicate_pr_risk_unconfirmed");
   });
 
   it("keeps weak queue warnings advisory-only for the opt-in gate", () => {
@@ -404,7 +468,7 @@ describe("advisory rules", () => {
     expect(output.text).toContain("[context]");
   });
 
-  it("keeps missing-issue advisory by default, blocks duplicates by default, honoring explicit modes", () => {
+  it("keeps missing-issue advisory by default, honoring an explicit block mode", () => {
     const pr: PullRequestRecord = {
       repoFullName: repo.fullName,
       number: 21,
@@ -424,17 +488,71 @@ describe("advisory rules", () => {
     expect(evaluateGateCheck(missingIssueAdvisory, { linkedIssueGateMode: "advisory" }).conclusion).toBe("success");
     expect(evaluateGateCheck(missingIssueAdvisory, { linkedIssueGateMode: "off" }).conclusion).toBe("success");
     expect(evaluateGateCheck(missingIssueAdvisory, { linkedIssueGateMode: "block" }).conclusion).toBe("failure");
+  });
 
-    const linkedPr: PullRequestRecord = { ...pr, number: 22, linkedIssues: [44] };
-    const duplicateAdvisory = buildPullRequestAdvisory(repo, linkedPr, {
-      otherOpenPullRequests: [{ ...linkedPr, number: 23, linkedIssues: [44] }],
-    });
+  // #9129 ADVERSARIAL REGRESSION: a PR with an overlapping linked issue but NO corroborating diff overlap must
+  // never produce a close, under ANY duplicatePrGateMode -- including an explicit "block", which is exactly the
+  // live-exploited configuration (.loopover.yml sets `duplicates: block` on this very repo). Before this fix, an
+  // attacker could cite the same issue number in a throwaway PR body (no code required) and force this exact
+  // scenario to auto-close the victim's PR one-shot.
+  it("#9129: an overlapping linked issue with NO diff-overlap corroboration never closes, under any duplicatePrGateMode", () => {
+    const pr: PullRequestRecord = {
+      repoFullName: repo.fullName,
+      number: 22,
+      title: "Add review panel",
+      state: "open",
+      authorLogin: "victim",
+      authorAssociation: "NONE",
+      headSha: "abc123",
+      labels: [],
+      linkedIssues: [44],
+      // No changedFiles resolved -- the common case, since collision enrichment is scoped away from the gate's
+      // own otherOpenPullRequests input by default (see hasDuplicateOverlapCorroboration's doc comment).
+    };
+    const attackerPr: PullRequestRecord = { ...pr, number: 23, authorLogin: "attacker", title: "Fixes the same thing" };
+    const duplicateAdvisory = buildPullRequestAdvisory(repo, pr, { otherOpenPullRequests: [attackerPr] });
+
+    expect(duplicateAdvisory.findings.map((finding) => finding.code)).toContain("duplicate_pr_risk_unconfirmed");
+    expect(duplicateAdvisory.findings.map((finding) => finding.code)).not.toContain("duplicate_pr_risk");
+    for (const duplicatePrGateMode of ["advisory", "off", "block"] as const) {
+      const gate = evaluateGateCheck(duplicateAdvisory, { duplicatePrGateMode });
+      expect(gate.conclusion).toBe("success");
+      expect(gate.blockers).toEqual([]);
+    }
+  });
+
+  // #9129: once corroborated (a real changed-file overlap), the finding stays configurable via
+  // duplicatePrGateMode -- but "block" now HOLDS (neutral) rather than closing, matching the requirement to
+  // "prefer holding BOTH over closing either automatically". The new code-level default (unset ⇒ "advisory")
+  // never even holds; a maintainer must opt in to "block" to get the hold behavior at all.
+  it("#9129: a CORROBORATED duplicate overlap stays advisory by default, and HOLDS (never closes) under an explicit block mode", () => {
+    const pr: PullRequestRecord = {
+      repoFullName: repo.fullName,
+      number: 22,
+      title: "Add review panel",
+      state: "open",
+      authorLogin: "someone",
+      authorAssociation: "NONE",
+      headSha: "abc123",
+      labels: [],
+      linkedIssues: [44],
+      changedFiles: ["src/panel.ts"],
+    };
+    const sibling: PullRequestRecord = { ...pr, number: 23, changedFiles: ["src/panel.ts"] };
+    const duplicateAdvisory = buildPullRequestAdvisory(repo, pr, { otherOpenPullRequests: [sibling] });
 
     expect(duplicateAdvisory.findings.map((finding) => finding.code)).toContain("duplicate_pr_risk");
-    expect(evaluateGateCheck(duplicateAdvisory).conclusion).toBe("failure");
+
+    // Code-level default (unset) is now "advisory" (#9129, was "block") -- never blocks, never holds.
+    expect(evaluateGateCheck(duplicateAdvisory).conclusion).toBe("success");
     expect(evaluateGateCheck(duplicateAdvisory, { duplicatePrGateMode: "advisory" }).conclusion).toBe("success");
     expect(evaluateGateCheck(duplicateAdvisory, { duplicatePrGateMode: "off" }).conclusion).toBe("success");
-    expect(evaluateGateCheck(duplicateAdvisory, { duplicatePrGateMode: "block" }).conclusion).toBe("failure");
+
+    // Explicit "block" HOLDS both sides for a human instead of closing either.
+    const held = evaluateGateCheck(duplicateAdvisory, { duplicatePrGateMode: "block" });
+    expect(held.conclusion).toBe("neutral");
+    expect(held.blockers).toEqual([]);
+    expect(held.warnings.map((finding) => finding.code)).toContain("duplicate_pr_risk");
   });
 
   it("a reviewer SPLIT (ai_review_split) blocks → close, gated like a consensus defect by aiReviewGateMode (#ai-review-split)", () => {
@@ -653,22 +771,25 @@ describe("advisory rules", () => {
   });
 
   it("gates NON-confirmed contributors normally — a real blocker closes them like a confirmed author (#gate-nonconfirmed)", () => {
+    // Uses missing_linked_issue (not duplicate_pr_risk, #9129): a duplicate-only blocker set now HOLDS instead of
+    // closing regardless of confirmed-contributor status, which would confound this test's actual subject (that
+    // confirmed-status itself has no effect on the verdict) with the unrelated duplicate-only hold behavior.
     const blockingAdvisory = {
       ...buildPullRequestAdvisory(repo, null),
-      findings: [{ code: "duplicate_pr_risk", title: "Linked issue overlaps another open PR", severity: "warning" as const, detail: "Duplicate." }],
+      findings: [{ code: "missing_linked_issue", title: "No linked issue detected", severity: "warning" as const, detail: "No linked issue." }],
     };
 
     // Non-confirmed author: gated NORMALLY now — a real blocker → failure (one-shot close), no longer forced to a
     // neutral/held state. Confirmed-status affects only on-chain scoring, never the gate verdict. (#gate-nonconfirmed)
-    const nonConfirmed = evaluateGateCheck(blockingAdvisory, { duplicatePrGateMode: "block", confirmedContributor: false });
+    const nonConfirmed = evaluateGateCheck(blockingAdvisory, { linkedIssueGateMode: "block", confirmedContributor: false });
     expect(nonConfirmed.conclusion).toBe("failure");
-    expect(nonConfirmed.title).toBe("LoopOver Orb Review Agent: Linked issue overlaps another open PR");
-    expect(nonConfirmed.blockers.map((finding) => finding.code)).toEqual(["duplicate_pr_risk"]);
+    expect(nonConfirmed.title).toBe("LoopOver Orb Review Agent: No linked issue detected");
+    expect(nonConfirmed.blockers.map((finding) => finding.code)).toEqual(["missing_linked_issue"]);
 
     // Confirmed author with the same blocker: identical verdict.
-    const confirmed = evaluateGateCheck(blockingAdvisory, { duplicatePrGateMode: "block", confirmedContributor: true });
+    const confirmed = evaluateGateCheck(blockingAdvisory, { linkedIssueGateMode: "block", confirmedContributor: true });
     expect(confirmed.conclusion).toBe("failure");
-    expect(confirmed.blockers.map((finding) => finding.code)).toEqual(["duplicate_pr_risk"]);
+    expect(confirmed.blockers.map((finding) => finding.code)).toEqual(["missing_linked_issue"]);
 
     // A clean PR from a non-confirmed author is a normal success → auto-merges.
     const cleanNonConfirmed = evaluateGateCheck({ ...buildPullRequestAdvisory(repo, null), findings: [] }, { confirmedContributor: false });

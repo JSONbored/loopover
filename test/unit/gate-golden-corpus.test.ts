@@ -39,7 +39,7 @@ function advisoryOf(entry: CorpusEntry): Advisory {
 
 describe("golden gate corpus (#8832)", () => {
   it("corpus file is well-formed: version, unique ids, non-empty archetype coverage", () => {
-    expect(corpus.version).toBe(1);
+    expect(corpus.version).toBe(2);
     expect(corpus.entries.length).toBeGreaterThanOrEqual(14);
     expect(new Set(corpus.entries.map((entry) => entry.id)).size).toBe(corpus.entries.length);
     // The corpus must always carry at least one knownBad guard — the never-flips-to-merge invariant is its point.

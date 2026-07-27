@@ -137,6 +137,12 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
   // budget is reserved for webhooks (which drive timely reviews) instead of compounding the backlog; the next
   // tick (~2 min) retries, and after the bucket resets the sweep resumes. Webhooks never pre-yield.
   const jobs: JobMessage[] = [];
+  // #9274 (epic #9267): enqueued EVERY tick, unconditionally, rather than gated behind isHourly here. The
+  // seq-threshold trigger (>=256 records since the last anchor) must fire "independent of the hourly clock"
+  // per the issue's own requirement -- gating the enqueue itself to isHourly would silently make that
+  // impossible. The job's own decideLedgerAnchorSchedule (in ledger-anchor-scheduler.ts) is what actually
+  // decides whether THIS tick does anything; a cheap two-query no-op the overwhelming majority of ticks.
+  jobs.push({ type: "anchor-decision-ledger", requestedBy: "schedule", isHourly });
   const selfHostedReviews = isSelfHostedReviewRuntime(env);
   const queueSnapshot = selfHostedReviews
     ? await queueSnapshotFromBinding(env.JOBS).catch((error) => {

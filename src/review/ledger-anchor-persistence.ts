@@ -149,3 +149,19 @@ function parseBackendRef(raw: string | null): unknown {
     return null;
   }
 }
+
+/**
+ * The most recent anchor ATTEMPT, regardless of backend or status -- the reference point the scheduler
+ * (#9274) compares the live tip against. Deliberately not "the most recent SUCCESSFUL anchor": if a backend
+ * is down for a stretch, treating each failed retry as if nothing had been attempted would mean hammering the
+ * same stale checkpoint every cron tick against a backend that keeps failing, rather than advancing to a
+ * newer tip as time passes and letting the gap be visible on #9271's own public attempt log. Returns null
+ * only when nothing has ever been recorded (the very first anchor ever).
+ */
+export async function loadLastLedgerAnchorAttempt(env: Env): Promise<{ seq: number; rowHash: string } | null> {
+  const row = await env.DB.prepare("SELECT seq, row_hash AS rowHash FROM decision_ledger_anchors ORDER BY created_at DESC, id DESC LIMIT 1").first<{
+    seq: number;
+    rowHash: string;
+  }>();
+  return row == null ? null : row;
+}

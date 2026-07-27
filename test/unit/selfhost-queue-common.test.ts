@@ -1579,6 +1579,9 @@ describe("self-host queue common helpers", () => {
       // The timely-merge sweep and its Orb-relay retry run every ~2-min tick → never deferred.
       expect(scheduledEnqueueDelaySeconds("agent-regate-sweep")).toBe(0);
       expect(scheduledEnqueueDelaySeconds("retry-orb-relay")).toBe(0);
+      // #9274: the seq-threshold anchoring trigger must fire independent of the hourly clock, so this also
+      // runs every tick rather than being phase-spread.
+      expect(scheduledEnqueueDelaySeconds("anchor-decision-ledger")).toBe(0);
 
       // A periodic maintenance job gets a stable, in-window slot derived from the shared jitter helper.
       const window = 5 * 60_000;

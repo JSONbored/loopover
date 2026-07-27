@@ -48,6 +48,10 @@ import {
   setAprRepoDispatchPaused,
 } from "../orb/apr-repo-transfer";
 import { syncBrokeredInstalledRepos } from "../orb/installed-repos-sync";
+import { githubRateLimitAdmissionKeyForInstallation, makeInstallationOctokit } from "../github/client";
+import { withInstallationTokenRetry } from "../github/app";
+import { runScheduledLedgerAnchor, resolveGitAnchorTarget } from "../review/ledger-anchor-scheduler";
+import { submitToGitAnchor } from "../review/ledger-anchor-git";
 import { incr } from "../selfhost/metrics";
 import { generateSignalSnapshots } from "./signal-snapshot";
 import { isDecisionAuditEnabled, runDecisionAuditSample } from "../review/decision-audit";
@@ -93,6 +97,23 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
     case "refresh-registry":
       await refreshRegistry(env);
       return;
+    case "anchor-decision-ledger": {
+      // Git anchoring runs only when BOTH the target (owner/repo, #9273) and an installation id (to mint a
+      // token through) are configured -- unset means that backend simply isn't wired up yet; Rekor still
+      // proceeds independently either way (runScheduledLedgerAnchor's own posture).
+      const gitTarget = resolveGitAnchorTarget(env);
+      const installationId = Number(env.LOOPOVER_LEDGER_ANCHOR_GIT_INSTALLATION_ID);
+      const submitGit =
+        gitTarget && Number.isInteger(installationId) && installationId > 0
+          ? async (signed: Parameters<typeof submitToGitAnchor>[1]) =>
+              withInstallationTokenRetry(env, installationId, async (token) => {
+                const octokit = makeInstallationOctokit(env, token, "live", githubRateLimitAdmissionKeyForInstallation(installationId));
+                await submitToGitAnchor(env, signed, octokit, gitTarget);
+              })
+          : null;
+      await runScheduledLedgerAnchor(env, { isHourly: message.isHourly }, { submitGit });
+      return;
+    }
     case "sync-brokered-installed-repos": {
       const syncResult = await syncBrokeredInstalledRepos(env);
       // syncBrokeredInstalledRepos is deliberately fail-safe (never throws -- a miss self-heals on the next

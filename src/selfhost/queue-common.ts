@@ -777,6 +777,10 @@ export function scheduledEnqueueJitterMs(): number {
 const IMMEDIATE_SCHEDULED_JOB_TYPES = new Set<string>([
   "agent-regate-sweep",
   "retry-orb-relay",
+  // #9274 (epic #9267): checked every ~2-min tick like the sweep above (the seq-threshold anchoring trigger
+  // must fire independent of the hourly clock), and is a cheap 1-2 query no-op the overwhelming majority of
+  // ticks -- not a heavy per-repo fan-out parent, so it needs no phase-spreading either.
+  "anchor-decision-ledger",
 ]);
 
 export function scheduledEnqueueDelaySeconds(jobType: string): number {

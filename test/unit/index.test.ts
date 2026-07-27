@@ -363,7 +363,7 @@ describe("worker entrypoint", () => {
 
     // A regular */2 tick (not :00, not :30) enqueues ONLY the light auto-maintain sweep — the heavier sync/health
     // jobs are gated to :00/:30, so the tight cadence stays cheap while merges/closes fire promptly.
-    expect(sent).toEqual([{ type: "agent-regate-sweep", requestedBy: "schedule" }]);
+    expect(sent).toEqual([{ type: "anchor-decision-ledger", requestedBy: "schedule", isHourly: false }, { type: "agent-regate-sweep", requestedBy: "schedule" }]);
   });
 
   it("enqueues the APR repo-transfer poll on an hourly tick only when LOOPOVER_APR_TRANSFER_POLL is set (#7741)", async () => {
@@ -409,6 +409,7 @@ describe("worker entrypoint", () => {
     await Promise.all(waitUntil);
 
     expect(sent).toEqual([
+      { type: "anchor-decision-ledger", requestedBy: "schedule", isHourly: false },
       { type: "agent-regate-sweep", requestedBy: "schedule" },
       { type: "backfill-registered-repos", requestedBy: "schedule", mode: "light" },
       { type: "repair-data-fidelity", requestedBy: "schedule" },
@@ -439,6 +440,7 @@ describe("worker entrypoint", () => {
     // No SECOND "agent-regate-sweep" trigger is enqueued behind the one already in flight; the other :30 jobs
     // are unaffected since they never depended on the (removed, broad) backlog check.
     expect(sent).toEqual([
+      { type: "anchor-decision-ledger", requestedBy: "schedule", isHourly: false },
       { type: "backfill-registered-repos", requestedBy: "schedule", mode: "light" },
       { type: "repair-data-fidelity", requestedBy: "schedule" },
       { type: "refresh-installation-health", requestedBy: "schedule" },
@@ -467,6 +469,7 @@ describe("worker entrypoint", () => {
     // No SECOND "backlog-convergence-sweep" trigger is enqueued behind the one already in flight; the other :30
     // jobs (including agent-regate-sweep, whose OWN backlog is unaffected) still fire normally.
     expect(sent).toEqual([
+      { type: "anchor-decision-ledger", requestedBy: "schedule", isHourly: false },
       { type: "agent-regate-sweep", requestedBy: "schedule" },
       { type: "backfill-registered-repos", requestedBy: "schedule", mode: "light" },
       { type: "repair-data-fidelity", requestedBy: "schedule" },
@@ -494,11 +497,11 @@ describe("worker entrypoint", () => {
 
     // Fails OPEN on a broken snapshot binding: the sweep still enqueues, and the failure is surfaced (not
     // silently swallowed) so an operator can see the introspection is unavailable.
-    expect(sent).toEqual([{ type: "agent-regate-sweep", requestedBy: "schedule" }]);
+    expect(sent).toEqual([{ type: "anchor-decision-ledger", requestedBy: "schedule", isHourly: false }, { type: "agent-regate-sweep", requestedBy: "schedule" }]);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("selfhost_queue_snapshot_failed"));
   });
 
-  it("does not enqueue review sweeps from a broker-only Cloudflare runtime", async () => {
+  it("does not enqueue review sweeps from a broker-only Cloudflare runtime (anchoring still runs -- it is not a review sweep, #9274)", async () => {
     const sent: Array<import("../../src/types").JobMessage> = [];
     const env = createTestEnv({
       JOBS: {
@@ -513,7 +516,7 @@ describe("worker entrypoint", () => {
     await worker.scheduled(controllerFor("2026-05-25T05:14:00.000Z"), env, executionContext(waitUntil));
     await Promise.all(waitUntil);
 
-    expect(sent).toEqual([]);
+    expect(sent).toEqual([{ type: "anchor-decision-ledger", requestedBy: "schedule", isHourly: false }]);
   });
 
   it("keeps broker-only Cloudflare maintenance cheap on :30 ticks", async () => {
@@ -532,6 +535,7 @@ describe("worker entrypoint", () => {
     await Promise.all(waitUntil);
 
     expect(sent).toEqual([
+      { type: "anchor-decision-ledger", requestedBy: "schedule", isHourly: false },
       { type: "repair-data-fidelity", requestedBy: "schedule" },
       { type: "refresh-installation-health", requestedBy: "schedule" },
     ]);
@@ -601,6 +605,7 @@ describe("worker entrypoint", () => {
     // opted into the experimental gittensor plugin, so the job is never enqueued (#experimental-gittensor-plugin)
     // — see "re-includes refresh-registry once a repo opts into the experimental gittensor plugin" below.
     expect(sent).toEqual([
+      { type: "anchor-decision-ledger", requestedBy: "schedule", isHourly: true },
       { type: "agent-regate-sweep", requestedBy: "schedule" },
       { type: "backfill-registered-repos", requestedBy: "schedule", mode: "light" },
       { type: "repair-data-fidelity", requestedBy: "schedule" },
@@ -671,6 +676,7 @@ describe("worker entrypoint", () => {
 
     // refresh-registry is absent here too — see the comment on "enqueues hourly refreshes..." above.
     expect(sent).toEqual([
+      { type: "anchor-decision-ledger", requestedBy: "schedule", isHourly: true },
       { type: "agent-regate-sweep", requestedBy: "schedule" },
       { type: "backfill-registered-repos", requestedBy: "schedule", mode: "full" },
       { type: "repair-data-fidelity", requestedBy: "schedule" },
@@ -715,6 +721,7 @@ describe("worker entrypoint", () => {
     // The enqueued SET is unchanged — jitter only spreads run_after timing, never which jobs are sent.
     // refresh-registry is absent here too — see the comment on "enqueues hourly refreshes..." above.
     expect(sent.map((s) => s.message.type)).toEqual([
+      "anchor-decision-ledger",
       "agent-regate-sweep",
       "backfill-registered-repos",
       "repair-data-fidelity",

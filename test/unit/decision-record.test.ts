@@ -9,7 +9,7 @@ import {
   sha256Hex,
   type DecisionRecord,
 } from "../../src/review/decision-record";
-import { appendDecisionLedger, buildLedgerAnchorPayload, LEDGER_GENESIS_HASH, loadDecisionRecordCollapsible, loadPublicDecisionRecord, verifyDecisionLedger } from "../../src/review/decision-record";
+import { appendDecisionLedger, LEDGER_GENESIS_HASH, loadDecisionLedgerTip, loadDecisionRecordCollapsible, loadPublicDecisionRecord, verifyDecisionLedger } from "../../src/review/decision-record";
 import { createTestEnv } from "../helpers/d1";
 
 // #8836: the digests are commitments a contributor can challenge — key-order invariance and unicode
@@ -333,18 +333,25 @@ describe("loadPublicDecisionRecord (#9123)", () => {
   });
 });
 
-describe("buildLedgerAnchorPayload (#9122)", () => {
-  it("returns exactly {seq, rowHash, at} from a tip, using a caller-supplied timestamp", () => {
-    const payload = buildLedgerAnchorPayload({ seq: 5, rowHash: "a".repeat(64) }, "2026-01-01T00:00:00.000Z");
-    expect(payload).toEqual({ seq: 5, rowHash: "a".repeat(64), at: "2026-01-01T00:00:00.000Z" });
+// #9270 superseded the old {seq, rowHash, at} stub that used to live here (buildLedgerAnchorPayload) with a
+// self-describing, SIGNED payload -- see src/review/ledger-anchor.ts and test/unit/ledger-anchor.test.ts.
+
+describe("loadDecisionLedgerTip (#9274)", () => {
+  it("returns genesis/seq 0/count 0 on an empty ledger", async () => {
+    expect(await loadDecisionLedgerTip(createTestEnv())).toEqual({ seq: 0, rowHash: LEDGER_GENESIS_HASH, totalCount: 0 });
   });
 
-  it("defaults `at` to the current time when the caller omits it", () => {
-    const beforeMs = Date.now();
-    const payload = buildLedgerAnchorPayload({ seq: 1, rowHash: LEDGER_GENESIS_HASH });
-    expect(payload.seq).toBe(1);
-    expect(payload.rowHash).toBe(LEDGER_GENESIS_HASH);
-    expect(Date.parse(payload.at)).toBeGreaterThanOrEqual(beforeMs);
+  it("returns the real tip and total count once records exist, lighter than a full verify walk", async () => {
+    const env = createTestEnv();
+    await appendDecisionLedger(env, "record:acme/widgets#1", "digest1");
+    await appendDecisionLedger(env, "record:acme/widgets#2", "digest2");
+    const tip = await loadDecisionLedgerTip(env);
+    expect(tip.seq).toBe(2);
+    expect(tip.totalCount).toBe(2);
+    expect(tip.rowHash).toMatch(/^[0-9a-f]{64}$/);
+    // Matches what verifyDecisionLedger's own tip computation reports for the same chain.
+    const verified = await verifyDecisionLedger(env);
+    expect(tip).toEqual({ seq: verified.tipSeq, rowHash: verified.tipHash, totalCount: verified.totalCount });
   });
 });
 

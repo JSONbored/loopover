@@ -57,6 +57,14 @@ export type JobMessage =
       requestedBy: "schedule" | "api" | "test";
     }
   | {
+      // Scheduled decision-ledger anchoring (#9274, epic #9267). `isHourly` is threaded through from the
+      // dispatcher's own clock computation (src/index.ts) rather than re-derived here, so there is exactly
+      // ONE place that decides "what time is it" for every scheduled job, this one included.
+      type: "anchor-decision-ledger";
+      requestedBy: "schedule" | "test";
+      isHourly: boolean;
+    }
+  | {
       type: "sync-brokered-installed-repos";
       requestedBy: "schedule" | "api" | "test";
     }

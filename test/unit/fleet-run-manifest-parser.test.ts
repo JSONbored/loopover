@@ -1,11 +1,15 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+// Direct src-path import (not the `@loopover/engine` / dist barrel): Codecov's `engine` flag grades
+// packages/loopover-engine/test/** (node:test against dist), while this vitest mirror attributes hits
+// on packages/loopover-engine/src/fleet-run-manifest.ts for the backend upload — same seam as
+// attester-engine.test.ts. Companion: packages/loopover-engine/test/fleet-run-manifest.test.ts.
 import {
   DEFAULT_FLEET_RUN_MANIFEST,
   DEFAULT_FLEET_RUN_MANIFEST_REPO_MAX_CONCURRENT_WORKTREES,
   parseFleetRunManifest,
   parseFleetRunManifestContent,
-} from "../../packages/loopover-engine/src/index";
+} from "../../packages/loopover-engine/src/fleet-run-manifest";
 
 describe("FleetRunManifest parser (#4299)", () => {
   it("re-exports the parser API from the engine barrel", () => {

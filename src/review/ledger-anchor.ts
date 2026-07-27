@@ -210,7 +210,6 @@ export function anchorKeyById(keys: readonly AnchorPublicKey[], keyId: string): 
   return keys.find((key) => key.keyId === keyId) ?? null;
 }
 
-/** Digest helper re-exported so an anchor consumer never needs a second import just to hash a payload. */
 /** Digest helpers re-exported so an anchor consumer (e.g. the git-commit backend, #9273, which commits the
  *  same canonicalized payload Rekor anchors) never needs a second import from decision-record.ts just to
  *  canonicalize or hash something alongside a signed anchor. */

@@ -130,6 +130,19 @@ describe("reconcileMissingPrOutcomes (#9026)", () => {
     vi.restoreAllMocks();
   });
 
+  it("treats a driver returning no results array as an empty scan", async () => {
+    const env = createTestEnv();
+    const original = env.DB.prepare.bind(env.DB);
+    vi.spyOn(env.DB, "prepare").mockImplementation((query: string) => {
+      if (query.includes("FROM pull_requests")) {
+        return { bind: () => ({ all: async () => ({}) }) } as never;
+      }
+      return original(query);
+    });
+    expect(await reconcileMissingPrOutcomes(env)).toEqual({ scanned: 0, backfilled: 0 });
+    vi.restoreAllMocks();
+  });
+
   it("bounds each run so a large backlog drains across runs instead of blocking one", () => {
     expect(PR_OUTCOME_RECONCILE_LIMIT).toBeGreaterThan(0);
     expect(PR_OUTCOME_RECONCILE_LIMIT).toBeLessThanOrEqual(1000);

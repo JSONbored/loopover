@@ -885,8 +885,45 @@ export const OPTIONAL_CONTENTS_WRITE_PERMISSION: Record<string, string> = {
   contents: "write",
 };
 
-export const REQUIRED_INSTALLATION_EVENTS = ["issues", "issue_comment", "pull_request", "repository"] as const;
+/**
+ * Events without which LoopOver is functionally broken, so a missing one keeps the installation at
+ * `needs_attention` with named remediation.
+ *
+ * #9058 promoted three. `check_run` and `check_suite` are how CI settlement reaches ORB at all —
+ * maybeReReviewOnCiCompletion is documented in its own header as THE auto-merge / close-on-red trigger — so an
+ * installation missing them reported "healthy" while silently degrading from event-driven to sweep-only, which
+ * is exactly the "the gate hung" shape an operator cannot diagnose from a green health page. `pull_request_review`
+ * is the same story for the human-approval signal the merge gate reads.
+ */
+export const REQUIRED_INSTALLATION_EVENTS = [
+  "issues",
+  "issue_comment",
+  "pull_request",
+  "pull_request_review",
+  "repository",
+  "check_run",
+  "check_suite",
+] as const;
+
+/**
+ * Events LoopOver uses but can do without — a missing one degrades a specific path rather than the product, so
+ * these are DIAGNOSED (surfaced in health) without holding the installation at needs_attention (#9058).
+ * `status` in particular matters more than its optional standing suggests: codecov/patch is a commit status,
+ * and it is the gate's hardest required check.
+ */
+export const DIAGNOSED_INSTALLATION_EVENTS = ["pull_request_review_thread", "status", "workflow_run", "deployment_status", "push"] as const;
+
 export const OPTIONAL_VISIBLE_INSTALLATION_EVENTS = ["installation_target", "installation_repositories"] as const;
+
+/**
+ * The complete event set a new App should subscribe to: everything required, plus everything diagnosed.
+ *
+ * #9058 — the setup wizard used to hand-maintain its own `default_events` list, and it had drifted: it omitted
+ * `issue_comment` and `repository`, both of which the health check calls REQUIRED. A wizard-created self-host
+ * therefore started with every `@loopover …` command dead and no rename handling, from a manifest the product's
+ * own health page would immediately mark unhealthy. Deriving one from the other makes that drift impossible.
+ */
+export const RECOMMENDED_APP_EVENTS: readonly string[] = [...REQUIRED_INSTALLATION_EVENTS, ...DIAGNOSED_INSTALLATION_EVENTS];
 
 type InstallationModeImpact = {
   mode: "comment" | "label" | "check_run" | "gate_check" | "agent_pr_action" | "agent_merge";

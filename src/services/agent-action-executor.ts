@@ -158,6 +158,11 @@ export type AgentActionExecutionContext = {
   repoFullName: string;
   pullNumber: number;
   headSha?: string | null | undefined;
+  // #9055: the base ORB last computed the diff/review/CI against. A contributor can retarget a PR's base with
+  // the HEAD unchanged — the freshness check that already gates every merge/approve mutation sees nothing wrong
+  // in that case, since it only compares head SHAs. Threaded through so the SAME live fetch that proves the
+  // head also proves the base, denying a merge into an abandoned base rather than silently completing it.
+  expectedBaseRef?: string | null | undefined;
   autonomy: AutonomyPolicy | null | undefined;
   agentPaused?: boolean | undefined;
   agentDryRun?: boolean | undefined;
@@ -374,6 +379,7 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
         repoFullName: ctx.repoFullName,
         pullNumber: ctx.pullNumber,
         expectedHeadSha,
+        expectedBaseRef: ctx.expectedBaseRef,
       });
       if (freshness.status !== "current") {
         await audit("denied", `${pullRequestFreshnessDetail(freshness)} — action not executed`);

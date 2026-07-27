@@ -87,6 +87,26 @@ describe("sweepStrandedPendingClosures (#9031)", () => {
     expect(await sweepStrandedPendingClosures(env, now + PENDING_CLOSURE_LOOKBACK_MS + 60_000)).toEqual({ scanned: 0, requeued: 0 });
   });
 
+  it("falls back to the flag's own timestamp when the deadline is absent entirely", async () => {
+    const { env, sent } = envWithQueue();
+    await seedPr(env, 19, "open");
+    await env.DB.prepare("INSERT INTO audit_events (id, event_type, actor, target_key, outcome, detail, metadata_json, created_at) VALUES (?,?,?,?,?,?,?,?)")
+      .bind(
+        crypto.randomUUID(),
+        "agent.linked_issue.pending_closure_flagged",
+        "loopover",
+        "alice/repo#19",
+        "queued",
+        "flagged",
+        JSON.stringify({ repoFullName: "alice/repo", pullNumber: 19, installationId: 88 }),
+        new Date(Date.now() - 3 * PENDING_CLOSURE_GRACE_MS).toISOString(),
+      )
+      .run();
+
+    expect((await sweepStrandedPendingClosures(env)).requeued).toBe(1);
+    expect(sent).toHaveLength(1);
+  });
+
   it("falls back to the flag's own timestamp when the recorded deadline is unreadable", async () => {
     const { env, sent } = envWithQueue();
     await seedPr(env, 16, "open");
@@ -129,6 +149,56 @@ describe("sweepStrandedPendingClosures (#9031)", () => {
     expect(await sweepStrandedPendingClosures(env, now)).toEqual({ scanned: 1, requeued: 0 });
     // And nothing was recorded, so the next tick retries rather than believing it already rescued this PR.
     expect((await sweepStrandedPendingClosures(env, now + 1000)).scanned).toBe(1);
+  });
+
+  it("still applies the flag when its own audit write fails — best-effort, like the enqueue it accompanies", async () => {
+    const { env } = envWithQueue();
+    const repositories = await import("../../src/db/repositories");
+    vi.spyOn(repositories, "recordAuditEvent").mockRejectedValue(new Error("audit down"));
+    await expect(recordPendingClosureFlag(env, { repoFullName: "alice/repo", pullNumber: 30, installationId: 88 }, Date.now())).resolves.toBeUndefined();
+    vi.restoreAllMocks();
+  });
+
+  it("counts the rescue even when the follow-up audit write fails", async () => {
+    const { env, sent } = envWithQueue();
+    await seedPr(env, 31, "open");
+    const now = Date.now();
+    await recordPendingClosureFlag(env, { repoFullName: "alice/repo", pullNumber: 31, installationId: 88 }, PAST_DUE(now));
+    const repositories = await import("../../src/db/repositories");
+    vi.spyOn(repositories, "recordAuditEvent").mockRejectedValue(new Error("audit down"));
+
+    // The job WAS enqueued, which is the part that rescues the PR; losing the bookkeeping row must not undo it.
+    expect((await sweepStrandedPendingClosures(env, now)).requeued).toBe(1);
+    expect(sent).toHaveLength(1);
+    vi.restoreAllMocks();
+  });
+
+  it("treats an unreadable rescue history as 'already rescued', so a broken ledger cannot cause a flood", async () => {
+    const { env, sent } = envWithQueue();
+    await seedPr(env, 32, "open");
+    const now = Date.now();
+    await recordPendingClosureFlag(env, { repoFullName: "alice/repo", pullNumber: 32, installationId: 88 }, PAST_DUE(now));
+    const repositories = await import("../../src/db/repositories");
+    vi.spyOn(repositories, "countRecentAuditEventsForActorAndTarget").mockRejectedValue(new Error("db down"));
+
+    expect((await sweepStrandedPendingClosures(env, now)).requeued).toBe(0);
+    expect(sent).toEqual([]);
+    vi.restoreAllMocks();
+  });
+
+  it("skips a flag whose pullNumber or installationId is the wrong shape", async () => {
+    const { env, sent } = envWithQueue();
+    for (const [n, metadata] of [
+      [40, { repoFullName: "alice/repo", pullNumber: "40", installationId: 88 }],
+      [41, { repoFullName: "alice/repo", pullNumber: 41 }],
+      [42, { pullNumber: 42, installationId: 88 }],
+    ] as const) {
+      await env.DB.prepare("INSERT INTO audit_events (id, event_type, actor, target_key, outcome, detail, metadata_json, created_at) VALUES (?,?,?,?,?,?,?,?)")
+        .bind(crypto.randomUUID(), "agent.linked_issue.pending_closure_flagged", "loopover", `alice/repo#${n}`, "queued", "flagged", JSON.stringify(metadata), new Date().toISOString())
+        .run();
+    }
+    expect((await sweepStrandedPendingClosures(env)).requeued).toBe(0);
+    expect(sent).toEqual([]);
   });
 
   it("returns an empty result instead of throwing when the scan fails", async () => {

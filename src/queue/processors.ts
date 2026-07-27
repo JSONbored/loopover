@@ -698,6 +698,13 @@ const PR_PUBLIC_SURFACE_ACTIONS = new Set([
   "synchronize",
   "ready_for_review",
   "edited",
+  // #9059: a maintainer adding or removing a disposition label IS a disposition input -- the manual-review hold
+  // is read straight off the PR's labels. Without these, adding the label did a row re-sync and nothing else,
+  // so the hold only took effect on the next ~2-minute sweep, and REMOVING it to unblock a PR had the same lag
+  // in the other direction. A sweep that is itself skipped under REST-budget backpressure makes that lag
+  // unbounded, which is how manually unblocking a PR ends up looking like the gate ignoring you.
+  "labeled",
+  "unlabeled",
 ]);
 const PR_GATE_CLOSED_ACTIONS = new Set(["closed"]);
 // #4818 follow-up: the three review-family event names `shouldProcessPullRequestPublicSurface` (below) also
@@ -2883,6 +2890,9 @@ async function maybeCloseForContributorCapOnOpen(
         repoFullName,
         pullNumber: pr.number,
         headSha: pr.headSha,
+        // #9055: threaded so the executor's live pre-merge check denies a merge/approve into a base the diff,
+        // review, and CI it is acting on were never computed against.
+        expectedBaseRef: pr.baseRef,
         autonomy: settings.autonomy,
         agentPaused: settings.agentPaused,
         agentDryRun: settings.agentDryRun,
@@ -3604,6 +3614,7 @@ async function runAgentMaintenancePlanAndExecute(
       repoFullName,
       pullNumber: pr.number,
       headSha: pr.headSha,
+      expectedBaseRef: pr.baseRef,
       autonomy: settings.autonomy,
       agentPaused: settings.agentPaused,
       agentDryRun: settings.agentDryRun,
@@ -4984,6 +4995,19 @@ async function maybeReReviewOnLinkedIssueChange(
   const installationId = getInstallationId(payload);
   const issueNumber = payload.issue?.number;
   if (!repoFullName || !installationId || !issueNumber) return false;
+  // #9059: persist the issue row BEFORE the wake fan-out. This function returns `true` unconditionally once
+  // repo + installation + issue are present, and the caller short-circuits on that -- so handleIssueWebhookEvent
+  // never ran, and `issues.labels_json` plus assignees only advanced on opened/edited/closed/reopened or when
+  // the (up to 6-hourly) backfill reached the repo. Relabelling is the single most common issue mutation, so
+  // the row most likely to be read was the row most likely to be stale.
+  //
+  // Blast radius was bounded -- the linked-issue HARD rules fetch live and uncached -- but
+  // resolveLinkedIssueAuthorLogins is cache-first and only falls back live on a MISS, not on staleness, and the
+  // issue-side advisories, slop triage, enrichment and the MCP/API issue surfaces all read these rows directly.
+  //
+  // Best-effort: this is a bookkeeping write, and failing it must not cost the PRs their wake, which is the
+  // part that actually changes a disposition.
+  if (payload.issue) await upsertIssueFromGitHub(env, repoFullName, payload.issue).catch(() => undefined);
   // #5385: mirrors sweepRepoRegate's own gate exactly -- a repo with acting autonomy configured but NOT in the
   // LOOPOVER_REVIEW_REPOS allowlist (e.g. removed during a rollback, or a self-hoster who configured autonomy
   // without also updating the env allowlist) used to silently never wake affected PRs here, leaving a stale
@@ -6442,6 +6466,20 @@ async function handlePullRequestWebhookEvent(
     if (eventName === "pull_request" && (payload.action === "synchronize" || payload.action === "closed" || payload.action === "reopened")) {
       /* v8 ignore next -- best-effort: invalidatePrStateCache never rejects against a healthy D1, and a cache-invalidation failure here must never block the webhook. */
       await invalidatePrStateCache(env, repoFullName, pr.number).catch(() => undefined);
+    }
+    // #9055 — a base retarget with the HEAD unchanged. A contributor can move a green PR onto a new base after
+    // CI passed against the old one; GitHub does not re-run `pull_request` workflows or emit a new head SHA for
+    // this, so nothing else in this handler notices. Left alone, the stored diff/patches, the AI-review cache
+    // (its fingerprint deliberately excludes baseSha), and the CI aggregate all keep describing the ABANDONED
+    // base — and the divergence is permanent for that head, since the sweep re-syncs only on head/label drift.
+    // `changes.base` is GitHub's own signal that this specific mutation happened; treated as review-invalidating
+    // exactly like a new commit or a fresh review event, and files are FORCED (bypassing the head-SHA-keyed
+    // `filesUpToDate` check that would otherwise skip the refetch entirely since the head has not moved).
+    if (eventName === "pull_request" && payload.action === "edited" && payload.changes?.base?.from?.ref) {
+      await invalidatePrStateCache(env, repoFullName, pr.number).catch(() => undefined);
+      await invalidateCiStateCache(env, repoFullName, pr.number).catch(() => undefined);
+      await markPullRequestReviewsInvalidated(env, repoFullName, pr.number).catch(() => undefined);
+      await refreshPullRequestDetails(env, repoFullName, pr.number, { force: true }).catch(() => undefined);
     }
     // Review-evasion protection (#review-evasion-protection): a head change (synchronize) invalidates any
     // active-review tracking for the OLD head immediately -- a fresh pass starts its own tracking later in

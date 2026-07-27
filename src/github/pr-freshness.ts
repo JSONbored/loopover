@@ -10,6 +10,9 @@ type PullRequestFreshnessOptions = {
   requireDraft?: boolean;
   unavailableSource?: PullRequestUnavailableSource;
   unavailableDetail?: string;
+  // #9055: the base the caller last computed the diff/review/CI against. Present only when the caller actually
+  // tracked one (older stored PRs predate the column); absent preserves every existing caller's behavior exactly.
+  expectedBaseRef?: string | null | undefined;
 };
 
 export type PullRequestFreshness =
@@ -24,7 +27,13 @@ export type PullRequestFreshness =
     }
   | {
       status: "stale";
-      reason: "unavailable" | "closed" | "head_unresolved" | "head_changed" | "no_longer_draft";
+      // #9055: `base_changed` — a contributor can retarget a PR's base AFTER CI is green with no new commit,
+      // so head/state/draft alone see nothing wrong. Everything downstream (diff, review, CI, guardrail path
+      // matching, migration-collision detection) was computed against the ABANDONED base, and the divergence
+      // was permanent for that head: nothing re-syncs on a base change alone. This is checked at the last
+      // possible moment, immediately before a merge/approve mutation, using the SAME live fetch that already
+      // proves the head — no extra GitHub call.
+      reason: "unavailable" | "closed" | "head_unresolved" | "head_changed" | "no_longer_draft" | "base_changed";
       expectedHeadSha: string | null;
       liveHeadSha: string | null;
       liveState: string | null;
@@ -45,7 +54,7 @@ export function reviewedPullRequestHeadSha(
 }
 
 export function classifyPullRequestFreshness(
-  live: Pick<GitHubPullRequestPayload, "state" | "head" | "draft" | "labels"> | null | undefined,
+  live: Pick<GitHubPullRequestPayload, "state" | "head" | "base" | "draft" | "labels"> | null | undefined,
   expectedHeadSha: string | null | undefined,
   options?: PullRequestFreshnessOptions,
 ): PullRequestFreshness {
@@ -83,6 +92,12 @@ export function classifyPullRequestFreshness(
   if (expected && liveHeadSha !== expected) {
     return { status: "stale", reason: "head_changed", expectedHeadSha: expected, liveHeadSha, liveState };
   }
+  // #9055: the base can change with the head UNCHANGED, which is exactly the case the check above cannot see.
+  // A repo whose per-repo settings pin a specific expected base (options?.expectedBaseRef) denies the mutation
+  // rather than merging into a base the diff/review/CI were never computed against.
+  if (options?.expectedBaseRef && live.base?.ref && live.base.ref !== options.expectedBaseRef) {
+    return { status: "stale", reason: "base_changed", expectedHeadSha: expected, liveHeadSha, liveState };
+  }
   // The draft-dodge close is only justified while the PR is STILL a draft -- a same-head, still-open PR
   // that was converted back to ready_for_review before the close fires has cleared its own justification
   // (#2130 follow-up: head/state alone can't see this transition).
@@ -103,10 +118,14 @@ export async function fetchPullRequestFreshness(
     // Require the LIVE PR to still be a draft (the draft-dodge close's own justification). Absent/false
     // preserves every other caller's existing head/state-only behavior exactly.
     requireDraft?: boolean;
+    // #9055: see PullRequestFreshnessOptions' own doc comment.
+    expectedBaseRef?: string | null | undefined;
   },
 ): Promise<PullRequestFreshness> {
-  const options: PullRequestFreshnessOptions =
-    args.requireDraft !== undefined ? { requireDraft: args.requireDraft } : {};
+  const options: PullRequestFreshnessOptions = {
+    ...(args.requireDraft !== undefined ? { requireDraft: args.requireDraft } : {}),
+    ...(args.expectedBaseRef ? { expectedBaseRef: args.expectedBaseRef } : {}),
+  };
   let tokenError: unknown;
   const installationToken = await createInstallationToken(env, args.installationId).catch((error) => {
     tokenError = error;
@@ -148,5 +167,6 @@ export function pullRequestFreshnessDetail(result: PullRequestFreshness): string
   if (result.reason === "closed") return `PR is no longer open (live state: ${result.liveState ?? "unknown"})`;
   if (result.reason === "head_unresolved") return "live PR head SHA could not be verified";
   if (result.reason === "no_longer_draft") return "PR is no longer a draft";
+  if (result.reason === "base_changed") return "PR base branch changed since the diff/review/CI it will merge with were computed";
   return `PR head changed from ${result.expectedHeadSha ?? "unknown"} to ${result.liveHeadSha ?? "unknown"}`;
 }

@@ -5,6 +5,7 @@
 // disabled once an App is configured (server.ts gates on GITHUB_APP_ID), so this can't rebind a live install.
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { timeoutFetch } from "../github/client";
+import { RECOMMENDED_APP_EVENTS } from "../github/backfill";
 
 export const SETUP_TOKEN_FORM_MAX_BYTES = 4096;
 
@@ -59,7 +60,11 @@ export function buildManifest(origin: string, state: string): Record<string, unk
       // itself is off by default and degrades gracefully (skipped + logged, never blocks the close) until then.
       actions: "write",
     },
-    default_events: ["pull_request", "pull_request_review", "push", "issues", "check_suite", "check_run", "status"],
+    // #9058: derived, never hand-listed. The previous literal had drifted from REQUIRED_INSTALLATION_EVENTS --
+    // it omitted `issue_comment` and `repository` -- so a wizard-created App started with every `@loopover …`
+    // command dead and no rename handling, and the product's own health page would have called it unhealthy the
+    // moment it booted. One list means the manifest and the health check can never disagree again.
+    default_events: [...RECOMMENDED_APP_EVENTS],
   };
 }
 

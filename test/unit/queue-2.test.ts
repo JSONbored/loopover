@@ -3634,7 +3634,9 @@ describe("queue processors", () => {
         account: { login: "JSONbored", id: 1, type: "User" },
         repository_selection: "selected",
         permissions: { metadata: "read", contents: "write", pull_requests: "write", issues: "write" },
-        events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
+        // #9058 promoted check_run/check_suite/pull_request_review to REQUIRED. A "healthy" fixture has to
+        // actually be healthy, so it subscribes to the full required set.
+        events: ["issues", "issue_comment", "pull_request", "pull_request_review", "repository", "check_run", "check_suite", "installation_repositories"],
       },
       repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }],
     });
@@ -3647,7 +3649,7 @@ describe("queue processors", () => {
           account: { login: "JSONbored", id: 1, type: "User" },
           repository_selection: "selected",
           permissions: { metadata: "read", pull_requests: "write", issues: "write" },
-          events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
+          events: ["issues", "issue_comment", "pull_request", "pull_request_review", "repository", "check_run", "check_suite", "installation_repositories"],
         });
       }
       return new Response("not found", { status: 404 });

@@ -1,6 +1,7 @@
 import {
   bumpPullRequestMergeAttempt,
   countModerationViolationsForActor,
+  countRecentAuditEventsForActorAndTarget,
   createPendingAgentActionIfAbsent,
   getGlobalContributorBlacklist,
   getGlobalModerationConfig,
@@ -14,6 +15,7 @@ import {
   recordModerationViolation,
   upsertGlobalContributorBlacklist,
 } from "../db/repositories";
+import { isPagerDutyEnabled, triggerPagerDutyIncident } from "./notify-pagerduty";
 import { isAuthorBlacklisted } from "../settings/contributor-blacklist";
 import { classifyMergeFailure, INFRA_MERGE_BLOCK_TTL_MS, isMergeConflictMessage, isNoNewBaseCommitsMessage, MERGE_RETRY_CAP } from "./merge-failure";
 import { notifyActionToDiscord, notifyActionToSlack, type NotifyOutcome } from "./notify-discord";
@@ -48,6 +50,19 @@ import { buildDecisionRecord, persistDecisionRecord, type DecisionRecord } from 
 // The agent actor name on every audit record — the App acts on the maintainer's behalf per their configured
 // autonomy (the config IS the authorization; there is no human commenter to authorize, unlike #824).
 const AGENT_ACTOR = "loopover";
+
+// #9039 wedge alert: how many recent merge-train denials against the SAME blocking sibling, within
+// MERGE_TRAIN_WEDGE_WINDOW_MS, mean the train is genuinely stalled behind one PR rather than a one-off
+// ordering hiccup that clears itself in seconds (the only other observed train-wait episode, behind #8925,
+// cleared in 20 seconds). Deliberately lower than ops-wire.ts's analogous REVIEW_FAILURE_BURST_THRESHOLD (3
+// over 2h) would suggest for a "rare, error-grade" condition, because a wedge is a harder stop than that
+// burst: it zeroes throughput for EVERY overlapping PR queued behind the blocker, not just the one repeatedly-
+// retried PR, so it should page sooner. A 1h window catches a wedge well inside its first hour -- far ahead of
+// both the 24h staleness cap and the 4h it took a human to notice the confirmed #8735 incident (57 denials,
+// 5 PRs blocked).
+const MERGE_TRAIN_WEDGE_ALERT_THRESHOLD = 5;
+const MERGE_TRAIN_WEDGE_WINDOW_MS = 60 * 60 * 1000;
+const MERGE_TRAIN_WEDGE_EVENT_TYPE = "agent.action.merge_train_blocked";
 
 // Bound on audit_events.detail / the reason embedded in buildAgentActionAudit (#terminal-outcome-audit). A
 // heuristic close/hold reason is built by joining every blocker's title (agent-actions.ts), so an unbounded PR
@@ -618,12 +633,14 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
     }
     // 8b) merge-train FIFO gate (#selfhost-merge-train): a still-viable, OVERLAPPING older open sibling in this
     // repo holds this merge until it merges, closes, or goes stale (see merge-train.ts's staleness cap and its
-    // module header for why overlap-scoping, not blanket FIFO, is the actual fix -- an unrelated older sibling,
-    // even one stuck in manual review, never blocks). Siblings + their changed-file paths are fetched fresh
-    // here, lazily, ONLY when the gate is actually enabled for this repo — not threaded through every caller
-    // unconditionally, since the vast majority of merges never need this check. "audit" mode logs the decision
-    // but never actually holds anything, so it's safe to enable everywhere to validate the fix before switching
-    // a repo to "enforce".
+    // module header for why overlap-scoping, not blanket FIFO, is the actual fix -- an unrelated older sibling
+    // never blocks). #9039: a sibling held for manual review ALSO never blocks (see merge-train.ts's header for
+    // the confirmed #8735 incident this fixes) -- it is evicted from the train the same as a git-conflicted
+    // one, rather than treated as "still viable to eventually clear on its own." Siblings + their changed-file
+    // paths are fetched fresh here, lazily, ONLY when the gate is actually enabled for this repo — not threaded
+    // through every caller unconditionally, since the vast majority of merges never need this check. "audit"
+    // mode logs the decision but never actually holds anything, so it's safe to enable everywhere to validate
+    // the fix before switching a repo to "enforce".
     if (action.actionClass === "merge" && ctx.mergeTrainMode && ctx.mergeTrainMode !== "off") {
       const siblings = await listOtherOpenPullRequests(env, ctx.repoFullName, ctx.pullNumber);
       const filePaths = await listRepoPullRequestFilePaths(env, ctx.repoFullName, {
@@ -635,6 +652,11 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
         paths.push(row.path);
         pathsByPullNumber.set(row.pullNumber, paths);
       }
+      // #9039: resolved the SAME way as the existing 7b manual-review guard just above (ctx.manualReviewLabel
+      // `null` explicitly disables the label; absent/undefined falls back to AGENT_LABEL_NEEDS_REVIEW) so the
+      // merge-train gate's notion of "held for manual review" can never drift from the rest of this executor's
+      // own definition.
+      const manualReviewLabel = ctx.manualReviewLabel === null ? null : (ctx.manualReviewLabel ?? AGENT_LABEL_NEEDS_REVIEW);
       const decision = shouldWaitForOlderSiblings({
         thisPrNumber: ctx.pullNumber,
         thisPrCreatedAt: ctx.pullRequestCreatedAt,
@@ -646,11 +668,49 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
           mergeableState: sibling.mergeableState,
           linkedIssues: sibling.linkedIssues,
           changedFiles: pathsByPullNumber.get(sibling.number),
+          heldForManualReview: manualReviewLabel !== null && sibling.labels.some((label) => label.toLowerCase() === manualReviewLabel.toLowerCase()),
         })),
         nowMs: Date.now(),
       });
       if (decision.wait) {
         incr("loopover_merge_train_deferred_total", { repo: ctx.repoFullName, mode: ctx.mergeTrainMode });
+        // #9039 wedge detector: keyed to the BLOCKING sibling, not the waiting PR -- every DIFFERENT PR the
+        // train denies behind the SAME stuck head counts toward one signal (the confirmed incident blocked 5
+        // distinct PR numbers behind #8735; a per-waiting-PR counter would never have crossed a useful
+        // threshold for any single one of them). Recorded in BOTH modes: an "audit"-mode would-wait and an
+        // "enforce"-mode deny both mean the train is (or would be) stalled behind this exact sibling.
+        const wedgeTargetKey = `${ctx.repoFullName}#merge-train-blocked-by-${decision.blockingPr}`;
+        await recordAuditEvent(env, {
+          eventType: MERGE_TRAIN_WEDGE_EVENT_TYPE,
+          actor: AGENT_ACTOR,
+          targetKey: wedgeTargetKey,
+          outcome: "denied",
+          detail: `merge train: blocked by sibling #${decision.blockingPr}`,
+          metadata: { repoFullName: ctx.repoFullName, pullNumber: ctx.pullNumber, blockingPr: decision.blockingPr, mode: ctx.mergeTrainMode },
+        }).catch(() => undefined);
+        // Best-effort, flag-gated, fail-open sustained-wedge page -- mirrors ops-wire.ts's own PagerDuty wiring
+        // exactly (same isPagerDutyEnabled/triggerPagerDutyIncident helpers, same "count recent audit rows,
+        // page past a threshold" shape) rather than inventing a new alerting mechanism. No-op unless
+        // LOOPOVER_ENABLE_PAGERDUTY is set AND a routing key resolves for this repo. triggerPagerDutyIncident
+        // itself never throws, applies its own min-severity floor, and (via its dedup_key cooldown) never
+        // re-pages every tick for a still-wedged train -- so calling it on every qualifying denial is safe.
+        if (isPagerDutyEnabled(env)) {
+          try {
+            const sinceIso = new Date(Date.now() - MERGE_TRAIN_WEDGE_WINDOW_MS).toISOString();
+            const recentDenials = await countRecentAuditEventsForActorAndTarget(env, AGENT_ACTOR, MERGE_TRAIN_WEDGE_EVENT_TYPE, wedgeTargetKey, sinceIso);
+            if (recentDenials >= MERGE_TRAIN_WEDGE_ALERT_THRESHOLD) {
+              await triggerPagerDutyIncident(env, {
+                repoFullName: ctx.repoFullName,
+                summary: `merge train wedged: #${decision.blockingPr} has blocked ${recentDenials} merge attempt(s) in the last hour`,
+                severity: "error",
+                dedupKey: wedgeTargetKey,
+                customDetails: { blockingPr: decision.blockingPr, recentDenials, mode: ctx.mergeTrainMode },
+              });
+            }
+          } catch (error) {
+            console.warn(JSON.stringify({ event: "merge_train_wedge_alert_failed", repo: ctx.repoFullName, message: errorMessage(error).slice(0, 200) }));
+          }
+        }
         if (ctx.mergeTrainMode === "enforce") {
           await audit("denied", `merge train: waiting for older mergeable sibling #${decision.blockingPr} — action not executed`);
           continue;

@@ -2302,6 +2302,136 @@ describe("executeAgentMaintenanceActions merge-train gate (#selfhost-merge-train
     expect(outcomes[0]?.detail).toContain("#3");
     expect(mergePullRequest).not.toHaveBeenCalled();
   });
+
+  describe("manual-review eviction (#9039 -- confirmed #8735 incident: 57 denials, 5 PRs blocked 4h)", () => {
+    it("REGRESSION: an older, overlapping, manual-review-labeled sibling does NOT block -- the newer PR merges normally in enforce mode", async () => {
+      const env = createTestEnv({});
+      await upsertPullRequestFromGitHub(env, "owner/repo", {
+        number: 3,
+        title: "Head of the train, held for manual review",
+        state: "open",
+        user: { login: "c" },
+        head: { sha: "sha3" },
+        labels: [{ name: "manual-review" }],
+        body: "Fixes #1",
+        created_at: "2026-07-05T08:00:00.000Z",
+      });
+      await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "This PR", state: "open", user: { login: "c" }, head: { sha: "sha7" }, labels: [], body: "Fixes #1", created_at: "2026-07-05T10:00:00.000Z" });
+
+      const outcomes = await executeAgentMaintenanceActions(env, ctx({ mergeTrainMode: "enforce", pullRequestCreatedAt: "2026-07-05T10:00:00.000Z", pullRequestLinkedIssues: [1] }), [merge]);
+      expect(outcomes[0]?.outcome).toBe("completed");
+      expect(mergePullRequest).toHaveBeenCalled();
+    });
+
+    it("honors a CUSTOM configured manualReviewLabel name (case-insensitive), same as the live approve/merge guard", async () => {
+      const env = createTestEnv({});
+      await upsertPullRequestFromGitHub(env, "owner/repo", { number: 3, title: "Older sibling", state: "open", user: { login: "c" }, head: { sha: "sha3" }, labels: [{ name: "Needs-Human" }], body: "Fixes #1", created_at: "2026-07-05T08:00:00.000Z" });
+      await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "This PR", state: "open", user: { login: "c" }, head: { sha: "sha7" }, labels: [], body: "Fixes #1", created_at: "2026-07-05T10:00:00.000Z" });
+
+      const outcomes = await executeAgentMaintenanceActions(
+        env,
+        ctx({ mergeTrainMode: "enforce", manualReviewLabel: "needs-human", pullRequestCreatedAt: "2026-07-05T10:00:00.000Z", pullRequestLinkedIssues: [1] }),
+        [merge],
+      );
+      expect(outcomes[0]?.outcome).toBe("completed");
+      expect(mergePullRequest).toHaveBeenCalled();
+    });
+
+    it("manualReviewLabel: null explicitly disables the eviction -- a manual-review-labeled older sibling still blocks", async () => {
+      const env = createTestEnv({});
+      await upsertPullRequestFromGitHub(env, "owner/repo", { number: 3, title: "Older sibling", state: "open", user: { login: "c" }, head: { sha: "sha3" }, labels: [{ name: "manual-review" }], body: "Fixes #1", created_at: "2026-07-05T08:00:00.000Z" });
+      await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "This PR", state: "open", user: { login: "c" }, head: { sha: "sha7" }, labels: [], body: "Fixes #1", created_at: "2026-07-05T10:00:00.000Z" });
+
+      const outcomes = await executeAgentMaintenanceActions(
+        env,
+        ctx({ mergeTrainMode: "enforce", manualReviewLabel: null, pullRequestCreatedAt: "2026-07-05T10:00:00.000Z", pullRequestLinkedIssues: [1] }),
+        [merge],
+      );
+      expect(outcomes[0]).toMatchObject({ actionClass: "merge", outcome: "denied" });
+      expect(outcomes[0]?.detail).toContain("#3");
+      expect(mergePullRequest).not.toHaveBeenCalled();
+    });
+
+    it("a manual-review-labeled older sibling produces no would-wait audit row in audit mode either -- it's evicted, not just silently allowed to pass", async () => {
+      const env = createTestEnv({});
+      await upsertPullRequestFromGitHub(env, "owner/repo", { number: 3, title: "Older sibling", state: "open", user: { login: "c" }, head: { sha: "sha3" }, labels: [{ name: "manual-review" }], body: "Fixes #1", created_at: "2026-07-05T08:00:00.000Z" });
+      await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "This PR", state: "open", user: { login: "c" }, head: { sha: "sha7" }, labels: [], body: "Fixes #1", created_at: "2026-07-05T10:00:00.000Z" });
+
+      const outcomes = await executeAgentMaintenanceActions(env, ctx({ mergeTrainMode: "audit", pullRequestCreatedAt: "2026-07-05T10:00:00.000Z", pullRequestLinkedIssues: [1] }), [merge]);
+      expect(outcomes[0]?.outcome).toBe("completed");
+      const wouldWaitRow = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("agent.action.merge_train_would_wait").first<{ n: number }>();
+      expect(wouldWaitRow?.n).toBe(0);
+    });
+  });
+
+  describe("wedged-train alert (#9039 -- N consecutive denials against the SAME blocking sibling pages, not just audit rows)", () => {
+    const PD_KEY = "b".repeat(32);
+    function stubPagerDutyFetch(status = 202): Array<{ dedup_key: string; payload: { summary: string; severity: string } }> {
+      const calls: Array<{ dedup_key: string; payload: { summary: string; severity: string } }> = [];
+      vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
+        if (String(url).includes("events.pagerduty.com")) {
+          calls.push(JSON.parse(String(init?.body)) as { dedup_key: string; payload: { summary: string; severity: string } });
+          return new Response(null, { status });
+        }
+        throw new Error(`unexpected fetch in wedge-alert test: ${String(url)}`);
+      });
+      return calls;
+    }
+
+    async function seedBlockedTrain(env: Env): Promise<void> {
+      await upsertPullRequestFromGitHub(env, "owner/repo", { number: 3, title: "Older sibling", state: "open", user: { login: "c" }, head: { sha: "sha3" }, labels: [], body: "Fixes #1", created_at: "2026-07-05T08:00:00.000Z" });
+      await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "This PR", state: "open", user: { login: "c" }, head: { sha: "sha7" }, labels: [], body: "Fixes #1", created_at: "2026-07-05T10:00:00.000Z" });
+    }
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("pages once a blocking sibling has denied MERGE_TRAIN_WEDGE_ALERT_THRESHOLD (5) merge attempts within the window", async () => {
+      const calls = stubPagerDutyFetch();
+      const env = createTestEnv({ LOOPOVER_ENABLE_PAGERDUTY: "1", PAGERDUTY_ROUTING_KEY: PD_KEY });
+      await seedBlockedTrain(env);
+      const trainCtx = ctx({ mergeTrainMode: "enforce", pullRequestCreatedAt: "2026-07-05T10:00:00.000Z", pullRequestLinkedIssues: [1] });
+
+      for (let i = 0; i < 4; i += 1) {
+        await executeAgentMaintenanceActions(env, trainCtx, [merge]);
+      }
+      expect(calls).toEqual([]); // below threshold -- no page yet
+
+      await executeAgentMaintenanceActions(env, trainCtx, [merge]); // 5th denial crosses the threshold
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.dedup_key).toBe("owner/repo#merge-train-blocked-by-3");
+      expect(calls[0]?.payload.summary).toContain("#3");
+      expect(calls[0]?.payload.severity).toBe("error");
+    });
+
+    it("never pages when LOOPOVER_ENABLE_PAGERDUTY is unset (default OFF, byte-identical to today)", async () => {
+      const calls = stubPagerDutyFetch();
+      const env = createTestEnv({}); // no PagerDuty env vars
+      await seedBlockedTrain(env);
+      const trainCtx = ctx({ mergeTrainMode: "enforce", pullRequestCreatedAt: "2026-07-05T10:00:00.000Z", pullRequestLinkedIssues: [1] });
+
+      for (let i = 0; i < 6; i += 1) {
+        await executeAgentMaintenanceActions(env, trainCtx, [merge]);
+      }
+
+      expect(calls).toEqual([]);
+    });
+
+    it("records a merge_train_blocked audit row, keyed to the BLOCKING sibling, on every wait decision (both modes)", async () => {
+      const env = createTestEnv({});
+      await seedBlockedTrain(env);
+
+      await executeAgentMaintenanceActions(env, ctx({ mergeTrainMode: "audit", pullRequestCreatedAt: "2026-07-05T10:00:00.000Z", pullRequestLinkedIssues: [1] }), [merge]);
+      await executeAgentMaintenanceActions(env, ctx({ mergeTrainMode: "enforce", pullRequestCreatedAt: "2026-07-05T10:00:00.000Z", pullRequestLinkedIssues: [1] }), [merge]);
+
+      const row = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
+        .bind("agent.action.merge_train_blocked", "owner/repo#merge-train-blocked-by-3")
+        .first<{ n: number }>();
+      expect(row?.n).toBe(2);
+    });
+  });
 });
 
 describe("pre-merge contributor-cap re-check (#7284-fix, TOCTOU race)", () => {

@@ -176,4 +176,31 @@ describe("shouldWaitForOlderSiblings (#selfhost-merge-train)", () => {
       expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW)).toEqual({ wait: true, blockingPr: 105 });
     });
   });
+
+  describe("manual-review eviction (#9039 -- confirmed #8735 incident)", () => {
+    it("REGRESSION: an older, OVERLAPPING sibling held for manual review does NOT block -- it is evicted, not waited for", () => {
+      const siblings: MergeTrainSibling[] = [{ number: 105, createdAt: "2026-07-07T10:00:00.000Z", linkedIssues: [1], heldForManualReview: true }];
+      expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW)).toEqual({ wait: false });
+    });
+
+    it("heldForManualReview: false (or absent/undefined) leaves the OVERLAPPING older sibling blocking exactly as before", () => {
+      const held = [{ number: 105, createdAt: "2026-07-07T10:00:00.000Z", linkedIssues: [1], heldForManualReview: false }];
+      expect(decide(110, "2026-07-07T11:00:00.000Z", held, NOW)).toEqual({ wait: true, blockingPr: 105 });
+      const absent: MergeTrainSibling[] = [{ number: 105, createdAt: "2026-07-07T10:00:00.000Z", linkedIssues: [1] }];
+      expect(decide(110, "2026-07-07T11:00:00.000Z", absent, NOW)).toEqual({ wait: true, blockingPr: 105 });
+    });
+
+    it("a manual-review-held sibling is skipped over in favor of the next-oldest still-viable overlapping sibling", () => {
+      const siblings: MergeTrainSibling[] = [
+        { number: 105, createdAt: "2026-07-07T10:00:00.000Z", linkedIssues: [1], heldForManualReview: true },
+        { number: 107, createdAt: "2026-07-07T10:30:00.000Z", linkedIssues: [1] },
+      ];
+      expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW)).toEqual({ wait: true, blockingPr: 107 });
+    });
+
+    it("a manual-review-held sibling that is also unrelated/newer/dirty is unaffected -- the flag only matters when it would otherwise block", () => {
+      const siblings: MergeTrainSibling[] = [{ number: 105, createdAt: "2026-07-07T10:00:00.000Z", linkedIssues: [999], heldForManualReview: true }];
+      expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW)).toEqual({ wait: false });
+    });
+  });
 });

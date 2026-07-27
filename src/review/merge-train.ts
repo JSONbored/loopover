@@ -12,12 +12,18 @@
 // area merging out of order -- not "any newer PR must wait for any older PR, related or not." A newer PR whose
 // files/linked-issues share nothing with an older sibling creates no conflict risk by merging first, so it
 // never waits, REGARDLESS of that sibling's review state (this is also what keeps a PR stuck in manual review
-// from silently wedging the ENTIRE queue -- it can only ever hold up a PR that actually overlaps it). An
-// overlapping older sibling DOES still count as a blocker even while held for manual review: letting the
-// newer, overlapping PR merge first doesn't remove the conflict risk, it just defers it to whenever the older
-// PR resumes (a normal rebase-on-conflict then, versus every newer related PR queueing behind it now) -- an
-// acceptable, bounded tradeoff given the 24h staleness cap already prevents an abandoned PR from blocking
-// forever.
+// from silently wedging the ENTIRE queue -- it can only ever hold up a PR that actually overlaps it).
+//
+// #9039: an overlapping older sibling held for manual review is NOT still counted as a blocker, unlike an
+// ordinary in-review PR. The confirmed production incident (#8735: 57 denials, 5 PRs blocked, 4 hours) was an
+// overlapping sibling wearing the manual-review label -- overlap-scoping worked exactly as designed (those 5
+// PRs genuinely shared files/issues with #8735), but a manual-review hold is administratively frozen, not
+// "still in progress": nothing about the label self-clears on any timer, unlike CI/AI-review/human-review,
+// which are all still making forward progress toward a natural resolution. Waiting for a PR that is not
+// currently trying to reach merge or close buys nothing the 24h staleness cap doesn't already bound far worse
+// -- it just multiplies a stuck PR's cost by however many newer, overlapping PRs happen to queue behind it. So
+// a manual-review-held sibling is evicted from blocking entirely (same treatment as a "dirty" git conflict
+// below), not merely subject to the same staleness cap as an actively-reviewing sibling.
 
 import { isLockfile } from "../signals/path-matchers";
 
@@ -34,6 +40,15 @@ export type MergeTrainSibling = {
    *  Absent/undefined degrades to issue-only overlap detection for this sibling, never to "no overlap
    *  possible" -- a sibling with unresolved files can still overlap via a shared linked issue. */
   changedFiles?: readonly string[] | undefined;
+  /** True when this sibling currently carries the repo's configured manual-review label (#9039 -- the
+   *  confirmed #8735 incident). A hold that does NOT self-clear on any timer, unlike an ordinary in-review PR
+   *  still making forward progress toward merge/close on its own -- so it never blocks (see the module header
+   *  for the full incident writeup). Resolved by the CALLER (same "kept minimal, zero import surface beyond
+   *  plain data" shape as this whole type): mirror however "does this PR carry the manual-review label" is
+   *  already resolved elsewhere in this codebase (agent-action-executor.ts's own live approve/merge guard,
+   *  processors.ts) rather than inventing a second, possibly-drifting definition here. Absent/undefined ⇒ not
+   *  held (unchanged from before this field existed). */
+  heldForManualReview?: boolean | undefined;
 };
 
 /** How long an older, OVERLAPPING sibling can hold up a newer one before it's excluded from blocking (24
@@ -87,10 +102,12 @@ export type ShouldWaitForOlderSiblingsInput = {
 /** True when an OVERLAPPING, older, still-viable sibling exists and `thisPrNumber` should wait its turn. A
  *  sibling never blocks when it is: the same PR, not older (by createdAt, falling back to PR number when
  *  createdAt is missing on either side -- mirrors the duplicate-winner election's own createdAt-then-number
- *  precedent), git-conflicted (`mergeableState === "dirty"` -- it isn't "about to merge," it's stuck), past
- *  the staleness cap, or simply UNRELATED (shares no linked issue and no meaningful changed file with this PR
- *  -- see the module header for why overlap-scoping, not blanket FIFO, is the actual fix here). Deterministic
- *  and total: same inputs always produce the same decision. */
+ *  precedent), git-conflicted (`mergeableState === "dirty"` -- it isn't "about to merge," it's stuck), held
+ *  for manual review (#9039 -- an administratively frozen hold that does not self-clear on any timer, unlike
+ *  an ordinary in-review PR; see the module header for the confirmed #8735 incident), past the staleness cap,
+ *  or simply UNRELATED (shares no linked issue and no meaningful changed file with this PR -- see the module
+ *  header for why overlap-scoping, not blanket FIFO, is the actual fix here). Deterministic and total: same
+ *  inputs always produce the same decision. */
 export function shouldWaitForOlderSiblings(input: ShouldWaitForOlderSiblingsInput): MergeTrainDecision {
   const { thisPrNumber, thisPrCreatedAt, thisPrLinkedIssues, thisPrChangedFiles, siblings, nowMs } = input;
   const thisCreatedMs = thisPrCreatedAt ? Date.parse(thisPrCreatedAt) : Number.NaN;
@@ -108,6 +125,7 @@ export function shouldWaitForOlderSiblings(input: ShouldWaitForOlderSiblingsInpu
   const viable = siblings
     .filter((sibling) => sibling.number !== thisPrNumber)
     .filter((sibling) => sibling.mergeableState !== "dirty")
+    .filter((sibling) => !sibling.heldForManualReview)
     .filter((sibling) => isOlder(sibling))
     .filter((sibling) => overlaps(thisPrLinkedIssues, thisPrChangedFiles, sibling))
     .filter((sibling) => {

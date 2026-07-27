@@ -256,6 +256,34 @@ describe("runLoopEscalationSweep (#6349)", () => {
     expect(result.reason).toBe("invalid_global_webhook");
   });
 
+  it("accepts the canary.discord.com and ptb.discord.com hosts its two siblings already accept (#9288)", async () => {
+    for (const host of ["canary.discord.com", "ptb.discord.com"]) {
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+      let postedUrl: string | undefined;
+      const result = await runLoopEscalationSweep(createTestEnv({ DISCORD_WEBHOOK_URL: `https://${host}/api/webhooks/123/abc` }), {
+        loadActiveLoops: () => [{ loopId: "broken", tenantId: "acme", runStatus: "abandoned" }],
+        fetchImpl: (async (url) => {
+          postedUrl = String(url);
+          return new Response(null, { status: 204 });
+        }) as typeof fetch,
+        nowMs: () => Date.parse("2026-07-27T12:00:00.000Z"),
+      });
+      expect(result.notified).toBe(true);
+      expect(postedUrl).toBe(`https://${host}/api/webhooks/123/abc`);
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("still rejects a non-Discord host after widening the allowlist (#9288 regression guard)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const result = await runLoopEscalationSweep(createTestEnv({ DISCORD_WEBHOOK_URL: "https://canary.example.com/api/webhooks/123/abc" }), {
+      loadActiveLoops: () => [{ loopId: "broken", tenantId: "acme", runStatus: "abandoned" }],
+      fetchImpl: (async () => new Response(null, { status: 204 })) as typeof fetch,
+    });
+    expect(result.notified).toBe(false);
+    expect(result.reason).toBe("invalid_global_webhook");
+  });
+
   it("continues when recording the missing-webhook 'denied' audit event itself throws (#9064)", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);

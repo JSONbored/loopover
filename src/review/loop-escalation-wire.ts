@@ -28,7 +28,7 @@ import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { resolveLoopOverSelfRepoFullName } from "../config/loopover-repo-focus-manifest";
 import { errorMessage } from "../utils/json";
 
-const ALLOWED_DISCORD_HOSTS = new Set(["discord.com", "discordapp.com"]);
+const ALLOWED_DISCORD_HOSTS = new Set(["discord.com", "discordapp.com", "canary.discord.com", "ptb.discord.com"]);
 const DEFAULT_COOLDOWN_MINUTES = 60;
 const AUDIT_EVENT_TYPE = "loop_escalation_notification.discord";
 const AUDIT_TARGET_KEY = "fleet:loop-escalation";

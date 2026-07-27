@@ -10,6 +10,17 @@ export interface TerminalScene {
 
 const DEFAULT_SCENES: TerminalScene[] = [
   {
+    prompt: "cat loop.ts",
+    output: `while (true) {
+  const work = await locate();   // discovery: issues, gaps, dups
+  const pr   = await code(work); // contributor agent ships it
+  const call = await review(pr); // maintainer agent decides
+  await merge(call);             // or close — its call, logged
+  await learn(call.outcome);     // every result tunes the loop
+}
+// this loop has no exit condition. neither did your backlog.`,
+  },
+  {
     prompt: "npx -y @loopover/mcp@latest login",
     output: "→ GitHub Device Flow opened… authorized as octocat",
   },

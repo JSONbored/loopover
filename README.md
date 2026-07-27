@@ -13,7 +13,9 @@ _Formerly Gittensory._
   <a href="https://gittensor.io/miners/repository?name=JSONbored/loopover"><img alt="Gittensor impact" src="https://api.gittensor.io/repos/JSONbored%2Floopover/badge.svg" /></a>
 </p>
 
-Software delivery is a pipeline. LoopOver makes it a loop: agents write, agents review, agents merge — and every outcome trains the next pass. Any GitHub repo, both sides of the lifecycle.
+**The loop never sleeps. You finally can.**
+
+LoopOver automates the entire development lifecycle — write, review, merge, learn — end to end, with agents on both sides and a published safety record. The good kind of infinite loop, on any GitHub repo.
 
 - **For maintainers (self-hosted):** an autonomous review agent works the PR queue end-to-end — AI review grounded in finished CI status, full post-change file content, and codebase RAG — then gates, approves, requests changes, merges, or closes on its own, governed by dry-run / pause / freeze / kill-switch controls.
 - **For contributors:** the [`@loopover/mcp`](https://www.npmjs.com/package/@loopover/mcp) copilot brings predicted gate verdicts, branch preflight, duplicate detection, and cross-repo opportunity discovery into your own AI harness; the autonomous miner runtime (`@loopover/miner`) runs unattended across a fleet of repos, respecting each target repo's `.loopover-miner.yml` goal spec.

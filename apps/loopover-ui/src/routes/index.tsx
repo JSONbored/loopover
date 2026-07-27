@@ -18,17 +18,17 @@ import { MCP_PACKAGE_NAME, getLatestMcpVersion, useMcpPackageMetadata } from "@/
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "LoopOver — Close the loop on software delivery" },
+      { title: "LoopOver — The loop never sleeps. You finally can." },
       {
         name: "description",
         content:
-          "Agents write, review, and merge — and every outcome trains the next pass. Autonomous PR reviews with a certified, published error rate, plus an MCP copilot and autonomous miner for contributors. Any GitHub repo.",
+          "Agents automate the entire development lifecycle — write, review, merge, learn — end to end. Autonomous PR reviews with a published safety record, plus an MCP copilot and autonomous miner for contributors. Any GitHub repo.",
       },
-      { property: "og:title", content: "LoopOver — Close the loop on software delivery" },
+      { property: "og:title", content: "LoopOver — The loop never sleeps. You finally can." },
       {
         property: "og:description",
         content:
-          "Closed loop, open receipts: autonomous reviews for maintainers, autonomous contributions for miners, error rate published and replayable.",
+          "The good kind of infinite loop: agents write, review, merge, and learn — end to end, hands off. Safety record published.",
       },
       { property: "og:url", content: "/" },
       { property: "og:type", content: "website" },
@@ -70,14 +70,13 @@ function Hero() {
             MCP v{latestMcpVersion} · open source · self-hosted
           </div>
           <h1 className="mt-5 text-token-3xl font-medium leading-token-tight tracking-tight text-foreground">
-            Software delivery is a pipeline.
-            <span className="block text-muted-foreground">LoopOver makes it a loop.</span>
+            The loop never sleeps.
+            <span className="block text-muted-foreground">You finally can.</span>
           </h1>
           <p className="mt-5 max-w-lg text-token-md leading-token-normal text-muted-foreground">
-            Agents write, agents review, agents merge — and every outcome trains the next pass. An
-            autonomous maintainer works your PR queue end-to-end, a contributor stack plans and
-            ships real work, and the loop&apos;s error rate is published, certified, and replayable.
-            Any GitHub repo; Gittensor-native mining intelligence built in.
+            Agents automate the entire development lifecycle — write, review, merge, learn — end to
+            end, hands off. On any GitHub repo, with a published safety record. Gittensor-native
+            mining intelligence built in.
           </p>
           <div className="mt-7 flex flex-wrap items-center gap-2">
             <Link

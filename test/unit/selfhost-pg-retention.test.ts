@@ -1,9 +1,10 @@
 // Unit tests for data-retention pruning (src/db/retention.ts) against the Postgres backend (#977). Mocks
 // pg.Pool so no real DB is needed — real-Postgres integration coverage lives in test/integration/selfhost-pg.test.ts.
-// retention.ts itself is unchanged: it still emits SQLite-dialect SQL (rowid, `?1`-style numbered
-// placeholders); src/selfhost/pg-dialect.ts's translateSql() is what makes it Postgres-safe, same as every
-// other query path on this backend. These tests exercise that translation end-to-end through the real
-// pruneExpiredRecords()/processJob() call path, not just the dialect translator in isolation.
+// retention.ts emits SQLite-dialect SQL; src/selfhost/pg-dialect.ts's translateSql() makes it Postgres-safe.
+// After #9083, age-based prune deletes by a real indexable PK (`id` / `delivery_id`) rather than
+// rowid/ctid; signal_snapshots dedupe still uses the rowid→ctid translation. These tests exercise that
+// translation end-to-end through the real pruneExpiredRecords()/processJob() call path, not just the
+// dialect translator in isolation.
 import { describe, expect, it, vi } from "vitest";
 import type { Pool } from "pg";
 import { createPgAdapter } from "../../src/selfhost/pg-adapter";

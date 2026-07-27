@@ -187,47 +187,66 @@ describe("agent-regate-sweep runs the durability repair scans (#9026, #9031, #89
     outcomes?: unknown;
     stranded?: unknown;
     orphaned?: unknown;
+    notifications?: unknown;
     outcomesThrows?: boolean;
     strandedThrows?: boolean;
     orphanedThrows?: boolean;
+    notificationsThrows?: boolean;
   }): Promise<Record<string, unknown>[]> {
     const logs: string[] = [];
     vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => void logs.push(String(args[0])));
     const reconciler = await import("../../src/review/pr-outcome-reconciler");
     const watchdog = await import("../../src/review/pending-closure-watchdog");
     const surfaceReconciler = await import("../../src/review/surface-disposition-reconciler");
+    const notificationSweep = await import("../../src/notifications/stranded-delivery-sweep");
     const outcomeSpy = vi.spyOn(reconciler, "reconcileMissingPrOutcomes");
     const strandedSpy = vi.spyOn(watchdog, "sweepStrandedPendingClosures");
     const orphanedSpy = vi.spyOn(surfaceReconciler, "reconcileSurfaceWithoutDisposition");
+    const notificationSpy = vi.spyOn(notificationSweep, "sweepStrandedNotificationDeliveries");
     if (stubs.outcomesThrows) outcomeSpy.mockRejectedValue(new Error("db down"));
     else outcomeSpy.mockResolvedValue((stubs.outcomes ?? { scanned: 0, backfilled: 0 }) as never);
     if (stubs.strandedThrows) strandedSpy.mockRejectedValue(new Error("db down"));
     else strandedSpy.mockResolvedValue((stubs.stranded ?? { scanned: 0, requeued: 0 }) as never);
     if (stubs.orphanedThrows) orphanedSpy.mockRejectedValue(new Error("db down"));
     else orphanedSpy.mockResolvedValue((stubs.orphaned ?? { scanned: 0, requeued: 0 }) as never);
+    if (stubs.notificationsThrows) notificationSpy.mockRejectedValue(new Error("db down"));
+    else notificationSpy.mockResolvedValue((stubs.notifications ?? { scanned: 0, requeued: 0 }) as never);
 
     await processJob(createTestEnv(), { type: "agent-regate-sweep", requestedBy: "schedule" });
     return logs.map((line) => JSON.parse(line) as Record<string, unknown>);
   }
 
   it("reports what each scan repaired", async () => {
-    const logs = await sweepWith({ outcomes: { scanned: 5, backfilled: 3 }, stranded: { scanned: 2, requeued: 1 }, orphaned: { scanned: 3, requeued: 2 } });
+    const logs = await sweepWith({
+      outcomes: { scanned: 5, backfilled: 3 },
+      stranded: { scanned: 2, requeued: 1 },
+      orphaned: { scanned: 3, requeued: 2 },
+      notifications: { scanned: 4, requeued: 3 },
+    });
     expect(logs.find((log) => log.event === "pr_outcomes_reconciled")).toMatchObject({ scanned: 5, backfilled: 3 });
     expect(logs.find((log) => log.event === "pending_closure_verifications_requeued")).toMatchObject({ scanned: 2, requeued: 1 });
     expect(logs.find((log) => log.event === "surface_without_disposition_reconciled")).toMatchObject({ scanned: 3, requeued: 2 });
+    expect(logs.find((log) => log.event === "stranded_notification_deliveries_requeued")).toMatchObject({ scanned: 4, requeued: 3 });
   });
 
   it("stays quiet when a scan looked but repaired nothing", async () => {
-    const logs = await sweepWith({ outcomes: { scanned: 9, backfilled: 0 }, stranded: { scanned: 4, requeued: 0 }, orphaned: { scanned: 6, requeued: 0 } });
+    const logs = await sweepWith({
+      outcomes: { scanned: 9, backfilled: 0 },
+      stranded: { scanned: 4, requeued: 0 },
+      orphaned: { scanned: 6, requeued: 0 },
+      notifications: { scanned: 7, requeued: 0 },
+    });
     expect(logs.some((log) => log.event === "pr_outcomes_reconciled")).toBe(false);
     expect(logs.some((log) => log.event === "pending_closure_verifications_requeued")).toBe(false);
     expect(logs.some((log) => log.event === "surface_without_disposition_reconciled")).toBe(false);
+    expect(logs.some((log) => log.event === "stranded_notification_deliveries_requeued")).toBe(false);
   });
 
-  it("completes the tick even when all three scans throw", async () => {
-    const logs = await sweepWith({ outcomesThrows: true, strandedThrows: true, orphanedThrows: true });
+  it("completes the tick even when all scans throw", async () => {
+    const logs = await sweepWith({ outcomesThrows: true, strandedThrows: true, orphanedThrows: true, notificationsThrows: true });
     expect(logs.some((log) => log.event === "pr_outcomes_reconciled")).toBe(false);
     expect(logs.some((log) => log.event === "pending_closure_verifications_requeued")).toBe(false);
     expect(logs.some((log) => log.event === "surface_without_disposition_reconciled")).toBe(false);
+    expect(logs.some((log) => log.event === "stranded_notification_deliveries_requeued")).toBe(false);
   });
 });

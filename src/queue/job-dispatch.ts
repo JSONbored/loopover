@@ -57,6 +57,7 @@ import { sweepStaleApprovalQueue } from "../services/agent-approval-queue";
 import { reconcileMissingPrOutcomes } from "../review/pr-outcome-reconciler";
 import { sweepStrandedPendingClosures } from "../review/pending-closure-watchdog";
 import { reconcileSurfaceWithoutDisposition } from "../review/surface-disposition-reconciler";
+import { sweepStrandedNotificationDeliveries } from "../notifications/stranded-delivery-sweep";
 // The 15 handlers below have no reason to move -- each is only reachable via this dispatcher (or, for
 // mapWithConcurrency, ALSO used by other still-in-processors.ts code), so they stay put and are exported
 // there purely for this one-directional import-back (processors.ts itself never calls processJob).
@@ -311,6 +312,13 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
         const orphanedDispositions = await reconcileSurfaceWithoutDisposition(env).catch(() => null);
         if (orphanedDispositions && orphanedDispositions.requeued > 0) {
           console.log(JSON.stringify({ event: "surface_without_disposition_reconciled", ...orphanedDispositions }));
+        }
+        // #9320 re-enqueues a notify-deliver for a notification_deliveries row stranded at `pending` when its
+        // enqueue was lost to queue backpressure, which otherwise leaves the notification invisible to the
+        // recipient until the 90-day retention sweep silently deletes it.
+        const strandedNotifications = await sweepStrandedNotificationDeliveries(env).catch(() => null);
+        if (strandedNotifications && strandedNotifications.requeued > 0) {
+          console.log(JSON.stringify({ event: "stranded_notification_deliveries_requeued", ...strandedNotifications }));
         }
         await fanOutAgentRegateSweepJobs(env, message.requestedBy);
         return;

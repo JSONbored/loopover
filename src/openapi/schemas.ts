@@ -1926,6 +1926,126 @@ export const GateConfigEffectiveResponseSchema = z
   })
   .openapi("GateConfigEffectiveResponse");
 
+// #9309: OpenAPI contracts for the /v1/loop/* idea/task-graph family (excl. request-apr-transfer).
+// Field shapes mirror the MCP tool inputSchema/outputSchema constants in src/mcp/server.ts so the
+// documented REST surface cannot drift from what each loopover_* tool already validates.
+
+export const EvaluateEscalationRequestSchema = z
+  .object({
+    runStatus: z.enum(["running", "converged", "abandoned", "error"]),
+    healthStatus: z.enum(["healthy", "degraded", "critical"]).optional(),
+    customerFlagged: z.boolean().optional(),
+    killRequested: z.boolean().optional(),
+  })
+  .openapi("EvaluateEscalationRequest");
+
+export const EvaluateEscalationResponseSchema = z
+  .object({
+    shouldEscalate: z.boolean().optional(),
+    action: z.enum(["none", "notify", "human_review", "stop"]).optional(),
+    severity: z.enum(["none", "low", "medium", "high"]).optional(),
+    reasons: z.array(z.string()).optional(),
+  })
+  .openapi("EvaluateEscalationResponse");
+
+export const BuildResultsPayloadRequestSchema = z
+  .object({
+    repoFullName: z.string().min(1),
+    prNumber: z.number().int().nullable().optional(),
+    title: z.string(),
+    changedFiles: z
+      .array(z.object({ path: z.string(), additions: z.number().int().optional(), deletions: z.number().int().optional() }))
+      .max(5000)
+      .optional(),
+    status: z.enum(["open", "merged", "closed"]).optional(),
+  })
+  .openapi("BuildResultsPayloadRequest");
+
+export const BuildResultsPayloadResponseSchema = z
+  .object({
+    prLink: z.string().nullable().optional(),
+    summary: z.string().optional(),
+    diffPreview: z.unknown().optional(),
+    totals: z.unknown().optional(),
+  })
+  .openapi("BuildResultsPayloadResponse");
+
+export const BuildProgressSnapshotRequestSchema = z
+  .object({
+    iteration: z.number().int(),
+    maxIterations: z.number().int().nullable().optional(),
+    phase: z.enum(["queued", "claiming", "coding", "reviewing", "submitting", "done"]),
+    status: z.enum(["running", "converged", "abandoned", "error"]),
+    recentActivity: z
+      .array(z.object({ step: z.string(), detail: z.string().optional(), at: z.string().optional() }))
+      .max(1000)
+      .optional(),
+  })
+  .openapi("BuildProgressSnapshotRequest");
+
+export const BuildProgressSnapshotResponseSchema = z
+  .object({
+    phase: z.string().optional(),
+    status: z.string().optional(),
+    iteration: z.number().optional(),
+    maxIterations: z.number().nullable().optional(),
+    percentComplete: z.number().nullable().optional(),
+    recentActivity: z.unknown().optional(),
+    done: z.boolean().optional(),
+  })
+  .openapi("BuildProgressSnapshotResponse");
+
+export const IntakeIdeaRequestSchema = z
+  .object({
+    id: z.string().optional(),
+    title: z.string().optional(),
+    body: z.string().optional(),
+    targetRepo: z.string().optional(),
+    constraints: z.array(z.string()).max(50).optional(),
+    acceptanceHints: z.array(z.string()).max(50).optional(),
+    priority: z.string().optional(),
+    decomposition: z
+      .array(z.object({ key: z.string(), title: z.string(), body: z.string(), dependsOn: z.array(z.string()).max(50).optional() }))
+      .max(50)
+      .optional(),
+  })
+  .openapi("IntakeIdeaRequest");
+
+export const IntakeIdeaResponseSchema = z
+  .object({
+    ok: z.boolean(),
+    verdict: z.enum(["go", "raise", "avoid"]).optional(),
+    taskGraph: z.unknown().optional(),
+    errors: z.array(z.string()).optional(),
+  })
+  .openapi("IntakeIdeaResponse");
+
+/** Same fields as IntakeIdeaRequest — plan-idea-claims reuses the idea-intake input shape (#4799 / MCP). */
+export const PlanIdeaClaimsRequestSchema = z
+  .object({
+    id: z.string().optional(),
+    title: z.string().optional(),
+    body: z.string().optional(),
+    targetRepo: z.string().optional(),
+    constraints: z.array(z.string()).max(50).optional(),
+    acceptanceHints: z.array(z.string()).max(50).optional(),
+    priority: z.string().optional(),
+    decomposition: z
+      .array(z.object({ key: z.string(), title: z.string(), body: z.string(), dependsOn: z.array(z.string()).max(50).optional() }))
+      .max(50)
+      .optional(),
+  })
+  .openapi("PlanIdeaClaimsRequest");
+
+export const PlanIdeaClaimsResponseSchema = z
+  .object({
+    ok: z.boolean(),
+    verdict: z.enum(["go", "raise", "avoid"]).optional(),
+    claimPlan: z.unknown().optional(),
+    errors: z.array(z.string()).optional(),
+  })
+  .openapi("PlanIdeaClaimsResponse");
+
 export const BurdenForecastSchema = z
   .object({
     repoFullName: z.string(),

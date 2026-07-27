@@ -17,6 +17,12 @@ describe("OpenAPI contract", () => {
     expect(spec.paths["/v1/repos/{owner}/{repo}/issue-quality"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/outcome-patterns"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/gate-config/effective"]).toBeDefined();
+    expect(spec.paths["/v1/loop/evaluate-escalation"]).toBeDefined();
+    expect(spec.paths["/v1/loop/results-payload"]).toBeDefined();
+    expect(spec.paths["/v1/loop/progress-snapshot"]).toBeDefined();
+    expect(spec.paths["/v1/loop/intake-idea"]).toBeDefined();
+    expect(spec.paths["/v1/loop/plan-idea-claims"]).toBeDefined();
+    expect(spec.paths["/v1/loop/request-apr-transfer"]).toBeUndefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/registration-readiness"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/gittensor-config-recommendation"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/pulls/{number}/maintainer-packet"]).toBeDefined();
@@ -97,6 +103,12 @@ describe("OpenAPI contract", () => {
     expect(spec.components?.schemas?.RepoIntelligence).toBeDefined();
     expect(spec.components?.schemas?.RepoOutcomePatterns).toBeDefined();
     expect(spec.components?.schemas?.RegistrationReadiness).toBeDefined();
+    expect(spec.components?.schemas?.GateConfigEffectiveResponse).toBeDefined();
+    expect(spec.components?.schemas?.EvaluateEscalationResponse).toBeDefined();
+    expect(spec.components?.schemas?.BuildResultsPayloadResponse).toBeDefined();
+    expect(spec.components?.schemas?.BuildProgressSnapshotResponse).toBeDefined();
+    expect(spec.components?.schemas?.IntakeIdeaResponse).toBeDefined();
+    expect(spec.components?.schemas?.PlanIdeaClaimsResponse).toBeDefined();
     expect(spec.components?.schemas?.GittensorConfigRecommendation).toBeDefined();
     expect(spec.components?.schemas?.PullRequestMaintainerPacket).toBeDefined();
     expect(spec.components?.schemas?.PullRequestReviewability).toBeDefined();
@@ -161,5 +173,55 @@ describe("OpenAPI contract", () => {
         }
       }
     }
+  });
+
+  // #9309: the five /v1/loop/* idea/task-graph REST mirrors must appear in the generated spec with
+  // response schemas whose keys match each route's MCP tool outputSchema (src/mcp/server.ts).
+  it("#9309: documents the /v1/loop idea/task-graph family with MCP-aligned response schemas", () => {
+    const spec = buildOpenApiSpec();
+    const expected: Array<{ path: string; schemaName: string; keys: string[] }> = [
+      {
+        path: "/v1/loop/evaluate-escalation",
+        schemaName: "EvaluateEscalationResponse",
+        keys: ["shouldEscalate", "action", "severity", "reasons"],
+      },
+      {
+        path: "/v1/loop/results-payload",
+        schemaName: "BuildResultsPayloadResponse",
+        keys: ["prLink", "summary", "diffPreview", "totals"],
+      },
+      {
+        path: "/v1/loop/progress-snapshot",
+        schemaName: "BuildProgressSnapshotResponse",
+        keys: ["phase", "status", "iteration", "maxIterations", "percentComplete", "recentActivity", "done"],
+      },
+      {
+        path: "/v1/loop/intake-idea",
+        schemaName: "IntakeIdeaResponse",
+        keys: ["ok", "verdict", "taskGraph", "errors"],
+      },
+      {
+        path: "/v1/loop/plan-idea-claims",
+        schemaName: "PlanIdeaClaimsResponse",
+        keys: ["ok", "verdict", "claimPlan", "errors"],
+      },
+    ];
+
+    for (const { path, schemaName, keys } of expected) {
+      expect(spec.paths[path]?.post, `${path} missing POST`).toBeDefined();
+      expect(spec.paths[path]?.post?.summary?.trim(), `${path} missing summary`).not.toBe("");
+      const responseSchema = (spec.paths[path]?.post?.responses as Record<string, { content?: { "application/json"?: { schema?: { $ref?: string } } } }>)?.[
+        "200"
+      ]?.content?.["application/json"]?.schema;
+      expect(responseSchema?.$ref, `${path} 200 response should $ref ${schemaName}`).toBe(`#/components/schemas/${schemaName}`);
+
+      const component = spec.components?.schemas?.[schemaName] as { properties?: Record<string, unknown> } | undefined;
+      expect(component?.properties, `${schemaName} missing from components`).toBeDefined();
+      for (const key of keys) {
+        expect(component!.properties![key], `${schemaName} missing property ${key}`).toBeDefined();
+      }
+    }
+
+    expect(spec.paths["/v1/loop/request-apr-transfer"]).toBeUndefined();
   });
 });

@@ -37,6 +37,16 @@ import {
   IssueQualityReportSchema,
   IssueQualityResponseSchema,
   GateConfigEffectiveResponseSchema,
+  EvaluateEscalationRequestSchema,
+  EvaluateEscalationResponseSchema,
+  BuildResultsPayloadRequestSchema,
+  BuildResultsPayloadResponseSchema,
+  BuildProgressSnapshotRequestSchema,
+  BuildProgressSnapshotResponseSchema,
+  IntakeIdeaRequestSchema,
+  IntakeIdeaResponseSchema,
+  PlanIdeaClaimsRequestSchema,
+  PlanIdeaClaimsResponseSchema,
   LabelAuditSchema,
   LaneAdviceSchema,
   LiveGateThresholdsResponseSchema,
@@ -163,6 +173,11 @@ export function buildOpenApiSpec() {
   registry.register("IssueQualityReport", IssueQualityReportSchema);
   registry.register("IssueQualityResponse", IssueQualityResponseSchema);
   registry.register("GateConfigEffectiveResponse", GateConfigEffectiveResponseSchema);
+  registry.register("EvaluateEscalationResponse", EvaluateEscalationResponseSchema);
+  registry.register("BuildResultsPayloadResponse", BuildResultsPayloadResponseSchema);
+  registry.register("BuildProgressSnapshotResponse", BuildProgressSnapshotResponseSchema);
+  registry.register("IntakeIdeaResponse", IntakeIdeaResponseSchema);
+  registry.register("PlanIdeaClaimsResponse", PlanIdeaClaimsResponseSchema);
   registry.register("LiveGateThresholdsResponse", LiveGateThresholdsResponseSchema);
   registry.register("BurdenForecast", BurdenForecastSchema);
   registry.register("ContributorScoringProfile", ContributorScoringProfileSchema);
@@ -464,6 +479,82 @@ export function buildOpenApiSpec() {
       },
       401: { description: "Missing or invalid static protected API token" },
       403: { description: "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo" },
+    },
+  });
+  // #9309: REST mirrors of the five loopover_* idea/task-graph MCP tools (excl. request-apr-transfer).
+  registry.registerPath({
+    method: "post",
+    path: "/v1/loop/evaluate-escalation",
+    summary: "Evaluate whether a loop run should escalate (#6754)",
+    request: {
+      body: { content: { "application/json": { schema: EvaluateEscalationRequestSchema } } },
+    },
+    responses: {
+      200: {
+        description: "Escalation decision from the same evaluateEscalation function the loopover_evaluate_escalation MCP tool calls",
+        content: { "application/json": { schema: EvaluateEscalationResponseSchema } },
+      },
+      400: { description: "Invalid evaluate-escalation request body" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/loop/results-payload",
+    summary: "Compose a loop results-delivery payload (#6752)",
+    request: {
+      body: { content: { "application/json": { schema: BuildResultsPayloadRequestSchema } } },
+    },
+    responses: {
+      200: {
+        description: "Results payload from the same buildResultsPayload function the loopover_build_results_payload MCP tool calls",
+        content: { "application/json": { schema: BuildResultsPayloadResponseSchema } },
+      },
+      400: { description: "Invalid results-payload request body" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/loop/progress-snapshot",
+    summary: "Compose a loop progress snapshot (#6753)",
+    request: {
+      body: { content: { "application/json": { schema: BuildProgressSnapshotRequestSchema } } },
+    },
+    responses: {
+      200: {
+        description: "Progress snapshot from the same buildProgressSnapshot function the loopover_build_progress_snapshot MCP tool calls",
+        content: { "application/json": { schema: BuildProgressSnapshotResponseSchema } },
+      },
+      400: { description: "Invalid progress-snapshot request body" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/loop/intake-idea",
+    summary: "Validate an idea submission and assemble its task graph (#6755)",
+    request: {
+      body: { content: { "application/json": { schema: IntakeIdeaRequestSchema } } },
+    },
+    responses: {
+      200: {
+        description: "Validated idea with task graph (mirrors loopover_intake_idea MCP tool output)",
+        content: { "application/json": { schema: IntakeIdeaResponseSchema } },
+      },
+      400: { description: "Schema-invalid body, or engine validation errors (ok:false + errors)" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/loop/plan-idea-claims",
+    summary: "Validate an idea and produce a claim disposition plan (#6756)",
+    request: {
+      body: { content: { "application/json": { schema: PlanIdeaClaimsRequestSchema } } },
+    },
+    responses: {
+      200: {
+        description: "Claim plan from the same validate → task-graph → buildClaimPlan path the loopover_plan_idea_claims MCP tool uses",
+        content: { "application/json": { schema: PlanIdeaClaimsResponseSchema } },
+      },
+      400: { description: "Schema-invalid body, or engine validation errors (ok:false + errors)" },
     },
   });
   registry.registerPath({

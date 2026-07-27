@@ -6,11 +6,19 @@
 // The fail-closed rule lives here rather than in the CLI because it is the security-relevant decision in this
 // feature: a runtime that CLAIMS a TEE must never be allowed to record a run as if attestation succeeded when
 // it did not (#9211). Keeping it pure is what lets it be exhaustively tested without hardware.
-import type { AttestationEnvelope } from "@loopover/engine";
-
-import { sqlStringLiteral } from "./backtest-logic-check-core";
+import type { AttestationEnvelope } from "@loopover/engine/calibration/attestation-envelope";
 
 export const ATTESTED_BACKTEST_EVENT_TYPE = "calibration.attested_backtest_run";
+
+/** Single-quoted SQL string literal — mirrors backtest-corpus-export.ts's and backtest-logic-check-core.ts's
+ *  own copies exactly. Duplicated here rather than imported from backtest-logic-check-core.ts on purpose:
+ *  that file's own top-level `@loopover/engine` barrel import (unrelated exports it needs for its own
+ *  purpose) would otherwise be dragged into this module's evaluation graph too -- and, via the runner's
+ *  reproducible replay-runner image (#9214), into the measured container's trusted computing base, which is
+ *  supposed to hold nothing beyond what replay itself needs. */
+function sqlStringLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
 
 /** What the runtime claims about itself, independent of what the attester actually returned. `none` is an
  *  ordinary un-attested dev run; `tee` asserts the workload believes it is inside a TEE runtime class. */

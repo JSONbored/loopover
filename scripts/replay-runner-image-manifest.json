@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "baseImageRef": "node:22-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3",
+  "dockerfileSha256": "7e4d3c18fbc3a4153d7ba25e3cff8329b07fceb6a52a62350ba0f3c65f54f2ff",
+  "packageLockSha256": "d4678b51bd2ad413ebf6f016fae0720ac32e3d6328646c749a434972f3bff1a5",
+  "sourceFiles": {
+    "scripts/attested-backtest-run-core.ts": "e5f5659dc9204f9406c9874317d71cb02fd7f4c993c9f5caa92545595f522167",
+    "scripts/attested-backtest-run.ts": "0db6b462afdf80086eb68da793a6dccbe3d5751eceeb19e338d2746a1c319fa5",
+    "scripts/backtest-corpus-export-core.ts": "6a268410ea1d8041e95af345149aeb4848376c4c72127b801ee9da377b81e85e",
+    "scripts/snp-attester.ts": "b917e8541908150bd0c885fbe57e178247e5cd5f78f80eda7dc9e8b77da6deb3"
+  },
+  "digest": "f07929d7c4e23136fae633c8750d92e7a464a0da70e5ac6d1841c7134dc45741"
+}

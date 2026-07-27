@@ -13,7 +13,7 @@
 // claim (fail-closed) -- never a silent degrade.
 import { spawnSync } from "node:child_process";
 
-import type { Attester, AttestationCollection, AttestationCollectionRequest } from "@loopover/engine";
+import type { Attester, AttestationCollection, AttestationCollectionRequest } from "@loopover/engine/calibration/attester";
 
 /** Where a CoCo attestation agent listens inside the guest. Overridable for a non-default topology. */
 export const DEFAULT_ATTESTATION_AGENT_URL = "http://127.0.0.1:8006/aa/evidence";

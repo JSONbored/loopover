@@ -1070,6 +1070,14 @@ const selftuneOverrideAuditShape = {
   limit: z.number().int().positive().optional(),
 };
 
+// #9300: write-side sibling of selftuneOverrideAuditShape — mirrors src/mcp/server.ts's
+// clearSelftuneOverrideShape (`confirm` must be the literal true; omitted/false is schema-rejected).
+const clearSelftuneOverrideShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  confirm: z.literal(true),
+};
+
 // #7764: mirrors the remote loopover_plan_repo_issues tool's input (src/mcp/server.ts's planRepoIssuesShape),
 // minus the create-only `milestone` which this proxy (and the `maintain plan-issues` CLI) does not expose --
 // forwarded to POST /v1/repos/:owner/:repo/issue-plan-drafts/generate. `goal` is the required maintainer
@@ -1582,6 +1590,12 @@ const STDIO_TOOL_DESCRIPTORS = [
     category: "maintainer",
     description:
       "Return the self-tune override audit trail for a repo — why the self-tune loop promoted, shadowed, or cleared a live gate override, newest first. Optionally capped by limit. Maintainer-authenticated; read-only measurement.",
+  },
+  {
+    name: "loopover_clear_selftune_override",
+    category: "maintainer",
+    description:
+      "Clear a repo's LIVE self-tune gate override (the operator's \"reset to config base\" control), mirroring DELETE /v1/repos/:owner/:repo/selftune/overrides. Requires confirm:true; the automatic self-tune promote path is untouched. Maintainer access required.",
   },
   {
     name: "loopover_get_automation_state",
@@ -3189,6 +3203,20 @@ registerStdioTool(
     const query = limit ? `?limit=${encodeURIComponent(limit)}` : "";
     const payload = await apiGet(`${toolRepoBase(owner, repo)}/selftune/overrides/audit${query}`);
     return toolResult(`Self-tune override audit for ${owner}/${repo}.`, payload);
+  },
+);
+
+// #9300: write-side sibling of loopover_get_selftune_override_audit — DELETE {repoBase}/selftune/overrides
+// with confirm:true (schema-enforced; never silently defaulted). Same apiDelete helper the unwatch action uses.
+registerStdioTool(
+  "loopover_clear_selftune_override",
+  {
+    description: stdioToolDescription("loopover_clear_selftune_override"),
+    inputSchema: clearSelftuneOverrideShape,
+  },
+  async ({ owner, repo, confirm }: any) => {
+    const payload = await apiDelete(`${toolRepoBase(owner, repo)}/selftune/overrides`, { confirm });
+    return toolResult(`Cleared the live self-tune gate override for ${owner}/${repo}.`, payload);
   },
 );
 

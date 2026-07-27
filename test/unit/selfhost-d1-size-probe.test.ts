@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LATEST_ONLY_SIGNAL_SNAPSHOT_TYPES } from "../../src/db/retention";
 import {
+  checkD1SizeThreshold,
   d1DatabaseSizeBytesSample,
   d1SignalSnapshotsRowsPerKeySample,
   d1TableRowCountSamples,
@@ -13,6 +14,7 @@ import {
   type D1SizeProbeConfig,
   type D1SizeProbeEnv,
 } from "../../src/selfhost/d1-size-probe";
+import * as posthogModule from "../../src/selfhost/posthog";
 import { renderMetrics, resetMetrics, gauge, gaugeVector, counterValue } from "../../src/selfhost/metrics";
 
 afterEach(() => {
@@ -366,5 +368,85 @@ describe("D1 metrics end-to-end via renderMetrics()", () => {
     expect(out).toContain("loopover_signal_snapshots_rows_per_key -1");
     expect(out).toContain("# TYPE loopover_d1_table_row_count gauge");
     expect(out).not.toContain('loopover_d1_table_row_count{table=');
+  });
+});
+
+describe("checkD1SizeThreshold (#9435)", () => {
+  const GB = 1024 ** 3;
+
+  it("stays silent below the warn threshold", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    checkD1SizeThreshold(6 * GB); // 60% — below the 70% warn line
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(counterValue("loopover_d1_size_threshold_alerts_total", { level: "warn" })).toBe(0);
+  });
+
+  it("fires ONCE on crossing warn, with the structured log, counter, and PostHog capture", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const captureSpy = vi.spyOn(posthogModule, "capturePostHogReviewFailure");
+    checkD1SizeThreshold(7.5 * GB); // 75% — warn
+    checkD1SizeThreshold(7.6 * GB); // still warn — latched, no second alert
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const logged = JSON.parse(errorSpy.mock.calls[0]![0] as string) as Record<string, unknown>;
+    expect(logged).toMatchObject({ event: "d1_size_threshold", alertLevel: "warn", percentOfCap: 75 });
+    expect(counterValue("loopover_d1_size_threshold_alerts_total", { level: "warn" })).toBe(1);
+    expect(captureSpy).toHaveBeenCalledTimes(1);
+    expect(captureSpy).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({ kind: "infra", alert_level: "warn", percent_of_cap: 75 }),
+      "d1_size_threshold",
+    );
+  });
+
+  it("escalates warn -> critical as a fresh alert, but never re-fires within a level", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    checkD1SizeThreshold(7.5 * GB); // warn
+    checkD1SizeThreshold(9 * GB); // 90% — critical, second alert
+    checkD1SizeThreshold(9.5 * GB); // still critical — latched
+    expect(errorSpy).toHaveBeenCalledTimes(2);
+    const second = JSON.parse(errorSpy.mock.calls[1]![0] as string) as Record<string, unknown>;
+    expect(second).toMatchObject({ alertLevel: "critical", percentOfCap: 90 });
+    expect(counterValue("loopover_d1_size_threshold_alerts_total", { level: "critical" })).toBe(1);
+  });
+
+  it("logs recovery at info grade, re-arms, and a re-crossing fires again", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    checkD1SizeThreshold(7.5 * GB); // warn — alert 1
+    checkD1SizeThreshold(3 * GB); // back to none — recovery, no error
+    const recovered = JSON.parse(logSpy.mock.calls.at(-1)![0] as string) as Record<string, unknown>;
+    expect(recovered).toMatchObject({ event: "d1_size_threshold_recovered", from: "warn", to: "none" });
+    checkD1SizeThreshold(7.5 * GB); // re-crossing — alert 2
+    expect(errorSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("a critical -> warn drop logs recovery without an alert, and returning to critical re-fires", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    checkD1SizeThreshold(9 * GB); // critical — alert 1
+    checkD1SizeThreshold(7.5 * GB); // down to warn — recovery line, no new alert
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const recovered = JSON.parse(logSpy.mock.calls.at(-1)![0] as string) as Record<string, unknown>;
+    expect(recovered).toMatchObject({ event: "d1_size_threshold_recovered", from: "critical", to: "warn" });
+    checkD1SizeThreshold(9 * GB); // back up — warn latch < critical ⇒ fresh alert
+    expect(errorSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("runD1SizeProbe feeds a fresh reading into the threshold check, and a failed size fetch does not", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    // Fresh reading at 90% of cap → the probe itself raises the alert.
+    await runD1SizeProbe(FULL_ENV, mockFetch({
+      databaseInfo: () => new Response(envelope({ file_size: 9 * GB, num_tables: 3 }), { status: 200 }),
+      rowsForTable: () => ({ total: 1 }),
+    }));
+    const alertCalls = errorSpy.mock.calls.filter((c) => typeof c[0] === "string" && (c[0] as string).includes("d1_size_threshold"));
+    expect(alertCalls).toHaveLength(1);
+    // Size endpoint now fails: the carried-forward sample must not re-alert OR recover the latch.
+    await runD1SizeProbe(FULL_ENV, mockFetch({
+      databaseInfo: () => new Response("{}", { status: 500 }),
+      rowsForTable: () => ({ total: 1 }),
+    }));
+    const after = errorSpy.mock.calls.filter((c) => typeof c[0] === "string" && (c[0] as string).includes("d1_size_threshold"));
+    expect(after).toHaveLength(1);
   });
 });

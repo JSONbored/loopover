@@ -148,6 +148,7 @@ export const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["loopover_d1_table_row_count", { help: "Row count for a monitored D1 table, from the same probe as loopover_d1_database_size_bytes, labeled by table.", type: "gauge" }],
   ["loopover_signal_snapshots_rows_per_key", { help: "signal_snapshots row count divided by its distinct (signal_type, target_key) count, scoped to the latest-only-dedup signal types dedupeSignalSnapshots converges to ~1 row per key; -1 when the probe is disabled or has never completed a successful sample.", type: "gauge" }],
   ["loopover_d1_probe_errors_total", { help: "D1 size/row-count Management API probe failures, by part (database_info/table_row_count).", type: "counter" }],
+  ["loopover_d1_size_threshold_alerts_total", { help: "D1 size-threshold alerts fired on crossing 70%/85% of the 10 GB cap, by level (warn/critical). Latched per level; recovery re-arms (#9435).", type: "counter" }],
   ["loopover_agent_action_permission_denied_total", { help: "Agent actions denied for missing a required GitHub App write permission, by action class.", type: "counter" }],
   ["loopover_agent_action_permission_denied_suppressed_total", { help: "Repeat permission denials suppressed within the cooldown window (still counted here, but not re-audited), by action class.", type: "counter" }],
   ["loopover_ai_review_frozen_reuse_total", { help: "AI review passes that reused a frozen (maintainer-gated) prior verdict instead of re-running.", type: "counter" }],

@@ -107,4 +107,51 @@ describe("a label change runs the public-surface pipeline immediately (#9059)", 
     const state = await getPullRequestDetailSyncState(env, "owner/assign-repo", 33);
     expect(state?.lastSyncedAt).toBe("2020-01-01T00:00:00.000Z");
   });
+
+  // #9175: #9059 scoped this to "a disposition label" but the implementation fired on ANY labeled/unlabeled
+  // action, breaking the noisy-event debounce for unrelated labels like "bug". Fixed to check the CHANGED
+  // label against the full disposition-label class (resolveAgentDispositionLabels), not just manual-review.
+  it("re-syncs immediately for another disposition label besides manual-review (ready-to-merge)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await seed(env, "ready-repo", 9303, 34, "lh34");
+    stubGitHub("ready-repo", 34, "lh34");
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "labeled-ready-1",
+      eventName: "pull_request",
+      payload: {
+        action: "labeled",
+        installation: { id: 9303 },
+        repository: { name: "ready-repo", full_name: "owner/ready-repo", private: false, owner: { login: "owner" } },
+        pull_request: { number: 34, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "lh34" }, labels: [{ name: "ready-to-merge" }], body: "x" },
+        label: { name: "ready-to-merge" },
+      },
+    });
+
+    const state = await getPullRequestDetailSyncState(env, "owner/ready-repo", 34);
+    expect(state?.lastSyncedAt).not.toBe("2020-01-01T00:00:00.000Z");
+  });
+
+  it("does not run the public-surface pipeline for an unrelated label (contrast case, #9175)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await seed(env, "noisy-label-repo", 9304, 35, "lh35");
+    stubGitHub("noisy-label-repo", 35, "lh35");
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "labeled-noisy-1",
+      eventName: "pull_request",
+      payload: {
+        action: "labeled",
+        installation: { id: 9304 },
+        repository: { name: "noisy-label-repo", full_name: "owner/noisy-label-repo", private: false, owner: { login: "owner" } },
+        pull_request: { number: 35, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "lh35" }, labels: [{ name: "bug" }], body: "x" },
+        label: { name: "bug" },
+      },
+    });
+
+    const state = await getPullRequestDetailSyncState(env, "owner/noisy-label-repo", 35);
+    expect(state?.lastSyncedAt).toBe("2020-01-01T00:00:00.000Z");
+  });
 });

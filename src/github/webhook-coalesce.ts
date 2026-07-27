@@ -11,13 +11,16 @@ const COALESCABLE_PULL_REQUEST_ACTIONS = new Set([
   "ready_for_review",
 ]);
 
-// #selfhost-backlog-convergence: label churn on a PR (repeated add/remove) does NOT trigger the public-surface
-// re-review pipeline at all -- shouldProcessPullRequestPublicSurface (processors.ts) only reacts to
-// PR_PUBLIC_SURFACE_ACTIONS, which excludes "labeled"/"unlabeled" -- the handler just re-syncs the PR row
-// (upsertPullRequestFromGitHub), identical work regardless of which specific label changed. A burst of label
-// events for the same PR is pure duplicate overhead; safe to coalesce to one job (unlike issue-side
-// labeled/unlabeled on a linked ISSUE, which has its OWN dedicated trailing-re-review coalescer in
-// processors.ts specifically because an add-then-remove sequence there carries a genuinely different state).
+// #selfhost-backlog-convergence: every "labeled"/"unlabeled" delivery re-syncs the PR row
+// (upsertPullRequestFromGitHub) regardless of which specific label changed -- shouldProcessPullRequestPublicSurface
+// (processors.ts) additionally runs the public-surface pipeline itself, but only when the changed label is a
+// disposition label (#9059/#9171); coalescing here is orthogonal to that check and stays keyed on the PR alone,
+// not the label name, since a same-PR burst is duplicate row-sync overhead either way and the queue keeps the
+// LATEST payload on coalesce (see pg-queue's job_key UPDATE), so the disposition check downstream still sees
+// whichever label change arrived last. A burst of label events for the same PR is safe to coalesce to one job
+// (unlike issue-side labeled/unlabeled on a linked ISSUE, which has its OWN dedicated trailing-re-review
+// coalescer in processors.ts specifically because an add-then-remove sequence there carries a genuinely
+// different state).
 const COALESCABLE_PULL_REQUEST_LABEL_ACTIONS = new Set(["labeled", "unlabeled"]);
 
 // #selfhost-backlog-convergence: mirrors shouldProcessPullRequestPublicSurface's (processors.ts) own action

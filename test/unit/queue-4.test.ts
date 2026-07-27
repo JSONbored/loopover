@@ -2745,6 +2745,67 @@ describe("queue processors", () => {
     expect(publicCalls).toBe(0);
   });
 
+  it("debounces a labeled event with no label payload the same as a noisy one (#9175)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      autoLabelEnabled: true,
+    });
+    let publicCalls = 0;
+    vi.stubGlobal("fetch", async () => {
+      publicCalls += 1;
+      return new Response("unexpected public call", { status: 500 });
+    });
+
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewCheckMode: "required", commentMode: "all_prs", publicSurface: "comment_and_label", checkRunMode: "enabled" } });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "pr-labeled-no-label-field",
+      eventName: "pull_request",
+      payload: {
+        action: "labeled",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 45, title: "Missing label payload", state: "open", user: { login: "contributor" }, head: { sha: "nolabel1" }, labels: [], body: "Fixes #1" },
+      },
+    });
+
+    expect(publicCalls).toBe(0);
+  });
+
+  it("debounces a manual-review label change when the repo disables that label entirely (#9175)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      autoLabelEnabled: true,
+    });
+    let publicCalls = 0;
+    vi.stubGlobal("fetch", async () => {
+      publicCalls += 1;
+      return new Response("unexpected public call", { status: 500 });
+    });
+
+    // manualReviewLabel is config-as-code only (no DB column) -- disabling it must go through the manifest,
+    // not upsertRepositorySettings.
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { manualReviewLabel: null, reviewCheckMode: "required", commentMode: "all_prs", publicSurface: "comment_and_label", checkRunMode: "enabled" } });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "pr-labeled-disabled-disposition-label",
+      eventName: "pull_request",
+      payload: {
+        action: "labeled",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 46, title: "Disabled disposition label", state: "open", user: { login: "contributor" }, head: { sha: "disabled1" }, labels: [{ name: "manual-review" }], body: "Fixes #1" },
+        label: { name: "manual-review" },
+      },
+    });
+
+    expect(publicCalls).toBe(0);
+  });
+
   it("processes GitHub webhook jobs for PRs, issues, comments-off, comment-attempt, and deleted installs", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await persistRegistrySnapshot(

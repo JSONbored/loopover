@@ -279,6 +279,7 @@ import {
   isProtectedAutomationAuthor,
   planAgentMaintenanceActions,
   planContributorCapClose,
+  resolveAgentDispositionLabels,
   type AgentActionPlanInput,
   type AgentDispositionLabelSettings,
   type PlannedAgentAction,
@@ -698,13 +699,10 @@ const PR_PUBLIC_SURFACE_ACTIONS = new Set([
   "synchronize",
   "ready_for_review",
   "edited",
-  // #9059: a maintainer adding or removing a disposition label IS a disposition input -- the manual-review hold
-  // is read straight off the PR's labels. Without these, adding the label did a row re-sync and nothing else,
-  // so the hold only took effect on the next ~2-minute sweep, and REMOVING it to unblock a PR had the same lag
-  // in the other direction. A sweep that is itself skipped under REST-budget backpressure makes that lag
-  // unbounded, which is how manually unblocking a PR ends up looking like the gate ignoring you.
-  "labeled",
-  "unlabeled",
+  // "labeled"/"unlabeled" are handled separately in shouldProcessPullRequestPublicSurface (#9059/#9171):
+  // only a DISPOSITION label (manual-review hold, ready-to-merge, changes-requested, migration-collision,
+  // pending-closure) re-syncs immediately -- an unrelated label like "bug" must stay debounced here, same as
+  // any other low-signal PR metadata churn.
 ]);
 const PR_GATE_CLOSED_ACTIONS = new Set(["closed"]);
 // #4818 follow-up: the three review-family event names `shouldProcessPullRequestPublicSurface` (below) also
@@ -6785,7 +6783,7 @@ async function handlePullRequestWebhookEvent(
     }
     if (
       installationId &&
-      shouldProcessPullRequestPublicSurface(eventName, payload.action)
+      shouldProcessPullRequestPublicSurface(eventName, payload.action, payload.label?.name, settings)
     ) {
       if (
         shouldCollectSlopEvidence(settings) ||
@@ -7411,6 +7409,8 @@ export function resolveAiReviewCadence(
 function shouldProcessPullRequestPublicSurface(
   eventName: string,
   action: string | undefined,
+  labelName: string | undefined,
+  labelSettings: AgentDispositionLabelSettings,
 ): boolean {
   if (eventName === "pull_request_review_comment") {
     return action === "created" || action === "edited" || action === "deleted";
@@ -7421,9 +7421,27 @@ function shouldProcessPullRequestPublicSurface(
   if (eventName === "pull_request_review") {
     return action === "submitted" || action === "edited" || action === "dismissed";
   }
+  // #9059/#9171: a label add/remove only re-syncs immediately when the CHANGED label is itself a disposition
+  // input -- the manual-review hold, ready-to-merge, changes-requested, migration-collision, and
+  // pending-closure labels are all read straight off the PR's labels elsewhere in this file. An unrelated
+  // label like "bug" is noise and stays debounced to the sweep, same as any other out-of-scope PR action.
+  if (action === "labeled" || action === "unlabeled") {
+    return isDispositionLabelChange(labelName, labelSettings);
+  }
   return (
     PR_PUBLIC_SURFACE_ACTIONS.has(action ?? "") ||
     PR_GATE_CLOSED_ACTIONS.has(action ?? "")
+  );
+}
+
+function isDispositionLabelChange(
+  labelName: string | undefined,
+  labelSettings: AgentDispositionLabelSettings,
+): boolean {
+  if (!labelName) return false;
+  const lower = labelName.toLowerCase();
+  return Object.values(resolveAgentDispositionLabels(labelSettings)).some(
+    (label) => label !== null && label.toLowerCase() === lower,
   );
 }
 

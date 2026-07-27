@@ -1275,6 +1275,38 @@ describe("api route guards and error branches", () => {
     expect(clearNoBody.status).toBe(200);
     await expect(clearNoBody.json()).resolves.toMatchObject({ cleared: true });
   });
+
+  it("isolates a single bad row in a bounty import batch instead of losing the whole batch (#9080)", async () => {
+    const app = createApp();
+    const env = withBountyUpsertFailureForIssueNumber(createTestEnv(), 4242);
+
+    const imported = await app.request(
+      "/v1/internal/bounties/import",
+      {
+        method: "POST",
+        headers: internalHeaders(env),
+        body: JSON.stringify({
+          success: true,
+          issue_count: 2,
+          issues: [
+            { id: 10, repository_full_name: "entrius/allways-ui", issue_number: 4242, status: "Open", bounty_alpha: "5.0000" },
+            { id: 11, repository_full_name: "entrius/allways-ui", issue_number: 20, status: "Open", bounty_alpha: "5.0000" },
+          ],
+        }),
+      },
+      env,
+    );
+
+    // Before #9080 a single bad row's exception propagated out of the route handler (500) and no
+    // lifecycle events were ever persisted for ANY item, since every event was collected into one array
+    // and written only after the whole loop finished. Now the good row still lands and gets counted.
+    expect(imported.status).toBe(200);
+    await expect(imported.json()).resolves.toMatchObject({ imported: 1, lifecycleEvents: 1 });
+
+    const bounties = await app.request("/v1/bounties", { headers: apiHeaders(env) }, env);
+    const bountyList = (await bounties.json()) as Array<{ id: string; issueNumber: number }>;
+    expect(bountyList.map((bounty) => bounty.issueNumber)).toEqual([20]);
+  });
 });
 
 async function seedRegisteredInstalledRepo(env: Env, installationId: number, owner: string, name: string): Promise<void> {
@@ -1351,6 +1383,44 @@ function withProductUsageInsertFailure(env: Env): Env {
       prepare(sql: string) {
         if (sql.includes("product_usage_events")) throw new Error("product usage insert failed");
         return db.prepare.call(db, sql);
+      },
+      batch(statements: unknown[]) {
+        return db.batch.call(db, statements);
+      },
+    } as unknown as D1Database,
+  };
+}
+
+// #9080: simulates ONE bad row deep in a `/v1/internal/bounties/import` batch (a transient D1 write
+// failure, a constraint violation the caller couldn't anticipate, etc.) by throwing only when the
+// upsert's own bound issue_number matches the target -- every other row in the same batch must still
+// land, and its own lifecycle event must still be written, instead of one bad item taking the whole
+// batch down (the pre-#9080 shape, since events were only ever persisted AFTER the whole loop finished).
+function withBountyUpsertFailureForIssueNumber(env: Env, issueNumber: number): Env {
+  const db = env.DB as unknown as { prepare(sql: string): { bind(...values: unknown[]): unknown }; batch(statements: unknown[]): Promise<unknown> };
+  return {
+    ...env,
+    DB: {
+      prepare(sql: string) {
+        const statement = db.prepare(sql);
+        // Only the targeted INSERT is instrumented -- every other query (session lookups, the SELECT
+        // half of the upsert's own getBounty read, lifecycle-event inserts, ...) passes through to the
+        // real statement untouched, so it keeps whatever methods (e.g. `.raw()`) drizzle's D1 driver
+        // expects on it.
+        if (!sql.includes('insert into "bounties"')) return statement;
+        return {
+          bind(...values: unknown[]) {
+            const bound = statement.bind(...values) as { run(): Promise<unknown> };
+            if (values.includes(issueNumber)) {
+              return {
+                run() {
+                  throw new Error(`simulated bounty upsert failure for issue ${issueNumber}`);
+                },
+              };
+            }
+            return bound;
+          },
+        };
       },
       batch(statements: unknown[]) {
         return db.batch.call(db, statements);

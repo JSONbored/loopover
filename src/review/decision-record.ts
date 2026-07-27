@@ -193,16 +193,36 @@ export async function persistDecisionRecord(env: Env, record: DecisionRecord, re
         )
           .bind(id, record.repoFullName.slice(0, 200), record.pullNumber, record.headSha, record.action, record.reasonCode.slice(0, 200), recordDigest, canonicalJson(record), record.decidedAt)
           .run();
-        // #8837: every write appends a chain row — including a supersession's OWN new row, so re-decisions
-        // are visible history rather than silent replacement.
-        await appendDecisionLedger(env, id, recordDigest);
-        return id;
       } catch (error) {
         if (attempt >= attempts) throw error;
         // A concurrent supersession at the exact same (repo, pull, head) raced the count-then-insert above and
         // collided on the PK — re-count and retry with the next revision id (mirrors appendDecisionLedger's
         // own PK-collision retry for the ledger tip immediately above).
+        continue;
       }
+      // The record row landed. #9078: a failure chaining it must NOT be conflated with the persist failure
+      // handled below (nothing landed at all) — the record already exists, so this is its own distinct
+      // failure mode ("an unchained record", per this module's header) and deserves its own dedicated,
+      // non-swallowed alarm rather than the same generic console.warn every other persist failure gets.
+      // verifyDecisionLedger's `missing_record`/`short_tail` reconciliation is what catches this after the
+      // fact; this alarm is what makes it visible the moment it happens, instead of only on the next verify.
+      try {
+        // #8837: every write appends a chain row — including a supersession's OWN new row, so re-decisions
+        // are visible history rather than silent replacement.
+        await appendDecisionLedger(env, id, recordDigest);
+      } catch (error) {
+        console.error(
+          JSON.stringify({
+            level: "error",
+            event: "decision_ledger_append_failed",
+            target: `${record.repoFullName}#${record.pullNumber}`,
+            recordId: id,
+            message: errorMessage(error).slice(0, 160),
+            at: nowIso(),
+          }),
+        );
+      }
+      return id;
     }
   } catch (error) {
     console.warn(JSON.stringify({ event: "decision_record_persist_error", target: `${record.repoFullName}#${record.pullNumber}`, message: errorMessage(error).slice(0, 160) }));
@@ -334,7 +354,18 @@ export type LedgerBreak =
   | { kind: "row_hash_mismatch"; atSeq: number }
   // #9122: a self-consistent chain that stops short of every decision_records row it should account for — see
   // the reconciliation check at the end of verifyDecisionLedger below for exactly what this catches and why.
-  | { kind: "short_tail"; atSeq: number };
+  | { kind: "short_tail"; atSeq: number }
+  // #9078: the ledger's OWN committed digest for this row disagrees with a digest freshly recomputed from the
+  // record's current record_json — content tampering (or an operational bug) that rewrote decision_records
+  // without touching the chain. Comparing against the ledger's row.recordDigest — not the equally-tamperable
+  // decision_records.record_digest column — is what makes this a real check: a forger would have to also
+  // recompute every row_hash after this one to make a tampered record_json look consistent, which
+  // row_hash_mismatch would already catch.
+  | { kind: "content_mismatch"; atSeq: number; recordId: string }
+  // #9078: a ledger row commits to a decision_records id that no longer has a row at all — the one preimage
+  // the chain vouched for is simply gone (a direct-DB deletion, or some other operation none of the
+  // gap/predecessor/hash checks above can see, since those only ever compare ledger rows against each other).
+  | { kind: "missing_record"; atSeq: number; recordId: string };
 
 /** #9122: the exact shape a scheduled external-anchoring job (git-commit checkpoint, transparency log, or an
  *  on-chain commitment — the actual publishing mechanism is a genuinely open infra/protocol decision tracked
@@ -348,11 +379,16 @@ export function buildLedgerAnchorPayload(tip: { seq: number; rowHash: string }, 
 
 /**
  * Verify a window of the chain, resumable via `afterSeq` (0 = genesis). Reports the FIRST break with its
- * class — a gap, a broken predecessor link, a rewritten row, or a short tail (see below) — and the cursor for
- * the next window. Always returns the CURRENT global tip (`tipSeq`/`tipHash`) and total row count, regardless
- * of where this window's pagination stopped, so a third-party checkpoint-keeper can compare it against
- * whatever tip it last observed (#9122 — the exact shape a future external-anchoring job would need). Pure
- * read; safe on a public route (hashes and ids only, no record contents).
+ * class — a gap, a broken predecessor link, a rewritten row, a short tail, a content mismatch, or a missing
+ * record (see below) — and the cursor for the next window. Always returns the CURRENT global tip
+ * (`tipSeq`/`tipHash`) and total row count, regardless of where this window's pagination stopped, so a
+ * third-party checkpoint-keeper can compare it against whatever tip it last observed (#9122 — the exact shape
+ * a future external-anchoring job would need). #9078: also reconciles each row against `decision_records` —
+ * recomputing `contentDigest(JSON.parse(record_json))` and comparing it to the digest the chain itself
+ * committed to, so a rewrite of `record_json` that left `decision_records.record_digest` untouched (or vice
+ * versa) is caught here instead of only being provable by an external challenger who happens to still have the
+ * original preimage. Read-only; safe on a public route — it reads `record_json` to recompute a digest but
+ * never RETURNS record contents, only the break kind, sequence, and (public, already-exposed) record id.
  */
 export async function verifyDecisionLedger(
   env: Env,
@@ -379,6 +415,18 @@ export async function verifyDecisionLedger(
   )
     .bind(afterSeq, bounded)
     .all<{ seq: number; recordId: string; recordDigest: string; prevHash: string; rowHash: string; createdAt: string }>();
+  // #9078: batch-fetch every decision_records row this window's chain rows reference, ONE query rather than
+  // one per row, so the content reconciliation below is a map lookup instead of an N+1 query per verify call.
+  const recordIds = [...new Set(results.map((row) => row.recordId))];
+  const recordsById = new Map<string, { recordDigest: string; recordJson: string }>();
+  if (recordIds.length > 0) {
+    const { results: recordRows } = await env.DB.prepare(
+      `SELECT id, record_digest AS recordDigest, record_json AS recordJson FROM decision_records WHERE id IN (${recordIds.map(() => "?").join(",")})`,
+    )
+      .bind(...recordIds)
+      .all<{ id: string; recordDigest: string; recordJson: string }>();
+    for (const recordRow of recordRows) recordsById.set(recordRow.id, { recordDigest: recordRow.recordDigest, recordJson: recordRow.recordJson });
+  }
   let checked = 0;
   // Tracks the created_at of the last row this call actually verified clean — the anchor the tail-truncation
   // reconciliation below compares decision_records against. Seeded from `prior` (the checkpoint we resumed
@@ -389,6 +437,19 @@ export async function verifyDecisionLedger(
     if (row.prevHash !== prevHash) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, break: { kind: "predecessor_mismatch", atSeq: row.seq } };
     const recomputed = await ledgerRowHash(prevHash, { seq: row.seq, recordId: row.recordId, recordDigest: row.recordDigest, createdAt: row.createdAt });
     if (recomputed !== row.rowHash) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, break: { kind: "row_hash_mismatch", atSeq: row.seq } };
+    // #9078: the promised record/ledger reconciliation — a row_hash chained cleanly can still commit to a
+    // digest whose CONTENT has since been rewritten (or whose preimage is simply gone). Neither is visible to
+    // the chain-only checks above, since those only ever compare ledger rows against each other.
+    const storedRecord = recordsById.get(row.recordId);
+    if (!storedRecord) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, break: { kind: "missing_record", atSeq: row.seq, recordId: row.recordId } };
+    let recomputedContentDigest: string | null = null;
+    try {
+      recomputedContentDigest = await contentDigest(JSON.parse(storedRecord.recordJson));
+    } catch {
+      // Unparseable record_json is itself proof the content no longer matches whatever the chain committed to.
+      recomputedContentDigest = null;
+    }
+    if (recomputedContentDigest !== row.recordDigest) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, break: { kind: "content_mismatch", atSeq: row.seq, recordId: row.recordId } };
     prevHash = row.rowHash;
     lastVerifiedCreatedAt = row.createdAt;
     expectedSeq = row.seq + 1;

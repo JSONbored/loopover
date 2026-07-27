@@ -914,6 +914,14 @@ describe("world-class backend signals", () => {
     // Empty/whitespace status is a sparse-cache fallback that cannot be classified.
     expect(classifyBountyLifecycle({ ...base, id: "blank", status: "   " }, openIssue)).toBe("unknown");
 
+    // #9080: the lifecycle regexes were unanchored substring matches, so a base word buried mid-token
+    // false-positived. A leading `\b` fixes this without losing the genuine prefix matches above
+    // (cancelled/completed/rewarded/etc. all still match -- nothing but a word start precedes them).
+    expect(classifyBountyLifecycle({ ...base, id: "unclaimed", status: "Unclaimed" }, openIssue)).not.toBe("completed");
+    expect(classifyBountyLifecycle({ ...base, id: "not-completed", status: "not_completed" }, openIssue)).not.toBe("completed");
+    expect(classifyBountyLifecycle({ ...base, id: "avoid", status: "Avoid" }, openIssue)).not.toBe("cancelled");
+    expect(classifyBountyLifecycle({ ...base, id: "renewed", status: "Renewed" }, openIssue)).not.toBe("active");
+
     expect(buildBountyAdvisory(historical, repo, openIssue).findings.map((finding) => finding.code)).toContain("historical_bounty");
     expect(buildBountyAdvisory(completed, repo, openIssue).findings.map((finding) => finding.code)).toContain("completed_bounty");
     expect(buildBountyAdvisory(cancelled, repo, openIssue).findings.map((finding) => finding.code)).toContain("cancelled_bounty");
@@ -922,6 +930,15 @@ describe("world-class backend signals", () => {
     expect(buildBountyAdvisory(stale, repo, openIssue).isActiveOpportunity).toBe(false);
     expect(buildBountyAdvisory({ ...base, id: "target-only", status: "Open", payload: { target_bounty: 1, bounty_amount: "0.0000" } }, repo, openIssue).fundingStatus).toBe("target_only");
     expect(buildBountyAdvisory({ ...base, id: "unknown-funding", status: "Open", payload: {} }, repo, openIssue).fundingStatus).toBe("unknown");
+    // #9080: the old guard only excluded the ONE hardcoded literal "0.0000" -- any other zero-ish string
+    // (upstream sending "0", "0.0", or "0.00") was a non-empty, truthy string that reported "funded".
+    // Number(amount) > 0 treats every zero-ish spelling the same regardless of exact formatting.
+    expect(buildBountyAdvisory({ ...base, id: "zero-string", status: "Open", payload: { bounty_amount: "0" } }, repo, openIssue).fundingStatus).toBe("unknown");
+    expect(buildBountyAdvisory({ ...base, id: "zero-point-oh", status: "Open", payload: { bounty_amount: "0.0" } }, repo, openIssue).fundingStatus).toBe("unknown");
+    expect(buildBountyAdvisory({ ...base, id: "zero-point-oh-oh", status: "Open", payload: { bounty_amount: "0.00", target_bounty: 5 } }, repo, openIssue).fundingStatus).toBe("target_only");
+    // A malformed/non-numeric amount is not a payout figure at all; degrade to target-only/unknown rather
+    // than reporting funded off a string that happened to be truthy.
+    expect(buildBountyAdvisory({ ...base, id: "non-numeric-amount", status: "Open", payload: { bounty_amount: "TBD" } }, repo, openIssue).fundingStatus).toBe("unknown");
 
     const stalePreflight = buildPreflightResult({ repoFullName: repo.fullName, title: "Fix cache", body: "Fixes #7" }, repo, [openIssue], [], [stale]);
     const ambiguousPreflight = buildPreflightResult({ repoFullName: repo.fullName, title: "Fix cache", body: "Fixes #7" }, repo, [openIssue], [], [ambiguousStatus]);

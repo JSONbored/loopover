@@ -136,6 +136,38 @@ describe("buildDecisionRecord / persistDecisionRecord", () => {
     expect([idOne, idTwo, idThree]).toEqual([`record:o/r#7@abc1234def`, `record:o/r#7@abc1234def:rev2`, `record:o/r#7@abc1234def:rev3`]);
   });
 
+  it("#9078: a ledger-append failure after a successful record insert raises a dedicated alarm (not a swallowed warn) and still returns the id", async () => {
+    const env = createTestEnv();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    vi.spyOn(env.DB, "prepare").mockImplementation((sql: string) => {
+      if (sql.includes("INSERT INTO decision_ledger")) {
+        return {
+          bind: () => ({
+            run: async () => {
+              throw new Error("ledger down");
+            },
+          }),
+        } as never;
+      }
+      return realPrepare(sql);
+    });
+    const { record, recordDigest } = await buildDecisionRecord(recordInput());
+    const id = await persistDecisionRecord(env, record, recordDigest);
+    // The record row itself still landed -- an append failure must not be conflated with a persist failure.
+    expect(id).toBe(`record:o/r#7@abc1234def`);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("decision_ledger_append_failed"));
+    expect(warnSpy).not.toHaveBeenCalled();
+    const row = await env.DB.prepare("SELECT id FROM decision_records WHERE id = ?").bind(id).first();
+    expect(row).toBeTruthy();
+    const ledgerRow = await env.DB.prepare("SELECT seq FROM decision_ledger").first();
+    // Unchained -- exactly the state verifyDecisionLedger's `missing_record` reconciliation now catches.
+    expect(ledgerRow ?? null).toBeNull();
+    vi.restoreAllMocks();
+  });
+
   it("a persist failure is swallowed (legibility must never break finalization) and resolves null", async () => {
     const env = createTestEnv();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -417,7 +449,61 @@ describe("decision ledger (#8837)", () => {
 
   it("a concurrent append races on the PK and retries with a re-read predecessor — both rows land, chain intact", async () => {
     const env = createTestEnv();
-    await Promise.all([appendDecisionLedger(env, "record:a", "1".repeat(64)), appendDecisionLedger(env, "record:b", "2".repeat(64))]);
+    // #9078: verifyDecisionLedger now reconciles every chain row against a real decision_records preimage, so
+    // this test (which is really about the ledger's own PK-collision race, not persistDecisionRecord's insert
+    // path) needs real backing rows instead of the bare synthetic digests it used before that reconciliation
+    // existed.
+    const a = await buildDecisionRecord(recordInput({ pullNumber: 201 }));
+    const b = await buildDecisionRecord(recordInput({ pullNumber: 202 }));
+    for (const [id, built] of [
+      ["record:a", a],
+      ["record:b", b],
+    ] as const) {
+      await env.DB.prepare(
+        `INSERT INTO decision_records (id, repo_full_name, pull_number, head_sha, action, reason_code, record_digest, record_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+        .bind(id, built.record.repoFullName, built.record.pullNumber, built.record.headSha, built.record.action, built.record.reasonCode, built.recordDigest, canonicalJson(built.record), built.record.decidedAt)
+        .run();
+    }
+    await Promise.all([appendDecisionLedger(env, "record:a", a.recordDigest), appendDecisionLedger(env, "record:b", b.recordDigest)]);
+    const verified = await verifyDecisionLedger(env);
+    expect(verified).toMatchObject({ ok: true, checked: 2 });
+  });
+
+  it("#9078: a rewritten record_json is caught as a content mismatch even when the record_digest column is untouched", async () => {
+    const env = createTestEnv();
+    await persist(env, 1);
+    await env.DB.prepare("UPDATE decision_records SET record_json = ? WHERE pull_number = 1")
+      .bind(JSON.stringify({ tampered: true }))
+      .run();
+    const verified = await verifyDecisionLedger(env);
+    expect(verified.ok).toBe(false);
+    expect(verified.break).toMatchObject({ kind: "content_mismatch", atSeq: 1, recordId: "record:o/r#1@abc1234def" });
+  });
+
+  it("#9078: unreadable record_json is treated as a content mismatch rather than throwing", async () => {
+    const env = createTestEnv();
+    await persist(env, 1);
+    await env.DB.prepare("UPDATE decision_records SET record_json = '{not json' WHERE pull_number = 1").run();
+    const verified = await verifyDecisionLedger(env);
+    expect(verified.ok).toBe(false);
+    expect(verified.break).toMatchObject({ kind: "content_mismatch" });
+  });
+
+  it("#9078: a ledger row whose decision_records preimage was deleted outright is reported as a missing record, distinct from a content mismatch", async () => {
+    const env = createTestEnv();
+    await persist(env, 1);
+    await env.DB.prepare("DELETE FROM decision_records WHERE pull_number = 1").run();
+    const verified = await verifyDecisionLedger(env);
+    expect(verified.ok).toBe(false);
+    expect(verified.break).toMatchObject({ kind: "missing_record", recordId: "record:o/r#1@abc1234def" });
+  });
+
+  it("#9078: an untampered chain still verifies clean through the new content reconciliation", async () => {
+    const env = createTestEnv();
+    await persist(env, 1);
+    await persist(env, 2);
     const verified = await verifyDecisionLedger(env);
     expect(verified).toMatchObject({ ok: true, checked: 2 });
   });

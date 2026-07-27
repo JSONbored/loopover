@@ -339,7 +339,6 @@ import {
 } from "../signals/registration-readiness";
 import { fileUpstreamDriftIssues, loadUpstreamStatus, refreshUpstreamDrift, registryHyperparameterDriftWarningsForRepo, resolveAutoFileDriftIssuesManifestOverride } from "../upstream/ruleset";
 import type {
-  BountyLifecycleEventRecord,
   ControlPanelRoleName,
   ContributorEvidenceRecord,
   DataQuality,
@@ -5091,24 +5090,45 @@ export function createApp() {
   app.post("/v1/internal/bounties/import", async (c) => {
     const body = await c.req.json().catch(() => null);
     const bounties = normalizeGittBountySnapshot(body);
-    const events: BountyLifecycleEventRecord[] = [];
+    let imported = 0;
+    let lifecycleEvents = 0;
     for (const bounty of bounties) {
-      const existing = await getBounty(c.env, bounty.id);
-      await upsertBounty(c.env, bounty);
-      if (!existing || existing.status !== bounty.status) {
-        events.push({
-          id: crypto.randomUUID(),
-          bountyId: bounty.id,
-          repoFullName: bounty.repoFullName,
-          issueNumber: bounty.issueNumber,
-          status: bounty.status,
-          payload: { previousStatus: existing?.status ?? null, source: "gitt_import" },
-          generatedAt: nowIso(),
-        });
+      // #9080: the lifecycle event for THIS bounty is now written in the SAME step as its own upsert, and
+      // each item is individually try/caught -- previously every event was collected into one array and
+      // persisted only AFTER the whole loop finished, so a mid-loop failure (a bad row further down the
+      // batch) left every bounty upserted so far already advanced in `bounties` with ZERO lifecycle rows
+      // recorded for any of them, and the transition is unrecoverable once the next import's diff runs
+      // against the now-already-updated row (the same "state advanced, audit trail didn't" shape as #8997).
+      // A single bad item can no longer take the rest of the batch down with it, either.
+      try {
+        const existing = await getBounty(c.env, bounty.id);
+        await upsertBounty(c.env, bounty);
+        imported += 1;
+        if (!existing || existing.status !== bounty.status) {
+          await persistBountyLifecycleEvent(c.env, {
+            id: crypto.randomUUID(),
+            bountyId: bounty.id,
+            repoFullName: bounty.repoFullName,
+            issueNumber: bounty.issueNumber,
+            status: bounty.status,
+            payload: { previousStatus: existing?.status ?? null, source: "gitt_import" },
+            generatedAt: nowIso(),
+          });
+          lifecycleEvents += 1;
+        }
+      } catch (error) {
+        console.warn(
+          JSON.stringify({
+            event: "bounty_import_item_failed",
+            bountyId: bounty.id,
+            repoFullName: bounty.repoFullName,
+            issueNumber: bounty.issueNumber,
+            message: errorMessage(error).slice(0, 160),
+          }),
+        );
       }
     }
-    await Promise.all(events.map((event) => persistBountyLifecycleEvent(c.env, event)));
-    return c.json({ ok: true, imported: bounties.length, lifecycleEvents: events.length });
+    return c.json({ ok: true, imported, lifecycleEvents });
   });
 
   app.post("/v1/internal/queue-intelligence", async (c) => {

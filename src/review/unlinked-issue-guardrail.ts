@@ -137,13 +137,14 @@ async function recordUnlinkedIssueVerifyUsage(env: Env, repoFullName: string, pu
 
 /** Minimal cached miner-identity check, deliberately independent of processors.ts's getCachedOfficialMinerDetection
  *  (same cache table and TTLs, no audit-log side effect -- this call site doesn't need one). Fail-safe: any
- *  lookup failure resolves to "not a confirmed miner," never the reverse. */
-async function isConfirmedOfficialMiner(env: Env, login: string): Promise<boolean> {
+ *  lookup failure resolves to "not a confirmed miner," never the reverse. #9079: matches on `githubId` (the
+ *  author's immutable numeric id) when the caller has one -- `login` is only ever the fallback/cache key. */
+async function isConfirmedOfficialMiner(env: Env, login: string, githubId?: number | null): Promise<boolean> {
   const cached = await getFreshOfficialMinerDetection(env, login).catch(() => null);
   if (cached) return cached.status === "confirmed";
   // fetchOfficialGittensorMiner already converts every failure into a returned {status: "unavailable"}
   // value rather than rejecting -- nothing to catch here.
-  const detection = await fetchOfficialGittensorMiner(login);
+  const detection = await fetchOfficialGittensorMiner(login, githubId);
   // A cache-write failure must never block the caller from using the freshly-fetched (just uncached)
   // detection -- worst case, the next call re-fetches instead of hitting the cache.
   const cacheable = await upsertOfficialMinerDetection(
@@ -172,6 +173,11 @@ export type ResolveUnlinkedIssueMatchDispositionInput = {
    *  correlated across PRs, so repeat-detection is skipped entirely and a confirmed match always holds
    *  (fail-safe: never escalate to a close on an unidentifiable author). */
   prAuthorLogin: string | null | undefined;
+  /** #9079: the author's immutable numeric GitHub user id (`PullRequestRecord.authorGithubId`), when the
+   *  caller has it. Preferred over `prAuthorLogin` for the velocity exception's miner-identity check below --
+   *  a login is renameable and a freed one is reclaimable, so matching a `confirmed_miner`-gated exception on
+   *  username alone would let a squatter who claims a former miner's old login inherit it. */
+  prAuthorGithubId?: number | null | undefined;
 };
 
 function unlinkedIssueMatchTargetKey(repoFullName: string, pullNumber: number): string {
@@ -271,7 +277,7 @@ export async function resolveUnlinkedIssueMatchDisposition(env: Env, input: Reso
       const gapMs = Date.now() - new Date(priorMatchIso).getTime();
       // #4512 velocity exception: gated on CONFIRMED miner identity, not on speed alone -- an unverified
       // account repeating this fast is the MORE suspicious case, not less, and still escalates to close.
-      const velocityExceptionApplies = gapMs >= 0 && gapMs < VELOCITY_EXCEPTION_MAX_GAP_MS && (await isConfirmedOfficialMiner(env, authorLogin).catch(() => false));
+      const velocityExceptionApplies = gapMs >= 0 && gapMs < VELOCITY_EXCEPTION_MAX_GAP_MS && (await isConfirmedOfficialMiner(env, authorLogin, input.prAuthorGithubId).catch(() => false));
       if (!velocityExceptionApplies) {
         return {
           kind: "close",

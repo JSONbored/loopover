@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getActiveReviewStartedAt,
+  getBounty,
   getContributorScoringProfile,
   getOpenUpstreamDriftReportByFingerprint,
   hasActiveReviewForHeadSha,
@@ -17,6 +18,7 @@ import {
   startActiveReviewTracking,
   terminalizeActiveReviewTracking,
   updateUpstreamDriftReportIssue,
+  upsertBounty,
   upsertContributorRepoStat,
   upsertContributorScoringProfile,
   upsertPullRequestFile,
@@ -77,6 +79,68 @@ describe("database persistence helpers", () => {
     });
 
     await expect(env.DB.prepare("select count(*) as count from bounty_lifecycle_events").first<{ count: number }>()).resolves.toMatchObject({ count: 1 });
+  });
+
+  describe("upsertBounty (#9080)", () => {
+    it("updates the existing row in place on a same-id re-import", async () => {
+      const env = createTestEnv();
+      await upsertBounty(env, {
+        id: "bounty-1",
+        repoFullName: "JSONbored/loopover",
+        issueNumber: 7,
+        status: "Open",
+        amountText: "5.0000",
+        payload: { bounty_alpha: "5.0000" },
+      });
+      await upsertBounty(env, {
+        id: "bounty-1",
+        repoFullName: "JSONbored/loopover",
+        issueNumber: 7,
+        status: "Completed",
+        amountText: "5.0000",
+        payload: { bounty_alpha: "5.0000" },
+      });
+
+      expect(await getBounty(env, "bounty-1")).toMatchObject({ id: "bounty-1", status: "Completed" });
+      await expect(env.DB.prepare("select count(*) as count from bounties").first<{ count: number }>()).resolves.toMatchObject({ count: 1 });
+    });
+
+    it("reconciles onto the existing (repoFullName, issueNumber) row instead of throwing when upstream re-issues a bounty under a new id (#9080)", async () => {
+      const env = createTestEnv();
+      await upsertBounty(env, {
+        id: "bounty-old",
+        repoFullName: "JSONbored/loopover",
+        issueNumber: 7,
+        status: "Cancelled",
+        amountText: "0.0000",
+        payload: { bounty_alpha: "0.0000" },
+      });
+
+      // Upstream re-issues the bounty on the SAME issue under a brand-new id -- before #9080 this threw
+      // (unhandled conflict on the (repo_full_name, issue_number) unique index), 500ing the whole import
+      // batch and wedging every subsequent import on the same row.
+      await expect(
+        upsertBounty(env, {
+          id: "bounty-new",
+          repoFullName: "JSONbored/loopover",
+          issueNumber: 7,
+          status: "Open",
+          amountText: "12.0000",
+          payload: { bounty_alpha: "12.0000" },
+        }),
+      ).resolves.toBeUndefined();
+
+      // Exactly one row survives for that (repo, issue) -- the id column is never part of the update, so
+      // the surviving row keeps its ORIGINAL id (bounty_lifecycle_events rows already keyed to it are not
+      // orphaned), but every other column reconciles onto the newly-imported values.
+      await expect(env.DB.prepare("select count(*) as count from bounties").first<{ count: number }>()).resolves.toMatchObject({ count: 1 });
+      expect(await getBounty(env, "bounty-old")).toMatchObject({
+        id: "bounty-old",
+        status: "Open",
+        amountText: "12.0000",
+      });
+      expect(await getBounty(env, "bounty-new")).toBeNull();
+    });
   });
 
   it("returns an empty array when no totals snapshots exist", async () => {

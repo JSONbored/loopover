@@ -11,13 +11,15 @@ import { fetchOfficialGittensorMiner } from "./api";
 const OFFICIAL_MINER_DETECTION_TTL_MS = 5 * 60 * 1000;
 const OFFICIAL_MINER_DETECTION_UNAVAILABLE_TTL_MS = 60 * 1000;
 
-/** Fail-safe: any lookup failure resolves to "not a confirmed miner," never the reverse. */
-export async function isConfirmedOfficialMiner(env: Env, login: string): Promise<boolean> {
+/** Fail-safe: any lookup failure resolves to "not a confirmed miner," never the reverse. #9079: matches on
+ *  `githubId` (the author's immutable numeric id) when the caller has one -- `login` is only ever the
+ *  fallback/cache key, since a GitHub username is renameable and a freed one is reclaimable by anyone. */
+export async function isConfirmedOfficialMiner(env: Env, login: string, githubId?: number | null): Promise<boolean> {
   const cached = await getFreshOfficialMinerDetection(env, login).catch(() => null);
   if (cached) return cached.status === "confirmed";
   // fetchOfficialGittensorMiner already converts every failure into a returned {status: "unavailable"}
   // value rather than rejecting -- nothing to catch here.
-  const detection = await fetchOfficialGittensorMiner(login);
+  const detection = await fetchOfficialGittensorMiner(login, githubId);
   // A cache-write failure must never block the caller from using the freshly-fetched (just uncached)
   // detection -- worst case, the next call re-fetches instead of hitting the cache.
   const cacheable = await upsertOfficialMinerDetection(

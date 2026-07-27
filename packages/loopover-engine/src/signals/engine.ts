@@ -3829,15 +3829,29 @@ export function indexBountiesByIssue(bounties: BountyRecord[]): Map<string, Boun
   return map;
 }
 
+// #9080: every alternative below is a deliberate PREFIX match (so "cancel" also catches "cancelled",
+// "reward" also catches "rewarding", etc.) -- but unanchored, a prefix match is also a SUBSTRING match
+// anywhere in the string, which false-positived on real upstream statuses: "unclaimed" (contains
+// "claimed") and "not_completed" (contains "complete") both classified as completed; "avoid" (contains
+// "void") classified as cancelled; "renewed" (contains "new") classified as active. A leading `\b`
+// requires a genuine WORD START immediately before the match -- still matches "cancelled"/"completed"/
+// "rewarded" (nothing but whitespace/string-start precedes the base word there), but no longer matches
+// a base word buried mid-token behind a letter or underscore (`\b` treats `_` as a word character, so
+// "not_completed" still correctly fails to match "complete" the same way "notcompleted" would).
+const BOUNTY_CANCELLED_STATUS_RE = /\b(cancel|void|expired|withdrawn|rejected|abandon)/;
+// Only past-tense payout phrasing (rewarded/awarded) marks completion; a bounty that merely
+// advertises a "reward"/"award" is an active offer, not already-completed work.
+const BOUNTY_COMPLETED_STATUS_RE = /\b(complete|paid|resolved|rewarded|awarded|fulfil|merged|claimed|done)/;
+const BOUNTY_HISTORICAL_STATUS_RE = /\b(historical|archived|closed)/;
+const BOUNTY_ACTIVE_LOOKING_STATUS_RE = /\b(open|active|live|available|ready|funded|reward|award|in[\s_-]?progress|todo|new)/;
+
 export function classifyBountyLifecycle(bounty: BountyRecord, issue: IssueRecord | null): BountyLifecycle {
   const status = bounty.status.trim().toLowerCase();
   if (!status) return "unknown";
-  if (/cancel|void|expired|withdrawn|rejected|abandon/.test(status)) return "cancelled";
-  // Only past-tense payout phrasing (rewarded/awarded) marks completion; a bounty that merely
-  // advertises a "reward"/"award" is an active offer, not already-completed work.
-  if (/complete|paid|resolved|rewarded|awarded|fulfil|merged|claimed|done/.test(status)) return "completed";
-  if (/historical|archived|closed/.test(status)) return "historical";
-  const looksActive = /open|active|live|available|ready|funded|reward|award|in[\s_-]?progress|todo|new/.test(status);
+  if (BOUNTY_CANCELLED_STATUS_RE.test(status)) return "cancelled";
+  if (BOUNTY_COMPLETED_STATUS_RE.test(status)) return "completed";
+  if (BOUNTY_HISTORICAL_STATUS_RE.test(status)) return "historical";
+  const looksActive = BOUNTY_ACTIVE_LOOKING_STATUS_RE.test(status);
   if (!looksActive) return "ambiguous";
   // Active-looking status: reconcile against the linked issue and freshness so dead context is not treated as live.
   if (issue && issue.state !== "open") return "ambiguous";
@@ -3942,8 +3956,16 @@ export function buildBountyAdvisory(
   const lifecycle = classifyBountyLifecycle(bounty, issue);
   const target = bounty.payload.target_bounty ?? bounty.payload.target_alpha;
   const amount = bounty.payload.bounty_amount ?? bounty.payload.bounty_alpha;
+  // #9080: the old check (`amount && amount !== 0 && amount !== "0.0000"`) compared against exactly ONE
+  // hardcoded zero-string literal -- upstream sending "0", "0.0", or "0.00" (any zero string other than
+  // that one exact literal) was a non-empty, truthy string that survived every guard and reported
+  // "funded". `amount !== 0` was also dead for a numeric amount (numeric 0 is already falsy, so `amount &&`
+  // alone already excludes it). Parsing to a real number and requiring it to be positive treats every
+  // zero-ish spelling (string or numeric) the same, and a malformed/non-numeric amount degrades to
+  // target-only/unknown instead of reporting funded.
+  const numericAmount = Number(amount);
   /* v8 ignore next -- Unknown funding is a sparse-cache fallback; funded and target-only states are covered. */
-  const fundingStatus = amount && amount !== 0 && amount !== "0.0000" ? "funded" : target ? "target_only" : "unknown";
+  const fundingStatus = Number.isFinite(numericAmount) && numericAmount > 0 ? "funded" : target ? "target_only" : "unknown";
   const source = buildBountySourceContext(bounty);
   const linkedPrs = buildBountyLinkedPrs(issue, pullRequests, recentMergedPullRequests);
   const findings: SignalFinding[] = [];

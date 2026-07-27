@@ -8,6 +8,7 @@ import {
 import { createInstallationToken, getRepositoryCollaboratorPermission } from "../github/app";
 import { githubRateLimitAdmissionKeyForToken, type GitHubRateLimitAdmissionKey } from "../github/client";
 import { isPerRepoAdminModeEnabled, parseGitHubLoginList } from "../auth/security";
+import { getLatestPublishedLinkedIssueSatisfaction } from "../db/repositories";
 import { errorMessage } from "../utils/json";
 import type { LinkedIssueLabelPropagationMapping } from "../types";
 
@@ -135,6 +136,7 @@ async function resolveIssueLabelsForPropagation(
   result: LinkedIssueFactsFetch,
   prAuthorLogin: string | undefined,
   relaxableLabels: ReadonlySet<string>,
+  rewardTrustLabels: ReadonlySet<string>,
   prMergedAt: string | null,
   // #9161: issueLabels named by at least one ADDITIVE mapping (`removeOtherTypeLabels !== true` -- see
   // pr-type-label.ts's exclusive/additive split, e.g. `gittensor:priority` composing alongside bug/feature).
@@ -243,7 +245,9 @@ async function resolveIssueLabelsForPropagation(
   }
   const maintainerAuthored = maintainerCheck === "maintainer";
   const relaxedRewardLabels = maintainerAuthored ? rewardCandidateLabels.filter((label) => relaxableLabels.has(label.toLowerCase())) : [];
-  const kept = [...directTypeLabels, ...relaxedRewardLabels];
+  // `let`, not `const`: #9077's satisfaction-verdict check below (rewardCandidates/rewardTrustLabels) can
+  // further filter an unconfirmed reward-flagged label back out of this set.
+  let kept = [...directTypeLabels, ...relaxedRewardLabels];
 
   if (kept.length < allLabels.length && allLabels.length > 0) {
     console.log(
@@ -260,6 +264,43 @@ async function resolveIssueLabelsForPropagation(
       }),
     );
   }
+
+  // #9077: the maintainer-authored relaxation above accepts "a maintainer opened this issue" as the ENTIRE
+  // unlock for a `trustMaintainerAuthoredIssueForReward` label -- unlike the direct author/assignee match
+  // above (return-early, genuine involvement), a contributor here did nothing but CITE an issue they had no
+  // part in. Nothing upstream of this point verifies the PR actually addresses it: `isLinkedIssueTrustworthy`
+  // trusts every OPEN issue unconditionally, and an OPEN maintainer-authored `gittensor:priority` issue is
+  // exactly what this mapping exists to match. A reward-flagged label reached only via this relaxed path is
+  // therefore additionally gated on a PUBLISHED linked-issue-satisfaction verdict of "addressed" for this
+  // exact (repo, PR, issue) -- the same AI-backed assessment the `linkedIssueSatisfactionGateMode` gate
+  // already computes and persists (`src/services/linked-issue-satisfaction.ts`), read here rather than
+  // re-run, so this never spends a second model call. A repo that has not opted into that gate mode (the
+  // "off" default) never persists a verdict at all, so the reward relaxation simply never fires for it --
+  // a fail-safe degrade, not a silent bypass: "no evidence this PR addresses the issue" must never be
+  // conflated with "confirmed addressed." This check does NOT apply to a non-reward relaxed label (plain
+  // `trustMaintainerAuthoredIssue`, e.g. bug/feature mirroring) or to the direct-ownership path above --
+  // both keep their existing behavior unchanged.
+  const rewardCandidates = kept.filter((label) => rewardTrustLabels.has(label.toLowerCase()));
+  if (rewardCandidates.length > 0) {
+    const verdict =
+      args.prNumber !== undefined
+        ? await getLatestPublishedLinkedIssueSatisfaction(args.env, args.repoFullName, args.prNumber, result.facts.number).catch(() => null)
+        : null;
+    const satisfactionConfirmed = verdict?.status === "ok" && verdict.result?.status === "addressed";
+    if (!satisfactionConfirmed) {
+      console.log(
+        JSON.stringify({
+          event: "linked_issue_reward_label_requires_satisfaction",
+          repoFullName: args.repoFullName,
+          issueNumber: result.facts.number,
+          droppedCount: rewardCandidates.length,
+        }),
+      );
+      const rewardCandidateSet = new Set(rewardCandidates);
+      kept = kept.filter((label) => !rewardCandidateSet.has(label));
+    }
+  }
+
   return { labels: kept, inconclusive: false };
 }
 
@@ -283,7 +324,12 @@ async function resolveIssueLabelsForPropagation(
  *  `mappings` (optional, #priority-linked-issue-gate-ownership) is the propagation config's own mapping
  *  list, used ONLY to know which `issueLabel`s are allowed to unlock via `resolveIssueLabelsForPropagation`'s
  *  relaxed maintainer-authored-issue path (either trust flag) -- omitting it (or a mapping never setting
- *  either flag) reproduces today's strict author-or-assignee-only behavior exactly.
+ *  either flag) reproduces today's strict author-or-assignee-only behavior exactly. #9077: a label reached
+ *  ONLY via that relaxed path AND flagged `trustMaintainerAuthoredIssueForReward` is additionally required
+ *  to have a PUBLISHED "addressed" linked-issue-satisfaction verdict for this exact (repo, PR, issue) before
+ *  it is kept -- citing an untouched maintainer-authored issue is no longer sufficient by itself for a
+ *  reward-bearing label. See `resolveIssueLabelsForPropagation`'s own comment on that check for the repo-
+ *  opt-in dependency this introduces (`linkedIssueSatisfactionGateMode` must not be `"off"`).
  *
  *  `prMergedAt` (#4528) is this PR's own `merged_at`, or `null` while unmerged -- the caller's `pr.mergedAt`
  *  straight from the DB row (or webhook payload), no extra fetch in the common case.
@@ -347,6 +393,16 @@ export async function fetchLinkedIssueLabelsForPropagation(args: {
   const rewardLabels = new Set(
     [...mappingsByIssueLabel.entries()].filter(([, mappings]) => mappings.some((mapping) => mapping.removeOtherTypeLabels !== true)).map(([issueLabel]) => issueLabel),
   );
+  // #9077: a STRICTER subset of `relaxableLabels` -- any issueLabel where AT LEAST ONE of its mappings
+  // opted into the reward-specific flag, not just the generic maintainer-trust one. Checked with `.some`
+  // rather than `.every` (unlike `relaxableLabels` above) so a repo cannot dodge the extra satisfaction-
+  // verdict gate below by pairing a reward-flagged mapping with a non-reward one under the same issueLabel
+  // string -- any reward intent on a label is enough to require the stronger evidence bar.
+  const rewardTrustLabels = new Set(
+    [...mappingsByIssueLabel.entries()]
+      .filter(([, mappings]) => mappings.some((mapping) => mapping.trustMaintainerAuthoredIssueForReward === true))
+      .map(([issueLabel]) => issueLabel),
+  );
   const results = await Promise.all(
     linkedIssues.map((issueNumber) =>
       fetchLinkedIssueFacts(
@@ -365,6 +421,7 @@ export async function fetchLinkedIssueLabelsForPropagation(args: {
         result,
         prAuthorLogin,
         relaxableLabels,
+        rewardTrustLabels,
         prMergedAt,
         rewardLabels,
       ),

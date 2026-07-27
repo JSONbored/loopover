@@ -1140,6 +1140,53 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
     expect(JSON.parse(audit?.metadata_json ?? "{}").explanationPosted).toBe(true);
   });
 
+  it("REGRESSION (#9294): honors settings.autoCloseExemptLogins -- the shared allowlist its five sibling review-evasion guards already use", async () => {
+    const calls: Array<{ url: string; method: string; body?: unknown }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      calls.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.endsWith("/issues/42/comments") && method === "POST") return Response.json({ id: 1 }, { status: 201 });
+      if (url.endsWith("/pulls/42") && method === "PATCH") return Response.json({ state: "closed" });
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
+    await setupRepo(env);
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewCheckMode: "required", autoCloseExemptLogins: ["contributor"] } });
+    await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
+
+    await processJob(env, { type: "github-webhook", deliveryId: "draft-dodge-exempt", eventName: "pull_request", payload: draftPayload("contributor") });
+
+    expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+    const audit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("github_app.draft_dodge_closed").first<{ n: number }>();
+    expect(audit?.n).toBe(0);
+  });
+
+  it("REGRESSION (#9294): honors protected-automation-author exemption -- the same allowlist its five sibling review-evasion guards already use", async () => {
+    const calls: Array<{ url: string; method: string; body?: unknown }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      calls.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.endsWith("/issues/42/comments") && method === "POST") return Response.json({ id: 1 }, { status: 201 });
+      if (url.endsWith("/pulls/42") && method === "PATCH") return Response.json({ state: "closed" });
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
+    await setupRepo(env);
+    await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
+
+    await processJob(env, { type: "github-webhook", deliveryId: "draft-dodge-protected-bot", eventName: "pull_request", payload: draftPayload("dependabot[bot]") });
+
+    expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+    const audit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("github_app.draft_dodge_closed").first<{ n: number }>();
+    expect(audit?.n).toBe(0);
+  });
+
   it("#8801: a FAILED close records outcome 'error' with the failure named — never a false 'completed' (the #2260 contract)", async () => {
     const calls: Array<{ url: string; method: string }> = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {

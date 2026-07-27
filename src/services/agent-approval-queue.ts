@@ -123,7 +123,7 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
   // at any point while it sits waiting. `settings` was fetched fresh at the top of this function, so this
   // mirrors the exact same pure check the planner uses (processors.ts), just re-run against CURRENT effective config.
   if (pending.actionClass === "close" && pending.params.closeKind === "blacklist" && pr) {
-    const stillBlacklisted = findBlacklistEntry(pr.authorLogin, settings.contributorBlacklist) !== null;
+    const stillBlacklisted = findBlacklistEntry(pr.authorLogin, settings.contributorBlacklist, pr.authorGithubId) !== null;
     if (!stillBlacklisted) {
       await setPendingAgentActionStatus(env, pending.id, { status: "rejected", decidedBy: input.decidedBy });
       await recordAuditEvent(env, {

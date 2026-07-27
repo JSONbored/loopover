@@ -2732,7 +2732,7 @@ async function resolvePerRepoContributorCapMatch(
       ? Math.max(1, Math.ceil(settings.contributorOpenPrCap / 2))
       : settings.contributorOpenPrCap;
   if (typeof contributorOpenPrCap === "number" && pr.authorLogin && !isAutoCloseExempt(pr.authorLogin, settings.autoCloseExemptLogins)) {
-    const otherAuthorOpenPullRequests = await listOtherOpenPullRequestsForAuthor(env, repoFullName, pr.number, pr.authorLogin);
+    const otherAuthorOpenPullRequests = await listOtherOpenPullRequestsForAuthor(env, repoFullName, pr.number, pr.authorLogin, pr.authorGithubId);
     const confirmedOpen = new Set<number>();
     await mapWithConcurrency(otherAuthorOpenPullRequests, CONTRIBUTOR_CAP_LIVE_CHECK_CONCURRENCY, async (other) => {
       const liveState = await fetchLivePullRequestState(env, repoFullName, other.number, token, admissionKey).catch(() => undefined);
@@ -3194,6 +3194,7 @@ async function runAgentMaintenancePlanAndExecute(
   const blacklistEntry = findBlacklistEntry(
     pr.authorLogin,
     settings.contributorBlacklist,
+    pr.authorGithubId,
   );
 
   // Screenshot-table gate (#2006): a DETERMINISTIC check (no AI) that an in-scope (label/path-matched)
@@ -5861,8 +5862,15 @@ async function maybeCloseIssueOverContributorCap(
 
   const otherOpenIssues = await listOpenIssues(env, repoFullName);
   const authorLoginLower = authorLogin.toLowerCase();
+  const authorGithubId = issue.authorGithubId;
+  // #9125: id-when-present union login -- a sibling issue matches on the immutable id even if it (or this
+  // issue) was opened under a login that has since been renamed, so the cap can't be cleared by renaming.
   const otherAuthorIssueNumbers = otherOpenIssues
-    .filter((other) => (other.authorLogin ?? "").toLowerCase() === authorLoginLower && other.number !== issue.number)
+    .filter(
+      (other) =>
+        other.number !== issue.number &&
+        ((typeof authorGithubId === "number" && other.authorGithubId === authorGithubId) || (other.authorLogin ?? "").toLowerCase() === authorLoginLower),
+    )
     .map((other) => other.number);
 
   // Live-verify each OTHER counted sibling before trusting it toward the cap (#2479 gate finding): the stored
@@ -6971,17 +6979,24 @@ async function handlePullRequestWebhookEvent(
       // outcome is derived ONLY from the PR's realized terminal state + the gate verdict (no PR content);
       // nothing is ever surfaced publicly. Flag-OFF (default) is an immediate no-op (nothing recorded), so the
       // path is byte-identical. Best-effort: a record failure must never affect the gate or the public surface.
-      const reputationOutcome = (await convergedFeatureActive(
-        env,
-        repoFullName,
-        "reputation",
-      ))
+      //
+      // #9131: a review/review-comment/review-thread event re-gates the SAME PR without the submitter
+      // submitting anything -- reusing PR_TYPE_LABEL_IRRELEVANT_EVENT_NAMES (the same three review-family
+      // event names, already enumerated above for an unrelated purpose) rather than a second copy of the
+      // list. Any third party's comment must never be able to drive a rival's reputation counter.
+      const reputationOutcome = (!PR_TYPE_LABEL_IRRELEVANT_EVENT_NAMES.has(eventName) &&
+        (await convergedFeatureActive(
+          env,
+          repoFullName,
+          "reputation",
+        )))
         ? reputationOutcomeFromTerminalState(pr, payload.pull_request, gate)
         : undefined;
       if (reputationOutcome) {
         await recordReputationOutcome(env, {
           project: repoFullName,
           submitter: pr.authorLogin ?? null,
+          pullNumber: pr.number,
           outcome: reputationOutcome,
         }).catch((error) => {
           /* v8 ignore next -- best-effort: a reputation-record failure is logged, never surfaced to the gate. */
@@ -10163,6 +10178,7 @@ async function maybePublishPrPublicSurface(
     const authorBlacklisted = isAuthorBlacklisted(
       author,
       settings.contributorBlacklist,
+      pr.authorGithubId,
     );
     // #regate-churn (maintainer-gated freeze): once a PR is held for manual review -- the manual-review label is
     // already on it from a PRIOR pass -- a repeat CONTRIBUTOR push must not buy a fresh, real AI review. That is

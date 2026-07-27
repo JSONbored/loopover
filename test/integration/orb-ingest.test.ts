@@ -430,6 +430,7 @@ describe("Orb instance registry routes (/v1/internal/orb/instances)", () => {
 
 describe("GET /v1/internal/fleet/analytics route", () => {
   const app = createApp();
+  const auth = { authorization: "Bearer dev-internal-token" };
 
   it("returns the fleet report, honoring ?days (bearer-gated)", async () => {
     const res = await app.request("/v1/internal/fleet/analytics?days=30", { headers: { authorization: "Bearer dev-internal-token" } }, createTestEnv());
@@ -447,22 +448,48 @@ describe("GET /v1/internal/fleet/analytics route", () => {
     expect(res.status).toBe(401);
   });
 
-  it("stores risk_control calibrations ONLY for REGISTERED senders and retracts absent arms (#8835)", async () => {
-    const db = new TestD1Database() as unknown as D1Database;
-    const flag = async () => (await (db as unknown as TestD1Database).prepare("SELECT value FROM system_flags WHERE key='riskcontrol:fleet:close'").first<{ value: string }>())?.value;
-    const send = (risk_control: unknown) =>
-      handleOrbIngest(JSON.stringify({ instance_id: "inst1", events: [{ repo_hash: "rh", pr_hash: `g${Math.random()}`, outcome: "merged" }], risk_control }), db);
+  it("stores risk_control calibrations ONLY for a REGISTERED, CREDENTIAL-AUTHENTICATED sender; an absent arm is a no-op and only an explicit null retracts (#8835/#9121)", async () => {
+    const env = createTestEnv();
+    const db = env.DB as unknown as D1Database;
+    const flag = async () =>
+      (
+        await (db as unknown as TestD1Database)
+          .prepare("SELECT payload_json FROM orb_risk_control_arms WHERE instance_id='inst1' AND arm='close'")
+          .first<{ payload_json: string }>()
+      )?.payload_json;
+    const send = (risk_control: unknown, instanceSecret?: string) =>
+      handleOrbIngest(JSON.stringify({ instance_id: "inst1", events: [{ repo_hash: "rh", pr_hash: `g${Math.random()}`, outcome: "merged" }], risk_control }), db, instanceSecret);
 
     // Unregistered sender: the strongest homepage claim must not be plantable via open ingest.
     await send({ close: { alpha: 0.015, lambda: 0.94, coverageAtLambda: 0.8, nAtLambda: 200 } });
     expect(await flag()).toBeUndefined();
 
-    await (db as unknown as TestD1Database).prepare("UPDATE orb_instances SET registered = 1 WHERE instance_id = 'inst1'").run();
-    await send({ close: { alpha: 0.015, lambda: 0.94, coverageAtLambda: 0.8, nAtLambda: 200 } });
+    // #9121: registering now mints a per-instance credential -- the real, HTTP registration route is used
+    // here (not a raw SQL UPDATE) so this test exercises the actual credential-issuance path.
+    const reg = await app.request("/v1/internal/orb/instances/register", { method: "POST", headers: auth, body: JSON.stringify({ instanceId: "inst1" }) }, env);
+    const { instanceSecret } = (await reg.json()) as { instanceSecret: string };
+    expect(instanceSecret).toMatch(/^orbis_[0-9a-f]{64}$/);
+
+    // Registered but WITHOUT the credential: the claim is refused, not silently accepted.
+    const rejected = await send({ close: { alpha: 0.015, lambda: 0.94, coverageAtLambda: 0.8, nAtLambda: 200 } });
+    expect(rejected).toEqual({ error: "instance_unauthenticated" });
+    expect(await flag()).toBeUndefined();
+
+    // Registered AND credential-authenticated: the claim is accepted.
+    await send({ close: { alpha: 0.015, lambda: 0.94, coverageAtLambda: 0.8, nAtLambda: 200 } }, instanceSecret);
     expect(JSON.parse((await flag())!)).toMatchObject({ lambda: 0.94 });
 
-    // The sender stops publishing the arm → the fleet copy retracts (a stale guarantee lies).
-    await send({});
+    // An ABSENT arm is "no change", never an implicit retraction (#9121) -- the stored value survives.
+    await send({}, instanceSecret);
+    expect(JSON.parse((await flag())!)).toMatchObject({ lambda: 0.94 });
+
+    // Only an EXPLICIT null retracts.
+    await send({ close: null }, instanceSecret);
+    expect(await flag()).toBeUndefined();
+
+    // A WRONG credential is also refused, not silently accepted.
+    const wrongSecret = await send({ close: { alpha: 0.015, lambda: 0.5, coverageAtLambda: 0.8, nAtLambda: 200 } }, "orbis_wrongwrongwrong");
+    expect(wrongSecret).toEqual({ error: "instance_unauthenticated" });
     expect(await flag()).toBeUndefined();
   });
 });

@@ -468,12 +468,24 @@ export async function getPublicStats(
   // for an empty fleet.
   const fleetAccuracyPct =
     fleet.fleet.decisionAccuracy === null ? null : Math.round(fleet.fleet.decisionAccuracy * 1000) / 10;
-  // #8835: live per-arm guarantees, published by a REGISTERED instance's risk-control calibration and
-  // stored by ingest under riskcontrol:fleet:<arm>. Fail-open null — a flags blip hides the guarantee
-  // rather than fabricating or freezing one.
+  // #8835/#9121: live per-arm guarantees, published by REGISTERED (and, since #9121, credential-authenticated
+  // — see src/orb/ingest.ts) instances' risk-control calibrations, stored per-instance in
+  // orb_risk_control_arms. Was a single system_flags cell any registered instance could overwrite (or
+  // delete, via an absent arm); now scoped per instance and aggregated HERE at read time, preferring the
+  // largest sample size (nAtLambda) — more data is a more trustworthy estimate, so one low-n or stale peer
+  // can no longer eclipse a well-calibrated one just by writing last. Fail-open null — a flags blip hides
+  // the guarantee rather than fabricating or freezing one.
   const readGuarantee = async (arm: string): Promise<{ alpha: number; lambda: number; coveragePct: number; n: number } | null> => {
     try {
-      const row = await env.DB.prepare("SELECT value FROM system_flags WHERE key = ?").bind(`riskcontrol:fleet:${arm}`).first<{ value: string }>();
+      const row = await env.DB.prepare(
+        `SELECT o.payload_json AS value FROM orb_risk_control_arms o
+           JOIN orb_instances i ON i.instance_id = o.instance_id AND i.registered = 1
+          WHERE o.arm = ?
+          ORDER BY CAST(json_extract(o.payload_json, '$.nAtLambda') AS REAL) DESC, o.updated_at DESC
+          LIMIT 1`,
+      )
+        .bind(arm)
+        .first<{ value: string }>();
       if (!row?.value) return null;
       const parsed = JSON.parse(row.value) as { alpha?: unknown; lambda?: unknown; coverageAtLambda?: unknown; nAtLambda?: unknown };
       if (typeof parsed.alpha !== "number" || typeof parsed.lambda !== "number" || typeof parsed.coverageAtLambda !== "number" || typeof parsed.nAtLambda !== "number") return null;

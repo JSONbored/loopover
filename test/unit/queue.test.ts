@@ -4990,12 +4990,14 @@ describe("queue processors", () => {
       await processJob(env, { type: "agent-regate-pr", deliveryId: "reputation-single-read", repoFullName: "JSONbored/gittensory", prNumber: 62, installationId: 123 });
       // Before #4507, the outer caller-scope computation AND runAiReviewForAdvisory's own internal check each
       // independently scanned review_targets for this submitter — 2 full sets (6 prepares), not 1 (3).
+      // #9131: the windowed aggregate (submissions/merged/closed/manual, the burst check's data source) now
+      // reads submitter_outcome_log instead of submitter_stats — same one-read invariant, new table name.
       const reputationPrepares = spy.mock.calls
         .slice(before)
         .map(([sql]) => String(sql))
-        .filter((sql) => sql.includes("submitter_stats") || sql.includes("terminal_at IS NOT NULL") || sql.includes("created_at >= datetime"));
+        .filter((sql) => sql.includes("submitter_outcome_log") || sql.includes("terminal_at IS NOT NULL") || sql.includes("created_at >= datetime"));
       spy.mockRestore();
-      expect(reputationPrepares).toHaveLength(3); // submitter_stats + review_targets quality scan + cadence scan, ONCE
+      expect(reputationPrepares).toHaveLength(3); // submitter_outcome_log agg + review_targets quality scan + cadence scan, ONCE
     });
 
     it("INVARIANT (#4446): a real agent-regate-pr pass with AI review persists a non-negative reviewDurationMs onto the publish audit event", async () => {

@@ -19,9 +19,11 @@ import {
   buildClearedBrowserSessionCookie,
   buildClearedGitHubOAuthStateCookie,
   buildGitHubOAuthStateCookie,
+  createOpaqueToken,
   extractBearerToken,
   extractBrowserSessionToken,
   extractCookieValue,
+  hashToken,
   isAuthorizedGitHubSessionLogin,
   isMcpReadRepoAllowed,
   isMcpReadUnscoped,
@@ -1667,7 +1669,7 @@ export function createApp() {
       listInstallationHealth(c.env),
       listLatestGitHubRateLimitObservations(c.env, 20),
     ]);
-    const scope = identity.kind === "session" && !summary.roles.includes("operator") ? await loadControlPanelAccessScope(c.env, identity.actor) : null;
+    const scope = identity.kind === "session" && !summary.roles.includes("operator") ? await loadControlPanelAccessScope(c.env, identity.actor, identity.session?.githubUserId) : null;
     const scopedRepoNames = new Set(scope?.repositoryFullNames.map((repo) => repo.toLowerCase()) ?? []);
     const scopedInstallationIds = new Set(scope?.installationIds ?? []);
     const scopedAccountLogins = new Set(scope?.accountLogins.map((login) => login.toLowerCase()) ?? []);
@@ -2269,7 +2271,7 @@ export function createApp() {
     ]);
     // Tenant-scoped identically to /v1/app/maintainer-dashboard (#7659) -- a non-operator session must
     // only ever see their own repositories/installations/rate-limit telemetry, never the full fleet.
-    const scope = identity.kind === "session" && !summary.roles.includes("operator") ? await loadControlPanelAccessScope(c.env, identity.actor) : null;
+    const scope = identity.kind === "session" && !summary.roles.includes("operator") ? await loadControlPanelAccessScope(c.env, identity.actor, identity.session?.githubUserId) : null;
     const scopedRepoNames = new Set(scope?.repositoryFullNames.map((repo) => repo.toLowerCase()) ?? []);
     const scopedInstallationIds = new Set(scope?.installationIds ?? []);
     const scopedAccountLogins = new Set(scope?.accountLogins.map((accountLogin) => accountLogin.toLowerCase()) ?? []);
@@ -4431,8 +4433,11 @@ export function createApp() {
     const body = await readOrbIngestBody(c.req.raw, c.req.header("content-length"));
     if (body === null) return c.json({ error: "payload_too_large" }, 413);
     if (!body) return c.json({ error: "invalid_request" }, 400);
-    const result = await handleOrbIngest(body, c.env.DB);
-    if ("error" in result) return c.json(result, 400);
+    // #9121: the per-instance credential proving THIS sender is the registered instance it claims to be in
+    // the body — distinct from the shared fleet-wide bearer token checked above, which proves only "some
+    // fleet member". Absent for an unregistered instance or one that hasn't (re-)registered since #9121.
+    const result = await handleOrbIngest(body, c.env.DB, c.req.header("x-orb-instance-secret"));
+    if ("error" in result) return c.json(result, result.error === "instance_unauthenticated" ? 403 : 400);
     return c.json(result, 200);
   });
 
@@ -4518,20 +4523,29 @@ export function createApp() {
 
   // Opt an instance into (or out of) fleet calibration. Body: { instanceId, registered? } (registered
   // defaults true). Upserts so an operator can register an instance that has ingested but isn't recorded yet.
+  //
+  // #9121: registering ALSO mints a fresh per-instance ingest credential — the only way "registered" can
+  // mean anything on the risk-control write path is if the identity it trusts is proven by a secret only
+  // the real instance holds, not merely claimed in the request body. Returned ONCE, in plaintext, here;
+  // only its hash is ever persisted, so the operator must copy it into the instance's config now (as
+  // ORB_COLLECTOR_INSTANCE_SECRET) — a repeat register call rotates it, invalidating the previous value.
   app.post("/v1/internal/orb/instances/register", async (c) => {
     const payload = (await c.req.json().catch(() => null)) as { instanceId?: unknown; registered?: unknown } | null;
     const instanceId = typeof payload?.instanceId === "string" ? payload.instanceId : "";
     if (!instanceId) return c.json({ error: "instanceId required" }, 400);
     const registered = payload?.registered === false ? 0 : 1;
+    const instanceSecret = registered === 1 ? createOpaqueToken("orbis") : null;
+    const instanceSecretHash = instanceSecret ? await hashToken(instanceSecret) : null;
     await c.env.DB
       .prepare(
-        `INSERT INTO orb_instances (instance_id, registered, registered_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+        `INSERT INTO orb_instances (instance_id, registered, registered_at, ingest_secret_hash) VALUES (?, ?, CURRENT_TIMESTAMP, ?)
          ON CONFLICT(instance_id) DO UPDATE SET registered = excluded.registered,
-           registered_at = CASE WHEN excluded.registered = 1 THEN CURRENT_TIMESTAMP ELSE NULL END`,
+           registered_at = CASE WHEN excluded.registered = 1 THEN CURRENT_TIMESTAMP ELSE NULL END,
+           ingest_secret_hash = CASE WHEN excluded.registered = 1 THEN excluded.ingest_secret_hash ELSE orb_instances.ingest_secret_hash END`,
       )
-      .bind(instanceId, registered)
+      .bind(instanceId, registered, instanceSecretHash)
       .run();
-    return c.json({ instanceId, registered: registered === 1 });
+    return c.json({ instanceId, registered: registered === 1, ...(instanceSecret ? { instanceSecret } : {}) });
   });
 
   // Central Orb GitHub App installation registry — the onboarding gate. Every installation the Orb App webhook
@@ -5400,12 +5414,12 @@ function authRedirectWithError(env: Env, reason: string): string {
 }
 
 async function buildSessionResponse(env: Env, identity: Extract<AuthIdentity, { kind: "session" }>) {
-  const roleSummary = await loadControlPanelRoleSummary(env, identity.actor);
+  const roleSummary = await loadControlPanelRoleSummary(env, identity.actor, identity.session?.githubUserId);
   return {
     status: "authenticated",
     login: identity.session.login,
-    githubId: identity.session.githubUserId ?? null,
-    github_id: identity.session.githubUserId ?? null,
+    githubId: identity.session?.githubUserId ?? null,
+    github_id: identity.session?.githubUserId ?? null,
     roles: roleSummary.roles,
     roleSummary,
     confirmedMiner: roleSummary.confirmedMiner,
@@ -6255,7 +6269,7 @@ type ProtectedRouteContext = {
 // handler; it only decides whether a session may REACH a path — the per-route guards above enforce the
 // actual identity/repo scope. A path added here MUST be scoped by a per-route guard in its handler.
 function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: "session" }>, path: string): boolean {
-  if (isAuthorizedGitHubSessionLogin(env, identity.actor)) return true;
+  if (isAuthorizedGitHubSessionLogin(env, identity.actor, identity.session?.githubUserId)) return true;
   if (path.startsWith("/v1/app/")) return true;
   if (isIssueQualityPath(path)) return true;
   if (isRepoSettingsPath(path)) return true;
@@ -6414,7 +6428,7 @@ async function authenticateRequestIdentity(c: ProtectedRouteContext): Promise<Au
 }
 
 async function getRoleSummaryForIdentity(env: Env, identity: AuthIdentity) {
-  if (identity.kind === "session") return loadControlPanelRoleSummary(env, identity.actor);
+  if (identity.kind === "session") return loadControlPanelRoleSummary(env, identity.actor, identity.session?.githubUserId);
   return buildStaticControlPanelRoleSummary(identity.actor);
 }
 
@@ -6429,7 +6443,7 @@ async function requireAppRole(c: ProtectedRouteContext, allowedRoles: ControlPan
     if (identity.actor === "mcp" || identity.actor === "mcp-admin") return c.json({ error: "insufficient_role" }, 403);
     return null;
   }
-  const summary = await loadControlPanelRoleSummary(c.env, identity.actor);
+  const summary = await loadControlPanelRoleSummary(c.env, identity.actor, identity.session?.githubUserId);
   return summary.roles.some((role) => allowedRoles.includes(role)) ? null : c.json({ error: "insufficient_role" }, 403);
 }
 
@@ -6449,7 +6463,7 @@ async function resolveAppInstallationScope(
   }
   const scope =
     identity.kind === "session" && !summary.roles.includes("operator")
-      ? await loadControlPanelAccessScope(c.env, identity.actor)
+      ? await loadControlPanelAccessScope(c.env, identity.actor, identity.session?.githubUserId)
       : null;
   return { identity, scope };
 }
@@ -6520,8 +6534,8 @@ async function requireCommandPreviewRepoAccess(
 
 async function requireDiscoveryAccessForApi(c: ProtectedRouteContext, identity: AuthIdentity): Promise<Response | null> {
   if (identity.kind === "session") {
-    if (isAuthorizedGitHubSessionLogin(c.env, identity.actor)) return null;
-    const scope = await loadControlPanelAccessScope(c.env, identity.actor);
+    if (isAuthorizedGitHubSessionLogin(c.env, identity.actor, identity.session?.githubUserId)) return null;
+    const scope = await loadControlPanelAccessScope(c.env, identity.actor, identity.session?.githubUserId);
     if (scope.operator) return null;
     return c.json({ error: "forbidden", reason: "cross_repo_search_requires_discovery_access" }, 403);
   }
@@ -6532,7 +6546,7 @@ async function requireDiscoveryAccessForApi(c: ProtectedRouteContext, identity: 
 }
 
 async function canApiAccessRepo(env: Env, identity: AuthIdentity, repoFullName: string): Promise<boolean> {
-  if (identity.kind === "session") return canLoginAccessRepo(env, identity.actor, repoFullName);
+  if (identity.kind === "session") return canLoginAccessRepo(env, identity.actor, repoFullName, identity.session?.githubUserId);
   if (identity.kind === "static" && identity.actor === "mcp") {
     return isMcpReadRepoAllowed(env.MCP_READ_REPO_ALLOWLIST, repoFullName);
   }
@@ -6554,9 +6568,9 @@ async function requireSessionRepoAccess(
   repoFullName: string,
   repo: RepositoryRecord | null,
 ): Promise<Response | null> {
-  const summary = await loadControlPanelRoleSummary(c.env, identity.actor);
+  const summary = await loadControlPanelRoleSummary(c.env, identity.actor, identity.session?.githubUserId);
   if (summary.roles.includes("operator")) return null;
-  const scope = await loadControlPanelAccessScope(c.env, identity.actor);
+  const scope = await loadControlPanelAccessScope(c.env, identity.actor, identity.session?.githubUserId);
   const requestedRepo = repoFullName.toLowerCase();
   const scopedRepoNames = new Set(scope.repositoryFullNames.map((name) => name.toLowerCase()));
   if (scopedRepoNames.has(requestedRepo)) return null;
@@ -6592,7 +6606,7 @@ async function requireRepoWriteAccess(c: ProtectedRouteContext, fullName: string
   const gate = await requireRepoMaintainer(c, fullName);
   if (gate instanceof Response) return gate;
   if (gate.identity?.kind !== "session") return gate; // server-to-server token: no per-repo push check
-  const summary = await loadControlPanelRoleSummary(c.env, gate.identity.actor);
+  const summary = await loadControlPanelRoleSummary(c.env, gate.identity.actor, gate.identity.session?.githubUserId);
   if (summary.roles.includes("operator")) return gate; // operators manage any repo
   const repo = await getRepository(c.env, fullName);
   const installationId = repo?.installationId ?? null;
@@ -6618,7 +6632,7 @@ async function skippedPrAuditRepoScope(
   requestedRepo: string | undefined,
 ): Promise<string[] | undefined | Response> {
   if (identity.kind !== "session" || roles.includes("operator")) return requestedRepo ? [requestedRepo] : undefined;
-  const scope = await loadControlPanelAccessScope(c.env, identity.actor);
+  const scope = await loadControlPanelAccessScope(c.env, identity.actor, identity.session?.githubUserId);
   const scopedRepoNames = new Set(scope.repositoryFullNames.map((name) => name.toLowerCase()));
   if (requestedRepo) {
     return scopedRepoNames.has(requestedRepo.toLowerCase()) ? [requestedRepo] : c.json({ error: "forbidden_repo" }, 403);

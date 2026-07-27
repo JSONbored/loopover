@@ -126,6 +126,10 @@ export type AdvisoryAiRoutingConfig = {
 
 export type ContributorBlacklistEntry = {
   login: string;
+  /** #9125: the login's IMMUTABLE numeric GitHub user id, when the operator has it (e.g. copied from an
+   *  audit event or the API). Optional so existing login-only entries keep working; when present, matching
+   *  is id-when-present UNION login, so a renamed-then-back account still can't shed a ban by renaming. */
+  githubId?: number | undefined;
   /** Why the account is blocked. Free-text maintainer metadata; not published in automated close comments. */
   reason?: string | undefined;
   /** PR/issue URLs (or other maintainer refs) evidencing the block. */

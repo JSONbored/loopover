@@ -51,6 +51,9 @@ export function normalizeContributorBlacklist(input: unknown): { entries: Contri
     if (seen.has(key)) continue; // first occurrence wins
     seen.add(key);
     const entry: ContributorBlacklistEntry = { login };
+    // #9125: an optional immutable id, rename-proofing this entry. Dropped (not widened to 0/negative) if
+    // malformed, same discipline as every other field here.
+    if (typeof record.githubId === "number" && Number.isInteger(record.githubId) && record.githubId > 0) entry.githubId = record.githubId;
     if (typeof record.reason === "string" && record.reason.trim().length > 0) entry.reason = record.reason.trim().slice(0, MAX_REASON_CHARS);
     if (Array.isArray(record.evidence)) {
       const evidence = record.evidence.filter((ref): ref is string => typeof ref === "string" && ref.trim().length > 0).map((ref) => ref.trim().slice(0, MAX_EVIDENCE_CHARS)).slice(0, MAX_EVIDENCE);
@@ -62,17 +65,33 @@ export function normalizeContributorBlacklist(input: unknown): { entries: Contri
   return { entries, warnings };
 }
 
-/** The blacklist entry matching `login` (case-insensitive), or null. Tolerates an absent list (treated as empty)
- *  so callers can pass the optional `settings.contributorBlacklist` directly. */
-export function findBlacklistEntry(login: string | null | undefined, entries: ContributorBlacklistEntry[] | undefined): ContributorBlacklistEntry | null {
-  if (!login) return null;
-  const key = login.toLowerCase();
-  return (entries ?? []).find((entry) => entry.login.toLowerCase() === key) ?? null;
+/**
+ * The blacklist entry matching `login` OR `githubId` (case-insensitive login; exact id), or null. Tolerates
+ * an absent list (treated as empty) so callers can pass the optional `settings.contributorBlacklist`
+ * directly.
+ *
+ * #9125: matches id-WHEN-PRESENT union login, so a banned contributor cannot clear the block by renaming --
+ * GitHub carries the account (and its immutable id) across a rename, so an entry that has captured the id
+ * still matches under the new login even though `entry.login` itself is now stale. `githubId` is optional
+ * on BOTH sides (the entry and the call): omit it and this behaves exactly as the login-only match always
+ * did, so existing entries and callers that haven't threaded an id through yet keep working unchanged.
+ */
+export function findBlacklistEntry(
+  login: string | null | undefined,
+  entries: ContributorBlacklistEntry[] | undefined,
+  githubId?: number | null | undefined,
+): ContributorBlacklistEntry | null {
+  const key = login ? login.toLowerCase() : null;
+  return (
+    (entries ?? []).find(
+      (entry) => (typeof githubId === "number" && entry.githubId === githubId) || (key !== null && entry.login.toLowerCase() === key),
+    ) ?? null
+  );
 }
 
-/** True iff `login` is on the resolved blacklist. */
-export function isAuthorBlacklisted(login: string | null | undefined, entries: ContributorBlacklistEntry[] | undefined): boolean {
-  return findBlacklistEntry(login, entries) !== null;
+/** True iff `login` (or `githubId`) is on the resolved blacklist. */
+export function isAuthorBlacklisted(login: string | null | undefined, entries: ContributorBlacklistEntry[] | undefined, githubId?: number | null | undefined): boolean {
+  return findBlacklistEntry(login, entries, githubId) !== null;
 }
 
 /** Union multiple blacklist sources (e.g. the shared/global list + the per-repo list) by case-insensitive login.

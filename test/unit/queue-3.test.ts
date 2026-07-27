@@ -46,6 +46,7 @@ import {
   upsertOfficialMinerDetection,
   upsertPullRequestFile,
   upsertPullRequestFromGitHub,
+  listOtherOpenPullRequestsForAuthor,
   upsertIssueWatchSubscription,
   upsertRepositoryAiKey,
   upsertRepositorySettings,
@@ -2895,6 +2896,26 @@ describe("queue processors", () => {
     expect(ledgerRows?.n).toBeGreaterThanOrEqual(1);
   });
 
+  it("#9125: listOtherOpenPullRequestsForAuthor matches on the immutable authorGithubId when present, surviving a rename that would otherwise clear the cap", async () => {
+    const env = createTestEnv();
+    // Two PRs opened under the OLD login, one under the NEW (post-rename) login -- all the SAME immutable id.
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 1, title: "old-login PR 1", state: "open", user: { login: "farmer99", id: 555 }, head: { sha: "s1" }, labels: [], body: "" });
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 2, title: "old-login PR 2", state: "open", user: { login: "farmer99", id: 555 }, head: { sha: "s2" }, labels: [], body: "" });
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 3, title: "new-login PR", state: "open", user: { login: "farmer99x", id: 555 }, head: { sha: "s3" }, labels: [], body: "" });
+    // A genuinely unrelated PR, different id and login entirely -- must never be counted.
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 4, title: "unrelated", state: "open", user: { login: "someone-else", id: 999 }, head: { sha: "s4" }, labels: [], body: "" });
+
+    // Without threading the id (login-only, pre-#9125 behavior): the renamed PR (#3) is invisible to a query
+    // scoped to the OLD login -- exactly the gap that let a rename clear the cap.
+    const loginOnly = await listOtherOpenPullRequestsForAuthor(env, "owner/repo", 1, "farmer99");
+    expect(loginOnly.map((pr) => pr.number).sort()).toEqual([2]);
+
+    // With the id threaded through: PR #2 (same old login) AND PR #3 (renamed, same id) both count; the
+    // unrelated PR #4 never does.
+    const withId = await listOtherOpenPullRequestsForAuthor(env, "owner/repo", 1, "farmer99", 555);
+    expect(withId.map((pr) => pr.number).sort()).toEqual([2, 3]);
+  });
+
   it("pre-merge contributor-cap re-check (#7284-fix): a contributor well UNDER a configured cap merges normally through the full pipeline", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertInstallation(env, {
@@ -5224,6 +5245,51 @@ describe("queue processors", () => {
     expect(seen.comments.some((c) => c.includes("@farmer99") && c.includes("3 open issues") && c.includes("limit of 2"))).toBe(true);
     const closeAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'agent.action.close'").first<{ n: number }>();
     expect(closeAudit?.n).toBeGreaterThanOrEqual(1);
+  });
+
+  it("#9125: contributor open-ISSUE cap survives a rename -- two sibling issues opened under the OLD login still count toward the cap on a 3rd issue opened under the renamed login, via the shared immutable id", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", issues: "write" }, events: ["issues"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    // Two sibling issues opened under the OLD login, both carrying the immutable id 555.
+    await upsertIssueFromGitHub(env, "JSONbored/gittensory", { number: 60, title: "Farmer issue one", state: "open", user: { login: "farmer99", id: 555 }, labels: [], body: "x" });
+    await upsertIssueFromGitHub(env, "JSONbored/gittensory", { number: 61, title: "Farmer issue two", state: "open", user: { login: "farmer99", id: 555 }, labels: [], body: "y" });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      autonomy: { close: "auto", label: "auto" },
+    });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { contributorCapLabel: "spam-cap", contributorOpenIssueCap: 2 } }, "repo_file");
+    const seen = { closed: false, labels: [] as string[], comments: [] as string[] };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if ((url.endsWith("/issues/60") || url.endsWith("/issues/61")) && method === "GET") return Response.json({ state: "open" });
+      if (url.endsWith("/issues/62") && method === "PATCH") { seen.closed = JSON.parse(String(init?.body ?? "{}")).state === "closed"; return Response.json({ state: "closed" }); }
+      if (url.includes("/issues/62/labels") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/62/labels") && method === "POST") { seen.labels.push(...((JSON.parse(String(init?.body ?? "{}")).labels ?? []) as string[])); return Response.json([]); }
+      if (url.includes("/issues/62/comments") && method === "POST") { seen.comments.push(String(JSON.parse(String(init?.body ?? "{}")).body ?? "")); return Response.json({ id: 1 }, { status: 201 }); }
+      return Response.json({});
+    });
+
+    // The 3rd issue is opened under a NEW login -- same immutable id -- as if the contributor renamed
+    // between opening #61 and #62. Before #9125 this cleared the cap (the login-only match saw a stranger).
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "contributor-issue-cap-rename",
+      eventName: "issues",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 62, title: "Farmer's 3rd issue, post-rename", state: "open", user: { login: "farmer99x", id: 555 }, labels: [], body: "x" },
+      },
+    });
+
+    expect(seen.closed).toBe(true);
+    expect(seen.labels).toContain("spam-cap");
   });
 
   it("contributor open-ISSUE cap (#2270): bounds the sibling live-check fan-out instead of firing one request per open issue at once (#2766 parity)", async () => {

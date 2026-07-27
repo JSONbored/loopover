@@ -14,6 +14,7 @@ import {
   type ReputationConfig,
   signalFromCounts,
 } from "../../src/review/submitter-reputation";
+import { createTestEnv, TestD1Database } from "../helpers/d1";
 
 // NOTE: this is the SELF-CONTAINED native port of reviewbot's submitter-reputation test. The reviewbot
 // original also exercised applyNonContentGate / decideNonContentGate (the gate wiring + owner exemption);
@@ -207,40 +208,73 @@ describe("recordSubmissionOutcome / getSubmitterReputation (D1, fail-safe)", () 
     expect(rep.signal).toBe("neutral");
   });
   it("recordSubmissionOutcome never throws (no submitter / no DB / DB ok)", async () => {
-    await expect(recordSubmissionOutcome({} as Env, "p", undefined, "merged")).resolves.toBeUndefined();
-    await expect(recordSubmissionOutcome({ DB: { prepare: () => ({ bind: () => ({ run: async () => undefined }) }) } } as unknown as Env, "p", "u", "closed")).resolves.toBeUndefined();
+    await expect(recordSubmissionOutcome({} as Env, "p", undefined, 1, "merged")).resolves.toBeUndefined();
+    await expect(
+      recordSubmissionOutcome(
+        { DB: { prepare: () => ({ bind: () => ({ run: async () => ({ meta: { changes: 1 } }) }) }) } } as unknown as Env,
+        "p",
+        "u",
+        1,
+        "closed",
+      ),
+    ).resolves.toBeUndefined();
   });
 
   it("recordSubmissionOutcome binds the right column per outcome (merged / closed / manual ternary)", async () => {
     // Capture the prepared SQL so we can assert the `${col}` interpolation picks the correct column for each
     // outcome — exercises both ternary arms of `col` (merged → "merged", closed → "closed", manual → "manual").
+    // #9131: the FIRST prepare is now the idempotency-log INSERT OR IGNORE; the SECOND (only reached when that
+    // insert reports a real change) is the submitter_stats upsert this test cares about.
     const seen: string[] = [];
     const mkEnv = () =>
       ({
         DB: {
           prepare: (sql: string) => {
             seen.push(sql);
-            return { bind: () => ({ run: async () => undefined }) };
+            return { bind: () => ({ run: async () => ({ meta: { changes: 1 } }) }) };
           },
         },
       }) as unknown as Env;
 
-    await recordSubmissionOutcome(mkEnv(), "p", "u", "merged");
-    expect(seen[0]).toContain(", merged, last_seen)");
-    expect(seen[0]).toContain("submissions = submitter_stats.submissions + 1");
-    expect(seen[0]).toContain("merged = submitter_stats.merged + 1");
+    await recordSubmissionOutcome(mkEnv(), "p", "u", 1, "merged");
+    expect(seen[0]).toContain("submitter_outcome_log");
+    expect(seen[1]).toContain(", merged, last_seen)");
+    expect(seen[1]).toContain("submissions = submitter_stats.submissions + 1");
+    expect(seen[1]).toContain("merged = submitter_stats.merged + 1");
 
     seen.length = 0;
-    await recordSubmissionOutcome(mkEnv(), "p", "u", "closed");
-    expect(seen[0]).toContain(", closed, last_seen)");
-    expect(seen[0]).toContain("submissions = submitter_stats.submissions + 1");
-    expect(seen[0]).toContain("closed = submitter_stats.closed + 1");
+    await recordSubmissionOutcome(mkEnv(), "p", "u", 2, "closed");
+    expect(seen[1]).toContain(", closed, last_seen)");
+    expect(seen[1]).toContain("submissions = submitter_stats.submissions + 1");
+    expect(seen[1]).toContain("closed = submitter_stats.closed + 1");
 
     seen.length = 0;
-    await recordSubmissionOutcome(mkEnv(), "p", "u", "manual");
-    expect(seen[0]).toContain(", manual, last_seen)");
-    expect(seen[0]).toContain("submissions = submitter_stats.submissions + 1");
-    expect(seen[0]).toContain("manual = submitter_stats.manual + 1");
+    await recordSubmissionOutcome(mkEnv(), "p", "u", 3, "manual");
+    expect(seen[1]).toContain(", manual, last_seen)");
+    expect(seen[1]).toContain("submissions = submitter_stats.submissions + 1");
+    expect(seen[1]).toContain("manual = submitter_stats.manual + 1");
+  });
+
+  it("recordSubmissionOutcome is idempotent per (project, submitter, pullNumber, outcome) — N re-gates of one PR count once (#9131)", async () => {
+    const db = new TestD1Database() as unknown as D1Database;
+    const env = { DB: db } as unknown as Env;
+    const statRow = async () =>
+      (await (db as unknown as TestD1Database).prepare("SELECT submissions, manual FROM submitter_stats WHERE project=? AND submitter=?").bind("p", "u").first<{ submissions: number; manual: number }>())!;
+
+    // Five re-gates of the SAME still-open PR (the self-inflicted #9131 shape: a body edit or push re-gating
+    // a held PR) all record "manual" — must count exactly once, not five times.
+    for (let i = 0; i < 5; i++) await recordSubmissionOutcome(env, "p", "u", 42, "manual");
+    expect((await statRow()).submissions).toBe(1);
+    expect((await statRow()).manual).toBe(1);
+
+    // A DIFFERENT pull_number for the same submitter is a genuinely new submission and counts again.
+    await recordSubmissionOutcome(env, "p", "u", 43, "manual");
+    expect((await statRow()).submissions).toBe(2);
+    expect((await statRow()).manual).toBe(2);
+
+    // A different OUTCOME on the same PR (e.g. eventually merged) is also a new, distinct key.
+    await recordSubmissionOutcome(env, "p", "u", 42, "merged");
+    expect((await statRow()).submissions).toBe(3);
   });
 
   it("recordSubmissionOutcome swallows a DB error fail-safe (logs, never throws)", async () => {
@@ -256,7 +290,7 @@ describe("recordSubmissionOutcome / getSubmitterReputation (D1, fail-safe)", () 
         }),
       },
     } as unknown as Env;
-    await expect(recordSubmissionOutcome(env, "p", "u", "merged")).resolves.toBeUndefined();
+    await expect(recordSubmissionOutcome(env, "p", "u", 1, "merged")).resolves.toBeUndefined();
   });
 
   it("getSubmitterReputation → neutral with no submitter (early return guard)", async () => {

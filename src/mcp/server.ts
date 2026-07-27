@@ -3375,7 +3375,7 @@ export class LoopoverMcp {
       }
       return;
     }
-    const summary = await loadControlPanelRoleSummary(this.env, this.identity.actor);
+    const summary = await loadControlPanelRoleSummary(this.env, this.identity.actor, this.identity.session?.githubUserId);
     if (!summary.roles.some((role) => role === "maintainer" || role === "owner" || role === "operator")) {
       throw new Error("Forbidden: maintainer, owner, or operator role is required for focus-manifest (insufficient_role).");
     }
@@ -3452,13 +3452,13 @@ export class LoopoverMcp {
   // check this function could add — a static mcp caller can only ever reach here already fully trusted. (#2455)
   private async requireWatchableRepo(login: string, repoFullName: string): Promise<void> {
     if (this.identity.kind !== "session") return;
-    if (await canWatchRepo(this.env, login, repoFullName)) return;
+    if (await canWatchRepo(this.env, login, repoFullName, this.identity.session?.githubUserId)) return;
     throw new Error("Forbidden: session cannot watch this repository.");
   }
 
   private loadSessionAccessScope(): Promise<ControlPanelAccessScope> {
     if (this.identity.kind !== "session") throw new Error("Session access scope is only available for session identities.");
-    this.accessScopePromise ??= loadControlPanelAccessScope(this.env, this.identity.actor);
+    this.accessScopePromise ??= loadControlPanelAccessScope(this.env, this.identity.actor, this.identity.session?.githubUserId);
     return this.accessScopePromise;
   }
 
@@ -3944,7 +3944,7 @@ export class LoopoverMcp {
   /** Cross-repo search requires unscoped MCP read (wildcard allowlist) or operator/session authority. */
   private async requireDiscoveryAccess(): Promise<void> {
     if (this.identity.kind === "session") {
-      if (isAuthorizedGitHubSessionLogin(this.env, this.identity.actor)) return;
+      if (isAuthorizedGitHubSessionLogin(this.env, this.identity.actor, this.identity.session?.githubUserId)) return;
       const scope = await this.loadSessionAccessScope();
       if (scope.operator) return;
       throw new Error("Forbidden: cross-repo opportunity search requires operator or unscoped MCP read access.");
@@ -4142,7 +4142,7 @@ export class LoopoverMcp {
   }
 
   private async canAccessRepo(fullName: string): Promise<boolean> {
-    if (this.identity.kind === "session") return canLoginAccessRepo(this.env, this.identity.actor, fullName);
+    if (this.identity.kind === "session") return canLoginAccessRepo(this.env, this.identity.actor, fullName, this.identity.session?.githubUserId);
     // The static `mcp` identity is a shared, end-user-obtainable CLI credential — scope it to the operator's
     // MCP_READ_REPO_ALLOWLIST instead of trusting it for every installed repo, mirroring requireRepoManageAccess's
     // MCP_ACTUATION_REPO_ALLOWLIST scoping for writes. api/internal static identities remain trusted (operator-only
@@ -4234,7 +4234,7 @@ export class LoopoverMcp {
   // unscoped MCP_READ_REPO_ALLOWLIST wildcard, matching requireOperatorAccess/requireDiscoveryAccess above.
   private async requireSkippedPrAuditAccess(requestedRepo: string | undefined): Promise<string[] | undefined> {
     if (this.identity.kind === "session") {
-      const [summary, scope] = await Promise.all([loadControlPanelRoleSummary(this.env, this.identity.actor), this.loadSessionAccessScope()]);
+      const [summary, scope] = await Promise.all([loadControlPanelRoleSummary(this.env, this.identity.actor, this.identity.session?.githubUserId), this.loadSessionAccessScope()]);
       if (!summary.roles.some((role) => role === "maintainer" || role === "owner" || role === "operator")) {
         throw new Error("Forbidden: maintainer, owner, or operator role is required for the skipped-PR audit.");
       }
@@ -5532,7 +5532,7 @@ function redactSensitiveForMcp(value: unknown): unknown {
 async function authenticateMcpRequest(c: AppContext): Promise<AuthIdentity | null> {
   const identity = await authenticatePrivateToken(c.env, extractBearerToken(c.req.header("authorization")));
   if (!identity || identity.kind !== "session") return identity;
-  const summary = await loadControlPanelRoleSummary(c.env, identity.actor);
+  const summary = await loadControlPanelRoleSummary(c.env, identity.actor, identity.session?.githubUserId);
   return summary.roles.length > 0 ? identity : null;
 }
 

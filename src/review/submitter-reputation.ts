@@ -260,12 +260,26 @@ export function countOutcomes(rows: Array<{ status: string; reasonCode: string |
   return c;
 }
 
-/** Record a terminal outcome for a submitter (internal; fail-safe no-op on any error). Keeps submitter_stats
- *  current for the operator /stats view — it is NO LONGER the source of the signal (review_targets is). */
-export async function recordSubmissionOutcome(env: Env, project: string, submitter: string | undefined, outcome: SubmissionOutcome): Promise<void> {
+/**
+ * Record a terminal outcome for a submitter (internal; fail-safe no-op on any error). Keeps submitter_stats
+ * current for the operator /stats view — it is NO LONGER the source of the signal (review_targets is).
+ *
+ * #9131: idempotent per (project, submitter, pullNumber, outcome) via submitter_outcome_log. The prior
+ * shape counted webhook PASSES, not submissions — every re-gate of the SAME PR (a body edit, a push, or a
+ * third party's review comment on a rival's held PR) bumped the counter again, with no idempotency key at
+ * all. `INSERT OR IGNORE` into the log first; the submitter_stats increment only runs when that insert
+ * actually created a row, so N re-gates of one PR (or N adversarial comments on it) yield exactly one
+ * counted outcome — including "manual", which used to accrue once per re-gate of a still-open, held PR.
+ */
+export async function recordSubmissionOutcome(env: Env, project: string, submitter: string | undefined, pullNumber: number, outcome: SubmissionOutcome): Promise<void> {
   if (!submitter) return;
   const col = outcome === "merged" ? "merged" : outcome === "closed" ? "closed" : "manual";
   try {
+    const logged = await storage(env)
+      .prepare(`INSERT OR IGNORE INTO submitter_outcome_log (project, submitter, pull_number, outcome) VALUES (?, ?, ?, ?)`)
+      .bind(project, submitter, pullNumber, outcome)
+      .run();
+    if (logged.meta.changes === 0) return; // already counted this exact (project, submitter, PR, outcome)
     await storage(env)
       .prepare(
         `INSERT INTO submitter_stats (project, submitter, submissions, ${col}, last_seen) VALUES (?, ?, 1, 1, CURRENT_TIMESTAMP)
@@ -284,15 +298,30 @@ export async function recordSubmissionOutcome(env: Env, project: string, submitt
 export async function getSubmitterReputation(env: Env, project: string, submitter: string | undefined, cfg: ReputationConfig = DEFAULT_REPUTATION_CONFIG): Promise<SubmitterStats> {
   const neutral: SubmitterStats = { submissions: 0, merged: 0, closed: 0, manual: 0, closeRate: 0, signal: "neutral" };
   if (!submitter) return neutral;
-  // The all-time aggregate counts (for /stats only — NOT the signal). Best-effort: a failure here still lets the
-  // signal derive (and vice-versa); either failing degrades to neutral defaults, never throws.
+  // #9131: WINDOWED (not all-time) counts, read from the idempotent submitter_outcome_log rather than
+  // submitter_stats -- so a burst state DECAYS as old outcomes age out of the window, instead of a serial
+  // false-positive from months ago permanently gating this submitter with no recovery but a merge. The
+  // all-time submitter_stats table still exists and is still maintained (recordSubmissionOutcome), but only
+  // for the separate /stats operator view (src/review/contributor-trust-profile.ts reads it directly) --
+  // nothing that feeds a gate decision should read an undecaying aggregate. Best-effort: a failure here
+  // still lets the signal derive (and vice-versa); either failing degrades to neutral defaults, never throws.
   let agg = { submissions: 0, merged: 0, closed: 0, manual: 0 };
   try {
     const row = await storage(env)
-      .prepare("SELECT submissions, merged, closed, manual FROM submitter_stats WHERE project = ? AND submitter = ?")
-      .bind(project, submitter)
-      .first<{ submissions: number; merged: number; closed: number; manual: number }>();
-    if (row) agg = { submissions: row.submissions, merged: row.merged, closed: row.closed, manual: row.manual };
+      .prepare(
+        `SELECT COUNT(*) AS submissions,
+                SUM(CASE WHEN outcome = 'merged' THEN 1 ELSE 0 END) AS merged,
+                SUM(CASE WHEN outcome = 'closed' THEN 1 ELSE 0 END) AS closed,
+                SUM(CASE WHEN outcome = 'manual' THEN 1 ELSE 0 END) AS manual
+           FROM submitter_outcome_log
+          WHERE project = ? AND submitter = ? AND recorded_at >= datetime('now', ?)`,
+      )
+      .bind(project, submitter, `-${cfg.windowDays} days`)
+      .first<{ submissions: number; merged: number | null; closed: number | null; manual: number | null }>();
+    // A submitter with zero rows in the window is a real, common case (SUM over an empty set is NULL, COUNT
+    // is 0) -- ?? 0 on each SUM column, not just a truthy-row check, or a genuinely-neutral submitter would
+    // read `merged: null` and corrupt closeRate's arithmetic below.
+    if (row) agg = { submissions: row.submissions, merged: row.merged ?? 0, closed: row.closed ?? 0, manual: row.manual ?? 0 };
   } catch {
     // keep neutral aggregate defaults
   }

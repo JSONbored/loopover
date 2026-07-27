@@ -102,6 +102,46 @@ describe("private-beta auth and rate limiting", () => {
     expect(extractCookieValue("loopover_session=%E0%A4%A", "loopover_session")).toBeUndefined();
   });
 
+  describe("isAuthorizedGitHubSessionLogin: id-binding (#9126, a released GitHub handle must not grant operator access)", () => {
+    it("no ADMIN_GITHUB_IDS configured: falls back to login-only, byte-identical to before #9126", () => {
+      const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "jsonbored" });
+      expect(isAuthorizedGitHubSessionLogin(env, "jsonbored")).toBe(true);
+      expect(isAuthorizedGitHubSessionLogin(env, "jsonbored", 12345)).toBe(true); // an id doesn't matter here
+      expect(isAuthorizedGitHubSessionLogin(env, "stranger")).toBe(false);
+    });
+
+    it("ADMIN_GITHUB_IDS configured: a matching LOGIN with a NON-matching id is DENIED -- the released-handle takeover this closes", () => {
+      const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "jsonbored", ADMIN_GITHUB_IDS: "555" });
+      // The configured login, but presented with an id that doesn't match (e.g. the handle was released and
+      // re-registered by a stranger) -- must be denied even though the login string matches.
+      expect(isAuthorizedGitHubSessionLogin(env, "jsonbored", 999)).toBe(false);
+      expect(isAuthorizedGitHubSessionLogin(env, "jsonbored")).toBe(false); // no id presented at all
+    });
+
+    it("ADMIN_GITHUB_IDS configured: the matching id authorizes regardless of login", () => {
+      const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "jsonbored", ADMIN_GITHUB_IDS: "555" });
+      expect(isAuthorizedGitHubSessionLogin(env, "jsonbored", 555)).toBe(true);
+      // Even under a DIFFERENT login (e.g. jsonbored renamed) -- the id is what's authoritative once configured.
+      expect(isAuthorizedGitHubSessionLogin(env, "renamed-handle", 555)).toBe(true);
+    });
+
+    it("ADMIN_GITHUB_IDS configured but blank/whitespace-only parses to an EMPTY set, not id 0 -- falls back to login-only", () => {
+      // Number("") is 0, not NaN -- parseGitHubIdList must not let an unset/blank env accidentally "configure"
+      // id 0, which would deny every real operator (whose id is never 0) via the id-only branch.
+      const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "jsonbored", ADMIN_GITHUB_IDS: "  " });
+      expect(isAuthorizedGitHubSessionLogin(env, "jsonbored")).toBe(true);
+    });
+
+    it("parses a whitespace-or-comma id list, dropping non-numeric/non-integer entries", () => {
+      const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "", ADMIN_GITHUB_IDS: "111, 222 333,not-a-number 4.5" });
+      expect(isAuthorizedGitHubSessionLogin(env, "anyone", 111)).toBe(true);
+      expect(isAuthorizedGitHubSessionLogin(env, "anyone", 222)).toBe(true);
+      expect(isAuthorizedGitHubSessionLogin(env, "anyone", 333)).toBe(true);
+      expect(isAuthorizedGitHubSessionLogin(env, "anyone", 4.5)).toBe(false); // dropped: not an integer
+      expect(isAuthorizedGitHubSessionLogin(env, "anyone", 999)).toBe(false);
+    });
+  });
+
   it("enforces burst limits inside the Durable Object bucket", async () => {
     const state = memoryDurableObjectState();
     const limiter = new RateLimiter(state as unknown as DurableObjectState, createTestEnv());

@@ -107,6 +107,11 @@ export type AttemptCliResult =
       raiseReasons: string[];
     })
   | (CommonAttemptResultFields & {
+      outcome: "blocked_own_open_pr";
+      reason: string;
+      existingPullRequestNumber: number;
+    })
+  | (CommonAttemptResultFields & {
       outcome: `attempt_${RunMinerAttemptResult["outcome"]}`;
       submissionMode: "observe" | "enforce";
       totalTurnsUsed: number;

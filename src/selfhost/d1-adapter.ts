@@ -92,6 +92,24 @@ export function createD1Adapter(driver: SqliteDriver): D1Database {
       driver.exec(sql); // runs one or more statements (used for migrations)
       return { count: (sql.match(/;/g) ?? []).length || 1, duration: 0 };
     },
+    async execTransaction(sql: string) {
+      // #9027: SQLite is a single connection here, so BEGIN/COMMIT issued as separate exec calls are already
+      // the same session — unlike Postgres, where that is exactly the trap. Still explicit rather than relying
+      // on the driver: node:sqlite's exec() runs statements sequentially with no implicit transaction, so a
+      // crash partway through a migration file would leave it half-applied without this.
+      driver.exec("BEGIN");
+      try {
+        driver.exec(sql);
+        driver.exec("COMMIT");
+      } catch (error) {
+        try {
+          driver.exec("ROLLBACK");
+        } catch {
+          /* ignore -- the original error is the one worth reporting */
+        }
+        throw error;
+      }
+    },
     async dump() {
       return new ArrayBuffer(0); // unused by loopover; present for D1 surface completeness
     },

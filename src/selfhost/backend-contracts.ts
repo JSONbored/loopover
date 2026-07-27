@@ -88,6 +88,13 @@ export interface SelfHostD1Database {
   prepare(query: string): SelfHostD1PreparedStatement;
   batch(statements: SelfHostD1PreparedStatement[]): Promise<Array<{ results: unknown[]; success: true; meta: Record<string, unknown> }>>;
   exec(query: string): Promise<{ count: number; duration: number }>;
+  /** Run a multi-statement script as ONE all-or-nothing transaction (#9027). `exec` cannot give this: on
+   *  Postgres it takes an arbitrary pooled connection per call, so a BEGIN and its COMMIT issued as separate
+   *  `exec`s can land on different connections and mean nothing. Migrations need it because several of them
+   *  carry non-idempotent DML (the table-rebuild `INSERT ... SELECT` pattern, plus UPDATE/DELETE steps) that a
+   *  crash mid-file would otherwise re-run in full on the next boot — double-inserting, or failing on a PK
+   *  conflict that is not "already exists" and so bricking boot outright. */
+  execTransaction(query: string): Promise<void>;
   /** @deprecated present only because both self-host adapters still implement it for D1 surface completeness;
    *  real D1 no longer uses it either (see d1-adapter.ts / pg-adapter.ts). */
   dump(): Promise<ArrayBuffer>;

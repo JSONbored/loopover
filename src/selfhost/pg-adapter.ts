@@ -90,6 +90,28 @@ export function createPgAdapter(pool: Pool): D1Database {
       await pool.query(translateDdl(sql));
       return { count: (sql.match(/;/g) ?? []).length || 1, duration: 0 };
     },
+    async execTransaction(sql: string) {
+      // #9027: a dedicated client, so BEGIN/COMMIT/ROLLBACK are guaranteed to be the SAME session — the thing
+      // `exec` above cannot promise, since each of its calls takes whatever connection the pool hands out.
+      // Postgres DDL is transactional, so a migration file wrapped this way is genuinely all-or-nothing.
+      // Mirrors batch()'s transaction handling above, including releasing the client on every path so a failed
+      // transaction can never be returned to the pool still open.
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(translateDdl(sql));
+        await client.query("COMMIT");
+      } catch (error) {
+        try {
+          await client.query("ROLLBACK");
+        } catch {
+          /* ignore -- the original error is the one worth reporting */
+        }
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
     async dump() {
       return new ArrayBuffer(0); // unused; present for D1 surface completeness
     },

@@ -281,7 +281,66 @@ describe("createPgQueue (durable #977)", () => {
     const q = createPgQueue(m.pool, async () => undefined);
     await q.init();
     expect(m.pool.query).toHaveBeenCalledWith(expect.stringContaining("CREATE TABLE IF NOT EXISTS _selfhost_jobs"));
-    expect(m.pool.query).toHaveBeenCalledWith(expect.stringContaining("status='processing'"));
+    expect(m.pool.query).toHaveBeenCalledWith(expect.stringContaining("status='processing'"), expect.anything());
+  });
+
+  // #9023: boot recovery used to re-pend EVERY processing row unconditionally. On Postgres the queue is
+  // deliberately multi-instance, so during any overlapped or rolling deploy "every processing row" includes
+  // jobs a SIBLING is running right now -- both processes then ran the same PR pass, producing duplicate gate
+  // check-runs and verdict thrash. Only a row whose lease has actually expired can belong to a dead process.
+  describe("boot recovery respects the processing lease (#9023)", () => {
+    async function initWithTimeout(timeoutMs: string | undefined, fn: ReturnType<typeof vi.fn>): Promise<void> {
+      const old = process.env.QUEUE_PROCESSING_TIMEOUT_MS;
+      if (timeoutMs === undefined) delete process.env.QUEUE_PROCESSING_TIMEOUT_MS;
+      else process.env.QUEUE_PROCESSING_TIMEOUT_MS = timeoutMs;
+      try {
+        await createPgQueue({ query: fn } as unknown as Pool, async () => undefined).init();
+      } finally {
+        if (old === undefined) delete process.env.QUEUE_PROCESSING_TIMEOUT_MS;
+        else process.env.QUEUE_PROCESSING_TIMEOUT_MS = old;
+      }
+    }
+
+    it("scopes the recovery scan to rows older than the lease, not to every processing row", async () => {
+      const seen: Array<{ sql: string; params: unknown[] }> = [];
+      const fn = vi.fn().mockImplementation(async (sql: unknown, params?: unknown[]) => {
+        seen.push({ sql: String(sql), params: params ?? [] });
+        return { rows: [], rowCount: 0 };
+      });
+      await initWithTimeout("60000", fn);
+
+      const scan = seen.find((call) => call.sql.includes("FROM _selfhost_jobs WHERE status='processing' AND run_after<=$1"));
+      expect(scan).toBeDefined();
+      // The cutoff is "now minus the lease", the same definition the runtime reaper uses -- boot and
+      // steady-state must not disagree about what counts as abandoned.
+      expect(Number(scan?.params[0])).toBeLessThanOrEqual(Date.now() - 60000);
+    });
+
+    it("re-pends only under a compare-and-swap, so a sibling finishing first cannot be resurrected", async () => {
+      const seen: string[] = [];
+      const fn = vi.fn().mockImplementation(async (sql: unknown) => {
+        const q = String(sql);
+        seen.push(q);
+        if (q.includes("FROM _selfhost_jobs WHERE status='processing' AND run_after<=$1")) {
+          return { rows: [{ id: "7", payload: JSON.stringify({ type: "agent-regate-pr" }), job_key: null }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      });
+      await initWithTimeout("60000", fn);
+
+      expect(seen.some((q) => q.includes("SET status='pending', run_after=$1 WHERE id=$2 AND status='processing'"))).toBe(true);
+    });
+
+    it("recovers nothing when the lease is disabled — with no lease, nothing can be PROVEN abandoned", async () => {
+      const seen: string[] = [];
+      const fn = vi.fn().mockImplementation(async (sql: unknown) => {
+        seen.push(String(sql));
+        return { rows: [], rowCount: 0 };
+      });
+      await initWithTimeout("0", fn);
+
+      expect(seen.some((q) => q.includes("FROM _selfhost_jobs WHERE status='processing' AND run_after<=$1"))).toBe(false);
+    });
   });
 
   it("init() handles null rowCount from the recovery query (rowCount ?? 0 nullish arm)", async () => {
@@ -2943,18 +3002,195 @@ describe("createPgQueue (durable #977)", () => {
     expect(logged.some((line) => line.includes("selfhost_queue_pump_crashed") && line.includes("connection terminated unexpectedly"))).toBe(true);
   });
 
+  // #9023: a reclaim never charged an attempt, so a job that reliably wedges past its lease -- an infinite
+  // loop, a hang against an unresponsive dependency -- was requeued forever with `attempts` frozen at whatever
+  // the last real failure left it. It could never reach the dead-letter threshold that exists precisely to stop
+  // a poison job from burning the queue.
+  describe("reclaimed jobs consume their retry budget (#9023)", () => {
+    async function drainWithProcessingRow(row: Record<string, unknown>): Promise<string[]> {
+      const old = process.env.QUEUE_PROCESSING_TIMEOUT_MS;
+      process.env.QUEUE_PROCESSING_TIMEOUT_MS = "1";
+      const statements: string[] = [];
+      try {
+        // Boot recovery now shares the reaper's lease-scoped scan (#9023), so the row is only offered AFTER
+        // init() -- otherwise this would exercise boot recovery, not the runtime reclaim.
+        let booted = false;
+        let served = false;
+        const fn = vi.fn().mockImplementation(async (sql: unknown) => {
+          const q = String(sql);
+          statements.push(q);
+          if (booted && q.includes("FROM _selfhost_jobs WHERE status='processing' AND run_after<=$1")) {
+            if (served) return { rows: [], rowCount: 0 };
+            served = true;
+            return { rows: [row], rowCount: 1 };
+          }
+          return { rows: [], rowCount: 1 };
+        });
+        const q = createPgQueue({ query: fn } as unknown as Pool, async () => undefined);
+        await q.init();
+        booted = true;
+        statements.length = 0;
+        await q.drain();
+      } finally {
+        if (old === undefined) delete process.env.QUEUE_PROCESSING_TIMEOUT_MS;
+        else process.env.QUEUE_PROCESSING_TIMEOUT_MS = old;
+      }
+      return statements;
+    }
+
+    it("requeues with attempts incremented while the job still has budget", async () => {
+      const statements = await drainWithProcessingRow({ id: "5", payload: JSON.stringify({ type: "agent-regate-pr" }), job_key: null, attempts: 0 });
+      expect(statements.some((q) => q.includes("SET status='pending', run_after=$1, attempts=$2"))).toBe(true);
+    });
+
+    it("dead-letters a job that has wedged past its lease as many times as the retry cap allows", async () => {
+      const statements = await drainWithProcessingRow({ id: "6", payload: JSON.stringify({ type: "agent-regate-pr" }), job_key: null, attempts: 4 });
+      expect(statements.some((q) => q.includes("SET status='dead', attempts=$1") && q.includes("AND status='processing'"))).toBe(true);
+      // It must NOT also be requeued -- that would be the forever-loop this fixes, just one attempt later.
+      expect(statements.some((q) => q.includes("SET status='pending', run_after=$1, attempts=$2"))).toBe(false);
+    });
+  });
+
+  // #9023: `run_after` doubles as the lease timestamp, so without a heartbeat the lease timeout was a ceiling on
+  // job DURATION rather than on liveness -- a legitimately long pass (a large PR, a slow AI review, a
+  // rate-limited GitHub window) got reclaimed and double-run by a sibling purely for taking too long. The
+  // activeJobIds guard only covers THIS process's in-memory set, which is the wrong scope for a shared queue.
+  it("heartbeats the lease of a job it is actively running (#9023)", async () => {
+    const old = process.env.QUEUE_PROCESSING_TIMEOUT_MS;
+    process.env.QUEUE_PROCESSING_TIMEOUT_MS = "3000"; // → a 1s heartbeat interval
+    vi.useFakeTimers();
+    try {
+      const m = makePool();
+      m.enqueueJob("9", { type: "agent-regate-pr" }, 0);
+      let release: (() => void) | undefined;
+      const running = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const q = createPgQueue(m.pool, async () => running);
+      await q.init();
+      const drained = q.drain();
+      await vi.advanceTimersByTimeAsync(2500);
+
+      const poolCalls = (): unknown[][] => (m.fn as unknown as ReturnType<typeof vi.fn>).mock.calls;
+      const heartbeats = poolCalls().filter((call: unknown[]) => String(call[0]).includes("SET run_after=$1 WHERE id=$2 AND status='processing'"));
+      expect(heartbeats.length).toBeGreaterThanOrEqual(1);
+
+      release?.();
+      await vi.advanceTimersByTimeAsync(10);
+      await drained;
+      // The timer must be cleared on completion, or a finished job keeps renewing a lease it no longer holds.
+      const after = poolCalls().length;
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(poolCalls().length).toBe(after);
+    } finally {
+      vi.useRealTimers();
+      if (old === undefined) delete process.env.QUEUE_PROCESSING_TIMEOUT_MS;
+      else process.env.QUEUE_PROCESSING_TIMEOUT_MS = old;
+    }
+  });
+
+  // The pg driver can return a null rowCount for some UPDATE results; the recovery/reclaim counters must read
+  // that as "nothing changed" rather than crashing or over-reporting.
+  describe("#9023 recovery paths tolerate a null rowCount", () => {
+    async function runWith(fn: ReturnType<typeof vi.fn>, afterInit: (q: ReturnType<typeof createPgQueue>) => Promise<void>): Promise<void> {
+      const old = process.env.QUEUE_PROCESSING_TIMEOUT_MS;
+      process.env.QUEUE_PROCESSING_TIMEOUT_MS = "1";
+      try {
+        const q = createPgQueue({ query: fn } as unknown as Pool, async () => undefined);
+        await q.init();
+        await afterInit(q);
+      } finally {
+        if (old === undefined) delete process.env.QUEUE_PROCESSING_TIMEOUT_MS;
+        else process.env.QUEUE_PROCESSING_TIMEOUT_MS = old;
+      }
+    }
+
+    it("counts nothing recovered at boot when the compare-and-swap reports a null rowCount", async () => {
+      const logs: string[] = [];
+      vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => void logs.push(String(args[0])));
+      const fn = vi.fn().mockImplementation(async (sql: unknown) => {
+        const q = String(sql);
+        if (q.includes("FROM _selfhost_jobs WHERE status='processing' AND run_after<=$1")) {
+          return { rows: [{ id: "1", payload: JSON.stringify({ type: "agent-regate-pr" }), job_key: null, attempts: 0 }], rowCount: 1 };
+        }
+        if (q.includes("SET status='pending', run_after=$1 WHERE id=$2 AND status='processing'")) return { rows: [], rowCount: null };
+        return { rows: [], rowCount: 1 };
+      });
+      await runWith(fn, async () => undefined);
+
+      expect(logs.map((line) => JSON.parse(line) as Record<string, unknown>).some((log) => log.event === "selfhost_queue_recovered")).toBe(false);
+      vi.restoreAllMocks();
+    });
+
+    it("does not report a dead-letter it did not actually win", async () => {
+      let booted = false;
+      let served = false;
+      const fn = vi.fn().mockImplementation(async (sql: unknown) => {
+        const q = String(sql);
+        if (booted && q.includes("FROM _selfhost_jobs WHERE status='processing' AND run_after<=$1")) {
+          if (served) return { rows: [], rowCount: 0 };
+          served = true;
+          return { rows: [{ id: "2", payload: JSON.stringify({ type: "agent-regate-pr" }), job_key: null, attempts: 4 }], rowCount: 1 };
+        }
+        // A sibling won the row first, so the guarded UPDATE matched nothing.
+        if (q.includes("SET status='dead', attempts=$1")) return { rows: [], rowCount: null };
+        return { rows: [], rowCount: 1 };
+      });
+      await runWith(fn, async (q) => {
+        booted = true;
+        await q.drain();
+      });
+      expect(served).toBe(true);
+    });
+  });
+
+  it("#9023 heartbeat failures are absorbed — a lost renewal just lets the lease age normally", async () => {
+    const old = process.env.QUEUE_PROCESSING_TIMEOUT_MS;
+    process.env.QUEUE_PROCESSING_TIMEOUT_MS = "3000";
+    vi.useFakeTimers();
+    try {
+      const m = makePool();
+      m.enqueueJob("10", { type: "agent-regate-pr" }, 0);
+      let release: (() => void) | undefined;
+      const running = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const original = m.pool.query.bind(m.pool);
+      (m.pool as unknown as { query: (sql: string, params?: unknown[]) => Promise<unknown> }).query = async (sql: string, params?: unknown[]) => {
+        if (String(sql).includes("SET run_after=$1 WHERE id=$2 AND status='processing'")) throw new Error("connection lost");
+        return original(sql, params as never);
+      };
+      const q = createPgQueue(m.pool, async () => running);
+      await q.init();
+      const drained = q.drain();
+      await vi.advanceTimersByTimeAsync(2500);
+      release?.();
+      await vi.advanceTimersByTimeAsync(10);
+      // The job still completes: a heartbeat is an optimization, never a precondition.
+      await expect(drained).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+      if (old === undefined) delete process.env.QUEUE_PROCESSING_TIMEOUT_MS;
+      else process.env.QUEUE_PROCESSING_TIMEOUT_MS = old;
+    }
+  });
+
   it("pump absorbs a reclaimExpiredProcessingJobs() pool failure instead of crashing the process (regression for #2498)", async () => {
     const oldTimeout = process.env.QUEUE_PROCESSING_TIMEOUT_MS;
     process.env.QUEUE_PROCESSING_TIMEOUT_MS = "1";
     try {
+      // #9023 made boot recovery use the SAME lease-scoped scan as the reaper, so the injection has to start
+      // AFTER init() -- otherwise this exercises a failing boot, not the pump absorbing a reaper failure.
+      let failReaper = false;
       const fn = vi.fn().mockImplementation(async (sql: unknown) => {
-        if (String(sql).includes("WHERE status='processing' AND run_after<=$1")) throw new Error("connection terminated unexpectedly");
+        if (failReaper && String(sql).includes("WHERE status='processing' AND run_after<=$1")) throw new Error("connection terminated unexpectedly");
         return { rows: [], rowCount: 0 };
       });
       const pool = { query: fn } as unknown as Pool;
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
       const q = createPgQueue(pool, async () => undefined);
       await q.init();
+      failReaper = true;
 
       await expect(q.drain()).resolves.toBeUndefined();
 

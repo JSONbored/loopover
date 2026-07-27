@@ -301,6 +301,7 @@ import {
 } from "../services/agent-action-executor";
 import { activeMergeBlockedSha } from "../services/merge-failure";
 import { applyLowConfidenceHoldCap } from "../review/low-confidence-hold-cap";
+import { recordPendingClosureFlag } from "../review/pending-closure-watchdog";
 import { loadIssueQualityReportMap } from "../services/issue-quality";
 import { generateAndSendReviewRecap } from "../services/review-recap";
 import {
@@ -3676,6 +3677,11 @@ async function runAgentMaintenancePlanAndExecute(
         ? env.JOBS.send(verifyJob, { delaySeconds })
         : env.JOBS.send(verifyJob)
     ).catch(() => undefined);
+    // #9031: the durable half of the same intent. The enqueue above is a single queue message, and until now
+    // it was the ONLY thing that could finish this sequence -- lose it and the PR sits flagged forever, since
+    // the flag suppresses merge/approve and #never-endless-reregate makes the PR sweep-ineligible. Recording
+    // the deadline lets sweepStrandedPendingClosures re-enqueue Pass 2 if it never ran.
+    await recordPendingClosureFlag(env, { repoFullName, pullNumber: pr.number, installationId }, Date.now() + delaySeconds * 1000);
   }
 }
 

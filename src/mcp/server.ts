@@ -80,6 +80,7 @@ import {
   MAX_NOTIFICATION_MARK_READ_IDS,
   markNotificationDeliveriesRead,
   recordAuditEvent,
+  recordPostMergeIncidentReport,
   recordProductUsageEvent,
 } from "../db/repositories";
 import { decidePendingAgentAction } from "../services/agent-approval-queue";
@@ -256,6 +257,20 @@ const clearSelftuneOverrideShape = {
   owner: z.string().min(1),
   repo: z.string().min(1),
   confirm: z.literal(true),
+};
+
+// (#9298) owner/repo/pull (mirrors ownerRepoPullShape) plus the same body fields the REST route's
+// postMergeIncidentReportSchema validates. Declared inline rather than spread from that schema's `.shape`
+// because src/api/routes.ts imports this module before it defines postMergeIncidentReportSchema, so reading
+// `.shape` at module-init time would dereference `undefined` (circular-import temporal dead zone).
+const fileIncidentReportShape = {
+  ...ownerRepoPullShape,
+  description: z.string().min(1).max(4000),
+  severity: z.enum(["low", "medium", "high", "critical"]),
+  mergedSha: z
+    .string()
+    .regex(/^[0-9a-f]{7,40}$/i)
+    .optional(),
 };
 
 const windowOnlyShape = {
@@ -1132,6 +1147,17 @@ const selftuneOverrideAuditOutputSchema = {
 const clearSelftuneOverrideOutputSchema = {
   repoFullName: z.string().optional(),
   cleared: z.boolean().optional(),
+};
+
+// (#9298) mirrors the REST incident-report route's response: `{ ok: true, repoFullName, pullNumber, ...report }`
+// on success, or `{ ok: false, error }` when the PR is missing/unmerged (the REST route's 404/409 bodies).
+const fileIncidentReportOutputSchema = {
+  ok: z.boolean(),
+  repoFullName: z.string(),
+  pullNumber: z.number().int().positive(),
+  id: z.string().optional(),
+  createdAt: z.string().optional(),
+  error: z.enum(["pull_request_not_found", "pull_request_not_merged"]).optional(),
 };
 
 // #5825 - maintainer-authenticated skipped-PR audit trail, mirroring GET /v1/app/skipped-pr-audit's
@@ -2028,6 +2054,7 @@ export const MCP_TOOL_CATEGORIES: Record<string, McpToolCategory> = {
   loopover_get_gate_precision: "maintainer",
   loopover_get_selftune_override_audit: "maintainer",
   loopover_clear_selftune_override: "maintainer",
+  loopover_file_incident_report: "maintainer",
   loopover_get_skipped_pr_audit: "maintainer",
   loopover_get_fleet_analytics: "maintainer",
   loopover_get_recommendation_quality: "maintainer",
@@ -2331,6 +2358,20 @@ export class LoopoverMcp {
         outputSchema: clearSelftuneOverrideOutputSchema,
       },
       async (input) => this.toolResult(await this.clearSelftuneOverride(input)),
+    );
+
+    // (#9298) MCP mirror of POST /v1/repos/:owner/:repo/pulls/:number/incident-reports (#5672): the missing
+    // write tool next to the already-wrapped PR read surfaces (maintainer-packet, reviewability). Same
+    // maintainer-manage boundary and recordPostMergeIncidentReport persistence path as the REST route.
+    register(
+      "loopover_file_incident_report",
+      {
+        description:
+          "File a post-merge incident report on an already-merged rented-loop PR later found harmful, mirroring POST /v1/repos/:owner/:repo/pulls/:number/incident-reports. Persists an audit_events row keyed to the PR; the PR must exist and be merged. Maintainer access required.",
+        inputSchema: fileIncidentReportShape,
+        outputSchema: fileIncidentReportOutputSchema,
+      },
+      async (input) => this.toolResult(await this.fileIncidentReport(input)),
     );
 
     register(
@@ -4335,6 +4376,43 @@ export class LoopoverMcp {
     return {
       summary: `Cleared the live self-tune gate override for ${fullName}.`,
       data: { repoFullName: fullName, cleared: true },
+    };
+  }
+
+  // (#9298) Mirrors POST /v1/repos/:owner/:repo/pulls/:number/incident-reports (#5672): maintainer-manage
+  // gate, then the REST route's exact PR-must-exist-and-be-merged validation, then the same
+  // recordPostMergeIncidentReport persistence (reporterKind "customer", the calling actor) and response shape.
+  // Missing/unmerged PRs return the route's 404/409 error codes as a normal `{ ok: false, error }` tool result.
+  private async fileIncidentReport(input: z.infer<z.ZodObject<typeof fileIncidentReportShape>>): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoManageAccess(fullName);
+    const pullRequest = await getPullRequest(this.env, fullName, input.number);
+    if (!pullRequest) {
+      return {
+        summary: `No pull request ${fullName}#${input.number} to file a post-merge incident report against.`,
+        data: { ok: false, error: "pull_request_not_found", repoFullName: fullName, pullNumber: input.number },
+      };
+    }
+    if (!pullRequest.mergedAt) {
+      return {
+        summary: `Pull request ${fullName}#${input.number} is not merged; a post-merge incident report cannot be filed.`,
+        data: { ok: false, error: "pull_request_not_merged", repoFullName: fullName, pullNumber: input.number },
+      };
+    }
+    const actor = this.identity.kind === "session" ? this.identity.actor : "mcp";
+    const report = await recordPostMergeIncidentReport(this.env, {
+      repoFullName: fullName,
+      pullNumber: input.number,
+      description: input.description,
+      severity: input.severity,
+      mergedSha: input.mergedSha,
+      reporterKind: "customer",
+      actor,
+      route: `/v1/repos/${input.owner}/${input.repo}/pulls/${input.number}/incident-reports`,
+    });
+    return {
+      summary: `Filed a post-merge incident report on ${fullName}#${input.number} (severity ${input.severity}).`,
+      data: { ok: true, repoFullName: fullName, pullNumber: input.number, ...report },
     };
   }
 

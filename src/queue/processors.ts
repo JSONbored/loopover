@@ -3460,7 +3460,7 @@ async function runAgentMaintenancePlanAndExecute(
     autoMaintain.requireApprovals === 0 ||
     (liveReviewDecision ?? pr.reviewDecision) === "APPROVED";
   const duplicateWinnerEnabled = resolveDuplicateWinnerEnabled(isDuplicateWinnerEnabledGlobally(env), settings.duplicateWinnerMode);
-  const openDuplicateSiblings = linkedIssueDuplicatePullRequestRecordsForGate(pr, otherOpenPullRequests);
+  const openDuplicateSiblings = linkedIssueDuplicatePullRequestRecordsForGate(pr, otherOpenPullRequests, settings.copycatGateMode, settings.copycatGateMinScore);
   // AI-review low-confidence guardrail (#4603): resolved PURELY from this pass's own gate evaluation + settings
   // (no extra network/DB call, unlike migrationCollisionHold/unlinkedIssueMatchHold above) -- undefined unless the
   // gate failed SOLELY on a sub-aiReviewCloseConfidence-floor ai_consensus_defect/ai_review_split finding under
@@ -10237,6 +10237,8 @@ async function maybePublishPrPublicSurface(
     const linkedDuplicatePrsForGate = linkedIssueDuplicatePullRequestRecordsForGate(
       pr,
       otherOpenPullRequests,
+      settings.copycatGateMode,
+      settings.copycatGateMinScore,
     );
     const duplicateWinnerEnabled = resolveDuplicateWinnerEnabled(isDuplicateWinnerEnabledGlobally(env), settings.duplicateWinnerMode);
     const isDupWinner =

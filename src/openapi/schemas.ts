@@ -2970,6 +2970,59 @@ export const AmsMinerCohortComparisonSchema = z
   })
   .openapi("AmsMinerCohortComparison");
 
+/**
+ * Response body for GET /v1/repos/{owner}/{repo}/gate-precision. Field-level parity with
+ * `gatePrecisionOutputSchema` (the `loopover_get_gate_precision` MCP tool `outputSchema`) in
+ * src/mcp/server.ts — #9302.
+ */
+export const GatePrecisionResponseSchema = z
+  .object({
+    repoFullName: z.string().optional(),
+    generatedAt: z.string().optional(),
+    windowDays: z.number().nullable().optional(),
+    perGateType: z.array(z.unknown()).optional(),
+    overall: z.unknown().optional(),
+    signals: z.array(z.string()).optional(),
+  })
+  .openapi("GatePrecisionResponse");
+
+/**
+ * Response body for GET /v1/repos/{owner}/{repo}/outcome-calibration. Field-level parity with
+ * `maintainerMeasurementReportOutputSchema` (the `loopover_get_outcome_calibration` MCP tool
+ * `outputSchema`) in src/mcp/server.ts — #9302.
+ */
+export const OutcomeCalibrationResponseSchema = z
+  .object({
+    repoFullName: z.string().optional(),
+    generatedAt: z.string().optional(),
+    windowDays: z.number().nullable().optional(),
+    slop: z.unknown().optional(),
+    recommendations: z.unknown().optional(),
+    signals: z.array(z.string()).optional(),
+    status: z.string().optional(),
+  })
+  .openapi("OutcomeCalibrationResponse");
+
+/**
+ * Response body for GET /v1/repos/{owner}/{repo}/activation-preview. Field-level parity with
+ * `activationPreviewOutputSchema` (the `loopover_get_activation_preview` MCP tool `outputSchema`) in
+ * src/mcp/server.ts — #9302.
+ */
+export const ActivationPreviewResponseSchema = z
+  .object({
+    repoFullName: z.string().optional(),
+    generatedAt: z.string().optional(),
+    currentReviewCheckMode: z.string().optional(),
+    aiReviewConfigured: z.boolean().optional(),
+    evaluatedCount: z.number().optional(),
+    withFindingsCount: z.number().optional(),
+    findingCodeCounts: z.array(z.unknown()).optional(),
+    samples: z.array(z.unknown()).optional(),
+    recommendedAction: z.string().nullable().optional(),
+    summary: z.string().optional(),
+  })
+  .openapi("ActivationPreviewResponse");
+
 export const PullRequestReviewabilitySchema = z
   .object({
     repoFullName: z.string(),

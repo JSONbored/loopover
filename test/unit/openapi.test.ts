@@ -10,6 +10,11 @@ import {
   intakeIdeaShape,
   intakeIdeaOutputSchema,
   planIdeaClaimsOutputSchema,
+  maintainerNoiseOutputSchema,
+  amsMinerCohortOutputSchema,
+  gatePrecisionOutputSchema,
+  maintainerMeasurementReportOutputSchema,
+  activationPreviewOutputSchema,
 } from "../../src/mcp/server";
 
 describe("OpenAPI contract", () => {
@@ -28,6 +33,11 @@ describe("OpenAPI contract", () => {
     expect(spec.paths["/v1/repos/{owner}/{repo}/issue-quality"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/outcome-patterns"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/gate-config/effective"]).toBeDefined();
+    expect(spec.paths["/v1/repos/{owner}/{repo}/maintainer-noise"]).toBeDefined();
+    expect(spec.paths["/v1/repos/{owner}/{repo}/ams-miner-cohort"]).toBeDefined();
+    expect(spec.paths["/v1/repos/{owner}/{repo}/gate-precision"]).toBeDefined();
+    expect(spec.paths["/v1/repos/{owner}/{repo}/outcome-calibration"]).toBeDefined();
+    expect(spec.paths["/v1/repos/{owner}/{repo}/activation-preview"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/registration-readiness"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/gittensor-config-recommendation"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/pulls/{number}/maintainer-packet"]).toBeDefined();
@@ -89,7 +99,6 @@ describe("OpenAPI contract", () => {
       "/v1/repos/{owner}/{repo}/burden-forecast",
       "/v1/repos/{owner}/{repo}/registry-drift",
       "/v1/repos/{owner}/{repo}/maintainer-lane",
-      "/v1/repos/{owner}/{repo}/maintainer-noise",
       "/v1/repos/{owner}/{repo}/pulls/{number}/review-intelligence",
       "/v1/repos/{owner}/{repo}/pulls/{number}/scoring-preview",
       "/v1/internal/jobs/generate-signal-snapshots/run",
@@ -109,6 +118,11 @@ describe("OpenAPI contract", () => {
     expect(spec.components?.schemas?.RepoOutcomePatterns).toBeDefined();
     expect(spec.components?.schemas?.RegistrationReadiness).toBeDefined();
     expect(spec.components?.schemas?.GittensorConfigRecommendation).toBeDefined();
+    expect(spec.components?.schemas?.GatePrecisionResponse).toBeDefined();
+    expect(spec.components?.schemas?.OutcomeCalibrationResponse).toBeDefined();
+    expect(spec.components?.schemas?.ActivationPreviewResponse).toBeDefined();
+    expect(spec.components?.schemas?.MaintainerNoiseReport).toBeDefined();
+    expect(spec.components?.schemas?.AmsMinerCohortComparison).toBeDefined();
     expect(spec.components?.schemas?.PullRequestMaintainerPacket).toBeDefined();
     expect(spec.components?.schemas?.PullRequestReviewability).toBeDefined();
     expect(spec.components?.schemas?.LocalBranchAnalysis).toBeDefined();
@@ -224,6 +238,52 @@ describe("OpenAPI contract", () => {
 
     // request-apr-transfer is explicitly out of scope for this batch and must stay undocumented here.
     expect(spec.paths["/v1/loop/request-apr-transfer"]).toBeUndefined();
+  });
+
+  // #9302: five maintainer-report GET routes are each backed by an MCP tool whose Zod output shape already
+  // lives in src/mcp/server.ts. Assert every route is a documented GET path whose response component keys
+  // stay field-for-field in parity with those tool shapes.
+  it("documents the repo maintainer-report route family with tool-parity schemas (#9302)", () => {
+    const spec = buildOpenApiSpec();
+    const schemas = spec.components?.schemas ?? {};
+
+    const propKeys = (name: string) =>
+      Object.keys((schemas[name] as { properties?: Record<string, unknown> }).properties ?? {}).sort();
+
+    const cases = [
+      {
+        path: "/v1/repos/{owner}/{repo}/maintainer-noise",
+        response: "MaintainerNoiseReport",
+        outputShape: maintainerNoiseOutputSchema,
+      },
+      {
+        path: "/v1/repos/{owner}/{repo}/ams-miner-cohort",
+        response: "AmsMinerCohortComparison",
+        outputShape: amsMinerCohortOutputSchema,
+      },
+      {
+        path: "/v1/repos/{owner}/{repo}/gate-precision",
+        response: "GatePrecisionResponse",
+        outputShape: gatePrecisionOutputSchema,
+      },
+      {
+        path: "/v1/repos/{owner}/{repo}/outcome-calibration",
+        response: "OutcomeCalibrationResponse",
+        outputShape: maintainerMeasurementReportOutputSchema,
+      },
+      {
+        path: "/v1/repos/{owner}/{repo}/activation-preview",
+        response: "ActivationPreviewResponse",
+        outputShape: activationPreviewOutputSchema,
+      },
+    ];
+
+    for (const { path, response, outputShape } of cases) {
+      const op = spec.paths[path]?.get;
+      expect(op, `${path} should be a documented GET path`).toBeDefined();
+      expect(schemas[response], `${response} component should be registered`).toBeDefined();
+      expect(propKeys(response)).toEqual(Object.keys(outputShape).sort());
+    }
   });
 
   it("declares an `in: path` parameter for every {templated} path segment (Cloudflare schema-validation warning 30046)", () => {

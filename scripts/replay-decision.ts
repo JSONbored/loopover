@@ -4,6 +4,12 @@
 //
 //   node --experimental-strip-types scripts/replay-decision.ts <bundle.json>
 //   ... | node --experimental-strip-types scripts/replay-decision.ts -
+//   node --experimental-strip-types scripts/replay-decision.ts <bundle.json> --at <epoch ms>
+//
+// #9028: `--at` names the instant to replay AT. Omit it to replay at the instant the decision itself recorded
+// (`replayInput.clock.nowMs`) — the bit-exact case. Passing a DIFFERENT instant exits 1 with a `clock`
+// divergence rather than reporting a match: time is a decision INPUT, and a clock-dependent rule
+// (`gate.requireFreshRebaseWindow`) can flip purely because the wall clock moved.
 //
 // The bundle is one JSON object: { record: {...decision_records row}, replayInput: {...replay_json} }.
 // EXTRACT (operator, against the instance DB):
@@ -24,8 +30,13 @@
 import { readFileSync } from "node:fs";
 import { replayDecision, type DecisionReplayInput, type ReplayableRecord } from "../src/review/decision-replay";
 
-/** Parse + normalize a bundle (snake_case SQL rows accepted) and replay it. Exported for tests. */
-export function runReplayBundle(raw: string): { outcome: ReturnType<typeof replayDecision> | null; error?: string } {
+/** Parse + normalize a bundle (snake_case SQL rows accepted) and replay it. Exported for tests.
+ *
+ *  #9028: `atMs` names the instant to replay AT. Omitted (the default) replays at the instant the decision
+ *  recorded, which is the bit-exact case. Supplying a DIFFERENT instant is reported as a `clock` divergence,
+ *  never silently accepted — a clock-dependent rule can legitimately flip its answer as the wall clock moves,
+ *  so "it still matches at a different instant" is not a re-derivation of the original decision. */
+export function runReplayBundle(raw: string, atMs?: number): { outcome: ReturnType<typeof replayDecision> | null; error?: string } {
   let bundle: { record?: Record<string, unknown>; replayInput?: unknown };
   try {
     bundle = JSON.parse(raw) as never;
@@ -47,18 +58,25 @@ export function runReplayBundle(raw: string): { outcome: ReturnType<typeof repla
   if (!record || !replayInput || !Array.isArray(replayInput.findings) || typeof replayInput.evaluated !== "object") {
     return { outcome: null, error: "bundle must carry {record: {id, reason_code|reasonCode, action}, replayInput: {findings, policy, evaluated}}" };
   }
-  return { outcome: replayDecision(record, replayInput) };
+  return { outcome: replayDecision(record, replayInput, atMs === undefined ? {} : { nowMs: atMs }) };
 }
 
 const invokedDirectly = process.argv[1]?.endsWith("replay-decision.ts") === true;
 if (invokedDirectly) {
-  const source = process.argv[2];
+  const argv = process.argv.slice(2);
+  const atIndex = argv.indexOf("--at");
+  const atRaw = atIndex === -1 ? undefined : argv[atIndex + 1];
+  if (atIndex !== -1 && (atRaw === undefined || !Number.isFinite(Number(atRaw)))) {
+    console.error("replay-decision: --at requires a Unix-epoch-milliseconds value");
+    process.exit(2);
+  }
+  const source = argv.filter((arg, index) => index !== atIndex && index !== atIndex + 1)[0];
   if (!source) {
-    console.error("usage: replay-decision.ts <bundle.json | ->");
+    console.error("usage: replay-decision.ts <bundle.json | -> [--at <epoch ms>]");
     process.exit(2);
   }
   const raw = source === "-" ? readFileSync(0, "utf8") : readFileSync(source, "utf8");
-  const { outcome, error } = runReplayBundle(raw);
+  const { outcome, error } = runReplayBundle(raw, atRaw === undefined ? undefined : Number(atRaw));
   if (!outcome) {
     console.error(`replay-decision: ${error}`);
     process.exit(2);

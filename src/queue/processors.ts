@@ -663,6 +663,7 @@ import {
 import { AI_JUDGMENT_BLOCKER_CODES } from "../rules/advisory";
 import { computeSalvageabilityForTarget } from "../review/salvageability-wire";
 import { deriveDecisionReasonCode, persistDecisionReplayInputForGate } from "../review/decision-replay";
+import { isWithinFreshRebaseWindow, type DecisionClockCapture } from "../review/staleness-clock";
 import { recordVerdictFlip } from "../review/verdict-flip-store";
 import { resolveAutomaticCloseConfidence } from "../review/risk-control-wire";
 import { maybeApplyCloseAuditHoldout } from "../review/close-audit-holdout";
@@ -3175,6 +3176,12 @@ async function runAgentMaintenancePlanAndExecute(
   },
 ): Promise<void> {
   const { installationId, repoFullName, pr, settings, otherOpenPullRequests, deliveryId, gate } = args;
+  // #9028: ONE wall-clock read for this whole decision pass, recorded into the replay input below and passed
+  // to every clock-dependent gate rule (today `gate.requireFreshRebaseWindow` via maybeForceFreshRebase)
+  // instead of each of them calling Date.now() independently. Two rules reading the clock at two different
+  // moments cannot both be replayed from one recorded instant — and an unrecorded instant is an unrecorded
+  // decision INPUT, which is exactly what makes a time-dependent decision unreplayable.
+  const decisionClock: DecisionClockCapture = { nowMs: Date.now() };
 
   // Convergence safety: feed the planner the PR's changed paths + the repo's hard-guardrail globs so guarded
   // paths force manual review, and flag owner-authored PRs so they are never auto-closed (standing rule).
@@ -3761,13 +3768,13 @@ async function runAgentMaintenancePlanAndExecute(
       divertedByHoldout: closeAuditHoldout?.diverted ?? false,
     });
     const recordId = await persistDecisionRecord(env, record, recordDigest);
-    // #8838: persist the evaluation's own exact inputs beside the record (PRIVATE sibling, migration 0181)
+    // #8838: persist the evaluation's own exact inputs beside the record (PRIVATE sibling, migration 0182)
     // so the replay harness can re-derive this decision bit-exactly. Best-effort, like the record itself;
     // the no-replay no-op (synthetic content-lane/bridge evaluations) lives inside the helper. Keyed to the
     // id persistDecisionRecord actually wrote (#9123: a supersession at the same head gets a revisioned id,
     // not the base one this used to always recompute independently). #9135: the holdout outcome rides along
     // so `holdout_consistency` has something to check the public record against.
-    if (recordId !== null) await persistDecisionReplayInputForGate(env, recordId, gate, policyCloseKind ?? null, closeAuditHoldout ?? null);
+    if (recordId !== null) await persistDecisionReplayInputForGate(env, recordId, gate, policyCloseKind ?? null, closeAuditHoldout ?? null, decisionClock);
   }
   // #2349 (PR 1): additive per-contributor calibration data, gated identically to recordNativeGateDecision
   // above -- see src/review/contributor-calibration.ts's doc comment. Currently write-only; nothing reads
@@ -3897,6 +3904,7 @@ async function runAgentMaintenancePlanAndExecute(
       token,
       admissionKey,
       deliveryId,
+      nowMs: decisionClock.nowMs,
     }))
   ) {
     return;
@@ -4806,9 +4814,12 @@ async function maybeForceFreshRebase(
     token: string | undefined;
     admissionKey: GitHubRateLimitAdmissionKey | undefined;
     deliveryId: string;
+    // #9028: the decision pass's single captured instant — this rule reads it instead of the clock, so the
+    // window comparison is replayable from `decision_replay_inputs.replay_json`.
+    nowMs: number;
   },
 ): Promise<boolean> {
-  const { installationId, repoFullName, pr, settings, windowMinutes, baseRef, token, admissionKey, deliveryId } = args;
+  const { installationId, repoFullName, pr, settings, windowMinutes, baseRef, token, admissionKey, deliveryId, nowMs } = args;
   /* v8 ignore next -- structurally unreachable: the caller only invokes this after confirming
    * (liveMergeState ?? pr.mergeableState) === "clean", which GitHub can never compute for a PR with no
    * head commit; the null check is belt-and-suspenders against the field's optional TS type. */
@@ -4816,7 +4827,7 @@ async function maybeForceFreshRebase(
   const advancedAt = await fetchLiveBaseBranchAdvancedAt(env, repoFullName, baseRef, token, admissionKey);
   if (!advancedAt) return false; // fail-open: unreadable base commit -> no forced rebase
   const advancedAtMs = Date.parse(advancedAt);
-  if (!Number.isFinite(advancedAtMs) || Date.now() - advancedAtMs >= windowMinutes * 60_000) return false;
+  if (!isWithinFreshRebaseWindow({ baseAdvancedAtMs: advancedAtMs, windowMinutes, nowMs })) return false;
 
   const countKey = freshRebaseForceCountKey(repoFullName, pr.number);
   const storedCount = Number(await getTransientKey(env, countKey));

@@ -41,6 +41,10 @@ import {
   ScoreBreakdownResponseSchema,
   EvaluateEscalationRequestSchema,
   EvaluateEscalationResponseSchema,
+  ValidateLinkedIssueRequestSchema,
+  ValidateLinkedIssueResponseSchema,
+  CheckBeforeStartRequestSchema,
+  CheckBeforeStartResponseSchema,
   BuildResultsPayloadRequestSchema,
   BuildResultsPayloadResponseSchema,
   BuildProgressSnapshotRequestSchema,
@@ -207,6 +211,10 @@ export function buildOpenApiSpec() {
   registry.register("ScoreBreakdownResponse", ScoreBreakdownResponseSchema);
   registry.register("EvaluateEscalationRequest", EvaluateEscalationRequestSchema);
   registry.register("EvaluateEscalationResponse", EvaluateEscalationResponseSchema);
+  registry.register("ValidateLinkedIssueRequest", ValidateLinkedIssueRequestSchema);
+  registry.register("ValidateLinkedIssueResponse", ValidateLinkedIssueResponseSchema);
+  registry.register("CheckBeforeStartRequest", CheckBeforeStartRequestSchema);
+  registry.register("CheckBeforeStartResponse", CheckBeforeStartResponseSchema);
   registry.register("BuildResultsPayloadRequest", BuildResultsPayloadRequestSchema);
   registry.register("BuildResultsPayloadResponse", BuildResultsPayloadResponseSchema);
   registry.register("BuildProgressSnapshotRequest", BuildProgressSnapshotRequestSchema);
@@ -560,6 +568,46 @@ export function buildOpenApiSpec() {
         description: "Effective TunableOverride values (confidenceFloor / scopeCap.files / scopeCap.lines) with a shadowPending flag — never the raw override_audit history",
         content: { "application/json": { schema: GateConfigEffectiveResponseSchema } },
       },
+      401: { description: "Missing or invalid static protected API token" },
+      403: { description: "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/repos/{owner}/{repo}/validate-linked-issue",
+    summary: "Validate a linked issue for a planned change — REST mirror of loopover_validate_linked_issue (#9304)",
+    request: {
+      params: z.object({ owner: z.string(), repo: z.string() }),
+      body: {
+        content: { "application/json": { schema: ValidateLinkedIssueRequestSchema } },
+      },
+    },
+    responses: {
+      200: {
+        description: "Linked-issue validation over the planned change — mirrors the loopover_validate_linked_issue MCP tool's output shape",
+        content: { "application/json": { schema: ValidateLinkedIssueResponseSchema } },
+      },
+      400: { description: "Invalid validate-linked-issue request body" },
+      401: { description: "Missing or invalid static protected API token" },
+      403: { description: "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/repos/{owner}/{repo}/check-before-start",
+    summary: "Pre-work claim/duplicate check before starting an issue — REST mirror of loopover_check_before_start (#9304)",
+    request: {
+      params: z.object({ owner: z.string(), repo: z.string() }),
+      body: {
+        content: { "application/json": { schema: CheckBeforeStartRequestSchema } },
+      },
+    },
+    responses: {
+      200: {
+        description: "Claim status, duplicate-cluster risk, and a start recommendation — mirrors the loopover_check_before_start MCP tool's output shape",
+        content: { "application/json": { schema: CheckBeforeStartResponseSchema } },
+      },
+      400: { description: "Invalid check-before-start request body" },
       401: { description: "Missing or invalid static protected API token" },
       403: { description: "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo" },
     },

@@ -1926,6 +1926,60 @@ export const GateConfigEffectiveResponseSchema = z
   })
   .openapi("GateConfigEffectiveResponse");
 
+/**
+ * #554 gate false-positive precision report (GET /v1/repos/:owner/:repo/gate-precision). Mirrors the
+ * loopover_get_gate_precision MCP tool's gatePrecisionOutputSchema field-for-field. Structured sub-reports
+ * (perGateType rows, overall) stay permissive — loadGatePrecisionReport is the single source of truth for
+ * their shape — matching how the MCP tool leaves them as z.unknown().
+ */
+export const GatePrecisionResponseSchema = z
+  .object({
+    repoFullName: z.string().optional(),
+    generatedAt: z.string().optional(),
+    windowDays: z.number().nullable().optional(),
+    perGateType: z.array(z.unknown()).optional(),
+    overall: z.unknown().optional(),
+    signals: z.array(z.string()).optional(),
+  })
+  .openapi("GatePrecisionResponse");
+
+/**
+ * #543 slop-band + recommendation outcome calibration (GET /v1/repos/:owner/:repo/outcome-calibration).
+ * Mirrors the loopover_get_outcome_calibration MCP tool's maintainerMeasurementReportOutputSchema
+ * field-for-field; buildRepoOutcomeCalibration owns the slop/recommendations sub-report shapes.
+ */
+export const OutcomeCalibrationResponseSchema = z
+  .object({
+    repoFullName: z.string().optional(),
+    generatedAt: z.string().optional(),
+    windowDays: z.number().nullable().optional(),
+    slop: z.unknown().optional(),
+    recommendations: z.unknown().optional(),
+    signals: z.array(z.string()).optional(),
+    status: z.string().optional(),
+  })
+  .openapi("OutcomeCalibrationResponse");
+
+/**
+ * #701 maintainer activation preview over recent PRs (GET /v1/repos/:owner/:repo/activation-preview).
+ * Mirrors the loopover_get_activation_preview MCP tool's activationPreviewOutputSchema field-for-field;
+ * buildMaintainerActivationPreview owns the findingCodeCounts / samples row shapes.
+ */
+export const ActivationPreviewResponseSchema = z
+  .object({
+    repoFullName: z.string().optional(),
+    generatedAt: z.string().optional(),
+    currentReviewCheckMode: z.string().optional(),
+    aiReviewConfigured: z.boolean().optional(),
+    evaluatedCount: z.number().optional(),
+    withFindingsCount: z.number().optional(),
+    findingCodeCounts: z.array(z.unknown()).optional(),
+    samples: z.array(z.unknown()).optional(),
+    recommendedAction: z.string().nullable().optional(),
+    summary: z.string().optional(),
+  })
+  .openapi("ActivationPreviewResponse");
+
 export const BurdenForecastSchema = z
   .object({
     repoFullName: z.string(),

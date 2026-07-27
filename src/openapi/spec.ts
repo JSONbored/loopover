@@ -47,6 +47,9 @@ import {
   MaintainerLaneReportSchema,
   MaintainerNoiseReportSchema,
   AmsMinerCohortComparisonSchema,
+  GatePrecisionResponseSchema,
+  OutcomeCalibrationResponseSchema,
+  ActivationPreviewResponseSchema,
   McpCompatibilitySchema,
   PullRequestMaintainerPacketSchema,
   PullRequestReviewIntelligenceSchema,
@@ -172,6 +175,9 @@ export function buildOpenApiSpec() {
   registry.register("ContributorRewardRiskStrategy", ContributorRewardRiskStrategySchema);
   registry.register("MaintainerNoiseReport", MaintainerNoiseReportSchema);
   registry.register("AmsMinerCohortComparison", AmsMinerCohortComparisonSchema);
+  registry.register("GatePrecisionResponse", GatePrecisionResponseSchema);
+  registry.register("OutcomeCalibrationResponse", OutcomeCalibrationResponseSchema);
+  registry.register("ActivationPreviewResponse", ActivationPreviewResponseSchema);
   registry.register("PullRequestReviewability", PullRequestReviewabilitySchema);
 
   registry.registerPath({
@@ -478,6 +484,82 @@ export function buildOpenApiSpec() {
       },
       403: { description: "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo" },
       404: { description: "No live or shadow gate override is active for this repo" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/repos/{owner}/{repo}/maintainer-noise",
+    summary: "Maintainer queue-noise triage report for a repo (#2228)",
+    request: { params: z.object({ owner: z.string(), repo: z.string() }) },
+    responses: {
+      200: {
+        description: "Read-only queue-noise triage report — noise score/level, sources, recommended maintainer actions, and queue health (mirrors loopover_get_maintainer_noise)",
+        content: { "application/json": { schema: MaintainerNoiseReportSchema } },
+      },
+      401: { description: "Missing or invalid credential" },
+      403: { description: "Caller is not a maintainer of this repo" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/repos/{owner}/{repo}/ams-miner-cohort",
+    summary: "AMS-vs-human contributor-mix cohort comparison for a repo (#6488)",
+    request: { params: z.object({ owner: z.string(), repo: z.string() }) },
+    responses: {
+      200: {
+        description: "AMS-miner vs human cohort metrics over the comparison window; `present: false` (never a 404) when the AMS reputation bridge is off or the repo has no submitter activity (mirrors loopover_get_ams_miner_cohort)",
+        content: { "application/json": { schema: AmsMinerCohortComparisonSchema } },
+      },
+      401: { description: "Missing or invalid credential" },
+      403: { description: "Caller is not a maintainer of this repo" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/repos/{owner}/{repo}/gate-precision",
+    summary: "Per-gate-type false-positive precision report for a repo (#554)",
+    request: {
+      params: z.object({ owner: z.string(), repo: z.string() }),
+      query: z.object({ windowDays: z.coerce.number().int().positive().optional() }),
+    },
+    responses: {
+      200: {
+        description: "Read-only per-gate-type precision measurement — blocked / blocked-then-merged / overridden counts and false-positive rates with low-sample guards; never adjusts a gate (mirrors loopover_get_gate_precision)",
+        content: { "application/json": { schema: GatePrecisionResponseSchema } },
+      },
+      401: { description: "Missing or invalid credential" },
+      403: { description: "Caller is not a maintainer of this repo" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/repos/{owner}/{repo}/outcome-calibration",
+    summary: "Slop-band and recommendation outcome calibration for a repo (#543)",
+    request: {
+      params: z.object({ owner: z.string(), repo: z.string() }),
+      query: z.object({ windowDays: z.coerce.number().int().positive().optional() }),
+    },
+    responses: {
+      200: {
+        description: "Read-only measurement of whether higher slop bands merge less often and how agent recommendations are panning out over the optional window (mirrors loopover_get_outcome_calibration)",
+        content: { "application/json": { schema: OutcomeCalibrationResponseSchema } },
+      },
+      401: { description: "Missing or invalid credential" },
+      403: { description: "Caller is not a maintainer of this repo" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/repos/{owner}/{repo}/activation-preview",
+    summary: "Maintainer activation preview over recent PRs for a repo (#701)",
+    request: { params: z.object({ owner: z.string(), repo: z.string() }) },
+    responses: {
+      200: {
+        description: "Deterministic \"here's what LoopOver would have surfaced\" preview — evaluated/with-findings counts, distinct finding codes, per-PR samples, current review-check mode, and the single recommended next action (mirrors loopover_get_activation_preview)",
+        content: { "application/json": { schema: ActivationPreviewResponseSchema } },
+      },
+      401: { description: "Missing or invalid credential" },
+      403: { description: "Caller is not a maintainer of this repo" },
     },
   });
   registry.registerPath({

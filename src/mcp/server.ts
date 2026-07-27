@@ -967,7 +967,7 @@ const repoContextOutputSchema = {
   dataQuality: z.unknown().optional(),
 };
 
-const maintainerNoiseOutputSchema = {
+export const maintainerNoiseOutputSchema = {
   repoFullName: z.string().optional(),
   generatedAt: z.string().optional(),
   score: z.number().optional(),
@@ -978,7 +978,7 @@ const maintainerNoiseOutputSchema = {
   summary: z.string().optional(),
 };
 
-const amsMinerCohortOutputSchema = {
+export const amsMinerCohortOutputSchema = {
   present: z.boolean().optional(),
   windowDays: z.number().optional(),
   totalSubmitterCount: z.number().optional(),
@@ -996,7 +996,7 @@ const repoFocusManifestOutputSchema = {
 
 // (#7799) Repo-specific "here's what LoopOver would have surfaced" activation preview over recent PRs.
 // Mirrors buildMaintainerActivationPreview's shape; deterministic, maintainer-authenticated, advisory only.
-const activationPreviewOutputSchema = {
+export const activationPreviewOutputSchema = {
   repoFullName: z.string().optional(),
   generatedAt: z.string().optional(),
   currentReviewCheckMode: z.string().optional(),
@@ -1114,7 +1114,7 @@ const repoSettingsOutputSchema = {
   slopGateMode: z.string().optional(),
 };
 
-const maintainerMeasurementReportOutputSchema = {
+export const maintainerMeasurementReportOutputSchema = {
   repoFullName: z.string().optional(),
   generatedAt: z.string().optional(),
   windowDays: z.number().nullable().optional(),
@@ -1127,7 +1127,7 @@ const maintainerMeasurementReportOutputSchema = {
 // #2220 - gate-precision measurement surfaced over MCP. Mirrors the
 // maintainerMeasurementReportOutputSchema pattern: report fields optional, structured sub-reports as
 // z.unknown() (buildGatePrecisionReport is the single source of truth for their shape).
-const gatePrecisionOutputSchema = {
+export const gatePrecisionOutputSchema = {
   repoFullName: z.string().optional(),
   generatedAt: z.string().optional(),
   windowDays: z.number().nullable().optional(),

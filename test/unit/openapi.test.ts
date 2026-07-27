@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { buildOpenApiSpec } from "../../src/openapi/spec";
+import {
+  maintainerNoiseOutputSchema,
+  amsMinerCohortOutputSchema,
+  gatePrecisionOutputSchema,
+  maintainerMeasurementReportOutputSchema,
+  activationPreviewOutputSchema,
+} from "../../src/mcp/server";
 
 describe("OpenAPI contract", () => {
   it("exports the modern private-beta backend contract only", () => {
@@ -78,7 +85,6 @@ describe("OpenAPI contract", () => {
       "/v1/repos/{owner}/{repo}/burden-forecast",
       "/v1/repos/{owner}/{repo}/registry-drift",
       "/v1/repos/{owner}/{repo}/maintainer-lane",
-      "/v1/repos/{owner}/{repo}/maintainer-noise",
       "/v1/repos/{owner}/{repo}/pulls/{number}/review-intelligence",
       "/v1/repos/{owner}/{repo}/pulls/{number}/scoring-preview",
       "/v1/internal/jobs/generate-signal-snapshots/run",
@@ -133,6 +139,29 @@ describe("OpenAPI contract", () => {
     expect(spec.paths["/v1/auth/session"]?.get?.security).toBeUndefined();
     expect(spec.paths["/v1/auth/logout"]?.post?.security).toBeUndefined();
     expect(spec.paths["/v1/auth/github/token"]?.post?.security).toEqual([{ LoopOverBearer: [] }, { LoopOverSessionCookie: [] }]);
+  });
+
+  // #9302: the five repo maintainer-report routes (maintainer-noise, ams-miner-cohort, gate-precision,
+  // outcome-calibration, activation-preview) must be documented as GETs whose 200 response references a
+  // component schema whose keys match, field-for-field, their MCP tool's output shape — closing the drift
+  // for the whole "repo maintainer advisory report" route family (mirrors #6611's gate-config/effective fix).
+  it("documents the five maintainer-report routes with response schemas matching their MCP tool shapes", () => {
+    const spec = buildOpenApiSpec();
+    const cases: Array<{ path: string; component: string; shape: Record<string, unknown> }> = [
+      { path: "/v1/repos/{owner}/{repo}/maintainer-noise", component: "MaintainerNoiseReport", shape: maintainerNoiseOutputSchema },
+      { path: "/v1/repos/{owner}/{repo}/ams-miner-cohort", component: "AmsMinerCohortComparison", shape: amsMinerCohortOutputSchema },
+      { path: "/v1/repos/{owner}/{repo}/gate-precision", component: "GatePrecisionResponse", shape: gatePrecisionOutputSchema },
+      { path: "/v1/repos/{owner}/{repo}/outcome-calibration", component: "OutcomeCalibrationResponse", shape: maintainerMeasurementReportOutputSchema },
+      { path: "/v1/repos/{owner}/{repo}/activation-preview", component: "ActivationPreviewResponse", shape: activationPreviewOutputSchema },
+    ];
+    for (const { path, component, shape } of cases) {
+      const operation = (spec.paths[path] as { get?: { responses?: Record<string, { content?: Record<string, { schema?: { $ref?: string } }> }> } } | undefined)?.get;
+      expect(operation, `${path} GET operation should be documented`).toBeDefined();
+      const responseSchema = operation?.responses?.["200"]?.content?.["application/json"]?.schema;
+      expect(responseSchema?.$ref, `${path} 200 response should reference ${component}`).toBe(`#/components/schemas/${component}`);
+      const componentSchema = spec.components?.schemas?.[component] as { properties?: Record<string, unknown> } | undefined;
+      expect(Object.keys(componentSchema?.properties ?? {}).sort(), `${component} keys should match ${path}'s MCP tool output shape`).toEqual(Object.keys(shape).sort());
+    }
   });
 
   // #5810: every operation needs a title in the generated spec and the rendered API browser. Iterating the built

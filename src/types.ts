@@ -1609,7 +1609,17 @@ export type LinkedIssueLabelPropagationMapping = {
    *  issue) as sufficient for the reward label too, when a repo's operator has decided that's the intended
    *  workflow (e.g. a maintainer hand-labels an issue `gittensor:priority` specifically to attract ANY
    *  contributor to pick it up, per the label's own "reserved for outstanding work" framing -- the hand-picking
-   *  already happened at issue-labeling time, not gated on which contributor later closes it). */
+   *  already happened at issue-labeling time, not gated on which contributor later closes it).
+   *
+   *  #9077: this flag alone is NOT sufficient once relaxed -- a label unlocked via this path additionally
+   *  requires a PUBLISHED linked-issue-satisfaction verdict of "addressed" for the exact (repo, PR, issue)
+   *  triple (`review/linked-issue-label-propagation-fetch.ts`'s `resolveIssueLabelsForPropagation`), since
+   *  "a maintainer opened this issue" was previously the ENTIRE evidence bar: any open, maintainer-authored,
+   *  reward-labeled issue could be cited by a PR that never touched it. This makes the reward relaxation
+   *  depend on also setting `linkedIssueSatisfactionGateMode` to something other than `"off"` -- a repo
+   *  that opts into this flag without also enabling that gate mode will never see the reward label
+   *  propagate via this path (a fail-safe degrade: no verdict published is treated as no evidence, never
+   *  as a confirmed pass). */
   trustMaintainerAuthoredIssueForReward?: boolean | undefined;
 };
 

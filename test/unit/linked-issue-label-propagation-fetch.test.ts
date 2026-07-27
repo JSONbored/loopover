@@ -2,11 +2,25 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTestEnv } from "../helpers/d1";
 import * as appModule from "../../src/github/app";
 import { clearInstallationTokenCacheForTest } from "../../src/github/app";
+import { putCachedLinkedIssueSatisfaction } from "../../src/db/repositories";
 import {
   fetchLinkedIssueLabelsForPropagation,
   type LinkedIssuePropagationLabels,
 } from "../../src/review/linked-issue-label-propagation-fetch";
 import { generatePrivateKeyPem } from "../helpers/github-app-key";
+
+// #9077: a `trustMaintainerAuthoredIssueForReward` label additionally requires a PUBLISHED "addressed"
+// linked-issue-satisfaction verdict for the exact (repo, PR, issue) triple before it is kept -- see
+// `resolveIssueLabelsForPropagation`'s own comment on that check. This persists one directly (mirroring
+// exactly what `putCachedLinkedIssueSatisfaction` callers in `src/queue/processors.ts` write for a real
+// "ok" + "addressed" assessment), so a test can grant the gate without spinning up a real model call.
+async function publishAddressedSatisfactionVerdict(env: Env, repoFullName: string, pullNumber: number, issueNumber: number): Promise<void> {
+  await putCachedLinkedIssueSatisfaction(env, repoFullName, pullNumber, "test-head-sha", issueNumber, "test-fingerprint", {
+    status: "ok",
+    result: { status: "addressed", rationale: "test fixture: this PR addresses the linked issue.", confidence: 0.9 },
+    estimatedNeurons: 10,
+  });
+}
 
 // `getRepositoryCollaboratorPermission` mints its own installation token internally with no fallback to
 // the public token, so a maintainer-authored-issue test that reaches it (i.e. isn't already short-circuited
@@ -791,7 +805,7 @@ describe("fetchLinkedIssueLabelsForPropagation (#priority-linked-issue-gate)", (
     });
 
     describe("reward-label maintainer trust (#priority-reward-maintainer-trust)", () => {
-      it("REGRESSION (metagraphed PR #4554 / issue #3947 shape): a reward mapping with trustMaintainerAuthoredIssueForReward propagates alongside a routine trusted label from the SAME maintainer-authored issue, for a contributor who is neither its author nor assignee", async () => {
+      it("REGRESSION (metagraphed PR #4554 / issue #3947 shape): a reward mapping with trustMaintainerAuthoredIssueForReward propagates alongside a routine trusted label from the SAME maintainer-authored issue, for a contributor who is neither its author nor assignee, once a satisfaction verdict confirms the PR addresses it (#9077)", async () => {
         const mappings = [
           { issueLabel: "gittensor:bug", prLabel: "gittensor:bug", removeOtherTypeLabels: true, trustMaintainerAuthoredIssue: true },
           { issueLabel: "gittensor:priority", prLabel: "gittensor:priority", removeOtherTypeLabels: false, trustMaintainerAuthoredIssueForReward: true },
@@ -803,16 +817,72 @@ describe("fetchLinkedIssueLabelsForPropagation (#priority-linked-issue-gate)", (
           return new Response("not found", { status: 404 });
         });
         const env = createTestEnv({});
+        await publishAddressedSatisfactionVerdict(env, "owner/repo", 4554, 3947);
         const result = await fetchLinkedIssueLabelsForPropagation({
           env,
           repoFullName: "owner/repo",
           linkedIssues: [3947],
           installationId: 123,
+          prNumber: 4554,
           prAuthorLogin: "contrib",
           mappings,
         });
         expect(result.labels.sort()).toEqual(["gittensor:bug", "gittensor:priority"]);
         expect(result.inconclusive).toBe(false);
+      });
+
+      it("#9077 REGRESSION GUARD: the SAME reward mapping/maintainer-authored-issue shape as the PR #4554 test above no longer propagates the reward label when NO satisfaction verdict has been published yet -- citing an untouched maintainer-authored issue is not, by itself, sufficient evidence", async () => {
+        const mappings = [
+          { issueLabel: "gittensor:bug", prLabel: "gittensor:bug", removeOtherTypeLabels: true, trustMaintainerAuthoredIssue: true },
+          { issueLabel: "gittensor:priority", prLabel: "gittensor:priority", removeOtherTypeLabels: false, trustMaintainerAuthoredIssueForReward: true },
+        ];
+        stubFetch((url) => {
+          if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+          if (url.endsWith("/issues/3947"))
+            return Response.json({ number: 3947, state: "open", user: { login: "owner" }, assignees: [], labels: ["gittensor:bug", "gittensor:priority"] });
+          return new Response("not found", { status: 404 });
+        });
+        const env = createTestEnv({});
+        // No publishAddressedSatisfactionVerdict call this time -- no verdict published at all.
+        const result = await fetchLinkedIssueLabelsForPropagation({
+          env,
+          repoFullName: "owner/repo",
+          linkedIssues: [3947],
+          installationId: 123,
+          prNumber: 4554,
+          prAuthorLogin: "contrib",
+          mappings,
+        });
+        // The non-reward mapping (bug, trustMaintainerAuthoredIssue) is unaffected -- only the reward label
+        // is withheld.
+        expect(result.labels).toEqual(["gittensor:bug"]);
+        expect(result.inconclusive).toBe(false);
+      });
+
+      it("#9077: still withholds the reward label when a satisfaction verdict WAS published but reads 'unaddressed' or 'partial', not just when none exists at all", async () => {
+        const mappings = [{ issueLabel: "gittensor:priority", prLabel: "gittensor:priority", removeOtherTypeLabels: false, trustMaintainerAuthoredIssueForReward: true }];
+        stubFetch((url) => {
+          if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+          if (url.endsWith("/issues/3952"))
+            return Response.json({ number: 3952, state: "open", user: { login: "owner" }, assignees: [], labels: ["gittensor:priority"] });
+          return new Response("not found", { status: 404 });
+        });
+        const env = createTestEnv({});
+        await putCachedLinkedIssueSatisfaction(env, "owner/repo", 4555, "test-head-sha", 3952, "test-fingerprint", {
+          status: "ok",
+          result: { status: "partial", rationale: "test fixture: only partially addresses the issue.", confidence: 0.9 },
+          estimatedNeurons: 10,
+        });
+        const result = await fetchLinkedIssueLabelsForPropagation({
+          env,
+          repoFullName: "owner/repo",
+          linkedIssues: [3952],
+          installationId: 123,
+          prNumber: 4555,
+          prAuthorLogin: "contrib",
+          mappings,
+        });
+        expectPropagation(result, []);
       });
 
       it("does NOT propagate the reward label from a maintainer-authored issue when its mapping has not opted into trustMaintainerAuthoredIssueForReward (unchanged strict default)", async () => {
@@ -861,7 +931,29 @@ describe("fetchLinkedIssueLabelsForPropagation (#priority-linked-issue-gate)", (
         expectPropagation(result, []);
       });
 
-      it("still propagates the reward label via trustMaintainerAuthoredIssueForReward when the issue is authored by an ADMIN_GITHUB_LOGINS fleet-operator", async () => {
+      it("still propagates the reward label via trustMaintainerAuthoredIssueForReward when the issue is authored by an ADMIN_GITHUB_LOGINS fleet-operator, once a satisfaction verdict confirms the PR addresses it (#9077)", async () => {
+        const mappings = [{ issueLabel: "gittensor:priority", prLabel: "gittensor:priority", removeOtherTypeLabels: false, trustMaintainerAuthoredIssueForReward: true }];
+        stubFetch((url) => {
+          if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+          if (url.endsWith("/issues/3949"))
+            return Response.json({ number: 3949, state: "open", user: { login: "fleetop" }, assignees: [], labels: ["gittensor:priority"] });
+          return new Response("not found", { status: 404 });
+        });
+        const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "fleetop" });
+        await publishAddressedSatisfactionVerdict(env, "owner/repo", 4949, 3949);
+        const result = await fetchLinkedIssueLabelsForPropagation({
+          env,
+          repoFullName: "owner/repo",
+          linkedIssues: [3949],
+          installationId: 123,
+          prNumber: 4949,
+          prAuthorLogin: "contrib",
+          mappings,
+        });
+        expectPropagation(result, ["gittensor:priority"]);
+      });
+
+      it("#9077: withholds the reward label from an ADMIN_GITHUB_LOGINS fleet-operator's own issue too when no satisfaction verdict has been published (the maintainer-trust relaxation alone is not enough)", async () => {
         const mappings = [{ issueLabel: "gittensor:priority", prLabel: "gittensor:priority", removeOtherTypeLabels: false, trustMaintainerAuthoredIssueForReward: true }];
         stubFetch((url) => {
           if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
@@ -875,10 +967,11 @@ describe("fetchLinkedIssueLabelsForPropagation (#priority-linked-issue-gate)", (
           repoFullName: "owner/repo",
           linkedIssues: [3949],
           installationId: 123,
+          prNumber: 4949,
           prAuthorLogin: "contrib",
           mappings,
         });
-        expectPropagation(result, ["gittensor:priority"]);
+        expectPropagation(result, []);
       });
 
       it("does not propagate the reward label when the issue author is only a read-access collaborator (fails closed, same as trustMaintainerAuthoredIssue)", async () => {

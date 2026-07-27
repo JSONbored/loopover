@@ -153,6 +153,7 @@ import {
   foregroundLaneForJob,
   nextForegroundLane,
   pickBacklogRepo,
+  shouldEscapeLanePriorityGate,
   type BacklogRepoCount,
   type ForegroundLane,
 } from "./queue-fairness";
@@ -206,6 +207,11 @@ CREATE INDEX IF NOT EXISTS ${TABLE}_claim ON ${TABLE}(status, priority, claim_so
 CREATE INDEX IF NOT EXISTS ${TABLE}_pending_job_key ON ${TABLE}(job_key, status);
 CREATE INDEX IF NOT EXISTS ${TABLE}_lane_claim ON ${TABLE}(status, foreground_lane, run_after);
 CREATE INDEX IF NOT EXISTS ${TABLE}_dead ON ${TABLE}(status, dead_at, id);
+-- #9155: maintenancePressureSignals' maintenance-lane COUNT/MIN scan (WHERE is_maintenance=1 AND status IN
+-- (...)) had no supporting index -- every other aggregate in that function reuses the claim index's leading
+-- status column, but this one filters on is_maintenance first with no index at all. Partial (is_maintenance=1
+-- only) since the maintenance lane is a small minority of rows and non-maintenance jobs never need it.
+CREATE INDEX IF NOT EXISTS ${TABLE}_maintenance_status ON ${TABLE}(is_maintenance, status) WHERE is_maintenance=1;
 CREATE TABLE IF NOT EXISTS ${STATS_TABLE} (
   name TEXT PRIMARY KEY,
   value BIGINT NOT NULL DEFAULT 0
@@ -479,15 +485,18 @@ export function createPgQueue(
    *  count, see maintenance-admission.ts). The runnable-now split is the #selfhost-queue-liveness diagnostic:
    *  distinguishes "queue large but intentionally deferred" from "queue stuck, nothing runnable" without
    *  manual SQL. Host load is an independent, optional signal. */
-  async function maintenancePressureSignals(now: number): Promise<MaintenancePressureSignals> {
-    // runnable_cnt/oldest_runnable count a row as genuinely active RIGHT NOW when it's either already
-    // 'processing' (real, in-flight resource use) or 'pending' AND due (run_after<=now) -- NOT merely present
-    // in the outer pending/processing set, which also includes work deliberately deferred to the future (see
-    // maintenance-admission.ts's MaintenancePressureSignals doc comments).
+  async function computeMaintenancePressureSignals(now: number): Promise<MaintenancePressureSignals> {
+    // runnable_cnt counts a row as genuinely active RIGHT NOW when it's either already 'processing' (real,
+    // in-flight resource use) or 'pending' AND due (run_after<=now) -- NOT merely present in the outer
+    // pending/processing set, which also includes work deliberately deferred to the future. oldest_runnable is
+    // narrower still (#9155): it excludes 'processing' rows entirely, so a normal in-flight job (routinely
+    // minutes long) never by itself ages past maxLiveJobAgeMs and trips live_job_age_high -- only a due row
+    // that's still WAITING to be claimed counts toward that signal (see maintenance-admission.ts's
+    // MaintenancePressureSignals doc comments).
     const liveRes = await pool.query(
       `SELECT COUNT(*) AS cnt, MIN(created_at) AS oldest,
               COUNT(*) FILTER (WHERE status='processing' OR run_after<=$2) AS runnable_cnt,
-              MIN(created_at) FILTER (WHERE status='processing' OR run_after<=$2) AS oldest_runnable
+              MIN(created_at) FILTER (WHERE status='pending' AND run_after<=$2) AS oldest_runnable
          FROM ${TABLE} WHERE status IN ('pending','processing') AND priority>=$1`,
       [FOREGROUND_QUEUE_PRIORITY_FLOOR, now],
     );
@@ -520,6 +529,34 @@ export function createPgQueue(
       freshIntakePendingCount: Number(freshIntake.cnt),
       hostLoadAvg1PerCore: hostLoadAvg1PerCore(),
     };
+  }
+
+  // #9155: memoization state for maintenancePressureSignals below -- see maintenanceAdmissionConfig's
+  // pressureSignalsCacheTtlMs doc comment for the feedback-loop this closes. `pendingPressureSignals` dedupes
+  // overlapping in-flight computations across this instance's concurrent pump() loops (up to `concurrency`
+  // of them), not just successive calls from the SAME loop.
+  let cachedPressureSignals: { value: MaintenancePressureSignals; computedAtMs: number } | null = null;
+  let pendingPressureSignals: Promise<MaintenancePressureSignals> | null = null;
+
+  /** Cached wrapper around computeMaintenancePressureSignals -- the actual four-aggregate-query read. Every
+   *  caller (maintenance-admission gating in processOne, and the binding.pressureSignals() observability
+   *  method) goes through this, so both benefit from -- and share -- the same short-TTL cache. */
+  async function maintenancePressureSignals(now: number): Promise<MaintenancePressureSignals> {
+    if (
+      cachedPressureSignals &&
+      now - cachedPressureSignals.computedAtMs < maintenanceAdmissionConfig.pressureSignalsCacheTtlMs
+    ) {
+      return cachedPressureSignals.value;
+    }
+    if (pendingPressureSignals) return pendingPressureSignals;
+    pendingPressureSignals = computeMaintenancePressureSignals(now);
+    try {
+      const value = await pendingPressureSignals;
+      cachedPressureSignals = { value, computedAtMs: now };
+      return value;
+    } finally {
+      pendingPressureSignals = null;
+    }
   }
 
   /** Top-N repos by backlog-convergence pending DEPTH, for the observability dashboard's per-repo backlog panel
@@ -1124,12 +1161,15 @@ export function createPgQueue(
    *  this cycle," never "no foreground work at all." One slot per fairness window is deliberately left unscoped,
    *  and lane-scoped claims must beat the best unclassified foreground priority, so manual/repair work the
    *  classifier intentionally leaves as lane `null` keeps its plain priority ordering instead of sitting behind a
-   *  perpetually non-empty classified lane. The fairness singleton's claim_sequence always advances (best-effort,
-   *  hit or miss) so the ratio cycle keeps progressing even through empty cycles. Sequence
-   *  allocation is a single atomic UPDATE ... RETURNING (not a separate SELECT-then-UPDATE): this backend is
-   *  the multi-instance one (multiple app instances can share one Postgres, see the file header), so two
-   *  concurrent callers reading the same pre-increment value would both compute the SAME lane and defeat the
-   *  bounded-ratio guarantee -- the row's own lock serializes concurrent allocations instead. */
+   *  perpetually non-empty classified lane -- UNLESS that gate has starved the lane past
+   *  shouldEscapeLanePriorityGate's bounded age (#9153: an unclassified priority-10 webhook is essentially always
+   *  due on a repo with CI, which would otherwise make the `>` gate permanently unsatisfiable and this whole
+   *  mechanism inert; see queue-fairness.ts's module comment on that constant). The fairness singleton's
+   *  claim_sequence always advances (best-effort, hit or miss) so the ratio cycle keeps progressing even through
+   *  empty cycles. Sequence allocation is a single atomic UPDATE ... RETURNING (not a separate SELECT-then-
+   *  UPDATE): this backend is the multi-instance one (multiple app instances can share one Postgres, see the file
+   *  header), so two concurrent callers reading the same pre-increment value would both compute the SAME lane
+   *  and defeat the bounded-ratio guarantee -- the row's own lock serializes concurrent allocations instead. */
   async function claimNextForegroundLane(now: number): Promise<JobRow | null> {
     const fairnessRes = await pool.query(
       `UPDATE ${FAIRNESS_TABLE} SET claim_sequence=claim_sequence+1 WHERE id='singleton' RETURNING claim_sequence, last_backlog_repo`,
@@ -1140,10 +1180,12 @@ export function createPgQueue(
     const lane: ForegroundLane = nextForegroundLane(sequence);
     if (sequence % (fairnessWindow + 1) === fairnessWindow) return null;
     const unclassifiedPriority = await maxDueUnclassifiedForegroundPriority(now);
-    const lanePriorityPredicate =
-      unclassifiedPriority === null ? "candidate.priority >= $2" : "candidate.priority > $2";
-    const lanePriorityFloor = unclassifiedPriority ?? FOREGROUND_QUEUE_PRIORITY_FLOOR;
     if (lane === "fresh") {
+      const oldestDueLaneAgeMs = await oldestDueForegroundLaneAgeMs(now, "fresh");
+      const { predicate: lanePriorityPredicate, floor: lanePriorityFloor } = lanePriorityGate(
+        unclassifiedPriority,
+        oldestDueLaneAgeMs,
+      );
       const freshRow = await claimNextWhere(now, lanePriorityPredicate, { sql: "candidate.foreground_lane='fresh'", params: [] }, lanePriorityFloor);
       if (freshRow) incr("loopover_jobs_claimed_by_lane_total", { lane: "fresh" });
       return freshRow;
@@ -1152,8 +1194,17 @@ export function createPgQueue(
       `SELECT job_key, created_at FROM ${TABLE} WHERE status='pending' AND run_after<=$1 AND foreground_lane='backlog'`,
       [now],
     );
+    const backlogRows = backlogRes.rows as Array<{ job_key: string | null; created_at: number | string }>;
+    // Oldest due backlog row's age, computed straight from the rows just fetched above -- no extra query needed
+    // (unlike the fresh lane, which has no equivalent pre-fetched row set to reuse).
+    const oldestDueLaneAgeMs =
+      backlogRows.length === 0 ? null : Math.max(...backlogRows.map((row) => now - Number(row.created_at)));
+    const { predicate: lanePriorityPredicate, floor: lanePriorityFloor } = lanePriorityGate(
+      unclassifiedPriority,
+      oldestDueLaneAgeMs,
+    );
     const candidates = backlogRepoCandidatesFromJobKeys(
-      (backlogRes.rows as Array<{ job_key: string | null; created_at: number | string }>).map((row) => ({
+      backlogRows.map((row) => ({
         jobKey: row.job_key,
         createdAtMs: Number(row.created_at),
       })),
@@ -1172,6 +1223,20 @@ export function createPgQueue(
     return row;
   }
 
+  /** The lane-scoped claim's priority predicate + floor for this cycle: strictly beat `unclassifiedPriority`
+   *  (when there is a due unclassified row) unless the age escape (#9153) fires, in which case fall back to the
+   *  same `>=` floor the unscoped claim itself uses -- letting the lane's own priority ordering (still scoped to
+   *  this lane via claimNextWhere's `extra` predicate) decide instead of being blocked outright. */
+  function lanePriorityGate(
+    unclassifiedPriority: number | null,
+    oldestDueLaneAgeMs: number | null,
+  ): { predicate: string; floor: number } {
+    if (unclassifiedPriority === null || shouldEscapeLanePriorityGate(oldestDueLaneAgeMs)) {
+      return { predicate: "candidate.priority >= $2", floor: FOREGROUND_QUEUE_PRIORITY_FLOOR };
+    }
+    return { predicate: "candidate.priority > $2", floor: unclassifiedPriority };
+  }
+
   async function maxDueUnclassifiedForegroundPriority(now: number): Promise<number | null> {
     const res = await pool.query(
       `SELECT MAX(priority) AS priority FROM ${TABLE} WHERE status='pending' AND run_after<=$1 AND priority>=$2 AND foreground_lane IS NULL`,
@@ -1179,6 +1244,18 @@ export function createPgQueue(
     );
     const row = res.rows[0] as { priority: number | string | null } | undefined;
     return row?.priority === null || row?.priority === undefined ? null : Number(row.priority);
+  }
+
+  /** Age (ms) of the oldest DUE row currently in the given classified lane -- null when the lane has no due
+   *  candidate at all right now. Only needed for the fresh lane; the backlog lane derives this directly from
+   *  the row set claimNextForegroundLane already fetches for repo selection, without a separate query. */
+  async function oldestDueForegroundLaneAgeMs(now: number, lane: "fresh" | "backlog"): Promise<number | null> {
+    const res = await pool.query(
+      `SELECT MIN(created_at) AS oldest FROM ${TABLE} WHERE status='pending' AND run_after<=$1 AND foreground_lane=$2`,
+      [now, lane],
+    );
+    const row = res.rows[0] as { oldest: number | string | null } | undefined;
+    return row?.oldest != null ? now - Number(row.oldest) : null;
   }
 
   async function claimNextWhere(

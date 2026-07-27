@@ -46,6 +46,34 @@ export function foregroundLaneForJob(type: string, payload: string): ForegroundL
   }
 }
 
+// #9153: claimNextForegroundLane requires the lane-scoped claim to beat the best DUE unclassified foreground
+// priority (`candidate.priority > maxDueUnclassifiedForegroundPriority()`), so that manual/repair work the
+// classifier deliberately leaves lane `null` doesn't get shut out by a perpetually non-empty classified lane
+// (see the module header above). But `githubWebhookPriority` returns 10 -- equal to fresh's own priority, and
+// ABOVE backlog's 9 -- for every webhook OTHER than a fresh pull_request open/reopen/synchronize/ready-for-
+// review event (check_suite.completed, check_run.completed, issue_comment, review events, ...), so on any repo
+// with CI at least one such row is essentially always due. Neither lane's priority can then ever satisfy a
+// strict `>` against 10, and BOTH lane claims permanently fall back to the plain unscoped claim -- exactly the
+// starvation this fairness mechanism exists to prevent. This bounded age escape mirrors maintenance-admission's
+// trickle_max_defer_age: once the OLDEST due row in the lane being claimed THIS cycle has waited at least
+// `maxStarveAgeMs`, the unclassified-priority gate is bypassed (the caller falls back to the same `>=` floor
+// the unscoped claim itself uses, scoped to the lane), so an old lane row can win on its own merits instead of
+// being blocked forever by an unrelated row's priority.
+export const DEFAULT_FOREGROUND_LANE_MAX_STARVE_AGE_MS = 10 * 60_000; // 10 minutes
+
+/**
+ * Whether the lane-priority gate (`candidate.priority > maxDueUnclassifiedForegroundPriority()`) should be
+ * bypassed this claim, given the age of the OLDEST due row in the lane currently being claimed.
+ * `oldestDueLaneAgeMs` is `null` when that lane currently has no due candidate at all (nothing to escape for --
+ * the lane-scoped claim will find no rows regardless of predicate). Pure.
+ */
+export function shouldEscapeLanePriorityGate(
+  oldestDueLaneAgeMs: number | null,
+  maxStarveAgeMs: number = DEFAULT_FOREGROUND_LANE_MAX_STARVE_AGE_MS,
+): boolean {
+  return oldestDueLaneAgeMs !== null && oldestDueLaneAgeMs >= maxStarveAgeMs;
+}
+
 export type ForegroundLaneRatio = { backlogPer: number; freshPer: number };
 
 // 3 backlog claims for every 1 fresh claim (suggested by the operator report, not a fixed law): heavily favors

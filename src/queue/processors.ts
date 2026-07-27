@@ -258,7 +258,7 @@ import {
   isRegateSweepDraining,
   selectRegateCandidates,
 } from "../settings/agent-sweep";
-import { selectBacklogConvergenceCandidates } from "../selfhost/backlog-convergence";
+import { BACKLOG_CONVERGENCE_SWEEP_MAX_PRS, sortedBacklogConvergenceCandidates } from "../selfhost/backlog-convergence";
 import {
   LOW_REST_RATE_LIMIT_REMAINING,
   MAINTENANCE_RESERVED_HEADROOM,
@@ -1854,16 +1854,53 @@ export async function sweepRepoBacklogConvergence(
   const sweepInstallationId = repo?.installationId ?? null;
   if (sweepInstallationId == null) return;
   const openPullRequests = await listOpenPullRequests(env, repoFullName);
-  const allCandidates = selectBacklogConvergenceCandidates({ pulls: openPullRequests });
+  // #9154: the exhaustion filter must run BEFORE the `max` cap, not after -- capping first (the previous
+  // shape: selectBacklogConvergenceCandidates already sliced to 5, THEN filtered) let five permanently
+  // repair-exhausted old PRs occupy every slot forever, shadowing every other PR needing convergence behind
+  // them. Walk the FULL oldest-open-first order and skip exhausted candidates as we go, stopping as soon as
+  // `max` actionable ones are found -- bounded to however far into the backlog we actually need to look, not
+  // the whole list, in the common case where most of the head is actionable.
+  //
   // #orb-retry-storm (backlog-convergence half): needsSurfaceConvergence re-fires on the exact same
   // lastPublishedSurfaceSha-mismatch signal as the main sweep's outage-repair priority path, but this sweeper
   // had no memory of prior attempts at all -- a PR whose gate-check finalize kept failing silently got a fresh
   // full re-review dispatched every ~30 minutes indefinitely. Share the same per-SHA attempt budget as the main
   // sweep (isRegateRepairExhausted) rather than adding an independent cap, since both sweeps competing for the
   // same stuck PR would otherwise double the wasted spend the cap exists to prevent.
-  const exhaustedFlags = await Promise.all(allCandidates.map((pr) => isRegateRepairExhausted(env, repoFullName, pr)));
-  const candidates = allCandidates.filter((_pr, index) => !exhaustedFlags[index]);
-  if (candidates.length === 0) return;
+  const orderedCandidates = sortedBacklogConvergenceCandidates(openPullRequests);
+  const candidates: PullRequestRecord[] = [];
+  let examinedCount = 0;
+  for (const pr of orderedCandidates) {
+    if (candidates.length >= BACKLOG_CONVERGENCE_SWEEP_MAX_PRS) break;
+    examinedCount += 1;
+    if (await isRegateRepairExhausted(env, repoFullName, pr)) continue;
+    candidates.push(pr);
+  }
+  if (candidates.length === 0) {
+    // Every candidate examined was repair-exhausted -- the sweep is returning early with nothing to show for
+    // it. Previously silent (the caller just saw an empty array and bailed); log + audit so a permanently
+    // wedged head of the backlog is visible instead of masquerading as "nothing needs convergence".
+    if (orderedCandidates.length > 0) {
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          event: "backlog_convergence_sweep_all_exhausted",
+          repository: repoFullName,
+          examined: examinedCount,
+          totalCandidates: orderedCandidates.length,
+        }),
+      );
+      await recordAuditEvent(env, {
+        eventType: "agent.sweep.backlog_convergence",
+        actor: "loopover",
+        targetKey: repoFullName,
+        outcome: "denied",
+        detail: `backlog-convergence sweep found ${orderedCandidates.length} open PR(s) needing convergence, all repair-exhausted`,
+        metadata: { repoFullName, examined: examinedCount, totalCandidates: orderedCandidates.length },
+      });
+    }
+    return;
+  }
   // Stamp the backlog-convergence draining marker for EVERY candidate NOW, at dispatch — not in the downstream
   // per-PR job (#4502, mirrors #audit-sweep-dispatch-stamp). This makes getLatestBacklogConvergenceRegatedAt
   // reflect this sweep immediately, so fanOutBacklogConvergenceSweepJobs's in-flight guard skips re-arming this

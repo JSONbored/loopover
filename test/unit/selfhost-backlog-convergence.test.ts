@@ -3,6 +3,7 @@ import {
   BACKLOG_CONVERGENCE_SWEEP_MAX_PRS,
   needsSurfaceConvergence,
   selectBacklogConvergenceCandidates,
+  sortedBacklogConvergenceCandidates,
 } from "../../src/selfhost/backlog-convergence";
 import type { PullRequestRecord } from "../../src/types";
 
@@ -118,5 +119,40 @@ describe("selectBacklogConvergenceCandidates (#selfhost-backlog-convergence)", (
   it("returns an empty array when nothing needs convergence", () => {
     const pulls = [pr({ number: 1, headSha: "a", lastPublishedSurfaceSha: "a" })];
     expect(selectBacklogConvergenceCandidates({ pulls })).toEqual([]);
+  });
+});
+
+// #9154: selectBacklogConvergenceCandidates caps to `max` BEFORE any repair-exhaustion filter can run (it has
+// no notion of exhaustion at all). sortedBacklogConvergenceCandidates is the unsliced order a caller that ALSO
+// needs to skip exhausted candidates must walk instead, so the cap is applied only to ACTIONABLE candidates.
+describe("sortedBacklogConvergenceCandidates (#9154)", () => {
+  it("returns every eligible PR in the same oldest-open-first order, without capping", () => {
+    const total = BACKLOG_CONVERGENCE_SWEEP_MAX_PRS + 3;
+    // PR number i+1 was created minutesAgo(i) — larger i is further in the past, i.e. OLDER. So oldest-first
+    // order is numbers descending: [total, total-1, ..., 1].
+    const pulls = Array.from({ length: total }, (_, i) =>
+      pr({ number: i + 1, headSha: "a", lastPublishedSurfaceSha: null, createdAt: minutesAgo(i) }),
+    );
+    const sorted = sortedBacklogConvergenceCandidates(pulls);
+    expect(sorted).toHaveLength(total);
+    expect(sorted.map((p) => p.number)).toEqual(Array.from({ length: total }, (_, i) => total - i));
+  });
+
+  it("applies the same drop rules as selectBacklogConvergenceCandidates (closed/draft/already-published)", () => {
+    const pulls = [
+      pr({ number: 1, state: "closed", headSha: "a", lastPublishedSurfaceSha: null }),
+      pr({ number: 2, isDraft: true, headSha: "a", lastPublishedSurfaceSha: null }),
+      pr({ number: 3, headSha: "a", lastPublishedSurfaceSha: "a" }),
+      pr({ number: 4, headSha: "a", lastPublishedSurfaceSha: null }),
+    ];
+    expect(sortedBacklogConvergenceCandidates(pulls).map((p) => p.number)).toEqual([4]);
+  });
+
+  it("selectBacklogConvergenceCandidates({max}) is exactly sortedBacklogConvergenceCandidates sliced to max", () => {
+    const pulls = Array.from({ length: 8 }, (_, i) =>
+      pr({ number: i + 1, headSha: "a", lastPublishedSurfaceSha: null, createdAt: minutesAgo(i) }),
+    );
+    const sorted = sortedBacklogConvergenceCandidates(pulls);
+    expect(selectBacklogConvergenceCandidates({ pulls, max: 3 })).toEqual(sorted.slice(0, 3));
   });
 });

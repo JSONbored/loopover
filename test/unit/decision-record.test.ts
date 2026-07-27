@@ -52,6 +52,7 @@ function recordInput(over: Partial<DecisionRecord> = {}): Omit<DecisionRecord, "
     repoFullName: "o/r",
     pullNumber: 7,
     salvageability: null,
+    aiAgreement: null,
     headSha: "abc1234def",
     baseSha: "base999",
     action: "close",

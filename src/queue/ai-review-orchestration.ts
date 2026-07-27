@@ -23,6 +23,7 @@ import { buildPullRequestAdvisory } from "../rules/advisory";
 import { recordAuditEvent, getDecryptedRepositoryAiKey, getRepository, listCheckSummaries, listPullRequestFiles } from "../db/repositories";
 import { registerHeldLock, unregisterHeldLock } from "./held-lock-registry";
 import { recordRoutingShadow } from "../services/reviewer-routing";
+import { scoreJudgmentAgreement } from "../review/judgment-agreement";
 import { createInstallationToken } from "../github/app";
 import type { AgentActionMode } from "../settings/agent-execution";
 import { buildAiReviewDiff } from "../review/review-diff";
@@ -889,6 +890,10 @@ export async function runAiReviewForAdvisory(
     // the REAL reviewer identities and the REAL system prompt into DecisionRecord instead of hardcoding null.
     const aiJudgmentModelIds = parsedReviewModelIds(result.reviewDiagnostics ?? []);
     const aiJudgmentPromptDigest = result.systemPromptDigest;
+    // #8834: inter-run agreement over the stances this review ALREADY produced (#8229's reviewerVotes) —
+    // zero additional AI spend. Computed once and attached to whichever AI-judgment finding is built below,
+    // so the decision record carries a per-decision confidence signal for the calibration set (#8835).
+    const aiJudgmentAgreement = (verbalizedConfidence: number) => scoreJudgmentAgreement(result.reviewerVotes, verbalizedConfidence);
     if (result.consensusDefect) {
       findings.push({
         code: "ai_consensus_defect",
@@ -913,6 +918,7 @@ export async function runAiReviewForAdvisory(
         confidence: result.consensusDefect.confidence,
         modelIds: aiJudgmentModelIds,
         promptDigest: aiJudgmentPromptDigest,
+        agreement: aiJudgmentAgreement(result.consensusDefect.confidence),
       });
     } else if (result.split) {
       // The reviewers DISAGREED — exactly one flagged a blocking defect. reviewbot's quorum treats any reviewer
@@ -940,6 +946,10 @@ export async function runAiReviewForAdvisory(
           : {}),
         modelIds: aiJudgmentModelIds,
         promptDigest: aiJudgmentPromptDigest,
+        // A split IS the disagreement case: the stances differ, so agreement scores strictly below unanimity
+        // and the recorded confidence falls with it. #8834's "disagreement routes to hold" is already this
+        // finding's existing behavior via the confidence floor; this measures it rather than re-routing it.
+        agreement: aiJudgmentAgreement(result.splitConfidence ?? 1),
       });
     } else if (result.inconclusive) {
       // Fail-CLOSED (#ai-fail-closed): block-mode AI could not return a usable verdict. Hold the PR for a human

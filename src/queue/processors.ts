@@ -3763,6 +3763,10 @@ async function runAgentMaintenancePlanAndExecute(
       modelIds: aiJudgment?.modelIds ?? null,
       promptDigest: aiJudgment?.promptDigest ?? null,
       aiConfidence: aiJudgment?.confidence ?? null,
+      // #8834: the inter-run agreement signal computed at review time (ai-review-orchestration.ts) and
+      // carried on the finding, so the record captures HOW REPRODUCIBLY the judgment was reached, not just
+      // what the model claimed. null for a rule-only decision, exactly like the fields above.
+      aiAgreement: aiJudgment?.agreement ?? null,
       salvageability,
       // #9135: legible on the record's own face — see maybeApplyCloseAuditHoldout's doc comment.
       divertedByHoldout: closeAuditHoldout?.diverted ?? false,

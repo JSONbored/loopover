@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { normalizeLcovSfPaths } from "../../scripts/engine-coverage.js";
+import { normalizeLcovSfPaths } from "../../scripts/engine-coverage";
 
 describe("engine-coverage script", () => {
   describe("normalizeLcovSfPaths", () => {

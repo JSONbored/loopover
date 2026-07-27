@@ -1,0 +1,36 @@
+[http_server]
+sockets = ["0.0.0.0:8080"]
+# Dev mode only -- no TLS termination. A real deployment (#8536) needs a certificate solution
+# (e.g. cert-manager) in front of this.
+insecure_http = true
+
+[attestation_token]
+insecure_header_jwk = true
+
+[attestation_service]
+type = "coco_as_builtin"
+
+[attestation_service.attestation_token_broker]
+duration_min = 5
+
+[attestation_service.rvps_config]
+type = "BuiltIn"
+
+[admin]
+authorization_mode = "AuthenticatedAuthorization"
+
+[admin.authentication.bearer_jwt]
+identity_providers = [{ public_key_uri = "/kbs/kbs.pem" }]
+
+[admin.authorization.regex_acl]
+acls = [{ role = "admin", allowed_endpoints = "^/kbs/.+$" }]
+
+[[plugins]]
+name = "resource"
+storage_backend_type = "kvstorage"
+
+[storage_backend]
+storage_type = "LocalFs"
+
+[storage_backend.backends.local_fs]
+dir_path = "/opt/confidential-containers/kbs"

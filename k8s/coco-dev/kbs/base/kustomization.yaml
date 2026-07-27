@@ -1,0 +1,29 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: coco-tenant
+
+# Digest-pinned, not tag-pinned (upstream's own base/kustomization.yaml uses `newTag:`) -- a tag can be
+# repointed by the upstream project, a digest cannot. Keep this in sync with ../../versions.json's
+# `trusteeKbs.digest`; scripts/check-coco-dev-versions.ts fails CI if the two ever drift apart.
+images:
+- name: kbs-container-image
+  newName: ghcr.io/confidential-containers/key-broker-service
+  digest: sha256:16926d905621e94dadadb95fd0794dddae8ee30bdf71c71940c6c8fe25087119
+
+resources:
+- namespace.yaml
+- deployment.yaml
+- service.yaml
+
+# KBS configuration.
+configMapGenerator:
+- files:
+  - kbs-config.toml
+  name: kbs-config
+
+# KBS auth public key. Generated locally by scripts/generate-kbs-keys.sh, never committed -- see
+# ../../.gitignore. Kustomize needs the file to exist at apply time, not at checkout time.
+secretGenerator:
+- files:
+  - kbs.pem
+  name: kbs-auth-public-key

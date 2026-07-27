@@ -1,0 +1,7 @@
+# Generated locally by scripts/generate-kbs-keys.sh, exactly matching upstream Trustee's own
+# kbs/config/kubernetes/.gitignore -- an ed25519 admin keypair and a dev workload secret, never real
+# production key material, but still never committed: kustomize's secretGenerator needs the files to
+# exist on disk at apply time, not at checkout time.
+kbs/base/kbs.pem
+kbs/base/kbs.key
+kbs/overlays/dev/key.bin

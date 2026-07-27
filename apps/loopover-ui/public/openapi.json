@@ -19336,6 +19336,40 @@
           }
         ]
       }
+    },
+    "/v1/public/decision-ledger/row/{seq}": {
+      "get": {
+        "summary": "Fetch one decision-ledger row by seq, so an external anchor can be bound back to the live chain",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "seq",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The chain row: seq, recordId, recordDigest, prevHash, rowHash, createdAt. Recompute sha256(prevHash || canonicalJson({seq, recordId, recordDigest, createdAt})) and compare against an anchored rowHash."
+          },
+          "400": {
+            "description": "seq is not a positive integer"
+          },
+          "404": {
+            "description": "No ledger row at that seq (never appended -- distinct from a row with empty fields)"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
     }
   },
   "servers": [

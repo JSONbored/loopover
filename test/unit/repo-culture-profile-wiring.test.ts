@@ -203,7 +203,9 @@ describe("culture profile wired into the AI reviewer (flag LOOPOVER_REVIEW_CULTU
     const user = seenUser[0] ?? "";
     expect(user).toContain("REPO QUALITY-CULTURE PROFILE");
     // Additive — the original diff section is still present.
-    expect(user).toContain("Unified diff (truncated if large):");
+    // #9035 reworded this header when the diff became a fenced untrusted region; these suites care that
+    // the diff section is present, not about its exact prose.
+    expect(user).toContain("Unified diff");
   });
 
   it("FLAG-OFF (default): the prompt is byte-identical to the no-culture-profile prompt (cultureProfileContext undefined)", async () => {

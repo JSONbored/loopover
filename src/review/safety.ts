@@ -6,7 +6,7 @@
 // convention (`/^(1|true|yes|on)$/i`, same as isRagEnabled / isEnabled).
 
 import type { AdvisoryFinding } from "../types";
-import { neutralizePromptInjection, safeReviewTitle } from "./prompt-injection";
+import { hasPromptInjection, neutralizePromptInjection, safeReviewTitle } from "./prompt-injection";
 import { ADVISORY_ONLY_SECRET_KINDS, HARD_SECRET_KINDS } from "./secret-patterns";
 import { scanDiffForSecretsWithLocations, type SecretScanLocationMatch } from "./secrets-scan";
 
@@ -72,6 +72,25 @@ export function defangReviewInput(input: SafetyReviewInput): {
       ? input.impactMapContext
       : neutralizePromptInjection(input.impactMapContext).text;
   return { title, body, diff, changedFiles, impactMapContext };
+}
+
+/**
+ * #9035 — whether any UNTRUSTED review input carries a reviewer-manipulation attempt.
+ *
+ * Defang has always DETECTED this and deliberately never let it affect the verdict, on the reasoning that the
+ * redaction alone was sufficient. It is not: the redaction is a narrow regex, so what it caught is evidence
+ * that someone TRIED, and paraphrase or encoding walks past the same patterns. Worse, the identical text
+ * reaches both consensus reviewers, so a successful steer suppresses both and never even trips the
+ * single-rejection `ai_review_split` rule that exists to catch one reviewer being wrong.
+ *
+ * So a caught attempt now routes the PR to a human. Detection stays separate from `defangReviewInput` because
+ * the two answer different questions — "what is safe to send the model" and "did someone try to steer it" —
+ * and only the second should ever move a disposition.
+ *
+ * PURE. Reads the same author-controlled fields the prompt does.
+ */
+export function reviewInputHasPromptInjection(input: { title?: string | null | undefined; body?: string | null | undefined; diff?: string | null | undefined }): boolean {
+  return hasPromptInjection(input.title) || hasPromptInjection(input.body) || hasPromptInjection(input.diff);
 }
 
 // #3041: cap the number of locations listed in a finding's `detail` so a single PR with dozens of hits still

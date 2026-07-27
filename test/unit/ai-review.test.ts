@@ -4784,19 +4784,33 @@ describe("selectContextSectionsWithinBudget (#3900)", () => {
     expect(included).toEqual(new Set(["a", "b"]));
   });
 
-  it("stops at the first section that would overflow and drops every lower-priority section after it, even one that would individually fit", () => {
+  // POLICY REVERSAL (#9075). This test previously asserted the opposite: that an oversized section is a HARD
+  // PRIORITY CUTOFF which drops every lower-priority section behind it, "not a bin-packing optimization that
+  // skips a large blocked section to squeeze in a smaller lower-priority one." That reasoning holds for
+  // sections that are genuinely model CONTEXT, where priority order really does encode what matters most.
+  //
+  // It does not hold for what actually sat at the bottom of this list. The lowest-priority entry is
+  // testEvidence: ~200 characters, and not context at all but a deterministic classifier FACT ("this PR changes
+  // no test paths"). Under the old rule a single large RAG block silently discarded it, on precisely the large
+  // PRs where a reviewer most needs to know whether tests were touched, with no marker anywhere saying it was
+  // dropped. Priority order still decides who gets first refusal on the budget; it just no longer lets one
+  // oversized section evict everything cheaper behind it. Every included section still genuinely fits.
+  it("skips a section that would overflow and still includes a smaller lower-priority one that fits", () => {
     const included = selectContextSectionsWithinBudget(
       [
         { key: "first", text: "a".repeat(500) },
-        { key: "second", text: "b".repeat(600) }, // 500+600=1100 > 1000 -- overflows here
-        { key: "third", text: "c".repeat(10) }, // would individually fit (500+10=510 <= 1000), but must NOT be
-        // included: a hard priority cutoff, not a bin-packing optimization that skips a large blocked section
-        // to squeeze in a smaller lower-priority one.
+        { key: "second", text: "b".repeat(600) }, // 500+600=1100 > 1000 -- does not fit, so it is skipped
+        { key: "third", text: "c".repeat(10) }, // 500+10=510 <= 1000 -- fits, and is no longer evicted by `second`
       ],
       0,
       1000,
     );
-    expect(included).toEqual(new Set(["first"]));
+    expect(included).toEqual(new Set(["first", "third"]));
+  });
+
+  it("still refuses a section that does not fit, however small the remaining budget makes it look", () => {
+    const included = selectContextSectionsWithinBudget([{ key: "only", text: "a".repeat(2000) }], 0, 1000);
+    expect(included).toEqual(new Set());
   });
 
   it("skips an absent (undefined) section without consuming budget or affecting later decisions", () => {
@@ -4871,10 +4885,13 @@ describe("buildUserPrompt aggregate context budget (#3900)", () => {
     });
     expect(user).toContain(grounding);
     expect(user).toContain(rag);
+    // The oversized impact map still drops -- it genuinely does not fit.
     expect(user).not.toContain(impactMap);
-    expect(user).not.toContain("ENRICHMENT-SECTION");
-    expect(user).not.toContain("CULTURE-PROFILE-SECTION");
-    expect(user).not.toContain("zero test-path evidence");
+    // #9075 reversal: the small sections behind it are no longer evicted along with it. Both fit in the budget
+    // impactMap could not use, and the test-evidence line in particular is a deterministic fact the reviewer
+    // needs most on exactly this kind of large PR.
+    expect(user).toContain("ENRICHMENT-SECTION");
+    expect(user).toContain("CULTURE-PROFILE-SECTION");
     expect(user.length).toBeLessThanOrEqual(AGGREGATE_CONTEXT_BUDGET_CHARS);
   });
 
@@ -4991,7 +5008,9 @@ describe("#8833: enforced boundaries between model judgment and deterministic fa
     expect(long).toContain("2 image/video attachment(s)");
     expect(long).toContain("NEVER claim screenshots or visual evidence are missing");
     const short = buildUserPrompt({ repoFullName: "o/r", prNumber: 1, title: "t", body: `hello ${images}`, diff: "d", actor: "a", mode: "advisory" } as never);
-    expect(short).toContain("Description:\nhello");
+    // #9035 fences the body as untrusted data; the truncation FACT this test pins is unaffected.
+    expect(short).toContain("Description:\n");
+    expect(short).toContain("hello");
     expect(short).not.toContain("TRUNCATED");
     const bodiless = buildUserPrompt({ repoFullName: "o/r", prNumber: 1, title: "t", body: "", diff: "d", actor: "a", mode: "advisory" } as never);
     expect(bodiless).toContain("Description: (none)");

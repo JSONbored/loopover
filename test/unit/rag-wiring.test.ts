@@ -369,7 +369,9 @@ describe("RAG wired into the AI reviewer (flag LOOPOVER_REVIEW_RAG)", () => {
     expect(user).toContain("src/helper.ts");
     expect(user).toContain("export function helper()");
     // The original diff section is still present (RAG is additive, not a replacement).
-    expect(user).toContain("Unified diff (truncated if large):");
+    // #9035 reworded this header when the diff became a fenced untrusted region; these suites care that
+    // the diff section is present, not about its exact prose.
+    expect(user).toContain("Unified diff");
   });
 
   it("FLAG-ON via runAiReviewForAdvisory: maps the changed files into the RAG retrieval (both patch / no-patch sides)", async () => {

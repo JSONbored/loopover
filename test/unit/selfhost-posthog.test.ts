@@ -35,6 +35,7 @@ import {
   resetPostHogForTest,
   resolvePostHogRelease,
   scrubPostHogEvent,
+  setPostHogAnonSecret,
   shutdownPostHog,
   withPostHogMonitor,
 } from "../../src/selfhost/posthog";
@@ -95,6 +96,111 @@ describe("initPostHog", () => {
     const enabled = await initPostHog({} as unknown as NodeJS.ProcessEnv);
     expect(enabled).toBe(false);
     expect(mocks.PostHog).not.toHaveBeenCalled();
+  });
+
+  // #9142
+  it("stays a no-op when ORB_AIR_GAP=true, even with a real key configured", async () => {
+    const enabled = await initPostHog({ ORB_AIR_GAP: "true", POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    expect(enabled).toBe(false);
+    expect(mocks.PostHog).not.toHaveBeenCalled();
+  });
+
+  it("stays a no-op when POSTHOG_DISABLED=true, even with a real key configured", async () => {
+    const enabled = await initPostHog({ POSTHOG_DISABLED: "true", POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    expect(enabled).toBe(false);
+    expect(mocks.PostHog).not.toHaveBeenCalled();
+  });
+
+  it("treats an explicitly EMPTY POSTHOG_API_KEY as OFF, not falling through to LOOPOVER_CENTRAL_POSTHOG_KEY", async () => {
+    const enabled = await initPostHog({ POSTHOG_API_KEY: "", LOOPOVER_CENTRAL_POSTHOG_KEY: "phc_central" } as unknown as NodeJS.ProcessEnv);
+    expect(enabled).toBe(false);
+    expect(mocks.PostHog).not.toHaveBeenCalled();
+  });
+
+  it("still falls through to LOOPOVER_CENTRAL_POSTHOG_KEY when POSTHOG_API_KEY is genuinely unset (not just blank)", async () => {
+    const enabled = await initPostHog({ LOOPOVER_CENTRAL_POSTHOG_KEY: "phc_central" } as unknown as NodeJS.ProcessEnv);
+    expect(enabled).toBe(true);
+    expect(mocks.PostHog).toHaveBeenCalledWith("phc_central", expect.anything());
+  });
+});
+
+// #9142: repo/PR/owner/SHA identifiers must be HMAC'd, never sent in the clear, when the active key is the
+// shared LOOPOVER_CENTRAL_POSTHOG_KEY -- an operator's own explicit POSTHOG_API_KEY is unaffected (their own
+// private analytics project has no cross-tenant concern).
+describe("central-key identifier anonymization (#9142)", () => {
+  it("hashes repo/pull/head_sha instead of sending them raw when using the central key, with the injected secret", async () => {
+    await initPostHog({ LOOPOVER_CENTRAL_POSTHOG_KEY: "phc_central" } as unknown as NodeJS.ProcessEnv);
+    setPostHogAnonSecret("a".repeat(64));
+    capturePostHogError(new Error("boom"), { repo: "owner/repo", pull: 7, head_sha: "abc123" });
+    const properties = lastCapturedProperties();
+    expect(properties.repo).not.toBe("owner/repo");
+    expect(properties.repo).toMatch(/^[0-9a-f]{24}$/);
+    expect(properties.pull).not.toBe(7);
+    expect(properties.pull).toMatch(/^[0-9a-f]{24}$/);
+    expect(properties.head_sha).not.toBe("abc123");
+    expect(properties.head_sha).toMatch(/^[0-9a-f]{24}$/);
+  });
+
+  it("hashes the SAME repo identically across two calls (stable per-instance secret)", async () => {
+    await initPostHog({ LOOPOVER_CENTRAL_POSTHOG_KEY: "phc_central" } as unknown as NodeJS.ProcessEnv);
+    setPostHogAnonSecret("a".repeat(64));
+    capturePostHogError(new Error("boom1"), { repo: "owner/repo" });
+    const first = lastCapturedProperties().repo;
+    capturePostHogError(new Error("boom2"), { repo: "owner/repo" });
+    const second = lastCapturedProperties().repo;
+    expect(first).toBe(second);
+  });
+
+  it("hashes a DIFFERENT repo to a DIFFERENT value", async () => {
+    await initPostHog({ LOOPOVER_CENTRAL_POSTHOG_KEY: "phc_central" } as unknown as NodeJS.ProcessEnv);
+    setPostHogAnonSecret("a".repeat(64));
+    capturePostHogError(new Error("boom1"), { repo: "owner/repo-a" });
+    const a = lastCapturedProperties().repo;
+    capturePostHogError(new Error("boom2"), { repo: "owner/repo-b" });
+    const b = lastCapturedProperties().repo;
+    expect(a).not.toBe(b);
+  });
+
+  it("drops (never sends raw) an identifying field when using the central key but no secret has been injected yet (fail closed)", async () => {
+    await initPostHog({ LOOPOVER_CENTRAL_POSTHOG_KEY: "phc_central" } as unknown as NodeJS.ProcessEnv);
+    // setPostHogAnonSecret deliberately not called -- simulates the early-boot race before server.ts wires it.
+    capturePostHogError(new Error("boom"), { repo: "owner/repo" });
+    const properties = lastCapturedProperties();
+    expect(properties.repo).toBeUndefined();
+  });
+
+  it("leaves repo/pull raw when the active key is the operator's OWN POSTHOG_API_KEY, never the central one", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_operator" } as unknown as NodeJS.ProcessEnv);
+    setPostHogAnonSecret("a".repeat(64)); // even if a secret happens to be injected, it must not apply here
+    capturePostHogError(new Error("boom"), { repo: "owner/repo", pull: 7 });
+    const properties = lastCapturedProperties();
+    expect(properties.repo).toBe("owner/repo");
+    expect(properties.pull).toBe(7);
+  });
+
+  it("leaves repo/pull raw when POSTHOG_API_KEY is set even though LOOPOVER_CENTRAL_POSTHOG_KEY is also present (#8626 precedence)", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_operator", LOOPOVER_CENTRAL_POSTHOG_KEY: "phc_central" } as unknown as NodeJS.ProcessEnv);
+    setPostHogAnonSecret("a".repeat(64));
+    capturePostHogError(new Error("boom"), { repo: "owner/repo" });
+    expect(lastCapturedProperties().repo).toBe("owner/repo");
+  });
+
+  it("also anonymizes on the capturePostHogAiGeneration success path (#9142 ai.ts context)", async () => {
+    await initPostHog({ LOOPOVER_CENTRAL_POSTHOG_KEY: "phc_central" } as unknown as NodeJS.ProcessEnv);
+    setPostHogAnonSecret("a".repeat(64));
+    capturePostHogAiGeneration({ provider: "ollama", model: "llama3.1", requestKind: "review", latencyMs: 1000, isError: false, context: { repo: "owner/repo", pullNumber: 7 } });
+    const call = mocks.capture.mock.calls[0]?.[0];
+    expect(call.properties.repo).not.toBe("owner/repo");
+    expect(call.properties.repo).toMatch(/^[0-9a-f]{24}$/);
+  });
+
+  it("resetPostHogForTest clears both the central-key flag and the injected secret", async () => {
+    await initPostHog({ LOOPOVER_CENTRAL_POSTHOG_KEY: "phc_central" } as unknown as NodeJS.ProcessEnv);
+    setPostHogAnonSecret("a".repeat(64));
+    resetPostHogForTest();
+    await initPostHog({ POSTHOG_API_KEY: "phc_operator" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogError(new Error("boom"), { repo: "owner/repo" });
+    expect(lastCapturedProperties().repo).toBe("owner/repo"); // operator key path, never hashed
   });
 });
 

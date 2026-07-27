@@ -76,6 +76,7 @@ import {
   MAX_NOTIFICATION_DELIVERY_ID_LENGTH,
   MAX_NOTIFICATION_MARK_READ_IDS,
   markNotificationDeliveriesRead,
+  recordAuditEvent,
   recordProductUsageEvent,
 } from "../db/repositories";
 import { decidePendingAgentAction } from "../services/agent-approval-queue";
@@ -4045,6 +4046,21 @@ export class LoopoverMcp {
     }
     const result =
       input.scope === "global" ? await functions.writeGlobal(input.content) : await functions.writeRepo(input.repoFullName!, input.content);
+    // #9137: rewrites the instance's private .loopover.yml FLEET-WIDE (global scope) or per-repo -- the
+    // sharpest unaudited write this issue calls out (previously left only a `.bak-<timestamp>` file on disk).
+    // A dedicated event type, not repo.settings_updated: this is the raw config FILE the focus-manifest
+    // loader reads, not the DB-backed RepositorySettings row. Audited on failure too, so "who attempted a
+    // write, and when" is answerable even when the write itself was rejected.
+    await recordAuditEvent(this.env, {
+      eventType: "config.private_write",
+      actor: this.identity.actor,
+      targetKey: input.scope === "global" ? "global" : input.repoFullName!,
+      outcome: result.ok ? "success" : "error",
+      detail: result.ok
+        ? `Wrote ${input.scope} config to ${result.path}${result.backupPath ? ` (backed up to ${result.backupPath})` : ""}.`
+        : `Failed to write ${input.scope} config: ${result.error}`,
+      metadata: { scope: input.scope, ...(input.repoFullName ? { repoFullName: input.repoFullName } : {}), ok: result.ok },
+    });
     if (!result.ok) {
       return {
         summary: `LoopOver admin config write failed: ${result.error}`,
@@ -4088,6 +4104,18 @@ export class LoopoverMcp {
     }
     try {
       const result = await trigger(input.image);
+      // #9137: redeploys the instance -- audited regardless of outcome so "who triggered a redeploy, and
+      // when" is answerable even when the companion itself reports a failed run.
+      await recordAuditEvent(this.env, {
+        eventType: "instance.redeploy_triggered",
+        actor: this.identity.actor,
+        targetKey: input.image ?? "default",
+        outcome: result.ok ? "success" : "error",
+        detail: result.ok
+          ? `Redeploy completed successfully${input.image ? ` (${input.image})` : ""}.`
+          : `Redeploy failed (exit ${result.exitCode ?? "unknown"}): ${result.error ?? "see log"}.`,
+        metadata: { image: input.image ?? null, ok: result.ok, exitCode: result.exitCode ?? null },
+      });
       return {
         summary: result.ok
           ? `LoopOver redeploy: completed successfully${input.image ? ` (${input.image})` : ""}.`
@@ -4097,9 +4125,18 @@ export class LoopoverMcp {
     } catch (error) {
       // A connection/protocol failure to the companion itself (socket missing, timeout, unauthorized) --
       // distinct from a redeploy that ran and failed (handled above via result.ok === false).
+      const message = error instanceof Error ? error.message : String(error);
+      await recordAuditEvent(this.env, {
+        eventType: "instance.redeploy_triggered",
+        actor: this.identity.actor,
+        targetKey: input.image ?? "default",
+        outcome: "error",
+        detail: `Could not reach the host companion: ${message}`,
+        metadata: { image: input.image ?? null, ok: false, exitCode: null },
+      });
       return {
-        summary: `LoopOver redeploy trigger: could not reach the host companion: ${error instanceof Error ? error.message : String(error)}`,
-        data: { configured: true, ok: false, exitCode: null, error: error instanceof Error ? error.message : String(error) },
+        summary: `LoopOver redeploy trigger: could not reach the host companion: ${message}`,
+        data: { configured: true, ok: false, exitCode: null, error: message },
       };
     }
   }
@@ -4497,6 +4534,10 @@ export class LoopoverMcp {
   private async computePredictedGateVerdict(
     input: z.infer<z.ZodObject<typeof predictGateShape>>,
   ): Promise<{ repoFullName: string; verdict: PredictedGateVerdict }> {
+    // #9138: shared by both loopover_predict_gate and loopover_explain_gate_disposition -- neither previously
+    // called enforceToolRateLimit, so the only ceiling was the shared /mcp route class (120/min), well above
+    // what's needed to flood predicted_gate_calls and drive the agreement metric toward 100%.
+    await this.enforceToolRateLimit("loopover_predict_gate");
     this.requireContributorAccess(input.login);
     const repoFullName = `${input.owner}/${input.repo}`;
     await this.requireRepoAccess(repoFullName);
@@ -4873,6 +4914,19 @@ export class LoopoverMcp {
     await this.requireRepoManageAccess(fullName);
     const current = await getRepositorySettings(this.env, fullName);
     const updated = await upsertRepositorySettings(this.env, { ...current, agentPaused: input.paused });
+    // #9137: mirror PUT /v1/repos/:owner/:repo/settings' own audit (src/api/routes.ts) -- this is the kill
+    // switch, and was previously the only mutating write in this file with no audit_events row at all.
+    await recordAuditEvent(this.env, {
+      eventType: "repo.settings_updated",
+      actor: this.identity.actor,
+      targetKey: fullName,
+      outcome: "success",
+      detail: `Agent actions ${input.paused ? "paused" : "resumed"} for ${fullName} via MCP.`,
+      // input.paused (never undefined, per the Zod-validated shape), not updated.agentPaused (typed
+      // boolean | undefined for other RepositorySettings read paths) -- upsertRepositorySettings persists
+      // exactly this value, so recording the request avoids an always-false `?? fallback` for TS alone.
+      metadata: { repoFullName: fullName, fields: ["agentPaused"], agentPaused: input.paused },
+    });
     // #9018: a paused->live transition performs no catch-up by default. A PR that went GREEN during the pause
     // window (CI-completion passes plan-and-suppress the whole time) can be permanently stranded: if it was
     // ALSO already regated once before the pause, agent-sweep.ts's #never-endless-reregate rule excludes it
@@ -4897,6 +4951,16 @@ export class LoopoverMcp {
     const current = await getRepositorySettings(this.env, fullName);
     const autonomy = { ...current.autonomy, [input.action]: input.level };
     const updated = await upsertRepositorySettings(this.env, { ...current, autonomy });
+    // #9137: same audit gap as setAgentPaused above -- the autonomy dial (e.g. merge: auto) is the other half
+    // of the kill-switch/autonomy pair this issue calls out by name.
+    await recordAuditEvent(this.env, {
+      eventType: "repo.settings_updated",
+      actor: this.identity.actor,
+      targetKey: fullName,
+      outcome: "success",
+      detail: `Set ${input.action} autonomy to ${input.level} for ${fullName} via MCP.`,
+      metadata: { repoFullName: fullName, fields: ["autonomy"], action: input.action, level: input.level },
+    });
     return {
       summary: `Set ${input.action} autonomy to ${input.level} for ${fullName}.`,
       data: { repoFullName: fullName, action: input.action, level: input.level, autonomy: updated.autonomy },

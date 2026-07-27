@@ -193,6 +193,23 @@ export function setSelfHostedMetricsMode(isSelfHosted: boolean): void {
   selfHostedMetricsMode = isSelfHosted;
 }
 
+// #9142: self-host mode used to serve the RAW repo label unchanged on PRIVATE_REPO_LABEL_METRICS -- /metrics
+// is commonly scraped by an operator's reverse proxy before any application auth, and every self-hosted
+// instance calls setSelfHostedMetricsMode(true) unconditionally at boot (server.ts), so every self-host
+// deployment shipped raw private repo names on an effectively-unauthenticated endpoint by default. The
+// pseudonym scheme below (stable per-repo redacted-N label, the SAME one ALWAYS_REDACT_REPO_LABEL_METRICS
+// already uses) is now the default instead -- an operator's own dashboards still get a stable per-repo series
+// to group by, just not the real name. An operator who has verified /metrics never leaves their private
+// network and wants real repo names can opt back in with LOOPOVER_METRICS_REPO_LABELS=raw.
+let rawSelfHostedRepoLabels = false;
+
+/** Call ONCE at boot (self-host entrypoint only, alongside setSelfHostedMetricsMode) to opt back into raw
+ *  (non-pseudonymized) repo labels on PRIVATE_REPO_LABEL_METRICS -- an explicit operator choice, never the
+ *  default. Never called on the shared cloud worker. */
+export function setSelfHostedRawRepoLabels(allowRaw: boolean): void {
+  rawSelfHostedRepoLabels = allowRaw;
+}
+
 const PRIVATE_REPO_LABEL_METRICS = new Set([
   "loopover_gate_decisions_total",
   "loopover_reviews_published_total",
@@ -216,7 +233,11 @@ function redactedRepoLabel(repo: string): string {
 function publicLabelsForMetric(name: string, labels?: Labels): Labels | undefined {
   if (!labels || !("repo" in labels)) return labels;
   if (ALWAYS_REDACT_REPO_LABEL_METRICS.has(name)) return { ...labels, repo: redactedRepoLabel(labels.repo) };
-  if (selfHostedMetricsMode || !PRIVATE_REPO_LABEL_METRICS.has(name)) return labels;
+  if (!PRIVATE_REPO_LABEL_METRICS.has(name)) return labels;
+  // #9142: self-host mode defaults to the SAME pseudonym scheme as ALWAYS_REDACT_REPO_LABEL_METRICS (not the
+  // cloud path's outright strip below -- a self-hosted operator legitimately wants a stable per-repo series
+  // on their OWN metrics), unless the operator explicitly opted into raw labels.
+  if (selfHostedMetricsMode) return rawSelfHostedRepoLabels ? labels : { ...labels, repo: redactedRepoLabel(labels.repo) };
   const publicLabels = { ...labels };
   delete publicLabels.repo;
   return Object.keys(publicLabels).length > 0 ? publicLabels : undefined;
@@ -299,12 +320,17 @@ export function gaugeVector(name: string, sample: GaugeVectorSample): void {
   gaugeVectors.set(name, sample);
 }
 
-/** Observe a value into a histogram (created on first use). `buckets` must be ascending upper bounds. */
+/** Observe a value into a histogram (created on first use). `buckets` must be ascending upper bounds.
+ *  #9142: labels are routed through publicLabelsForMetric (the same redaction incr()/gaugeVector() already
+ *  apply) BEFORE being used as the series key or stored on the histogram -- previously this was the one
+ *  metric-recording path that bypassed redaction entirely, including the ALWAYS_REDACT set. No histogram
+ *  carries a `repo` label today, so this changes nothing observable yet; it closes the gap before one does. */
 export function observe(name: string, value: number, labels?: Labels, buckets: number[] = DEFAULT_BUCKETS): void {
-  const k = seriesKey(name, labels);
+  const publicLabels = publicLabelsForMetric(name, labels);
+  const k = seriesKey(name, publicLabels);
   let h = histograms.get(k);
   if (!h) {
-    h = { name, labels, buckets, counts: new Array(buckets.length).fill(0), sum: 0, count: 0 };
+    h = { name, labels: publicLabels, buckets, counts: new Array(buckets.length).fill(0), sum: 0, count: 0 };
     histograms.set(k, h);
   }
   // Cumulative bucketing: bump every bucket whose upper bound is >= the value.

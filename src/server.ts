@@ -43,7 +43,7 @@ import {
   timingSafeStrEqual,
 } from "./selfhost/setup-wizard";
 import { createOrbRelayRegistrationState, isOrbBrokerMode, registerOrbRelayTargetWithRetry } from "./orb/broker-client";
-import { exportOrbBatch } from "./selfhost/orb-collector";
+import { exportOrbBatch, getOrCreateAnonSecret } from "./selfhost/orb-collector";
 import { createD1Adapter, nodeSqliteDriver } from "./selfhost/d1-adapter";
 import { loadFileSecrets } from "./selfhost/load-file-secrets";
 import {
@@ -61,7 +61,7 @@ import {
 } from "./selfhost/health";
 import { clockSkewSampleAgeSeconds, clockSkewSecondsSample } from "./selfhost/clock-skew";
 import { d1DatabaseSizeBytesSample, d1SignalSnapshotsRowsPerKeySample, d1TableRowCountSamples, isD1SizeProbeEnabled, runD1SizeProbe } from "./selfhost/d1-size-probe";
-import { gauge, gaugeVector, incr, observe, renderMetrics, setSelfHostedMetricsMode } from "./selfhost/metrics";
+import { gauge, gaugeVector, incr, observe, renderMetrics, setSelfHostedMetricsMode, setSelfHostedRawRepoLabels } from "./selfhost/metrics";
 import { delayToNextWallClockBoundaryMs } from "./selfhost/cron-alignment";
 import { runSelfHostMigrations } from "./selfhost/migrate";
 import { createPgAdapter, tuneGithubRateLimitObservationsAutovacuum, widenGithubIdColumnsToBigint } from "./selfhost/pg-adapter";
@@ -91,6 +91,7 @@ import {
   flushPostHog,
   initPostHog,
   installPostHogStructuredLogForwarding,
+  setPostHogAnonSecret,
   shutdownPostHog,
 } from "./selfhost/posthog";
 import {
@@ -350,9 +351,12 @@ async function main(): Promise<void> {
   const startedAt = Date.now();
   // This entrypoint IS the self-host runtime by definition (the cloud worker never imports server.ts), so the
   // /metrics endpoint it serves is the operator's own private scrape target, not a publicly reachable one --
-  // stop redacting the `repo` label PRIVATE_REPO_LABEL_METRICS otherwise drops for every deployment
-  // (#terminal-outcome-audit).
+  // stop STRIPPING the `repo` label PRIVATE_REPO_LABEL_METRICS otherwise drops for every deployment
+  // (#terminal-outcome-audit). #9142: this now defaults to a PSEUDONYMIZED repo label (not the raw name) --
+  // /metrics is commonly exposed by a reverse proxy before any application auth. An operator who has verified
+  // /metrics never leaves their private network and wants real repo names can opt in explicitly.
   setSelfHostedMetricsMode(true);
+  setSelfHostedRawRepoLabels((process.env.LOOPOVER_METRICS_REPO_LABELS ?? "").toLowerCase() === "raw");
   // Container-private per-repo config (self-host): register the LOOPOVER_REPO_CONFIG_DIR reader so the focus-
   // manifest loader prefers a mounted `{owner}__{repo}.yml`, deep-merged over an optional root `.loopover.yml`
   // global default, over the public `.loopover.yml` (review policy stays private; see
@@ -479,6 +483,12 @@ async function main(): Promise<void> {
       backend: dbBackend,
     }),
   );
+  // #9142: inject the same per-instance HMAC secret orb-collector.ts's exportOrbBatch already generates and
+  // persists (system_flags "orb:anon_secret") so posthog.ts can anonymize repo/PR identifiers before they
+  // reach the shared LOOPOVER_CENTRAL_POSTHOG_KEY project -- deferred until here (rather than inside
+  // initPostHog, called above before the DB backend exists) since it needs a real DB handle. A no-op cost
+  // when PostHog never activated; setPostHogAnonSecret itself no-ops when the active key isn't the central one.
+  if (posthogEnabled) setPostHogAnonSecret(await getOrCreateAnonSecret(backend.db));
   // Data-safety advisory (#8): warn LOUDLY at boot if running on a single SQLite file with no acknowledged backup,
   // so an operator doesn't run with zero durability while /ready answers 200.
   const sqliteBackupOpts = {

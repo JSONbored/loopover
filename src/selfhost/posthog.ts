@@ -37,6 +37,9 @@ import {
   scrubString,
   SECRET_KEY,
 } from "./redaction-scrub";
+// #9142: the SAME HMAC primitive orb-collector.ts's exportOrbBatch uses to anonymize repo/PR identifiers
+// before they leave the box -- reused here so a repo/PR hashes identically across both telemetry paths.
+import { hmacAnonymize } from "../../packages/loopover-engine/src/telemetry/anonymize.js";
 
 type PostHogNs = typeof import("posthog-node");
 type PostHogClient = InstanceType<PostHogNs["PostHog"]>;
@@ -46,6 +49,16 @@ let client: PostHogClient | undefined;
 let active = false;
 let posthogEnvironment = "production";
 let activeRelease: string | undefined;
+// #9142: true when the resolved key came from the shared LOOPOVER_CENTRAL_POSTHOG_KEY fallback rather than an
+// operator's own explicit POSTHOG_API_KEY -- gates identifier anonymization in operationalProperties below.
+// An operator's own key is their own private analytics project; only the fleet-wide shared one needs it.
+let usingCentralPostHogKey = false;
+// #9142: the shared per-instance HMAC secret (same value + persistence as orb-collector.ts's
+// getOrCreateAnonSecret/"orb:anon_secret") used to anonymize repo/PR/owner/SHA identifiers before they reach
+// the vendor's PostHog project via the shared central key. Injected lazily via setPostHogAnonSecret once the
+// self-host DB backend exists (server.ts) -- this module never touches D1 directly, matching every other
+// lazily-injected selfhost dependency (setLocalManifestReader, etc.).
+let centralKeyAnonSecret: string | undefined;
 
 /** No per-user identity is tracked by this sink (operational error events, not user analytics) -- every event
  *  shares one anonymous, constant distinct id, mirroring src/mcp/telemetry.ts's identical MCP_TELEMETRY_DISTINCT_ID
@@ -109,9 +122,16 @@ export function scrubPostHogEvent(event: PostHogEventMessage | null): PostHogEve
   return event;
 }
 
+/** #9142: the OPERATIONAL_TAG_KEYS entries that name a specific private repo/PR/org -- the ones that must
+ *  never leave the box in the clear when the resolved API key is the SHARED LOOPOVER_CENTRAL_POSTHOG_KEY.
+ *  Mirrors orb-collector.ts's repo_hash/pr_hash treatment exactly, reusing the same HMAC primitive + secret. */
+const CENTRAL_KEY_IDENTIFYING_KEYS = new Set<string>(["repo", "repository", "owner", "pull", "pullNumber", "pr", "head_sha"]);
+
 /** Build the properties bag for a captured error/log: hashes any installation id, then tags the shared
  *  operational key allowlist (./redaction-scrub's OPERATIONAL_TAG_KEYS) alongside whatever else the caller
- *  passed. */
+ *  passed. #9142: when the active key is the shared central one, the identifying subset above is HMAC'd with
+ *  the instance's own anonymization secret instead of passed through raw -- fail CLOSED (the field is
+ *  dropped, never sent raw) if that secret hasn't been injected yet via setPostHogAnonSecret. */
 function operationalProperties(context: Record<string, unknown> | undefined): Record<string, unknown> {
   const safeContext = context ? hashedInstallationContext(context) : {};
   const normalized: Record<string, unknown> =
@@ -121,7 +141,13 @@ function operationalProperties(context: Record<string, unknown> | undefined): Re
   const properties: Record<string, unknown> = {};
   for (const key of OPERATIONAL_TAG_KEYS) {
     const value = normalized[key];
-    if (typeof value === "string" || typeof value === "number") properties[key] = value;
+    if (typeof value !== "string" && typeof value !== "number") continue;
+    if (usingCentralPostHogKey && CENTRAL_KEY_IDENTIFYING_KEYS.has(key)) {
+      if (!centralKeyAnonSecret) continue; // fail closed -- never send the raw identifier
+      properties[key] = hmacAnonymize(String(value), centralKeyAnonSecret);
+      continue;
+    }
+    properties[key] = value;
   }
   const trace = currentOtelTraceIds();
   if (trace) {
@@ -135,13 +161,24 @@ function operationalProperties(context: Record<string, unknown> | undefined): Re
  *  the SAME var #6235's MCP telemetry reads (env-var decision, #8287). `env` is real process.env, matching
  *  initSentry's identical NodeJS.ProcessEnv shape. */
 export async function initPostHog(env: NodeJS.ProcessEnv): Promise<boolean> {
+  // #9142: air-gapped/offline deployments and an explicit kill switch both take precedence over any key --
+  // mirrors orb-collector.ts's own ORB_AIR_GAP short-circuit, since the central-key path reports to the same
+  // loopover-owned project ORB_AIR_GAP already promises never to reach.
+  if ((env.ORB_AIR_GAP ?? "").toLowerCase() === "true") return false;
+  if ((env.POSTHOG_DISABLED ?? "").toLowerCase() === "true") return false;
   // #8626: POSTHOG_API_KEY is the operator's own explicit config (highest precedence, unchanged); when it is
   // unset, fall back to LOOPOVER_CENTRAL_POSTHOG_KEY -- the fleet-wide key the hosted control-plane injects into
   // a tenant container (control-plane/src/container-driver.ts) so a hosted image reports to the loopover-owned
   // project without the operator setting anything. A hosted-injected fallback, never a silent override of an
   // operator's explicit POSTHOG_API_KEY. When neither is set, initPostHog stays a complete no-op (returns false).
-  const apiKey = processEnvString(env, "POSTHOG_API_KEY") ?? processEnvString(env, "LOOPOVER_CENTRAL_POSTHOG_KEY");
+  const explicitKey = processEnvString(env, "POSTHOG_API_KEY");
+  // #9142: an explicitly-set-but-EMPTY POSTHOG_API_KEY ("") is the operator's own "off", not "unset" -- it
+  // must NOT fall through to the shared central key (previously indistinguishable from unset once nonBlank
+  // collapsed both to undefined). A genuinely unset var (the property is simply absent) still falls through.
+  if (!explicitKey && env.POSTHOG_API_KEY !== undefined) return false;
+  const apiKey = explicitKey ?? processEnvString(env, "LOOPOVER_CENTRAL_POSTHOG_KEY");
   if (!apiKey) return false;
+  usingCentralPostHogKey = !explicitKey;
   await loadNodeHasher();
   const { PostHog } = await import("posthog-node");
   posthogEnvironment = processEnvString(env, "POSTHOG_ENVIRONMENT") ?? "production";
@@ -411,11 +448,20 @@ export async function shutdownPostHog(): Promise<void> {
   await client.shutdown().catch(() => undefined);
 }
 
+/** #9142: inject the shared per-instance HMAC secret used to anonymize identifying fields when the active key
+ *  is the shared central one -- see {@link centralKeyAnonSecret}'s own doc comment for the full rationale.
+ *  Pass undefined to clear it (test-only; also covered by resetPostHogForTest). */
+export function setPostHogAnonSecret(secret: string | undefined): void {
+  centralKeyAnonSecret = secret;
+}
+
 /** Test-only: reset module state between cases. */
 export function resetPostHogForTest(): void {
   client = undefined;
   active = false;
   posthogEnvironment = "production";
   activeRelease = undefined;
+  usingCentralPostHogKey = false;
+  centralKeyAnonSecret = undefined;
   resetRedactionScrubForTest();
 }

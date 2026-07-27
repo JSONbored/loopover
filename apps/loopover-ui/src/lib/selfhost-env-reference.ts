@@ -282,6 +282,10 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/selfhost/preflight.ts",
   },
   {
+    name: "LOOPOVER_METRICS_REPO_LABELS",
+    firstReference: "src/server.ts",
+  },
+  {
     name: "LOOPOVER_REPO_CONFIG_DIR",
     firstReference: "src/server.ts",
   },
@@ -480,6 +484,10 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   {
     name: "POSTHOG_API_KEY",
     firstReference: "src/selfhost/otel.ts",
+  },
+  {
+    name: "POSTHOG_DISABLED",
+    firstReference: "src/selfhost/posthog.ts",
   },
   {
     name: "POSTHOG_ENVIRONMENT",
@@ -703,6 +711,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `LOOPOVER_ENABLE_PAGERDUTY` | `src/services/notify-pagerduty.ts` |",
   "| `LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER` | `src/selfhost/ai.ts` |",
   "| `LOOPOVER_MCP_TOKEN` | `src/selfhost/preflight.ts` |",
+  "| `LOOPOVER_METRICS_REPO_LABELS` | `src/server.ts` |",
   "| `LOOPOVER_REPO_CONFIG_DIR` | `src/server.ts` |",
   "| `LOOPOVER_REVIEW_CONTINUOUS` | `src/queue/processors.ts` |",
   "| `LOOPOVER_REVIEW_RAG` | `src/selfhost/ai.ts` |",
@@ -753,6 +762,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `PGVECTOR_ENABLED` | `src/server.ts` |",
   "| `PORT` | `src/server.ts` |",
   "| `POSTHOG_API_KEY` | `src/selfhost/otel.ts` |",
+  "| `POSTHOG_DISABLED` | `src/selfhost/posthog.ts` |",
   "| `POSTHOG_ENVIRONMENT` | `src/selfhost/otel.ts` |",
   "| `POSTHOG_HOST` | `src/selfhost/otel.ts` |",
   "| `POSTHOG_MIN_SEVERITY` | `src/selfhost/posthog.ts` |",

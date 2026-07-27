@@ -1140,6 +1140,51 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
     expect(JSON.parse(audit?.metadata_json ?? "{}").explanationPosted).toBe(true);
   });
 
+  it("#9294: does NOT draft-dodge close an autoCloseExemptLogins-listed author, as every sibling guard already honors", async () => {
+    const calls: Array<{ url: string; method: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      calls.push({ url, method });
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
+    // Same blocked-PR draft-dodge scenario that closes above, but the author is on the operator's allowlist
+    // (config-as-code via the focus manifest, the same seam every sibling exempt test uses).
+    await setupRepo(env);
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewCheckMode: "required", autoCloseExemptLogins: ["contributor"] } });
+    await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
+
+    await processJob(env, { type: "github-webhook", deliveryId: "draft-dodge-exempt", eventName: "pull_request", payload: draftPayload("contributor") });
+
+    expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+    const audit = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("github_app.draft_dodge_closed").first();
+    expect(audit).toBeFalsy();
+  });
+
+  it("#9294: does NOT draft-dodge close a protected automation author (github-actions/dependabot/renovate)", async () => {
+    const calls: Array<{ url: string; method: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      calls.push({ url, method });
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
+    await setupRepo(env);
+    await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
+
+    await processJob(env, { type: "github-webhook", deliveryId: "draft-dodge-bot", eventName: "pull_request", payload: draftPayload("dependabot[bot]") });
+
+    expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+    const audit = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("github_app.draft_dodge_closed").first();
+    expect(audit).toBeFalsy();
+  });
+
   it("#8801: a FAILED close records outcome 'error' with the failure named — never a false 'completed' (the #2260 contract)", async () => {
     const calls: Array<{ url: string; method: string }> = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {

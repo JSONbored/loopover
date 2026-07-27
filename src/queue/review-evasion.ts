@@ -272,6 +272,11 @@ async function closeDraftDodgeAttemptIfBlocked(
   pr: PullRequestRecord,
   settings: RepositorySettings,
 ): Promise<void> {
+  // Honor the operator's auto-close exemptions the same way every sibling guard in this file does (#9294,
+  // same class as #6165): a protected automation author, or one on the autoCloseExemptLogins allowlist, is
+  // never auto-closed by this draft-dodge path either. Checked up front, before any close work, like siblings.
+  if (isProtectedAutomationAuthor(pr.authorLogin, env)) return;
+  if (isAutoCloseExempt(pr.authorLogin, settings.autoCloseExemptLogins)) return;
   const block = await getGateBlockOutcome(
     env,
     repoFullName,

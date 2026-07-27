@@ -1099,7 +1099,7 @@ const digestSubscriptionSchema = z
 
 const postMergeIncidentSeveritySchema = z.enum(["low", "medium", "high", "critical"]);
 
-const postMergeIncidentReportSchema = z
+export const postMergeIncidentReportSchema = z
   .object({
     description: z.string().min(1).max(4000),
     severity: postMergeIncidentSeveritySchema,

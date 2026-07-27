@@ -567,7 +567,8 @@
                 "type": "number"
               },
               "gamingFlagsCaught": {
-                "type": "number"
+                "type": "number",
+                "nullable": true
               },
               "accuracyCiPct": {
                 "type": "object",
@@ -645,18 +646,23 @@
                       "lambda": {
                         "type": "number"
                       },
-                      "coveragePct": {
-                        "type": "number"
-                      },
                       "n": {
                         "type": "number"
+                      },
+                      "aiJudgedCoveragePct": {
+                        "type": "number"
+                      },
+                      "backfilledPct": {
+                        "type": "number",
+                        "nullable": true
                       }
                     },
                     "required": [
                       "alpha",
                       "lambda",
-                      "coveragePct",
-                      "n"
+                      "aiJudgedCoveragePct",
+                      "n",
+                      "backfilledPct"
                     ]
                   },
                   "merge": {
@@ -669,18 +675,23 @@
                       "lambda": {
                         "type": "number"
                       },
-                      "coveragePct": {
-                        "type": "number"
-                      },
                       "n": {
                         "type": "number"
+                      },
+                      "aiJudgedCoveragePct": {
+                        "type": "number"
+                      },
+                      "backfilledPct": {
+                        "type": "number",
+                        "nullable": true
                       }
                     },
                     "required": [
                       "alpha",
                       "lambda",
-                      "coveragePct",
-                      "n"
+                      "aiJudgedCoveragePct",
+                      "n",
+                      "backfilledPct"
                     ]
                   }
                 },

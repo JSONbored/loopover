@@ -168,7 +168,13 @@ export function ProofOfPowerStats({ className }: { className?: string }) {
               fleetEligible
                 ? // #8829: a bare accuracy scalar at unstated coverage is gameable (holding more raises it), so
                   // the tile names the coverage it was earned at whenever the backend supplies it.
-                  `merge/close calls confirmed by outcome${data.fleetAccuracy.coveragePct != null ? ` · at ${data.fleetAccuracy.coveragePct}% coverage` : ""}${data.fleetAccuracy.guaranteed?.close ? ` · closes ≥${Math.round((1 - data.fleetAccuracy.guaranteed.close.alpha) * 1000) / 10}% guaranteed at ${data.fleetAccuracy.guaranteed.close.coveragePct}% coverage` : ""} · ${intFmt.format(data.fleetAccuracy.instanceCount)} self-hosted instance${data.fleetAccuracy.instanceCount === 1 ? "" : "s"}${data.fleetAccuracy.gamingFlagsCaught > 0 ? ` · ${intFmt.format(data.fleetAccuracy.gamingFlagsCaught)} gaming pattern${data.fleetAccuracy.gamingFlagsCaught === 1 ? "" : "s"} flagged` : ""}`
+                  // #9050: the guarantee's own coverage is named "of AI-judged closes" -- it's the share of the
+                  // AI-judgment sub-population the threshold covers, not a share of all closes (that reading
+                  // sits confusingly next to the sibling coveragePct just before it, which IS over all decided
+                  // signals) -- plus the backfilled-vs-live split behind the evidence, when supplied.
+                  // #9068: gamingFlagsCaught is null (not 0) below the fleet's own eligibility floor, so the
+                  // suffix is omitted entirely rather than rendering a structural zero as "checked, found none".
+                  `merge/close calls confirmed by outcome${data.fleetAccuracy.coveragePct != null ? ` · at ${data.fleetAccuracy.coveragePct}% coverage` : ""}${data.fleetAccuracy.guaranteed?.close ? ` · closes ≥${Math.round((1 - data.fleetAccuracy.guaranteed.close.alpha) * 1000) / 10}% guaranteed at ${data.fleetAccuracy.guaranteed.close.aiJudgedCoveragePct}% coverage of AI-judged closes${data.fleetAccuracy.guaranteed.close.backfilledPct != null ? ` (${data.fleetAccuracy.guaranteed.close.backfilledPct}% backfilled)` : ""}` : ""} · ${intFmt.format(data.fleetAccuracy.instanceCount)} self-hosted instance${data.fleetAccuracy.instanceCount === 1 ? "" : "s"}${data.fleetAccuracy.gamingFlagsCaught != null && data.fleetAccuracy.gamingFlagsCaught > 0 ? ` · ${intFmt.format(data.fleetAccuracy.gamingFlagsCaught)} gaming pattern${data.fleetAccuracy.gamingFlagsCaught === 1 ? "" : "s"} flagged` : ""}`
                 : totals.reversed > 0
                   ? `${intFmt.format(totals.reversed)} human-reversed`
                   : "reversal-grounded"

@@ -193,6 +193,20 @@ describe("FairnessReportPage (#fairness-analytics)", () => {
     expect(screen.getByText("2 human-reversed, lifetime")).toBeTruthy();
   });
 
+  it("#9068: renders the insufficient-instances state (not a fabricated zero) when gamingFlagsCaught is null", async () => {
+    apiFetch.mockResolvedValue({
+      ok: true,
+      data: { ...FIXTURE, fleetAccuracy: { ...FIXTURE.fleetAccuracy, gamingFlagsCaught: null } },
+      status: 200,
+      durationMs: 10,
+    });
+    renderWithClient(<FairnessReportPage />);
+    await waitFor(() => expect(screen.getByText("Anti-gaming flags caught")).toBeTruthy());
+    const gamingCard = screen.getByText("Anti-gaming flags caught").closest("div")!.parentElement!;
+    expect(gamingCard.textContent).toContain("—");
+    expect(gamingCard.textContent).toContain("not enough registered instances");
+  });
+
   it("REGRESSION: does not crash when the API response predates the fleetAccuracy field (old backend/new frontend deployment skew)", async () => {
     const { fleetAccuracy: _omitted, ...payloadWithoutFleetAccuracy } = FIXTURE;
     apiFetch.mockResolvedValue({

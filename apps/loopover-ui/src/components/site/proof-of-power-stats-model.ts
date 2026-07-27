@@ -39,13 +39,20 @@ export type PublicStats = {
     closePrecisionCiPct?: { lo: number; hi: number } | null;
     coveragePct?: number | null;
     decidedCount?: number;
+    /** #9050: `aiJudgedCoveragePct` (renamed from `coveragePct`) is the share of the arm's AI-JUDGED
+     *  sub-population the guarantee covers, not a share of all decided signals (that's the sibling
+     *  `coveragePct` above) -- render the population it's actually over, not a bare percentage.
+     *  `backfilledPct` is null when the stored calibration predates that field. */
     guaranteed?: {
-      close: { alpha: number; lambda: number; coveragePct: number; n: number } | null;
-      merge: { alpha: number; lambda: number; coveragePct: number; n: number } | null;
+      close: { alpha: number; lambda: number; aiJudgedCoveragePct: number; n: number; backfilledPct: number | null } | null;
+      merge: { alpha: number; lambda: number; aiJudgedCoveragePct: number; n: number; backfilledPct: number | null } | null;
     };
     instanceCount: number;
     windowDays: number;
-    gamingFlagsCaught: number;
+    /** #9068: null (not 0) when the fleet has fewer than GAMING_MIN_ELIGIBLE eligible instances -- the
+     *  anti-farming detector cannot run below that floor, so a structural zero must never render as "checked,
+     *  found none". */
+    gamingFlagsCaught: number | null;
   };
   /** Trailing weekly history of totals.accuracyPct's SAME formula (#4447). */
   accuracyTrend: Array<{

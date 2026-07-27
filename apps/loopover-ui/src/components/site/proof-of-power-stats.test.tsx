@@ -230,6 +230,35 @@ describe("ProofOfPowerStats", () => {
     expect(screen.getAllByRole("img", { name: "Trend over the last 8 weeks" })).toHaveLength(3);
   });
 
+  it("#9050: disambiguates the published guarantee's coverage as the AI-judged sub-population, with the backfilled-vs-live split", async () => {
+    apiFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      durationMs: 1,
+      data: {
+        ...PAYLOAD,
+        fleetAccuracy: {
+          accuracyPct: 80,
+          coveragePct: 64.3,
+          instanceCount: 3,
+          windowDays: 90,
+          gamingFlagsCaught: null, // #9068: below the fleet's own eligibility floor
+          guaranteed: {
+            close: { alpha: 0.05, lambda: 0.9, aiJudgedCoveragePct: 57.1, n: 129, backfilledPct: 98.7 },
+            merge: null,
+          },
+        },
+      },
+    });
+    renderWithClient(<ProofOfPowerStats />);
+    await screen.findByText("Decision accuracy");
+    expect(
+      screen.getByText(
+        "merge/close calls confirmed by outcome · at 64.3% coverage · closes ≥95% guaranteed at 57.1% coverage of AI-judged closes (98.7% backfilled) · 3 self-hosted instances",
+      ),
+    ).toBeTruthy();
+  });
+
   it("settles the count-up on the real reviewed total (not stuck at 0 when rAF never fires)", async () => {
     // Deterministic (#flake): force prefers-reduced-motion so useCountUp lands the final value synchronously on
     // mount, instead of running the requestAnimationFrame tween. jsdom has no matchMedia, so the unfixed test took

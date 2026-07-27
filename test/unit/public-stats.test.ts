@@ -218,7 +218,7 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
       decidedCount: 0,
       instanceCount: 0,
       windowDays: 90,
-      gamingFlagsCaught: 0,
+      gamingFlagsCaught: null, // #9068: fewer than GAMING_MIN_ELIGIBLE eligible instances -- detector didn't run
       guaranteed: { close: null, merge: null },
     });
   });
@@ -509,7 +509,8 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     const out = await getPublicStats(env, NOW);
 
     // 5 merge verdicts, 4 confirmed (the 5th was reverted) -> decisionAccuracy 4/5 -> 80%.
-    expect(out.fleetAccuracy).toMatchObject({ accuracyPct: 80, instanceCount: 1, windowDays: 90, gamingFlagsCaught: 0 });
+    // Only 1 eligible instance -- below GAMING_MIN_ELIGIBLE (3), so gamingFlagsCaught is null (#9068).
+    expect(out.fleetAccuracy).toMatchObject({ accuracyPct: 80, instanceCount: 1, windowDays: 90, gamingFlagsCaught: null });
     // #8829: per-arm split, coverage, sample size, and a Wilson interval ride every published figure.
     expect(out.fleetAccuracy.mergePrecisionPct).toBe(80);
     expect(out.fleetAccuracy.closePrecisionPct).toBeNull(); // no close verdicts in this fixture
@@ -831,16 +832,27 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
   });
 });
 
-describe("fleetAccuracy.guaranteed (#8835/#9121)", () => {
+describe("fleetAccuracy.guaranteed (#8835/#9121/#9050/#9068)", () => {
+  // minimumCalibrationLabels(0.015, 0.05) = 199 -- every valid fixture below clears it with margin.
+  const calibrated = (overrides: Record<string, unknown> = {}) => ({
+    status: "calibrated",
+    alpha: 0.015,
+    lambda: 0.94,
+    coverageAtLambda: 0.82,
+    nAtLambda: 240,
+    delta: 0.05,
+    ...overrides,
+  });
+
   it("publishes a live per-arm guarantee from a REGISTERED instance's orb_risk_control_arms row; malformed, unregistered, or absent rows read null (fail-open)", async () => {
     const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "" });
     await env.DB.prepare(`INSERT INTO orb_instances (instance_id, registered) VALUES ('inst-a', 1)`).run();
     await env.DB.prepare(`INSERT INTO orb_risk_control_arms (instance_id, arm, payload_json) VALUES ('inst-a', 'close', ?)`)
-      .bind(JSON.stringify({ alpha: 0.015, lambda: 0.94, coverageAtLambda: 0.82, nAtLambda: 240 }))
+      .bind(JSON.stringify(calibrated()))
       .run();
     await env.DB.prepare(`INSERT INTO orb_risk_control_arms (instance_id, arm, payload_json) VALUES ('inst-a', 'merge', '{broken')`).run();
     const out = await getPublicStats(env, NOW);
-    expect(out.fleetAccuracy.guaranteed.close).toEqual({ alpha: 0.015, lambda: 0.94, coveragePct: 82, n: 240 });
+    expect(out.fleetAccuracy.guaranteed.close).toEqual({ alpha: 0.015, lambda: 0.94, aiJudgedCoveragePct: 82, n: 240, backfilledPct: null });
     expect(out.fleetAccuracy.guaranteed.merge).toBeNull();
     // A structurally-wrong row (missing fields) also reads null rather than publishing garbage.
     await env.DB.prepare(`UPDATE orb_risk_control_arms SET payload_json = '{"alpha":"high"}' WHERE instance_id = 'inst-a' AND arm = 'close'`).run();
@@ -848,11 +860,31 @@ describe("fleetAccuracy.guaranteed (#8835/#9121)", () => {
     expect(again.fleetAccuracy.guaranteed.close).toBeNull();
   });
 
+  it("#9050: surfaces the backfilled-vs-live split when the stored calibration carries totalPairs/backfilledPairs", async () => {
+    const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "" });
+    await env.DB.prepare(`INSERT INTO orb_instances (instance_id, registered) VALUES ('inst-a', 1)`).run();
+    await env.DB.prepare(`INSERT INTO orb_risk_control_arms (instance_id, arm, payload_json) VALUES ('inst-a', 'close', ?)`)
+      .bind(JSON.stringify(calibrated({ totalPairs: 234, backfilledPairs: 231 })))
+      .run();
+    const out = await getPublicStats(env, NOW);
+    expect(out.fleetAccuracy.guaranteed.close).toEqual({ alpha: 0.015, lambda: 0.94, aiJudgedCoveragePct: 82, n: 240, backfilledPct: 98.7 });
+  });
+
+  it("#9068: rejects a stored row whose status is not 'calibrated' (defense in depth against a pre-#9068 write)", async () => {
+    const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "" });
+    await env.DB.prepare(`INSERT INTO orb_instances (instance_id, registered) VALUES ('inst-a', 1)`).run();
+    await env.DB.prepare(`INSERT INTO orb_risk_control_arms (instance_id, arm, payload_json) VALUES ('inst-a', 'close', ?)`)
+      .bind(JSON.stringify(calibrated({ status: "insufficient_labels" })))
+      .run();
+    const out = await getPublicStats(env, NOW);
+    expect(out.fleetAccuracy.guaranteed.close).toBeNull();
+  });
+
   it("#9121: an UNREGISTERED instance's row never publishes (the same open-ingest-can't-plant-a-guarantee invariant, now enforced at read time too)", async () => {
     const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "" });
     await env.DB.prepare(`INSERT INTO orb_instances (instance_id, registered) VALUES ('inst-b', 0)`).run();
     await env.DB.prepare(`INSERT INTO orb_risk_control_arms (instance_id, arm, payload_json) VALUES ('inst-b', 'close', ?)`)
-      .bind(JSON.stringify({ alpha: 0.015, lambda: 0.94, coverageAtLambda: 0.82, nAtLambda: 240 }))
+      .bind(JSON.stringify(calibrated()))
       .run();
     const out = await getPublicStats(env, NOW);
     expect(out.fleetAccuracy.guaranteed.close).toBeNull();
@@ -862,12 +894,26 @@ describe("fleetAccuracy.guaranteed (#8835/#9121)", () => {
     const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "" });
     await env.DB.prepare(`INSERT INTO orb_instances (instance_id, registered) VALUES ('small-n', 1), ('big-n', 1)`).run();
     await env.DB.prepare(`INSERT INTO orb_risk_control_arms (instance_id, arm, payload_json) VALUES ('small-n', 'close', ?)`)
-      .bind(JSON.stringify({ alpha: 0.015, lambda: 0.9, coverageAtLambda: 0.7, nAtLambda: 30 }))
+      .bind(JSON.stringify(calibrated({ lambda: 0.9, coverageAtLambda: 0.7, nAtLambda: 210 })))
       .run();
     await env.DB.prepare(`INSERT INTO orb_risk_control_arms (instance_id, arm, payload_json) VALUES ('big-n', 'close', ?)`)
-      .bind(JSON.stringify({ alpha: 0.015, lambda: 0.97, coverageAtLambda: 0.9, nAtLambda: 5000 }))
+      .bind(JSON.stringify(calibrated({ lambda: 0.97, coverageAtLambda: 0.9, nAtLambda: 5000 })))
       .run();
     const out = await getPublicStats(env, NOW);
-    expect(out.fleetAccuracy.guaranteed.close).toEqual({ alpha: 0.015, lambda: 0.97, coveragePct: 90, n: 5000 });
+    expect(out.fleetAccuracy.guaranteed.close).toEqual({ alpha: 0.015, lambda: 0.97, aiJudgedCoveragePct: 90, n: 5000, backfilledPct: null });
+  });
+
+  it("#9068: a top (largest-nAtLambda) row that fails validation no longer hides a smaller VALID row behind it", async () => {
+    const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "" });
+    await env.DB.prepare(`INSERT INTO orb_instances (instance_id, registered) VALUES ('bad-n', 1), ('good-n', 1)`).run();
+    // Largest nAtLambda, but alpha is out of range -- must be skipped, not returned as null outright.
+    await env.DB.prepare(`INSERT INTO orb_risk_control_arms (instance_id, arm, payload_json) VALUES ('bad-n', 'close', ?)`)
+      .bind(JSON.stringify(calibrated({ alpha: 0.2, nAtLambda: 9000 })))
+      .run();
+    await env.DB.prepare(`INSERT INTO orb_risk_control_arms (instance_id, arm, payload_json) VALUES ('good-n', 'close', ?)`)
+      .bind(JSON.stringify(calibrated({ nAtLambda: 300 })))
+      .run();
+    const out = await getPublicStats(env, NOW);
+    expect(out.fleetAccuracy.guaranteed.close).toEqual({ alpha: 0.015, lambda: 0.94, aiJudgedCoveragePct: 82, n: 300, backfilledPct: null });
   });
 });

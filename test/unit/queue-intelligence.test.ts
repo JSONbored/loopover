@@ -3,6 +3,7 @@ import {
   analyzePRQueue,
   generatePublicComment,
   isPublicScoreTermSafeForRepo,
+  shouldWarnPublicScoreTermsAllowlistUnset,
   sanitizePublicComment,
   FORBIDDEN_PUBLIC_COMMENT_WORDS,
 } from "../../src/queue-intelligence";
@@ -420,5 +421,38 @@ describe("isPublicScoreTermSafeForRepo (#public-score-terms-scoping)", () => {
   it("denies a repo NOT present in the list — no '*'/'all' wildcard escape hatch, unlike the MCP allowlists", () => {
     const env = { LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS: "*" };
     expect(isPublicScoreTermSafeForRepo(env, "JSONbored/loopover")).toBe(false);
+  });
+});
+
+// The #public-score-terms-scoping fix is CONFIG-DEPENDENT: the code path shipped, but stays inert until an
+// operator sets the env var, and unset the deployment behaves exactly like the pre-fix build metagraphed#8038
+// was filed against — every AI review narrative using the ordinary word "score"/"scoring" silently loses its
+// WHOLE summary, with no signal anywhere. No unit test can assert a production env var was set, so the boot
+// path shouts instead; these pin the predicate that drives that shout.
+describe("shouldWarnPublicScoreTermsAllowlistUnset", () => {
+  it("warns when the allowlist is unset, empty, or only separators (the inert-fix states)", () => {
+    expect(shouldWarnPublicScoreTermsAllowlistUnset({})).toBe(true);
+    expect(shouldWarnPublicScoreTermsAllowlistUnset({ LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS: "" })).toBe(true);
+    expect(shouldWarnPublicScoreTermsAllowlistUnset({ LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS: "   " })).toBe(true);
+    expect(shouldWarnPublicScoreTermsAllowlistUnset({ LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS: " , ,  " })).toBe(true);
+  });
+
+  it("stays quiet once at least one repo is configured", () => {
+    expect(shouldWarnPublicScoreTermsAllowlistUnset({ LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS: "JSONbored/metagraphed" })).toBe(false);
+    expect(
+      shouldWarnPublicScoreTermsAllowlistUnset({ LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS: "JSONbored/loopover, JSONbored/metagraphed" }),
+    ).toBe(false);
+  });
+
+  // The warning and the exemption must agree on what "configured" means, or the shout could fire for a
+  // deployment that IS configured (noise) or stay silent for one that is not (the failure this exists to catch).
+  it("agrees with isPublicScoreTermSafeForRepo about what counts as configured", () => {
+    const env = { LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS: "JSONbored/metagraphed" };
+    expect(shouldWarnPublicScoreTermsAllowlistUnset(env)).toBe(false);
+    expect(isPublicScoreTermSafeForRepo(env, "JSONbored/metagraphed")).toBe(true);
+    // "*" parses to a non-empty entry, so the warning is silent — but it grants NO repo the exemption.
+    const wildcard = { LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS: "*" };
+    expect(shouldWarnPublicScoreTermsAllowlistUnset(wildcard)).toBe(false);
+    expect(isPublicScoreTermSafeForRepo(wildcard, "JSONbored/loopover")).toBe(false);
   });
 });

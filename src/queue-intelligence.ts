@@ -171,11 +171,39 @@ export async function analyzePRQueue(
  *  loopover itself), which the MCP read/actuation allowlists' analogous risk doesn't share.
  *  LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS is the env var; config-as-code, never hardcoded per #config-as-code. */
 export function isPublicScoreTermSafeForRepo(env: { LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS?: string }, repoFullName: string): boolean {
-  const entries = (env.LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS ?? "")
+  return parsePublicScoreTermAllowedRepos(env.LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS).includes(repoFullName.toLowerCase());
+}
+
+/** The parsed, lowercased allowlist entries. Takes the RAW env string (not an env object) so both callers can
+ *  share it regardless of how their own `env` parameter is typed — `exactOptionalPropertyTypes` forbids
+ *  re-wrapping a `string | undefined` back into an optional property. */
+function parsePublicScoreTermAllowedRepos(raw: string | undefined): string[] {
+  return (raw ?? "")
     .split(/[\s,]+/)
     .map((entry) => entry.trim().toLowerCase())
     .filter(Boolean);
-  return entries.includes(repoFullName.toLowerCase());
+}
+
+/**
+ * True when the bare-score exemption allowlist is EMPTY — i.e. the over-broad `\bscore\w*\b` check is enforced
+ * for every repo, so any AI review narrative using the ordinary word "score"/"scoring" has its WHOLE assessment
+ * discarded in favour of the generic "did not include a separate narrative summary" placeholder.
+ *
+ * This exists because the #public-score-terms-scoping fix is CONFIG-DEPENDENT: the code path shipped, but it is
+ * inert until an operator populates LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS. Unset (the shipped default) the
+ * deployment silently behaves exactly like the pre-fix build that metagraphed#8038 was filed against, with no
+ * signal anywhere -- which is how that bug stayed live and "recurring" long after it was considered fixed. A
+ * unit test cannot catch this: it verifies the mechanism works WHEN enabled, never that a production env var
+ * was actually set. Warn-only, and deliberately not a hard boot failure: an empty allowlist is the correct,
+ * safe configuration for a deployment whose repos really do carry private trust/reward data -- the operator
+ * just needs to make that an informed choice rather than an unnoticed default. Pure predicate; the caller
+ * (server.ts) owns the actual shout, mirroring shouldWarnRagEmbedUnavailable.
+ */
+export function shouldWarnPublicScoreTermsAllowlistUnset(env: Record<string, string | undefined>): boolean {
+  // Same `Record<string, string | undefined>` shape as shouldWarnRagEmbedUnavailable so this accepts
+  // `process.env` directly at the boot-time call site (an optional-only object type does not structurally
+  // match Node's ProcessEnv).
+  return parsePublicScoreTermAllowedRepos(env.LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS).length === 0;
 }
 
 /** `allowBareScoreTerm` (#public-score-terms-scoping, default false = today's unchanged behavior): the bare

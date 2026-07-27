@@ -2,9 +2,15 @@
 // files Cloudflare applies via `wrangler d1 migrations apply` — they're plain SQLite DDL, so they run as-is
 // through the D1 adapter's exec(). Tracked in a `_selfhost_migrations` table so a restart re-applies only the
 // new ones (idempotent), mirroring wrangler's migration ledger.
+import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { errorMessage } from "../utils/json";
+
+/** SHA-256 of a migration file's raw content, hex-encoded — the ledger's content-identity check (#9164). */
+function contentSha256(sql: string): string {
+  return createHash("sha256").update(sql, "utf8").digest("hex");
+}
 
 function splitSqlStatements(sql: string): string[] {
   const statements: string[] = [];
@@ -96,12 +102,74 @@ function sqlQuote(value: string): string {
  * only works per-statement. So a file that fails atomically is retried through the original tolerant path.
  * The two orders matter: atomic first means a genuine mid-file crash is the case that gets protected, and the
  * tolerant fallback only runs for a database that was already inconsistent before this boot began.
+ *
+ * #9164 — the ledger also records each applied file's `content_sha256`, checked on every boot against the
+ * file's CURRENT on-disk hash. Before this, the ledger recorded only a filename: a migration edited in place
+ * after it was applied (rather than shipping a new numbered file) was invisible forever — `applied.has(file)`
+ * still matched, so the edit was silently skipped, and the running DB quietly diverged from the repo's
+ * declared schema with no signal anywhere (not at boot, not in `/health`, not in `preflight.ts`). A mismatch
+ * now fails boot loudly (thrown, after a structured console.error) rather than being silently skipped — same
+ * "fail loudly, don't limp along on a maybe-wrong schema" posture as `assertSelfHostPreflight`.
+ *
+ * The four grandfathered duplicate-NUMBER pairs (0015/0017/0074/0156, see migration-collisions.ts) need no
+ * special handling here: the ledger — and this drift check — key on the FILENAME, not the leading number, so
+ * each grandfathered file already has its own independent ledger row and hash exactly like any other
+ * migration. Their collision is a distinct, already-solved concern (duplicate NUMBER assignment, caught by
+ * scripts/check-migrations.ts pre-merge); content identity per file is unaffected by it.
+ *
+ * No down-migration path is added here. Forward-only migrations remain this repo's model — as with every
+ * existing migrations/*.sql file, reverting a change means writing a new migration that undoes it, not
+ * running this one "backwards".
  */
 export async function runSelfHostMigrations(db: D1Database, dir: string): Promise<number> {
-  await db.exec("CREATE TABLE IF NOT EXISTS _selfhost_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)");
-  const existing = await db.prepare("SELECT name FROM _selfhost_migrations").all<{ name: string }>();
-  const applied = new Set(existing.results.map((r) => r.name));
+  await db.exec("CREATE TABLE IF NOT EXISTS _selfhost_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL, content_sha256 TEXT)");
+  // A pre-#9164 ledger predates the content_sha256 column; ADD COLUMN is idempotent the same way every other
+  // "might already be there" DDL in this file is tolerated (duplicate column / already exists), so a fresh
+  // table (which already has the column from CREATE TABLE above) and an upgrading one both end up identical.
+  try {
+    await db.exec("ALTER TABLE _selfhost_migrations ADD COLUMN content_sha256 TEXT");
+  } catch (error) {
+    if (!/duplicate column|already exists/i.test(errorMessage(error))) throw error;
+  }
+
+  const existing = await db.prepare("SELECT name, content_sha256 FROM _selfhost_migrations").all<{ name: string; content_sha256: string | null }>();
+  const appliedHashes = new Map(existing.results.map((r) => [r.name, r.content_sha256]));
   const files = readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
+
+  // Content-drift check (#9164): for every file already recorded as applied, recompute its CURRENT on-disk hash
+  // and compare it to the hash recorded at apply time. A row with no stored hash predates this column —
+  // backfilled below to the file's CURRENT content as its baseline (there is no way to recover the hash of
+  // whatever actually ran before this column existed; the current content is the best available starting
+  // point). A mismatch means the file's body changed AFTER it was applied — the running DB was never updated
+  // to match, so the schema has silently drifted with no other signal. This is the opposite case from the
+  // per-statement drift TOLERANCE below (that tolerance is for a database catching itself up to a migration it
+  // never fully applied); here the migration WAS fully applied, and it is the file's declared intent that
+  // changed out from under it, so it must fail loudly rather than be silently skipped.
+  const hashBackfills: Array<{ file: string; hash: string }> = [];
+  const drifted: string[] = [];
+  for (const [name, storedHash] of appliedHashes) {
+    if (!files.includes(name)) continue; // file removed from the repo since applying — a different concern (renumbering/collisions), not content drift
+    const currentHash = contentSha256(readFileSync(join(dir, name), "utf8"));
+    if (storedHash === null) hashBackfills.push({ file: name, hash: currentHash });
+    else if (storedHash !== currentHash) drifted.push(name);
+  }
+  if (drifted.length > 0) {
+    console.error(
+      JSON.stringify({
+        level: "error",
+        event: "selfhost_migration_content_drift",
+        files: drifted,
+      }),
+    );
+    throw new Error(
+      `Applied migration(s) edited after being applied — on-disk content no longer matches the hash recorded at apply time: ${drifted.join(", ")}. Add a NEW migration to make the change instead of editing an already-applied file, or restore its original content.`,
+    );
+  }
+  for (const { file, hash } of hashBackfills) {
+    await db.prepare("UPDATE _selfhost_migrations SET content_sha256 = ? WHERE name = ?").bind(hash, file).run();
+  }
+
+  const applied = new Set(appliedHashes.keys());
   // Real Cloudflare D1 has no transactional multi-statement surface; only the two self-host adapters implement
   // this. Absent it, behavior is exactly the pre-#9027 path.
   const execTransaction = (db as unknown as { execTransaction?: (sql: string) => Promise<void> }).execTransaction;
@@ -109,8 +177,9 @@ export async function runSelfHostMigrations(db: D1Database, dir: string): Promis
   for (const file of files) {
     if (applied.has(file)) continue;
     const sql = readFileSync(join(dir, file), "utf8");
+    const hash = contentSha256(sql);
     const statements = splitSqlStatements(sql);
-    const ledger = `INSERT INTO _selfhost_migrations (name, applied_at) VALUES (${sqlQuote(file)}, ${sqlQuote(new Date().toISOString())});`;
+    const ledger = `INSERT INTO _selfhost_migrations (name, applied_at, content_sha256) VALUES (${sqlQuote(file)}, ${sqlQuote(new Date().toISOString())}, ${sqlQuote(hash)});`;
     if (execTransaction) {
       try {
         // splitSqlStatements keeps each statement's own trailing `;` but returns a final unterminated tail
@@ -146,7 +215,7 @@ export async function runSelfHostMigrations(db: D1Database, dir: string): Promis
           throw error;
       }
     }
-    await db.prepare("INSERT INTO _selfhost_migrations (name, applied_at) VALUES (?, ?)").bind(file, new Date().toISOString()).run();
+    await db.prepare("INSERT INTO _selfhost_migrations (name, applied_at, content_sha256) VALUES (?, ?, ?)").bind(file, new Date().toISOString(), hash).run();
     count += 1;
   }
   return count;

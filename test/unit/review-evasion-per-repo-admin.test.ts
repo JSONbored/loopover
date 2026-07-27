@@ -4,6 +4,7 @@ import {
   maybeCloseReviewEvasionSelfClose,
   maybeRecloseDisallowedReopen,
 } from "../../src/queue/review-evasion";
+import { recordGateBlockOutcome } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 import type { GitHubWebhookPayload, PullRequestRecord, RepositorySettings } from "../../src/types";
 import { generatePrivateKeyPem } from "../helpers/github-app-key";
@@ -135,5 +136,31 @@ describe("maybeCloseDraftDodgeAttempt fleet-operator exemption (#4889)", () => {
     await maybeCloseDraftDodgeAttempt(env, "d1", 123, "owner/repo", pr(), SETTINGS);
     await maybeCloseDraftDodgeAttempt(env, "d1", 123, "owner/repo", pr({ authorLogin: null }), SETTINGS);
     expect(urls).toEqual([]);
+  });
+});
+
+describe("maybeCloseDraftDodgeAttempt shared exemption allowlists (#9294)", () => {
+  it("returns early without closing when the author is on settings.autoCloseExemptLogins and the head is gate-blocked", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
+    const urls = stubGitHub((url) => {
+      if (url.endsWith("/pulls/7") || url.endsWith("/issues/7/comments")) return Response.json({});
+      return undefined;
+    });
+    await recordGateBlockOutcome(env, { repoFullName: "owner/repo", pullNumber: 7, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
+    const settings = { reviewEvasionProtection: "on", autoCloseExemptLogins: ["trusted-bot"], autonomy: { close: "auto" } } as unknown as RepositorySettings;
+    await maybeCloseDraftDodgeAttempt(env, "d1", 123, "owner/repo", pr({ authorLogin: "trusted-bot", headSha: "abc123" }), settings);
+    expect(urls.some((url) => url.includes("/pulls/7"))).toBe(false);
+  });
+
+  it("returns early without closing when the author is a protected automation bot and the head is gate-blocked", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
+    const urls = stubGitHub((url) => {
+      if (url.endsWith("/pulls/7") || url.endsWith("/issues/7/comments")) return Response.json({});
+      return undefined;
+    });
+    await recordGateBlockOutcome(env, { repoFullName: "owner/repo", pullNumber: 7, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
+    const settings = { reviewEvasionProtection: "on", autoCloseExemptLogins: [], autonomy: { close: "auto" } } as unknown as RepositorySettings;
+    await maybeCloseDraftDodgeAttempt(env, "d1", 123, "owner/repo", pr({ authorLogin: "github-actions[bot]", headSha: "abc123" }), settings);
+    expect(urls.some((url) => url.includes("/pulls/7"))).toBe(false);
   });
 });

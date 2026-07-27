@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildVisualBugAnalysisUserPrompt,
   buildVisualRegressionFindings,
+  buildVisualVisionSkippedForReputationFinding,
   buildVisualVisionUserPrompt,
   evaluateVisualVisionGate,
   parseVisualVisionResponse,
@@ -105,6 +106,23 @@ describe("evaluateVisualVisionGate", () => {
     expect(
       evaluateVisualVisionGate({ routes: [changedRoute("/a")], reputationSignal: "neutral", providerKey: null, selfHostVisionAvailable: false }),
     ).toEqual({ run: false, reason: "byok_not_configured" });
+  });
+});
+
+describe("buildVisualVisionSkippedForReputationFinding (#9136 compensating hold)", () => {
+  it("returns null when there was nothing to compensate for (no confirmed regression)", () => {
+    expect(buildVisualVisionSkippedForReputationFinding(0)).toBeNull();
+  });
+
+  it("builds a warning-severity advisory finding naming the confirmed-regression route count", () => {
+    const finding = buildVisualVisionSkippedForReputationFinding(2);
+    expect(finding).toEqual(
+      expect.objectContaining({
+        code: "visual_vision_skipped_low_reputation",
+        severity: "warning",
+        detail: expect.stringContaining("2 route(s)"),
+      }),
+    );
   });
 });
 

@@ -405,6 +405,41 @@ describe("runScreenshotTableVisionForAdvisory (#4366)", () => {
     expect(fetchCalls).not.toContain("https://api.anthropic.com/v1/messages");
   });
 
+  it("declines the AI call for a low-reputation submitter on a REAL (different-bytes) pair, leaving a compensating advisory finding (#9136)", async () => {
+    const env = byokEnv();
+    await upsertRepositoryAiKey(env, { repoFullName, provider: "anthropic", key: "sk-ant-key", model: null });
+    vi.spyOn(submitterReputation, "getSubmitterReputation").mockResolvedValueOnce({
+      submissions: 6,
+      merged: 0,
+      closed: 6,
+      manual: 0,
+      closeRate: 1,
+      signal: "low",
+    });
+    // Genuinely different bytes -- survives the free byte pre-check and reaches the vision gate, unlike the
+    // byte-identical fixture above (which never reaches the reputation gate at all).
+    stubShotsAndProvider(null, { before: [1, 2, 3], after: [4, 5, 6] });
+    const adv = findingsHolder();
+    await runScreenshotTableVisionForAdvisory(env, {
+      mode: "live",
+      repoFullName,
+      pr,
+      prBody: tableBody(BEFORE_URL, AFTER_URL),
+      prTitle: "Redesign the nav bar",
+      author: "bob",
+      confirmedContributor: true,
+      settings: gateEnabledSettings(),
+      advisory: adv,
+    });
+    // #9136: the vision call itself is still skipped (never spends), but a real pair going unverified for a
+    // low-reputation submitter must not be completely silent -- exactly the gaming case this check exists for.
+    expect(adv.findings).toEqual([
+      expect.objectContaining({ code: "screenshot_table_vision_skipped_low_reputation", severity: "warning" }),
+    ]);
+    const fetchCalls = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(fetchCalls).not.toContain("https://api.anthropic.com/v1/messages");
+  });
+
   it("runs via env.AI_VISION when no BYOK key is configured at all", async () => {
     const runMock = vi.fn(async () => ({ response: findingsResponse([{ pairIndex: 1, body: "Looks like a different app entirely." }]) }));
     const env = byokEnv();

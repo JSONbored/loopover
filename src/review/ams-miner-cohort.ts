@@ -1,9 +1,10 @@
 // AMS-vs-human contributor-mix dashboard panel (#6488), per #6210's decided design: for one repo, classify each
 // recent submitter as "has AMS track-record data" (via the ORB/AMS reputation bridge's pull path, #6485/#6208)
 // vs. not, then compare acceptance rate / review-cycle count / time-to-merge / PR volume between the two
-// cohorts. Reuses `submitter-reputation.ts`'s existing `review_targets`-based outcome classification for the
-// metrics and `ams-reputation-bridge.ts`'s existing fail-safe, timeout-bounded pull for AMS membership — no new
-// identity system, no new network path.
+// cohorts. Reuses `submitter-reputation.ts`'s existing outcome classification (`listSubmitterCohortRows`, #9136:
+// repointed off the orphaned `review_targets` table onto the live `review_audit`/`pull_requests` ledgers — this
+// module needed no changes of its own to pick that up) for the metrics, and `ams-reputation-bridge.ts`'s
+// existing fail-safe, timeout-bounded pull for AMS membership — no new identity system, no new network path.
 //
 // BOUNDED, NOT EXHAUSTIVE: classifying membership needs one live call per distinct submitter login (there is no
 // cached "is this login an AMS miner" flag anywhere yet). An unbounded per-dashboard-load fan-out over every
@@ -33,8 +34,11 @@ export type AmsMinerCohortMetrics = {
   /** merged / (merged + closed) over the cohort's terminal rows, `null` when the cohort has no terminal rows
    *  to divide by (never fabricated as 0, which would misleadingly read as "0% acceptance"). */
   acceptanceRate: number | null;
-  /** Mean of each submitter's own average `attempt_count` (the gate's re-review counter, reused as the
-   *  review-cycle-count proxy per #6488's requirements) — `null` when the cohort is empty. */
+  /** Mean of each submitter's own average review-cycle-count proxy per #6488's requirements — `null` when
+   *  the cohort is empty. Sourced from `pull_requests.merge_attempt_count` (#9136: the pre-repoint
+   *  `review_targets.attempt_count`, the gate's own re-review counter, has no live equivalent; see
+   *  `SubmitterCohortRow.avgAttemptCount`'s own doc comment in submitter-reputation.ts for the documented,
+   *  narrower substitution this reuses). */
   avgReviewCycleCount: number | null;
   /** Mean time-to-merge in ms across the cohort's MERGED rows only, `null` when the cohort has no merges. */
   avgTimeToMergeMs: number | null;

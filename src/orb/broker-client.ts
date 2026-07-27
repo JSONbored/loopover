@@ -7,6 +7,7 @@
 // The signal is the ENROLLMENT SECRET's presence: a brokered self-host sets ORB_ENROLLMENT_SECRET (issued by the
 // operator), cloud never does — so this path is inert on cloud and the deploy is byte-identical there.
 
+import { recordClockSkewFromResponse } from "../selfhost/clock-skew";
 import { incr } from "../selfhost/metrics";
 
 /** The Orb's hosted broker base; override (ORB_BROKER_URL) only to point at a private loopover deployment. */
@@ -72,6 +73,13 @@ export async function fetchBrokeredInstallationToken(
     ...(options.forceRefresh ? { body: JSON.stringify({ forceRefresh: true }) } : {}),
     signal: AbortSignal.timeout(BROKER_TIMEOUT_MS),
   });
+  // #9156: this IS the JWT-mint-equivalent call in broker mode -- a brokered self-host holds no App private
+  // key, so requestInstallationTokenWithJwt's own clock-skew sample (src/github/app.ts, #3811) is UNREACHABLE
+  // by construction whenever isOrbBrokerMode(env) is true (mintInstallationToken's broker branch returns
+  // before ever reaching the JWT path). Sampled unconditionally (both success and failure responses carry a
+  // real `Date` header) so a brokered deployment's clock drift is measured at all, not silently left at the
+  // NaN "never sampled" sentinel forever.
+  recordClockSkewFromResponse(response);
   if (!response.ok) {
     throw new Error(`Orb broker token exchange failed (${response.status}).`);
   }

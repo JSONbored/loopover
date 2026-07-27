@@ -547,9 +547,17 @@ export interface ReviewSourceFreshnessCheck {
  *  window. `review_targets` was silently orphaned by the 2026-06-22 convergence cutover (no live writer
  *  anywhere — see src/db/repo-identity-rename.ts / src/review/public-stats.ts's own comments) and nobody
  *  noticed for months; this is the generalizable fix so the NEXT orphaning is loud, not silent.
- *   - review_targets: submitter-reputation.ts's own REPUTATION_WINDOW_DAYS (90) — this table's newest row
- *     is frozen at the 2026-06-22 cutover, so it will fall outside this window (and read permanently stale
- *     here) around 2026-09-20 if nothing else changes; see #9136 for the full scope decision on that module.
+ *   - review_targets: submitter-reputation.ts (#9136) has SINCE been repointed off this table onto the live
+ *     review_audit/pull_requests ledgers — its own REPUTATION_WINDOW_DAYS (90) no longer reads this table at
+ *     all. The remaining live readers are THIS file's own computeAgentHealth (byStatus/byVerdict/failedRows/
+ *     manualRate/stuckRetryable/failed) and computeCalibration (mergedRows/closesByReasonRows/disputedRows) —
+ *     deferred here because review_targets' non-terminal states (queued/reviewing/error/error_retryable) and
+ *     the attempt-exhausted 'failed' bucket have no live per-target equivalent post-cutover: gate_decision's
+ *     own `decision` column only ever records 'merge' | 'close' | 'hold' (parity.ts's GateAction), not the
+ *     full status enum review_targets tracked. This table's newest row is frozen at the 2026-06-22 cutover,
+ *     so ANY windowDays here eventually reads permanently stale — 90 is kept as a conservative, still-fires-
+ *     eventually value, not because a live consumer still uses that exact number. See #9136 for the tracked
+ *     remainder and the reasoning above.
  *   - review_audit: this module's own ANOMALY_WINDOW (7 days) — IS live today (parity-wire.ts writes
  *     'gate_decision' rows, outcomes-wire.ts writes the outcome/reversal types), so this should read fresh
  *     in steady state. If both writers ever stop, this is what catches the alerter going silently inert

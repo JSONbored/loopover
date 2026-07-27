@@ -5,8 +5,8 @@ beforeEach(() => resetClockSkewForTest());
 afterEach(() => vi.useRealTimers());
 
 describe("clock-skew", () => {
-  it("defaults to 0 before any sample is recorded", () => {
-    expect(clockSkewSecondsSample()).toBe(0);
+  it("defaults to NaN before any sample is recorded (#9156: 0 is a real, reachable skew value)", () => {
+    expect(clockSkewSecondsSample()).toBeNaN();
   });
 
   it("records a positive skew when the local clock is ahead of the response's Date header", () => {
@@ -45,11 +45,20 @@ describe("clock-skew", () => {
     expect(clockSkewSecondsSample()).toBe(300); // unchanged, not reset to 0
   });
 
-  it("resetClockSkewForTest restores the sample to 0", () => {
+  it("resetClockSkewForTest restores the sample to NaN (#9156)", () => {
     recordClockSkewFromResponse(new Response(null, { headers: { date: new Date(Date.now() - 60_000).toUTCString() } }));
-    expect(clockSkewSecondsSample()).not.toBe(0);
+    expect(clockSkewSecondsSample()).not.toBeNaN();
     resetClockSkewForTest();
+    expect(clockSkewSecondsSample()).toBeNaN();
+  });
+
+  it("a genuine zero-skew sample (perfectly synced clocks) reads as the real number 0, not NaN (#9156)", () => {
+    vi.useFakeTimers();
+    const now = new Date("2026-07-06T12:00:00.000Z");
+    vi.setSystemTime(now);
+    recordClockSkewFromResponse(new Response(null, { headers: { date: now.toUTCString() } }));
     expect(clockSkewSecondsSample()).toBe(0);
+    expect(Number.isNaN(clockSkewSecondsSample())).toBe(false);
   });
 });
 

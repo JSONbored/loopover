@@ -162,6 +162,138 @@ describe("signalFromCounts — config-overridable thresholds (#private-config pa
   });
 });
 
+describe("getSubmitterReputation / getSubmitterReputationAcrossInstall / listSubmitterCohortRows — live-ledger repoint (#9136)", () => {
+  it("query the live review_audit/pull_requests ledgers, not the frozen review_targets table", async () => {
+    const seenSql: string[] = [];
+    const spyEnv = (): Env =>
+      ({
+        DB: {
+          prepare: (sql: string) => {
+            seenSql.push(sql);
+            return {
+              bind: () => ({
+                first: async () => null,
+                all: async () => ({ results: [] }),
+              }),
+            };
+          },
+        },
+      }) as unknown as Env;
+
+    await getSubmitterReputation(spyEnv(), "acme/widgets", "farmer99");
+    await getSubmitterReputationAcrossInstall(spyEnv(), 123, "farmer99");
+    await listSubmitterCohortRows(spyEnv(), "acme/widgets");
+
+    for (const sql of seenSql) expect(sql).not.toContain("review_targets");
+    expect(seenSql.some((sql) => sql.includes("FROM review_audit") && sql.includes("pull_requests"))).toBe(true);
+  });
+
+  async function seedPullRequest(env: Env, args: { repo: string; number: number; author: string; state?: string; mergedAt?: string | null; createdAt?: string; mergeAttemptCount?: number }): Promise<void> {
+    await env.DB.prepare(
+      `INSERT INTO pull_requests (repo_full_name, number, title, state, author_login, merged_at, created_at, merge_attempt_count)
+       VALUES (?, ?, 't', ?, ?, ?, ?, ?)`,
+    )
+      .bind(args.repo, args.number, args.state ?? (args.mergedAt ? "closed" : "open"), args.author, args.mergedAt ?? null, args.createdAt ?? "2026-07-01T00:00:00.000Z", args.mergeAttemptCount ?? 0)
+      .run();
+  }
+
+  async function seedGateDecision(env: Env, args: { repo: string; number: number; decision: string; summary?: string | null; createdAt?: string }): Promise<void> {
+    await env.DB.prepare(
+      `INSERT INTO review_audit (id, project, target_id, event_type, decision, source, summary, created_at)
+       VALUES (?, ?, ?, 'gate_decision', ?, 'gittensory-native', ?, ?)`,
+    )
+      .bind(`gd:${args.repo}#${args.number}:${Math.random()}`, args.repo, `${args.repo}#${args.number}`, args.decision, args.summary ?? null, args.createdAt ?? "2026-07-10T00:00:00.000Z")
+      .run();
+  }
+
+  async function seedPrOutcome(env: Env, args: { repo: string; number: number; decision: "merged" | "closed"; createdAt?: string }): Promise<void> {
+    await env.DB.prepare(
+      `INSERT INTO review_audit (id, project, target_id, event_type, decision, source, created_at)
+       VALUES (?, ?, ?, 'pr_outcome', ?, 'gittensory-native', ?)`,
+    )
+      .bind(`po:${args.repo}#${args.number}:${Math.random()}`, args.repo, `${args.repo}#${args.number}`, args.decision, args.createdAt ?? "2026-07-11T00:00:00.000Z")
+      .run();
+  }
+
+  it("derives the quality signal from real review_audit pr_outcome rows joined to pull_requests", async () => {
+    const env = createTestEnv();
+    // 1 genuine decline + 7 merges for "farmer99" -- a healthy contributor, must NOT be 'low' (success guard).
+    await seedPullRequest(env, { repo: "acme/widgets", number: 1, author: "Farmer99", mergedAt: "2026-07-05T00:00:00.000Z" });
+    await seedGateDecision(env, { repo: "acme/widgets", number: 1, decision: "merge" });
+    await seedPrOutcome(env, { repo: "acme/widgets", number: 1, decision: "merged" });
+    for (let n = 2; n <= 8; n++) {
+      await seedPullRequest(env, { repo: "acme/widgets", number: n, author: "farmer99", mergedAt: `2026-07-0${Math.min(n, 9)}T00:00:00.000Z` });
+      await seedGateDecision(env, { repo: "acme/widgets", number: n, decision: "merge" });
+      await seedPrOutcome(env, { repo: "acme/widgets", number: n, decision: "merged" });
+    }
+    await seedPullRequest(env, { repo: "acme/widgets", number: 9, author: "farmer99" });
+    await seedGateDecision(env, { repo: "acme/widgets", number: 9, decision: "close", summary: "dual_review_declined" });
+    await seedPrOutcome(env, { repo: "acme/widgets", number: 9, decision: "closed" });
+
+    const rep = await getSubmitterReputation(env, "acme/widgets", "farmer99");
+    expect(rep.signal).toBe("trusted"); // login match is case-insensitive (Farmer99 vs farmer99)
+  });
+
+  it("reads a submitter's login case-insensitively, and scopes strictly to the requested project", async () => {
+    const env = createTestEnv();
+    await seedPullRequest(env, { repo: "acme/widgets", number: 1, author: "farmer99" });
+    await seedGateDecision(env, { repo: "acme/widgets", number: 1, decision: "close", summary: "source_prompt_injection" });
+    await seedPrOutcome(env, { repo: "acme/widgets", number: 1, decision: "closed" });
+    // A same-named submitter in a DIFFERENT repo must not leak into this project's signal.
+    await seedPullRequest(env, { repo: "other/repo", number: 1, author: "farmer99" });
+    await seedGateDecision(env, { repo: "other/repo", number: 1, decision: "merge" });
+    await seedPrOutcome(env, { repo: "other/repo", number: 1, decision: "merged" });
+
+    const rep = await getSubmitterReputation(env, "acme/widgets", "farmer99");
+    expect(rep.signal).toBe("low"); // prompt-injection is a hard override, unaffected by minSample
+  });
+
+  it("only counts the LATEST pr_outcome row per target when a duplicate write exists", async () => {
+    const env = createTestEnv();
+    await seedPullRequest(env, { repo: "acme/widgets", number: 1, author: "farmer99" });
+    await seedGateDecision(env, { repo: "acme/widgets", number: 1, decision: "close", summary: "dual_review_declined" });
+    // Simulate the recordPrOutcome-vs-recordTerminalActionOutcome double-write race (#9136): an EARLIER
+    // "closed" row and a LATER "merged" row for the SAME target. Only the latest should be counted.
+    await seedPrOutcome(env, { repo: "acme/widgets", number: 1, decision: "closed", createdAt: "2026-07-01T00:00:00.000Z" });
+    await seedPrOutcome(env, { repo: "acme/widgets", number: 1, decision: "merged", createdAt: "2026-07-02T00:00:00.000Z" });
+
+    const rep = await getSubmitterReputation(env, "acme/widgets", "farmer99");
+    // If both rows were counted, this would be sample=2 (merged=1, closed=1). Counting only the LATEST
+    // ("merged") leaves a sample of 1 success and 0 fails -- below minSample, so 'neutral', not 'low'/'trusted'.
+    expect(rep.signal).toBe("neutral");
+  });
+
+  it("getSubmitterReputationAcrossInstall aggregates across every repo the installation owns, via `repositories`", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare(`INSERT INTO repositories (full_name, owner, name, installation_id) VALUES (?, ?, ?, ?)`).bind("acme/widgets", "acme", "widgets", 555).run();
+    await env.DB.prepare(`INSERT INTO repositories (full_name, owner, name, installation_id) VALUES (?, ?, ?, ?)`).bind("acme/other", "acme", "other", 555).run();
+    for (const [repo, n] of [["acme/widgets", 1], ["acme/other", 1]] as const) {
+      await seedPullRequest(env, { repo, number: n, author: "farmer99" });
+      await seedGateDecision(env, { repo, number: n, decision: "close", summary: "source_prompt_injection" });
+      await seedPrOutcome(env, { repo, number: n, decision: "closed" });
+    }
+    const rep = await getSubmitterReputationAcrossInstall(env, 555, "farmer99");
+    expect(rep.signal).toBe("low");
+    // A different installation_id must not see this submitter's activity.
+    expect((await getSubmitterReputationAcrossInstall(env, 999, "farmer99")).signal).toBe("neutral");
+  });
+
+  it("listSubmitterCohortRows groups real ledger rows by submitter with pull_requests-sourced merge timing", async () => {
+    const env = createTestEnv();
+    await seedPullRequest(env, { repo: "acme/widgets", number: 1, author: "alice", mergedAt: "2026-07-02T00:00:00.000Z", createdAt: "2026-07-01T00:00:00.000Z", mergeAttemptCount: 2 });
+    await seedGateDecision(env, { repo: "acme/widgets", number: 1, decision: "merge" });
+    await seedPrOutcome(env, { repo: "acme/widgets", number: 1, decision: "merged" });
+    await seedPullRequest(env, { repo: "acme/widgets", number: 2, author: "alice" });
+    await seedGateDecision(env, { repo: "acme/widgets", number: 2, decision: "close", summary: "dual_review_declined" });
+    await seedPrOutcome(env, { repo: "acme/widgets", number: 2, decision: "closed" });
+
+    const rows = await listSubmitterCohortRows(env, "acme/widgets");
+    expect(rows).toEqual([
+      expect.objectContaining({ submitter: "alice", submissions: 2, merged: 1, closed: 1, avgAttemptCount: 1, avgMergeMs: 86_400_000 }),
+    ]);
+  });
+});
+
 describe("getSubmitterReputation — recency window (#reputation-redesign)", () => {
   it("OLD closes outside the window are not in the query result → they don't count (auto-correct)", async () => {
     // Simulate the DB returning ONLY in-window rows (the SQL `terminal_at >= datetime('now', -90 days)` filters

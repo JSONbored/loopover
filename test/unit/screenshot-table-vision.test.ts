@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildScreenshotTableVisionFindings,
+  buildScreenshotTableVisionSkippedForReputationFinding,
   buildScreenshotTableVisionUserPrompt,
   evaluateScreenshotTableVisionGate,
   parseScreenshotTableVisionResponse,
@@ -50,6 +51,23 @@ describe("evaluateScreenshotTableVisionGate", () => {
     expect(
       evaluateScreenshotTableVisionGate({ imagePairCount: 1, reputationSignal: "neutral", providerKey: null, selfHostVisionAvailable: true }),
     ).toEqual({ run: true, pairCount: 1 });
+  });
+});
+
+describe("buildScreenshotTableVisionSkippedForReputationFinding (#9136 compensating hold)", () => {
+  it("returns null when there was nothing to compensate for (no real image pairs)", () => {
+    expect(buildScreenshotTableVisionSkippedForReputationFinding(0)).toBeNull();
+  });
+
+  it("builds a warning-severity advisory finding naming the pair count", () => {
+    const finding = buildScreenshotTableVisionSkippedForReputationFinding(1);
+    expect(finding).toEqual(
+      expect.objectContaining({
+        code: "screenshot_table_vision_skipped_low_reputation",
+        severity: "warning",
+        detail: expect.stringContaining("1 real before/after image pair(s)"),
+      }),
+    );
   });
 });
 

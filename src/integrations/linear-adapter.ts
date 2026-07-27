@@ -2,6 +2,10 @@ import { getDecryptedRepositoryLinearKey } from "../db/repositories";
 import type { ProjectTrackerAdapter, ProjectTrackerAttachResult, ProjectTrackerContext, ProjectTrackerMatch, ProjectTrackerRef } from "./project-tracker-adapter";
 
 const LINEAR_API_URL = "https://api.linear.app/graphql";
+// #9165 sweep: matches src/gittensor/api.ts's GITTENSOR_FETCH_TIMEOUT_MS -- a per-adapter timeout constant
+// on every raw fetch() outside the shared GitHub client helpers, so a stalled Linear connection degrades
+// this adapter's caller (falls back to fuzzy matching) instead of hanging.
+const LINEAR_FETCH_TIMEOUT_MS = 10_000;
 
 // "Open" for Linear means not-yet-completed and not-canceled -- listing the positive set (rather than
 // excluding just "completed" via `neq`) so a canceled project is never mistaken for open. Bounded pagination
@@ -22,6 +26,7 @@ async function linearGraphQl<T>(apiKey: string, query: string, variables: Record
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: apiKey },
     body: JSON.stringify({ query, variables }),
+    signal: AbortSignal.timeout(LINEAR_FETCH_TIMEOUT_MS),
   });
   if (!response.ok) throw new Error(`Linear API HTTP ${response.status}`);
   const body = (await response.json()) as { data?: T } & LinearGraphQlErrorResponse;

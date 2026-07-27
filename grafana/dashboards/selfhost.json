@@ -2782,6 +2782,42 @@
             "mode": "absolute",
             "steps": [
               { "color": "green", "value": null },
+              { "color": "yellow", "value": 7200 }
+            ]
+          },
+          "unit": "s"
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 205 },
+      "id": 206,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "description": "Seconds since the last successful clock-skew sample (#7000, #9156). Ages continuously from process start when never sampled (#9128) -- LoopoverClockSkewSampleStale fires past 7200s (2h). While this is high, the Clock Skew panel to the left cannot be trusted: it may be reading stale or never-measured data.",
+      "title": "Clock Skew Sample Age (#7000, LoopoverClockSkewSampleStale > 7200s)",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "(loopover_clock_skew_sample_age_seconds or gittensory_clock_skew_sample_age_seconds)",
+          "legendFormat": "sample age"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
               { "color": "yellow", "value": 1 }
             ]
           },

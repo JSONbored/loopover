@@ -72,6 +72,30 @@ export function evaluateScreenshotTableVisionGate(input: {
   return { run: true, pairCount };
 }
 
+/** The advisory finding code recorded when the gaming-detection vision check is SKIPPED for a low-reputation
+ *  submitter on a real (different-bytes) image pair (#9136, mirrors visual-findings.ts's
+ *  VISUAL_VISION_SKIPPED_LOW_REPUTATION_FINDING_CODE — a compensating signal for the `low_reputation` skip
+ *  above). This is exactly the submitter this check exists to catch — a low-reputation submitter gaming the
+ *  deterministic screenshot-table gate with a duplicated/unrelated image — so skipping it with no trace at
+ *  all reproduces #9015's "suspicion buys less scrutiny" shape. `severity: "warning"` (never a blocker — this
+ *  module stays STRICTLY ADVISORY, see the file header) puts it in `gate.warnings`. */
+export const SCREENSHOT_TABLE_VISION_SKIPPED_LOW_REPUTATION_FINDING_CODE = "screenshot_table_vision_skipped_low_reputation";
+
+/** Build the compensating advisory finding for a low-reputation gaming-check skip (#9136). `imagePairCount` is
+ *  how many real (different-bytes) pairs survived the caller's byte pre-check — the pairs vision would have
+ *  looked at had reputation not skipped it. Returns `null` when there was nothing to compensate for (no real
+ *  pairs at all). Pure + total, mirrors every other finding builder in this file. */
+export function buildScreenshotTableVisionSkippedForReputationFinding(imagePairCount: number): AdvisoryFinding | null {
+  if (imagePairCount <= 0) return null;
+  return {
+    code: SCREENSHOT_TABLE_VISION_SKIPPED_LOW_REPUTATION_FINDING_CODE,
+    severity: "warning",
+    title: "Screenshot-table gaming check skipped (low submitter reputation)",
+    detail: `${imagePairCount} real before/after image pair(s) were ready to check, but the AI gaming-detection vision check was skipped because this submitter's reputation signal is currently "low".`,
+    action: "Advisory only — manually verify the screenshot-table images against the stated change before deciding.",
+  };
+}
+
 /** One vision observation the model reported for a specific table row (1-indexed among the pairs sent, not
  *  the row's position in the PR body — the live caller has no cheap way to recover the original row number
  *  once rows have been filtered down to real pairs, and the number only needs to disambiguate WHICH pair a

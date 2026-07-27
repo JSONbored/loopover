@@ -113,3 +113,23 @@ describe("progressChanged — push on change, not on a fixed interval (#4800)", 
     });
   });
 });
+
+describe("progressChanged — maxIterations / percentComplete displayed axes (#9323)", () => {
+  it("pushes when maxIterations changes even though iteration/phase/status/activity are identical", () => {
+    // Raising the iteration budget mid-run: iteration stays 2, maxIterations 5 -> 10 (percentComplete 40 -> 20).
+    const prev = buildProgressSnapshot(running({ iteration: 2, maxIterations: 5 }));
+    const next = buildProgressSnapshot(running({ iteration: 2, maxIterations: 10 }));
+    expect(progressChanged(prev, next)).toBe(true);
+  });
+
+  it("pushes when only percentComplete differs, with every other displayed axis identical", () => {
+    // progressChanged compares the displayed field, not a recomputation — a percentComplete-only delta pushes.
+    const base = buildProgressSnapshot(running());
+    expect(progressChanged(base, { ...base, percentComplete: (base.percentComplete ?? 0) + 10 })).toBe(true);
+  });
+
+  it("does not push when maxIterations and percentComplete are both unchanged", () => {
+    const base = buildProgressSnapshot(running());
+    expect(progressChanged(base, { ...base })).toBe(false);
+  });
+});

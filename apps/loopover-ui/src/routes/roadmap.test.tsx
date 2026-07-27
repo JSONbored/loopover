@@ -22,20 +22,53 @@ vi.mock("@tanstack/react-router", () => ({
 
 import { RoadmapPage } from "./roadmap";
 
-// #8669: the "Phase 3: repo owner intake console" card linked to /app/repos, which defaults to the
-// Maintainer console tab (app.repos.tsx:27) with no search param -- the opposite surface from what
-// the card describes. Locks in the fix to the dedicated /app/owner route, and guards that no other
-// phase's link moved as a side effect.
-describe("RoadmapPage phase links (#8669)", () => {
-  it("routes the repo owner intake console card to the dedicated Owner workspace, not the Maintainer tab", () => {
+// #9182: the page was frozen at a stale snapshot referencing the closed v1 phase epics
+// (#233-#238). Guards that those numbers never reappear, and that every rendered item links to
+// its real, live GitHub issue instead.
+describe("RoadmapPage content (#9182)", () => {
+  it("never references the closed, ancient phase issues #233-#238", () => {
     render(<RoadmapPage />);
-    const link = screen.getByRole("link", { name: /Open repos console/i });
-    expect(link.getAttribute("href")).toBe("/app/owner");
+    for (const staleIssue of [233, 234, 235, 236, 237, 238]) {
+      expect(
+        screen.queryByRole("link", { name: new RegExp(`Issue #${staleIssue}\\b`) }),
+      ).toBeNull();
+    }
   });
 
-  it("leaves the maintainer trust card's link unchanged (sibling regression guard)", () => {
+  it("links every card to its real, open GitHub issue", () => {
     render(<RoadmapPage />);
-    const link = screen.getByRole("link", { name: /Open maintainer console/i });
-    expect(link.getAttribute("href")).toBe("/app/maintainer");
+    const expected: Record<string, number> = {
+      "Rent-a-Loop: hosted development loops": 4778,
+      "ORB cloud readiness": 4877,
+      "Hosted AMS chat platform": 9184,
+      "ORB maintainer chat platform": 9183,
+      "Hosted bare-metal execution plane": 8534,
+      "PostHog observability consolidation": 8286,
+    };
+
+    for (const [title, issue] of Object.entries(expected)) {
+      const heading = screen.getByRole("heading", { name: title });
+      // The card is the outer wrapper (the ".group" hover-target div), not the heading's
+      // immediate parent (a plain flex row shared with the "Tracked" badge).
+      const card = heading.closest("div.group");
+      expect(card).not.toBeNull();
+      const issueLink = card!.querySelector(
+        `a[href="https://github.com/JSONbored/loopover/issues/${issue}"]`,
+      );
+      expect(issueLink).not.toBeNull();
+    }
+  });
+
+  it("renders the three roadmap columns", () => {
+    render(<RoadmapPage />);
+    expect(screen.getByText("Now")).toBeTruthy();
+    expect(screen.getByText("Next")).toBeTruthy();
+    expect(screen.getByText("Later")).toBeTruthy();
+  });
+
+  it("links out to the live GitHub milestones list, not a closed roadmap issue", () => {
+    render(<RoadmapPage />);
+    const link = screen.getByRole("link", { name: /See all milestones/i });
+    expect(link.getAttribute("href")).toBe("https://github.com/JSONbored/loopover/milestones");
   });
 });

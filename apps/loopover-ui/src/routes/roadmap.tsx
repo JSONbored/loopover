@@ -27,13 +27,25 @@ export const Route = createFileRoute("/roadmap")({
 });
 
 const COLUMNS = [
-  { key: "shipping-soon", title: "Now", hint: "Phase 0/1: stabilize and ship the miner loop." },
-  { key: "planned", title: "Next", hint: "Phase 2/3: maintainer trust and repo-owner intake." },
-  { key: "exploring", title: "Later", hint: "Phase 4/5: analytics, launch system, distribution." },
+  {
+    key: "shipping-soon",
+    title: "Now",
+    hint: "Hosted-platform foundations already underway.",
+  },
+  {
+    key: "planned",
+    title: "Next",
+    hint: "Chat-first, hosted dashboards for maintainers and miners.",
+  },
+  {
+    key: "exploring",
+    title: "Later",
+    hint: "Deeper execution infrastructure and observability consolidation.",
+  },
 ] as const;
 
-const LAST_UPDATED = "2026-06-01";
-const LAST_UPDATED_LABEL = "June 1, 2026";
+const LAST_UPDATED = "2026-07-27";
+const LAST_UPDATED_LABEL = "July 27, 2026";
 
 const ROADMAP_ITEMS: Array<{
   title: string;
@@ -42,72 +54,53 @@ const ROADMAP_ITEMS: Array<{
   issue: number;
 }> = [
   {
-    title: "Phase 0: stabilize while shipping",
+    title: "Rent-a-Loop: hosted development loops",
     status: "shipping-soon",
-    issue: 233,
+    issue: 4778,
     description:
-      "Current-version MCP display, stale PR queue triage, install/docs cleanup, and high-confidence polish before broader launch work.",
+      "Rent autonomous development-loop time against your own repository — a hosted product, settled on-chain via Bittensor or by conventional billing, built on the same review-gate authority model that already runs self-hosted.",
   },
   {
-    title: "Phase 1: miner command center",
+    title: "ORB cloud readiness",
     status: "shipping-soon",
-    issue: 234,
+    issue: 4877,
     description:
-      "MCP doctor/status/init-client clarity, last-good decision packs, recommendation-change explanations, and command-copy flows for miners.",
+      "Multi-tenant infrastructure, fleet operations, billing, and incident-response readiness for a centrally hosted edition of the review gate. Self-hosting remains fully supported alongside it.",
   },
   {
-    title: "Phase 2: maintainer trust",
+    title: "Hosted AMS chat platform",
     status: "planned",
-    issue: 235,
+    issue: 9184,
     description:
-      "Maintainer trust checklist, install health next actions, and private/public rendering checks.",
+      "Sign up, connect GitHub, and converse with your own autonomous miner through a hosted, chat-first dashboard — no local install or gittensor registration required to get started.",
   },
   {
-    title: "Phase 3: repo owner intake console",
+    title: "ORB maintainer chat platform",
     status: "planned",
-    issue: 236,
+    issue: 9183,
     description:
-      "Guided registration readiness, config recommendations, repo onboarding packs, and source-quality next actions.",
+      "A conversational, chat-first command center letting maintainers and repo owners drive the review agent through conversation — grounded read-only over maintainer data, with every action routed through the existing write-safety controls.",
   },
   {
-    title: "Phase 4: adoption analytics and launch system",
+    title: "Hosted bare-metal execution plane",
     status: "exploring",
-    issue: 237,
+    issue: 8534,
     description:
-      "Privacy-safe product events, role activation/retention metrics, weekly value reports, and operator export paths.",
+      "Dedicated, hardware-attested execution hosting, extending our reproducible-backtest trust guarantees to hosted reviews of private, non-public repositories.",
   },
   {
-    title: "Phase 5: ecosystem distribution",
+    title: "PostHog observability consolidation",
     status: "exploring",
-    issue: 238,
+    issue: 8286,
     description:
-      "PWA/digest delivery, documentation distribution, launch loops, and ecosystem packaging once the core surfaces are durable.",
+      "Consolidating error tracking, product analytics, and observability onto a single platform for clearer diagnostics and faster incident response across our hosted services.",
   },
 ];
 
 // Titles with live or self-hosted surfaces in the imported frontend.
-const BUILT_TITLES = new Set<string>([
-  "Phase 0: stabilize while shipping",
-  "Phase 1: miner command center",
-  "Phase 2: maintainer trust",
-  "Phase 3: repo owner intake console",
-  "Phase 4: adoption analytics and launch system",
-  "Phase 5: ecosystem distribution",
-]);
+const BUILT_TITLES = new Set<string>([]);
 
-const LINK_MAP: Record<string, { to: string; label: string }> = {
-  "Phase 1: miner command center": { to: "/app/miner", label: "Open miner dashboard" },
-  "Phase 2: maintainer trust": {
-    to: "/app/maintainer",
-    label: "Open maintainer console",
-  },
-  "Phase 3: repo owner intake console": { to: "/app/owner", label: "Open repos console" },
-  "Phase 4: adoption analytics and launch system": {
-    to: "/app/analytics",
-    label: "Open analytics",
-  },
-  "Phase 5: ecosystem distribution": { to: "/app/digest", label: "Preview the digest" },
-};
+const LINK_MAP: Record<string, { to: string; label: string }> = {};
 
 export function RoadmapPage() {
   const grouped = COLUMNS.map((c) => ({
@@ -123,16 +116,21 @@ export function RoadmapPage() {
           What&apos;s next for LoopOver
         </h1>
         <p className="mt-3 text-muted-foreground">
-          This reflects the live roadmap issue #127 and phase epics #233-#238. Project-board linkage
-          waits until the GitHub project scope is available.
+          Each item below links to a real, open epic on GitHub — no invented phases. Project-board
+          linkage waits until the GitHub project scope is available.
+        </p>
+        <p className="mt-2 text-muted-foreground">
+          Recently shipped: the certified close guarantee, full decision replay,
+          salvageability-aware closes, and opt-in federated fleet intelligence — all live in
+          production today.
         </p>
         <a
-          href="https://github.com/JSONbored/loopover/issues/127"
+          href="https://github.com/JSONbored/loopover/milestones"
           target="_blank"
           rel="noreferrer"
           className="mt-4 inline-flex rounded-token border-hairline px-2.5 py-1 font-mono text-token-2xs text-muted-foreground transition-colors duration-150 hover:border-strong hover:text-mint focus-ring"
         >
-          Roadmap #127 →
+          See all milestones →
         </a>
         <div className="mt-4 inline-flex items-center gap-2 font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
           <span className="size-1.5 rounded-full bg-mint" aria-hidden />

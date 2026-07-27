@@ -1706,6 +1706,10 @@ describe("agent approval queue (#779)", () => {
 });
 
 describe("#9158 (label-close-split-brain, approval-queue half): a coupled enforcement label may not post unless its paired close completed", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("REGRESSION: accept REJECTS a staged label coupled to a close (autonomyClass close + closeKind) when no paired close has EVER completed for this PR", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { label: "auto_with_approval" } });
@@ -1804,5 +1808,76 @@ describe("#9158 (label-close-split-brain, approval-queue half): a coupled enforc
     expect(result.status).toBe("accepted");
     const { ensurePullRequestLabel: labelApplied } = await import("../../src/github/labels");
     expect(labelApplied).toHaveBeenCalled();
+  });
+});
+
+describe("#9159: the accept-replay path threads a contributor-cap merge re-check, closing the TOCTOU the executor's own recheck exists for", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("REGRESSION: accept DENIES a staged merge when the author is now over the per-repo contributor-open-PR cap at accept time", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    // contributorOpenPrCap is config-as-code only (.loopover.yml), resolved from the focus manifest, not a
+    // repository_settings DB column (mirrors expectedCiContexts elsewhere in this file).
+    await upsertRepoFocusManifest(env, "owner/repo", { settings: { contributorOpenPrCap: 1 } });
+    await seedInstallation(env);
+    // The author has ANOTHER open PR in the same repo (#3) -- fetchLivePullRequestState defaults to "open" in
+    // this suite's mocks, so it live-confirms as still open too. With cap=1, the higher-numbered PR (#7, the
+    // one about to merge) is the one over cap.
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 3, title: "Sibling PR", state: "open", user: { login: "farmer99" }, head: { sha: "s3" }, labels: [], body: "x" });
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "farmer99" }, head: { sha: "h7" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+
+    expect(result.status).toBe("accepted"); // the maintainer's decision itself always records as accepted...
+    expect(mergePullRequest).not.toHaveBeenCalled(); // ...but the executor's own re-check denied the mutation
+    const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = 'agent.action.merge' order by created_at desc limit 1").first<{ outcome: string; detail: string }>();
+    expect(audit?.outcome).toBe("denied");
+    expect(audit?.detail).toMatch(/now over cap/);
+  });
+
+  it("accept EXECUTES a staged merge when the author remains under the per-repo contributor-open-PR cap at accept time", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    await upsertRepoFocusManifest(env, "owner/repo", { settings: { contributorOpenPrCap: 5 } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "farmer99" }, head: { sha: "h7" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+
+    expect(result.status).toBe("accepted");
+    expect(mergePullRequest).toHaveBeenCalled();
+  });
+
+  it("does not build a recheck at all (zero added cost) when no per-repo cap is configured", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "farmer99" }, head: { sha: "h7" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+
+    expect(result.status).toBe("accepted");
+    expect(mergePullRequest).toHaveBeenCalled();
+  });
+
+  it("does not build a recheck for an author exempt from the auto-close list, even with a cap configured", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    await upsertRepoFocusManifest(env, "owner/repo", { settings: { contributorOpenPrCap: 1, autoCloseExemptLogins: ["farmer99"] } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 3, title: "Sibling PR", state: "open", user: { login: "farmer99" }, head: { sha: "s3" }, labels: [], body: "x" });
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "farmer99" }, head: { sha: "h7" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+
+    expect(result.status).toBe("accepted");
+    expect(mergePullRequest).toHaveBeenCalled();
   });
 });

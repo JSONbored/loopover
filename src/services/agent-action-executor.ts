@@ -729,13 +729,104 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
         }).catch(() => undefined);
       }
     }
-    // 8c) pre-merge contributor-cap re-check (#7284-fix, TOCTOU race): confirmed live -- a PR whose OWN earlier
-    // cap check passed can still merge after a sibling's later cap-close made the author over cap, because each
-    // PR's cap check runs independently with no shared lock. Re-verify right before the irreversible write,
-    // under the SAME per-author mutex a concurrent sibling's cap-close/wake also acquires, so the two can never
-    // both act on a stale view of the author's open-PR count. `ctx.contributorCapMergeRecheck` is only ever set
-    // by the caller when a cap is actually configured for this repo (the common case leaves it undefined) —
-    // zero added cost, byte-identical to before this field existed.
+    // 9) live — perform the real mutation, recording success or the error. Wrapped in a closure so 8c below can
+    // hold the contributor-cap lock across this call for a merge (see 8c's own doc comment for why).
+    const performMutation = async (): Promise<void> => {
+      try {
+        const detailOverride = await performAction(env, ctx, action);
+        await audit("completed", detailOverride ?? action.reason);
+        // #9134: every completed merge/close emits a decision record + chained ledger row, by construction --
+        // see DecisionRecordContext's doc comment on why this lives HERE instead of at each call site. Never
+        // throws: recording legibility must never retroactively fail a mutation that already succeeded.
+        if (action.actionClass === "merge" || action.actionClass === "close") {
+          await recordCompletedDecision(env, ctx, action).catch(() => undefined);
+        }
+        // CI-run cancellation on an anti-abuse close (#2462 contributor_cap; extended to blacklist #6659): stop
+        // burning CI minutes on a PR that was just closed for exceeding the contributor cap, or for a banned
+        // login. contributor_cap stays opt-in (contributorCapCancelCi) since a repo may want the cap to bite
+        // without touching CI; blacklist is unconditional -- there is no scenario where a maintainer wants a
+        // permanently-banned login's CI to keep running after the close. Best-effort, AFTER the close already
+        // succeeded -- cancelInFlightWorkflowRunsForHeadSha never throws, so a missing actions:write grant (or
+        // any other failure here) can never retroactively turn this already-successful close into a recorded
+        // "error" by escaping into the catch block below.
+        if (action.actionClass === "close" && ctx.headSha) {
+          if (action.closeKind === "contributor_cap" && ctx.contributorCapCancelCi) {
+            await recordCiCancelOutcome(env, "contributor_cap", ctx, ctx.headSha);
+          } else if (action.closeKind === "blacklist") {
+            await recordCiCancelOutcome(env, "blacklist", ctx, ctx.headSha);
+          }
+        }
+        // Re-approval idempotency: record the head SHA we just approved so the planner skips re-approving this
+        // exact commit on the next sweep (a GitHub App's own approval does not reliably flip reviewDecision to
+        // APPROVED, so reviewDecision alone can't dedup). A new commit clears the match → the bot approves it.
+        // Best-effort: a failed persist only risks one redundant re-approval, never a wrong disposition.
+        if (action.actionClass === "approve" && !action.dismissStaleApproval && ctx.headSha) {
+          await markPullRequestApproved(env, ctx.repoFullName, ctx.pullNumber, ctx.headSha).catch(() => undefined);
+        }
+        // Per-repo Discord notification on a terminal/visible action (reviewbot parity): merge→merged,
+        // close→closed, request_changes→manual review. Best-effort; never affects the action. RC1 dedups at the
+        // action level, so this fires once per outcome per PR (no spam).
+        const notifyOutcome: NotifyOutcome | null =
+          action.actionClass === "merge" ? "merged" : action.actionClass === "close" ? "closed" : action.actionClass === "request_changes" ? "manual" : null;
+        if (notifyOutcome) {
+          // #6636: enrich the notification with the AI's actual gate-verdict reasoning (the latest recorded
+          // gate_decision summary for this PR) instead of only the plain disposition reason — resolveDispositionReason
+          // falls back to `action.reason` when no verdict is on record or the read fails, so this is byte-identical
+          // when there's nothing to enrich with. review_audit keys gate_decision rows by `${repoFullName}#${number}`.
+          const summary = await resolveDispositionReason(env, `${ctx.repoFullName}#${ctx.pullNumber}`, action.reason);
+          const notifyParams = { repoFullName: ctx.repoFullName, pullNumber: ctx.pullNumber, outcome: notifyOutcome, summary, submitter: ctx.authorLogin };
+          await notifyActionToDiscord(env, notifyParams).catch(() => undefined);
+          await notifyActionToSlack(env, notifyParams).catch(() => undefined);
+        }
+      } catch (error) {
+        await audit("error", errorMessage(error));
+        // RC3 terminal-fail merges: immediate terminal failures (401/405/409/conflict) are marked once; generic
+        // GitHub 403s are retryable first because branch-protection/check/conversation state can converge shortly
+        // after the gate publishes. A possibly-transient failure is retried up to MERGE_RETRY_CAP, then held.
+        if (action.actionClass === "merge" && ctx.headSha) {
+          await handleMergeFailure(env, ctx, error);
+        } else if (action.actionClass === "update_branch" && isMergeConflictMessage(errorMessage(error))) {
+          // LOOPOVER-24: update_branch performs a real merge internally, so it fails with the same "merge
+          // conflict" shape a MERGE action does -- but unlike a merge's terminal hold (a PR permanently blocked
+          // until a human intervenes), this is NOT a stuck state: forceUpdateBranch's caller (prReadyForReview)
+          // already falls through to reviewing the PR on its current, non-rebased head when this returns false
+          // (see forceUpdateBranch's own doc comment), exactly like every other "couldn't rebase, review anyway"
+          // path. The branch owner, not the bot, needs to resolve the conflict -- paging on every naturally-
+          // diverged PR this happens to hit isn't warranted. Still recorded by the audit() call above.
+        } else if (action.actionClass === "update_branch" && isNoNewBaseCommitsMessage(errorMessage(error))) {
+          // LOOPOVER-24 (regressed shape): a 422 "There are no new commits on the base branch." means the head
+          // was already up to date when update-branch fired -- the readiness check acted on a stale/cached
+          // mergeable_state read. Nothing went wrong and nothing is stuck: the caller falls through to reviewing
+          // the current head exactly as in the conflict case above. Audit-only; never a PostHog page.
+        } else {
+          // Non-merge action classes have no retry loop -- a single failure here is already this pass's terminal
+          // outcome (the planner may re-attempt on the next sweep if the underlying condition clears itself), so
+          // it is captured immediately rather than only on eventual exhaustion. Mirrors handleMergeFailure's own
+          // terminal-hold capture below and the "a real failure the maintainer must see" convention already used
+          // for review-pass failures (selfhost/posthog.ts's capturePostHogReviewFailure, queue/processors.ts).
+          // Previously this class of failure was audit-log-only, invisible without a manual audit_events query.
+          capturePostHogError(error, { kind: "agent_action_execution_failed", repo: ctx.repoFullName, pr: ctx.pullNumber, installationId: ctx.installationId, actionClass: action.actionClass }, "agent_action_execution_failed");
+        }
+        // #2265: a permission-looking 403 on a PR-write mutation can mean the LOCAL installations.permissions
+        // snapshot is stale after a maintainer-initiated downgrade (GitHub sends no downgrade webhook). Rate-limit
+        // 403s and operation-specific forbidden states are not permission evidence, and this refresh scans broad
+        // installation state, so keep the hot error path narrowly filtered and per-installation cooled down.
+        if (PR_WRITE_CLASSES.has(action.actionClass) && shouldRefreshInstallationHealthAfterPrWriteFailure(ctx.installationId, error)) {
+          await refreshInstallationHealthForInstallation(env, ctx.installationId).catch(() => undefined);
+        }
+      }
+    };
+    // 8c) pre-merge contributor-cap re-check (#7284-fix / #9159, TOCTOU race): confirmed live -- a PR whose OWN
+    // earlier cap check passed can still merge after a sibling's later cap-close made the author over cap,
+    // because each PR's cap check runs independently with no shared lock. Re-verify right before the
+    // irreversible write, under the SAME per-author mutex a concurrent sibling's cap-close/wake also acquires,
+    // so the two can never both act on a stale view of the author's open-PR count. #9159: the mutex must span
+    // the ACTUAL merge mutation (step 9) too, not just this re-check read -- releasing it beforehand (as this
+    // used to) reopens the exact #7284 window the lock exists to close: a concurrent cap-close claims the
+    // just-released lock, live-verifies this PR as still open, and wrong-closes it for a cap this merge was
+    // about to relieve milliseconds later. `ctx.contributorCapMergeRecheck` is only ever set by the caller when
+    // a cap is actually configured for this repo (the common case leaves it undefined) — zero added cost,
+    // byte-identical to before this field existed.
     if (action.actionClass === "merge" && ctx.contributorCapMergeRecheck) {
       const authorLogin = ctx.authorLogin ?? "";
       const { acquired, ownerToken } = await claimContributorCapLock(env, ctx.repoFullName, authorLogin);
@@ -751,94 +842,16 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
           await audit("denied", `contributor cap re-check confirmed ${authorLogin} is now over cap on ${ctx.repoFullName} — action not executed`);
           continue;
         }
+        // #9159: the lock stays held across the merge mutation itself -- only released in the `finally` below,
+        // AFTER performMutation has run to completion (success or failure) -- see this block's header comment.
+        await performMutation();
       } finally {
         await releaseContributorCapLock(env, ctx.repoFullName, authorLogin, ownerToken);
       }
+      continue;
     }
     // 9) live — perform the real mutation, recording success or the error.
-    try {
-      const detailOverride = await performAction(env, ctx, action);
-      await audit("completed", detailOverride ?? action.reason);
-      // #9134: every completed merge/close emits a decision record + chained ledger row, by construction --
-      // see DecisionRecordContext's doc comment on why this lives HERE instead of at each call site. Never
-      // throws: recording legibility must never retroactively fail a mutation that already succeeded.
-      if (action.actionClass === "merge" || action.actionClass === "close") {
-        await recordCompletedDecision(env, ctx, action).catch(() => undefined);
-      }
-      // CI-run cancellation on an anti-abuse close (#2462 contributor_cap; extended to blacklist #6659): stop
-      // burning CI minutes on a PR that was just closed for exceeding the contributor cap, or for a banned
-      // login. contributor_cap stays opt-in (contributorCapCancelCi) since a repo may want the cap to bite
-      // without touching CI; blacklist is unconditional -- there is no scenario where a maintainer wants a
-      // permanently-banned login's CI to keep running after the close. Best-effort, AFTER the close already
-      // succeeded -- cancelInFlightWorkflowRunsForHeadSha never throws, so a missing actions:write grant (or
-      // any other failure here) can never retroactively turn this already-successful close into a recorded
-      // "error" by escaping into the catch block below.
-      if (action.actionClass === "close" && ctx.headSha) {
-        if (action.closeKind === "contributor_cap" && ctx.contributorCapCancelCi) {
-          await recordCiCancelOutcome(env, "contributor_cap", ctx, ctx.headSha);
-        } else if (action.closeKind === "blacklist") {
-          await recordCiCancelOutcome(env, "blacklist", ctx, ctx.headSha);
-        }
-      }
-      // Re-approval idempotency: record the head SHA we just approved so the planner skips re-approving this
-      // exact commit on the next sweep (a GitHub App's own approval does not reliably flip reviewDecision to
-      // APPROVED, so reviewDecision alone can't dedup). A new commit clears the match → the bot approves it.
-      // Best-effort: a failed persist only risks one redundant re-approval, never a wrong disposition.
-      if (action.actionClass === "approve" && !action.dismissStaleApproval && ctx.headSha) {
-        await markPullRequestApproved(env, ctx.repoFullName, ctx.pullNumber, ctx.headSha).catch(() => undefined);
-      }
-      // Per-repo Discord notification on a terminal/visible action (reviewbot parity): merge→merged,
-      // close→closed, request_changes→manual review. Best-effort; never affects the action. RC1 dedups at the
-      // action level, so this fires once per outcome per PR (no spam).
-      const notifyOutcome: NotifyOutcome | null =
-        action.actionClass === "merge" ? "merged" : action.actionClass === "close" ? "closed" : action.actionClass === "request_changes" ? "manual" : null;
-      if (notifyOutcome) {
-        // #6636: enrich the notification with the AI's actual gate-verdict reasoning (the latest recorded
-        // gate_decision summary for this PR) instead of only the plain disposition reason — resolveDispositionReason
-        // falls back to `action.reason` when no verdict is on record or the read fails, so this is byte-identical
-        // when there's nothing to enrich with. review_audit keys gate_decision rows by `${repoFullName}#${number}`.
-        const summary = await resolveDispositionReason(env, `${ctx.repoFullName}#${ctx.pullNumber}`, action.reason);
-        const notifyParams = { repoFullName: ctx.repoFullName, pullNumber: ctx.pullNumber, outcome: notifyOutcome, summary, submitter: ctx.authorLogin };
-        await notifyActionToDiscord(env, notifyParams).catch(() => undefined);
-        await notifyActionToSlack(env, notifyParams).catch(() => undefined);
-      }
-    } catch (error) {
-      await audit("error", errorMessage(error));
-      // RC3 terminal-fail merges: immediate terminal failures (401/405/409/conflict) are marked once; generic
-      // GitHub 403s are retryable first because branch-protection/check/conversation state can converge shortly
-      // after the gate publishes. A possibly-transient failure is retried up to MERGE_RETRY_CAP, then held.
-      if (action.actionClass === "merge" && ctx.headSha) {
-        await handleMergeFailure(env, ctx, error);
-      } else if (action.actionClass === "update_branch" && isMergeConflictMessage(errorMessage(error))) {
-        // LOOPOVER-24: update_branch performs a real merge internally, so it fails with the same "merge
-        // conflict" shape a MERGE action does -- but unlike a merge's terminal hold (a PR permanently blocked
-        // until a human intervenes), this is NOT a stuck state: forceUpdateBranch's caller (prReadyForReview)
-        // already falls through to reviewing the PR on its current, non-rebased head when this returns false
-        // (see forceUpdateBranch's own doc comment), exactly like every other "couldn't rebase, review anyway"
-        // path. The branch owner, not the bot, needs to resolve the conflict -- paging on every naturally-
-        // diverged PR this happens to hit isn't warranted. Still recorded by the audit() call above.
-      } else if (action.actionClass === "update_branch" && isNoNewBaseCommitsMessage(errorMessage(error))) {
-        // LOOPOVER-24 (regressed shape): a 422 "There are no new commits on the base branch." means the head
-        // was already up to date when update-branch fired -- the readiness check acted on a stale/cached
-        // mergeable_state read. Nothing went wrong and nothing is stuck: the caller falls through to reviewing
-        // the current head exactly as in the conflict case above. Audit-only; never a PostHog page.
-      } else {
-        // Non-merge action classes have no retry loop -- a single failure here is already this pass's terminal
-        // outcome (the planner may re-attempt on the next sweep if the underlying condition clears itself), so
-        // it is captured immediately rather than only on eventual exhaustion. Mirrors handleMergeFailure's own
-        // terminal-hold capture below and the "a real failure the maintainer must see" convention already used
-        // for review-pass failures (selfhost/posthog.ts's capturePostHogReviewFailure, queue/processors.ts).
-        // Previously this class of failure was audit-log-only, invisible without a manual audit_events query.
-        capturePostHogError(error, { kind: "agent_action_execution_failed", repo: ctx.repoFullName, pr: ctx.pullNumber, installationId: ctx.installationId, actionClass: action.actionClass }, "agent_action_execution_failed");
-      }
-      // #2265: a permission-looking 403 on a PR-write mutation can mean the LOCAL installations.permissions
-      // snapshot is stale after a maintainer-initiated downgrade (GitHub sends no downgrade webhook). Rate-limit
-      // 403s and operation-specific forbidden states are not permission evidence, and this refresh scans broad
-      // installation state, so keep the hot error path narrowly filtered and per-installation cooled down.
-      if (PR_WRITE_CLASSES.has(action.actionClass) && shouldRefreshInstallationHealthAfterPrWriteFailure(ctx.installationId, error)) {
-        await refreshInstallationHealthForInstallation(env, ctx.installationId).catch(() => undefined);
-      }
-    }
+    await performMutation();
   }
 
   await maybeEscalateModeration(env, { installationId: ctx.installationId, repoFullName: ctx.repoFullName, number: ctx.pullNumber, authorLogin: ctx.authorLogin, mode, moderationSettings: ctx.moderationSettings }, planned, outcomes);

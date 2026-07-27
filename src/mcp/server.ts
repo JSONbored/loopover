@@ -594,7 +594,7 @@ const planViewOutputSchema = {
 };
 
 // #784 (MCP slice) — propose-action: a maintainer stages an action into the approval queue (#779).
-const proposeActionShape = {
+export const proposeActionShape = {
   owner: z.string().min(1),
   repo: z.string().min(1),
   pullNumber: z.number().int().positive(),
@@ -610,7 +610,7 @@ const proposeActionShape = {
 // MEMBER/COLLABORATOR for users without push permission, so write-capable MCP surfaces must verify live.
 const REPO_WRITE_PERMISSIONS = new Set(["admin", "maintain", "write"]);
 
-const proposeActionOutputSchema = {
+export const proposeActionOutputSchema = {
   created: z.boolean().optional(),
   action: z
     .object({ id: z.string(), actionClass: z.string(), pullNumber: z.number(), status: z.string(), reason: z.string().nullable() })
@@ -687,7 +687,7 @@ const pendingActionEntrySchema = z.object({
   createdAt: z.string(),
 });
 
-const listPendingActionsOutputSchema = {
+export const listPendingActionsOutputSchema = {
   repoFullName: z.string().optional(),
   status: z.string().optional(),
   pendingActions: z.array(pendingActionEntrySchema).optional(),
@@ -700,7 +700,7 @@ const decidePendingActionShape = {
   decision: z.enum(["accept", "reject"]),
 };
 
-const decidePendingActionOutputSchema = {
+export const decidePendingActionOutputSchema = {
   status: z.string().optional(),
   executionOutcome: z.string().optional(),
   action: pendingActionEntrySchema.optional(),

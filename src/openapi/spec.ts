@@ -89,6 +89,10 @@ import {
   AutomationStateSchema,
   RepositorySettingsSchema,
   RepoDocRefreshResultSchema,
+  ListPendingActionsResponseSchema,
+  ProposeActionRequestSchema,
+  ProposeActionResponseSchema,
+  DecidePendingActionResponseSchema,
   RoleContextSchema,
   ReviewRiskExplanationSchema,
   RewardRiskActionSchema,
@@ -151,6 +155,10 @@ export function buildOpenApiSpec() {
   registry.register("RepositorySettings", RepositorySettingsSchema);
   registry.register("AutomationState", AutomationStateSchema);
   registry.register("RepoDocRefreshResult", RepoDocRefreshResultSchema);
+  registry.register("ListPendingActionsResponse", ListPendingActionsResponseSchema);
+  registry.register("ProposeActionRequest", ProposeActionRequestSchema);
+  registry.register("ProposeActionResponse", ProposeActionResponseSchema);
+  registry.register("DecidePendingActionResponse", DecidePendingActionResponseSchema);
   registry.register("InstallationRepair", InstallationRepairSchema);
   registry.register("RepoSettingsPreview", RepoSettingsPreviewSchema);
   registry.register("SkippedPrAuditExport", SkippedPrAuditExportSchema);
@@ -679,6 +687,53 @@ export function buildOpenApiSpec() {
       200: { description: "Persist API-backed focus manifest for a repo", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
       400: { description: "Malformed JSON request body" },
       403: { description: "Insufficient role" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/repos/{owner}/{repo}/agent/pending-actions",
+    summary: "Maintainer-scoped agent approval queue of pending staged actions",
+    request: { params: z.object({ owner: z.string(), repo: z.string() }) },
+    responses: {
+      200: {
+        description: "Pending agent actions staged for maintainer approval (#784), mirroring the loopover_list_pending_actions MCP tool.",
+        content: { "application/json": { schema: ListPendingActionsResponseSchema } },
+      },
+      403: { description: "Insufficient role" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/repos/{owner}/{repo}/agent/pending-actions",
+    summary: "Stage an agent action into the approval queue for maintainer review",
+    request: {
+      params: z.object({ owner: z.string(), repo: z.string() }),
+      body: { content: { "application/json": { schema: ProposeActionRequestSchema } } },
+    },
+    responses: {
+      200: {
+        description: "The staged (or already-present) pending action (#6744), mirroring the loopover_propose_action MCP tool VERBATIM.",
+        content: { "application/json": { schema: ProposeActionResponseSchema } },
+      },
+      400: { description: "Malformed propose-action request body" },
+      403: { description: "Insufficient role" },
+      409: { description: "The LoopOver App is not installed on this repository" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/repos/{owner}/{repo}/agent/pending-actions/{id}/{decision}",
+    summary: "Accept (execute) or reject a staged agent action in the approval queue",
+    request: { params: z.object({ owner: z.string(), repo: z.string(), id: z.string(), decision: z.enum(["accept", "reject"]) }) },
+    responses: {
+      200: {
+        description: "The decided action's outcome (#779): accept executes it live, reject cancels it. Mirrors the loopover_decide_pending_action MCP tool.",
+        content: { "application/json": { schema: DecidePendingActionResponseSchema } },
+      },
+      400: { description: "Decision is not 'accept' or 'reject'" },
+      403: { description: "Insufficient role" },
+      404: { description: "Pending action not found for this repository" },
+      409: { description: "Pending action was already decided" },
     },
   });
   registry.registerPath({

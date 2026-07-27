@@ -89,18 +89,62 @@ Your replayed `confirmed / decided` for a rule should match the published precis
 window; the freeze-point checksum ties the published numbers to the exact corpus you just
 verified.
 
+## 5. Verify an attested run (when a run carries one)
+
+<Callout variant="warn">
+  **Placeholder pending real hardware.** No production run carries a real attestation envelope
+  yet — that needs genuine AMD SEV-SNP hardware, tracked as
+  [#8535](https://github.com/JSONbored/loopover/issues/8535)–[#8537](https://github.com/JSONbored/loopover/issues/8537).
+  Every command below is exactly what you will run once one exists; the software side (the harness,
+  the offline verifier, the deploy manifests) is already built and merged. Until then, exercise the
+  same verification mechanics against the project's own synthetic test fixtures — see
+  `scripts/verify-attested-run/README.md` — never against a real-looking file you were simply
+  handed, since that would defeat the entire point of this being independently checkable.
+</Callout>
+
+Replay (above) proves the *numbers*. Attestation is a second, additional path for a run that also
+carries an `AttestationEnvelope` — it proves the *computation that produced those numbers ran
+inside genuine, hardware-encrypted memory*, verifiable without contacting LoopOver at all:
+
+```bash
+npx tsx scripts/verify-attested-run.ts \
+  --envelope envelope.json --expected expected.json \
+  --vcek-cert vcek.pem --product milan
+```
+
+- **`envelope.json`** — the published `AttestationEnvelope`: `measurement`, `reportData`, `runId`,
+  the base64 `attestationReport`, and its own `verification` status.
+- **`expected.json`** — *your own* pinned expectations: `{ "measurement": "<hex>", "corpusChecksum":
+  "<hex>", "headSha": "<hex>", "baseSha": "<hex>" }` — the same checksum and SHAs from the replay
+  steps above, so both verification paths are checking the same underlying run.
+- **`--vcek-cert`** — the chip's certificate; the tool defaults to this repo's own vendored AMD root
+  chain, or fetches live from AMD's KDS with `--fetch-vcek`.
+
+Under the hood, the tool recomputes `reportData` itself — `buildAttestationReportData({
+corpusChecksum, headSha, baseSha, runId })` — and checks it against the report's own user-data
+binding, then walks the real certificate chain (ARK → ASK → VCEK, each a genuine X.509 signature
+check) and verifies the report's own ECDSA-P384-SHA384 signature against it. Exit `0` means
+verified; codes `1`–`8` each name a distinct, specific failure (see the script's own README for the
+full table); `9` is a usage/IO error.
+
 ## What this proves — and what it does not
 
 <Callout variant="note">
   **Proved:** the published scores are real computations over a real, checksummed, replayable
   corpus — not hand-entered numbers. Anyone can independently reproduce them from the snapshot.
+  **When a run also carries an attestation envelope**, verifying it (above) additionally proves that
+  exact computation ran inside genuine hardware-encrypted memory — a stronger, separate claim from
+  reproducibility, checkable with zero contact with LoopOver.
 
-  **Not proved:** that the live gate *ran this exact code* when it made its decisions. Verifying
-  the runtime itself is an attestation problem — a trusted-execution boundary, not a replay
-  boundary — and is tracked as its own explicitly-scoped decision in
+  **Not proved, either way:** that the live gate *ran this exact code* when it made its decisions.
+  Attestation (like replay) only ever covers the *offline backtest replay*, never the live
+  merge/close path — see the permanent-scope callout below. And attestation specifically proves
+  *computation*, never *data provenance*: a genuinely attested run over dishonestly-recorded
+  human-override history is still dishonest history, honestly computed. Closing that gap is tracked
+  as its own explicitly-scoped question in
   [#8136](https://github.com/JSONbored/loopover/issues/8136) and
   [#8137](https://github.com/JSONbored/loopover/issues/8137). This walkthrough is honest about
-  stopping at the reproducibility line rather than implying the stronger guarantee.
+  stopping at what each path actually proves rather than implying a stronger guarantee.
 
   **Live decision execution is permanently out of scope for attestation, by decision.** The
   attested-evaluation epic ([#8534](https://github.com/JSONbored/loopover/issues/8534)) attests the

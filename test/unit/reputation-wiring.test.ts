@@ -13,29 +13,45 @@ import { evaluateGateCheck } from "../../src/rules/advisory";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import type { Advisory, RepositorySettings } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
-import { upsertRepositoryFromGitHub } from "../../src/db/repositories";
+import { upsertRepositoryFromGitHub, upsertPullRequestFromGitHub } from "../../src/db/repositories";
 
-// Seeds one terminal review_targets row -- the raw table getSubmitterReputation(AcrossInstall) reads from
-// (not part of the Drizzle schema; migrations/0050 is the source of truth for these columns).
+// #9136: seeds one terminal outcome via the LIVE ledger getSubmitterReputation(AcrossInstall)/
+// listSubmitterCohortRows now read (review_audit's pr_outcome + gate_decision rows, joined against
+// pull_requests) -- review_targets was frozen by the 2026-06-22 convergence cutover and is no longer a
+// live writer for this signal (see submitter-reputation.ts's own PR_OUTCOME_JOIN/REASON_CODE_SUBQUERY
+// fragments, which this mirrors exactly). `status` becomes the pr_outcome row's `decision`; `reasonCode`
+// becomes a paired gate_decision row's `summary`, read back via the latest-gate_decision-for-this-target
+// subquery -- matching how a real close/merge webhook actually populates both rows in production.
+let seedReviewTargetCounter = 0;
 async function seedReviewTarget(
   env: Env,
   args: { project: string; repo: string; number: number; installationId: number; submitter: string; status: string; reasonCode?: string | null },
 ) {
+  await upsertPullRequestFromGitHub(env, args.repo, {
+    number: args.number,
+    title: "synthetic PR",
+    state: args.status === "merged" ? "closed" : "closed",
+    user: { login: args.submitter },
+    head: { sha: `sha${args.number}` },
+    labels: [],
+    merged_at: args.status === "merged" ? new Date().toISOString() : null,
+  } as unknown as Parameters<typeof upsertPullRequestFromGitHub>[2]);
+  const targetId = `${args.project}#${args.number}`;
+  const uniq = `${Date.now()}-${(seedReviewTargetCounter += 1)}`;
   await env.DB.prepare(
-    `INSERT INTO review_targets (id, project, kind, repo, number, installation_id, submitter, status, decision_json, terminal_at)
-     VALUES (?, ?, 'pull_request', ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+    `INSERT INTO review_audit (id, project, target_id, event_type, decision, source, head_sha, summary, created_at)
+     VALUES (?, ?, ?, 'pr_outcome', ?, 'gittensory-native', NULL, NULL, CURRENT_TIMESTAMP)`,
   )
-    .bind(
-      `${args.project}:pull_request:${args.repo}#${args.number}`,
-      args.project,
-      args.repo,
-      args.number,
-      args.installationId,
-      args.submitter,
-      args.status,
-      args.reasonCode === undefined ? null : JSON.stringify({ reasonCode: args.reasonCode }),
-    )
+    .bind(`pr_outcome:${targetId}:${uniq}`, args.project, targetId, args.status)
     .run();
+  if (args.reasonCode !== undefined && args.reasonCode !== null) {
+    await env.DB.prepare(
+      `INSERT INTO review_audit (id, project, target_id, event_type, decision, source, head_sha, summary, created_at)
+       VALUES (?, ?, ?, 'gate_decision', NULL, 'gittensory-native', NULL, ?, CURRENT_TIMESTAMP)`,
+    )
+      .bind(`gate_decision:${targetId}:${uniq}`, args.project, targetId, args.reasonCode)
+      .run();
+  }
 }
 
 // A submitter who FLOODED the project with submissions but landed almost none — the burst anti-abuse pattern.
@@ -368,9 +384,10 @@ describe("ORB/AMS reputation bridge wiring (#6801)", () => {
         reasonCode: "dual_review_declined",
       });
     }
-    // Keep the quality outcomes recent while making their submission cadence old enough not to trip the
-    // independent 24-hour machine-paced check after AMS upgrades the quality signal.
-    await env.DB.prepare("UPDATE review_targets SET created_at = '2026-01-01T00:00:00.000Z' WHERE submitter = ?").bind(submitter).run();
+    // Keep the quality outcomes (review_audit) recent while making their submission cadence old enough not
+    // to trip the independent 24-hour machine-paced check after AMS upgrades the quality signal. #9015
+    // repointed getSubmitterCadence to pull_requests.created_at (review_targets is no longer a live source).
+    await env.DB.prepare("UPDATE pull_requests SET created_at = '2026-01-01T00:00:00.000Z' WHERE author_login = ?").bind(submitter).run();
   }
 
   it("REGRESSION (#6801): feature on upgrades a low local signal and changes the end-to-end gate decision", async () => {
@@ -472,8 +489,11 @@ describe("getEffectiveSubmitterReputation (#4513, install-wide for a confirmed m
     await upsertRepositoryFromGitHub(env, { name: "repo-a", full_name: "org/repo-a", owner: { login: "org" } }, 999);
     // Only 1 sample on repo-a itself -- per-repo signal stays "neutral" (below minSample).
     await seedReviewTarget(env, { project: "org/repo-a", repo: "org/repo-a", number: 1, installationId: 999, submitter: "farmer99", status: "closed", reasonCode: "dual_review_declined" });
-    // But spread across OTHER repos in the SAME install, farmer99 has a clear serial-decline pattern.
+    // But spread across OTHER repos in the SAME install, farmer99 has a clear serial-decline pattern. Each
+    // repo must be registered (getSubmitterReputationAcrossInstall joins review_audit against `repositories`
+    // by installation_id, #9136) for its seeded outcome to actually count toward the install-wide tally.
     for (let i = 0; i < 7; i++) {
+      await upsertRepositoryFromGitHub(env, { name: `repo-${i}`, full_name: `org/repo-${i}`, owner: { login: "org" } }, 999);
       await seedReviewTarget(env, { project: `org/repo-${i}`, repo: `org/repo-${i}`, number: i + 10, installationId: 999, submitter: "farmer99", status: "closed", reasonCode: "dual_review_declined" });
     }
     vi.stubGlobal("fetch", stubMinerFetch("farmer99"));

@@ -279,8 +279,11 @@ async function resolveIssueLabelsForPropagation(
   // a fail-safe degrade, not a silent bypass: "no evidence this PR addresses the issue" must never be
   // conflated with "confirmed addressed." This check does NOT apply to a non-reward relaxed label (plain
   // `trustMaintainerAuthoredIssue`, e.g. bug/feature mirroring) or to the direct-ownership path above --
-  // both keep their existing behavior unchanged.
-  const rewardCandidates = kept.filter((label) => rewardTrustLabels.has(label.toLowerCase()));
+  // both keep their existing behavior unchanged. `isDirectOwnershipMatch` excludes `relaxedRewardLabels`
+  // entirely from this check even though both land in `kept`: a reward label the direct-match branch
+  // already required maintainerAuthored for (#9161's own stricter fall-through) is genuine involvement,
+  // not a bare citation, so it never needs this additional evidence bar.
+  const rewardCandidates = isDirectOwnershipMatch ? [] : kept.filter((label) => rewardTrustLabels.has(label.toLowerCase()));
   if (rewardCandidates.length > 0) {
     const verdict =
       args.prNumber !== undefined

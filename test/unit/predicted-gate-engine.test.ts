@@ -1555,7 +1555,10 @@ describe("predicted-gate engine branch coverage (#2283)", () => {
     expect(gateAdvisoryInternals.gateMode("off")).toBe("off");
     expect(gateAdvisoryInternals.gateMode("block")).toBe("block");
     expect(gateAdvisoryInternals.gateMode("advisory")).toBe("advisory");
-    expect(gateAdvisoryInternals.gateMode(undefined)).toBe("advisory");
+    // #9167: gateMode() fails CLOSED on a non-off/block/advisory value (including undefined) -- every
+    // legitimate caller supplies its own `?? "advisory"` default before reaching here, so this bare
+    // pass-through of `undefined` exercises the "truly malformed" fallback, not a normal call site.
+    expect(gateAdvisoryInternals.gateMode(undefined)).toBe("block");
     expect(gateAdvisoryInternals.gatePolicyBlocks("advisory", "advisory")).toBe(false);
     expect(gateAdvisoryInternals.gatePolicyBlocks("block", "advisory")).toBe(true);
     expect(gateAdvisoryInternals.gatePolicyBlocks(undefined, "off")).toBe(false);

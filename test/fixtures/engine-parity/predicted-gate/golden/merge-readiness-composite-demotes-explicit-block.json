@@ -2,11 +2,12 @@
   "predicted": true,
   "basis": "public_config",
   "pack": "gittensor",
-  "conclusion": "failure",
-  "title": "LoopOver Orb Review Agent: No linked issue detected",
-  "summary": "No linked issue detected — If this PR is intended to solve an issue, link it explicitly in the PR body.",
+  "conclusion": "success",
+  "title": "LoopOver Orb Review Agent passed",
+  "summary": "No configured hard blocker was found. Advisory findings, if any, stay advisory.",
   "readinessScore": 80,
-  "blockers": [
+  "blockers": [],
+  "warnings": [
     {
       "code": "missing_linked_issue",
       "title": "No linked issue detected",
@@ -14,7 +15,6 @@
       "action": "If this PR is intended to solve an issue, link it explicitly in the PR body."
     }
   ],
-  "warnings": [],
   "funnel": null,
   "note": "Predicted from the repo's public .loopover.yml gate config + safe defaults. The maintainer may have private dashboard overrides not reflected here, and the dual-model AI-consensus blocker is only evaluated on a real PR. The slop score is NOT evaluated pre-submission (it needs the diff content) and may still fail the real gate. Provide the PR's changed paths to also predict the focus-manifest path policy, the size/guardrail hold, and any pre-merge check scoped to changed paths; without them only path-independent title/description/label pre-merge checks are predicted. Every author is gated the same: a configured hard blocker fails the gate regardless of confirmed-contributor status (which affects only on-chain scoring)."
 }

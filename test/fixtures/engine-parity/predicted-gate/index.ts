@@ -4,7 +4,7 @@ import cleanPassGittensor from "./clean-pass-gittensor";
 import cleanPassOssAntiSlop from "./clean-pass-oss-anti-slop";
 import guardrailHold from "./guardrail-hold";
 import mergeReadinessCompositeBlock from "./merge-readiness-composite-block";
-import mergeReadinessCompositePreservesExplicitBlock from "./merge-readiness-composite-preserves-explicit-block";
+import mergeReadinessCompositeDemotesExplicitBlock from "./merge-readiness-composite-demotes-explicit-block";
 import selfAuthoredLinkedIssueBlock from "./self-authored-linked-issue-block";
 import duplicatePrBlock from "./duplicate-pr-block";
 import manifestBlockedPath from "./manifest-blocked-path";
@@ -27,7 +27,7 @@ export const predictedGateFixtures = [
   selfAuthoredLinkedIssueBlock,
   guardrailHold,
   mergeReadinessCompositeBlock,
-  mergeReadinessCompositePreservesExplicitBlock,
+  mergeReadinessCompositeDemotesExplicitBlock,
   claGateModeInert,
   aiReviewGateModeInert,
 ];

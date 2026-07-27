@@ -6656,9 +6656,13 @@ describe("queue processors", () => {
         },
       });
 
+      // #9161: gittensor:priority is an ADDITIVE mapping here (removeOtherTypeLabels: false), so it is
+      // reward-semantic -- and the issue author here ("contributor") is the SAME login as the PR author, a
+      // direct-ownership match, who is NOT a repo maintainer. The reward label is correctly withheld
+      // (bug/feature-style type labels are unaffected); only gittensor:feature propagates.
       expect(seen.issueFetches).toBe(1);
-      expect(seen.posted.sort()).toEqual(["gittensor:feature", "gittensor:priority"]);
-      expect(seen.removed).toEqual(["gittensor:bug"]);
+      expect(seen.posted.sort()).toEqual(["gittensor:feature"]);
+      expect(seen.removed.sort()).toEqual(["gittensor:bug", "gittensor:priority"]);
     });
 
     it("REGRESSION (#regression-safe-propagation, was: 'fails open to the normal title-based label'): skips the label decision entirely — never falls back to title — when the linked issue's fetch fails, leaving existing labels untouched", async () => {

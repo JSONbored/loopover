@@ -81,6 +81,8 @@ function activityChanged(prev: readonly LoopProgressActivity[], next: readonly L
  *  always pushes. Compares the displayed axes: phase, status, iteration, and the activity tail's contents. */
 export function progressChanged(prev: ProgressSnapshot | null, next: ProgressSnapshot): boolean {
   if (prev === null) return true;
+  if (prev.maxIterations !== next.maxIterations) return true;
+  if (prev.percentComplete !== next.percentComplete) return true;
   return (
     prev.phase !== next.phase ||
     prev.status !== next.status ||

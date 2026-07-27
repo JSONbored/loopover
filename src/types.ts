@@ -973,12 +973,19 @@ export type RepositorySettings = {
   /** `gate.cla.checkRunAppSlug`: the trusted GitHub App slug that must have produced `claCheckRunName`. Required
    *  for check-run detection so contributor-controlled same-name runs cannot satisfy a blocking CLA gate. */
   claCheckRunAppSlug?: string | null | undefined;
-  /** Copycat/plagiarism detection (#1969). `off` (default/absent) = no check; `warn`/`label`/`block` are
-   *  escalating tiers the deterministic containment engine (src/queue/copycat-detection.ts, evaluated in
-   *  src/queue/processors.ts alongside slop) acts on: `warn` surfaces an advisory finding only; `label` also
-   *  applies a label (src/settings/agent-actions.ts's maybePlanCopycatLabel); `block` also closes the PR
-   *  (closeKind: "copycat") and counts toward the moderation-rules strikes ledger. Config-as-code only — no
-   *  DB column or dashboard toggle; set via `.loopover.yml gate.copycat.mode`. */
+  /** Copycat/plagiarism detection (#1969). `off`/absent = no check when explicitly set that way, or on a repo
+   *  that isn't reward-eligible; `warn`/`label`/`block` are escalating tiers the deterministic containment engine
+   *  (src/queue/copycat-detection.ts, evaluated in src/queue/processors.ts alongside slop) acts on: `warn`
+   *  surfaces an advisory finding only; `label` also applies a label (src/settings/agent-actions.ts's
+   *  maybePlanCopycatLabel); `block` also closes the PR (closeKind: "copycat") and counts toward the
+   *  moderation-rules strikes ledger. Config-as-code only — no DB column or dashboard toggle; set via
+   *  `.loopover.yml gate.copycat.mode`. #9033: an UNSET value (never mentioned in `.loopover.yml`) no longer
+   *  flatly resolves to "off" for every repo — `resolveRepositorySettings`
+   *  (settings/repository-settings.ts, via {@link resolveEffectiveCopycatGateMode}) resolves it to `warn` for a
+   *  reward-eligible (subnet-registered, `RepositoryRecord.isRegistered`) repo instead, so the containment engine
+   *  actually runs (and persists `copycatScore`/`copycatMatchedPullNumber`) — the signal the duplicate-cluster
+   *  election (queue/duplicate-detection.ts, rules/advisory.ts) needs to catch a cross-issue reward-farming
+   *  duplicate. An EXPLICIT value (including an explicit `"off"`) always wins over this default. */
   copycatGateMode?: CopycatGateMode | undefined;
   /** `gate.copycat.minScore`: containment/similarity score (0-100) at/above which `copycatGateMode` acts.
    *  `null`/absent ⇒ the engine's own default threshold (85). Config-as-code only, alongside

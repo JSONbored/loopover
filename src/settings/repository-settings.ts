@@ -1,8 +1,9 @@
-import { getGlobalContributorBlacklist, getRepositorySettings } from "../db/repositories";
+import { getGlobalContributorBlacklist, getRepository, getRepositorySettings } from "../db/repositories";
 import { loadOverride, type StorageEnv } from "../review/auto-apply";
 import { resolveEffectiveSettings } from "../signals/focus-manifest";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { isAgentConfigured } from "./autonomy";
+import { resolveEffectiveCopycatGateMode } from "./copycat-gate-mode";
 import type { RepositorySettings } from "../types";
 
 /** Default-OFF self-tune flag (mirrors selftune-wire's `isSelfTuneEnabled`; inlined here to avoid a
@@ -42,12 +43,20 @@ export function applySelfTuneOverrideToSettings(
  *  delete the promoted override (a human, or re-opting-in, can still see/clear it) — it just stops it from
  *  being read back while the opt-out is in effect. */
 export async function resolveRepositorySettings(env: Env, repoFullName: string): Promise<RepositorySettings> {
-  const [dbSettings, manifest, globalContributorBlacklist] = await Promise.all([
+  const [dbSettings, manifest, globalContributorBlacklist, repo] = await Promise.all([
     getRepositorySettings(env, repoFullName),
     loadRepoFocusManifest(env, repoFullName),
     getGlobalContributorBlacklist(env).catch(() => []),
+    // #9033: cheap, indexed single-row read (mirrors the three parallel reads above) purely to resolve the
+    // copycat-gate reward-eligibility default below -- never throws (getRepository resolves null, not rejects,
+    // for a repo LoopOver hasn't seen), so a lookup failure just means "not registered" (today's "off" default).
+    getRepository(env, repoFullName),
   ]);
   const effective = resolveEffectiveSettings(dbSettings, manifest, globalContributorBlacklist);
+  // #9033: reward-eligible default flip -- an EXPLICIT `.loopover.yml` value (including an explicit "off") always
+  // wins; only a genuinely unset value falls through to the registration-based default. Applied to every return
+  // path below (not just the fast path) since this must hold whether or not self-tune is enabled.
+  effective.copycatGateMode = resolveEffectiveCopycatGateMode(effective.copycatGateMode, repo?.isRegistered ?? false);
   if (!selfTuneFlagOn(env)) return effective;
   if (manifest.review.selftune === false) return effective; // explicit per-repo opt-out — same check as selfTuneRepos
   if (!isAgentConfigured(effective.autonomy)) return effective; // acting-autonomy consent revoked/never granted

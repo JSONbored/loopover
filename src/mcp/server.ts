@@ -1994,6 +1994,7 @@ export const MCP_TOOL_CATEGORIES: Record<string, McpToolCategory> = {
   loopover_get_maintainer_noise: "maintainer",
   loopover_get_ams_miner_cohort: "maintainer",
   loopover_get_repo_focus_manifest: "maintainer",
+  loopover_refresh_repo_focus_manifest: "maintainer",
   loopover_get_activation_preview: "maintainer",
   loopover_get_label_audit: "maintainer",
   loopover_get_maintainer_lane: "maintainer",
@@ -2164,6 +2165,17 @@ export class LoopoverMcp {
         outputSchema: repoFocusManifestOutputSchema,
       },
       async (input) => this.toolResult(await this.getRepoFocusManifest(input)),
+    );
+
+    register(
+      "loopover_refresh_repo_focus_manifest",
+      {
+        description:
+          "Force an immediate refresh of a repo's cached focus manifest (.loopover.yml policy) from GitHub, then return the reloaded manifest plus its compiled policy. Write access required -- same requireRepoWriteAccess boundary as POST /v1/repos/:owner/:repo/focus-manifest/refresh, stricter than the read-only loopover_get_repo_focus_manifest. Bypasses the manifest cache (refresh: true), matching loopover_refresh_repo_docs's force-a-fresh-artifact shape.",
+        inputSchema: ownerRepoShape,
+        outputSchema: repoFocusManifestOutputSchema,
+      },
+      async (input) => this.toolResult(await this.refreshRepoFocusManifest(input)),
     );
 
     register(
@@ -3533,6 +3545,23 @@ export class LoopoverMcp {
     const policy = compileFocusManifestPolicy(manifest);
     return {
       summary: `LoopOver focus manifest for ${fullName}.`,
+      data: { repoFullName: fullName, manifest, policy } as unknown as Record<string, unknown>,
+    };
+  }
+
+  // #9299 - thin MCP surface over POST /v1/repos/:owner/:repo/focus-manifest/refresh, the refresh COUNTERPART to
+  // getRepoFocusManifest above (#7808). Forces a live reload of the cached .loopover.yml manifest from GitHub via the
+  // SAME loadRepoFocusManifest(..., { refresh: true }) + compileFocusManifestPolicy pair the REST route uses, returning
+  // the identical { repoFullName, manifest, policy } shape. Because it forces a live refresh it takes the write-access
+  // boundary (requireRepoManageAccess, mirroring the route's requireRepoWriteAccess) -- stricter than the read tool's
+  // requireFocusManifestReadAccess, matching loopover_refresh_repo_docs's refresh-action auth.
+  private async refreshRepoFocusManifest(input: { owner: string; repo: string }): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoManageAccess(fullName);
+    const manifest = await loadRepoFocusManifest(this.env, fullName, { refresh: true });
+    const policy = compileFocusManifestPolicy(manifest);
+    return {
+      summary: `Refreshed the LoopOver focus manifest for ${fullName} from GitHub.`,
       data: { repoFullName: fullName, manifest, policy } as unknown as Record<string, unknown>,
     };
   }

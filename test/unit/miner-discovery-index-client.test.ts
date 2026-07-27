@@ -111,6 +111,20 @@ describe("queryDiscoveryIndex (#7168)", () => {
     );
     expect(threw.candidates).toEqual([]);
   });
+
+  it("logs discovery_plane_query_failed before failing open when the fetch throws (#9329)", async () => {
+    const response = await queryDiscoveryIndex(
+      { repos: ["a/b"] },
+      {
+        env: ENABLED_ENV,
+        fetchImpl: async () => {
+          throw new Error("network exploded");
+        },
+      },
+    );
+    expect(response.candidates).toEqual([]);
+    expect(logSpy.debug).toHaveBeenCalledWith("discovery_plane_query_failed", { error: "network exploded" });
+  });
 });
 
 describe("submitSoftClaim (#7168)", () => {

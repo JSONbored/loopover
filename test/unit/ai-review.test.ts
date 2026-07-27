@@ -46,6 +46,7 @@ const {
   resolveDualAiTieBreakWithOrderStability,
   synthesizeDefect,
   toPublicSafe,
+  toPublicSafeBySentence,
   runWorkersOpinion,
   coerceAiUsage,
   aggregateActualUsage,
@@ -2150,6 +2151,17 @@ describe("resolveEffectiveAiReviewPlan (#2567 gate-review follow-up: combine/rev
 });
 
 describe("pure helpers", () => {
+  it("toPublicSafeBySentence returns null for absent or blank input, without splitting", () => {
+    // Both arms of the `text ?? ""` nullish coalesce: a model that returns no assessment field at all reaches
+    // this as undefined, and composeAdvisoryNotes' own `assessments[0] ?? ""` reaches it as "". Neither may be
+    // split into sentences -- an empty assessment must fall through to the existing placeholder path, not
+    // become an empty joined string that would read as a real (blank) narrative.
+    expect(toPublicSafeBySentence(undefined)).toBeNull();
+    expect(toPublicSafeBySentence(null)).toBeNull();
+    expect(toPublicSafeBySentence("")).toBeNull();
+    expect(toPublicSafeBySentence("   \n  ")).toBeNull();
+  });
+
   it("toPublicSafe drops forbidden public text and neutralizes markdown, mentions, links, and control characters", () => {
     expect(toPublicSafe("This change is solid.")).toBe("This change is solid.");
     expect(toPublicSafe("Boost your reward payout")).toBeNull();

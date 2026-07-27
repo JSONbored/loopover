@@ -3194,6 +3194,7 @@ export const __aiReviewInternals = {
   resolveDualAiTieBreakWithOrderStability,
   synthesizeDefect,
   toPublicSafe,
+  toPublicSafeBySentence,
   estimateNeurons,
   runWorkersOpinion,
   coerceAiUsage,

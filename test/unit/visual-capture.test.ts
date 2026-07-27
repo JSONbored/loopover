@@ -166,15 +166,19 @@ describe("visual capture preview discovery", () => {
 
     expect(seenUrls).toEqual([]);
     expect(result.previewPending).toBe(false);
-    expect(result.routes).toEqual([
-      {
-        path: "/app",
-        beforeUrl: undefined,
-        beforeUrlMobile: undefined,
-        afterUrl: `https://worker.example/loopover/shot?url=${encodeURIComponent("https://pr-42-abc1234.preview.example.com/app")}&w=1440&h=900`,
-        afterUrlMobile: `https://worker.example/loopover/shot?url=${encodeURIComponent("https://pr-42-abc1234.preview.example.com/app")}&w=390&h=844`,
-      },
-    ]);
+    expect(result.routes).toHaveLength(1);
+    const route = result.routes[0]!;
+    expect(route.path).toBe("/app");
+    expect(route.beforeUrl).toBeUndefined();
+    expect(route.beforeUrlMobile).toBeUndefined();
+    // The trailing &exp=&sig= (#9044, shot-render-token.ts) is a per-mint signed token -- checked separately
+    // (shape only) rather than baked into an exact string, since its value is time-dependent.
+    expect(route.afterUrl).toMatch(
+      new RegExp(`^https://worker\\.example/loopover/shot\\?url=${encodeURIComponent("https://pr-42-abc1234.preview.example.com/app")}&w=1440&h=900&exp=\\d+&sig=[0-9a-f]{64}$`),
+    );
+    expect(route.afterUrlMobile).toMatch(
+      new RegExp(`^https://worker\\.example/loopover/shot\\?url=${encodeURIComponent("https://pr-42-abc1234.preview.example.com/app")}&w=390&h=844&exp=\\d+&sig=[0-9a-f]{64}$`),
+    );
   });
 
   it("uses target.previewUrl directly (no url_template configured) and skips discovery entirely", async () => {
@@ -1393,8 +1397,8 @@ describe("buildCapture theme-storage-key wiring (#4109)", () => {
       undefined,
       { themes: ["dark"], themeStorageKey: "theme" },
     );
-    expect(result.routes[0]?.beforeUrl).toBe(
-      `https://worker.example/loopover/shot?url=${encodeURIComponent("https://prod.example.com/app")}&w=1440&h=900&theme=dark&themeStorageKey=${encodeURIComponent("theme")}`,
+    expect(result.routes[0]?.beforeUrl).toMatch(
+      new RegExp(`^https://worker\\.example/loopover/shot\\?url=${encodeURIComponent("https://prod.example.com/app")}&w=1440&h=900&theme=dark&themeStorageKey=${encodeURIComponent("theme")}&exp=\\d+&sig=[0-9a-f]{64}$`),
     );
   });
 
@@ -1407,7 +1411,9 @@ describe("buildCapture theme-storage-key wiring (#4109)", () => {
       undefined,
       { themeStorageKey: "theme" },
     );
-    expect(result.routes[0]?.beforeUrl).toBe(`https://worker.example/loopover/shot?url=${encodeURIComponent("https://prod.example.com/app")}&w=1440&h=900`);
+    expect(result.routes[0]?.beforeUrl).toMatch(
+      new RegExp(`^https://worker\\.example/loopover/shot\\?url=${encodeURIComponent("https://prod.example.com/app")}&w=1440&h=900&exp=\\d+&sig=[0-9a-f]{64}$`),
+    );
   });
 
   it("threads the theme storage key into the shot fingerprint too, so it never collides with an untagged-key capture of the same theme", async () => {

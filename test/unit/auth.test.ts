@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { completeGitHubWebOAuth, createSessionFromGitHubToken, pollGitHubDeviceFlow, startGitHubDeviceFlow, startGitHubWebOAuth } from "../../src/auth/github-oauth";
-import { enforceRateLimit, RateLimiter, routeClassForPath } from "../../src/auth/rate-limit";
-import { authenticatePrivateToken, buildBrowserSessionCookie, createSessionForGitHubUser, extractCookieValue, isAuthorizedGitHubSessionLogin, isMcpActuationRepoAllowed, revokeSession, timingSafeEqual } from "../../src/auth/security";
+import { enforceRateLimit, enforceShotRenderGlobalCeiling, RateLimiter, routeClassForPath } from "../../src/auth/rate-limit";
+import { authenticatePrivateToken, buildBrowserSessionCookie, createSessionForGitHubUser, extractCookieValue, hashToken, isAuthorizedGitHubSessionLogin, isMcpActuationRepoAllowed, revokeSession, timingSafeEqual } from "../../src/auth/security";
 import { createApp } from "../../src/api/routes";
 import { PRODUCT_USER_AGENT } from "../../src/github/client";
 import { issueOrbEnrollment } from "../../src/orb/broker";
@@ -251,6 +251,90 @@ describe("private-beta auth and rate limiting", () => {
     expect(observedKeys).toHaveLength(2);
     expect(observedKeys[0]).toBe(observedKeys[1]);
     expect(observedKeys[0]).toMatch(/^normal:\/v1\/public\/github\/repos\/:owner\/:repo\/stats:ip:/);
+  });
+
+  describe("clientIp trusted-proxy behavior (#9044 -- self-host behind a Cloudflare Tunnel to a plain Node process)", () => {
+    it("byte-identical to before when no peer IP is threaded in (Cloudflare Workers, or an unwired self-host build): still trusts cf-connecting-ip", async () => {
+      const observedKeys: string[] = [];
+      const env = rateLimitTestEnv({}, observedKeys);
+      await expect(enforceRateLimit(fakeContext(env, "/loopover/shot", { "cf-connecting-ip": "203.0.113.9" }), "expensive")).resolves.toBeNull();
+      await expect(enforceRateLimit(fakeContext(env, "/loopover/shot", { "cf-connecting-ip": "203.0.113.10" }), "expensive")).resolves.toBeNull();
+      expect(observedKeys[0]).not.toBe(observedKeys[1]); // different header -> different bucket, same as always
+    });
+
+    it("trusts cf-connecting-ip when the immediate peer is loopback (the real self-host topology: cloudflared -> 127.0.0.1)", async () => {
+      const observedKeys: string[] = [];
+      const env = rateLimitTestEnv({ LOOPOVER_PEER_IP: "127.0.0.1" }, observedKeys);
+      await expect(enforceRateLimit(fakeContext(env, "/loopover/shot", { "cf-connecting-ip": "203.0.113.9" }), "expensive")).resolves.toBeNull();
+      await expect(enforceRateLimit(fakeContext(env, "/loopover/shot", { "cf-connecting-ip": "203.0.113.10" }), "expensive")).resolves.toBeNull();
+      expect(observedKeys[0]).not.toBe(observedKeys[1]); // header is honored -> distinct callers stay distinct
+    });
+
+    it("falls back to the RIGHTMOST X-Forwarded-For hop (not the leftmost/client-supplied one) when cf-connecting-ip is absent, loopback peer", async () => {
+      const observedKeys: string[] = [];
+      const env = rateLimitTestEnv({ LOOPOVER_PEER_IP: "::1" }, observedKeys);
+      // Two requests share the SAME rightmost hop but differ in every hop a client could have forged --
+      // proving only the rightmost (nearest-to-us) hop is trusted.
+      await expect(enforceRateLimit(fakeContext(env, "/loopover/shot", { "x-forwarded-for": "9.9.9.9, 198.51.100.1" }), "expensive")).resolves.toBeNull();
+      await expect(enforceRateLimit(fakeContext(env, "/loopover/shot", { "x-forwarded-for": "6.6.6.6, 5.5.5.5, 198.51.100.1" }), "expensive")).resolves.toBeNull();
+      expect(observedKeys[0]).toBe(observedKeys[1]);
+      expect(observedKeys[0]).toBe(`expensive:/loopover/shot:ip:${await hashToken("198.51.100.1")}`);
+    });
+
+    it("REGRESSION: falls back to the real peer IP itself (never a shared 'unknown-ip' bucket) when the loopback peer sends neither header", async () => {
+      const observedKeys: string[] = [];
+      const env = rateLimitTestEnv({ LOOPOVER_PEER_IP: "127.0.0.1" }, observedKeys);
+      await expect(enforceRateLimit(fakeContext(env, "/loopover/shot", {}), "expensive")).resolves.toBeNull();
+      expect(observedKeys[0]).toBe(`expensive:/loopover/shot:ip:${await hashToken("127.0.0.1")}`);
+      expect(observedKeys[0]).not.toBe(`expensive:/loopover/shot:ip:${await hashToken("unknown-ip")}`);
+    });
+
+    it("REGRESSION: ignores cf-connecting-ip/X-Forwarded-For entirely (never lets an attacker rotate them to bypass keying) when the peer is NOT loopback/trusted -- keys on the real peer address instead", async () => {
+      const observedKeys: string[] = [];
+      const env = rateLimitTestEnv({ LOOPOVER_PEER_IP: "203.0.113.77" }, observedKeys);
+      // Two requests, EACH forging a different spoofed cf-connecting-ip -- both collapse to the SAME bucket
+      // because the header is never trusted once the connecting peer itself isn't loopback.
+      await expect(enforceRateLimit(fakeContext(env, "/loopover/shot", { "cf-connecting-ip": "203.0.113.9" }), "expensive")).resolves.toBeNull();
+      await expect(enforceRateLimit(fakeContext(env, "/loopover/shot", { "cf-connecting-ip": "198.51.100.50", "x-forwarded-for": "1.1.1.1" }), "expensive")).resolves.toBeNull();
+      expect(observedKeys[0]).toBe(observedKeys[1]);
+      expect(observedKeys[0]).toBe(`expensive:/loopover/shot:ip:${await hashToken("203.0.113.77")}`);
+    });
+  });
+
+  it("REGRESSION (#9044): a rotating Cf-Connecting-Ip can no longer bypass /loopover/shot's render-mode cap -- the fixed-key global ceiling throttles it regardless of identity", async () => {
+    // A REAL RateLimiter instance (not a stub) sharing storage per DO id, mirroring how idFromName/get would
+    // route every call for the SAME fixed key to the SAME durable object in production.
+    const instances = new Map<string, RateLimiter>();
+    const realRateLimiterNamespace = {
+      idFromName(name: string) {
+        return name;
+      },
+      get(id: string) {
+        let instance = instances.get(id);
+        if (!instance) {
+          instance = new RateLimiter(memoryDurableObjectState() as unknown as DurableObjectState, createTestEnv());
+          instances.set(id, instance);
+        }
+        // A real DurableObjectStub's .fetch(url, init) builds a Request and forwards it to the instance's
+        // own fetch(request) override -- unlike calling that override directly (see the OTHER rate-limit
+        // test above), which takes a single Request argument, not (url, init).
+        return { fetch: (url: string, init?: RequestInit) => instance!.fetch(new Request(url, init)) };
+      },
+    };
+    const env = createTestEnv({ RATE_LIMITER: realRateLimiterNamespace as unknown as DurableObjectNamespace });
+
+    // SHOT_RENDER_GLOBAL_CONFIG's budget (30/60s) is exhausted -- each call forges a DIFFERENT
+    // Cf-Connecting-Ip, simulating an attacker rotating the header on every request to try to dodge
+    // per-identity keying (the exact bypass class #9044 describes).
+    for (let i = 0; i < 30; i++) {
+      await expect(enforceShotRenderGlobalCeiling(fakeContext(env, "/loopover/shot", { "cf-connecting-ip": `203.0.113.${i}` }))).resolves.toBeNull();
+    }
+    // The 31st request, with yet another rotated identity, is STILL throttled: the ceiling is keyed on one
+    // fixed bucket, not on anything the caller controls.
+    const blocked = await enforceShotRenderGlobalCeiling(fakeContext(env, "/loopover/shot", { "cf-connecting-ip": "203.0.113.250" }));
+    expect(blocked).not.toBeNull();
+    expect(blocked?.status).toBe(429);
+    await expect(blocked?.json()).resolves.toMatchObject({ error: "rate_limited", routeClass: "expensive" });
   });
 
   it("keys /v1/auth/github/token by SESSION, not by IP (#6117) -- unlike its pre-auth OAuth-flow siblings", async () => {

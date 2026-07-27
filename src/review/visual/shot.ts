@@ -17,7 +17,7 @@
 // Rendering uses the Cloudflare Browser Rendering *binding* (env.BROWSER) via @cloudflare/puppeteer — no
 // account API token. Returns null on any failure so callers degrade gracefully (the cell becomes a dash).
 import puppeteer from "@cloudflare/puppeteer";
-import { isSafeHttpUrl } from "../content-lane/safe-url";
+import { hostIsPrivateOrLocal, isSafeHttpUrl } from "../content-lane/safe-url";
 
 export type Viewport = { width: number; height: number };
 /** A `prefers-color-scheme` value the renderer can emulate before capture (#3678). */
@@ -153,6 +153,57 @@ function isAllowedHost(targetUrl: string, env: Env, productionUrl?: string): boo
   return false;
 }
 
+// #9044 (LOW severity per the issue's own triage -- the eventual output is just a PNG the attacker already
+// controls the source page of): bounds the best-effort DNS-resolution pin below so an unresponsive resolver
+// can never hang a capture -- mirrors every other bounded probe in this file (SCREENSHOT_HEIGHT_PROBE_TIMEOUT_MS
+// et al).
+const DNS_PIN_LOOKUP_TIMEOUT_MS = 1_500;
+
+/**
+ * Best-effort DNS-resolution pin (#9044): `isSafeHttpUrl`'s SSRF guard is purely NAME-based, so a PUBLIC
+ * hostname whose A/AAAA record happens to resolve to a disallowed address (loopback / private / link-local,
+ * including cloud metadata 169.254.169.254) passes it even though the real TCP connection would land
+ * somewhere private. This resolves the hostname ONCE, up front, via Node's own resolver, and rejects it when
+ * the resolved address is itself disallowed.
+ *
+ * NOT airtight, and deliberately not pretending to be: this is a single point-in-time resolution on OUR
+ * side, not a pinned connection -- Chromium performs its OWN DNS resolution when it actually navigates, and
+ * neither Puppeteer's API nor the CDP request-interception this file already uses (`page.on('request', ...)`)
+ * exposes a way to force Chromium's socket to reuse the exact address validated here, so a DNS record that
+ * changes between this check and Chromium's real connect (TOCTOU) can still slip through. Fails OPEN (true)
+ * on any error, on a timeout, or on a runtime with no working `node:dns` (Cloudflare Workers has no real
+ * socket-level resolution to offer here) -- this is ONE MORE defense-in-depth layer alongside isSafeHttpUrl's
+ * name check and the per-request interception re-checks below, never the sole guard, so failing open here
+ * matches this whole file's existing fail-open-to-the-other-guards posture.
+ */
+async function isDnsResolutionSafe(url: string): Promise<boolean> {
+  let hostname: string;
+  try {
+    hostname = new URL(url).hostname;
+  } catch {
+    // Unreachable via every public entry point: isSafeHttpUrl (checked by the same `||` guard, before this
+    // function ever runs) already calls `new URL()` itself and rejects an unparseable url first. Retained
+    // as defense-in-depth for a hypothetical future direct caller, mirroring safe-url.ts's own convention for
+    // guards that are provably unreachable today given the current call sites.
+    /* v8 ignore next -- @preserve unreachable: isSafeHttpUrl already rejects an unparseable url first */
+    return true;
+  }
+  // A single try/catch for BOTH the dynamic import (fails only on a runtime with no working `node:dns`, e.g.
+  // Cloudflare Workers) and the lookup call itself (fails on an unresolvable/erroring hostname) -- both land
+  // on the exact same fail-open outcome, so there is no behavioral reason to distinguish them.
+  try {
+    const { lookup } = await import("node:dns/promises");
+    const result = await Promise.race([
+      lookup(hostname),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), DNS_PIN_LOOKUP_TIMEOUT_MS)),
+    ]);
+    if (!result) return true; // timed out -- fail open, same posture as every other guard in this file
+    return !hostIsPrivateOrLocal(result.address);
+  } catch {
+    return true; // no working node:dns, or an unresolvable/erroring lookup -- fail open
+  }
+}
+
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
 /** Reads a PNG's real width/height straight from its IHDR chunk -- Chromium's own rasterized output, not a
@@ -254,7 +305,7 @@ export async function captureShot(env: Env, url: string, viewport: Viewport = VI
   // SSRF defense-in-depth: NEVER navigate the headless browser to a non-public host (loopback / link-local /
   // private / cloud-metadata 169.254.169.254 / etc.). Callers may resolve `url` from a deployment_status
   // webhook or a PR-comment preview link, so guard at this choke point regardless of how the URL was obtained.
-  if (!url || !isSafeHttpUrl(url) || (opts.isAllowedUrl && !opts.isAllowedUrl(url))) {
+  if (!url || !isSafeHttpUrl(url) || (opts.isAllowedUrl && !opts.isAllowedUrl(url)) || !(await isDnsResolutionSafe(url))) {
     console.log(JSON.stringify({ event: "render_screenshot_blocked", url: String(url).slice(0, 120) }));
     return { png: null, authWalled: false };
   }
@@ -364,7 +415,7 @@ async function waitForScrollSettle(): Promise<void> {
  * (callers degrade gracefully, same contract as `captureShot` returning a null `png`).
  */
 export async function captureScrollFrames(env: Env, url: string, viewport: Viewport = VIEWPORT, opts: CaptureShotOptions = {}): Promise<{ frames: Uint8Array[]; authWalled: boolean }> {
-  if (!url || !isSafeHttpUrl(url) || (opts.isAllowedUrl && !opts.isAllowedUrl(url))) {
+  if (!url || !isSafeHttpUrl(url) || (opts.isAllowedUrl && !opts.isAllowedUrl(url)) || !(await isDnsResolutionSafe(url))) {
     console.log(JSON.stringify({ event: "render_scroll_frames_blocked", url: String(url).slice(0, 120) }));
     return { frames: [], authWalled: false };
   }
@@ -515,7 +566,7 @@ export async function captureInteractionFrames(
   opts: CaptureShotOptions = {},
   dragTo?: string | undefined,
 ): Promise<{ frames: Uint8Array[]; authWalled: boolean }> {
-  if (!url || !isSafeHttpUrl(url) || (opts.isAllowedUrl && !opts.isAllowedUrl(url))) {
+  if (!url || !isSafeHttpUrl(url) || (opts.isAllowedUrl && !opts.isAllowedUrl(url)) || !(await isDnsResolutionSafe(url))) {
     console.log(JSON.stringify({ event: "render_interaction_frames_blocked", url: String(url).slice(0, 120) }));
     return { frames: [], authWalled: false };
   }

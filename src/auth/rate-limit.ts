@@ -57,9 +57,32 @@ export class RateLimiter extends DurableObject<Env> {
 }
 
 export async function enforceRateLimit(c: Context<{ Bindings: Env }>, routeClass: RateLimitClass): Promise<Response | null> {
-  if (!c.env.RATE_LIMITER) return null;
-  const config = CONFIG[routeClass];
   const key = await rateLimitKey(c, routeClass);
+  return checkRateLimitBucket(c, key, CONFIG[routeClass], routeClass);
+}
+
+// #9044: a SEPARATE, fixed-key (never identity-keyed) ceiling on /loopover/shot's on-demand render mode --
+// the one route on this deployment's single internet-facing path that drives a real headless-Chromium render
+// per request. The per-identity `expensive` bucket above is necessary but not sufficient: an attacker who can
+// get an arbitrary value into `Cf-Connecting-Ip` (or who simply has no header at all pre-clientIp-fix) gets a
+// FRESH per-identity bucket on every request by rotating it, bypassing the per-identity cap entirely. A fixed
+// key sidesteps that class of bypass completely -- there is only ever ONE bucket for this route's render mode,
+// no matter what identity a caller can manufacture. Deliberately its OWN (lower) budget rather than reusing
+// CONFIG.expensive: this caps the render primitive's TOTAL cost to the whole deployment, not any one caller's
+// share of it, so it is set independently of the per-identity number.
+const SHOT_RENDER_GLOBAL_CONFIG: RateLimitConfig = { limit: 30, windowSeconds: 60 };
+const SHOT_RENDER_GLOBAL_KEY = "global-ceiling:loopover-shot-render";
+
+/** Enforce the fixed-key global ceiling on `/loopover/shot`'s on-demand render mode (see
+ *  {@link SHOT_RENDER_GLOBAL_CONFIG}'s doc comment for why this exists alongside the per-identity `expensive`
+ *  class). Callers should invoke this ONLY for the render (`?url=`) mode -- the R2-serve (`?key=`) mode is
+ *  cheap and doesn't drive a render, so it stays covered by the ordinary per-identity check alone. */
+export async function enforceShotRenderGlobalCeiling(c: Context<{ Bindings: Env }>): Promise<Response | null> {
+  return checkRateLimitBucket(c, SHOT_RENDER_GLOBAL_KEY, SHOT_RENDER_GLOBAL_CONFIG, "expensive");
+}
+
+async function checkRateLimitBucket(c: Context<{ Bindings: Env }>, key: string, config: RateLimitConfig, routeClass: RateLimitClass): Promise<Response | null> {
+  if (!c.env.RATE_LIMITER) return null;
   let decisionResponse: Response;
   try {
     const id = c.env.RATE_LIMITER.idFromName(key);
@@ -243,9 +266,47 @@ async function validateBearerForRateLimit(c: Context<{ Bindings: Env }>, token: 
   return Boolean((await authenticatePrivateToken(c.env, token)) ?? (await authenticateInternalToken(c.env, token)));
 }
 
+const LOOPBACK_PEER_IPS = new Set(["127.0.0.1", "::1"]);
+
+/** Rightmost hop of a (possibly multi-hop) `X-Forwarded-For` header -- the one nearest to THIS process, i.e.
+ *  the one a single trusted local proxy itself appended, as opposed to any earlier value a client could have
+ *  supplied. Only ever consulted from the loopback-trusted branch below. */
+function rightmostForwardedFor(header: string | undefined): string | undefined {
+  const hops = (header ?? "").split(",");
+  return normalizeIpAddress(hops[hops.length - 1]);
+}
+
+/**
+ * The client identity a rate-limit bucket keys on (#9044).
+ *
+ * On Cloudflare Workers, `cf-connecting-ip` is populated by the Workers runtime itself and cannot be
+ * supplied by the caller -- unconditionally trusting it there is correct and stays exactly as it always has
+ * (`env.LOOPOVER_PEER_IP` is never set on Workers, so that branch is unreachable there).
+ *
+ * Self-host runs the SAME Hono app behind a loopback-bound Node process (`server.ts`), fronted by a
+ * Cloudflare Tunnel (cloudflared). `env.LOOPOVER_PEER_IP` (set per-request by server.ts from the real TCP
+ * peer address) tells us who actually connected to this process -- the one thing that can never be spoofed
+ * by a request header. On THIS topology, a loopback peer IS the trust boundary: nothing other than the local
+ * cloudflared process can ever reach a port bound to 127.0.0.1 only, so a loopback peer legitimizes trusting
+ * the header it forwarded (falling back to the rightmost X-Forwarded-For hop, then the peer itself, if the
+ * header is absent). A NON-loopback peer means this Node process is reachable some other way (e.g. exposed
+ * directly with no tunnel in front of it, a foreseeable alternate self-host topology) -- an untrusted
+ * connection whose headers could be anything, so the header is ignored entirely and the bucket keys on the
+ * peer's own real address instead. Either way, once real peer info exists, "unknown-ip" (a bucket shared by
+ * every anonymous caller worldwide -- the DoS this closes) is never reachable again.
+ */
 function clientIp(c: Context<{ Bindings: Env }>): string {
-  // Only trust Cloudflare-populated client IPs. Proxy fallback headers can be supplied by clients in Workers.
-  return normalizeIpAddress(c.req.header("cf-connecting-ip")) ?? "unknown-ip";
+  const peerIp = normalizeIpAddress(c.env.LOOPOVER_PEER_IP);
+  if (!peerIp) {
+    // Workers, or any caller (tests, an unwired self-host build) that never threads a peer IP in --
+    // byte-identical to the pre-#9044 behavior.
+    return normalizeIpAddress(c.req.header("cf-connecting-ip")) ?? "unknown-ip";
+  }
+  if (LOOPBACK_PEER_IPS.has(peerIp)) {
+    return normalizeIpAddress(c.req.header("cf-connecting-ip")) ?? rightmostForwardedFor(c.req.header("x-forwarded-for")) ?? peerIp;
+  }
+  // Untrusted topology: never honor a caller-suppliable header here.
+  return peerIp;
 }
 
 function normalizeIpAddress(value: string | undefined): string | undefined {

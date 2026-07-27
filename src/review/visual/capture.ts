@@ -30,6 +30,7 @@ import {
   parseRepo,
 } from "./preview-url";
 import { captureInteractionFrames, captureScrollFrames, captureShot, DESKTOP_VIEWPORT, MOBILE_VIEWPORT, type InteractionAction, type ShotTheme, type Viewport } from "./shot";
+import { mintShotRenderToken } from "./shot-render-token";
 import { compareCapturedScreenshots, isVisualDiffAvailable, type VisualDiffOutcome } from "./pixel-diff";
 import { encodeScrollGif, isScrollGifAvailable } from "./scroll-gif";
 import { detectAutoHoverInteractions, type ChangedCssFile } from "./interaction-detection";
@@ -366,9 +367,12 @@ async function capturePage(
   // Carries the theme (#3678) and, when set, the storage key (#4109) so a LATER on-demand fetch of this
   // exact URL (e.g. a failed/never-persisted render retried by GitHub's image proxy) still requests the
   // matching prefers-color-scheme/localStorage forcing, not the default — handleShot's Mode B reads these
-  // same &theme=/&themeStorageKey= params. Omitted when unset, unchanged from today.
+  // same &theme=/&themeStorageKey= params. Omitted when unset, unchanged from today. The trailing
+  // &exp=&sig= (#9044) is a signed, expiring token ORB mints for exactly this url -- routes.ts requires it
+  // before ever invoking the render path, so a live Chromium render only ever happens for a page ORB itself
+  // decided to capture. See shot-render-token.ts's own doc comment for the full threat model.
   const onDemand = shotBase
-    ? `${shotBase}/${NAMESPACE}/shot?url=${encodeURIComponent(page)}&w=${viewport.width}&h=${viewport.height}${theme ? `&theme=${theme}` : ""}${theme && themeStorageKey ? `&themeStorageKey=${encodeURIComponent(themeStorageKey)}` : ""}`
+    ? `${shotBase}/${NAMESPACE}/shot?url=${encodeURIComponent(page)}&w=${viewport.width}&h=${viewport.height}${theme ? `&theme=${theme}` : ""}${theme && themeStorageKey ? `&themeStorageKey=${encodeURIComponent(themeStorageKey)}` : ""}&${await mintShotRenderToken(env, page)}`
     : page;
 
   if (env.REVIEW_AUDIT) {

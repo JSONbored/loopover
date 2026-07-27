@@ -75,6 +75,15 @@ declare global {
     };
     PUBLIC_API_ORIGIN?: string;
     PUBLIC_SITE_ORIGIN?: string;
+    /** #9044: the genuine TCP peer address of whoever connected directly to this self-host Node process --
+     *  threaded in by server.ts from `@hono/node-server`'s own `HttpBindings.incoming.socket.remoteAddress`
+     *  (the SECOND argument its `FetchCallback` type offers, which this repo's synthesized-env `serve()` call
+     *  previously ignored entirely). UNSPOOFABLE, unlike any header. Absent on Cloudflare Workers (no Node
+     *  socket exists there -- cf-connecting-ip is the only, and correct, signal) and absent in any test/harness
+     *  that doesn't wire it, which is exactly the "no peer info" case clientIp() (src/auth/rate-limit.ts) falls
+     *  back from -- see that function's own doc comment for the full trust-boundary reasoning. Never a wrangler
+     *  binding/var (no cf-typegen entry needed): a plain runtime-only field server.ts sets per request. */
+    LOOPOVER_PEER_IP?: string;
     /** Comma-separated extra origins (each `scheme://host[:port]`) allowed as a post-GitHub-OAuth `returnTo`
      *  redirect target, alongside PUBLIC_SITE_ORIGIN. Lets the web login flow work correctly from more than
      *  one live UI domain at once (e.g. during a brand/domain migration) without breaking PUBLIC_SITE_ORIGIN's

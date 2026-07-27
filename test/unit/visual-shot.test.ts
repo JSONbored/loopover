@@ -26,12 +26,23 @@ const mocks = vi.hoisted(() => ({
   // same mock rather than introducing a second, redundant height property.
   scrollHeight: 900,
   evaluateCallCount: 0,
+  // #9044 DNS-resolution pin: a public, non-private address by default so every existing test's target host
+  // resolves "safely" and none of them exercise the new guard unintentionally — matching every other default
+  // in this hoisted object being the "everything is fine" case. Individual tests override via
+  // mockResolvedValueOnce/mockRejectedValueOnce/mockReturnValueOnce, consumed once and reverting to this
+  // default afterward (vi.clearAllMocks() in each beforeEach clears call history only, never this base
+  // implementation — same convention every other mock in this file already relies on).
+  dnsLookup: vi.fn(async (_hostname: string) => ({ address: "93.184.216.34", family: 4 as const })),
 }));
 
 vi.mock("@cloudflare/puppeteer", () => ({
   default: {
     launch: mocks.launch,
   },
+}));
+
+vi.mock("node:dns/promises", () => ({
+  lookup: (hostname: string) => mocks.dnsLookup(hostname),
 }));
 
 function env(): Env {
@@ -891,6 +902,92 @@ describe("captureInteractionFrames (#interaction-gif-capture)", () => {
       expect(mocks.mouseDown).toHaveBeenCalledTimes(1);
       expect(mocks.mouseUp).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe("DNS-resolution pin (#9044, best-effort SSRF defense-in-depth)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.finalUrl = "https://preview.pages.dev/page";
+    mocks.scrollHeight = 900;
+    mocks.dnsLookup.mockResolvedValue({ address: "93.184.216.34", family: 4 });
+    mocks.evaluate.mockImplementation(async (fn: (...fnArgs: unknown[]) => unknown, ...fnArgs: unknown[]) => {
+      try {
+        fn(...fnArgs);
+      } catch {
+        // expected — see the shared mock comment at the top of this file.
+      }
+      return fnArgs.length === 0 ? mocks.scrollHeight : undefined;
+    });
+    mocks.launch.mockImplementation(async () => {
+      let onRequest: ((request: ReturnType<typeof makeRequest>) => void) | undefined;
+      return {
+        newPage: async () => ({
+          setRequestInterception: vi.fn(async () => undefined),
+          on: vi.fn((event: string, callback: (request: ReturnType<typeof makeRequest>) => void) => {
+            if (event === "request") onRequest = callback;
+          }),
+          setViewport: vi.fn(async () => undefined),
+          emulateMediaFeatures: mocks.emulateMediaFeatures,
+          goto: vi.fn(async (url: string) => {
+            onRequest?.(makeRequest(url));
+            if (mocks.finalUrl !== url) onRequest?.(makeRequest(mocks.finalUrl));
+          }),
+          reload: mocks.reload,
+          url: vi.fn(() => mocks.finalUrl),
+          screenshot: mocks.screenshot,
+          evaluate: mocks.evaluate,
+          waitForSelector: mocks.waitForSelector,
+          mouse: { move: mocks.mouseMove, down: mocks.mouseDown, up: mocks.mouseUp },
+        }),
+        close: mocks.close,
+      };
+    });
+  });
+
+  it("captureShot rejects a public hostname whose DNS resolves to a disallowed address, before launching the browser", async () => {
+    mocks.dnsLookup.mockResolvedValueOnce({ address: "169.254.169.254", family: 4 }); // cloud metadata
+    const result = await captureShot(env(), "https://attacker-controlled.pages.dev/page");
+    expect(result).toEqual({ png: null, authWalled: false });
+    expect(mocks.launch).not.toHaveBeenCalled();
+  });
+
+  it("captureScrollFrames rejects a public hostname whose DNS resolves to a disallowed address", async () => {
+    mocks.dnsLookup.mockResolvedValueOnce({ address: "127.0.0.1", family: 4 });
+    const result = await captureScrollFrames(env(), "https://attacker-controlled.pages.dev/page", { width: 1440, height: 900 });
+    expect(result).toEqual({ frames: [], authWalled: false });
+    expect(mocks.launch).not.toHaveBeenCalled();
+  });
+
+  it("captureInteractionFrames rejects a public hostname whose DNS resolves to a disallowed address", async () => {
+    mocks.dnsLookup.mockResolvedValueOnce({ address: "10.0.0.5", family: 4 });
+    const result = await captureInteractionFrames(env(), "https://attacker-controlled.pages.dev/page", ".x", "hover", { width: 1440, height: 900 });
+    expect(result).toEqual({ frames: [], authWalled: false });
+    expect(mocks.launch).not.toHaveBeenCalled();
+  });
+
+  it("fails open (still renders) when DNS resolution errors -- not the sole guard, defense-in-depth only", async () => {
+    mocks.dnsLookup.mockRejectedValueOnce(new Error("ENOTFOUND"));
+    const response = await handleShot(request("https://preview.pages.dev/page"), env());
+    expect(response.status).toBe(200);
+  });
+
+  it("fails open (still renders) when the DNS lookup times out", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.dnsLookup.mockReturnValueOnce(new Promise(() => undefined));
+      const result = captureShot(env(), "https://preview.pages.dev/page");
+      await vi.advanceTimersByTimeAsync(1_500);
+      await expect(result).resolves.toEqual({ png: expect.any(Uint8Array), authWalled: false });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails open (still renders) for a resolved address that is itself safe/public", async () => {
+    mocks.dnsLookup.mockResolvedValueOnce({ address: "93.184.216.34", family: 4 });
+    const response = await handleShot(request("https://preview.pages.dev/page"), env());
+    expect(response.status).toBe(200);
   });
 });
 

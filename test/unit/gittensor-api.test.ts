@@ -195,6 +195,43 @@ describe("Gittensor API contributor snapshots", () => {
     await expect(fetchOfficialGittensorMiner("12345")).resolves.toEqual({ status: "not_found" });
   });
 
+  describe("#9079: matches on the immutable githubId when the caller has one, not the renameable login", () => {
+    it("confirms by githubId even when the caller-supplied login no longer matches the upstream username", async () => {
+      // The registered miner's CURRENT upstream username is "renamed-miner" -- the caller only knows the OLD
+      // login it observed on a stale/cached PR row. Login-only matching would report not_found here; the id
+      // is what actually identifies the same account across a rename.
+      vi.stubGlobal("fetch", async () => Response.json([{ githubUsername: "renamed-miner", githubId: "49853598" }]));
+      await expect(fetchOfficialGittensorMiner("stale-old-login", "49853598")).resolves.toMatchObject({ status: "confirmed", snapshot: { githubId: "49853598", githubUsername: "renamed-miner" } });
+    });
+
+    it("REFUSES to fall back to a username match when a supplied githubId doesn't match anyone -- the exact exploit this closes", async () => {
+      // An attacker reclaims a miner's freed login. The upstream list may still carry an entry for that exact
+      // username (from before the rename/deletion, e.g. under a DIFFERENT numeric id, or simply not carry the
+      // caller's id at all) -- but the caller here is asking about a SPECIFIC github user id that is not a
+      // registered miner. Matching the login instead would hand the attacker the real miner's confirmed status.
+      vi.stubGlobal("fetch", async () => Response.json([{ githubUsername: "attacker-claimed-login", githubId: "1111" }]));
+      await expect(fetchOfficialGittensorMiner("attacker-claimed-login", "9999")).resolves.toEqual({ status: "not_found" });
+    });
+
+    it("falls back to a login match only when the caller has no githubId at all (unchanged pre-#9079 behavior)", async () => {
+      vi.stubGlobal("fetch", async () => Response.json([{ githubUsername: "jsonbored", githubId: "49853598" }]));
+      await expect(fetchOfficialGittensorMiner("jsonbored")).resolves.toMatchObject({ status: "confirmed", snapshot: { githubId: "49853598" } });
+      await expect(fetchOfficialGittensorMiner("jsonbored", null)).resolves.toMatchObject({ status: "confirmed", snapshot: { githubId: "49853598" } });
+      await expect(fetchOfficialGittensorMiner("jsonbored", undefined)).resolves.toMatchObject({ status: "confirmed", snapshot: { githubId: "49853598" } });
+    });
+
+    it("accepts a numeric githubId (not just a string) and matches it against the upstream string field", async () => {
+      vi.stubGlobal("fetch", async () => Response.json([{ githubUsername: "jsonbored", githubId: "49853598" }]));
+      await expect(fetchOfficialGittensorMiner("jsonbored", 49853598)).resolves.toMatchObject({ status: "confirmed" });
+    });
+
+    it("threads githubId through fetchGittensorContributorSnapshot the same way", async () => {
+      vi.stubGlobal("fetch", async () => Response.json([{ githubUsername: "renamed-miner", githubId: "49853598" }]));
+      await expect(fetchGittensorContributorSnapshot("stale-old-login", "49853598")).resolves.toMatchObject({ githubId: "49853598" });
+      await expect(fetchGittensorContributorSnapshot("attacker-claimed-login", "9999")).resolves.toBeNull();
+    });
+  });
+
   it("classifies official miner detection without a complete identity and handles non-Error failures", async () => {
     vi.stubGlobal("fetch", async () => Response.json([{ githubUsername: "jsonbored" }, { githubId: "49853598" }]));
     await expect(fetchOfficialGittensorMiner("jsonbored")).resolves.toEqual({ status: "not_found" });

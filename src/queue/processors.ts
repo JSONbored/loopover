@@ -2358,6 +2358,8 @@ async function finalizePolicyCloseDisposition(
     pullNumber: number;
     headSha: string | null | undefined;
     authorLogin?: string | null | undefined;
+    /** #9079: the author's immutable numeric GitHub user id, preferred over authorLogin for miner matching. */
+    authorGithubId?: number | null | undefined;
     deliveryId: string;
     planned: PlannedAgentAction[];
     settings: Awaited<ReturnType<typeof resolveRepositorySettings>>;
@@ -2378,7 +2380,7 @@ async function finalizePolicyCloseDisposition(
         await getCachedOfficialMinerDetection(env, args.authorLogin, {
           targetKey: `${args.repoFullName}#${args.pullNumber}`,
           deliveryId: args.deliveryId,
-        })
+        }, args.authorGithubId)
       ).status === "confirmed"
     : false;
   const breakerOnPlan = applyPrecisionBreakers(
@@ -2997,7 +2999,7 @@ async function resolveContributorCapMatch(
     const officialMiner = await getCachedOfficialMinerDetection(env, pr.authorLogin, {
       targetKey: `${repoFullName}#${pr.number}`,
       deliveryId,
-    });
+    }, pr.authorGithubId);
     const globalCap = officialMiner.status === "confirmed" ? prGlobalCapForMiner : prGlobalCapForHuman;
     if (globalCap !== null) {
       const globalOpenCount = await verifiedGlobalOpenItemCount(env, installationId, pr.authorLogin, {
@@ -3611,7 +3613,7 @@ async function runAgentMaintenancePlanAndExecute(
         await getCachedOfficialMinerDetection(env, pr.authorLogin, {
           targetKey: `${repoFullName}#${pr.number}`,
           deliveryId,
-        })
+        }, pr.authorGithubId)
       ).status === "confirmed"
     : false;
   // #7986: a cheap, cron-refreshed single-row read (readUntrustworthyRuleCodes) — never a fresh aggregate
@@ -6147,7 +6149,7 @@ async function maybeCloseIssueOverContributorCap(
     const officialMiner = await getCachedOfficialMinerDetection(env, authorLogin, {
       targetKey: `${repoFullName}#${issue.number}`,
       deliveryId,
-    });
+    }, issue.authorGithubId);
     const globalCap = officialMiner.status === "confirmed" ? globalCapForMiner : globalCapForHuman;
     if (globalCap !== null) {
       const globalOpenCount = await verifiedGlobalOpenItemCount(env, installationId, authorLogin, {
@@ -9714,7 +9716,7 @@ async function maybePublishPrPublicSurface(
     official = await getCachedOfficialMinerDetection(env, author, {
       targetKey: `${repoFullName}#${pr.number}`,
       deliveryId: webhook.deliveryId,
-    });
+    }, pr.authorGithubId);
     if (requireOfficialMiner && official.status === "unavailable") {
       await auditPrVisibilitySkip(
         env,
@@ -10376,7 +10378,7 @@ async function maybePublishPrPublicSurface(
       official = await getCachedOfficialMinerDetection(env, author, {
         targetKey: `${repoFullName}#${pr.number}`,
         deliveryId: webhook.deliveryId,
-      });
+      }, pr.authorGithubId);
     }
 
     // Resolve the author's confirmed-Gittensor status. It feeds on-chain SCORING and the public surface, but
@@ -13557,7 +13559,7 @@ async function runE2eTestGenerationAndDeliver(
   let commitOutcome: E2eTestGenCommitOutcome | undefined;
   if (testSource && deliveryMode === "commit") {
     const minerDetection = args.pr.authorLogin
-      ? await getCachedOfficialMinerDetection(env, args.pr.authorLogin, { targetKey: args.targetKey, deliveryId: args.deliveryId })
+      ? await getCachedOfficialMinerDetection(env, args.pr.authorLogin, { targetKey: args.targetKey, deliveryId: args.deliveryId }, args.pr.authorGithubId)
       : ({ status: "not_found" } as const);
     if (minerDetection.status === "confirmed") {
       commitOutcome = { status: "blocked" };
@@ -14339,6 +14341,10 @@ async function authorizePrActionActor(args: {
   );
   const pullRequestAuthor =
     args.pr.authorLogin ?? args.issue.user?.login ?? null;
+  // #9079: mirrors the pullRequestAuthor fallback above -- prefer the cached PR row's immutable id, falling
+  // back to the webhook issue payload's own `user.id` only when the PR row's login itself was unavailable
+  // (the exact case where pullRequestAuthor also fell back to the webhook login).
+  const pullRequestAuthorGithubId = args.pr.authorLogin ? args.pr.authorGithubId : (args.issue.user?.id ?? null);
   const official =
     args.needsMinerDetection &&
     pullRequestAuthor &&
@@ -14352,7 +14358,7 @@ async function authorizePrActionActor(args: {
       ? await getCachedOfficialMinerDetection(args.env, pullRequestAuthor, {
           targetKey: `${args.repoFullName}#${args.issue.number}`,
           deliveryId: args.deliveryId,
-        })
+        }, pullRequestAuthorGithubId)
       : undefined;
   const authorization = isAuthorizedCommandActor({
     commandName: args.commandName,
@@ -14670,6 +14676,7 @@ async function maybeThrottleReviewNagPing(
     pullNumber: pr.number,
     headSha: pr.headSha,
     authorLogin: pr.authorLogin,
+    authorGithubId: pr.authorGithubId,
     deliveryId,
     planned,
     settings,
@@ -14879,6 +14886,7 @@ async function maybeThrottleMonitoredMentions(
     pullNumber: pr.number,
     headSha: pr.headSha,
     authorLogin: pr.authorLogin,
+    authorGithubId: pr.authorGithubId,
     deliveryId,
     planned,
     settings,
@@ -15230,6 +15238,9 @@ async function maybeProcessLoopOverMentionCommand(
 
   const pullRequestAuthor =
     cachedPullRequest?.authorLogin ?? issue.user?.login ?? null;
+  // #9079: mirrors the pullRequestAuthor fallback above -- prefer the cached PR row's immutable id, falling
+  // back to the webhook issue payload's own `user.id` only when the cached row's login itself was unavailable.
+  const pullRequestAuthorGithubId = cachedPullRequest?.authorLogin ? cachedPullRequest.authorGithubId : (issue.user?.id ?? null);
 
   // Intent-classification router (#4596): an unrecognized-verb mention with real trailing text (e.g. "why is
   // this stuck?") gets ONE chance to be re-routed to an existing Q&A command. Because the classifier is a
@@ -15255,7 +15266,7 @@ async function maybeProcessLoopOverMentionCommand(
       ? await getCachedOfficialMinerDetection(env, pullRequestAuthor, {
           targetKey: `${repoFullName}#${issue.number}`,
           deliveryId,
-        })
+        }, pullRequestAuthorGithubId)
       : undefined;
   let interpretedFrom: { question: string; matchedCommand: LoopOverMentionCommandName } | undefined;
   if (command.name === "help" && command.unrecognizedText && settings.advisoryAiRouting?.intentRouting === true) {
@@ -15318,7 +15329,7 @@ async function maybeProcessLoopOverMentionCommand(
     official = await getCachedOfficialMinerDetection(env, pullRequestAuthor, {
       targetKey: `${repoFullName}#${issue.number}`,
       deliveryId,
-    });
+    }, pullRequestAuthorGithubId);
   }
   const authorization = isAuthorizedCommandActor({
     commandName: command.name,
@@ -15862,12 +15873,14 @@ async function maybeProcessAgentCommandFeedbackReaction(
   }
   const pullRequestAuthor =
     cachedPullRequest?.authorLogin ?? issue.user?.login ?? null;
+  // #9079: mirrors the pullRequestAuthor fallback above -- see the identical derivation earlier in this file.
+  const pullRequestAuthorGithubId = cachedPullRequest?.authorLogin ? cachedPullRequest.authorGithubId : (issue.user?.id ?? null);
   const official =
     pullRequestAuthor && actor.toLowerCase() === pullRequestAuthor.toLowerCase()
       ? await getCachedOfficialMinerDetection(env, actor, {
           targetKey,
           deliveryId,
-        })
+        }, pullRequestAuthorGithubId)
       : undefined;
   // #8682: feedback votes must be authorized against the SAME command policy that authorized the answer,
   // not isAuthorizedCommandActor's `"preflight"` default. Load live settings so commandAuthorization /
@@ -16014,6 +16027,11 @@ async function getCachedOfficialMinerDetection(
   env: Env,
   login: string,
   context: { targetKey: string; deliveryId: string },
+  // #9079: the author's immutable numeric GitHub user id (PullRequestRecord/IssueRecord.authorGithubId),
+  // when the caller has one. Preferred over `login` for the actual upstream match (fetchOfficialGittensorMiner
+  // checks id first) -- `login` remains the cache key/audit-log identity and the fallback match key for a
+  // caller that genuinely doesn't have a stored id yet.
+  githubId?: number | null,
 ): Promise<OfficialGittensorMinerDetection> {
   const cached = await getFreshOfficialMinerDetection(env, login);
   if (cached) {
@@ -16035,7 +16053,7 @@ async function getCachedOfficialMinerDetection(
     context,
     "miss",
   );
-  const detection = await fetchOfficialGittensorMiner(login);
+  const detection = await fetchOfficialGittensorMiner(login, githubId);
   const cacheableDetection = await upsertOfficialMinerDetection(
     env,
     login,

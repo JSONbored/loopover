@@ -163,9 +163,9 @@ export type GittensorContributorSnapshot = {
   issueLabels: string[];
 };
 
-export async function fetchGittensorContributorSnapshot(login: string): Promise<GittensorContributorSnapshot | null> {
+export async function fetchGittensorContributorSnapshot(login: string, githubId?: number | string | null): Promise<GittensorContributorSnapshot | null> {
   try {
-    const detection = await fetchOfficialGittensorMiner(login);
+    const detection = await fetchOfficialGittensorMiner(login, githubId);
     return detection.status === "confirmed" ? detection.snapshot : null;
   } catch {
     /* v8 ignore next -- fetchOfficialGittensorMiner converts network failures into an unavailable status; this is a last-resort guard. */
@@ -178,11 +178,31 @@ export type OfficialGittensorMinerDetection =
   | { status: "not_found" }
   | { status: "unavailable"; error: string };
 
-export async function fetchOfficialGittensorMiner(login: string): Promise<OfficialGittensorMinerDetection> {
+/**
+ * #9079: `login` alone used to be the ENTIRE match key against the upstream `/miners` list — but a GitHub
+ * login is renameable, and a freed username is reclaimable by anyone the instant its prior owner renames or
+ * deletes their account. If the upstream list still carries the old username (refresh cadence is upstream's,
+ * not ours), a squatter who claims it inherits `confirmed_miner` — a genuinely elevated role (command
+ * self-retrigger, the miner-scoped open-PR cap, the unlinked-issue-guardrail velocity exception). `githubId`
+ * is GitHub's own immutable numeric user id (present on every webhook payload's `user.id`, threaded through as
+ * `PullRequestRecord`/`IssueRecord.authorGithubId` since #9125) and CANNOT be reassigned by a rename or a
+ * reclaimed login, so it is checked FIRST whenever the caller has one. `login` is now purely a display/lookup
+ * fallback: still used verbatim when a caller genuinely has no stored id yet (a PR/issue predating #9125, or
+ * a call site not yet threading it through), which is a strict narrowing of the old always-username-only
+ * behavior, never a widening of it.
+ */
+export async function fetchOfficialGittensorMiner(login: string, githubId?: number | string | null): Promise<OfficialGittensorMinerDetection> {
   try {
     const miners = await fetchJson<GittensorMinerSummaryResponse[]>(`${GITTENSOR_API_BASE}/miners`);
+    const normalizedTargetGithubId = githubId === null || githubId === undefined ? null : String(githubId);
     const normalizedLogin = login.toLowerCase();
-    const miner = miners.find((candidate) => candidate.githubUsername?.toLowerCase() === normalizedLogin);
+    const miner = normalizedTargetGithubId
+      ? (miners.find((candidate) => candidate.githubId === normalizedTargetGithubId) ??
+        // A caller-supplied id that the upstream list doesn't (yet) carry is NOT "confirmed via username" --
+        // that would reopen exactly the login-only hole this id-first match exists to close. Only fall back to
+        // a username match when the id itself was never known at all.
+        undefined)
+      : miners.find((candidate) => candidate.githubUsername?.toLowerCase() === normalizedLogin);
     if (!miner?.githubId || !miner.githubUsername) return { status: "not_found" };
     return { status: "confirmed", snapshot: await buildGittensorContributorSnapshot({ ...miner, githubId: miner.githubId, githubUsername: miner.githubUsername }) };
   } catch (error) {

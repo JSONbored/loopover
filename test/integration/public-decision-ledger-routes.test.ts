@@ -76,6 +76,8 @@ describe("public decision-ledger/decision-records routes answer WITHOUT credenti
     ["stats", "/v1/public/stats"],
     ["decision-ledger/verify", "/v1/public/decision-ledger/verify"],
     ["decision-ledger/row/:seq", "/v1/public/decision-ledger/row/1"],
+    ["decision-ledger/anchor-key", "/v1/public/decision-ledger/anchor-key"],
+    ["decision-ledger/anchors", "/v1/public/decision-ledger/anchors"],
     ["decision-records/:owner/:repo/:pull", "/v1/public/decision-records/acme/widgets/1"],
     ["github/repos/:owner/:repo/stats", "/v1/public/github/repos/acme/widgets/stats"],
     ["repos/:owner/:repo/badge.svg", "/v1/public/repos/acme/widgets/badge.svg"],

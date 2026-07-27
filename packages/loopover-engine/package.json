@@ -82,7 +82,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.218",
     "tree-sitter-wasms": "^0.1.13",
-    "web-tree-sitter": "^0.20.8",
+    "web-tree-sitter": "^0.26.11",
     "yaml": "^2.9.0"
   },
   "devDependencies": {

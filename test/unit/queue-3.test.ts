@@ -2886,6 +2886,13 @@ describe("queue processors", () => {
     expect(mergeAudit?.n).toBe(0);
     // The close comment states the cap + current count (public, unlike the blacklist's static-only comment).
     expect(seen.comments.some((c) => c.includes("@farmer99") && c.includes("3 open pull requests") && c.includes("limit of 2"))).toBe(true);
+    // #9134 REGRESSION: this early cap-on-open close path used to write NO decision record and NO ledger row
+    // at all -- exactly the contributor-disputable close the issue flagged as biasing the risk-control
+    // calibration join. It must now emit both, by construction (the executor's shared record hook).
+    const decisionRecord = await env.DB.prepare("select action, reason_code from decision_records where repo_full_name = ? and pull_number = 55").bind("JSONbored/gittensory").first<{ action: string; reason_code: string }>();
+    expect(decisionRecord).toMatchObject({ action: "close", reason_code: "policy_close:contributor_cap" });
+    const ledgerRows = await env.DB.prepare("select count(*) as n from decision_ledger").first<{ n: number }>();
+    expect(ledgerRows?.n).toBeGreaterThanOrEqual(1);
   });
 
   it("pre-merge contributor-cap re-check (#7284-fix): a contributor well UNDER a configured cap merges normally through the full pipeline", async () => {

@@ -420,6 +420,11 @@ describe("queue processors", () => {
       expect(seen.comments.some((c) => c.includes("chatty") && c.includes("4 times"))).toBe(true);
       const closeAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'agent.action.close'").first<{ n: number }>();
       expect(closeAudit?.n).toBeGreaterThanOrEqual(1);
+      // #9134 REGRESSION: this review-nag close previously wrote NO decision record at all.
+      const decisionRecord = await env.DB.prepare("select action, reason_code from decision_records where repo_full_name = ? and pull_number = 203").bind("JSONbored/gittensory").first<{ action: string; reason_code: string }>();
+      expect(decisionRecord).toMatchObject({ action: "close", reason_code: "policy_close:review_nag" });
+      const ledgerRows = await env.DB.prepare("select count(*) as n from decision_ledger").first<{ n: number }>();
+      expect(ledgerRows?.n).toBeGreaterThanOrEqual(1);
     });
 
     it("REGRESSION (#review-nag-cross-pr-carryover): a contributor who exhausted their pings on PR A carries the count over to a BRAND-NEW PR B instead of resetting to a clean 0/maxPings slate", async () => {
@@ -985,6 +990,13 @@ describe("queue processors", () => {
       expect(seen.closed).toBe(true);
       expect(seen.labels).toContain("too-chatty");
       // #label-scoping: close: "auto" alone (no broad label: "auto") is sufficient for the label AND the close.
+      // #9134 REGRESSION: this monitored-mentions close (the @mention-triggered review-nag variant) previously
+      // wrote NO decision record at all -- same closeKind ("review_nag") as its ping-count sibling above,
+      // since planAgentMaintenanceActions tags both through the same reviewNagMatch field.
+      const decisionRecord = await env.DB.prepare("select action, reason_code from decision_records where repo_full_name = ? and pull_number = 305").bind("JSONbored/gittensory").first<{ action: string; reason_code: string }>();
+      expect(decisionRecord).toMatchObject({ action: "close", reason_code: "policy_close:review_nag" });
+      const ledgerRows = await env.DB.prepare("select count(*) as n from decision_ledger").first<{ n: number }>();
+      expect(ledgerRows?.n).toBeGreaterThanOrEqual(1);
     });
 
     it("REGRESSION (#review-nag-cross-pr-carryover): a contributor who exhausted their @-mention pings for ONE login on PR A carries that login's count over to a BRAND-NEW PR B", async () => {

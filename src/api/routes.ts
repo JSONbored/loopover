@@ -306,7 +306,7 @@ import { getContributorTrustProfile } from "../review/contributor-trust-profile"
 import { backfillContributorGateHistory } from "../review/contributor-gate-history-backfill";
 import { isFairnessAnalyticsEnabled, resolveFairnessAnalyticsManifestOverride } from "../review/contributor-trust-profile-wire";
 import { isRagEnabled } from "../review/rag-wire";
-import { verifyDecisionLedger } from "../review/decision-record";
+import { loadPublicDecisionRecord, verifyDecisionLedger } from "../review/decision-record";
 import { getPublicStats, isPublicStatsEnabled, resolvePublicStatsManifestOverride } from "../review/public-stats";
 import { loadPublicAccuracyTrend } from "../services/public-accuracy-trend";
 import { loadPublicRulePrecision } from "../review/public-rule-precision";
@@ -1263,14 +1263,41 @@ export function createApp() {
     }
   });
 
-  // #8837: public chain-verification for the decision ledger. Hashes/ids only — no record contents — so it
-  // is safe unauthenticated; any observer can confirm no decision was deleted, reordered, or rewritten.
-  // Resumable: pass afterSeq from the previous response's nextAfterSeq until it returns null.
+  // #8837: public chain-verification for the decision ledger. Hashes/ids only — no record contents — so it is
+  // unauthenticated by design (fixed in #9120: this route was missing from the requiresApiToken exemption
+  // list below and 401'd in prod despite this comment always having claimed otherwise). #9122 correction: this
+  // only proves SELF-consistency (no reorder/rewrite/gap WITHIN what verify examined) plus — since this
+  // route's own fix — that no decision_records row exists past the verified tip with no chain entry over it
+  // (catches a truncated tail, see verifyDecisionLedger's own doc comment). It does NOT prove the operator
+  // never deleted the chain wholesale and started fresh from genesis; that needs an external anchor the
+  // operator does not control, which is tracked but not yet built (decision-record.ts's module header has the
+  // full honest-limit paragraph). Resumable: pass afterSeq from the previous response's nextAfterSeq until it
+  // returns null; every response also carries the CURRENT tipSeq/tipHash/totalCount so a third party can keep
+  // its own checkpoint independent of pagination position.
   app.get("/v1/public/decision-ledger/verify", async (c) => {
     const afterSeq = Math.max(0, Number(c.req.query("afterSeq")) || 0);
     const limit = Number(c.req.query("limit")) || 500;
     const result = await verifyDecisionLedger(c.env, afterSeq, limit);
     return c.json(result, result.ok ? 200 : 409);
+  });
+
+  // #9123: the decision record itself was persisted (decision_records) but never published anywhere a
+  // contributor or a third party could fetch the full body — the only prior public surface was
+  // renderDecisionRecordSection's bounded review-comment summary (12-char digest prefixes, and it omits
+  // decidedAt/baseSha/salvageability/repoFullName/pullNumber entirely). DecisionRecord is public-safe BY
+  // CONSTRUCTION (its own type doc: counts/digests/enums only, no diffs, no private config contents, no
+  // wallet/hotkey/trust-score/reward fields) — no field-level redaction needed before exposing it verbatim,
+  // unlike a route touching a type that carries any of those. Unauthenticated by design, mirroring the
+  // ledger-verify route immediately above; excluded from requiresApiToken below.
+  app.get("/v1/public/decision-records/:owner/:repo/:pull", async (c) => {
+    const owner = c.req.param("owner");
+    const repo = c.req.param("repo");
+    const pullNumber = Number(c.req.param("pull"));
+    if (!Number.isInteger(pullNumber) || pullNumber <= 0) return c.json({ error: "invalid_pull_number" }, 400);
+    const published = await loadPublicDecisionRecord(c.env, `${owner}/${repo}`, pullNumber);
+    if (!published) return c.json({ error: "not_found" }, 404);
+    c.header("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+    return c.json({ record: published.record, recordDigest: published.recordDigest });
   });
 
   app.get("/v1/public/github/repos/:owner/:repo/stats", async (c) => {
@@ -6639,6 +6666,15 @@ function requiresApiToken(path: string): boolean {
   if (/^\/v1\/public\/repos\/[^/]+\/[^/]+\/quality$/.test(path)) return false;
   if (path === "/v1/public/subnet-interface") return false;
   if (path === "/v1/public/stats") return false;
+  // #9120: this route's own doc comment always claimed "safe unauthenticated" but was missing from this exact
+  // list, so it 401'd in prod — verified live: subnet-interface/stats/quality answered 200, this one 401'd.
+  if (path === "/v1/public/decision-ledger/verify") return false;
+  // #9123: the new public decision-record read route — same unauthenticated posture as its ledger-verify
+  // sibling immediately above, added in the SAME PR so the two can never drift apart the way #9120 did. The
+  // pull segment matches any non-slash text (not just digits): an invalid pull number is the ROUTE's 400 to
+  // return, not the auth gate's 401 — mirrors every other dynamic-segment exemption below (owner/repo use the
+  // same unvalidated [^/]+).
+  if (/^\/v1\/public\/decision-records\/[^/]+\/[^/]+\/[^/]+$/.test(path)) return false;
   if (path === "/openapi.json") return false;
   if (path === "/mcp") return false;
   // Public OAuth draft-submission flow (LOOPOVER_REVIEW_DRAFT): the submission entry points are unauthenticated

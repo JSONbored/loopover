@@ -119,11 +119,11 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "LoopOver — Deterministic base-agent layer for Gittensor OSS mining" },
+      { title: "LoopOver — Close the loop on software delivery" },
       {
         name: "description",
         content:
-          "Plan better work, preflight branches, understand score blockers, and keep maintainer review surfaces quiet. Built for the Gittensor ecosystem.",
+          "Agents write, review, and merge — and every outcome trains the next pass. Autonomous PR reviews with a certified, published error rate, plus an MCP copilot and autonomous miner for contributors. Any GitHub repo.",
       },
       { property: "og:site_name", content: "LoopOver" },
       { property: "og:type", content: "website" },
@@ -154,7 +154,8 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
           "@type": "Organization",
           name: "LoopOver",
           url: "https://loopover.ai",
-          description: "Deterministic base-agent layer for Gittensor OSS contribution mining.",
+          description:
+            "Agents for the whole development loop — autonomous reviews and contributions with a published, certified error rate.",
         }),
       },
       // Local, cookieless analytics beacon. Do not load the mutable remote

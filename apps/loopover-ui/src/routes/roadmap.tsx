@@ -16,7 +16,8 @@ export const Route = createFileRoute("/roadmap")({
       { property: "og:title", content: "LoopOver roadmap" },
       {
         property: "og:description",
-        content: "Upcoming control-plane surfaces for Gittensor OSS contribution mining.",
+        content:
+          "What LoopOver is shipping next across the review agent, contributor stack, and hosted plane.",
       },
       { property: "og:url", content: "/roadmap" },
     ],

@@ -60,8 +60,9 @@ export function SiteFooter() {
             <span aria-hidden>ittensory</span>
           </Link>
           <p className="mt-3 max-w-sm text-token-sm text-muted-foreground">
-            Deterministic base-agent layer for Gittensor OSS contribution mining. Built for the
-            Gittensor ecosystem — not affiliated with the official subnet.
+            Closed loop, open receipts — agents write, review, and merge, and every outcome trains
+            the next pass. Gittensor-native intelligence included; not affiliated with the official
+            subnet.
           </p>
           <div className="mt-5 flex items-center gap-3">
             <a

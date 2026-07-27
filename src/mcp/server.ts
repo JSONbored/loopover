@@ -1697,7 +1697,7 @@ const remediationPlanOutputSchema = {
   items: z.unknown().optional(),
 };
 
-const scoreBreakdownOutputSchema = {
+export const scoreBreakdownOutputSchema = {
   repoFullName: z.string().optional(),
   scoreabilityStatus: z.string().optional(),
   effectiveEstimatedScore: z.number().optional(),
@@ -1706,7 +1706,7 @@ const scoreBreakdownOutputSchema = {
   highestLeverageLever: z.unknown().optional(),
 };
 
-const eligibilityPlanOutputSchema = {
+export const eligibilityPlanOutputSchema = {
   eligible: z.boolean().optional(),
   linkedIssueStatus: z.string().optional(),
   branchEligibilityStatus: z.string().optional(),

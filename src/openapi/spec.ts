@@ -37,6 +37,8 @@ import {
   IssueQualityReportSchema,
   IssueQualityResponseSchema,
   GateConfigEffectiveResponseSchema,
+  EligibilityPlanResponseSchema,
+  ScoreBreakdownResponseSchema,
   EvaluateEscalationRequestSchema,
   EvaluateEscalationResponseSchema,
   BuildResultsPayloadRequestSchema,
@@ -173,6 +175,8 @@ export function buildOpenApiSpec() {
   registry.register("IssueQualityReport", IssueQualityReportSchema);
   registry.register("IssueQualityResponse", IssueQualityResponseSchema);
   registry.register("GateConfigEffectiveResponse", GateConfigEffectiveResponseSchema);
+  registry.register("EligibilityPlanResponse", EligibilityPlanResponseSchema);
+  registry.register("ScoreBreakdownResponse", ScoreBreakdownResponseSchema);
   registry.register("EvaluateEscalationRequest", EvaluateEscalationRequestSchema);
   registry.register("EvaluateEscalationResponse", EvaluateEscalationResponseSchema);
   registry.register("BuildResultsPayloadRequest", BuildResultsPayloadRequestSchema);
@@ -329,6 +333,32 @@ export function buildOpenApiSpec() {
     responses: {
       200: { description: "Private scoring preview artifact", content: { "application/json": { schema: ScorePreviewSchema } } },
       400: { description: "Invalid scoring preview input" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/scoring/eligibility-plan",
+    summary: "Derive a contributor eligibility plan from a scoring preview — REST mirror of loopover_get_eligibility_plan (#9301)",
+    responses: {
+      200: {
+        description:
+          "Structured eligibility plan over a server-built score preview — mirrors the loopover_get_eligibility_plan MCP tool. Advisory only; it explains eligibility, it does not open issues or PRs",
+        content: { "application/json": { schema: EligibilityPlanResponseSchema } },
+      },
+      400: { description: "Invalid scoring preview input" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/scoring/explain-breakdown",
+    summary: "Explain a score breakdown from a scoring preview — REST mirror of loopover_explain_score_breakdown (#9301)",
+    responses: {
+      200: {
+        description:
+          "Score multiplier breakdown and gate highlights over a server-built score preview — mirrors the loopover_explain_score_breakdown MCP tool. Requires contributorLogin in the request body",
+        content: { "application/json": { schema: ScoreBreakdownResponseSchema } },
+      },
+      400: { description: "Invalid scoring preview input or missing contributorLogin" },
     },
   });
   registry.registerPath({

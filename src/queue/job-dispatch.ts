@@ -51,6 +51,8 @@ import { isDecisionAuditEnabled, runDecisionAuditSample } from "../review/decisi
 import { isRiskControlEnabled, runRiskControlRecalibration } from "../review/risk-control-wire";
 import { runRetentionPrune } from "./retention";
 import { sweepStaleApprovalQueue } from "../services/agent-approval-queue";
+import { reconcileMissingPrOutcomes } from "../review/pr-outcome-reconciler";
+import { sweepStrandedPendingClosures } from "../review/pending-closure-watchdog";
 // The 15 handlers below have no reason to move -- each is only reachable via this dispatcher (or, for
 // mapWithConcurrency, ALSO used by other still-in-processors.ts code), so they stay put and are exported
 // there purely for this one-directional import-back (processors.ts itself never calls processJob).
@@ -273,12 +275,29 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
     }
     case "agent-regate-sweep":
       if (!message.repoFullName && message.requestedBy !== "test") {
-        // #9032: piggyback the approval-queue staleness pass on the sweep's own fan-out tick rather than adding
-        // a job type and a cron entry for a bounded DB scan. Best-effort and deliberately BEFORE the fan-out:
-        // a failure here must not cost the tick its re-gate work, which is the sweep's actual job.
+        // Three bounded repair scans ride the sweep's own fan-out tick rather than each earning a job type and
+        // a cron entry. All are best-effort and deliberately BEFORE the fan-out: none may cost the tick its
+        // re-gate work, which is the sweep's actual job.
+        //
+        // #9032 reminds and expires approval-queue rows nobody has acted on.
+        //
+        // #9026 backfills pr_outcome rows lost when a process died between the GitHub mutation and the
+        // bookkeeping write. Those losses skew toward the gate's MISTAKES, so leaving them out biases published
+        // accuracy upward -- this is calibration ground truth, not ordinary telemetry.
+        //
+        // #9031 re-enqueues a pending-closure Pass 2 whose single delayed job was lost, which otherwise strands
+        // the PR permanently: flagged, un-mergeable, un-approvable, and sweep-ineligible.
         const staleness = await sweepStaleApprovalQueue(env).catch(() => null);
         if (staleness && (staleness.reminded > 0 || staleness.expired > 0)) {
           console.log(JSON.stringify({ event: "approval_queue_staleness_swept", ...staleness }));
+        }
+        const outcomes = await reconcileMissingPrOutcomes(env).catch(() => null);
+        if (outcomes && outcomes.backfilled > 0) {
+          console.log(JSON.stringify({ event: "pr_outcomes_reconciled", ...outcomes }));
+        }
+        const stranded = await sweepStrandedPendingClosures(env).catch(() => null);
+        if (stranded && stranded.requeued > 0) {
+          console.log(JSON.stringify({ event: "pending_closure_verifications_requeued", ...stranded }));
         }
         await fanOutAgentRegateSweepJobs(env, message.requestedBy);
         return;

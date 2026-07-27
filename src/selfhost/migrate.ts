@@ -73,16 +73,70 @@ function splitSqlStatements(sql: string): string[] {
   return statements;
 }
 
+/** SQL-literal escape for the migration name written into the ledger inside the transactional script. The
+ *  names are our own repo filenames (`NNNN_*.sql`), not user input, but the doubling keeps the script correct
+ *  for any name rather than relying on that. */
+function sqlQuote(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+/**
+ * Apply pending self-host migrations.
+ *
+ * #9027 — each file now runs as ONE transaction, with its ledger row committed inside that same transaction, so
+ * a file is all-or-nothing. Before this, statements ran individually and the file was recorded only after the
+ * last one succeeded, so a crash mid-file re-ran the WHOLE file on the next boot. That is fine for pure DDL and
+ * actively harmful for the several migrations carrying real DML — the table-rebuild `INSERT ... SELECT`
+ * pattern, plus UPDATE/DELETE steps — where a re-run either double-inserts or raises a PK conflict which, not
+ * matching the tolerated "already exists" shape, throws and bricks boot. With deploys currently ending in
+ * SIGKILL under load (#9007), a mid-migration kill is not hypothetical.
+ *
+ * The pre-existing drift tolerance is preserved, not replaced. A database that already drifted — a column a
+ * migration adds is somehow present — must still heal itself rather than fail to boot, and that self-healing
+ * only works per-statement. So a file that fails atomically is retried through the original tolerant path.
+ * The two orders matter: atomic first means a genuine mid-file crash is the case that gets protected, and the
+ * tolerant fallback only runs for a database that was already inconsistent before this boot began.
+ */
 export async function runSelfHostMigrations(db: D1Database, dir: string): Promise<number> {
   await db.exec("CREATE TABLE IF NOT EXISTS _selfhost_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)");
   const existing = await db.prepare("SELECT name FROM _selfhost_migrations").all<{ name: string }>();
   const applied = new Set(existing.results.map((r) => r.name));
   const files = readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
+  // Real Cloudflare D1 has no transactional multi-statement surface; only the two self-host adapters implement
+  // this. Absent it, behavior is exactly the pre-#9027 path.
+  const execTransaction = (db as unknown as { execTransaction?: (sql: string) => Promise<void> }).execTransaction;
   let count = 0;
   for (const file of files) {
     if (applied.has(file)) continue;
     const sql = readFileSync(join(dir, file), "utf8");
-    for (const statement of splitSqlStatements(sql)) {
+    const statements = splitSqlStatements(sql);
+    const ledger = `INSERT INTO _selfhost_migrations (name, applied_at) VALUES (${sqlQuote(file)}, ${sqlQuote(new Date().toISOString())});`;
+    if (execTransaction) {
+      try {
+        // splitSqlStatements keeps each statement's own trailing `;` but returns a final unterminated tail
+        // verbatim, so re-terminate before concatenating — otherwise the ledger INSERT fuses onto the last
+        // statement and the whole file fails to parse.
+        const script = statements.map((statement) => (statement.endsWith(";") ? statement : `${statement};`)).join("\n");
+        await execTransaction.call(db, `${script}\n${ledger}`);
+        count += 1;
+        continue;
+      } catch (error) {
+        // ONLY drift falls through. Any other failure rethrows here, with the transaction already rolled back --
+        // so boot dies loudly against a database in exactly the state it started in. Retrying a genuinely broken
+        // file through the per-statement path would re-apply its valid statements after the rollback and leave
+        // precisely the partial state this fix exists to prevent.
+        if (!/duplicate column|already exists/i.test(errorMessage(error))) throw error;
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            event: "selfhost_migration_transaction_failed",
+            file,
+            message: errorMessage(error),
+          }),
+        );
+      }
+    }
+    for (const statement of statements) {
       try {
         await db.exec(statement);
       } catch (error) {

@@ -110,3 +110,58 @@ describe("createPgAdapter (#977 self-host D1-over-Postgres)", () => {
     expect(await createPgAdapter(makeMockPool([])).dump()).toBeInstanceOf(ArrayBuffer);
   });
 });
+
+// #9027: migrations need all-or-nothing execution per file, and `exec` cannot give it — each `exec` call takes
+// whatever connection the pool hands out, so a BEGIN and its COMMIT issued as separate calls can land on
+// different connections and mean nothing. This surface exists to make the transaction a single session.
+describe("execTransaction runs a script as one transaction (#9027)", () => {
+  it("wraps the script in BEGIN/COMMIT on a single dedicated client", async () => {
+    const pool = makeMockPool();
+    const db = createPgAdapter(pool) as unknown as { execTransaction(sql: string): Promise<void> };
+
+    await db.execTransaction("CREATE TABLE t (id INTEGER);");
+
+    expect(pool.queries.map((q) => q.sql)).toEqual(["BEGIN", "CREATE TABLE t (id INTEGER);", "COMMIT"]);
+  });
+
+  it("rolls back and rethrows when the script fails", async () => {
+    const queries: string[] = [];
+    let released = 0;
+    const client = {
+      async query(sql: string) {
+        queries.push(String(sql));
+        if (String(sql).includes("BROKEN")) throw new Error("syntax error");
+        return { rows: [], rowCount: 0 };
+      },
+      release() {
+        released += 1;
+      },
+    };
+    const pool = { async connect() { return client as unknown as PoolClient; } } as unknown as Pool;
+    const db = createPgAdapter(pool) as unknown as { execTransaction(sql: string): Promise<void> };
+
+    await expect(db.execTransaction("BROKEN;")).rejects.toThrow("syntax error");
+    expect(queries).toEqual(["BEGIN", "BROKEN;", "ROLLBACK"]);
+    // A failed transaction must never be returned to the pool still open.
+    expect(released).toBe(1);
+  });
+
+  it("still releases the client and reports the ORIGINAL error when the rollback itself fails", async () => {
+    let released = 0;
+    const client = {
+      async query(sql: string) {
+        if (String(sql) === "BEGIN") return { rows: [], rowCount: 0 };
+        throw new Error(String(sql) === "ROLLBACK" ? "connection lost" : "syntax error");
+      },
+      release() {
+        released += 1;
+      },
+    };
+    const pool = { async connect() { return client as unknown as PoolClient; } } as unknown as Pool;
+    const db = createPgAdapter(pool) as unknown as { execTransaction(sql: string): Promise<void> };
+
+    // The rollback failure must not mask why the migration actually failed.
+    await expect(db.execTransaction("BROKEN;")).rejects.toThrow("syntax error");
+    expect(released).toBe(1);
+  });
+});

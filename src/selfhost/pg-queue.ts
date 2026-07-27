@@ -565,22 +565,63 @@ export function createPgQueue(
     return result.rowCount ?? 0;
   }
 
+  /**
+   * Boot recovery: re-pend jobs a previous process left mid-flight.
+   *
+   * #9023 — this used to re-pend EVERY row in `processing`, unconditionally. On Postgres the queue is
+   * explicitly multi-instance (that is what the FOR UPDATE SKIP LOCKED claim exists for), so "every processing
+   * row" is not "my crashed predecessor's work" — during any overlapped or rolling deploy it also includes jobs
+   * a SIBLING instance is running RIGHT NOW. Both processes then ran the same PR pass concurrently, producing
+   * duplicate gate check-runs and verdict thrash.
+   *
+   * The lease cutoff is the fix: only a row whose lease has actually expired can belong to a dead process, and
+   * that is exactly the condition reclaimExpiredProcessingJobs already encodes, so boot and steady-state now
+   * agree on what "abandoned" means instead of using two different definitions. A live sibling heartbeats its
+   * lease (see heartbeatProcessingLease), so its rows are never eligible however long the job legitimately runs.
+   */
   async function recoverProcessingJobs(): Promise<number> {
+    // A disabled timeout means leases never expire, so nothing can be proven abandoned -- recovering anything
+    // would be a guess, and the guess is the bug. The runtime reaper is disabled in that configuration too.
+    if (processingTimeoutMs <= 0) return 0;
+    const now = Date.now();
     const res = await pool.query(
-      `SELECT id, payload, job_key FROM ${TABLE} WHERE status='processing'`,
+      `SELECT id, payload, job_key FROM ${TABLE} WHERE status='processing' AND run_after<=$1`,
+      [now - processingTimeoutMs],
     );
     let changed = 0;
-    const now = Date.now();
     const maxJitter = queueRecoveryJitterMs();
     for (const row of res.rows as Array<{ id: string; payload: string; job_key?: string | null }>) {
       const runAfter = now + deterministicJitterMs(`${row.job_key ?? ""}:${row.id}:${row.payload}`, maxJitter);
-      await pool.query(`UPDATE ${TABLE} SET status='pending', run_after=$1 WHERE id=$2`, [
-        runAfter,
-        row.id,
-      ]);
-      changed += 1;
+      // AND status='processing' makes this a compare-and-swap: between the SELECT above and this UPDATE a
+      // sibling may have finished the job (row deleted) or reclaimed it itself. Without the guard this could
+      // resurrect a completed job as pending. Mirrors reclaimExpiredProcessingJobs' own guard.
+      const update = await pool.query(
+        `UPDATE ${TABLE} SET status='pending', run_after=$1 WHERE id=$2 AND status='processing'`,
+        [runAfter, row.id],
+      );
+      changed += update.rowCount ?? 0;
     }
     return changed;
+  }
+
+  /**
+   * Refresh the lease on a job this process is actively running (#9023).
+   *
+   * `run_after` doubles as the lease timestamp: the claim sets it to now, and a row is reclaimable once it is
+   * older than `processingTimeoutMs`. Without a heartbeat that made the timeout a hard ceiling on job DURATION,
+   * not on liveness — a genuinely long pass (a large PR, a slow AI review, a rate-limited GitHub window) got
+   * reclaimed and double-run by a sibling purely for taking too long. The `activeJobIds` check that was meant to
+   * prevent this only covers THIS process's in-memory set, which is precisely the wrong scope for a queue whose
+   * whole point is that several processes share it.
+   *
+   * Best-effort by design: a failed heartbeat just means the lease ages normally, which is the pre-#9023
+   * behavior. Losing the row (deleted on completion, or dead-lettered) makes this a harmless no-op via the
+   * status guard.
+   */
+  async function heartbeatProcessingLease(id: string): Promise<void> {
+    await pool
+      .query(`UPDATE ${TABLE} SET run_after=$1 WHERE id=$2 AND status='processing'`, [Date.now(), id])
+      .catch(() => undefined);
   }
 
   // Dead-letter auto-retry (#audit-rate-headroom): a job dies once `attempts >= maxRetries` (see the
@@ -1114,6 +1155,13 @@ export function createPgQueue(
     if (!job) return false;
     activeJobIds.add(job.id);
     const claimedAt = Date.now();
+    // #9023: hold the lease open for as long as this process is genuinely working on the job. Without this the
+    // lease timeout is a ceiling on job DURATION rather than on liveness, so a legitimately slow pass gets
+    // reclaimed and double-run by a sibling. Refreshed at a third of the timeout so two refreshes can be lost
+    // (a blip, a paused event loop) before the lease is actually at risk.
+    const heartbeat = setInterval(() => void heartbeatProcessingLease(job.id), Math.max(1000, Math.floor(processingTimeoutMs / 3)));
+    // Never let the timer hold the process open: shutdown must not wait on a heartbeat tick.
+    heartbeat.unref?.();
     try {
       let message: JobMessage;
       try {
@@ -1468,6 +1516,7 @@ export function createPgQueue(
       }
       return true;
     } finally {
+      clearInterval(heartbeat);
       activeJobIds.delete(job.id);
       if (job.backgroundSlotReserved)
         activeBackground = Math.max(0, activeBackground - 1);
@@ -1630,17 +1679,39 @@ export function createPgQueue(
     const now = Date.now();
     const cutoff = now - processingTimeoutMs;
     const res = await pool.query(
-      `SELECT id, payload, job_key FROM ${TABLE} WHERE status='processing' AND run_after<=$1`,
+      `SELECT id, payload, job_key, attempts FROM ${TABLE} WHERE status='processing' AND run_after<=$1`,
       [cutoff],
     );
     let changed = 0;
     const maxJitter = queueRecoveryJitterMs();
-    for (const row of res.rows as Array<{ id: string; payload: string; job_key?: string | null }>) {
+    for (const row of res.rows as Array<{ id: string; payload: string; job_key?: string | null; attempts: number | string }>) {
       if (activeJobIds.has(row.id)) continue;
+      // #9023: a reclaim now COSTS an attempt. It never did, so a job that reliably wedges past its lease --
+      // an infinite loop, a hang against an unresponsive dependency -- was requeued forever: reclaimed, re-run,
+      // wedged, reclaimed, with `attempts` frozen at whatever the last real failure left it. It could never
+      // reach the dead-letter threshold that exists precisely to stop a poison job from burning the queue.
+      // Charging the attempt makes a chronic wedger die on the same budget as a chronic thrower.
+      const attempts = Number(row.attempts) + 1;
+      if (attempts >= maxRetries) {
+        const update = await pool.query(
+          `UPDATE ${TABLE} SET status='dead', attempts=$1, last_error=$2, dead_at=$3 WHERE id=$4 AND status='processing'`,
+          [attempts, "processing lease expired repeatedly; dead-lettered", Date.now(), row.id],
+        );
+        if ((update.rowCount ?? 0) > 0) {
+          await recordQueueMetric("loopover_jobs_dead_total");
+          capturePostHogError(new Error("self-host queue job wedged past its lease repeatedly"), {
+            kind: "job_dead",
+            reason: "processing_lease_exhausted",
+            jobId: row.id,
+            attempts,
+          }, "processing_lease_exhausted");
+        }
+        continue;
+      }
       const runAfter = now + deterministicJitterMs(`${row.job_key ?? ""}:${row.id}:${row.payload}`, maxJitter);
       const update = await pool.query(
-        `UPDATE ${TABLE} SET status='pending', run_after=$1, last_error=COALESCE(last_error, $2) WHERE id=$3 AND status='processing'`,
-        [runAfter, "processing lease expired; requeued", row.id],
+        `UPDATE ${TABLE} SET status='pending', run_after=$1, attempts=$2, last_error=COALESCE(last_error, $3) WHERE id=$4 AND status='processing'`,
+        [runAfter, attempts, "processing lease expired; requeued", row.id],
       );
       changed += update.rowCount ?? 0;
     }

@@ -51,7 +51,11 @@ describe("docs beta onboarding page", () => {
     expect(source).toMatch(/official Gittensor product surface/i);
     expect(source).toMatch(/official Gittensor frontend/i);
     expect(source).toMatch(/independent of/i);
-    expect(source).toMatch(/base-agent/i);
+    // Deliberately NOT asserting "base-agent" any more. #9117 repositioned the product away from "a
+    // deterministic base-agent for the Gittensor ecosystem" toward an agent stack for both sides of the pull
+    // request on ANY GitHub repo, which is a narrowing this test had no business vetoing -- it exists to stop
+    // LoopOver claiming to BE the official Gittensor frontend, and the four assertions here cover that on
+    // their own. Pinning the old wording only made the guard fire on an intended product change.
     expect(source).not.toMatch(/the official Gittensor frontend/i);
   });
 });

@@ -40,6 +40,20 @@ export type ContentDuplicateReview = {
   relatedCandidates: ContentDuplicateMatch[];
 };
 
+function stripYamlComment(value: string): string {
+  return value.replace(/\s+#.*$/, "").trim();
+}
+
+// A YAML block-scalar header indicator: `|` or `>` with an optional chomping (`+`/`-`) and/or a single indentation
+// digit, in EITHER order — `|`, `>`, `|-`, `>+`, `|2`, `|2-`, `|-2`, `>2+`. Mirrors source-evidence.ts (#8016).
+const BLOCK_SCALAR_INDICATOR = /^[|>](?:[+-]?\d?|\d[+-]?)$/;
+
+// True when a raw frontmatter value is a block-scalar header. Comment-tolerant: a header may carry a trailing inline
+// comment (`| # sources below`), which normalizes away before the indicator is matched.
+function isBlockScalarHeader(raw: string): boolean {
+  return BLOCK_SCALAR_INDICATOR.test(stripYamlComment(raw));
+}
+
 function unquoteYamlScalar(value: string): string {
   const trimmed = value.trim();
   if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
@@ -74,7 +88,7 @@ export function parseSimpleFrontmatter(source: string): Record<string, string> {
     /* v8 ignore next -- noUncheckedIndexedAccess fallback: capture group 2 (.*) always participates when head matches, so head[2] is never undefined */
     const inline = (head[2] ?? "").trim();
     i += 1;
-    if (/^[|>][+-]?\d*$/.test(inline)) {
+    if (isBlockScalarHeader(inline)) {
       // Block literal (`|`) / folded (`>`) scalar: gather the indented block that follows.
       const block: string[] = [];
       /* v8 ignore next -- noUncheckedIndexedAccess fallback: i < lines.length guards the index; split() elements are always strings */
@@ -129,7 +143,7 @@ export function findDuplicateFrontmatterKeys(source: string): string[] {
     /* v8 ignore next -- noUncheckedIndexedAccess fallback: capture group 2 (.*) always participates when head matches, so head[2] is never undefined */
     const inline = (head[2] ?? "").trim();
     i += 1;
-    if (/^[|>][+-]?\d*$/.test(inline)) {
+    if (isBlockScalarHeader(inline)) {
       /* v8 ignore next -- noUncheckedIndexedAccess fallback: i < lines.length guards the index; split() elements are always strings */
       while (i < lines.length && ((lines[i] ?? "").trim() === "" || /^\s/.test(lines[i] ?? ""))) i += 1;
     } else if (inline === "") {

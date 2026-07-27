@@ -6,6 +6,8 @@ import { PR_PANEL_COMMENT_MARKER } from "../../src/github/comments";
 import * as backfillModule from "../../src/github/backfill";
 import * as rateLimitModule from "../../src/github/rate-limit";
 import * as repositoriesModule from "../../src/db/repositories";
+import * as visualCaptureModule from "../../src/review/visual/capture";
+import { MAX_PREVIEW_POLL_ATTEMPTS } from "../../src/review/visual/preview-poll-budget";
 import * as reviewEffortModule from "../../src/review/review-effort";
 import * as repositorySettingsModule from "../../src/settings/repository-settings";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
@@ -2041,6 +2043,158 @@ describe("queue processors", () => {
     expect(seen.closed).toBe(true);
     const stored = await getPullRequest(env, "JSONbored/gittensory", 59);
     expect(stored?.visualCaptureSatisfiedSha).toBeNull();
+  });
+
+  // #9030: same fixture shape as the sibling "#4110" tests above (in-scope, no body table), except the capture
+  // pipeline itself THROWS (browserless down, a timeout, a GitHub hiccup) rather than concluding normally with
+  // no routes. Before this fix, that looked identical to "capture ran and found nothing" -- the PR was closed
+  // purely because an internal service blipped.
+  it("screenshot-table gate (#9030): a capture-pipeline ERROR defers the close instead of treating it as missing evidence", async () => {
+    const buildCaptureSpy = vi.spyOn(visualCaptureModule, "buildCapture").mockRejectedValueOnce(new Error("browserless connection refused"));
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      LOOPOVER_REVIEW_SCREENSHOTS: "true",
+    });
+    const sentJobs: Array<Record<string, unknown>> = [];
+    env.JOBS = { async send(message: Record<string, unknown>) { sentJobs.push(message); } } as unknown as Queue;
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      autonomy: { close: "auto", label: "auto" },
+    });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { commentMode: "all_prs", publicSurface: "comment_only", checkRunMode: "off", screenshotTableGate: { enabled: true, whenLabels: ["visual"] }, reviewCheckMode: "required" } }, "repo_file");
+    const seen = { closed: false };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/60/files")) return Response.json([{ filename: "apps/loopover-ui/src/routes/app.index.tsx", status: "modified", additions: 5, deletions: 1, changes: 6, patch: "@@\n+const ok = true;" }]);
+      if (url.includes("/pulls/60/reviews")) return Response.json([]);
+      if (url.includes("/pulls/60/commits")) return Response.json([]);
+      if (url.endsWith("/pulls/60") && method === "PATCH") { seen.closed = JSON.parse(String(init?.body ?? "{}")).state === "closed"; return Response.json({ number: 60, state: "closed" }); }
+      if (url.endsWith("/pulls/60")) return Response.json({ number: 60, state: "open", user: { login: "visual-contributor" }, head: { sha: "vis60" }, mergeable_state: "clean" });
+      if (url.includes("/commits/vis60/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/commits/vis60/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/vis60/check-suites")) return Response.json({ check_suites: [] });
+      if (url.includes("/issues/60/labels") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/60/comments")) return Response.json([]);
+      if (url.endsWith("/labels") && method === "POST") return Response.json([]);
+      if (url.endsWith("/check-runs") && method === "POST") return Response.json({ id: 901 }, { status: 201 });
+      if (url.includes("/check-runs/901") && method === "PATCH") return Response.json({ id: 901 });
+      return new Response("not found", { status: 404 });
+    });
+
+    try {
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "screenshot-table-capture-error",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: {
+            number: 60,
+            title: "Update the app index route",
+            state: "open",
+            user: { login: "visual-contributor" },
+            head: { sha: "vis60" },
+            labels: [{ name: "visual" }],
+            body: "Changed the route layout, no table here.",
+            mergeable_state: "clean",
+            reviewDecision: "APPROVED",
+          },
+        },
+      });
+    } finally {
+      buildCaptureSpy.mockRestore();
+    }
+
+    // A capture ERROR must not be treated as "no visual evidence" -- the close is deferred, not fired.
+    expect(seen.closed).toBe(false);
+    const closeAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'agent.action.close'").first<{ n: number }>();
+    expect(closeAudit?.n).toBe(0);
+    // The retry marker is persisted for this exact head, and a bounded recapture retry was scheduled.
+    const stored = await getPullRequest(env, "JSONbored/gittensory", 60);
+    expect(stored?.visualCaptureRetryPendingSha).toBe("vis60");
+    expect(stored?.visualCaptureSatisfiedSha).toBeNull();
+    expect(sentJobs).toContainEqual(expect.objectContaining({ type: "recapture-preview", repoFullName: "JSONbored/gittensory", prNumber: 60, attempt: 1 }));
+    // The deferral itself is named in the audit trail, not silent.
+    const deferAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
+      .bind("github_app.screenshot_table_close_deferred_capture_retry", "JSONbored/gittensory#60")
+      .first<{ n: number }>();
+    expect(deferAudit?.n).toBe(1);
+  });
+
+  // #9030: sibling of the test above, but the recapture retry BUDGET is already exhausted (this delivery IS
+  // itself the final recapture-preview attempt) -- proves the deferral cannot hold a PR closed forever: once
+  // no retry chance remains, a still-erroring capture pipeline falls through to the gate's normal, accurate
+  // (and here, correctly negative) evaluation.
+  it("screenshot-table gate (#9030): once the recapture retry budget is exhausted, a still-erroring capture no longer defers the close", async () => {
+    const buildCaptureSpy = vi.spyOn(visualCaptureModule, "buildCapture").mockRejectedValue(new Error("browserless connection refused"));
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      LOOPOVER_REVIEW_SCREENSHOTS: "true",
+    });
+    const sentJobs: Array<Record<string, unknown>> = [];
+    env.JOBS = { async send(message: Record<string, unknown>) { sentJobs.push(message); } } as unknown as Queue;
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      autonomy: { close: "auto", label: "auto" },
+    });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { commentMode: "all_prs", publicSurface: "comment_only", checkRunMode: "off", screenshotTableGate: { enabled: true, whenLabels: ["visual"] }, reviewCheckMode: "required" } }, "repo_file");
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 61,
+      title: "Update the app index route",
+      state: "open",
+      user: { login: "visual-contributor" },
+      head: { sha: "vis61" },
+      labels: [{ name: "visual" }],
+      body: "Changed the route layout, no table here.",
+    });
+    const seen = { closed: false };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/61/files")) return Response.json([{ filename: "apps/loopover-ui/src/routes/app.index.tsx", status: "modified", additions: 5, deletions: 1, changes: 6, patch: "@@\n+const ok = true;" }]);
+      if (url.includes("/pulls/61/reviews")) return Response.json([]);
+      if (url.includes("/pulls/61/commits")) return Response.json([]);
+      if (url.endsWith("/pulls/61") && method === "PATCH") { seen.closed = JSON.parse(String(init?.body ?? "{}")).state === "closed"; return Response.json({ number: 61, state: "closed" }); }
+      if (url.endsWith("/pulls/61")) return Response.json({ number: 61, state: "open", user: { login: "visual-contributor" }, head: { sha: "vis61" }, mergeable_state: "clean" });
+      if (url.includes("/commits/vis61/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/commits/vis61/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/vis61/check-suites")) return Response.json({ check_suites: [] });
+      if (url.includes("/issues/61/labels") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/61/comments")) return Response.json([]);
+      if (url.endsWith("/labels") && method === "POST") return Response.json([]);
+      if (url.endsWith("/check-runs") && method === "POST") return Response.json({ id: 901 }, { status: 201 });
+      if (url.includes("/check-runs/901") && method === "PATCH") return Response.json({ id: 901 });
+      return new Response("not found", { status: 404 });
+    });
+
+    try {
+      // attempt: MAX_PREVIEW_POLL_ATTEMPTS -> previewPollAttempt >= MAX_PREVIEW_POLL_ATTEMPTS -> the budget
+      // check bails BEFORE scheduling yet another retry or persisting the marker (see scheduleVisualCaptureRetry).
+      await processJob(env, { type: "recapture-preview", deliveryId: "screenshot-table-capture-error-exhausted", repoFullName: "JSONbored/gittensory", prNumber: 61, installationId: 123, attempt: MAX_PREVIEW_POLL_ATTEMPTS });
+    } finally {
+      buildCaptureSpy.mockRestore();
+    }
+
+    // No retry chance remains -- the gate falls through to its normal (accurate) evaluation and closes.
+    expect(seen.closed).toBe(true);
+    const stored = await getPullRequest(env, "JSONbored/gittensory", 61);
+    expect(stored?.visualCaptureRetryPendingSha).toBeNull();
+    expect(sentJobs.some((job) => job.type === "recapture-preview")).toBe(false);
   });
 
   describe("live migrations/** collision recheck (#2550)", () => {

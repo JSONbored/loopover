@@ -1,0 +1,14 @@
+-- Screenshot-table gate false-positive close (#9030). Visual capture (`review.visual.enabled`) can fail to
+-- reach a conclusive result for reasons that have NOTHING to do with whether the PR actually needs
+-- before/after evidence: the capture pipeline can throw (browserless down, timeout, a GitHub API hiccup
+-- fetching a token) or the preview deploy can still be building (previewPending). Before this column existed,
+-- both looked identical to "capture concluded normally and found no visual evidence" -- the very next
+-- maintenance pass could then close the PR under the screenshotTableGate purely because an internal service
+-- blipped, with no distinction and no grace period.
+--
+-- visual_capture_retry_pending_sha is the head SHA a bounded recapture retry is currently scheduled/in-flight
+-- for (see MAX_PREVIEW_POLL_ATTEMPTS) -- set ONLY when that retry was actually scheduled (budget not yet
+-- exhausted), so the screenshotTableGate's CLOSE action defers for exactly as long as a retry chance remains,
+-- never indefinitely. Scoped to head SHA (mirrors visual_capture_satisfied_sha, 0125) so a new commit re-arms
+-- it; cleared by a subsequent successful capture for the same head.
+ALTER TABLE pull_requests ADD COLUMN visual_capture_retry_pending_sha TEXT;

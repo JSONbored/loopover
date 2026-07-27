@@ -208,6 +208,9 @@ export const githubRateLimitObservations = sqliteTable(
     admissionObserved: index("github_rate_limit_observations_admission_observed_idx").on(table.admissionKey, table.observedAt),
     repoObserved: index("github_rate_limit_observations_repo_observed_idx").on(table.repoFullName, table.observedAt),
     reset: index("github_rate_limit_observations_reset_idx").on(table.resetAt),
+    // #9083: a leading index on the retention column itself -- the three above all lead with a different
+    // column, so RETENTION_POLICY's prune of this table had no usable index (migration 0191).
+    observed: index("idx_github_rate_limit_observations_observed_at").on(table.observedAt),
   }),
 );
 
@@ -308,19 +311,26 @@ export const repoLabels = sqliteTable(
   }),
 );
 
-export const repoSnapshots = sqliteTable("repo_snapshots", {
-  id: text("id").primaryKey(),
-  repoFullName: text("repo_full_name").notNull(),
-  snapshotKind: text("snapshot_kind").notNull(),
-  sourceKind: text("source_kind").notNull().default("github"),
-  fetchedAt: text("fetched_at").notNull(),
-  primaryLanguage: text("primary_language"),
-  defaultBranch: text("default_branch"),
-  openIssuesCount: integer("open_issues_count").notNull().default(0),
-  openPullRequestsCount: integer("open_pull_requests_count").notNull().default(0),
-  recentMergedPullRequestsCount: integer("recent_merged_pull_requests_count").notNull().default(0),
-  payloadJson: text("payload_json").notNull().default("{}"),
-});
+export const repoSnapshots = sqliteTable(
+  "repo_snapshots",
+  {
+    id: text("id").primaryKey(),
+    repoFullName: text("repo_full_name").notNull(),
+    snapshotKind: text("snapshot_kind").notNull(),
+    sourceKind: text("source_kind").notNull().default("github"),
+    fetchedAt: text("fetched_at").notNull(),
+    primaryLanguage: text("primary_language"),
+    defaultBranch: text("default_branch"),
+    openIssuesCount: integer("open_issues_count").notNull().default(0),
+    openPullRequestsCount: integer("open_pull_requests_count").notNull().default(0),
+    recentMergedPullRequestsCount: integer("recent_merged_pull_requests_count").notNull().default(0),
+    payloadJson: text("payload_json").notNull().default("{}"),
+  },
+  (table) => ({
+    // #9083: no index at all previously -- RETENTION_POLICY's 90-day prune was an unindexed full scan (migration 0191).
+    fetched: index("idx_repo_snapshots_fetched_at").on(table.fetchedAt),
+  }),
+);
 
 export const registrySnapshots = sqliteTable("registry_snapshots", {
   id: text("id").primaryKey(),
@@ -649,14 +659,22 @@ export const collisionEdges = sqliteTable("collision_edges", {
   generatedAt: text("generated_at").notNull().$defaultFn(() => nowIso()),
 });
 
-export const signalSnapshots = sqliteTable("signal_snapshots", {
-  id: text("id").primaryKey(),
-  signalType: text("signal_type").notNull(),
-  targetKey: text("target_key").notNull(),
-  repoFullName: text("repo_full_name"),
-  payloadJson: text("payload_json").notNull().default("{}"),
-  generatedAt: text("generated_at").notNull().$defaultFn(() => nowIso()),
-});
+export const signalSnapshots = sqliteTable(
+  "signal_snapshots",
+  {
+    id: text("id").primaryKey(),
+    signalType: text("signal_type").notNull(),
+    targetKey: text("target_key").notNull(),
+    repoFullName: text("repo_full_name"),
+    payloadJson: text("payload_json").notNull().default("{}"),
+    generatedAt: text("generated_at").notNull().$defaultFn(() => nowIso()),
+  },
+  (table) => ({
+    // #9083: signal_snapshots had NO index at all -- RETENTION_POLICY's 90-day prune of this table (its
+    // largest, at ~44KB/row) was an unindexed full scan (migration 0191).
+    generated: index("idx_signal_snapshots_generated_at").on(table.generatedAt),
+  }),
+);
 
 export const agentRuns = sqliteTable(
   "agent_runs",
@@ -723,6 +741,9 @@ export const agentContextSnapshots = sqliteTable(
   },
   (table) => ({
     runCreated: index("agent_context_snapshots_run_created_idx").on(table.runId, table.createdAt),
+    // #9083: the above leads with run_id -- RETENTION_POLICY's 30-day prune had no index leading with
+    // created_at alone (migration 0191).
+    created: index("idx_agent_context_snapshots_created_at").on(table.createdAt),
   }),
 );
 
@@ -897,18 +918,27 @@ export const advisories = sqliteTable("advisories", {
   updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
 });
 
-export const webhookEvents = sqliteTable("webhook_events", {
-  deliveryId: text("delivery_id").primaryKey(),
-  eventName: text("event_name").notNull(),
-  action: text("action"),
-  installationId: integer("installation_id"),
-  repositoryFullName: text("repository_full_name"),
-  payloadHash: text("payload_hash").notNull(),
-  status: text("status").notNull(),
-  errorSummary: text("error_summary"),
-  receivedAt: text("received_at").notNull().$defaultFn(() => nowIso()),
-  processedAt: text("processed_at"),
-});
+export const webhookEvents = sqliteTable(
+  "webhook_events",
+  {
+    deliveryId: text("delivery_id").primaryKey(),
+    eventName: text("event_name").notNull(),
+    action: text("action"),
+    installationId: integer("installation_id"),
+    repositoryFullName: text("repository_full_name"),
+    payloadHash: text("payload_hash").notNull(),
+    status: text("status").notNull(),
+    errorSummary: text("error_summary"),
+    receivedAt: text("received_at").notNull().$defaultFn(() => nowIso()),
+    processedAt: text("processed_at"),
+  },
+  (table) => ({
+    status: index("webhook_events_status_idx").on(table.status),
+    // #9083: only the status index above existed before -- RETENTION_POLICY's 90-day prune had no index on
+    // received_at at all (migration 0191).
+    received: index("idx_webhook_events_received_at").on(table.receivedAt),
+  }),
+);
 
 export const orbRelayPending = sqliteTable(
   "orb_relay_pending",
@@ -961,17 +991,24 @@ export const scoringModelSnapshots = sqliteTable("scoring_model_snapshots", {
   payloadJson: text("payload_json").notNull().default("{}"),
 });
 
-export const scorePreviews = sqliteTable("score_previews", {
-  id: text("id").primaryKey(),
-  scoringModelSnapshotId: text("scoring_model_snapshot_id").notNull(),
-  repoFullName: text("repo_full_name").notNull(),
-  targetType: text("target_type").notNull(),
-  targetKey: text("target_key").notNull(),
-  contributorLogin: text("contributor_login"),
-  inputJson: text("input_json").notNull().default("{}"),
-  resultJson: text("result_json").notNull().default("{}"),
-  generatedAt: text("generated_at").notNull().$defaultFn(() => nowIso()),
-});
+export const scorePreviews = sqliteTable(
+  "score_previews",
+  {
+    id: text("id").primaryKey(),
+    scoringModelSnapshotId: text("scoring_model_snapshot_id").notNull(),
+    repoFullName: text("repo_full_name").notNull(),
+    targetType: text("target_type").notNull(),
+    targetKey: text("target_key").notNull(),
+    contributorLogin: text("contributor_login"),
+    inputJson: text("input_json").notNull().default("{}"),
+    resultJson: text("result_json").notNull().default("{}"),
+    generatedAt: text("generated_at").notNull().$defaultFn(() => nowIso()),
+  },
+  (table) => ({
+    // #9083: no index at all previously -- RETENTION_POLICY's 90-day prune was an unindexed full scan (migration 0191).
+    generated: index("idx_score_previews_generated_at").on(table.generatedAt),
+  }),
+);
 
 export const contributorEvidence = sqliteTable("contributor_evidence", {
   login: text("login").primaryKey(),
@@ -1196,6 +1233,9 @@ export const notificationDeliveries = sqliteTable(
     dedupChannel: uniqueIndex("notification_deliveries_dedup_channel_unique").on(table.dedupKey, table.channel),
     recipientStatus: index("notification_deliveries_recipient_status_idx").on(table.recipientLogin, table.status),
     recipientChannelCreated: index("notification_deliveries_recipient_channel_created_idx").on(table.recipientLogin, table.channel, table.createdAt),
+    // #9083: the three above all lead with recipient_login/dedup_key -- RETENTION_POLICY's 90-day prune had
+    // no index leading with created_at alone (migration 0191).
+    created: index("idx_notification_deliveries_created_at").on(table.createdAt),
   }),
 );
 
@@ -1281,6 +1321,9 @@ export const auditEvents = sqliteTable(
     actorCreated: index("audit_events_actor_created_idx").on(table.actor, table.createdAt),
     routeCreated: index("audit_events_route_created_idx").on(table.route, table.createdAt),
     targetKeyCreated: index("audit_events_target_key_created_idx").on(table.targetKey, table.createdAt),
+    // #9083: the four above all lead with a different column -- RETENTION_POLICY's 90-day prune had no
+    // index leading with created_at alone (migration 0191).
+    created: index("idx_audit_events_created_at").on(table.createdAt),
   }),
 );
 
@@ -1313,6 +1356,9 @@ export const productUsageEvents = sqliteTable(
     eventOccurred: index("product_usage_events_event_occurred_idx").on(table.eventName, table.occurredAt),
     actorOccurred: index("product_usage_events_actor_occurred_idx").on(table.actorHash, table.occurredAt),
     repoOccurred: index("product_usage_events_repo_occurred_idx").on(table.repoFullName, table.occurredAt),
+    // #9083: the five above all lead with a different column -- RETENTION_POLICY's 180-day prune had no
+    // index leading with occurred_at alone (migration 0191).
+    occurred: index("idx_product_usage_events_occurred_at").on(table.occurredAt),
   }),
 );
 
@@ -1381,6 +1427,9 @@ export const aiUsageEvents = sqliteTable(
     // Covers the daily-budget query (sumAiEstimatedNeuronsSince): WHERE status='ok' AND created_at >= ?.
     // Without it that aggregate full-scans ai_usage_events, which runs on every AI review/summary.
     statusCreated: index("ai_usage_events_status_created_idx").on(table.status, table.createdAt),
+    // #9083: the four above all lead with a different column -- RETENTION_POLICY's 90-day prune had no
+    // index leading with created_at alone (migration 0191).
+    created: index("idx_ai_usage_events_created_at").on(table.createdAt),
   }),
 );
 
@@ -1408,6 +1457,8 @@ export const aiReviewCache = sqliteTable(
   },
   (table) => ({
     primary: primaryKey({ columns: [table.repoFullName, table.pullNumber, table.headSha] }),
+    // #9083: this cache had a read-side TTL but no delete path at all -- now pruned via RETENTION_POLICY.
+    created: index("idx_ai_review_cache_created_at").on(table.createdAt),
   }),
 );
 
@@ -1432,6 +1483,8 @@ export const aiSlopCache = sqliteTable(
   },
   (table) => ({
     primary: primaryKey({ columns: [table.repoFullName, table.pullNumber, table.headSha] }),
+    // #9083: this cache had no delete path at all -- now pruned via RETENTION_POLICY.
+    created: index("idx_ai_slop_cache_created_at").on(table.createdAt),
   }),
 );
 
@@ -1458,6 +1511,8 @@ export const linkedIssueSatisfactionCache = sqliteTable(
   },
   (table) => ({
     primary: primaryKey({ columns: [table.repoFullName, table.pullNumber, table.headSha, table.linkedIssueNumber] }),
+    // #9083: this cache had no delete path at all -- now pruned via RETENTION_POLICY.
+    created: index("idx_linked_issue_satisfaction_cache_created_at").on(table.createdAt),
   }),
 );
 
@@ -1489,6 +1544,8 @@ export const groundingFileContentCache = sqliteTable(
   },
   (table) => ({
     primary: primaryKey({ columns: [table.repoFullName, table.path, table.headSha] }),
+    // #9083: this cache had a read-side 24h TTL but no delete path at all -- now pruned via RETENTION_POLICY.
+    fetched: index("idx_grounding_file_content_cache_fetched_at").on(table.fetchedAt),
   }),
 );
 

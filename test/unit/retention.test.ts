@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createApp } from "../../src/api/routes";
 import { getDb } from "../../src/db/client";
 import { dedupeSignalSnapshots, pruneExpiredRecords, RETENTION_POLICY } from "../../src/db/retention";
-import { agentContextSnapshots, aiUsageEvents, webhookEvents } from "../../src/db/schema";
+import { agentContextSnapshots, aiReviewCache, aiSlopCache, aiUsageEvents, groundingFileContentCache, linkedIssueSatisfactionCache, webhookEvents } from "../../src/db/schema";
 import { processJob, runRetentionPrune } from "../../src/queue/processors";
 import { REPO_FOCUS_MANIFEST_SIGNAL, REPO_PUBLIC_FOCUS_MANIFEST_SIGNAL } from "../../src/signals/focus-manifest-loader";
 import { createTestEnv } from "../helpers/d1";
@@ -191,6 +191,153 @@ describe("pruneExpiredRecords", () => {
     expect(results[0]?.deleted).toBe(2);
     const rows = await env.DB.prepare("SELECT id FROM predicted_gate_calls").all<{ id: string }>();
     expect(rows.results.map((row) => row.id)).toEqual(["pgc-recent"]);
+  });
+
+  // #9083: four read-side caches had a read-side TTL but no delete path anywhere — every row lived forever.
+  // Each now has a RETENTION_POLICY entry; these regression tests exercise the actual policy windows (not
+  // an ad-hoc override) so a future edit to RETENTION_POLICY that drops one of these entries fails loudly.
+  it("prunes grounding_file_content_cache older than its 2-day window and keeps recent rows (#9083)", async () => {
+    const env = createTestEnv();
+    const db = getDb(env.DB);
+    await db.insert(groundingFileContentCache).values([
+      { repoFullName: "acme/widgets", path: "a.ts", headSha: "sha-old", content: "old", fetchedAt: daysAgo(3) },
+      { repoFullName: "acme/widgets", path: "a.ts", headSha: "sha-new", content: "new", fetchedAt: daysAgo(1) },
+    ]);
+
+    const rule = RETENTION_POLICY.find((r) => r.table === "grounding_file_content_cache");
+    expect(rule).toEqual({ table: "grounding_file_content_cache", column: "fetched_at", days: 2 });
+
+    const results = await pruneExpiredRecords(env, { nowMs: NOW, policy: [rule!] });
+    expect(results[0]?.deleted).toBe(1);
+    const rows = await env.DB.prepare("SELECT head_sha FROM grounding_file_content_cache").all<{ head_sha: string }>();
+    expect(rows.results.map((row) => row.head_sha)).toEqual(["sha-new"]);
+  });
+
+  it("prunes ai_review_cache and ai_slop_cache older than their 30-day window and keeps recent rows (#9083)", async () => {
+    const env = createTestEnv();
+    const db = getDb(env.DB);
+    await db.insert(aiReviewCache).values([
+      { repoFullName: "acme/widgets", pullNumber: 1, headSha: "sha-old", aiReviewMode: "full", notes: "n", reviewerCount: 1, createdAt: daysAgo(40) },
+      { repoFullName: "acme/widgets", pullNumber: 1, headSha: "sha-new", aiReviewMode: "full", notes: "n", reviewerCount: 1, createdAt: daysAgo(1) },
+    ]);
+    await db.insert(aiSlopCache).values([
+      { repoFullName: "acme/widgets", pullNumber: 1, headSha: "sha-old", inputFingerprint: "f", status: "ok", createdAt: daysAgo(40) },
+      { repoFullName: "acme/widgets", pullNumber: 1, headSha: "sha-new", inputFingerprint: "f", status: "ok", createdAt: daysAgo(1) },
+    ]);
+
+    const reviewRule = RETENTION_POLICY.find((r) => r.table === "ai_review_cache");
+    const slopRule = RETENTION_POLICY.find((r) => r.table === "ai_slop_cache");
+    expect(reviewRule).toEqual({ table: "ai_review_cache", column: "created_at", days: 30 });
+    expect(slopRule).toEqual({ table: "ai_slop_cache", column: "created_at", days: 30 });
+
+    const results = await pruneExpiredRecords(env, { nowMs: NOW, policy: [reviewRule!, slopRule!] });
+    expect(results.find((r) => r.table === "ai_review_cache")?.deleted).toBe(1);
+    expect(results.find((r) => r.table === "ai_slop_cache")?.deleted).toBe(1);
+    const reviewRows = await env.DB.prepare("SELECT head_sha FROM ai_review_cache").all<{ head_sha: string }>();
+    expect(reviewRows.results.map((row) => row.head_sha)).toEqual(["sha-new"]);
+    const slopRows = await env.DB.prepare("SELECT head_sha FROM ai_slop_cache").all<{ head_sha: string }>();
+    expect(slopRows.results.map((row) => row.head_sha)).toEqual(["sha-new"]);
+  });
+
+  it("prunes linked_issue_satisfaction_cache older than its 30-day window and keeps recent rows (#9083)", async () => {
+    const env = createTestEnv();
+    const db = getDb(env.DB);
+    await db.insert(linkedIssueSatisfactionCache).values([
+      { repoFullName: "acme/widgets", pullNumber: 1, headSha: "sha-old", linkedIssueNumber: 5, inputFingerprint: "f", status: "ok", createdAt: daysAgo(40) },
+      { repoFullName: "acme/widgets", pullNumber: 1, headSha: "sha-new", linkedIssueNumber: 5, inputFingerprint: "f", status: "ok", createdAt: daysAgo(1) },
+    ]);
+
+    const rule = RETENTION_POLICY.find((r) => r.table === "linked_issue_satisfaction_cache");
+    expect(rule).toEqual({ table: "linked_issue_satisfaction_cache", column: "created_at", days: 30 });
+
+    const results = await pruneExpiredRecords(env, { nowMs: NOW, policy: [rule!] });
+    expect(results[0]?.deleted).toBe(1);
+    const rows = await env.DB.prepare("SELECT head_sha FROM linked_issue_satisfaction_cache").all<{ head_sha: string }>();
+    expect(rows.results.map((row) => row.head_sha)).toEqual(["sha-new"]);
+  });
+
+  // #9083: review_audit, decision_records, and orb_webhook_events were append-only logs with no retention
+  // rule at all. All three are raw-SQL-only tables (RAW_SQL_ONLY_TABLES in check-schema-drift.ts), so seed
+  // via raw SQL like the predicted_gate_calls test above.
+  it("prunes review_audit older than its 90-day window and keeps recent rows (#9083)", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare(
+      `INSERT INTO review_audit (id, project, target_id, event_type, decision, source, head_sha, summary, created_at)
+       VALUES
+         ('ra-old', 'acme/widgets', 'acme/widgets#1', 'gate_decision', 'merge', 'loopover-native', 'sha1', 'success', ?),
+         ('ra-recent', 'acme/widgets', 'acme/widgets#1', 'gate_decision', 'merge', 'loopover-native', 'sha2', 'success', ?)`,
+    )
+      .bind(daysAgo(100), daysAgo(1))
+      .run();
+
+    const rule = RETENTION_POLICY.find((r) => r.table === "review_audit");
+    expect(rule).toEqual({ table: "review_audit", column: "created_at", days: 90 });
+
+    const results = await pruneExpiredRecords(env, { nowMs: NOW, policy: [rule!] });
+    expect(results[0]?.deleted).toBe(1);
+    const rows = await env.DB.prepare("SELECT id FROM review_audit").all<{ id: string }>();
+    expect(rows.results.map((row) => row.id)).toEqual(["ra-recent"]);
+  });
+
+  it("prunes decision_records older than its 180-day window and keeps recent rows (#9083)", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare(
+      `INSERT INTO decision_records (id, repo_full_name, pull_number, head_sha, action, reason_code, record_digest, record_json, created_at)
+       VALUES
+         ('dr-old', 'acme/widgets', 1, 'sha1', 'close', 'missing_linked_issue', 'digest1', '{}', ?),
+         ('dr-recent', 'acme/widgets', 1, 'sha2', 'close', 'missing_linked_issue', 'digest2', '{}', ?)`,
+    )
+      .bind(daysAgo(200), daysAgo(1))
+      .run();
+
+    const rule = RETENTION_POLICY.find((r) => r.table === "decision_records");
+    expect(rule).toEqual({ table: "decision_records", column: "created_at", days: 180 });
+
+    const results = await pruneExpiredRecords(env, { nowMs: NOW, policy: [rule!] });
+    expect(results[0]?.deleted).toBe(1);
+    const rows = await env.DB.prepare("SELECT id FROM decision_records").all<{ id: string }>();
+    expect(rows.results.map((row) => row.id)).toEqual(["dr-recent"]);
+  });
+
+  it("prunes orb_webhook_events older than its 90-day window and keeps recent rows (#9083)", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare(
+      `INSERT INTO orb_webhook_events (delivery_id, event_name, payload_hash, status, received_at)
+       VALUES
+         ('owe-old', 'push', 'h', 'processed', ?),
+         ('owe-recent', 'push', 'h', 'processed', ?)`,
+    )
+      .bind(daysAgo(100), daysAgo(1))
+      .run();
+
+    const rule = RETENTION_POLICY.find((r) => r.table === "orb_webhook_events");
+    expect(rule).toEqual({ table: "orb_webhook_events", column: "received_at", days: 90 });
+
+    const results = await pruneExpiredRecords(env, { nowMs: NOW, policy: [rule!] });
+    expect(results[0]?.deleted).toBe(1);
+    const rows = await env.DB.prepare("SELECT delivery_id FROM orb_webhook_events").all<{ delivery_id: string }>();
+    expect(rows.results.map((row) => row.delivery_id)).toEqual(["owe-recent"]);
+  });
+
+  // #9083: pruneExpiredRecords now deletes via a real PK (RETENTION_PK_COLUMN) ordered by the retention
+  // column instead of rowid/ctid, so this pins that a table absent from that map (composite-PK caches, or
+  // any future ad-hoc policy entry) still falls back to the rowid path correctly rather than erroring.
+  it("falls back to rowid ordering for a table with no RETENTION_PK_COLUMN entry", async () => {
+    const env = createTestEnv();
+    const db = getDb(env.DB);
+    await db.insert(aiReviewCache).values([
+      { repoFullName: "acme/widgets", pullNumber: 2, headSha: "sha-a", aiReviewMode: "full", notes: "n", reviewerCount: 1, createdAt: daysAgo(50) },
+      { repoFullName: "acme/widgets", pullNumber: 2, headSha: "sha-b", aiReviewMode: "full", notes: "n", reviewerCount: 1, createdAt: daysAgo(45) },
+    ]);
+    // ai_review_cache has a composite primary key (repo, pull, head_sha) so it is intentionally absent from
+    // RETENTION_PK_COLUMN; the delete must still succeed via the rowid fallback.
+    const results = await pruneExpiredRecords(env, {
+      nowMs: NOW,
+      policy: [{ table: "ai_review_cache", column: "created_at", days: 30 }],
+    });
+    expect(results[0]?.deleted).toBe(2);
+    const remaining = await env.DB.prepare("SELECT count(*) AS n FROM ai_review_cache").first<{ n: number }>();
+    expect(remaining?.n).toBe(0);
   });
 });
 

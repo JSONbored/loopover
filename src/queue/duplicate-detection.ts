@@ -12,6 +12,7 @@ import { githubRateLimitAdmissionKeyForToken } from "../github/client";
 import { resolveCopycatDuplicateSibling } from "../signals/copycat-duplicate";
 import { isDuplicateClusterWinnerByClaim, resolveDuplicateClusterWinnerNumber } from "../signals/duplicate-winner";
 import { isDuplicateWinnerEnabledGlobally, resolveDuplicateWinnerEnabled } from "../settings/duplicate-winner-mode";
+import { getEarliestLinkedIssueClaim } from "../db/repositories";
 import type { CopycatGateMode, PullRequestRecord, RepositorySettings } from "../types";
 import { mapWithConcurrency } from "./map-with-concurrency";
 
@@ -132,6 +133,36 @@ export async function reconcileLiveDuplicateSiblings(
   return otherOpenPullRequests.filter(
     (other) => !staleClosed.has(other.number),
   );
+}
+
+/**
+ * #9160: scope `pr`'s claim time to ONLY the issue(s) actually contested with at least one of `openSiblings`,
+ * reading each issue's own IMMUTABLE first-observed claim from the durable per-(PR, issue) ledger
+ * (`db/repositories.ts`'s `linked_issue_claims`, see its own doc comment) instead of `pr`'s blended
+ * `linkedIssueClaimedAt` column. This is what closes the #linked-issue-claim-overlap-preserve-style backdating
+ * attack at the winner-election boundary specifically: an attacker's OTHER, unrelated linked issue (kept
+ * around purely so the blended column's overlap rule preserves an old timestamp) never enters this
+ * computation, because it was never shared with any sibling in `openSiblings`.
+ *
+ * `contestedIssues` empty (no sibling actually overlaps -- defensive; every real caller already filtered
+ * `openSiblings` down to PRs sharing an issue with `pr`) returns `pr.linkedIssueClaimedAt` unchanged, since
+ * there is no backdating angle without a contested issue. Otherwise returns the per-issue ledger's earliest
+ * claim among the CONTESTED issues only, which fails closed to `null` (mirrors this module's existing
+ * sparse-row-fails-closed posture) rather than falling back to the blended value when the ledger has no row
+ * yet for any of them -- a `null` here makes {@link isDuplicateClusterWinnerByClaim} correctly refuse to
+ * elect `pr` the winner from missing data, rather than risk resurrecting the very blended value being scoped
+ * away from.
+ */
+export async function resolveScopedLinkedIssueClaimedAt(
+  env: Env,
+  repoFullName: string,
+  pr: Pick<PullRequestRecord, "number" | "linkedIssues" | "linkedIssueClaimedAt">,
+  openSiblings: readonly Pick<PullRequestRecord, "linkedIssues">[],
+): Promise<string | null | undefined> {
+  const siblingIssues = new Set(openSiblings.flatMap((sibling) => sibling.linkedIssues));
+  const contestedIssues = pr.linkedIssues.filter((issue) => siblingIssues.has(issue));
+  if (contestedIssues.length === 0) return pr.linkedIssueClaimedAt;
+  return getEarliestLinkedIssueClaim(env, repoFullName, pr.number, contestedIssues);
 }
 
 export function linkedIssueDuplicatePullRequestsForGate(

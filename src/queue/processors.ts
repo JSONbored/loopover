@@ -380,6 +380,7 @@ import {
   linkedIssueDuplicatePullRequestRecordsForGate,
   linkedIssueDuplicatePullRequestsForGate,
   reconcileLiveDuplicateSiblings,
+  resolveScopedLinkedIssueClaimedAt,
 } from "./duplicate-detection";
 export {
   dupWinnerLinkedDuplicateCount,
@@ -387,6 +388,7 @@ export {
   linkedIssueDuplicatePullRequestRecordsForGate,
   linkedIssueDuplicatePullRequestsForGate,
   reconcileLiveDuplicateSiblings,
+  resolveScopedLinkedIssueClaimedAt,
 } from "./duplicate-detection";
 import { mapWithConcurrency } from "./map-with-concurrency";
 export { mapWithConcurrency } from "./map-with-concurrency";
@@ -1601,6 +1603,10 @@ export async function sweepRepoRegate(
       pr.linkedIssues,
       settings,
     );
+    // #9160: see resolveScopedLinkedIssueClaimedAt's own doc comment -- scopes pr's claim time to only the
+    // issue(s) actually contested with an open sibling instead of pr's blended linkedIssueClaimedAt column.
+    const scopedLinkedIssueClaimedAt =
+      duplicateWinnerEnabled && others.length > 0 ? await resolveScopedLinkedIssueClaimedAt(env, repoFullName, pr, others) : pr.linkedIssueClaimedAt;
     const advisory = buildPullRequestAdvisory(repo, pr, {
       otherOpenPullRequests: others,
       requireLinkedIssue,
@@ -1609,6 +1615,7 @@ export async function sweepRepoRegate(
       confirmedNoOpenLinkedIssue,
       copycatGateMode: settings.copycatGateMode,
       copycatGateMinScore: settings.copycatGateMinScore,
+      scopedLinkedIssueClaimedAt,
     });
     const gate = evaluateGateCheck(
       advisory,
@@ -2721,6 +2728,11 @@ function buildAgentMaintenancePlanInput(args: {
   pr: PullRequestRecord;
   openDuplicateSiblings: ReturnType<typeof linkedIssueDuplicatePullRequestRecordsForGate>;
   duplicateWinnerEnabled: boolean;
+  // #9160: pr's claim time, ALREADY SCOPED by the caller (resolveScopedLinkedIssueClaimedAt) to only the
+  // issue(s) actually contested with an open sibling -- resolved outside this function since it needs a DB
+  // read and this function is otherwise pure. Falls back to pr.linkedIssueClaimedAt when undefined so every
+  // existing test/caller that hasn't been updated to pass it keeps today's (pre-#9160) behavior exactly.
+  scopedLinkedIssueClaimedAt?: string | null | undefined;
   manualReviewLockContentionResolved: AgentActionPlanInput["manualReviewLockContentionResolved"];
 }): AgentActionPlanInput {
   const {
@@ -2747,8 +2759,10 @@ function buildAgentMaintenancePlanInput(args: {
     pr,
     openDuplicateSiblings,
     duplicateWinnerEnabled,
+    scopedLinkedIssueClaimedAt,
     manualReviewLockContentionResolved,
   } = args;
+  const linkedIssueClaimedAtForElection = scopedLinkedIssueClaimedAt !== undefined ? scopedLinkedIssueClaimedAt : pr.linkedIssueClaimedAt;
   return {
     conclusion: gate.conclusion,
     blockerTitles: gate.blockers.map((blocker) => blocker.title),
@@ -2828,7 +2842,7 @@ function buildAgentMaintenancePlanInput(args: {
       linkedDuplicateCount: dupWinnerLinkedDuplicateCount(
         openDuplicateSiblings,
         pr.number,
-        pr.linkedIssueClaimedAt,
+        linkedIssueClaimedAtForElection,
         duplicateWinnerEnabled,
         pr.createdAt,
       ),
@@ -2838,7 +2852,7 @@ function buildAgentMaintenancePlanInput(args: {
       linkedDuplicateWinnerNumber: dupWinnerLinkedDuplicateWinnerNumber(
         openDuplicateSiblings,
         pr.number,
-        pr.linkedIssueClaimedAt,
+        linkedIssueClaimedAtForElection,
         duplicateWinnerEnabled,
         pr.createdAt,
       ),
@@ -2866,7 +2880,10 @@ function buildAgentMaintenancePlanInput(args: {
  * EVERY PR-open across the fleet, not just the rare over-cap ones — this function alone is cheap enough (one
  * DB query + a bounded live-GitHub confirm) to run unconditionally on open.
  */
-async function resolvePerRepoContributorCapMatch(
+// #9159: exported so the approval-queue accept path (src/services/agent-approval-queue.ts) can build the SAME
+// pre-merge contributor-cap re-check the live webhook path builds below (contributorCapMergeRecheck) -- that
+// path previously never threaded one at all, so an accepted staged merge skipped the #7284 re-check entirely.
+export async function resolvePerRepoContributorCapMatch(
   env: Env,
   deliveryId: string,
   installationId: number,
@@ -3502,6 +3519,17 @@ async function runAgentMaintenancePlanAndExecute(
     // not inherit this transient provenance on some future pass.
     await deleteTransientKey(env, manualReviewLockContentionMarkerKey);
   }
+  // #9160: scope pr's claim time to only the issue(s) actually contested with an open duplicate sibling,
+  // reading the durable per-(PR, issue) claim ledger instead of pr's own blended linkedIssueClaimedAt column
+  // -- see resolveScopedLinkedIssueClaimedAt's own doc comment for why the blended column is unsafe to feed
+  // directly into the winner election (an unrelated OTHER linked issue on this PR could otherwise "vouch" a
+  // backdated claim time for the one actually being contested). Only worth the extra DB read when the flag is
+  // on AND at least one sibling actually overlaps; otherwise this is `pr.linkedIssueClaimedAt` unchanged,
+  // byte-identical to before this existed.
+  const scopedLinkedIssueClaimedAt =
+    duplicateWinnerEnabled && openDuplicateSiblings.length > 0
+      ? await resolveScopedLinkedIssueClaimedAt(env, repoFullName, pr, openDuplicateSiblings)
+      : pr.linkedIssueClaimedAt;
   const planned = planAgentMaintenanceActions(
     buildAgentMaintenancePlanInput({
       gate,
@@ -3527,6 +3555,7 @@ async function runAgentMaintenancePlanAndExecute(
       pr,
       openDuplicateSiblings,
       duplicateWinnerEnabled,
+      scopedLinkedIssueClaimedAt,
       manualReviewLockContentionResolved: hadPriorLockContentionHold && !aiReviewLockContentionThisPass,
     }),
   );
@@ -4085,14 +4114,22 @@ export async function reReviewStoredPullRequest(
     cachedOtherOpenPullRequests,
     settings,
   );
+  const duplicateWinnerEnabledForPr = resolveDuplicateWinnerEnabled(isDuplicateWinnerEnabledGlobally(env), settings.duplicateWinnerMode);
+  // #9160: see resolveScopedLinkedIssueClaimedAt's own doc comment -- scopes pr's claim time to only the
+  // issue(s) actually contested with an open sibling instead of pr's blended linkedIssueClaimedAt column.
+  const scopedLinkedIssueClaimedAt =
+    duplicateWinnerEnabledForPr && otherOpenPullRequests.length > 0
+      ? await resolveScopedLinkedIssueClaimedAt(env, repoFullName, pr, otherOpenPullRequests)
+      : pr.linkedIssueClaimedAt;
   const advisory = buildPullRequestAdvisory(repo, pr, {
     otherOpenPullRequests,
     requireLinkedIssue: shouldCollectLinkedIssueEvidence(settings),
-    duplicateWinnerEnabled: resolveDuplicateWinnerEnabled(isDuplicateWinnerEnabledGlobally(env), settings.duplicateWinnerMode),
+    duplicateWinnerEnabled: duplicateWinnerEnabledForPr,
     confirmedNoOpenLinkedIssue,
     linkedIssueAuthorLogins,
     copycatGateMode: settings.copycatGateMode,
     copycatGateMinScore: settings.copycatGateMinScore,
+    scopedLinkedIssueClaimedAt,
   });
   await persistAdvisory(env, advisory);
   // #2537 follow-up (gate-flagged): the durable review cache's only invalidation path is markPullRequestReviewsInvalidated
@@ -6942,14 +6979,22 @@ async function handlePullRequestWebhookEvent(
       cachedOtherOpenPullRequests,
       settings,
     );
+    const duplicateWinnerEnabledForPr = resolveDuplicateWinnerEnabled(isDuplicateWinnerEnabledGlobally(env), settings.duplicateWinnerMode);
+    // #9160: see resolveScopedLinkedIssueClaimedAt's own doc comment -- scopes pr's claim time to only the
+    // issue(s) actually contested with an open sibling instead of pr's blended linkedIssueClaimedAt column.
+    const scopedLinkedIssueClaimedAt =
+      duplicateWinnerEnabledForPr && otherOpenPullRequests.length > 0
+        ? await resolveScopedLinkedIssueClaimedAt(env, repoFullName, pr, otherOpenPullRequests)
+        : pr.linkedIssueClaimedAt;
     const advisory = buildPullRequestAdvisory(repo, pr, {
       otherOpenPullRequests,
       requireLinkedIssue: shouldCollectLinkedIssueEvidence(settings),
-      duplicateWinnerEnabled: resolveDuplicateWinnerEnabled(isDuplicateWinnerEnabledGlobally(env), settings.duplicateWinnerMode),
+      duplicateWinnerEnabled: duplicateWinnerEnabledForPr,
       confirmedNoOpenLinkedIssue,
       linkedIssueAuthorLogins,
       copycatGateMode: settings.copycatGateMode,
       copycatGateMinScore: settings.copycatGateMinScore,
+      scopedLinkedIssueClaimedAt,
     });
     await persistAdvisory(env, advisory);
     // Auto-project/milestone matching (#3183): independent of the gate/disposition entirely -- a missed or
@@ -14296,14 +14341,22 @@ export async function buildAuthorizedPrActionAdvisory(
     pr.linkedIssues,
     settings,
   );
+  const duplicateWinnerEnabledForPr = resolveDuplicateWinnerEnabled(isDuplicateWinnerEnabledGlobally(env), settings.duplicateWinnerMode);
+  // #9160: see resolveScopedLinkedIssueClaimedAt's own doc comment -- scopes pr's claim time to only the
+  // issue(s) actually contested with an open sibling instead of pr's blended linkedIssueClaimedAt column.
+  const scopedLinkedIssueClaimedAt =
+    duplicateWinnerEnabledForPr && otherOpenPullRequests.length > 0
+      ? await resolveScopedLinkedIssueClaimedAt(env, repoFullName, pr, otherOpenPullRequests)
+      : pr.linkedIssueClaimedAt;
   const advisory = buildPullRequestAdvisory(repo, pr, {
     otherOpenPullRequests,
     requireLinkedIssue: shouldCollectLinkedIssueEvidence(settings),
-    duplicateWinnerEnabled: resolveDuplicateWinnerEnabled(isDuplicateWinnerEnabledGlobally(env), settings.duplicateWinnerMode),
+    duplicateWinnerEnabled: duplicateWinnerEnabledForPr,
     confirmedNoOpenLinkedIssue,
     linkedIssueAuthorLogins,
     copycatGateMode: settings.copycatGateMode,
     copycatGateMinScore: settings.copycatGateMinScore,
+    scopedLinkedIssueClaimedAt,
   });
   return { repo, advisory, otherOpenPullRequests };
 }

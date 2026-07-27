@@ -386,6 +386,11 @@ export function buildPullRequestAdvisory(
      *  identical to before this field existed — the duplicate finding stays linked-issue-overlap only. */
     copycatGateMode?: CopycatGateMode | null | undefined;
     copycatGateMinScore?: number | null | undefined;
+    /** #9160: see addPullRequestFindings's own parameter doc comment. Resolved by the caller (this function
+     *  stays synchronous/pure) via queue/duplicate-detection.ts's resolveScopedLinkedIssueClaimedAt, from the
+     *  SAME otherOpenPullRequests already being passed above. Absent ⇒ falls back to pr.linkedIssueClaimedAt,
+     *  byte-identical to before this field existed. */
+    scopedLinkedIssueClaimedAt?: string | null | undefined;
   } = {},
 ): Advisory {
   const repoFullName = pr?.repoFullName ?? repo?.fullName ?? "unknown/unknown";
@@ -422,6 +427,7 @@ export function buildPullRequestAdvisory(
       Boolean(context.confirmedNoOpenLinkedIssue),
       context.copycatGateMode,
       context.copycatGateMinScore,
+      context.scopedLinkedIssueClaimedAt,
     );
   }
   return advisory("pull_request", targetKey, repoFullName, findings, "Pull request advisory generated.", pr?.number, undefined, pr?.headSha ?? undefined);
@@ -990,6 +996,13 @@ function addPullRequestFindings(
   confirmedNoOpenLinkedIssue: boolean,
   copycatGateMode: CopycatGateMode | null | undefined,
   copycatGateMinScore: number | null | undefined,
+  // #9160: pr's claim time, ALREADY SCOPED by the caller (queue/duplicate-detection.ts's
+  // resolveScopedLinkedIssueClaimedAt) to only the issue(s) actually contested with an open sibling, instead of
+  // pr.linkedIssueClaimedAt's blended-across-every-linked-issue value -- see that function's own doc comment
+  // for why the blended column lets an unrelated, already-linked issue backdate a newly-added one's claim.
+  // `undefined` (every caller that hasn't been updated, and every non-DB caller like decision-replay.ts) falls
+  // back to pr.linkedIssueClaimedAt, byte-identical to before this existed.
+  scopedLinkedIssueClaimedAt?: string | null | undefined,
 ): void {
   if (pr.state !== "open") {
     findings.push({
@@ -1036,7 +1049,11 @@ function addPullRequestFindings(
     // winner survives while later claimants keep the finding. Sparse legacy rows fail closed instead of
     // suppressing duplicate evidence with arbitrary PR-number ordering.
     // Flag-OFF (default) short-circuits ⇒ the finding is pushed exactly as before (byte-identical).
-    if (overlappingPrs.length > 0 && !(duplicateWinnerEnabled && isDuplicateClusterWinnerByClaim(pr, overlappingPrs))) {
+    // #9160: compare using the SCOPED claim time (falls back to pr.linkedIssueClaimedAt when the caller didn't
+    // resolve one) rather than pr's raw, blended column directly -- see scopedLinkedIssueClaimedAt's own
+    // parameter doc comment above.
+    const claimMemberForElection = { number: pr.number, linkedIssueClaimedAt: scopedLinkedIssueClaimedAt !== undefined ? scopedLinkedIssueClaimedAt : pr.linkedIssueClaimedAt, createdAt: pr.createdAt };
+    if (overlappingPrs.length > 0 && !(duplicateWinnerEnabled && isDuplicateClusterWinnerByClaim(claimMemberForElection, overlappingPrs))) {
       // #9129: split by corroboration (hasDuplicateOverlapCorroboration) — see its own doc comment. A CONCRETE
       // finding code (`duplicate_pr_risk`) is reserved for a sibling with real corroborating evidence beyond body
       // text; it stays configurable via duplicatePrGateMode and evaluateGateCheckCore now HOLDS (never closes) a

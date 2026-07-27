@@ -53,6 +53,22 @@ import {
   IntakeIdeaResponseSchema,
   PlanIdeaClaimsRequestSchema,
   PlanIdeaClaimsResponseSchema,
+  LintPrTextRequestSchema,
+  LintPrTextResponseSchema,
+  CheckSlopRiskRequestSchema,
+  CheckSlopRiskResponseSchema,
+  CheckImprovementPotentialRequestSchema,
+  CheckImprovementPotentialResponseSchema,
+  SimulateOpenPrPressureRequestSchema,
+  SimulateOpenPrPressureResponseSchema,
+  SuggestBoundaryTestsRequestSchema,
+  SuggestBoundaryTestsResponseSchema,
+  CheckTestEvidenceRequestSchema,
+  CheckTestEvidenceResponseSchema,
+  CheckIssueSlopRequestSchema,
+  CheckIssueSlopResponseSchema,
+  ValidateFocusManifestRequestSchema,
+  ValidateFocusManifestResponseSchema,
   LabelAuditSchema,
   LaneAdviceSchema,
   LiveGateThresholdsResponseSchema,
@@ -63,6 +79,9 @@ import {
   MaintainerLaneReportSchema,
   MaintainerNoiseReportSchema,
   AmsMinerCohortComparisonSchema,
+  GatePrecisionResponseSchema,
+  OutcomeCalibrationResponseSchema,
+  ActivationPreviewResponseSchema,
   McpCompatibilitySchema,
   PullRequestAiReviewFindingsSchema,
   PullRequestMaintainerPacketSchema,
@@ -202,6 +221,22 @@ export function buildOpenApiSpec() {
   registry.register("IntakeIdeaResponse", IntakeIdeaResponseSchema);
   registry.register("PlanIdeaClaimsRequest", PlanIdeaClaimsRequestSchema);
   registry.register("PlanIdeaClaimsResponse", PlanIdeaClaimsResponseSchema);
+  registry.register("LintPrTextRequest", LintPrTextRequestSchema);
+  registry.register("LintPrTextResponse", LintPrTextResponseSchema);
+  registry.register("CheckSlopRiskRequest", CheckSlopRiskRequestSchema);
+  registry.register("CheckSlopRiskResponse", CheckSlopRiskResponseSchema);
+  registry.register("CheckImprovementPotentialRequest", CheckImprovementPotentialRequestSchema);
+  registry.register("CheckImprovementPotentialResponse", CheckImprovementPotentialResponseSchema);
+  registry.register("SimulateOpenPrPressureRequest", SimulateOpenPrPressureRequestSchema);
+  registry.register("SimulateOpenPrPressureResponse", SimulateOpenPrPressureResponseSchema);
+  registry.register("SuggestBoundaryTestsRequest", SuggestBoundaryTestsRequestSchema);
+  registry.register("SuggestBoundaryTestsResponse", SuggestBoundaryTestsResponseSchema);
+  registry.register("CheckTestEvidenceRequest", CheckTestEvidenceRequestSchema);
+  registry.register("CheckTestEvidenceResponse", CheckTestEvidenceResponseSchema);
+  registry.register("CheckIssueSlopRequest", CheckIssueSlopRequestSchema);
+  registry.register("CheckIssueSlopResponse", CheckIssueSlopResponseSchema);
+  registry.register("ValidateFocusManifestRequest", ValidateFocusManifestRequestSchema);
+  registry.register("ValidateFocusManifestResponse", ValidateFocusManifestResponseSchema);
   registry.register("LiveGateThresholdsResponse", LiveGateThresholdsResponseSchema);
   registry.register("BurdenForecast", BurdenForecastSchema);
   registry.register("ContributorScoringProfile", ContributorScoringProfileSchema);
@@ -211,6 +246,9 @@ export function buildOpenApiSpec() {
   registry.register("ContributorRewardRiskStrategy", ContributorRewardRiskStrategySchema);
   registry.register("MaintainerNoiseReport", MaintainerNoiseReportSchema);
   registry.register("AmsMinerCohortComparison", AmsMinerCohortComparisonSchema);
+  registry.register("GatePrecisionResponse", GatePrecisionResponseSchema);
+  registry.register("OutcomeCalibrationResponse", OutcomeCalibrationResponseSchema);
+  registry.register("ActivationPreviewResponse", ActivationPreviewResponseSchema);
   registry.register("PullRequestReviewability", PullRequestReviewabilitySchema);
   registry.register("PullRequestAiReviewFindings", PullRequestAiReviewFindingsSchema);
 
@@ -623,6 +661,110 @@ export function buildOpenApiSpec() {
     },
   });
   registry.registerPath({
+    method: "post",
+    path: "/v1/lint/pr-text",
+    summary: "Lint a PR's commit messages + body — REST mirror of loopover_lint_pr_text (#9308)",
+    request: { body: { content: { "application/json": { schema: LintPrTextRequestSchema } } } },
+    responses: {
+      200: {
+        description: "PR-text lint verdict, score, and fix suggestions — mirrors the loopover_lint_pr_text MCP tool",
+        content: { "application/json": { schema: LintPrTextResponseSchema } },
+      },
+      400: { description: "Invalid lint/pr-text request body" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/lint/slop-risk",
+    summary: "Assess a changeset's slop risk — REST mirror of loopover_check_slop_risk (#9308)",
+    request: { body: { content: { "application/json": { schema: CheckSlopRiskRequestSchema } } } },
+    responses: {
+      200: {
+        description: "Slop-risk band and findings over the caller-supplied changed files — mirrors the loopover_check_slop_risk MCP tool",
+        content: { "application/json": { schema: CheckSlopRiskResponseSchema } },
+      },
+      400: { description: "Invalid lint/slop-risk request body" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/lint/improvement-potential",
+    summary: "Score a changeset's structural improvement potential — REST mirror of loopover_check_improvement_potential (#9308)",
+    request: { body: { content: { "application/json": { schema: CheckImprovementPotentialRequestSchema } } } },
+    responses: {
+      200: {
+        description: "Improvement-potential score, band, and findings — mirrors the loopover_check_improvement_potential MCP tool",
+        content: { "application/json": { schema: CheckImprovementPotentialResponseSchema } },
+      },
+      400: { description: "Invalid lint/improvement-potential request body" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/lint/open-pr-pressure",
+    summary: "Simulate open-PR queue pressure for a repo — REST mirror of loopover_simulate_open_pr_pressure (#9308)",
+    request: { body: { content: { "application/json": { schema: SimulateOpenPrPressureRequestSchema } } } },
+    responses: {
+      200: {
+        description: "Queue-pressure scenarios and the recommended option over caller-supplied queue health — mirrors the loopover_simulate_open_pr_pressure MCP tool",
+        content: { "application/json": { schema: SimulateOpenPrPressureResponseSchema } },
+      },
+      400: { description: "Invalid lint/open-pr-pressure request body" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/lint/boundary-tests",
+    summary: "Suggest boundary tests for a changeset — REST mirror of loopover_suggest_boundary_tests (#9308)",
+    request: { body: { content: { "application/json": { schema: SuggestBoundaryTestsRequestSchema } } } },
+    responses: {
+      200: {
+        description: "Boundary-test finding and suggested test spec — mirrors the loopover_suggest_boundary_tests MCP tool",
+        content: { "application/json": { schema: SuggestBoundaryTestsResponseSchema } },
+      },
+      400: { description: "Invalid lint/boundary-tests request body" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/lint/test-evidence",
+    summary: "Classify a changeset's test evidence — REST mirror of loopover_check_test_evidence (#9308)",
+    request: { body: { content: { "application/json": { schema: CheckTestEvidenceRequestSchema } } } },
+    responses: {
+      200: {
+        description: "Test-evidence classification, file counts, and guidance over caller-supplied changed paths — mirrors the loopover_check_test_evidence MCP tool",
+        content: { "application/json": { schema: CheckTestEvidenceResponseSchema } },
+      },
+      400: { description: "Invalid lint/test-evidence request body" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/lint/issue-slop",
+    summary: "Assess an issue's slop risk from its title/body — REST mirror of loopover_check_issue_slop (#9308)",
+    request: { body: { content: { "application/json": { schema: CheckIssueSlopRequestSchema } } } },
+    responses: {
+      200: {
+        description: "Slop-risk band and findings over the caller-supplied issue title/body — mirrors the loopover_check_issue_slop MCP tool",
+        content: { "application/json": { schema: CheckIssueSlopResponseSchema } },
+      },
+      400: { description: "Invalid lint/issue-slop request body" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/validate/focus-manifest",
+    summary: "Validate a .loopover focus-manifest config — REST mirror of loopover_validate_config (#9308)",
+    request: { body: { content: { "application/json": { schema: ValidateFocusManifestRequestSchema } } } },
+    responses: {
+      200: {
+        description: "Focus-manifest presence, normalized config, warnings, and status — mirrors the loopover_validate_config MCP tool",
+        content: { "application/json": { schema: ValidateFocusManifestResponseSchema } },
+      },
+      400: { description: "Invalid validate/focus-manifest request body" },
+    },
+  });
+  registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/live-gate-thresholds",
     summary: "Live self-tuned gate thresholds for AMS probe (#6486)",
@@ -634,6 +776,87 @@ export function buildOpenApiSpec() {
       },
       403: { description: "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo" },
       404: { description: "No live or shadow gate override is active for this repo" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/repos/{owner}/{repo}/maintainer-noise",
+    summary: "Maintainer queue-noise triage report for a repository (#9302)",
+    request: { params: z.object({ owner: z.string(), repo: z.string() }) },
+    responses: {
+      200: {
+        description:
+          "Noise score/level, specific noise sources to clear first, and recommended maintainer actions — mirrors the loopover_get_maintainer_noise MCP tool. Maintainer-authenticated; advisory only",
+        content: { "application/json": { schema: MaintainerNoiseReportSchema } },
+      },
+      401: { description: "Missing or invalid static protected API token" },
+      403: { description: "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/repos/{owner}/{repo}/ams-miner-cohort",
+    summary: "AMS-vs-human contributor-mix cohort comparison for a repository (#9302)",
+    request: { params: z.object({ owner: z.string(), repo: z.string() }) },
+    responses: {
+      200: {
+        description:
+          "Submitter counts, PR volume, acceptance rate, review-cycle, and time-to-merge metrics for AMS-tracked vs human submitters — mirrors the loopover_get_ams_miner_cohort MCP tool. Maintainer-authenticated; advisory only",
+        content: { "application/json": { schema: AmsMinerCohortComparisonSchema } },
+      },
+      401: { description: "Missing or invalid static protected API token" },
+      403: { description: "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/repos/{owner}/{repo}/gate-precision",
+    summary: "Per-gate-type false-positive precision measurement for a repository (#9302)",
+    request: {
+      params: z.object({ owner: z.string(), repo: z.string() }),
+      query: z.object({ windowDays: z.coerce.number().int().positive().optional() }),
+    },
+    responses: {
+      200: {
+        description:
+          "Blocked / blocked-then-merged / overridden counts and false-positive rates with low-sample guards — mirrors the loopover_get_gate_precision MCP tool. Maintainer-authenticated; measurement only",
+        content: { "application/json": { schema: GatePrecisionResponseSchema } },
+      },
+      401: { description: "Missing or invalid static protected API token" },
+      403: { description: "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/repos/{owner}/{repo}/outcome-calibration",
+    summary: "Slop-band and recommendation outcome calibration for a repository (#9302)",
+    request: {
+      params: z.object({ owner: z.string(), repo: z.string() }),
+      query: z.object({ windowDays: z.coerce.number().int().positive().optional() }),
+    },
+    responses: {
+      200: {
+        description:
+          "Whether higher-slop bands merge less often and how agent recommendations are panning out — mirrors the loopover_get_outcome_calibration MCP tool. Maintainer-authenticated; measurement only",
+        content: { "application/json": { schema: OutcomeCalibrationResponseSchema } },
+      },
+      401: { description: "Missing or invalid static protected API token" },
+      403: { description: "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/repos/{owner}/{repo}/activation-preview",
+    summary: "Deterministic maintainer activation preview for a repository (#9302)",
+    request: { params: z.object({ owner: z.string(), repo: z.string() }) },
+    responses: {
+      200: {
+        description:
+          "A deterministic \"here's what LoopOver would have surfaced\" run of the advisory engine over recent PRs — mirrors the loopover_get_activation_preview MCP tool. Maintainer-authenticated; advisory only, never runs AI",
+        content: { "application/json": { schema: ActivationPreviewResponseSchema } },
+      },
+      401: { description: "Missing or invalid static protected API token" },
+      403: { description: "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo" },
     },
   });
   registry.registerPath({

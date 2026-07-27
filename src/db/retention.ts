@@ -25,8 +25,10 @@ export const RETENTION_POLICY: readonly RetentionRule[] = [
   // depending on it, so a shorter window than the audit/usage-log tables above is appropriate.
   { table: "agent_context_snapshots", column: "created_at", days: 30 },
   // One row per inbound webhook delivery (#8381 / unfinished #3896); short-lived idempotency lookups,
-  // not durable history — same 90d window as audit/ai_usage logs.
-  { table: "webhook_events", column: "received_at", days: 90 },
+  // not durable history. Cut 90d -> 14d: the dedup lookups these serve are minutes-old at most, and at the
+  // hosted fleet's ~4.3M-rows/day write rate a 90-day window on a pure idempotency log is the single
+  // largest avoidable contributor to the D1 ceiling (see the block at the end of this policy).
+  { table: "webhook_events", column: "received_at", days: 14 },
   // One row per outbound notification delivery (#8899); same append-only log shape as webhook_events.
   { table: "notification_deliveries", column: "created_at", days: 90 },
   // #9138: one row per loopover_predict_gate/explain_gate_disposition MCP call (unbounded, contributor-
@@ -54,8 +56,25 @@ export const RETENTION_POLICY: readonly RetentionRule[] = [
   // close still has its record, matching product_usage_events' 180-day window for the same reason.
   { table: "decision_records", column: "created_at", days: 180 },
   // #9083: the central Orb App's OWN webhook delivery/dedup log (separate from webhook_events, which is the
-  // per-repo review app's) -- identical short-lived-idempotency shape, same 90d window.
-  { table: "orb_webhook_events", column: "received_at", days: 90 },
+  // per-repo review app's) -- identical short-lived-idempotency shape, same 14d window as webhook_events.
+  { table: "orb_webhook_events", column: "received_at", days: 14 },
+  // The five highest-growth tables below had NO retention rule at all and grew without bound, which is what
+  // actually filled the hosted D1 to its 10GB ceiling: every write then failed with
+  // `D1_ERROR: Exceeded maximum DB size`, including recordOrbWebhookEvent's INSERT, so /v1/orb/webhook
+  // returned 500 to GitHub and inbound webhook delivery stopped fleet-wide until rows were pruned by hand.
+  // Measured at the time of the outage: check_summaries 100,459 rows / 0.30GB of payload_json and
+  // pull_request_files 54,532 rows / 0.20GB were the two largest single consumers in the database.
+  //
+  // All five are re-derivable GitHub mirrors or superseded snapshots, never a contributor's evidentiary
+  // trail (decision_records, 180d above, is the table that carries that): a check-run summary, a PR's file
+  // list, a repo's totals snapshot, and the merged-PR/outcome caches are all re-fetched from GitHub on the
+  // next sync of the PR that needs them. 30 days keeps every window the review paths actually read
+  // (grounding/impact-map reads are head_sha-scoped and days-fresh at most) while bounding the growth.
+  { table: "check_summaries", column: "updated_at", days: 30 },
+  { table: "pull_request_files", column: "updated_at", days: 30 },
+  { table: "repo_github_totals_snapshots", column: "fetched_at", days: 30 },
+  { table: "recent_merged_pull_requests", column: "updated_at", days: 30 },
+  { table: "orb_pr_outcomes", column: "occurred_at", days: 90 },
 ];
 
 // #9083: a real, single-column, indexable primary key for the ordered-range delete below, keyed by table
@@ -95,8 +114,15 @@ export type PruneResult = { table: string; column: string; cutoff: string; delet
 const SAFE_IDENTIFIER = /^[a-z_]+$/;
 const BATCH_SIZE = 1000;
 // Bound work per table per run so a first prune of a large backlog cannot blow the D1 statement budget;
-// the daily cron drains any remainder over subsequent runs.
-const MAX_DELETED_PER_TABLE = 50_000;
+// the cron drains any remainder over subsequent runs.
+//
+// Raised 50k -> 250k because the old ceiling made retention structurally unable to keep up on the hosted
+// fleet and so guaranteed the D1 ceiling would be reached eventually: at 50k/table against a measured
+// ~4.3M rows written per day, a DAILY prune could delete at most ~1.25M rows/day across the whole policy —
+// a permanent ~3.5x deficit that no window tightening alone can close, because the cap (not the cutoff)
+// was the binding constraint. Paired with the hourly cadence in src/index.ts, the policy now drains far
+// faster than the fleet writes, so a backlog converges instead of compounding.
+const MAX_DELETED_PER_TABLE = 250_000;
 const MS_PER_DAY = 86_400_000;
 
 function retentionWhere(rule: RetentionRule): string {

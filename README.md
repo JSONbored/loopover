@@ -20,6 +20,8 @@ LoopOver runs the pull-request loop with agents — on any GitHub repo, on both 
 - **With proof:** merge/close decisions are outcome-confirmed (merged / reopened / reverted), published with coverage and confidence intervals on the live [fairness report](https://loopover.ai/fairness), and backed by a certified close-precision guarantee that self-tightens as data grows. The backtest corpus behind the published numbers is checksummed and [replayable by anyone](https://loopover.ai/docs/verify-this-review).
 - **Gittensor-native intelligence built in:** for Bittensor SN74 miners the same engine adds scoreability previews, registry economics, and the cross-repo duplicate graph — while keeping wallet, hotkey, and raw trust-score context out of public GitHub output.
 
+Self-hosting the whole stack is the path available today — and it doubles as the trust story: audit the algorithm, run it on your own infra, replay the published numbers yourself. A hosted plane is in open development on the public milestones (ORB Cloud Readiness, Rent-a-Loop): rentable, metered loops you point at a repo — and, further out, at nothing more than an idea.
+
 It is the single converged home of the native review system; the legacy separate reviewbot repo/runtime is not part of the active architecture described here.
 
 It is not a Gittensor explorer, public leaderboard, reward-farming bot, or wallet dashboard.

@@ -37,6 +37,16 @@ import {
   IssueQualityReportSchema,
   IssueQualityResponseSchema,
   GateConfigEffectiveResponseSchema,
+  EvaluateEscalationRequestSchema,
+  EvaluateEscalationResponseSchema,
+  BuildResultsPayloadRequestSchema,
+  BuildResultsPayloadResponseSchema,
+  BuildProgressSnapshotRequestSchema,
+  BuildProgressSnapshotResponseSchema,
+  IntakeIdeaRequestSchema,
+  IntakeIdeaResponseSchema,
+  PlanIdeaClaimsRequestSchema,
+  PlanIdeaClaimsResponseSchema,
   LabelAuditSchema,
   LaneAdviceSchema,
   LiveGateThresholdsResponseSchema,
@@ -163,6 +173,16 @@ export function buildOpenApiSpec() {
   registry.register("IssueQualityReport", IssueQualityReportSchema);
   registry.register("IssueQualityResponse", IssueQualityResponseSchema);
   registry.register("GateConfigEffectiveResponse", GateConfigEffectiveResponseSchema);
+  registry.register("EvaluateEscalationRequest", EvaluateEscalationRequestSchema);
+  registry.register("EvaluateEscalationResponse", EvaluateEscalationResponseSchema);
+  registry.register("BuildResultsPayloadRequest", BuildResultsPayloadRequestSchema);
+  registry.register("BuildResultsPayloadResponse", BuildResultsPayloadResponseSchema);
+  registry.register("BuildProgressSnapshotRequest", BuildProgressSnapshotRequestSchema);
+  registry.register("BuildProgressSnapshotResponse", BuildProgressSnapshotResponseSchema);
+  registry.register("IntakeIdeaRequest", IntakeIdeaRequestSchema);
+  registry.register("IntakeIdeaResponse", IntakeIdeaResponseSchema);
+  registry.register("PlanIdeaClaimsRequest", PlanIdeaClaimsRequestSchema);
+  registry.register("PlanIdeaClaimsResponse", PlanIdeaClaimsResponseSchema);
   registry.register("LiveGateThresholdsResponse", LiveGateThresholdsResponseSchema);
   registry.register("BurdenForecast", BurdenForecastSchema);
   registry.register("ContributorScoringProfile", ContributorScoringProfileSchema);
@@ -464,6 +484,96 @@ export function buildOpenApiSpec() {
       },
       401: { description: "Missing or invalid static protected API token" },
       403: { description: "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/loop/evaluate-escalation",
+    summary: "Evaluate whether a loop outcome should escalate — REST mirror of loopover_evaluate_escalation (#9309)",
+    request: {
+      body: {
+        content: { "application/json": { schema: EvaluateEscalationRequestSchema } },
+      },
+    },
+    responses: {
+      200: {
+        description:
+          "Escalation decision over caller-supplied loop outcome + health signals — mirrors the loopover_evaluate_escalation MCP tool. Pure, source-free evaluator; it decides, the caller wires the action",
+        content: { "application/json": { schema: EvaluateEscalationResponseSchema } },
+      },
+      400: { description: "Invalid evaluate-escalation request body" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/loop/results-payload",
+    summary: "Compose a loop results-delivery payload — REST mirror of loopover_build_results_payload (#9309)",
+    request: {
+      body: {
+        content: { "application/json": { schema: BuildResultsPayloadRequestSchema } },
+      },
+    },
+    responses: {
+      200: {
+        description:
+          "Formatted results payload over caller-supplied iteration metadata — mirrors the loopover_build_results_payload MCP tool. Pure composer; it formats the result, it does not fetch, open, or deliver anything",
+        content: { "application/json": { schema: BuildResultsPayloadResponseSchema } },
+      },
+      400: { description: "Invalid results-payload request body" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/loop/progress-snapshot",
+    summary: "Compose a running-loop progress snapshot — REST mirror of loopover_build_progress_snapshot (#9309)",
+    request: {
+      body: {
+        content: { "application/json": { schema: BuildProgressSnapshotRequestSchema } },
+      },
+    },
+    responses: {
+      200: {
+        description:
+          "Formatted progress snapshot over caller-supplied loop state — mirrors the loopover_build_progress_snapshot MCP tool. Pure composer; it formats the snapshot, it does not fetch or stream anything",
+        content: { "application/json": { schema: BuildProgressSnapshotResponseSchema } },
+      },
+      400: { description: "Invalid progress-snapshot request body" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/loop/intake-idea",
+    summary: "Validate an idea submission and assemble its task-graph — REST mirror of loopover_intake_idea (#9309)",
+    request: {
+      body: {
+        content: { "application/json": { schema: IntakeIdeaRequestSchema } },
+      },
+    },
+    responses: {
+      200: {
+        description:
+          "Idea verdict + assembled task-graph — mirrors the loopover_intake_idea MCP tool. Pure composer over the caller-supplied idea and optional decomposition",
+        content: { "application/json": { schema: IntakeIdeaResponseSchema } },
+      },
+      400: { description: "Invalid intake-idea request body, or an empty/malformed idea submission (actionable error list returned)" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/loop/plan-idea-claims",
+    summary: "Disposition an idea's task-graph into a claim plan — REST mirror of loopover_plan_idea_claims (#9309)",
+    request: {
+      body: {
+        content: { "application/json": { schema: PlanIdeaClaimsRequestSchema } },
+      },
+    },
+    responses: {
+      200: {
+        description:
+          "Idea verdict + claim plan (which constituent issues can be claimed now vs. deferred) — mirrors the loopover_plan_idea_claims MCP tool. Pure composer over the caller-supplied idea and optional decomposition",
+        content: { "application/json": { schema: PlanIdeaClaimsResponseSchema } },
+      },
+      400: { description: "Invalid plan-idea-claims request body, or an empty/malformed idea submission (actionable error list returned)" },
     },
   });
   registry.registerPath({

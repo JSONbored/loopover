@@ -1295,7 +1295,7 @@ const checkSlopRiskOutputSchema = {
 // owns the real bounds/format checks and returns the actionable error list — an empty/malformed submission
 // reaches the handler rather than being rejected upstream by the schema. `decomposition` is the optional
 // renter-reviewed idea→issues split (the one fuzzy step, supplied in); omit it for the single-issue baseline.
-const intakeIdeaShape = {
+export const intakeIdeaShape = {
   id: z.string().optional(),
   title: z.string().optional(),
   body: z.string().optional(),
@@ -1309,7 +1309,7 @@ const intakeIdeaShape = {
     .optional(),
 };
 
-const intakeIdeaOutputSchema = {
+export const intakeIdeaOutputSchema = {
   ok: z.boolean(),
   verdict: z.enum(["go", "raise", "avoid"]).optional(),
   taskGraph: z.unknown().optional(),
@@ -1318,7 +1318,7 @@ const intakeIdeaOutputSchema = {
 
 // Claim-plan hand-off (#4799): same idea input, but the output is the loop disposition — which constituent
 // issues the claim/code/submit loop can claim now vs. must defer or skip.
-const planIdeaClaimsOutputSchema = {
+export const planIdeaClaimsOutputSchema = {
   ok: z.boolean(),
   verdict: z.enum(["go", "raise", "avoid"]).optional(),
   claimPlan: z.unknown().optional(),
@@ -1326,7 +1326,7 @@ const planIdeaClaimsOutputSchema = {
 };
 
 // Loop results-delivery input (#4801): a completed iteration's already-computed metadata.
-const buildResultsPayloadShape = {
+export const buildResultsPayloadShape = {
   repoFullName: z.string().min(1),
   prNumber: z.number().int().nullable().optional(),
   title: z.string(),
@@ -1337,7 +1337,7 @@ const buildResultsPayloadShape = {
   status: z.enum(["open", "merged", "closed"]).optional(),
 };
 
-const buildResultsPayloadOutputSchema = {
+export const buildResultsPayloadOutputSchema = {
   prLink: z.string().nullable().optional(),
   summary: z.string().optional(),
   diffPreview: z.unknown().optional(),
@@ -1345,7 +1345,7 @@ const buildResultsPayloadOutputSchema = {
 };
 
 // Loop progress-snapshot input (#4800): a running loop's already-computed state.
-const buildProgressSnapshotShape = {
+export const buildProgressSnapshotShape = {
   iteration: z.number().int(),
   maxIterations: z.number().int().nullable().optional(),
   phase: z.enum(["queued", "claiming", "coding", "reviewing", "submitting", "done"]),
@@ -1356,7 +1356,7 @@ const buildProgressSnapshotShape = {
     .optional(),
 };
 
-const buildProgressSnapshotOutputSchema = {
+export const buildProgressSnapshotOutputSchema = {
   phase: z.string().optional(),
   status: z.string().optional(),
   iteration: z.number().optional(),
@@ -1367,14 +1367,14 @@ const buildProgressSnapshotOutputSchema = {
 };
 
 // Loop escalation evaluator input (#4806): an already-computed loop outcome + health tier + operator signals.
-const evaluateEscalationShape = {
+export const evaluateEscalationShape = {
   runStatus: z.enum(["running", "converged", "abandoned", "error"]),
   healthStatus: z.enum(["healthy", "degraded", "critical"]).optional(),
   customerFlagged: z.boolean().optional(),
   killRequested: z.boolean().optional(),
 };
 
-const evaluateEscalationOutputSchema = {
+export const evaluateEscalationOutputSchema = {
   shouldEscalate: z.boolean().optional(),
   action: z.enum(["none", "notify", "human_review", "stop"]).optional(),
   severity: z.enum(["none", "low", "medium", "high"]).optional(),

@@ -1926,6 +1926,168 @@ export const GateConfigEffectiveResponseSchema = z
   })
   .openapi("GateConfigEffectiveResponse");
 
+/**
+ * Request body for POST /v1/loop/evaluate-escalation. Field-level parity with `evaluateEscalationShape`
+ * (the `loopover_evaluate_escalation` MCP tool `inputSchema`) in src/mcp/server.ts — #9309.
+ */
+export const EvaluateEscalationRequestSchema = z
+  .object({
+    runStatus: z.enum(["running", "converged", "abandoned", "error"]),
+    healthStatus: z.enum(["healthy", "degraded", "critical"]).optional(),
+    customerFlagged: z.boolean().optional(),
+    killRequested: z.boolean().optional(),
+  })
+  .openapi("EvaluateEscalationRequest");
+
+/**
+ * Response body for POST /v1/loop/evaluate-escalation. Field-level parity with `evaluateEscalationOutputSchema`
+ * (the `loopover_evaluate_escalation` MCP tool `outputSchema`) in src/mcp/server.ts — #9309.
+ */
+export const EvaluateEscalationResponseSchema = z
+  .object({
+    shouldEscalate: z.boolean().optional(),
+    action: z.enum(["none", "notify", "human_review", "stop"]).optional(),
+    severity: z.enum(["none", "low", "medium", "high"]).optional(),
+    reasons: z.array(z.string()).optional(),
+  })
+  .openapi("EvaluateEscalationResponse");
+
+/**
+ * Request body for POST /v1/loop/results-payload. Field-level parity with `buildResultsPayloadShape`
+ * (the `loopover_build_results_payload` MCP tool `inputSchema`) in src/mcp/server.ts — #9309.
+ */
+export const BuildResultsPayloadRequestSchema = z
+  .object({
+    repoFullName: z.string().min(1),
+    prNumber: z.number().int().nullable().optional(),
+    title: z.string(),
+    changedFiles: z
+      .array(z.object({ path: z.string(), additions: z.number().int().optional(), deletions: z.number().int().optional() }))
+      .max(5000)
+      .optional(),
+    status: z.enum(["open", "merged", "closed"]).optional(),
+  })
+  .openapi("BuildResultsPayloadRequest");
+
+/**
+ * Response body for POST /v1/loop/results-payload. Field-level parity with `buildResultsPayloadOutputSchema`
+ * (the `loopover_build_results_payload` MCP tool `outputSchema`) in src/mcp/server.ts — #9309. `diffPreview`
+ * and `totals` are intentionally left as opaque `unknown` objects (the tool composes them from caller-supplied
+ * metadata; the spec does not re-derive their internal shape).
+ */
+export const BuildResultsPayloadResponseSchema = z
+  .object({
+    prLink: z.string().nullable().optional(),
+    summary: z.string().optional(),
+    diffPreview: z.unknown().optional(),
+    totals: z.unknown().optional(),
+  })
+  .openapi("BuildResultsPayloadResponse");
+
+/**
+ * Request body for POST /v1/loop/progress-snapshot. Field-level parity with `buildProgressSnapshotShape`
+ * (the `loopover_build_progress_snapshot` MCP tool `inputSchema`) in src/mcp/server.ts — #9309.
+ */
+export const BuildProgressSnapshotRequestSchema = z
+  .object({
+    iteration: z.number().int(),
+    maxIterations: z.number().int().nullable().optional(),
+    phase: z.enum(["queued", "claiming", "coding", "reviewing", "submitting", "done"]),
+    status: z.enum(["running", "converged", "abandoned", "error"]),
+    recentActivity: z
+      .array(z.object({ step: z.string(), detail: z.string().optional(), at: z.string().optional() }))
+      .max(1000)
+      .optional(),
+  })
+  .openapi("BuildProgressSnapshotRequest");
+
+/**
+ * Response body for POST /v1/loop/progress-snapshot. Field-level parity with `buildProgressSnapshotOutputSchema`
+ * (the `loopover_build_progress_snapshot` MCP tool `outputSchema`) in src/mcp/server.ts — #9309. `recentActivity`
+ * is left as opaque `unknown` (the tool passes the caller-supplied activity list through untouched).
+ */
+export const BuildProgressSnapshotResponseSchema = z
+  .object({
+    phase: z.string().optional(),
+    status: z.string().optional(),
+    iteration: z.number().optional(),
+    maxIterations: z.number().nullable().optional(),
+    percentComplete: z.number().nullable().optional(),
+    recentActivity: z.unknown().optional(),
+    done: z.boolean().optional(),
+  })
+  .openapi("BuildProgressSnapshotResponse");
+
+/**
+ * Request body for POST /v1/loop/intake-idea. Field-level parity with `intakeIdeaShape`
+ * (the `loopover_intake_idea` MCP tool `inputSchema`) in src/mcp/server.ts — #9309. Fields are deliberately
+ * loose (matching the tool) so the engine's validateIdeaSubmission owns the real bounds/format checks.
+ */
+export const IntakeIdeaRequestSchema = z
+  .object({
+    id: z.string().optional(),
+    title: z.string().optional(),
+    body: z.string().optional(),
+    targetRepo: z.string().optional(),
+    constraints: z.array(z.string()).max(50).optional(),
+    acceptanceHints: z.array(z.string()).max(50).optional(),
+    priority: z.string().optional(),
+    decomposition: z
+      .array(z.object({ key: z.string(), title: z.string(), body: z.string(), dependsOn: z.array(z.string()).max(50).optional() }))
+      .max(50)
+      .optional(),
+  })
+  .openapi("IntakeIdeaRequest");
+
+/**
+ * Response body for POST /v1/loop/intake-idea. Field-level parity with `intakeIdeaOutputSchema`
+ * (the `loopover_intake_idea` MCP tool `outputSchema`) in src/mcp/server.ts — #9309. `taskGraph` is left as
+ * opaque `unknown` (the assembled task-graph structure is not re-derived in the spec).
+ */
+export const IntakeIdeaResponseSchema = z
+  .object({
+    ok: z.boolean(),
+    verdict: z.enum(["go", "raise", "avoid"]).optional(),
+    taskGraph: z.unknown().optional(),
+    errors: z.array(z.string()).optional(),
+  })
+  .openapi("IntakeIdeaResponse");
+
+/**
+ * Request body for POST /v1/loop/plan-idea-claims. The `loopover_plan_idea_claims` MCP tool reuses the same
+ * `intakeIdeaShape` input as intake-idea (src/mcp/server.ts) — kept as its own component for a stable per-route
+ * contract — #9309.
+ */
+export const PlanIdeaClaimsRequestSchema = z
+  .object({
+    id: z.string().optional(),
+    title: z.string().optional(),
+    body: z.string().optional(),
+    targetRepo: z.string().optional(),
+    constraints: z.array(z.string()).max(50).optional(),
+    acceptanceHints: z.array(z.string()).max(50).optional(),
+    priority: z.string().optional(),
+    decomposition: z
+      .array(z.object({ key: z.string(), title: z.string(), body: z.string(), dependsOn: z.array(z.string()).max(50).optional() }))
+      .max(50)
+      .optional(),
+  })
+  .openapi("PlanIdeaClaimsRequest");
+
+/**
+ * Response body for POST /v1/loop/plan-idea-claims. Field-level parity with `planIdeaClaimsOutputSchema`
+ * (the `loopover_plan_idea_claims` MCP tool `outputSchema`) in src/mcp/server.ts — #9309. `claimPlan` is left
+ * as opaque `unknown` (the disposition structure is not re-derived in the spec).
+ */
+export const PlanIdeaClaimsResponseSchema = z
+  .object({
+    ok: z.boolean(),
+    verdict: z.enum(["go", "raise", "avoid"]).optional(),
+    claimPlan: z.unknown().optional(),
+    errors: z.array(z.string()).optional(),
+  })
+  .openapi("PlanIdeaClaimsResponse");
+
 export const BurdenForecastSchema = z
   .object({
     repoFullName: z.string(),

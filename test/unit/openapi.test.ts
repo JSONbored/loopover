@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { buildOpenApiSpec } from "../../src/openapi/spec";
+import {
+  evaluateEscalationShape,
+  evaluateEscalationOutputSchema,
+  buildResultsPayloadShape,
+  buildResultsPayloadOutputSchema,
+  buildProgressSnapshotShape,
+  buildProgressSnapshotOutputSchema,
+  intakeIdeaShape,
+  intakeIdeaOutputSchema,
+  planIdeaClaimsOutputSchema,
+} from "../../src/mcp/server";
 
 describe("OpenAPI contract", () => {
   it("exports the modern private-beta backend contract only", () => {
@@ -147,6 +158,72 @@ describe("OpenAPI contract", () => {
         expect(operation.summary?.trim(), `${label} has an empty operation-level summary`).not.toBe("");
       }
     }
+  });
+
+  // #9309: the five /v1/loop/* idea/task-graph composer routes are each backed by an MCP tool whose Zod
+  // input/output shapes already live in src/mcp/server.ts. Assert every route is a documented POST path whose
+  // request/response components stay field-for-field in parity with those tool shapes, so a future field added
+  // to a tool but not the spec fails loudly here. request-apr-transfer is intentionally excluded from this batch.
+  it("documents the /v1/loop/* idea/task-graph route family with tool-parity schemas (#9309)", () => {
+    const spec = buildOpenApiSpec();
+    const schemas = spec.components?.schemas ?? {};
+
+    const propKeys = (name: string) =>
+      Object.keys((schemas[name] as { properties?: Record<string, unknown> }).properties ?? {}).sort();
+
+    const cases = [
+      {
+        path: "/v1/loop/evaluate-escalation",
+        request: "EvaluateEscalationRequest",
+        response: "EvaluateEscalationResponse",
+        inputShape: evaluateEscalationShape,
+        outputShape: evaluateEscalationOutputSchema,
+      },
+      {
+        path: "/v1/loop/results-payload",
+        request: "BuildResultsPayloadRequest",
+        response: "BuildResultsPayloadResponse",
+        inputShape: buildResultsPayloadShape,
+        outputShape: buildResultsPayloadOutputSchema,
+      },
+      {
+        path: "/v1/loop/progress-snapshot",
+        request: "BuildProgressSnapshotRequest",
+        response: "BuildProgressSnapshotResponse",
+        inputShape: buildProgressSnapshotShape,
+        outputShape: buildProgressSnapshotOutputSchema,
+      },
+      {
+        path: "/v1/loop/intake-idea",
+        request: "IntakeIdeaRequest",
+        response: "IntakeIdeaResponse",
+        inputShape: intakeIdeaShape,
+        outputShape: intakeIdeaOutputSchema,
+      },
+      {
+        // plan-idea-claims reuses intakeIdeaShape as its input; its output is the claim-plan disposition.
+        path: "/v1/loop/plan-idea-claims",
+        request: "PlanIdeaClaimsRequest",
+        response: "PlanIdeaClaimsResponse",
+        inputShape: intakeIdeaShape,
+        outputShape: planIdeaClaimsOutputSchema,
+      },
+    ];
+
+    for (const { path, request, response, inputShape, outputShape } of cases) {
+      const op = spec.paths[path]?.post;
+      expect(op, `${path} should be a documented POST path`).toBeDefined();
+      expect(op?.requestBody, `${path} should document a request body`).toBeDefined();
+
+      expect(schemas[request], `${request} component should be registered`).toBeDefined();
+      expect(schemas[response], `${response} component should be registered`).toBeDefined();
+
+      expect(propKeys(request)).toEqual(Object.keys(inputShape).sort());
+      expect(propKeys(response)).toEqual(Object.keys(outputShape).sort());
+    }
+
+    // request-apr-transfer is explicitly out of scope for this batch and must stay undocumented here.
+    expect(spec.paths["/v1/loop/request-apr-transfer"]).toBeUndefined();
   });
 
   it("declares an `in: path` parameter for every {templated} path segment (Cloudflare schema-validation warning 30046)", () => {

@@ -539,6 +539,28 @@ export const NotificationsMarkedSchema = z
   })
   .openapi("NotificationsMarked");
 
+/**
+ * Request body for POST/DELETE /v1/contributors/{login}/watches. Mirrors `watchSubscriptionBodySchema`
+ * in src/api/routes.ts (repoFullName + optional labels) — #9306.
+ */
+export const ContributorWatchRequestSchema = z
+  .object({
+    repoFullName: z.string().min(3).max(200),
+    labels: z.array(z.string().min(1).max(100)).max(50).optional(),
+  })
+  .openapi("ContributorWatchRequest");
+
+/**
+ * Response body for GET/POST/DELETE /v1/contributors/{login}/watches. Field-level parity with
+ * `watchIssuesOutputSchema` (the `loopover_watch_issues` MCP tool `outputSchema`) — #9306.
+ */
+export const ContributorWatchesResponseSchema = z
+  .object({
+    watching: z.array(z.object({ repoFullName: z.string(), labels: z.array(z.string()) })).optional(),
+    changed: z.string().optional(),
+  })
+  .openapi("ContributorWatchesResponse");
+
 export const ContributorOpportunitySchema = z
   .object({
     repoFullName: z.string(),

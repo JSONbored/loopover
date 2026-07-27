@@ -16290,6 +16290,57 @@
             "nullable": true
           }
         }
+      },
+      "ContributorWatchRequest": {
+        "type": "object",
+        "properties": {
+          "repoFullName": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 200
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "maxItems": 50
+          }
+        },
+        "required": [
+          "repoFullName"
+        ]
+      },
+      "ContributorWatchesResponse": {
+        "type": "object",
+        "properties": {
+          "watching": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "repoFullName": {
+                  "type": "string"
+                },
+                "labels": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "repoFullName",
+                "labels"
+              ]
+            }
+          },
+          "changed": {
+            "type": "string"
+          }
+        }
       }
     },
     "parameters": {},
@@ -22161,6 +22212,149 @@
           },
           "403": {
             "description": "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/contributors/{login}/watches": {
+      "get": {
+        "summary": "List contributor issue-watch subscriptions — REST mirror of loopover_watch_issues action=list (#9306)",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "login",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The contributor's own issue-watch subscriptions (self-scoped) — mirrors loopover_watch_issues action=list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributorWatchesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication"
+          },
+          "403": {
+            "description": "Authenticated principal cannot access this contributor's watches"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      },
+      "post": {
+        "summary": "Subscribe to a repo's new issues — REST mirror of loopover_watch_issues action=watch (#9306)",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "login",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContributorWatchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated watch list after subscribing — mirrors loopover_watch_issues action=watch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributorWatchesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid watch request body"
+          },
+          "401": {
+            "description": "Missing or invalid authentication"
+          },
+          "403": {
+            "description": "Authenticated principal cannot watch this repo or contributor"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      },
+      "delete": {
+        "summary": "Unsubscribe from a repo's issue watches — REST mirror of loopover_watch_issues action=unwatch (#9306)",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "login",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContributorWatchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated watch list after unsubscribing — mirrors loopover_watch_issues action=unwatch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributorWatchesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid unwatch request body"
+          },
+          "401": {
+            "description": "Missing or invalid authentication"
+          },
+          "403": {
+            "description": "Authenticated principal cannot unwatch this repo or contributor"
           }
         },
         "security": [

@@ -543,7 +543,7 @@ describe("GitHub check runs", () => {
         brokerCalls += 1;
         return Response.json({
           token: "brokered-token",
-          installationId: 999,
+          installationId: 888, // must match the requested install (#9152) — see the dedicated mismatch test below
           expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
           permissions: { contents: "write" },
         });
@@ -679,6 +679,61 @@ describe("GitHub check runs", () => {
     await expect(createInstallationToken(env, 1003)).rejects.toThrow(); // re-mint fails + cached expired → rethrow
   });
 
+  it("#9152: throws rather than caching/returning a token the broker minted for a DIFFERENT installation", async () => {
+    const env = createTestEnv({ ORB_ENROLLMENT_SECRET: "orbsec_test" });
+    await upsertInstallation(env, {
+      installation: {
+        id: 1004,
+        account: { login: "owner", id: 1, type: "User" },
+        target_type: "User",
+        repository_selection: "selected",
+        permissions: { contents: "read" },
+        events: [],
+      },
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (input.toString().includes("/v1/orb/token")) {
+        return Response.json({
+          token: "wrong-tenant-token",
+          installationId: 2001, // a stale caller-side id (1004) requested a token; the broker minted for 2001 instead
+          expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+          permissions: { contents: "write" },
+        });
+      }
+      return new Response("nf", { status: 404 });
+    });
+    await expect(createInstallationToken(env, 1004)).rejects.toThrow(/installation 2001.*requested 1004/);
+    // The requested install's permissions are untouched — the mismatched reply was never persisted under it.
+    expect((await getInstallation(env, 1004))?.permissions).toEqual({ contents: "read" });
+    // Nothing was ever recorded for the OTHER (actually-minted-for) installation either.
+    expect(await getInstallation(env, 2001)).toBeNull();
+  });
+
+  it("#9152: persists broker-returned permissions even when the reply omits installationId (legacy default 0)", async () => {
+    const env = createTestEnv({ ORB_ENROLLMENT_SECRET: "orbsec_test" });
+    await upsertInstallation(env, {
+      installation: {
+        id: 1005,
+        account: { login: "owner", id: 1, type: "User" },
+        target_type: "User",
+        repository_selection: "selected",
+        permissions: { contents: "read" },
+        events: [],
+      },
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (input.toString().includes("/v1/orb/token")) {
+        // installationId omitted entirely — fetchBrokeredInstallationToken defaults it to 0, which must be
+        // treated as "no claim to check" (compatible with any requested install), not a mismatch.
+        return Response.json({ token: "brokered-token", expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(), permissions: { contents: "write" } });
+      }
+      return new Response("nf", { status: 404 });
+    });
+
+    expect(await createInstallationToken(env, 1005)).toBe("brokered-token");
+    expect((await getInstallation(env, 1005))?.permissions).toEqual({ contents: "write" });
+  });
+
   it("fetches repository collaborator permissions with installation credentials", async () => {
     const privateKey = await generatePrivateKeyPem();
     const calls: string[] = [];
@@ -707,6 +762,21 @@ describe("GitHub check runs", () => {
     expect(
       calls.some((url) => url.includes("/app/installations/123/access_tokens")),
     ).toBe(true);
+  });
+
+  it("#9152: prefers role_name over the coarse permission field, surfacing the granular Maintain/Triage tiers", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      // GitHub's real response: `permission` collapses Maintain into "write" — `role_name` carries the real tier.
+      if (url.includes("/collaborators/a-maintainer/permission")) return Response.json({ permission: "write", role_name: "maintain" });
+      if (url.includes("/collaborators/a-triager/permission")) return Response.json({ permission: "read", role_name: "triage" });
+      return new Response("not found", { status: 404 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    await expect(getRepositoryCollaboratorPermission(env, 123, "JSONbored/gittensory", "a-maintainer")).resolves.toBe("maintain");
+    await expect(getRepositoryCollaboratorPermission(env, 123, "JSONbored/gittensory", "a-triager")).resolves.toBe("triage");
   });
 
   it("handles missing repository collaborator permission responses", async () => {

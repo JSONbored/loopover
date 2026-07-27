@@ -9893,14 +9893,12 @@ async function maybePublishPrPublicSurface(
             eventType: "github_app.type_label_decision",
             targetKey: `${repoFullName}#${pr.number}`,
             outcome: "completed",
-            // `|| "none"` is unreachable: resolvePrTypeLabel's "title" source always resolves a non-empty
-            // label (deriveKindFromTitle only ever returns "bug"/"feature", and a built-in category always
-            // falls back to its default rather than an empty string -- either DEFAULT_TYPE_LABELS directly
-            // for the config-as-code-only DB base (#6443), or normalizeTypeLabelSet's own fallback for a
-            // manifest override), and its
-            // propagation sources only ever use a mapping's `prLabel`, which normalizeMapping drops
-            // entirely when empty -- applyLabels can never be [] here.
-            /* v8 ignore next */
+            // `|| "none"` IS reachable as of #9077: a `propagation_unmatched` decision (propagation enabled,
+            // but no exclusive/additive mapping matched this pass) deliberately resolves `applyLabels` to
+            // `[]` rather than falling back to a title guess -- every OTHER source still always resolves a
+            // non-empty label (deriveKindFromTitle only ever returns "bug"/"feature", and a built-in category
+            // always falls back to its default rather than an empty string; a matched propagation source
+            // only ever uses a mapping's `prLabel`, which normalizeMapping drops entirely when empty).
             detail: `applied labels: ${decisionResult.applyLabels.join(", ") || "none"}`,
             metadata: { labels: decisionResult.applyLabels, source: decisionResult.source },
           }).catch(() => undefined);

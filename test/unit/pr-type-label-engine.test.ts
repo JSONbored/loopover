@@ -49,14 +49,14 @@ describe("resolvePrTypeLabel (#priority-linked-issue-gate)", () => {
     expect(result).toEqual({ applyLabels: ["gittensor:priority"], removeLabels: [DEFAULT_TYPE_LABELS.bug, DEFAULT_TYPE_LABELS.feature], source: "propagation_exclusive" });
   });
 
-  it("never invents priority: falls through to the title-based label when no linked issue carries the configured issue label", () => {
+  it("never invents priority, and (#9077) no longer falls through to a title guess either, when no linked issue carries the configured issue label", () => {
     const result = resolvePrTypeLabel({
       title: "fix: y",
       linkedIssueLabels: ["unrelated-label"],
       propagation: propagation({ mappings: [{ issueLabel: "gittensor:priority", prLabel: "gittensor:priority", removeOtherTypeLabels: true }] }),
     });
-    expect(result.applyLabels).toEqual([DEFAULT_TYPE_LABELS.bug]);
-    expect(result.source).toBe("title");
+    expect(result.applyLabels).toEqual([]);
+    expect(result.source).toBe("propagation_unmatched");
   });
 
   it("never invents priority: falls through to title-based even with matching linked-issue labels when propagation is disabled", () => {
@@ -100,19 +100,49 @@ describe("resolvePrTypeLabel (#priority-linked-issue-gate)", () => {
     expect(result.source).toBe("propagation_additive");
   });
 
-  it("does not crash on an empty mappings array and falls through to title-based", () => {
+  it("does not crash on an empty mappings array; withholds a label instead of falling through to title (#9077)", () => {
+    // Propagation is enabled (the repo's own opt-out of title-derived reward classification) but there is
+    // nothing to match against at all -- falling through to the title here would silently reintroduce the
+    // exact author-controlled classification propagation exists to remove.
     const result = resolvePrTypeLabel({ title: "feat: add provider fallback", linkedIssueLabels: ["anything"], propagation: propagation({ mappings: [] }) });
-    expect(result.applyLabels).toEqual([DEFAULT_TYPE_LABELS.feature]);
-    expect(result.source).toBe("title");
+    expect(result).toEqual({ applyLabels: [], removeLabels: [DEFAULT_TYPE_LABELS.bug, DEFAULT_TYPE_LABELS.feature, DEFAULT_TYPE_LABELS.priority], source: "propagation_unmatched" });
   });
 
-  it("does not crash when linkedIssueLabels is omitted entirely (propagation enabled with mappings configured)", () => {
+  it("does not crash when linkedIssueLabels is omitted entirely (propagation enabled with mappings configured); withholds a label (#9077)", () => {
     const result = resolvePrTypeLabel({
       title: "feat: add provider fallback",
       propagation: propagation({ mappings: [{ issueLabel: "gittensor:priority", prLabel: "gittensor:priority", removeOtherTypeLabels: true }] }),
     });
-    expect(result.applyLabels).toEqual([DEFAULT_TYPE_LABELS.feature]);
-    expect(result.source).toBe("title");
+    expect(result).toEqual({ applyLabels: [], removeLabels: [DEFAULT_TYPE_LABELS.bug, DEFAULT_TYPE_LABELS.feature, DEFAULT_TYPE_LABELS.priority], source: "propagation_unmatched" });
+  });
+
+  describe("propagation enabled but unmatched withholds the label entirely (#9077)", () => {
+    it("a linked issue carrying none of the configured issueLabels applies nothing and clears every configured category", () => {
+      const result = resolvePrTypeLabel({
+        title: "feat: add provider fallback", // title alone would say "feature" -- must NOT be used as a fallback guess
+        linkedIssueLabels: ["unrelated-label"],
+        propagation: propagation({
+          mappings: [
+            { issueLabel: "gittensor:bug", prLabel: "gittensor:bug", removeOtherTypeLabels: true },
+            { issueLabel: "gittensor:feature", prLabel: "gittensor:feature", removeOtherTypeLabels: true },
+            { issueLabel: "gittensor:priority", prLabel: "gittensor:priority", removeOtherTypeLabels: false },
+          ],
+        }),
+      });
+      expect(result).toEqual({ applyLabels: [], removeLabels: [DEFAULT_TYPE_LABELS.bug, DEFAULT_TYPE_LABELS.feature, DEFAULT_TYPE_LABELS.priority], source: "propagation_unmatched" });
+    });
+
+    it("clears a stale previously-applied label rather than leaving it looking like a confirmed classification", () => {
+      // Only bug/feature are configured (no priority category at all) -- removeLabels must still be exactly
+      // that configured subset, never the full built-in triad.
+      const result = resolvePrTypeLabel({
+        title: "fix: y",
+        linkedIssueLabels: [],
+        labels: { bug: "gittensor:bug", feature: "gittensor:feature" },
+        propagation: propagation({ mappings: [{ issueLabel: "gittensor:bug", prLabel: "gittensor:bug", removeOtherTypeLabels: true }] }),
+      });
+      expect(result).toEqual({ applyLabels: [], removeLabels: ["gittensor:bug", "gittensor:feature"], source: "propagation_unmatched" });
+    });
   });
 
   it("resolves the LAST matching exclusive mapping (highest declared precedence) when multiple linked-issue labels are present (#5385)", () => {

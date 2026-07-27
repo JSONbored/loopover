@@ -108,7 +108,7 @@ export function normalizeTypeLabelSet(input: unknown, warnings: string[]): PrTyp
 export type PrTypeLabelDecision = {
   applyLabels: string[];
   removeLabels: string[];
-  source: "propagation_exclusive" | "propagation_additive" | "title";
+  source: "propagation_exclusive" | "propagation_additive" | "title" | "propagation_unmatched";
 };
 
 /**
@@ -125,11 +125,18 @@ export type PrTypeLabelDecision = {
  *     - `removeOtherTypeLabels: false` (additive) — the mapped label is applied ALONGSIDE the
  *       normal title-based bug/feature label, which is left untouched (e.g. a generic
  *       `customer:vip` → `triage:vip` triage marker that has nothing to do with bug/feature/priority).
- *  2. Otherwise, feature (feat/feature) / bug (everything else) by the conventional-commit title prefix
- *     -- ONLY when `labels` actually has a name registered for that built-in category; a configured set
- *     that omits `bug`/`feature` entirely (a self-hoster who only wants custom, propagation-driven
- *     categories, or an explicit `typeLabels: {}` resolved to zero categories) applies nothing for that
- *     branch rather than inventing a label name (#label-modularity).
+ *  2. When propagation is enabled but produced NEITHER an exclusive nor an additive match for this pass
+ *     (the linked issue hasn't been triaged with a mapped label yet, or carries none), no label is applied
+ *     at all (`source: "propagation_unmatched"`) -- #9077: falling back to a title guess here would silently
+ *     reintroduce the exact author-controlled-free-text classification the repo opted OUT of by turning
+ *     propagation on in the first place. This is a REPO-level opt-in consequence only: it never fires for a
+ *     repo that hasn't configured `linkedIssueLabelPropagation.enabled` (see case 3 below), so it changes
+ *     nothing for the shipped default.
+ *  3. Otherwise (propagation disabled/unconfigured), feature (feat/feature) / bug (everything else) by the
+ *     conventional-commit title prefix -- ONLY when `labels` actually has a name registered for that
+ *     built-in category; a configured set that omits `bug`/`feature` entirely (a self-hoster who only
+ *     wants custom, propagation-driven categories, or an explicit `typeLabels: {}` resolved to zero
+ *     categories) applies nothing for that branch rather than inventing a label name (#label-modularity).
  * `removeLabels` is always "every member of the configured type-label set that isn't one of
  * `applyLabels`" — generic and total over however many categories are configured, and safe even if a
  * misconfigured additive mapping's `prLabel` happens to collide with a type-label-set name (it is
@@ -177,6 +184,16 @@ export function resolvePrTypeLabel(input: {
       const applyLabels = [exclusiveMatch ? exclusiveMatch.prLabel : titleLabel, ...additiveMatches.map((mapping) => mapping.prLabel)];
       return decide(applyLabels, exclusiveMatch ? "propagation_exclusive" : "propagation_additive");
     }
+    // #9077: this repo has opted OUT of title-derived classification for its reward-bearing categories by
+    // turning propagation on -- neither an exclusive nor an additive mapping matched this pass (the linked
+    // issue has no mapped label yet, or none at all), so there is no confirmed evidence to classify from.
+    // Falling through to `deriveKindFromTitle` here would defeat the entire point of enabling propagation:
+    // a contributor's own title wording would silently become the reward-multiplier source again, exactly
+    // the author-controlled-free-text problem propagation exists to remove. No type label is applied instead
+    // -- `removeLabels` below still clears every configured category, since "unclassified" must never leave
+    // a STALE label (e.g. from before the linked issue's labels changed, or before propagation was enabled)
+    // sitting on the PR looking like a confirmed classification.
+    return decide([], "propagation_unmatched");
   }
   return decide([titleLabel], "title");
 }

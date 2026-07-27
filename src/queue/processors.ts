@@ -2462,6 +2462,14 @@ async function maybeRunAgentMaintenance(
     deliveryId: string;
     gate: ReturnType<typeof evaluateGateCheck> | undefined;
     liveFacts: LiveGithubFacts;
+    // A {@link claimPrActuationLock} claim the CALLER already acquired (#9013) before its own publish call, so
+    // ONE lock spans the publish-then-maintain pair instead of leaving the publish half unprotected. Mirrors
+    // preAcquiredAiReviewLock's exact contract (ai-review-orchestration.ts): when supplied and `.acquired`, this
+    // function trusts it, skips its OWN claim below entirely, and does NOT release it in its `finally` (release
+    // stays the caller's job, so the lock keeps covering the caller's own publish call too). Absent (any direct/
+    // test caller that doesn't thread it) ⇒ this function claims + releases its own lock exactly as before —
+    // byte-identical to today.
+    preAcquiredActuationLock?: TransientLockClaim | undefined;
   },
 ): Promise<void> {
   const {
@@ -2496,7 +2504,14 @@ async function maybeRunAgentMaintenance(
   // plan-and-execute critical section (extracted below so the try/finally doesn't force-reindent that whole
   // block); a pass that loses the race defers cleanly — the next webhook/sweep tick is the backstop. Prefers
   // the SubmissionLock Durable Object when bound; otherwise the transient-cache mutex in transient-locks.ts.
-  const actuationLock = await claimPrActuationLock(env, repoFullName, pr.number);
+  // #9013: prefer the caller's OWN claim (args.preAcquiredActuationLock) when it already did one — the caller
+  // now claims this SAME lock before its own public-surface publish call and threads it through here so ONE
+  // claim spans publish-then-maintain, rather than leaving the publish half unlocked. Claiming again here would
+  // be this function contending against its own caller's claim (always losing) rather than against a genuinely
+  // different pass. Absent (any direct/test caller) ⇒ claim it here exactly as before.
+  const selfClaimedActuationLock = args.preAcquiredActuationLock === undefined;
+  const actuationLock =
+    args.preAcquiredActuationLock ?? (await claimPrActuationLock(env, repoFullName, pr.number));
   if (!actuationLock.acquired) {
     // #9025: this used to `return` silently -- the job completed "successfully", nothing re-queued the
     // disposition, and no audit row recorded that a planned action was abandoned. That silently amplified
@@ -2534,7 +2549,10 @@ async function maybeRunAgentMaintenance(
       liveFacts: args.liveFacts,
     });
   } finally {
-    await releasePrActuationLock(env, repoFullName, pr.number, actuationLock.ownerToken);
+    // #9013: only release a lock THIS call actually claimed -- a caller-supplied preAcquiredActuationLock must
+    // keep covering the caller's own post-return work, exactly like preAcquiredAiReviewLock's own finally.
+    if (selfClaimedActuationLock)
+      await releasePrActuationLock(env, repoFullName, pr.number, actuationLock.ownerToken);
   }
 }
 
@@ -3937,86 +3955,117 @@ export async function reReviewStoredPullRequest(
       () => undefined,
     );
   }
-  const gate = await withReviewPipelineSpan(
-    "selfhost.review.public_surface",
-    {
-      installationId,
-      repoFullName,
-      pullNumber: pr.number,
-      operation: "public_surface",
-    },
-    () =>
-      maybePublishPrPublicSurface(
-        env,
+  // #9013: ONE per-PR actuation-lock claim spans the publish pass AND the maintenance pass right after it.
+  // maybePublishPrPublicSurface used to run with no lock at all -- only the LATER maybeRunAgentMaintenance
+  // claimed one -- so two concurrent passes for the SAME PR (this sweep re-review racing a webhook delivery,
+  // or vice versa) could BOTH publish: duplicate gate check-runs (createOrUpdateNamedCheckRun has no dedup for
+  // check-runs, unlike panel comments' deleteDuplicateMarkerComments self-heal) and a lock-losing pass's
+  // placeholder verdict overwriting a real one, whichever PATCHes last. Claiming here, before the publish call,
+  // and threading the SAME claim into both maybePublishPrPublicSurface (preAcquiredActuationLock, which also
+  // covers its internal type-label section) and maybeRunAgentMaintenance (preAcquiredActuationLock) makes "does
+  // another pass already own this PR" one question with one answer for the whole publish-then-maintain unit,
+  // not two separately-timed ones. A losing pass defers the WHOLE unit (throws, uncaught below -- reaches the
+  // queue's retry path exactly like maybeRunAgentMaintenance's own pre-existing contention throw) instead of
+  // racing ahead on a stale/concurrent read.
+  const actuationLock = await claimPrActuationLock(env, repoFullName, pr.number);
+  if (!actuationLock.acquired) {
+    await recordAuditEvent(env, {
+      eventType: "github_app.pr_public_surface_lock_contended",
+      actor: null,
+      targetKey: `${repoFullName}#${pr.number}`,
+      outcome: "queued",
+      detail: "Another pass holds this PR's actuation lock; the publish-and-maintain pass retries instead of racing it.",
+      metadata: { deliveryId, repoFullName },
+    }).catch(() => undefined);
+    throw new PrActuationLockContendedError(repoFullName, pr.number, "public-surface-publish");
+  }
+  let gate: ReturnType<typeof evaluateGateCheck> | undefined;
+  try {
+    gate = await withReviewPipelineSpan(
+      "selfhost.review.public_surface",
+      {
         installationId,
         repoFullName,
-        pr,
-        repo,
-        settings,
-        advisory,
-        otherOpenPullRequests,
-        {
+        pullNumber: pr.number,
+        operation: "public_surface",
+      },
+      () =>
+        maybePublishPrPublicSurface(
+          env,
+          installationId,
+          repoFullName,
+          pr,
+          repo,
+          settings,
+          advisory,
+          otherOpenPullRequests,
+          {
+            deliveryId,
+            baseSha: live?.base?.sha ?? null,
+            liveFacts,
+            ...(previewPollAttempt !== undefined ? { previewPollAttempt } : {}),
+            ...(options.skipAiReview || autoreviewPaused ? { skipAiReview: true } : {}),
+            ...(options.force || pendingRetriggerForceReview ? { forceAiReview: true } : {}),
+            hasPendingRefreshSignal: otherRefreshReasons || reviewsCacheStale,
+            preAcquiredActuationLock: actuationLock,
+          },
+        ),
+    ).catch((error) => {
+      /* v8 ignore next -- retryable/rate-limit propagation is exercised by queue retry tests; this catch only preserves that contract. */
+      if (isGitHubRateLimitedError(error) || isRetryableJobError(error)) throw error;
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "pr_public_surface_failed",
           deliveryId,
-          baseSha: live?.base?.sha ?? null,
-          liveFacts,
-          ...(previewPollAttempt !== undefined ? { previewPollAttempt } : {}),
-          ...(options.skipAiReview || autoreviewPaused ? { skipAiReview: true } : {}),
-          ...(options.force || pendingRetriggerForceReview ? { forceAiReview: true } : {}),
-          hasPendingRefreshSignal: otherRefreshReasons || reviewsCacheStale,
-        },
-      ),
-  ).catch((error) => {
-    /* v8 ignore next -- retryable/rate-limit propagation is exercised by queue retry tests; this catch only preserves that contract. */
-    if (isGitHubRateLimitedError(error) || isRetryableJobError(error)) throw error;
-    console.error(
-      JSON.stringify({
-        level: "error",
-        event: "pr_public_surface_failed",
-        deliveryId,
-        repository: repoFullName,
-        pullNumber: prNumber,
-        error: errorMessage(error),
-      }),
-    );
-    return undefined;
-  });
-  await withReviewPipelineSpan(
-    "selfhost.review.maintenance",
-    {
-      installationId,
-      repoFullName,
-      pullNumber: pr.number,
-      operation: "maintenance",
-      decisionOutcome: gate?.conclusion,
-    },
-    () =>
-      maybeRunAgentMaintenance(env, {
+          repository: repoFullName,
+          pullNumber: prNumber,
+          error: errorMessage(error),
+        }),
+      );
+      return undefined;
+    });
+    await withReviewPipelineSpan(
+      "selfhost.review.maintenance",
+      {
         installationId,
         repoFullName,
-        repo,
-        pr,
-        settings,
-        otherOpenPullRequests,
-        deliveryId,
-        gate,
-        liveFacts,
-      }),
-  ).catch((error) => {
-    // #9025: rate-limit / retryable errors (chiefly PrActuationLockContendedError from the maintenance
-    // lock claim) MUST reach the queue so the disposition retries instead of being logged-and-dropped --
-    // the same propagation contract the review pipeline's own catch sites already follow.
-    if (isGitHubRateLimitedError(error) || isRetryableJobError(error)) throw error;
-    console.error(
-      JSON.stringify({
-        level: "error",
-        event: "agent_maintenance_failed",
-        deliveryId,
-        repository: repoFullName,
-        pullNumber: prNumber,
-        error: errorMessage(error),
-      }),
-    );
-  });
+        pullNumber: pr.number,
+        operation: "maintenance",
+        decisionOutcome: gate?.conclusion,
+      },
+      () =>
+        maybeRunAgentMaintenance(env, {
+          installationId,
+          repoFullName,
+          repo,
+          pr,
+          settings,
+          otherOpenPullRequests,
+          deliveryId,
+          gate,
+          liveFacts,
+          preAcquiredActuationLock: actuationLock,
+        }),
+    ).catch((error) => {
+      // #9025: rate-limit / retryable errors (chiefly PrActuationLockContendedError from the maintenance
+      // lock claim) MUST reach the queue so the disposition retries instead of being logged-and-dropped --
+      // the same propagation contract the review pipeline's own catch sites already follow.
+      if (isGitHubRateLimitedError(error) || isRetryableJobError(error)) throw error;
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "agent_maintenance_failed",
+          deliveryId,
+          repository: repoFullName,
+          pullNumber: prNumber,
+          error: errorMessage(error),
+        }),
+      );
+    });
+  } finally {
+    await releasePrActuationLock(env, repoFullName, pr.number, actuationLock.ownerToken);
+  }
   return true;
 }
 
@@ -6906,89 +6955,117 @@ async function handlePullRequestWebhookEvent(
           pr.number,
           pr.headSha,
         );
-        gate = await withReviewPipelineSpan(
-          "selfhost.review.public_surface",
-          {
-            installationId,
-            repoFullName,
-            pullNumber: pr.number,
-            operation: "public_surface",
-          },
-          () =>
-            maybePublishPrPublicSurface(
-              env,
+        // #9013: ONE per-PR actuation-lock claim spans the publish pass AND the maintenance pass right after
+        // it -- see reReviewStoredPullRequest's identical claim (the sweep/CI-completion sibling of this
+        // webhook path) for the full race this closes: maybePublishPrPublicSurface used to run with no lock
+        // at all, so a webhook delivery racing a sweep re-review for the SAME PR could BOTH publish (duplicate
+        // gate check-runs, a lock-losing pass's placeholder overwriting a real verdict). Threaded into both
+        // maybePublishPrPublicSurface (preAcquiredActuationLock, covering its internal type-label section) and
+        // maybeRunAgentMaintenance (preAcquiredActuationLock) so "does another pass already own this PR" is
+        // one question with one answer for the whole unit. A losing pass defers the WHOLE unit (throws,
+        // uncaught below -- reaches the queue's retry path exactly like maybeRunAgentMaintenance's own
+        // pre-existing contention throw).
+        const actuationLock = await claimPrActuationLock(env, repoFullName, pr.number);
+        if (!actuationLock.acquired) {
+          await recordAuditEvent(env, {
+            eventType: "github_app.pr_public_surface_lock_contended",
+            actor: null,
+            targetKey: `${repoFullName}#${pr.number}`,
+            outcome: "queued",
+            detail: "Another pass holds this PR's actuation lock; the publish-and-maintain pass retries instead of racing it.",
+            metadata: { deliveryId, repoFullName },
+          }).catch(() => undefined);
+          throw new PrActuationLockContendedError(repoFullName, pr.number, "public-surface-publish");
+        }
+        try {
+          gate = await withReviewPipelineSpan(
+            "selfhost.review.public_surface",
+            {
               installationId,
               repoFullName,
-              pr,
-              repo,
-              settings,
-              advisory,
-              otherOpenPullRequests,
-              {
+              pullNumber: pr.number,
+              operation: "public_surface",
+            },
+            () =>
+              maybePublishPrPublicSurface(
+                env,
+                installationId,
+                repoFullName,
+                pr,
+                repo,
+                settings,
+                advisory,
+                otherOpenPullRequests,
+                {
+                  deliveryId,
+                  authorType: payloadPullRequest.user?.type,
+                  action: payload.action,
+                  eventName,
+                  baseSha: payloadPullRequest.base?.sha ?? null,
+                  liveFacts,
+                  ...(pendingRetriggerForceReview ? { forceAiReview: true } : {}),
+                  preAcquiredActuationLock: actuationLock,
+                },
+              ),
+          ).catch((error) => {
+            if (isGitHubRateLimitedError(error) || isRetryableJobError(error)) throw error;
+            console.error(
+              JSON.stringify({
+                level: "error",
+                event: "pr_public_surface_failed",
                 deliveryId,
-                authorType: payloadPullRequest.user?.type,
-                action: payload.action,
-                eventName,
-                baseSha: payloadPullRequest.base?.sha ?? null,
-                liveFacts,
-                ...(pendingRetriggerForceReview ? { forceAiReview: true } : {}),
-              },
-            ),
-        ).catch((error) => {
-          if (isGitHubRateLimitedError(error) || isRetryableJobError(error)) throw error;
-          console.error(
-            JSON.stringify({
-              level: "error",
-              event: "pr_public_surface_failed",
-              deliveryId,
-              repository: payload.repository?.full_name,
-              pullNumber: pr.number,
-              error: errorMessage(error),
-            }),
-          );
-          return undefined;
-        });
-        // #778 maintainer auto-maintain: act on the PR's state (label/review/merge/close) per the repo's
-        // autonomy config, after the gate has run. The function self-guards on agent config; best-effort here
-        // so it never blocks the gate or public surface.
-        await withReviewPipelineSpan(
-          "selfhost.review.maintenance",
-          {
-            installationId,
-            repoFullName,
-            pullNumber: pr.number,
-            operation: "maintenance",
-            decisionOutcome: gate?.conclusion,
-          },
-          () =>
-            maybeRunAgentMaintenance(env, {
+                repository: payload.repository?.full_name,
+                pullNumber: pr.number,
+                error: errorMessage(error),
+              }),
+            );
+            return undefined;
+          });
+          // #778 maintainer auto-maintain: act on the PR's state (label/review/merge/close) per the repo's
+          // autonomy config, after the gate has run. The function self-guards on agent config; best-effort here
+          // so it never blocks the gate or public surface.
+          await withReviewPipelineSpan(
+            "selfhost.review.maintenance",
+            {
               installationId,
               repoFullName,
-              repo,
-              pr,
-              settings,
-              otherOpenPullRequests,
-              deliveryId,
-              gate,
-              liveFacts,
-            }),
-        ).catch((error) => {
-          // #9025: same propagation contract as the sibling maintenance catch above -- a retryable error
-          // (chiefly the maintenance lock's own PrActuationLockContendedError) must reach the queue's retry
-          // path instead of being logged-and-dropped, or the disposition is silently lost.
-          if (isGitHubRateLimitedError(error) || isRetryableJobError(error)) throw error;
-          /* v8 ignore next -- best-effort: auto-maintain failures are logged, never surfaced to the gate. */
-          console.error(
-            JSON.stringify({
-              level: "error",
-              event: "agent_maintenance_failed",
-              deliveryId,
-              repository: repoFullName,
               pullNumber: pr.number,
-              error: errorMessage(error),
-            }),
-          );
-        });
+              operation: "maintenance",
+              decisionOutcome: gate?.conclusion,
+            },
+            () =>
+              maybeRunAgentMaintenance(env, {
+                installationId,
+                repoFullName,
+                repo,
+                pr,
+                settings,
+                otherOpenPullRequests,
+                deliveryId,
+                gate,
+                liveFacts,
+                preAcquiredActuationLock: actuationLock,
+              }),
+          ).catch((error) => {
+            // #9025: same propagation contract as the sibling maintenance catch above -- a retryable error
+            // (chiefly the maintenance lock's own PrActuationLockContendedError) must reach the queue's retry
+            // path instead of being logged-and-dropped, or the disposition is silently lost.
+            if (isGitHubRateLimitedError(error) || isRetryableJobError(error)) throw error;
+            /* v8 ignore next -- best-effort: auto-maintain failures are logged, never surfaced to the gate. */
+            console.error(
+              JSON.stringify({
+                level: "error",
+                event: "agent_maintenance_failed",
+                deliveryId,
+                repository: repoFullName,
+                pullNumber: pr.number,
+                error: errorMessage(error),
+              }),
+            );
+          });
+        } finally {
+          await releasePrActuationLock(env, repoFullName, pr.number, actuationLock.ownerToken);
+        }
       }
       // Reputation (convergence, flag-gated by LOOPOVER_REVIEW_REPUTATION). After the gate decides, record this
       // submitter's terminal outcome (merged / closed / manual) so the INTERNAL reputation stays current. The
@@ -9095,6 +9172,14 @@ async function maybePublishPrPublicSurface(
     // besides the head SHA could make the published output differ from what is already live.
     hasPendingRefreshSignal?: boolean | undefined;
     liveFacts: LiveGithubFacts;
+    // A {@link claimPrActuationLock} claim the CALLER already acquired (#9013) before this call, spanning this
+    // publish pass AND the maybeRunAgentMaintenance call that follows it — see that function's own
+    // preAcquiredActuationLock doc comment for the full contract. Threaded down to the type-label block below
+    // (the only section of this function that itself claims the SAME per-PR actuation lock): when supplied and
+    // `.acquired`, that block trusts it instead of re-claiming, which would contend against the caller's own
+    // claim and always lose. Absent (any direct/test caller that doesn't thread it) ⇒ the type-label block
+    // claims + releases its own lock exactly as before.
+    preAcquiredActuationLock?: TransientLockClaim | undefined;
   },
 ): Promise<ReturnType<typeof evaluateGateCheck> | undefined> {
   const author = pr.authorLogin ?? null;
@@ -9345,9 +9430,21 @@ async function maybePublishPrPublicSurface(
     // a correct propagation_exclusive decision, followed within 30-90s by a second concurrent pass computing
     // a DIFFERENT (wrong) verdict that then overwrote the first. A losing pass must defer to the next tick,
     // never compute-and-act on a stale/racing verdict for a PR another pass is actively deciding for.
-    const typeLabelLock = await claimPrActuationLock(env, repoFullName, pr.number);
+    // #9013: prefer the caller's OWN claim (webhook.preAcquiredActuationLock) exactly like
+    // maybeRunAgentMaintenance's identical preAcquiredActuationLock contract above -- re-claiming here when the
+    // caller already holds this SAME lock around the whole publish pass would only contend against that claim
+    // and always lose. Absent (any direct/test caller) ⇒ claim it here exactly as before.
+    const selfClaimedTypeLabelLock = webhook.preAcquiredActuationLock === undefined;
+    const typeLabelLock =
+      webhook.preAcquiredActuationLock ?? (await claimPrActuationLock(env, repoFullName, pr.number));
     if (!typeLabelLock.acquired) {
       await logTypeLabelSkip(env, repoFullName, pr.number, "lock_contended");
+      // #9013: promoted from "skip the label and keep publishing anyway" to deferring the WHOLE pass -- the
+      // prior behavior let a lock-losing pass publish a full surface (comment, check run, disposition) built
+      // from a stale/racing read while another pass was actively mutating this same PR, exactly the class of
+      // duplicate-publish bug this lock exists to prevent. Throwing here (retryable, same shape as the sibling
+      // agent-maintenance contention branch above) defers the entire publish to the queue's fast retry instead.
+      throw new PrActuationLockContendedError(repoFullName, pr.number, "type-label");
     } else {
       try {
         // Same reasoning as `typeLabelsEnabled` above: `settings.typeLabels` is optional only for
@@ -9461,7 +9558,10 @@ async function maybePublishPrPublicSurface(
           metadata: { labels: [], source: null },
         }).catch(() => undefined);
       } finally {
-        await releasePrActuationLock(env, repoFullName, pr.number, typeLabelLock.ownerToken);
+        // #9013: only release a lock THIS block actually claimed -- a caller-supplied preAcquiredActuationLock
+        // must keep covering the rest of the caller's publish pass (and the maintenance call after it).
+        if (selfClaimedTypeLabelLock)
+          await releasePrActuationLock(env, repoFullName, pr.number, typeLabelLock.ownerToken);
       }
     }
   } else {

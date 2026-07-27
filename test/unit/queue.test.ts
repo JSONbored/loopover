@@ -8512,16 +8512,28 @@ describe("queue processors", () => {
 
       // Two DIFFERENT delivery ids (matching the real incident's two distinct webhook deliveries) for the SAME
       // repo/PR/head, fired concurrently — neither awaits the other before both are in flight.
-      await Promise.all([
+      // #9013: the per-PR actuation lock now ALSO wraps the whole public-surface publish call (not just the
+      // narrower ai-review-lock deep inside it), so the loser of this race defers the WHOLE pass and its
+      // processJob call REJECTS with PrActuationLockContendedError instead of completing with a placeholder --
+      // Promise.allSettled (not Promise.all) so both outcomes are observed rather than the first rejection
+      // aborting the assertion before the winner's own call has necessarily settled.
+      const [outcomeA, outcomeB] = await Promise.allSettled([
         processJob(env, { type: "agent-regate-pr", deliveryId: "delivery-a", repoFullName: "JSONbored/gittensory", prNumber: 91, installationId: 123 }),
         processJob(env, { type: "agent-regate-pr", deliveryId: "delivery-b", repoFullName: "JSONbored/gittensory", prNumber: 91, installationId: 123 }),
       ]);
+      const settled = [outcomeA, outcomeB];
+      const fulfilled = settled.filter((outcome) => outcome.status === "fulfilled");
+      const rejected = settled.filter((outcome) => outcome.status === "rejected");
+      expect(fulfilled).toHaveLength(1); // the lock winner completes a real review normally
+      expect(rejected).toHaveLength(1); // the lock loser defers the whole pass instead of racing it
+      expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({ name: "PrActuationLockContendedError" });
 
       // The DISCRIMINATING assertion (fails on unfixed code, verified by temporarily reverting the fix): exactly
       // ONE pass logged a genuine cache miss (read the cache, found nothing, ran fresh) — the loser never reached
-      // the cache-read at all, because the lock now wraps that read too, not just the LLM call. Without the fix
-      // this is 2: both passes independently reach the cache-read and both log a miss before either one's
-      // runAiReviewForAdvisory-internal lock (the historical, narrower placement) ever engages.
+      // the cache-read at all: pre-#9013 that was because the (narrower) ai-review-lock wrapped the cache-read
+      // deep inside runAiReviewForAdvisory; post-#9013 the loser never even reaches maybePublishPrPublicSurface,
+      // since the coarser per-PR actuation lock now defers the whole pass before that call. Without either fix
+      // this is 2: both passes independently reach the cache-read and both log a miss.
       const missAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
         .bind("github_app.ai_review_cache_miss", "JSONbored/gittensory#91")
         .first<{ n: number }>();

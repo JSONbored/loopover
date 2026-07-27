@@ -2117,6 +2117,96 @@ describe("queue processors", () => {
     expect(usageEvents).toEqual(expect.arrayContaining([expect.objectContaining({ surface: "github_app", eventName: "pr_panel_retriggered", outcome: "completed" })]));
   });
 
+  it("#9013: a manual panel rerun's own type-label block defers the WHOLE publish pass when it self-claims a contended actuation lock", async () => {
+    // Unlike the two webhook/sweep call sites (reReviewStoredPullRequest, handlePullRequestWebhookEvent), the
+    // manual panel-retrigger call site does NOT thread a preAcquiredActuationLock into
+    // maybePublishPrPublicSurface -- so its type-label block still claims the lock itself, exactly as before
+    // #9013. This exercises that self-claimed path's OWN promoted contention behavior: throw and defer the
+    // whole pass, instead of the pre-#9013 "skip the label and keep publishing anyway".
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      autoLabelEnabled: false,
+      commandAuthorization: { default: ["maintainer", "collaborator", "confirmed_miner"], commands: { "review-now": ["maintainer"] } },
+    });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { commentMode: "all_prs", publicAudienceMode: "oss_maintainer", publicSignalLevel: "standard", publicSurface: "comment_only", checkRunMode: "off", includeMaintainerAuthors: true } });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 91,
+      title: "Refresh panel under contention",
+      state: "open",
+      user: { login: "contributor" },
+      author_association: "CONTRIBUTOR",
+      head: { sha: "panel91" },
+      labels: [],
+      body: "Validation: npm test",
+    });
+    const checkedPanel = [
+      "<!-- gittensory-pr-panel:v1 -->",
+      "",
+      "- [x] <!-- gittensory-rerun-review:v1 --> Re-run LoopOver review",
+    ].join("\n");
+    let labelPosts = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") {
+        return Response.json([
+          { uid: 7, githubUsername: "contributor", githubId: "123", totalPrs: 4, totalMergedPrs: 3, totalOpenPrs: 1, totalClosedPrs: 0, totalOpenIssues: 0, totalClosedIssues: 0, totalSolvedIssues: 0, totalValidSolvedIssues: 0, isEligible: true, credibility: 1, eligibleRepoCount: 1 },
+        ]);
+      }
+      if (url === "https://api.gittensor.io/miners/123") {
+        return Response.json({ repositories: [{ repositoryFullName: "JSONbored/gittensory", totalPrs: "4", totalMergedPrs: "3", totalOpenPrs: "1", totalClosedPrs: "0", totalOpenIssues: "0", totalClosedIssues: "0", isEligible: true, credibility: "1.000000" }] });
+      }
+      if (url === "https://api.gittensor.io/miners/123/prs") return Response.json([]);
+      if (url === "https://mirror.gittensor.io/api/v1/miners/123/issues") return Response.json({ issues: [] });
+      if (url.endsWith("/users/contributor")) return Response.json({ login: "contributor", public_repos: 2, followers: 1 });
+      if (url.includes("/users/contributor/repos")) return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/check-runs")) return Response.json({ id: 888 });
+      if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "maintain" });
+      if (url.includes("/issues/91/comments") && method === "GET") {
+        return Response.json([{ id: 777, body: checkedPanel, user: { login: "loopover-orb[bot]", type: "Bot" } }]);
+      }
+      if (url.includes("/issues/comments/777") && method === "PATCH") return Response.json({ id: 777 });
+      if (url.includes("/issues/91/labels") && method === "POST") {
+        labelPosts += 1;
+        return Response.json([]);
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    // Simulates a concurrent pass (a sibling webhook delivery, or the sweep) already holding this exact PR's
+    // actuation lock when the manual retrigger reaches the type-label block's own self-claim.
+    const held = await claimPrActuationLock(env, "JSONbored/gittensory", 91);
+    expect(held.acquired).toBe(true);
+    try {
+      await expect(
+        processJob(env, {
+          type: "github-webhook",
+          deliveryId: "panel-retrigger-lock-contended",
+          eventName: "issue_comment",
+          payload: {
+            action: "edited",
+            installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+            repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+            issue: { number: 91, title: "Refresh panel under contention", state: "open", user: { login: "contributor" }, pull_request: {} },
+            comment: { id: 777, body: checkedPanel, user: { login: "loopover-orb[bot]", type: "Bot" } },
+            sender: { login: "maintainer", type: "User" },
+          },
+        }),
+      ).rejects.toMatchObject({ name: "PrActuationLockContendedError" });
+    } finally {
+      await releasePrActuationLock(env, "JSONbored/gittensory", 91, held.ownerToken);
+    }
+
+    expect(labelPosts).toBe(0); // the label decision never ran -- the whole pass deferred instead
+    const typeLabelEvents = await env.DB.prepare(
+      "select outcome, detail from audit_events where event_type = 'github_app.type_label_decision' and target_key = 'JSONbored/gittensory#91'",
+    ).all<{ outcome: string; detail: string }>();
+    expect(typeLabelEvents.results).toEqual([{ outcome: "denied", detail: "lock_contended" }]);
+  });
+
   it("defers a manual panel rerun while CI is still running", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);

@@ -3335,7 +3335,7 @@ describe("queue processors", () => {
     expect(store.size).toBe(0);
   });
 
-  it("INVARIANT (#2129 per-PR lock): a maintenance pass defers when another pass already holds the PR's lock", async () => {
+  it("INVARIANT (#2129/#9013 per-PR lock): a publish-and-maintain pass defers when another pass already holds the PR's lock", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
     await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
@@ -3382,6 +3382,10 @@ describe("queue processors", () => {
     // disposition a second time with no trace). Throwing the retryable error is the same contract
     // review-evasion.ts's withPrActuationLock already used for this exact condition; the queue honors its
     // retryAfterMs via consumingRetryDelayMs, so the disposition lands once the contending pass releases.
+    // #9013: ONE lock now spans publish-then-maintain, claimed BEFORE the publish call -- so this contention
+    // surfaces at the public-surface publish stage (reReviewStoredPullRequest's own claim), never even
+    // reaching maybeRunAgentMaintenance's own (now pre-satisfied) claim. Strictly earlier and stronger than
+    // the pre-#9013 behavior, where only the trailing maintenance call was locked and publish ran unprotected.
     await expect(
       processJob(env, { type: "agent-regate-pr", deliveryId: "race-sweep", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 }),
     ).rejects.toMatchObject({ name: "PrActuationLockContendedError", retryKind: "pr_actuation_lock_contended" });
@@ -3393,15 +3397,15 @@ describe("queue processors", () => {
     expect(actionAudits?.n).toBe(0);
     // ...and the contention itself is now visible in the ledger instead of leaving no trace at all.
     const contendedAudit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? and target_key = ?")
-      .bind("github_app.agent_maintenance_lock_contended", "owner/agent-repo#7")
+      .bind("github_app.pr_public_surface_lock_contended", "owner/agent-repo#7")
       .first<{ outcome: string; detail: string }>();
     expect(contendedAudit?.outcome).toBe("queued");
 
-    // #9025: the contention audit write is best-effort -- a failing write must never swallow or replace the
-    // retry itself. The disposition's durability cannot depend on the ledger being writable.
+    // #9025/#9013: the contention audit write is best-effort -- a failing write must never swallow or replace
+    // the retry itself. The disposition's durability cannot depend on the ledger being writable.
     const originalRecordAuditEvent = repositoriesModule.recordAuditEvent;
     const auditSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockImplementation(async (auditEnv, event) => {
-      if (event.eventType === "github_app.agent_maintenance_lock_contended") throw new Error("audit DB down");
+      if (event.eventType === "github_app.pr_public_surface_lock_contended") throw new Error("audit DB down");
       await originalRecordAuditEvent(auditEnv, event);
     });
     await expect(

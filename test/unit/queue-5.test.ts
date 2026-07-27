@@ -6674,7 +6674,7 @@ describe("queue processors", () => {
       expect(seen.removed.sort()).toEqual(["gittensor:bug", "gittensor:priority"]);
     });
 
-    it("REGRESSION (#regression-safe-propagation): a contended per-PR actuation lock skips the label decision entirely instead of racing the pass that already holds it", async () => {
+    it("REGRESSION (#regression-safe-propagation/#9013): a contended per-PR actuation lock defers the WHOLE publish-and-maintain pass, not just the label decision", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
       await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
       await upsertRepositorySettings(env, {
@@ -6701,21 +6701,26 @@ describe("queue processors", () => {
       stubPropagationFetch(223, 1, seen, () => Response.json({ number: 1, state: "open", user: { login: "contributor" }, labels: ["gittensor:priority"] }));
 
       // Simulates a concurrent pass (a sibling webhook delivery, or the sweep) already holding this exact
-      // PR's actuation lock when this pass reaches the type-label block.
+      // PR's actuation lock. #9013: the public-surface publish call now claims this SAME lock BEFORE it does
+      // anything -- including before the type-label block ever runs -- so a contended pass defers the WHOLE
+      // publish-and-maintain unit instead of reaching (and self-recovering from) the type-label block's own
+      // (now unreachable in this scenario) inner claim.
       const held = await claimPrActuationLock(env, "JSONbored/gittensory", 223);
       expect(held.acquired).toBe(true);
       try {
-        await processJob(env, {
-          type: "github-webhook",
-          deliveryId: "priority-propagation-lock-contended",
-          eventName: "pull_request",
-          payload: {
-            action: "opened",
-            installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
-            repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
-            pull_request: { number: 223, title: "fix: some bug", state: "open", user: { login: "contributor" }, author_association: "NONE", head: { sha: "sha223" }, labels: [], body: "Fixes #1" },
-          },
-        });
+        await expect(
+          processJob(env, {
+            type: "github-webhook",
+            deliveryId: "priority-propagation-lock-contended",
+            eventName: "pull_request",
+            payload: {
+              action: "opened",
+              installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+              repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+              pull_request: { number: 223, title: "fix: some bug", state: "open", user: { login: "contributor" }, author_association: "NONE", head: { sha: "sha223" }, labels: [], body: "Fixes #1" },
+            },
+          }),
+        ).rejects.toMatchObject({ name: "PrActuationLockContendedError" });
       } finally {
         await releasePrActuationLock(env, "JSONbored/gittensory", 223, held.ownerToken);
       }
@@ -6724,10 +6729,16 @@ describe("queue processors", () => {
       expect(seen.issueFetches).toBe(0);
       expect(seen.posted).toEqual([]);
       expect(seen.removed).toEqual([]);
-      const events = await env.DB.prepare(
+      // The type-label block's OWN "lock_contended" self-claim path never runs -- the outer publish-level
+      // claim (#9013) already deferred the whole pass before maybePublishPrPublicSurface was ever called.
+      const typeLabelEvents = await env.DB.prepare(
         `select outcome, detail from audit_events where event_type = 'github_app.type_label_decision' and target_key = 'JSONbored/gittensory#223'`,
       ).all();
-      expect(events.results).toEqual([{ outcome: "denied", detail: "lock_contended" }]);
+      expect(typeLabelEvents.results).toEqual([]);
+      const publishLockEvents = await env.DB.prepare(
+        `select outcome from audit_events where event_type = 'github_app.pr_public_surface_lock_contended' and target_key = 'JSONbored/gittensory#223'`,
+      ).all<{ outcome: string }>();
+      expect(publishLockEvents.results).toEqual([{ outcome: "queued" }]);
     });
 
     describe("review-family events never touch the type label (#4818 follow-up)", () => {

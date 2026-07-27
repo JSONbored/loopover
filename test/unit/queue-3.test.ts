@@ -3110,10 +3110,12 @@ describe("queue processors", () => {
       return Response.json({});
     });
 
-    // #9025: the trailing maintenance pass hits the SAME still-held actuation lock and now throws the
-    // retryable contention error rather than returning silently, so the disposition retries instead of being
-    // dropped. The early-cap short-circuit under test here is a different call site and still defers cleanly
-    // (its own `return false`, unchanged) -- both assertions below are exactly as before.
+    // #9013: the public-surface publish call now claims this SAME still-held actuation lock BEFORE it (or the
+    // trailing maintenance pass) does anything, so the contention now surfaces there instead of at the
+    // trailing maintenance call's own (later) claim -- publish and maintain defer together, as ONE unit. The
+    // early-cap short-circuit under test here is a different call site and still defers cleanly (its own
+    // `return false`, unchanged); it's the REST of the pipeline that no longer "falls through" past a still-
+    // held lock the way it used to pre-#9013.
     await expect(
       processJob(env, {
         type: "github-webhook",
@@ -3128,10 +3130,10 @@ describe("queue processors", () => {
       }),
     ).rejects.toMatchObject({ name: "PrActuationLockContendedError" });
 
-    // The early close DEFERRED (no PATCH close fired from it) and the pipeline fell through, mirroring the
-    // author-lock contention semantics one namespace over.
+    // The early close DEFERRED (no PATCH close fired from it) and the REST of the pass deferred too, both
+    // parts of the SAME lock namespace now (#9013) -- unlike pre-#9013, the AI review never ran either.
     expect(seen.closed).toBe(false);
-    expect(aiCalls).toBeGreaterThan(0);
+    expect(aiCalls).toBe(0);
   });
 
   it("early cap short-circuit (#7284-fix): close autonomy not granted (observe) plans nothing early -- no crash, falls through to the normal pipeline", async () => {

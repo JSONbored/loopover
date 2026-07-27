@@ -27,7 +27,7 @@ describe("loopover-engine package scaffold", () => {
   });
 
   it("publishes only the build output and changelog, not source", () => {
-    expect(enginePkg.files).toEqual(["dist", "CHANGELOG.md"]);
+    expect(enginePkg.files).toEqual(["dist/**/*.js", "dist/**/*.d.ts", "CHANGELOG.md"]);
     expect(enginePkg.files).not.toContain("src");
   });
 

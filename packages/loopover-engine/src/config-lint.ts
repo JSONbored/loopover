@@ -73,7 +73,7 @@ const MERGE_READINESS_SUB_GATES: ReadonlyArray<{ field: "linkedIssue" | "duplica
 ];
 
 function mergeReadinessCompositeWarnings(gate: FocusManifestGateConfig): string[] {
-  if (gate.mergeReadiness === null) return [];
+  if (gate.mergeReadiness === null || gate.mergeReadiness === "off") return [];
   const explicit = MERGE_READINESS_SUB_GATES.filter(({ field }) => gate[field] !== null).map(({ label }) => label);
   if (explicit.length === 0) return [];
   return [

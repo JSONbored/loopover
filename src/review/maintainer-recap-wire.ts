@@ -3,15 +3,21 @@
 // single-repo ReviewRecap job, which is manually-triggerable only (review-recap.ts). Flag-gated and OFF by
 // default, mirroring isOpsEnabled: flag-OFF, the cron enqueues no job and this module's exports are never
 // invoked, so the deploy is byte-identical to today.
-import { claimMaintainerRecapPeriod, listRepositories, recordAuditEvent } from "../db/repositories";
+import { claimMaintainerRecapPeriod, listRecentMergedPullRequests, listRepositories, recordAuditEvent } from "../db/repositories";
 import { isAgentConfigured } from "../settings/autonomy";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { buildRepoOutcomeCalibration } from "../services/outcome-calibration";
-import { runMaintainerRecap, type MaintainerRecapRepoInput, type RunMaintainerRecapResult } from "../services/maintainer-recap";
+import {
+  contributorTotalsToList,
+  foldMergedPrContributorTotals,
+  runMaintainerRecap,
+  type MaintainerRecapRepoInput,
+  type RunMaintainerRecapResult,
+} from "../services/maintainer-recap";
 import { loadGatePrecisionReport } from "../services/gate-precision";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { resolveLoopOverSelfRepoFullName } from "../config/loopover-repo-focus-manifest";
-import { errorMessage } from "../utils/json";
+import { errorMessage, nowIso } from "../utils/json";
 
 /** A manifest-sourced enable/cadence override (#2250) -- the `maintainerRecap` block of the loopover
  *  self-repo's `.loopover.yml` (see FocusManifestMaintainerRecapConfig). `present: false` (no block, or the
@@ -177,8 +183,11 @@ export async function runMaintainerRecapJob(
   if (!claimed) return { skipped: true, reason: "already_sent_this_period" };
 
   const resolvedWindowDays = windowDays ?? DEFAULT_RECAP_WINDOW_DAYS;
+  const generatedAt = nowIso();
+  const contributorSinceMs = Date.parse(generatedAt) - resolvedWindowDays * 24 * 60 * 60 * 1000;
   const repoNames = await recapScanRepos(env);
   const repos: MaintainerRecapRepoInput[] = [];
+  const contributorTotals = new Map<string, number>();
   for (const repoFullName of repoNames) {
     try {
       const [gatePrecision, calibration] = await Promise.all([
@@ -188,13 +197,22 @@ export async function runMaintainerRecapJob(
         buildRepoOutcomeCalibration(env, repoFullName, resolvedWindowDays),
       ]);
       repos.push({ gatePrecision, calibration });
+      try {
+        const mergedPrs = await listRecentMergedPullRequests(env, repoFullName);
+        foldMergedPrContributorTotals(contributorTotals, mergedPrs, contributorSinceMs);
+      } catch (error) {
+        console.warn(
+          JSON.stringify({ event: "maintainer_recap_repo_error", repo: repoFullName, message: errorMessage(error).slice(0, 200) }),
+        );
+      }
     } catch (error) {
       console.warn(
         JSON.stringify({ event: "maintainer_recap_repo_error", repo: repoFullName, message: errorMessage(error).slice(0, 200) }),
       );
     }
   }
-  const result = await runMaintainerRecap(env, { windowDays: resolvedWindowDays, repos });
+  const contributors = contributorTotalsToList(contributorTotals);
+  const result = await runMaintainerRecap(env, { windowDays: resolvedWindowDays, generatedAt, repos, contributors });
   // unreachable implicit-else: runMaintainerRecap only returns skipped:true when explicitly passed
   // `enabled: false`, which this call site never does -- the enable/disable decision already happened
   // before runMaintainerRecapJob was ever invoked (isRecapEnabled, checked by the cron and the processor).

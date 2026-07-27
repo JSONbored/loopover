@@ -315,6 +315,7 @@ const SAMPLE_RECAP: RecapReport = {
   generatedAt: "2026-07-08T00:00:00.000Z",
   windowDays: 7,
   repos: [{ repoFullName: "acme/widgets", reviewed: 5, merged: 3, closed: 2, gateFalsePositives: 1, gateOverrides: 1, reversals: 0 }],
+  contributors: [],
   totals: { reviewed: 5, merged: 3, closed: 2, blocked: 4, gateFalsePositives: 1, gateOverrides: 1, reversals: 0, gateFalsePositiveRate: 0.25 },
   summary: [
     "Maintainer recap over the last 7 day(s): 1 repo(s), 5 reviewed, 3 merged, 2 closed.",

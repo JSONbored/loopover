@@ -19,10 +19,11 @@ import type { DriftRecapSection } from "./maintainer-recap-drift";
 import { buildCalibrationRecapSection } from "./maintainer-recap-calibration";
 import { buildGateOutcomesRecapSection } from "./maintainer-recap-gate-outcomes";
 import { buildPerRepoRecapSection } from "./maintainer-recap-per-repo";
+import { buildTopContributorsRecapSection } from "./maintainer-recap-top-contributors";
 import { buildRoutingRecapSection } from "./maintainer-recap-routing";
 import { REVIEWER_ROUTING_SHADOW_EVENT_TYPE, type RoutingShadowDecision } from "./reviewer-routing";
 import type { OutcomeCalibration } from "./outcome-calibration";
-import type { MaintainerRecapCohortCounts, MaintainerRecapRepo, RecapReport } from "../types";
+import type { MaintainerRecapCohortCounts, MaintainerRecapContributor, MaintainerRecapRepo, RecentMergedPullRequestRecord, RecapReport } from "../types";
 import { nowIso } from "../utils/json";
 
 const DEFAULT_WINDOW_DAYS = 7;
@@ -51,7 +52,28 @@ export type MaintainerRecapInputs = {
   generatedAt: string;
   windowDays?: number | null | undefined;
   repos: MaintainerRecapRepoInput[];
+  /** Window-filtered per-login merged-PR tally (#9291); defaults to empty when omitted. */
+  contributors?: MaintainerRecapContributor[] | undefined;
 };
+
+/** Fold window-filtered merged-PR rows into a per-login tally (#9291). Mirrors maintainer-quality-dashboard's
+ *  contributorTotals Map pattern — group by `authorLogin ?? "unknown"`, sum counts. Pure. */
+export function foldMergedPrContributorTotals(
+  totals: Map<string, number>,
+  mergedPrs: RecentMergedPullRequestRecord[],
+  sinceMs: number,
+): void {
+  for (const pr of mergedPrs) {
+    if (!pr.mergedAt || Date.parse(pr.mergedAt) < sinceMs) continue;
+    const login = pr.authorLogin ?? "unknown";
+    totals.set(login, (totals.get(login) ?? 0) + 1);
+  }
+}
+
+/** Convert a contributor tally Map into the RecapReport list shape. Pure. */
+export function contributorTotalsToList(totals: Map<string, number>): MaintainerRecapContributor[] {
+  return [...totals.entries()].map(([login, merged]) => ({ login, merged }));
+}
 
 /** #4521: convert one GatePrecisionCohortReport's `overall` bucket into the recap's own cohort-counts shape
  *  (renamed fields to match this file's gateFalsePositives/gateFalsePositiveRate convention). Pure. */
@@ -146,7 +168,14 @@ export function buildMaintainerRecap(args: MaintainerRecapInputs): RecapReport {
     rateLine,
     `${totals.gateOverrides} maintainer override(s), ${totals.reversals} recommendation reversal(s).`,
   ].map(sanitizeRecapText);
-  return { generatedAt: args.generatedAt, windowDays, repos, totals: { ...totals, ...(cohorts ? { cohorts } : {}) }, summary };
+  return {
+    generatedAt: args.generatedAt,
+    windowDays,
+    repos,
+    contributors: args.contributors ?? [],
+    totals: { ...totals, ...(cohorts ? { cohorts } : {}) },
+    summary,
+  };
 }
 
 /** Redact one free-text line bound for the public digest body. Two arms mirroring weekly-value-report.ts's
@@ -178,6 +207,8 @@ export function formatMaintainerRecap(report: RecapReport, options: { configDrif
   const perRepoLines = perRepoSection.lines.map(redactRecapLine);
   const calibrationSection = buildCalibrationRecapSection({ windowDays: report.windowDays, totals: report.totals });
   const gateOutcomesSection = buildGateOutcomesRecapSection({ windowDays: report.windowDays, totals: report.totals });
+  const topContributorsSection = buildTopContributorsRecapSection({ windowDays: report.windowDays, contributors: report.contributors });
+  const topContributorLines = topContributorsSection.lines.map(redactRecapLine);
   const lines = [
     "# Maintainer recap",
     "",
@@ -206,6 +237,10 @@ export function formatMaintainerRecap(report: RecapReport, options: { configDrif
     "",
     `## ${redactRecapLine(gateOutcomesSection.title)}`,
     ...recapSectionLines(gateOutcomesSection.lines.map(redactRecapLine), "_No gate-outcome lines for this window._"),
+    "",
+    // #9291: unconditional — contributors are always present on RecapReport once the wire populates them.
+    `## ${redactRecapLine(topContributorsSection.title)}`,
+    ...recapSectionLines(topContributorLines, "_No contributors for this window._"),
     // #8214: optional config-drift section (maintainer-recap-drift.ts) — appended only when the caller has a
     // sentinel projection to render, so every existing digest stays byte-identical until the sentinel wires in.
     ...(options.configDrift
@@ -270,6 +305,8 @@ export async function runMaintainerRecap(
     repos?: MaintainerRecapRepoInput[];
     /** Pre-built report for test injection; skips {@link buildMaintainerRecap} when set. */
     report?: RecapReport;
+    /** Window-filtered per-login merged-PR tally (#9291); forwarded to {@link buildMaintainerRecap}. */
+    contributors?: MaintainerRecapContributor[] | undefined;
     /** When explicitly false, short-circuits before build/format/delivery. Default: run. */
     enabled?: boolean;
     /** #8372: forwarded to {@link formatMaintainerRecap} so a caller holding a drift projection can have it
@@ -287,6 +324,7 @@ export async function runMaintainerRecap(
       generatedAt: options.generatedAt ?? nowIso(),
       windowDays: options.windowDays,
       repos: options.repos ?? [],
+      contributors: options.contributors,
     });
   // #8229 stage 1: the routing-shadow section reads the window's recorded decisions straight from the
   // audit trail — fail-safe to an absent section (the recap must never break on a read blip).

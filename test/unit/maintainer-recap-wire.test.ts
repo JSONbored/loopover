@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as repositories from "../../src/db/repositories";
 import { isRecapEnabled, resolveMaintainerRecapManifestOverride, runMaintainerRecapJob, shouldFireMaintainerRecap } from "../../src/review/maintainer-recap-wire";
 import type { MaintainerRecapJobSkipped } from "../../src/review/maintainer-recap-wire";
 import type { RunMaintainerRecapResult } from "../../src/services/maintainer-recap";
-import { recordGateBlockOutcome, updatePullRequestSlopAssessment, upsertPullRequestFromGitHub, upsertRepositorySettings } from "../../src/db/repositories";
+import { recordGateBlockOutcome, updatePullRequestSlopAssessment, upsertPullRequestFromGitHub, upsertRecentMergedPullRequest, upsertRepositorySettings } from "../../src/db/repositories";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { createTestEnv } from "../helpers/d1";
 
@@ -41,9 +42,21 @@ async function seedRegisteredRepo(env: Env, fullName: string, installationId?: n
 }
 
 // A resolved, merged PR carrying a slop assessment so it counts in buildRepoOutcomeCalibration's slop bands.
-async function seedMergedPr(env: Env, repoFullName: string, number: number): Promise<void> {
-  await upsertPullRequestFromGitHub(env, repoFullName, { number, title: `PR ${number}`, state: "closed", merged_at: "2026-06-01T00:00:00.000Z" });
+async function seedMergedPr(env: Env, repoFullName: string, number: number, authorLogin = "contributor"): Promise<void> {
+  const mergedAt = "2026-07-09T12:00:00.000Z";
+  await upsertPullRequestFromGitHub(env, repoFullName, { number, title: `PR ${number}`, state: "closed", merged_at: mergedAt, user: { login: authorLogin } });
   await updatePullRequestSlopAssessment(env, repoFullName, number, { slopRisk: 0, slopBand: "clean" });
+  await upsertRecentMergedPullRequest(env, {
+    repoFullName,
+    number,
+    title: `PR ${number}`,
+    authorLogin,
+    mergedAt,
+    labels: [],
+    linkedIssues: [],
+    changedFiles: [],
+    payload: {},
+  });
 }
 
 // Only RECORDS calls to the Discord webhook itself -- recapScanRepos's resolveRepositorySettings also fetches
@@ -306,6 +319,57 @@ describe("runMaintainerRecapJob — cross-repo digest (#1963, #2248)", () => {
     expect(delivery.slack.sent).toBe(false);
     const logged = warnings.mock.calls.map((c) => String(c[0])).find((line) => line.includes("maintainer_recap_repo_error") && line.includes("owner/alpha"));
     expect(logged).toBeDefined();
+  });
+
+  it("#9291: aggregates merged-PR counts by login across repos and renders ## Top contributors in the digest", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-09T14:00:00.000Z"));
+    const env = createTestEnv({ DISCORD_WEBHOOK_URL: HOOK });
+    await seedRegisteredRepo(env, "owner/alpha");
+    await seedMergedPr(env, "owner/alpha", 1, "alice");
+    await seedMergedPr(env, "owner/alpha", 2, "alice");
+    await seedRegisteredRepo(env, "owner/beta");
+    await seedMergedPr(env, "owner/beta", 1, "bob");
+    await seedMergedPr(env, "owner/beta", 2, "alice");
+    stubDiscordFetch();
+
+    const { report, formatted } = ranRecap(await runMaintainerRecapJob(env));
+
+    expect(report.contributors.sort((a, b) => a.login.localeCompare(b.login))).toEqual([
+      { login: "alice", merged: 3 },
+      { login: "bob", merged: 1 },
+    ]);
+    expect(formatted).toContain("## Top contributors");
+    expect(formatted).toContain("- alice: 3 merged");
+    expect(formatted).toContain("- bob: 1 merged");
+    vi.useRealTimers();
+  });
+
+  it("#9291: fails safe when listRecentMergedPullRequests errors for one repo — other repos still contribute", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-09T14:00:00.000Z"));
+    const env = createTestEnv({ DISCORD_WEBHOOK_URL: HOOK });
+    await seedRegisteredRepo(env, "owner/alpha");
+    await seedMergedPr(env, "owner/alpha", 1, "alice");
+    await seedRegisteredRepo(env, "owner/beta");
+    await seedMergedPr(env, "owner/beta", 1, "bob");
+    const realList = repositories.listRecentMergedPullRequests;
+    vi.spyOn(repositories, "listRecentMergedPullRequests").mockImplementation(async (listEnv, fullName) => {
+      if (fullName === "owner/alpha") throw new Error("merged-pr load failed");
+      return realList(listEnv, fullName);
+    });
+    const warnings = vi.spyOn(console, "warn").mockImplementation(() => {});
+    stubDiscordFetch();
+
+    const { report, formatted } = ranRecap(await runMaintainerRecapJob(env));
+
+    expect(report.repos.map((r) => r.repoFullName).sort()).toEqual(["owner/alpha", "owner/beta"]);
+    expect(report.contributors).toEqual([{ login: "bob", merged: 1 }]);
+    expect(formatted).toContain("## Top contributors");
+    expect(formatted).toContain("- bob: 1 merged");
+    const logged = warnings.mock.calls.map((c) => String(c[0])).find((line) => line.includes("maintainer_recap_repo_error") && line.includes("owner/alpha"));
+    expect(logged).toBeDefined();
+    vi.useRealTimers();
   });
 
   it("still delivers a zeroed report to Discord when there are no registered repos at all", async () => {

@@ -1028,6 +1028,62 @@ export const RepoDocRefreshResultSchema = z
   ])
   .openapi("RepoDocRefreshResult");
 
+// #9307 — the agent approval-queue routes under /v1/repos/:owner/:repo/agent/pending-actions, documented to
+// match the loopover_propose_action / loopover_list_pending_actions / loopover_decide_pending_action MCP tools
+// they mirror (src/mcp/server.ts). The audit-feed neighbor (same agent/* prefix) is already documented; these
+// three were the gap. Field-level source of truth is each MCP tool's raw Zod shape, hand-mirrored here so the
+// codegen path never pulls the heavy MCP server module into the OpenAPI build.
+const PendingActionEntrySchema = z.object({
+  id: z.string(),
+  actionClass: z.string(),
+  pullNumber: z.number(),
+  status: z.string(),
+  autonomyLevel: z.string(),
+  reason: z.string().nullable(),
+  decidedBy: z.string().nullable(),
+  decidedAt: z.string().nullable(),
+  createdAt: z.string(),
+});
+
+export const ListPendingActionsResponseSchema = z
+  .object({
+    repoFullName: z.string().optional(),
+    status: z.string().optional(),
+    pendingActions: z.array(PendingActionEntrySchema).optional(),
+  })
+  .openapi("ListPendingActionsResponse");
+
+// Mirrors proposeActionShape minus owner/repo (both are path params on the REST route), matching the request
+// body proposePendingActionSchema already validates in src/api/routes.ts.
+export const ProposeActionRequestSchema = z
+  .object({
+    pullNumber: z.number().int().positive(),
+    actionClass: z.enum(["review", "request_changes", "approve", "merge", "close", "label", "review_state_label"]),
+    reason: z.string().max(500).optional(),
+    label: z.string().min(1).max(100).optional(),
+    reviewBody: z.string().max(60000).optional(),
+    mergeMethod: z.enum(["merge", "squash", "rebase"]).optional(),
+    closeComment: z.string().max(60000).optional(),
+  })
+  .openapi("ProposeActionRequest");
+
+export const ProposeActionResponseSchema = z
+  .object({
+    created: z.boolean().optional(),
+    action: z
+      .object({ id: z.string(), actionClass: z.string(), pullNumber: z.number(), status: z.string(), reason: z.string().nullable() })
+      .optional(),
+  })
+  .openapi("ProposeActionResponse");
+
+export const DecidePendingActionResponseSchema = z
+  .object({
+    status: z.string().optional(),
+    executionOutcome: z.string().optional(),
+    action: PendingActionEntrySchema.optional(),
+  })
+  .openapi("DecidePendingActionResponse");
+
 export const RepoSettingsPreviewSchema = z
   .object({
     repoFullName: z.string(),

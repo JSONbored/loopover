@@ -15,6 +15,7 @@ import packageJson from "../package.json";
 import worker from "./index";
 import { githubRestRateLimitRemainingSamples } from "./github/client";
 import { processJob } from "./queue/processors";
+import { releaseAllHeldLocksAtShutdown } from "./queue/held-lock-registry";
 import {
   createOpenAiCompatibleAi,
   createSelfHostAi,
@@ -1323,6 +1324,13 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(JSON.stringify({ event: "selfhost_shutdown", signal }));
+    // #8998: release every transient lock THIS process currently holds FIRST, before anything that might take
+    // real time (the queue drain below, telemetry flush). A container orchestrator's SIGKILL grace period is
+    // often shorter than an in-flight AI-review call legitimately runs, so waiting for the graceful drain to
+    // release a lock via its own finally block is not always fast enough -- doing it proactively here means the
+    // lock is gone the instant SIGTERM/SIGINT arrives, regardless of whether the rest of shutdown gets to finish.
+    const releasedLocks = await releaseAllHeldLocksAtShutdown();
+    if (releasedLocks > 0) console.log(JSON.stringify({ event: "selfhost_shutdown_locks_released", count: releasedLocks }));
     clearInterval(cron);
     server.close();
     await backend.shutdown();

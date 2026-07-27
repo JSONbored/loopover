@@ -21,6 +21,7 @@ import {
 } from "./transient-locks";
 import { buildPullRequestAdvisory } from "../rules/advisory";
 import { recordAuditEvent, getDecryptedRepositoryAiKey, getRepository, listCheckSummaries, listPullRequestFiles } from "../db/repositories";
+import { registerHeldLock, unregisterHeldLock } from "./held-lock-registry";
 import { recordRoutingShadow } from "../services/reviewer-routing";
 import { createInstallationToken } from "../github/app";
 import type { AgentActionMode } from "../settings/agent-execution";
@@ -120,12 +121,15 @@ export async function claimAiReviewLock(
   mode: string,
   options?: { steal?: boolean },
 ): Promise<TransientLockClaim> {
-  return claimTransientLock(
-    env,
-    aiReviewLockKey(repoFullName, prNumber, headSha, mode),
-    AI_REVIEW_LOCK_TTL_SECONDS,
-    options,
-  );
+  const key = aiReviewLockKey(repoFullName, prNumber, headSha, mode);
+  const claim = await claimTransientLock(env, key, AI_REVIEW_LOCK_TTL_SECONDS, options);
+  // #8998: register a REAL claim (a non-null ownerToken means this call, not a fail-open passthrough or a
+  // no-op adapter, actually owns the key) so a shutdown signal can release it immediately instead of only via
+  // graceful drain or the full 1800s TTL. A fail-open claim (ownerToken null) has nothing to release.
+  if (claim.acquired && claim.ownerToken !== null) {
+    registerHeldLock(key, () => releaseTransientLockIfOwner(env, key, claim.ownerToken));
+  }
+  return claim;
 }
 
 /** Best-effort release, called from a finally block so the lock frees promptly instead of waiting out the TTL. */
@@ -137,7 +141,12 @@ export async function releaseAiReviewLock(
   mode: string,
   ownerToken: string | null,
 ): Promise<void> {
-  await releaseTransientLockIfOwner(env, aiReviewLockKey(repoFullName, prNumber, headSha, mode), ownerToken);
+  const key = aiReviewLockKey(repoFullName, prNumber, headSha, mode);
+  await releaseTransientLockIfOwner(env, key, ownerToken);
+  // #8998: this process no longer holds it -- a later shutdown must not attempt to release a key it already
+  // gave up (harmless either way, since the compare-and-delete release is idempotent, but there is no reason
+  // to carry a stale entry).
+  unregisterHeldLock(key);
 }
 
 /**

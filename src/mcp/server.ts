@@ -1536,7 +1536,7 @@ const watchIssuesShape = {
   labels: z.array(z.string().min(1).max(100)).max(50).optional(),
 };
 
-const watchIssuesOutputSchema = {
+export const watchIssuesOutputSchema = {
   watching: z.array(z.object({ repoFullName: z.string(), labels: z.array(z.string()) })).optional(),
   changed: z.string().optional(),
 };

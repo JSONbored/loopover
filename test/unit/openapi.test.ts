@@ -21,6 +21,7 @@ import {
   gatePrecisionOutputSchema,
   maintainerMeasurementReportOutputSchema,
   activationPreviewOutputSchema,
+  watchIssuesOutputSchema,
 } from "../../src/mcp/server";
 
 describe("OpenAPI contract", () => {
@@ -57,6 +58,7 @@ describe("OpenAPI contract", () => {
     expect(spec.paths["/v1/contributors/{login}/decision-pack"]).toBeDefined();
     expect(spec.paths["/v1/contributors/{login}/open-pr-monitor"]).toBeDefined();
     expect(spec.paths["/v1/contributors/{login}/pr-outcomes"]).toBeDefined();
+    expect(spec.paths["/v1/contributors/{login}/watches"]).toBeDefined();
     expect(spec.paths["/v1/contributors/{login}/repos/{owner}/{repo}/decision"]).toBeDefined();
     expect(spec.paths["/v1/preflight/pr"]).toBeDefined();
     expect(spec.paths["/v1/preflight/review-risk"]).toBeDefined();
@@ -491,6 +493,30 @@ describe("OpenAPI contract", () => {
       expect(schemas[response], `${response} component should be registered`).toBeDefined();
       expect(propKeys(response)).toEqual(Object.keys(outputShape).sort());
     }
+  });
+
+  // #9306: GET/POST/DELETE /v1/contributors/{login}/watches are the REST mirror of loopover_watch_issues
+  // but were missing from the OpenAPI contract. Assert all three verbs are documented with a response
+  // component whose keys match watchIssuesOutputSchema, and POST/DELETE carry the watch request body.
+  it("documents contributor watches GET/POST/DELETE with tool-parity schemas (#9306)", () => {
+    const spec = buildOpenApiSpec();
+    const schemas = spec.components?.schemas ?? {};
+    const path = "/v1/contributors/{login}/watches";
+
+    const propKeys = (name: string) =>
+      Object.keys((schemas[name] as { properties?: Record<string, unknown> }).properties ?? {}).sort();
+
+    expect(spec.paths[path]?.get).toBeDefined();
+    expect(spec.paths[path]?.post).toBeDefined();
+    expect(spec.paths[path]?.delete).toBeDefined();
+
+    expect(schemas.ContributorWatchesResponse).toBeDefined();
+    expect(schemas.ContributorWatchRequest).toBeDefined();
+    expect(propKeys("ContributorWatchesResponse")).toEqual(Object.keys(watchIssuesOutputSchema).sort());
+    expect(propKeys("ContributorWatchRequest")).toEqual(["labels", "repoFullName"].sort());
+
+    expect(spec.paths[path]?.post?.requestBody).toBeDefined();
+    expect(spec.paths[path]?.delete?.requestBody).toBeDefined();
   });
 
   it("declares an `in: path` parameter for every {templated} path segment (Cloudflare schema-validation warning 30046)", () => {

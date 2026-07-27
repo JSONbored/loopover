@@ -189,6 +189,8 @@ export async function startFixtureServer(
     onPlanIssuesRequest?: (body: { goal?: string; dryRun?: boolean; create?: boolean; limit?: number }) => void;
     onWatchRequest?: (req: { method: string; body: { repoFullName?: string; labels?: string[] } }) => void;
     onApiRequest?: (request: IncomingMessage) => void;
+    /** #9300: captures DELETE /v1/repos/:owner/:repo/selftune/overrides body ({ confirm }). */
+    onClearSelftuneOverride?: (body: { confirm?: boolean }) => void;
     validateConfigWarnings?: string[];
     openPrMonitor?: Record<string, unknown>;
     prOutcomes?: Record<string, unknown>;
@@ -746,6 +748,13 @@ export async function startFixtureServer(
     // #7798: audit-less variant — a payload without rows, for the CLI's defensive audit fallback.
     if (request.url?.startsWith("/v1/repos/owner/bare/selftune/overrides/audit") && request.method === "GET") {
       response.end(JSON.stringify({ repoFullName: "owner/bare" }));
+      return;
+    }
+    // #9300: clear live self-tune override (write-side sibling of the audit GET above).
+    if (request.url?.startsWith("/v1/repos/owner/repo/selftune/overrides") && !request.url.includes("/audit") && request.method === "DELETE") {
+      const body = (await readJsonRequest(request)) as { confirm?: boolean };
+      options.onClearSelftuneOverride?.(body);
+      response.end(JSON.stringify({ repoFullName: "owner/repo", cleared: true }));
       return;
     }
     if (request.url?.startsWith("/v1/repos/owner/repo/outcome-calibration") && request.method === "GET") {

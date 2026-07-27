@@ -13,8 +13,8 @@
 //   4. `.loopover.yml`                          — GLOBAL default at the dir root, shared by every repo.
 //   5. `_shared/.loopover.yml`                  — SHARED BASE (#1959), the lowest-priority layer: one house policy
 //      an operator running many repos writes once instead of copy-pasting into every repo's private config.
-// `.yaml` / `.json` are accepted everywhere `.yml` is (see CONFIG_BASENAMES). `readFirstExisting` (and its
-// `WithPath` sibling) return the first candidate that exists, in list order. With only ONE of {a per-repo
+// `.yaml` / `.json` are accepted everywhere `.yml` is (see CONFIG_BASENAMES). `readFirstExistingWithPath`
+// returns the first candidate that exists, in list order. With only ONE of {a per-repo
 // candidate, the global default, the shared base} present, its raw text is returned unchanged — byte-identical to
 // the original #1390 behavior (and to the pre-#1959 2-layer behavior when no shared base is mounted, the common
 // case). With more than one present, they are DEEP-MERGED in ascending priority (shared base → global default →
@@ -48,8 +48,8 @@ import type {
 
 /** The bare config filenames tried inside a per-repo folder and at the dir root (global default), in priority
  *  order. Every helper below (`GLOBAL_CONFIG_CANDIDATES`, `SHARED_BASE_CONFIG_CANDIDATES`, `localConfigCandidates`)
- *  derives its search order from this array's order, and `readFirstExisting` / `readFirstExistingWithPath` return
- *  the first candidate that EXISTS. */
+ *  derives its search order from this array's order, and `readFirstExistingWithPath` returns the first
+ *  candidate that EXISTS. */
 const CONFIG_BASENAMES = [".loopover.yml", ".loopover.yaml", ".loopover.json"] as const;
 
 /** The extensions accepted by CONFIG_BASENAMES, in first-seen order: `.yml`, `.yaml`, `.json`. Used only to build
@@ -97,14 +97,10 @@ export function localConfigCandidates(repoFullName: string): string[] {
   ];
 }
 
-/** Read the first candidate that exists, trying each in order; null when none do. A read error (ENOENT or
- *  otherwise unreadable) is swallowed so the next candidate is tried. */
-async function readFirstExisting(base: string, candidates: string[]): Promise<string | null> {
-  const hit = await readFirstExistingWithPath(base, candidates);
-  return hit?.text ?? null;
-}
-
-/** Like {@link readFirstExisting}, but also returns the winning relative candidate path (for provenance). */
+/** Read the first candidate that exists, trying each in order, returning both its text and its winning
+ *  relative candidate path (for provenance); null when none do. A read error (ENOENT or otherwise
+ *  unreadable) is swallowed so the next candidate is tried. #9065: every caller now wants the path (to name
+ *  a dropped layer in a warning), so the former text-only `readFirstExisting` wrapper was retired. */
 async function readFirstExistingWithPath(
   base: string,
   candidates: string[],
@@ -194,13 +190,27 @@ function combineConfigLayersWithMeta(
   const present = layersAscendingPriority.filter((layer): layer is { text: string; kind: ConfigLayerKind; sourcePath?: string | null } => layer.text !== null);
   if (present.length === 0) return { content: null, sharedConfigSource: null, warnings };
 
-  const sharedLayer = present.find((layer) => layer.kind === "shared");
-  if (sharedLayer && parseConfigMapping(sharedLayer.text) === null) warnings.push(SHARED_BASE_MALFORMED_WARNING);
-
   const parsedLayers: Array<{ text: string; kind: ConfigLayerKind; mapping: Record<string, unknown>; sourcePath: string | null }> = [];
   for (const layer of present) {
     const mapping = parseConfigMapping(layer.text);
-    if (mapping) parsedLayers.push({ text: layer.text, kind: layer.kind, mapping, sourcePath: layer.sourcePath ?? null });
+    if (mapping) {
+      parsedLayers.push({ text: layer.text, kind: layer.kind, mapping, sourcePath: layer.sourcePath ?? null });
+      continue;
+    }
+    // #9065: previously ONLY the shared-base layer's parse failure was ever warned about (the dedicated
+    // `sharedLayer` check this replaced); a malformed GLOBAL-default or PER-REPO layer was silently dropped
+    // right here with no warning, no log, no metric -- that repo silently demoted to whatever layer(s)
+    // remained (or fleet house policy, if none did) with a clean-looking manifest and zero signal anything
+    // was wrong. Every dropped layer now warns, carrying its candidate path when known.
+    if (layer.kind === "shared") {
+      warnings.push(SHARED_BASE_MALFORMED_WARNING);
+    } else {
+      const layerLabel = layer.kind === "global" ? "global-default" : "per-repo";
+      const pathSuffix = layer.sourcePath ? ` (\`${layer.sourcePath}\`)` : "";
+      warnings.push(
+        `Container-private ${layerLabel} manifest${pathSuffix} is malformed or oversized; ignoring it and continuing.`,
+      );
+    }
   }
 
   if (parsedLayers.length === 0) {
@@ -246,15 +256,17 @@ export function makeLocalManifestReader(dir: string | undefined): RepoFocusManif
   return async (repoFullName: string): Promise<LocalManifestLoadResult | null> => {
     const perRepo = localConfigCandidates(repoFullName);
     if (perRepo.length === 0) return null; // invalid repo name → no per-repo file, global default, or shared base
-    const [sharedHit, globalText, repoText] = await Promise.all([
+    const [sharedHit, globalHit, repoHit] = await Promise.all([
       readFirstExistingWithPath(base, SHARED_BASE_CONFIG_CANDIDATES),
-      readFirstExisting(base, GLOBAL_CONFIG_CANDIDATES),
-      readFirstExisting(base, perRepo),
+      readFirstExistingWithPath(base, GLOBAL_CONFIG_CANDIDATES),
+      readFirstExistingWithPath(base, perRepo),
     ]);
     const loaded = combineConfigLayersWithMeta([
       { text: sharedHit?.text ?? null, kind: "shared", sourcePath: sharedHit?.path ?? null },
-      { text: globalText, kind: "global" },
-      { text: repoText, kind: "repo" },
+      // #9065: thread the winning candidate path through for these two layers as well (previously only the
+      // shared layer carried one) so a malformed-layer warning can name WHICH file was dropped.
+      { text: globalHit?.text ?? null, kind: "global", sourcePath: globalHit?.path ?? null },
+      { text: repoHit?.text ?? null, kind: "repo", sourcePath: repoHit?.path ?? null },
     ]);
     if (loaded.content === null && loaded.warnings.length === 0 && loaded.sharedConfigSource === null) return null;
     return loaded;

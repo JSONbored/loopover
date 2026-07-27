@@ -1,37 +1,12 @@
 import { parse as parseYaml } from "yaml";
-import { MAX_FOCUS_MANIFEST_BYTES, parseFocusManifestContent, type FocusManifestGateConfig } from "./focus-manifest.js";
+import {
+  FOCUS_MANIFEST_TOP_LEVEL_FIELDS,
+  MAX_FOCUS_MANIFEST_BYTES,
+  parseFocusManifestContent,
+  unknownTopLevelManifestWarnings,
+  type FocusManifestGateConfig,
+} from "./focus-manifest.js";
 
-const TOP_LEVEL_FIELDS = [
-  "source",
-  "wantedPaths",
-  "preferredLabels",
-  "linkedIssuePolicy",
-  "testExpectations",
-  "issueDiscoveryPolicy",
-  "maintainerNotes",
-  "publicNotes",
-  "gate",
-  "settings",
-  "review",
-  "features",
-  "experimental",
-  "contentLane",
-  "repoDocGeneration",
-  "reviewRecap",
-  "maintainerRecap",
-  "ops",
-  "publicStats",
-  "draftFlow",
-  "upstreamDriftIssues",
-  "sweepWatchdog",
-  "prReconciliation",
-  "activeReviewReconciliation",
-  "loopEscalation",
-  "federatedIntelligence",
-  "fairnessAnalytics",
-] as const;
-
-const TOP_LEVEL_FIELD_SET = new Set<string>(TOP_LEVEL_FIELDS);
 const NO_RECOGNIZED_FOCUS_FIELDS_WARNING =
   "Manifest contained no recognized focus fields; falling back to deterministic signals.";
 
@@ -43,13 +18,15 @@ export type SelfHostConfigLintResult = {
 };
 
 export function lintManifestText(text: string | null | undefined): SelfHostConfigLintResult {
+  // #9065: parseFocusManifestContent's own manifest.warnings NOW already carries the unknown-top-level-field
+  // warnings too (parseFocusManifest calls unknownTopLevelManifestWarnings itself), so this no longer needs
+  // its own separate `...unknownTopLevelWarnings(text)` concatenation -- doing so would double the warning.
   const manifest = parseFocusManifestContent(text, "repo_file");
   const recognizedFields = recognizedFieldsFor(text);
   const warnings = [
     ...manifest.warnings
       .map(redactManifestWarning)
       .filter((warning) => recognizedFields.length === 0 || warning !== NO_RECOGNIZED_FOCUS_FIELDS_WARNING),
-    ...unknownTopLevelWarnings(text),
     ...mergeReadinessCompositeWarnings(manifest.gate),
   ];
   if (warnings.length === 0 && recognizedFields.length === 0) {
@@ -69,7 +46,7 @@ export function lintManifestText(text: string | null | undefined): SelfHostConfi
 function recognizedFieldsFor(text: string | null | undefined): string[] {
   const parsed = parseManifestTopLevelObject(text);
   if (parsed === null) return [];
-  return TOP_LEVEL_FIELDS.filter(
+  return FOCUS_MANIFEST_TOP_LEVEL_FIELDS.filter(
     (field) => field !== "source" && Object.prototype.hasOwnProperty.call(parsed, field),
   );
 }
@@ -107,21 +84,15 @@ function mergeReadinessCompositeWarnings(gate: FocusManifestGateConfig): string[
   ];
 }
 
+/** Standalone (pre-parse) unknown-top-level-field check over raw manifest TEXT, kept for existing direct
+ *  callers (the offline validator route, `loopover_validate_config`, the admin dry-run write, the CLI lint
+ *  script) that want this signal without running the full parse. Delegates the actual "which keys are
+ *  unknown" decision to `unknownTopLevelManifestWarnings` (focus-manifest.ts) -- the SAME function the
+ *  runtime parser now calls (#9065) -- so the two can never disagree. */
 export function unknownTopLevelWarnings(text: string | null | undefined): string[] {
   const parsed = parseManifestTopLevelObject(text);
   if (parsed === null) return [];
-  const keys = Object.keys(parsed).filter((key) => !TOP_LEVEL_FIELD_SET.has(key));
-  // `hasOwnProperty.call`, NOT `key in`: a manifest field named like an Object.prototype member
-  // (`constructor`, `toString`, `hasOwnProperty`, ...) would otherwise test true for the inherited
-  // property and resolve to the prototype's function instead of a real retired-field warning string,
-  // corrupting the string[] result and suppressing the genuine unknown-field warning.
-  const isRetired = (key: string): boolean => Object.prototype.hasOwnProperty.call(RETIRED_FIELD_MIGRATION_WARNINGS, key);
-  const retiredWarnings = keys.filter(isRetired).map((key) => RETIRED_FIELD_MIGRATION_WARNINGS[key]!);
-  const unknown = keys.filter((key) => !isRetired(key)).map(formatFieldName);
-  return [
-    ...retiredWarnings,
-    ...(unknown.length > 0 ? [`Manifest contains unknown top-level field${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}.`] : []),
-  ];
+  return unknownTopLevelManifestWarnings(parsed);
 }
 
 // Single top-level-object parser shared by both `recognizedFieldsFor` and `unknownTopLevelWarnings` so the two
@@ -155,11 +126,6 @@ function topLevelObjectOrNull(parsed: unknown): Record<string, unknown> | null {
 
 function isOversize(text: string): boolean {
   return text.length > MAX_FOCUS_MANIFEST_BYTES || new TextEncoder().encode(text).byteLength > MAX_FOCUS_MANIFEST_BYTES;
-}
-
-function formatFieldName(name: string): string {
-  const trimmed = name.replace(/[^\w.-]/g, "_").slice(0, 80);
-  return trimmed || "<blank>";
 }
 
 function redactManifestWarning(warning: string): string {

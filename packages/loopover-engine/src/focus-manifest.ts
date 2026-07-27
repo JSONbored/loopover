@@ -315,6 +315,7 @@ export const CONVERGED_FEATURE_KEYS = [
   "amsReputationBridge",
 ] as const;
 export type ConvergedFeatureKey = (typeof CONVERGED_FEATURE_KEYS)[number];
+const CONVERGED_FEATURE_KEYS_SET = new Set<string>(CONVERGED_FEATURE_KEYS);
 
 /** Per-repo activation overrides for the converged review features (`features:` block). `true`/`false` force the
  *  feature on/off for THIS repo (subject to the env kill-switch); `null` (unset) ⇒ the resolver falls back to the
@@ -1752,6 +1753,42 @@ function normalizeOptionalAdvisoryCheckRuns(
   return out.length > 0 ? out : null;
 }
 
+// Every top-level `gate.*` key parseGateConfig below actually reads (#9065). Nested sub-blocks
+// (gate.readiness.*, gate.aiReview.*, gate.slop.*, gate.copycat.*, gate.size.*, gate.cla.*) are each
+// already a fully-enumerated mapping read field-by-field above/below, and a typo INSIDE one of those is
+// covered by that sub-block's own explicit field reads -- this set only catches a typo of the sub-block
+// KEY ITSELF (e.g. `gate.readinesss`) or of a scalar gate.* field, matching the concrete typo table in #9065
+// (every example there is exactly one level deep).
+const GATE_TOP_LEVEL_KEYS = new Set<string>([
+  "enabled",
+  "checkMode",
+  "pack",
+  "linkedIssue",
+  "duplicates",
+  "readiness",
+  "aiReview",
+  "closeAuditHoldoutPct",
+  "slop",
+  "size",
+  "lockfileIntegrity",
+  "mergeReadiness",
+  "manifestPolicy",
+  "selfAuthoredLinkedIssue",
+  "linkedIssueSatisfaction",
+  "contentLaneDeliverable",
+  "backtestRegression",
+  "dryRun",
+  "premergeContentRecheck",
+  "requireFreshRebaseWindow",
+  "staleBaseAheadByThreshold",
+  "claMode",
+  "cla",
+  "expectedCiContexts",
+  "advisoryCheckRuns",
+  "aiJudgmentBlockers",
+  "copycat",
+]);
+
 /**
  * Parse the optional `gate:` mapping. Every field stays `null` when unset so the resolver can layer
  * this OVER DB settings without clobbering. A nested `readiness: { mode, minScore }` block is accepted.
@@ -1905,6 +1942,13 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     gate.aiJudgmentBlockersMode !== null ||
     gate.copycatMode !== null ||
     gate.copycatMinScore !== null;
+  // #9065: a typo'd top-level gate.* key (e.g. `gate.checkModee`) previously read as `undefined` via
+  // `record.<field>` and produced no warning at all -- the gate block simply behaved as if that field were
+  // absent. Compare the SUPPLIED keys against the ones this parser actually reads instead.
+  const unknownGateKeys = Object.keys(record).filter((key) => !GATE_TOP_LEVEL_KEYS.has(key));
+  if (unknownGateKeys.length > 0) {
+    warnings.push(`Manifest "gate" has unknown key${unknownGateKeys.length === 1 ? "" : "s"}: ${unknownGateKeys.join(", ")}; ignoring ${unknownGateKeys.length === 1 ? "it" : "them"}.`);
+  }
   return gate;
 }
 
@@ -2022,6 +2066,14 @@ function parseFeaturesConfig(value: JsonValue | undefined, warnings: string[]): 
     features[key] = normalizeOptionalBoolean(record[key], `features.${key}`, warnings);
   }
   features.present = CONVERGED_FEATURE_KEYS.some((key) => features[key] !== null);
+  // #9065: this docstring has always claimed unknown feature keys "are dropped with a warning", but nothing
+  // below ever compared the SUPPLIED keys against CONVERGED_FEATURE_KEYS -- a typo'd feature name (e.g.
+  // `improvementSignall`) silently read as `undefined` via `record[key]` and produced no warning at all,
+  // making the doc comment factually wrong. This makes the code match the doc instead of the reverse.
+  const unknownFeatureKeys = Object.keys(record).filter((key) => !CONVERGED_FEATURE_KEYS_SET.has(key));
+  if (unknownFeatureKeys.length > 0) {
+    warnings.push(`Manifest "features" has unknown key${unknownFeatureKeys.length === 1 ? "" : "s"}: ${unknownFeatureKeys.join(", ")}; ignoring ${unknownFeatureKeys.length === 1 ? "it" : "them"}.`);
+  }
   return features;
 }
 
@@ -2563,6 +2615,100 @@ function normalizeOptionalString(value: JsonValue | undefined, field: string, wa
 // GitHub-App-specific dependency chain into the UI build for one small constant.
 const MAX_REVIEW_NAG_COOLDOWN_DAYS = 365;
 
+// Every top-level `settings.*` key parseSettingsOverride below actually reads (#9065) -- mechanically copied
+// from FocusManifestSettings' own `Pick<RepositorySettings, ...>` union plus its six explicitly-declared
+// sparse-partial fields (typeLabels et al.), so this is the SAME field list the type already commits to, not
+// an independently-guessed one. Keep in sync with FocusManifestSettings above when either changes. As with
+// GATE_TOP_LEVEL_KEYS/REVIEW_TOP_LEVEL_KEYS, a typo INSIDE a nested sub-block (settings.autonomy.*,
+// settings.typeLabels.*, ...) is a separate concern from this top-level check.
+const SETTINGS_TOP_LEVEL_KEYS = new Set<string>([
+  "commentMode",
+  "publicAudienceMode",
+  "publicSignalLevel",
+  "checkRunMode",
+  "checkRunDetailLevel",
+  "regateSweepOrderMode",
+  "reviewCheckMode",
+  "autoProjectMilestoneMatch",
+  "autoProjectMilestoneMatchBackend",
+  "linkedIssueGateMode",
+  "duplicatePrGateMode",
+  "selfAuthoredLinkedIssueGateMode",
+  "qualityGateMode",
+  "qualityGateMinScore",
+  "aiReviewMode",
+  "aiReviewByok",
+  "aiReviewProvider",
+  "aiReviewModel",
+  "aiReviewAllAuthors",
+  "aiReviewConfirmedContributorsOnly",
+  "closeOwnerAuthors",
+  "skipAutomationBotAuthors",
+  "duplicateWinnerMode",
+  "openPrFileCollisionMode",
+  "plannerMode",
+  "autoLabelEnabled",
+  "typeLabelsEnabled",
+  "issuePlanEnabled",
+  "issuePlanExtraLabels",
+  "issuePlanMilestoneReuse",
+  "badgeEnabled",
+  "publicQualityMetrics",
+  "gittensorLabel",
+  "createMissingLabel",
+  "publicSurface",
+  "includeMaintainerAuthors",
+  "requireLinkedIssue",
+  "backfillEnabled",
+  "autonomy",
+  "autoMaintain",
+  "agentPaused",
+  "agentDryRun",
+  "commandAuthorization",
+  "contributorBlacklist",
+  "blacklistLabel",
+  "contributorOpenPrCap",
+  "contributorOpenIssueCap",
+  "contributorCapLabel",
+  "contributorCapCancelCi",
+  "reviewNagPolicy",
+  "reviewNagMaxPings",
+  "reviewNagCooldownDays",
+  "reviewNagLabel",
+  "reviewNagMonitoredMentions",
+  "autoCloseExemptLogins",
+  "hardGuardrailGlobs",
+  "hardGuardrailGlobsOverridesInvariants",
+  "manualReviewLabel",
+  "readyToMergeLabel",
+  "changesRequestedLabel",
+  "migrationCollisionLabel",
+  "pendingClosureLabel",
+  "accountAgeThresholdDays",
+  "newAccountLabel",
+  "commandRateLimitPolicy",
+  "commandRateLimitMaxPerWindow",
+  "commandRateLimitAiMaxPerWindow",
+  "commandRateLimitWindowHours",
+  "moderationGateMode",
+  "moderationRules",
+  "moderationWarningLabel",
+  "moderationBannedLabel",
+  "fairnessAnalyticsMode",
+  "reviewEvasionProtection",
+  "draftPrClosePolicy",
+  "reviewEvasionLabel",
+  "reviewEvasionComment",
+  "synchronizeClosePolicy",
+  "mergeTrainMode",
+  "typeLabels",
+  "linkedIssueLabelPropagation",
+  "linkedIssueHardRules",
+  "unlinkedIssueGuardrail",
+  "screenshotTableGate",
+  "advisoryAiRouting",
+]);
+
 /**
  * Parse the optional `settings:` mapping — a partial repository-settings override. Only recognized
  * fields are kept; unknown/invalid values are dropped with a warning and never throw.
@@ -3013,6 +3159,14 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   if (synchronizeClosePolicy !== null) out.synchronizeClosePolicy = synchronizeClosePolicy;
   const mergeTrainMode = normalizeOptionalEnum(r.mergeTrainMode, "settings.mergeTrainMode", ["off", "audit", "enforce"] as const, warnings);
   if (mergeTrainMode !== null) out.mergeTrainMode = mergeTrainMode;
+  // #9065: a typo'd top-level settings.* key (e.g. `settings.agentPause` or `settings.hardGuardrailGlob`)
+  // previously read as `undefined` via `r.<field>` and produced NO warning at all -- silently disabling
+  // whatever safety control that field controls (the kill switch, the manual-review label match, an
+  // auto-close exemption, ...) with the operator having no way to know their config typo did nothing.
+  const unknownSettingsKeys = Object.keys(r).filter((key) => !SETTINGS_TOP_LEVEL_KEYS.has(key));
+  if (unknownSettingsKeys.length > 0) {
+    warnings.push(`Manifest "settings" has unknown key${unknownSettingsKeys.length === 1 ? "" : "s"}: ${unknownSettingsKeys.join(", ")}; ignoring ${unknownSettingsKeys.length === 1 ? "it" : "them"}.`);
+  }
   return out;
 }
 
@@ -3034,6 +3188,49 @@ function parsePublicSafeText(value: JsonValue | undefined, field: string, warnin
   }
   return bounded;
 }
+
+// Every top-level `review.*` key parseReviewConfig below actually reads (#9065), mirroring GATE_TOP_LEVEL_KEYS'
+// doc comment: a typo INSIDE a nested sub-block (review.fields.*, review.auto_review.*, review.visual.*, ...)
+// is covered by that sub-block's own field-by-field reads (`review.enrichment` already warns per-key, see
+// REES_ANALYZER_NAME_SET above); this set only catches a typo of the sub-block key itself or a scalar field.
+const REVIEW_TOP_LEVEL_KEYS = new Set<string>([
+  "footer",
+  "fields",
+  "enrichment",
+  "note",
+  "profile",
+  "tone",
+  "security_focus",
+  "inline_comments",
+  "fixHandoff",
+  "auto_merge_summary",
+  "suggestions",
+  "changed_files_summary",
+  "effort_score",
+  "impact_map",
+  "culture_profile",
+  "selftune",
+  "sweepWatchdog",
+  "prReconciliation",
+  "activeReviewReconciliation",
+  "memory",
+  "finding_categories",
+  "inline_comments_per_category",
+  "min_finding_severity",
+  "max_findings",
+  "comment_verbosity",
+  "e2e_test_delivery",
+  "e2e_test_auto_trigger",
+  "path_instructions",
+  "instructions",
+  "exclude_paths",
+  "path_filters",
+  "pre_merge_checks",
+  "auto_review",
+  "ai_model",
+  "visual",
+  "linkedIssueSatisfaction",
+]);
 
 /**
  * Parse the optional `review:` block — maintainer overrides for the public review-panel content. Never
@@ -3114,6 +3311,12 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
   const aiModel = parseSelfHostAiModelConfig(r.ai_model, warnings);
   const visual = parseVisualConfig(r.visual, warnings);
   const linkedIssueSatisfaction = normalizeOptionalEnum(r.linkedIssueSatisfaction, "review.linkedIssueSatisfaction", LINKED_ISSUE_SATISFACTION_MODES, warnings);
+  // #9065: a typo'd top-level review.* key (e.g. `review.toen`) previously read as `undefined` via `r.<field>`
+  // and produced no warning at all. Compare the SUPPLIED keys against the ones this parser actually reads.
+  const unknownReviewKeys = Object.keys(r).filter((key) => !REVIEW_TOP_LEVEL_KEYS.has(key));
+  if (unknownReviewKeys.length > 0) {
+    warnings.push(`Manifest "review" has unknown key${unknownReviewKeys.length === 1 ? "" : "s"}: ${unknownReviewKeys.join(", ")}; ignoring ${unknownReviewKeys.length === 1 ? "it" : "them"}.`);
+  }
   return {
     present:
       footerText !== null ||
@@ -4024,6 +4227,74 @@ export function reviewConfigToJson(review: FocusManifestReviewConfig): JsonValue
   return out;
 }
 
+// Every top-level key `parseFocusManifest` below actually reads. Single source of truth for "unknown
+// top-level field" detection (#9065) -- previously duplicated as a hand-maintained TOP_LEVEL_FIELDS list
+// inside config-lint.ts, used ONLY by the offline linter/validator, never by this runtime parser itself, so
+// a manifest edited directly on a mounted host file (bypassing the validator entirely) got no check at all.
+export const FOCUS_MANIFEST_TOP_LEVEL_FIELDS = [
+  "source",
+  "wantedPaths",
+  "preferredLabels",
+  "linkedIssuePolicy",
+  "testExpectations",
+  "issueDiscoveryPolicy",
+  "maintainerNotes",
+  "publicNotes",
+  "gate",
+  "settings",
+  "review",
+  "features",
+  "experimental",
+  "contentLane",
+  "repoDocGeneration",
+  "reviewRecap",
+  "maintainerRecap",
+  "ops",
+  "publicStats",
+  "draftFlow",
+  "upstreamDriftIssues",
+  "sweepWatchdog",
+  "prReconciliation",
+  "activeReviewReconciliation",
+  "loopEscalation",
+  "federatedIntelligence",
+  "fairnessAnalytics",
+] as const;
+
+const FOCUS_MANIFEST_TOP_LEVEL_FIELD_SET = new Set<string>(FOCUS_MANIFEST_TOP_LEVEL_FIELDS);
+
+// Fields retired from FOCUS_MANIFEST_TOP_LEVEL_FIELDS that still warrant a migration-specific warning
+// (rather than the generic "unknown field" message) pointing operators at their replacement mechanism.
+const RETIRED_TOP_LEVEL_FIELD_MIGRATIONS: Record<string, string> = {
+  blockedPaths: "blockedPaths is retired; use settings.hardGuardrailGlobs for path holds.",
+};
+
+function formatUnknownFieldName(name: string): string {
+  const trimmed = name.replace(/[^\w.-]/g, "_").slice(0, 80);
+  return trimmed || "<blank>";
+}
+
+/**
+ * Unknown-top-level-field warnings for an ALREADY-PARSED manifest record. Shared by the runtime parser
+ * (`parseFocusManifest` below, wired in for #9065) and the offline linter (`config-lint.ts`'s
+ * `unknownTopLevelWarnings`, which parses raw text into a record first, then delegates here) so the two can
+ * never disagree about which top-level keys are recognized.
+ */
+export function unknownTopLevelManifestWarnings(record: Record<string, unknown>): string[] {
+  const keys = Object.keys(record).filter((key) => !FOCUS_MANIFEST_TOP_LEVEL_FIELD_SET.has(key));
+  // `hasOwnProperty.call`, NOT `key in`: a manifest field named like an Object.prototype member
+  // (`constructor`, `toString`, `hasOwnProperty`, ...) would otherwise test true for the inherited
+  // property and resolve to the prototype's function instead of a real retired-field warning string,
+  // corrupting the string[] result and suppressing the genuine unknown-field warning.
+  const isRetired = (key: string): boolean => Object.prototype.hasOwnProperty.call(RETIRED_TOP_LEVEL_FIELD_MIGRATIONS, key);
+  const retiredWarnings = keys.filter(isRetired).map((key) => RETIRED_TOP_LEVEL_FIELD_MIGRATIONS[key]!);
+  const unknown = keys.filter((key) => !isRetired(key)).map(formatUnknownFieldName);
+  return [
+    ...retiredWarnings,
+    ...(unknown.length > 0 ? [`Manifest contains unknown top-level field${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}.`] : []),
+  ];
+}
+
 /**
  * Resolve the `review.path_instructions` that APPLY to a PR — those whose glob matches at least one changed path
  * — into a single prompt section for the AI reviewer, or "" when none match (so the prompt stays byte-identical).
@@ -4100,6 +4371,14 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
     warnings.push("Manifest contained no recognized focus fields; falling back to deterministic signals.");
     manifest.present = false;
   }
+  // #9065: previously only the OFFLINE validator (config-lint.ts's unknownTopLevelWarnings, called from
+  // loopover_validate_config / the validate route / the admin dry-run write / the lint script) ever ran this
+  // check -- an operator editing the mounted manifest file directly (the normal self-host workflow) got zero
+  // feedback on a typo'd top-level key. Wiring it in here means every caller of parseFocusManifest /
+  // parseFocusManifestContent -- including the runtime load path (loadRepoFocusManifest) -- gets it too.
+  // Appended LAST (after the "no recognized fields" fallback above) to match the order the offline linter's
+  // own warnings + this check have always been surfaced in.
+  warnings.push(...unknownTopLevelManifestWarnings(record));
   return manifest;
 }
 
@@ -4115,14 +4394,26 @@ export function parseFocusManifestContent(content: string | null | undefined, so
   const trimmed = content.trim();
   const looksLikeJson = trimmed.startsWith("{") || trimmed.startsWith("[");
   let parsed: unknown;
-  try {
-    parsed = looksLikeJson ? JSON.parse(trimmed) : parseYaml(trimmed);
-  } catch {
-    return emptyManifest(source, [
-      looksLikeJson
-        ? "Manifest content was not valid JSON; ignoring it and falling back to deterministic signals."
-        : "Manifest content was not valid YAML; ignoring it and falling back to deterministic signals.",
-    ]);
+  if (looksLikeJson) {
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      // #9065: a YAML flow mapping (e.g. unquoted keys) can start with "{"/"[" while being invalid strict
+      // JSON -- retry as YAML before giving up, matching config-lint.ts's own (offline-only, until now)
+      // parseManifestTopLevelObject fallback, so the runtime path recognizes the same manifests the offline
+      // validator already accepted instead of rejecting them outright as "not valid JSON".
+      try {
+        parsed = parseYaml(trimmed);
+      } catch {
+        return emptyManifest(source, ["Manifest content was not valid JSON; ignoring it and falling back to deterministic signals."]);
+      }
+    }
+  } else {
+    try {
+      parsed = parseYaml(trimmed);
+    } catch {
+      return emptyManifest(source, ["Manifest content was not valid YAML; ignoring it and falling back to deterministic signals."]);
+    }
   }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     return emptyManifest(source, ["Manifest must be a mapping of fields; ignoring malformed manifest and falling back to deterministic signals."]);

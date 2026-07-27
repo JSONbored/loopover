@@ -516,6 +516,16 @@ declare global {
      *  gate disposition byte-identical. AI-FREE (pure structured-data adjudication), so independent of the AI
      *  reviewer; a generic hard blocker (e.g. a committed secret) is always preserved over a surface "merge". */
     LOOPOVER_REVIEW_CONTENT_LANE?: string;
+    /** Convergence (surface LIVE VERIFICATION, #8908/#8909): when truthy *AND* the surface lane above is active
+     *  for the repo, a surface entry that passes STATIC validation is additionally checked against what its URLs
+     *  actually serve — `computeGrounding` over the fetched source/target evidence (is the declared netuid /
+     *  owner / host corroborated at all?) and `probeFunctionalSurface` for the openapi/subnet-api/sse kinds (does
+     *  the url serve the interface its `kind` claims?). A CONFIRMED not-served functional surface CLOSES;
+     *  unconfirmed grounding and any INCONCLUSIVE probe HOLD for review — an inconclusive check is never reported
+     *  as a pass. Default OFF: unset/false makes no outbound probe and leaves the surface verdict byte-identical.
+     *  Its own flag, separate from the lane's, so the first outbound-fetch behavior in this lane can be rolled
+     *  back on its own — see review/content-lane/surface-verification. */
+    LOOPOVER_REVIEW_SURFACE_VERIFICATION?: string;
     /** Convergence (self-improve / auto-tune): when truthy, the ported self-improvement loop
      *  (src/review/auto-tune.ts + auto-apply.ts) runs on the cron tick over loopover's OWN review-outcome
      *  data — it computes tuning recommendations, SHADOW-SOAKS any STRICTLY-TIGHTENING recommendation in the

@@ -30,6 +30,13 @@ export interface SurfaceReviewInput {
   /** Loads decoded file content at a ref; injected so unit tests need no network. Returns null when absent. */
   loadFile: (path: string, ref: "head" | "base") => Promise<string | null>;
   opts?: { secretsScan?: boolean; sourceUrlValidation?: boolean };
+  /** Optional LIVE content verification for an entry that already passed static validation (#8908, #8909) —
+   *  injected I/O, exactly like `loadFile`, so the orchestrator stays pure and domain-agnostic and any registry
+   *  can supply its own verifier (metagraphed's is `makeSurfaceEntryVerifier` in ./surface-verification).
+   *  Returns an OVERRIDING Assessment when verification downgrades the entry (hold or close), or `null` when it
+   *  confirms it (the static assessment stands). Omitted ⇒ no verification runs and no fetch is made, so the
+   *  verdict is byte-identical to the pre-#8908 lane. */
+  verifyEntry?: (entry: unknown) => Promise<Assessment | null>;
 }
 
 export interface SurfaceReviewResult {
@@ -193,6 +200,42 @@ function pickAggregateAssessment(assessments: Assessment[]): Assessment {
 }
 
 /**
+ * Apply the injected live-content verifier (#8908, #8909) to every appended entry that passed STATIC validation,
+ * and return the per-entry assessments with any downgrade folded in.
+ *
+ * Only "merged" entries are verified, for two reasons: an entry already closing or held has its verdict decided
+ * (verification could only ever confirm it), and skipping them means an invalid submission — the common bad case
+ * — pays for no network I/O at all. The surviving entries are verified CONCURRENTLY (independent URLs, no data
+ * dependency), mirroring how this function's caller already parallelizes its GitHub reads.
+ *
+ * A verifier that THROWS must never take the review down or, worse, be swallowed into a pass: the entry is held
+ * for review instead. `makeSurfaceEntryVerifier` is itself written not to throw, so this is a belt-and-braces
+ * guard against a future/third-party verifier that is less careful.
+ */
+async function verifyMergedEntries(
+  staticAssessments: Assessment[],
+  appendedEntries: readonly unknown[],
+  verifyEntry: SurfaceReviewInput["verifyEntry"],
+): Promise<Assessment[]> {
+  if (!verifyEntry) return staticAssessments;
+  return await Promise.all(
+    staticAssessments.map(async (assessment, idx) => {
+      if (assessment.verdict !== "merged") return assessment;
+      try {
+        return (await verifyEntry(appendedEntries[idx])) ?? assessment;
+      } catch {
+        return {
+          verdict: "manual-review" as const,
+          summary: "Live verification of this surface entry could not be completed — routing to review rather than accepting an unverified entry.",
+          candidate: assessment.candidate,
+          reason: "verification-error",
+        };
+      }
+    }),
+  );
+}
+
+/**
  * Adjudication policy (deterministic, DECISIVE): the overwhelming majority of outcomes are merge or close —
  * manual review is the rare exception. A clean valid submission MERGES; anything invalid or non-standard
  * (a malformed/violating entry, an out-of-range append count, a duplicate entry when the spec opts into
@@ -279,9 +322,8 @@ export async function runSurfaceReview(spec: RegistryLaneSpec, input: SurfaceRev
     return { verdict: "manual", summary: NO_VALIDATOR_ENTRY_SUMMARY };
   }
   const headDoc = safeParseJson(headRaw);
-  const assessment = pickAggregateAssessment(
-    appendedEntries.map((appendedEntry) => assessEntry(headDoc, { ...input.opts, appendedEntry })),
-  );
+  const staticAssessments = appendedEntries.map((appendedEntry) => assessEntry(headDoc, { ...input.opts, appendedEntry }));
+  const assessment = pickAggregateAssessment(await verifyMergedEntries(staticAssessments, appendedEntries, input.verifyEntry));
   if (companionProviderFile !== null) {
     // Guaranteed non-null: the no-validator short-circuit above already returned when this spec lacks one.
     const assessProvider = spec.assessProviderEntry as NonNullable<RegistryLaneSpec["assessProviderEntry"]>;

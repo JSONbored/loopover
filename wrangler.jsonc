@@ -163,6 +163,16 @@
     // OFF (false): the processor takes no new branch + resolves no files, so the gate disposition is byte-
     // identical until deliberately enabled per-repo. See review/content-lane-wire.
     "LOOPOVER_REVIEW_CONTENT_LANE": "false",
+    // Convergence (surface LIVE VERIFICATION, #8908/#8909): when truthy AND the surface lane above is active for
+    // the repo, a surface entry that passes static validation is additionally checked against what its URLs
+    // actually serve — computeGrounding over the fetched source/target evidence (is the declared netuid/owner/
+    // host corroborated at all?) and probeFunctionalSurface for the openapi/subnet-api/sse kinds (does the url
+    // serve the interface its kind claims?). A confirmed not-served functional surface CLOSES; unconfirmed
+    // grounding and any inconclusive probe HOLD for review — an inconclusive check never reads as a pass.
+    // Default OFF (false): no outbound probe is made and the surface verdict is byte-identical to today. Its own
+    // flag, separate from the lane, so the first outbound-fetch behavior in this lane can be rolled back alone.
+    // See review/content-lane/surface-verification.
+    "LOOPOVER_REVIEW_SURFACE_VERIFICATION": "false",
     // Convergence (self-improve / auto-tune): run the ported self-improvement loop on the cron tick over
     // loopover's own review-outcome data — compute tuning recommendations, SHADOW-SOAK any strictly-
     // tightening one, and AUTO-PROMOTE it to live ONLY after the soak window passes the gate; every action is

@@ -165,6 +165,15 @@ any per-PR feature to run on a given repo. So a per-PR feature activates only wh
   registries) through the dedicated content lane — duplicate detection, source-evidence
   reachability, security scanning, scope classification, registry grounding — instead of the
   code gate. Global.
+- `LOOPOVER_REVIEW_SURFACE_VERIFICATION` — live verification of registry surface
+  entries, on top of the content lane above (both must be on). An entry that passes the
+  static shape/safety checks is additionally fetched: its declared source is checked for
+  evidence corroborating the claimed netuid, owner, or host, and an `openapi` /
+  `subnet-api` / `sse` entry is probed to confirm its URL really serves the interface its
+  `kind` declares. A confirmed not-served surface **closes**; unverified corroboration and
+  any **inconclusive** probe **hold for review** — an inconclusive check is never reported
+  as a pass. This is the only content-lane capability that makes outbound requests to
+  submitter-supplied URLs, so it is a separate flag you can roll back on its own. Global.
 - `LOOPOVER_REVIEW_DRAFT` — the public draft-submission flow (the
   `/v1/drafts` endpoints: contributor draft → GitHub OAuth → fork PR). With the
   flag off every draft endpoint 404s. Requires the

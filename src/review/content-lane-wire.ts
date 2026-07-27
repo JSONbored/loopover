@@ -37,10 +37,11 @@
 //     genuinely critical finding, or one of these other configured gates, still wins outright).
 import { AI_JUDGMENT_BLOCKER_CODES, type GateCheckEvaluation, isAiJudgmentOnlyFailure, isDuplicateOnlyFailure } from "../rules/advisory";
 import { LOOPOVER_GATE_CHECK_NAME } from "./check-names";
-import { isContentLaneEnabled } from "./content-lane/flag";
+import { isContentLaneEnabled, isSurfaceVerificationEnabled } from "./content-lane/flag";
 import { runSurfaceReview, type SurfaceReviewInput, type SurfaceReviewResult } from "./content-lane/orchestrator";
 import type { RegistryLaneSpec } from "./content-lane/registry-logic";
 import { registeredValidatorIds, resolveRegistryLaneSpec, unregisteredValidatorId } from "./content-lane/spec-resolver";
+import { makeSurfaceEntryVerifier } from "./content-lane/surface-verification";
 import { makeGithubFileFetcher } from "./grounding-wire";
 import { MAX_FETCH_CHARS } from "./review-grounding";
 import type { FocusManifest } from "../signals/focus-manifest";
@@ -185,6 +186,7 @@ export async function runRegistrySurfaceGate(
     files: { path: string; status?: string | null | undefined }[];
   },
   loadFileOverride?: SurfaceReviewInput["loadFile"],
+  verifyEntryOverride?: SurfaceReviewInput["verifyEntry"],
 ): Promise<GateCheckEvaluation | null> {
   let fetcherPromise: ReturnType<typeof makeGithubFileFetcher> | null = null;
   const githubLoad = async (path: string, ref: "head" | "base"): Promise<string | null> => {
@@ -219,10 +221,15 @@ export async function runRegistrySurfaceGate(
     if (ref === "base" && content === null && statusByPath.get(path) === "modified") deferUnreadable = true;
     return content;
   };
+  // #8908/#8909: live verification is its OWN flag on top of the lane's activation, so it can be rolled back
+  // without taking the (already-cutover) surface lane down. Flag-OFF, `verifyEntry` is undefined, the
+  // orchestrator runs no verification and makes no outbound probe, and the verdict is byte-identical to today.
+  const verifyEntry = verifyEntryOverride ?? (isSurfaceVerificationEnabled(env) ? makeSurfaceEntryVerifier() : undefined);
   const result = await runSurfaceReview(spec, {
     changedFiles: args.files.map((file) => file.path),
     loadFile,
     opts: { secretsScan: true, sourceUrlValidation: true },
+    ...(verifyEntry ? { verifyEntry } : {}),
   });
   if (result === null) return null; // not a registry submission → the generic gate applies
   if (deferUnreadable) return null; // a fetch blip on a file that must be readable → defer, never auto-close

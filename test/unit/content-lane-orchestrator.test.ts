@@ -552,3 +552,70 @@ describe("runSurfaceReview (deterministic + decisive: merge/close, rarely manual
     });
   });
 });
+
+// ── Live entry verification hook (#8908, #8909) ───────────────────────────────────────────────
+// The orchestrator itself stays domain-agnostic: it only knows "run the injected verifier on entries that
+// passed static validation, and let it downgrade them". metagraphed's actual verifier (the fetches, the
+// grounding/functional checks, the close-vs-hold policy) is tested in content-lane-surface-verification.test.ts.
+describe("runSurfaceReview — verifyEntry hook", () => {
+  const doc = (surfaces: unknown[]) => JSON.stringify({ netuid: 14, surfaces });
+  const files = (surfaces: unknown[], base: unknown[] = [existing]) => ({ [`head:${SUBNET}`]: doc(surfaces), [`base:${SUBNET}`]: doc(base) });
+  const withVerifier = (surfaces: unknown[], verifyEntry: SurfaceReviewInput["verifyEntry"], base: unknown[] = [existing]) =>
+    runSurfaceReview(METAGRAPHED_LANE_SPEC, { changedFiles: [SUBNET], loadFile: loader(files(surfaces, base)), ...(verifyEntry ? { verifyEntry } : {}) });
+
+  it("is entirely optional — omitted, the verdict is byte-identical to the pre-verification lane", async () => {
+    expect(await withVerifier([existing, newEntry], undefined)).toEqual({ verdict: "merge", summary: undefined, reason: undefined });
+  });
+
+  it("keeps the static merged verdict when the verifier confirms the entry (null)", async () => {
+    const r = await withVerifier([existing, newEntry], () => Promise.resolve(null));
+    expect(r?.verdict).toBe("merge");
+  });
+
+  it("CLOSES the PR when the verifier closes an otherwise-valid entry (#8909 served:false)", async () => {
+    const r = await withVerifier([existing, newEntry], () =>
+      Promise.resolve({ verdict: "closed" as const, summary: "url does not serve the declared surface", candidate: null, reason: "functional-surface-not-served" }),
+    );
+    expect(r).toEqual({ verdict: "close", summary: "url does not serve the declared surface", reason: "functional-surface-not-served" });
+  });
+
+  it("HOLDS the PR when the verifier downgrades an otherwise-valid entry (#8908 ungrounded)", async () => {
+    const r = await withVerifier([existing, newEntry], () =>
+      Promise.resolve({ verdict: "manual-review" as const, summary: "source does not corroborate", candidate: null, reason: "grounding-unconfirmed" }),
+    );
+    expect(r).toEqual({ verdict: "manual", summary: "source does not corroborate", reason: "grounding-unconfirmed" });
+  });
+
+  it("never verifies an entry that already failed static validation (no wasted network I/O)", async () => {
+    const seen: unknown[] = [];
+    // public_safe:false closes statically, so the verifier must never be handed this entry.
+    const r = await withVerifier([existing, { ...newEntry, public_safe: false }], (entry) => {
+      seen.push(entry);
+      return Promise.resolve(null);
+    });
+    expect(r?.verdict).toBe("close");
+    expect(seen).toEqual([]);
+  });
+
+  it("verifies EACH appended entry independently, and one bad entry closes the whole PR", async () => {
+    const seen: unknown[] = [];
+    const r = await withVerifier([existing, newEntry, newEntry2], (entry) => {
+      seen.push(entry);
+      const bad = (entry as { kind?: string }).kind === "openapi";
+      return Promise.resolve(bad ? { verdict: "closed" as const, summary: "not served", candidate: null, reason: "functional-surface-not-served" } : null);
+    });
+    expect(seen).toEqual([newEntry, newEntry2]);
+    // pickAggregateAssessment prefixes a multi-entry reason with its position so the offender is identifiable.
+    expect(r?.verdict).toBe("close");
+    expect(r?.summary).toBe("Surface entry 2 of 2: not served");
+  });
+
+  it("HOLDS rather than merging when the verifier itself throws — a broken check never reads as a pass", async () => {
+    const r = await withVerifier([existing, newEntry], () => Promise.reject(new Error("probe exploded")));
+    expect(r).toEqual({
+      verdict: "manual",
+      summary: "Live verification of this surface entry could not be completed — routing to review rather than accepting an unverified entry.",
+      reason: "verification-error",
+    });
+  });
+});

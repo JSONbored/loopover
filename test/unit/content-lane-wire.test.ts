@@ -836,3 +836,55 @@ describe("evaluateWithSurfaceLane (the processor seam helper)", () => {
     expect(advisory.findings).toEqual([]);
   });
 });
+
+// ── Live surface verification wiring (#8908, #8909) ───────────────────────────────────────────
+// The verifier's own checks are tested in content-lane-surface-verification.test.ts; what matters HERE is the
+// flag gating — the shipped default must make no outbound probe and leave the verdict byte-identical.
+describe("runRegistrySurfaceGate — LOOPOVER_REVIEW_SURFACE_VERIFICATION gating", () => {
+  const stub = { [`head:${SUBNET}`]: doc([existing, newEntry]), [`base:${SUBNET}`]: doc([existing]) };
+  const files = [{ path: SUBNET, status: "modified" }];
+  const run = (flagEnv: Record<string, string>, verifyOverride?: SurfaceReviewInput["verifyEntry"]) =>
+    runRegistrySurfaceGate(
+      flagEnv as unknown as Env,
+      METAGRAPHED_LANE_SPEC,
+      { installationId: 0, repoFullName: REPO, pr: { headSha: "HEAD", baseRef: "BASE" }, advisory: { findings: [] as AdvisoryFinding[] }, files },
+      loader(stub),
+      verifyOverride,
+    );
+
+  it("flag OFF (the shipped default) makes NO outbound probe and merges exactly as before", async () => {
+    // Any real fetch would reject and surface as a hold/close; a clean success proves none was attempted.
+    vi.stubGlobal("fetch", () => Promise.reject(new Error("no network expected")));
+    for (const env of [{}, { LOOPOVER_REVIEW_SURFACE_VERIFICATION: "false" }]) {
+      expect((await run(env))?.conclusion).toBe("success");
+    }
+  });
+
+  it("flag ON runs verification, so an entry the verifier closes fails the gate", async () => {
+    const out = await run({ LOOPOVER_REVIEW_SURFACE_VERIFICATION: "true" }, () =>
+      Promise.resolve({ verdict: "closed" as const, summary: "url does not serve the declared surface", candidate: null, reason: "functional-surface-not-served" }),
+    );
+    expect(out?.conclusion).toBe("failure");
+    expect(out?.blockers[0]?.code).toBe("surface_lane_reject");
+  });
+
+  it("flag ON, an ungrounded entry HOLDS (neutral) rather than merging or closing", async () => {
+    const out = await run({ LOOPOVER_REVIEW_SURFACE_VERIFICATION: "true" }, () =>
+      Promise.resolve({ verdict: "manual-review" as const, summary: "source does not corroborate", candidate: null, reason: "grounding-unconfirmed" }),
+    );
+    expect(out?.conclusion).toBe("neutral");
+    expect(out?.blockers).toEqual([]);
+    expect(out?.warnings[0]?.code).toBe("surface_lane_manual");
+  });
+
+  it("flag ON with a real (unstubbed) verifier holds an entry whose URLs cannot be reached", async () => {
+    // No verifyEntry override: exercises the production makeSurfaceEntryVerifier path end-to-end. `newEntry` is
+    // a subnet-api (a FUNCTIONAL kind), so with every fetch failing the functional probe is inconclusive and
+    // outranks the equally-inconclusive grounding check — and an unreachable surface HOLDS, never merges.
+    vi.stubGlobal("fetch", () => Promise.reject(new Error("network down")));
+    const out = await run({ LOOPOVER_REVIEW_SURFACE_VERIFICATION: "true" });
+    expect(out?.conclusion).toBe("neutral");
+    expect(out?.summary).toContain("Could not confirm the declared surface is served");
+    expect(out?.warnings[0]?.code).toBe("surface_lane_manual");
+  });
+});

@@ -2313,6 +2313,33 @@ export async function getNotificationDeliveryById(env: Env, id: string): Promise
   return row ? toNotificationDeliveryRecord(row) : null;
 }
 
+/** #9320: `notification_deliveries` rows stranded at `status: "pending"` — a notify-deliver job that may have
+ *  been lost to a failed/partial enqueue. Bounded on both ends: `createdAt` older than `olderThanIso` (the
+ *  grace cutoff, so a row merely waiting its turn behind a busy queue is not mistaken for a lost one) and no
+ *  older than `notBeforeIso` (the lookback floor, so the scan stays cheap and skips rows the 90-day retention
+ *  sweep is about to delete anyway). Oldest first, so the most-stranded rows are rescued first under the limit. */
+export async function listStrandedPendingNotificationDeliveries(
+  env: Env,
+  olderThanIso: string,
+  notBeforeIso: string,
+  limit: number,
+): Promise<NotificationDeliveryRecord[]> {
+  const db = getDb(env.DB);
+  const rows = await db
+    .select()
+    .from(notificationDeliveries)
+    .where(
+      and(
+        eq(notificationDeliveries.status, "pending"),
+        lt(notificationDeliveries.createdAt, olderThanIso),
+        gte(notificationDeliveries.createdAt, notBeforeIso),
+      ),
+    )
+    .orderBy(asc(notificationDeliveries.createdAt), asc(notificationDeliveries.id))
+    .limit(limit);
+  return rows.map(toNotificationDeliveryRecord);
+}
+
 export async function markNotificationDeliveryDelivered(env: Env, id: string): Promise<void> {
   const db = getDb(env.DB);
   await db

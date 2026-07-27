@@ -183,7 +183,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "CRON_INTERVAL_MS",
-    firstReference: "src/server.ts",
+    firstReference: "src/selfhost/preflight.ts",
   },
   {
     name: "DATABASE_PATH",
@@ -231,7 +231,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "GITHUB_CACHE_TTL_SECONDS",
-    firstReference: "src/server.ts",
+    firstReference: "src/selfhost/preflight.ts",
   },
   {
     name: "GITHUB_INSTALLATION_CONCURRENCY_DEFER_MS",
@@ -483,7 +483,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "PORT",
-    firstReference: "src/server.ts",
+    firstReference: "src/selfhost/preflight.ts",
   },
   {
     name: "POSTHOG_API_KEY",
@@ -690,7 +690,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `CONFIG_DIR_EMPTY_ACKNOWLEDGED` | `src/server.ts` |",
   "| `CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT` | `src/queue/processors.ts` |",
   "| `CONTRIBUTOR_EVIDENCE_BATCH_SIZE` | `src/queue/processors.ts` |",
-  "| `CRON_INTERVAL_MS` | `src/server.ts` |",
+  "| `CRON_INTERVAL_MS` | `src/selfhost/preflight.ts` |",
   "| `DATABASE_PATH` | `src/server.ts` |",
   "| `DATABASE_URL` | `src/selfhost/preflight.ts` |",
   "| `DISCORD_REPO_WEBHOOKS` | `src/services/notify-discord.ts` |",
@@ -702,7 +702,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `GITHUB_APP_ID` | `src/selfhost/orb-collector.ts` |",
   "| `GITHUB_APP_PRIVATE_KEY` | `src/selfhost/orb-collector.ts` |",
   "| `GITHUB_APP_SLUG` | `src/selfhost/pg-queue.ts` |",
-  "| `GITHUB_CACHE_TTL_SECONDS` | `src/server.ts` |",
+  "| `GITHUB_CACHE_TTL_SECONDS` | `src/selfhost/preflight.ts` |",
   "| `GITHUB_INSTALLATION_CONCURRENCY_DEFER_MS` | `src/selfhost/installation-concurrency-admission.ts` |",
   "| `GITHUB_INSTALLATION_CONCURRENCY_ENABLED` | `src/selfhost/installation-concurrency-admission.ts` |",
   "| `GITHUB_INSTALLATION_CONCURRENCY_LIMIT` | `src/selfhost/installation-concurrency-admission.ts` |",
@@ -765,7 +765,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `PAGERDUTY_ROUTING_KEY` | `src/services/notify-pagerduty.ts` |",
   "| `PGPOOL_MAX` | `src/selfhost/queue-common.ts` |",
   "| `PGVECTOR_ENABLED` | `src/server.ts` |",
-  "| `PORT` | `src/server.ts` |",
+  "| `PORT` | `src/selfhost/preflight.ts` |",
   "| `POSTHOG_API_KEY` | `src/selfhost/otel.ts` |",
   "| `POSTHOG_DISABLED` | `src/selfhost/posthog.ts` |",
   "| `POSTHOG_ENVIRONMENT` | `src/selfhost/otel.ts` |",

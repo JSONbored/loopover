@@ -1,4 +1,5 @@
 import { createPrivateKey } from "node:crypto";
+import { CRON_INTERVAL_MIN_MS } from "./cron-alignment";
 
 export type SelfHostPreflightProblem = {
   var: string;
@@ -129,6 +130,39 @@ function criticalSecretProblem(name: string, value: string): string | null {
   return null;
 }
 
+// #9157: a bare `Number(process.env.X ?? default)` at a call site turns a wrong-unit/wrong-type operator
+// mistake ("2m", "120s", "120_000", a fraction, a negative number) into NaN — and NaN silently becomes a
+// runaway (setTimeout/setInterval coerce NaN to 1ms) or a silent feature disable (a `> 0` gate on NaN is
+// always false), with no boot-time signal either way. Unlike parsePositiveIntEnv (queue-common.ts), which is
+// the RUNTIME defense-in-depth for the same knobs — it silently falls back to a safe default with a warn log
+// so a running process degrades gracefully — this runs at BOOT and turns the identical bad value into a
+// fatal preflight error: an operator who fat-fingers a unit suffix finds out immediately, from a clear error,
+// rather than from a buried warn line or (worse) a live production runaway. Absence is always fine — presence
+// is each var's own default's concern, mirrored in the call site's own fallback — this only judges a value
+// the operator actually set.
+function positiveInteger(
+  problems: SelfHostPreflightProblem[],
+  env: SelfHostPreflightEnv,
+  name: string,
+  min: number,
+  max: number,
+): void {
+  const raw = nonBlank(env[name]);
+  if (!raw) return;
+  if (!/^\d+$/.test(raw)) {
+    addProblem(
+      problems,
+      name,
+      `Set ${name} to a plain positive integer — no unit suffix (e.g. "2m"/"120s"), no numeric separators ("120_000"), and no decimal point.`,
+    );
+    return;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < min || parsed > max) {
+    addProblem(problems, name, `Set ${name} to an integer between ${min} and ${max}.`);
+  }
+}
+
 function checkCriticalSecrets(
   problems: SelfHostPreflightProblem[],
   env: SelfHostPreflightEnv,
@@ -222,6 +256,15 @@ export function preflightEnv(env: SelfHostPreflightEnv): SelfHostPreflightResult
     );
 
   checkCriticalSecrets(problems, env);
+
+  // #9157: the numeric env knobs previously read with a bare `Number(process.env.X ?? default)` at their call
+  // sites (src/server.ts) — a malformed value NaN's through to a runaway 1ms cron/setTimeout or a silently
+  // disabled response cache with no boot-time signal. 0 is a valid, meaningful value for
+  // GITHUB_CACHE_TTL_SECONDS ("disable the cache", server.ts's own documented convention) but NOT for
+  // CRON_INTERVAL_MS (see CRON_INTERVAL_MIN_MS's own doc comment) or PORT (no TCP port is 0).
+  positiveInteger(problems, env, "CRON_INTERVAL_MS", CRON_INTERVAL_MIN_MS, 24 * 60 * 60_000);
+  positiveInteger(problems, env, "PORT", 1, 65_535);
+  positiveInteger(problems, env, "GITHUB_CACHE_TTL_SECONDS", 0, 86_400);
 
   return problems.length === 0 ? { ok: true, problems: [] } : { ok: false, problems };
 }

@@ -21,6 +21,8 @@ describe("OpenAPI contract", () => {
     expect(spec.paths["/v1/repos/{owner}/{repo}/gittensor-config-recommendation"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/pulls/{number}/maintainer-packet"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/pulls/{number}/reviewability"]).toBeDefined();
+    expect(spec.paths["/v1/repos/{owner}/{repo}/pulls/{number}/ai-review-findings"]).toBeDefined();
+    expect(spec.paths["/v1/repos/{owner}/{repo}/pulls/{number}/ai-review-findings"]?.get).toBeDefined();
     expect(spec.paths["/v1/contributors/{login}/profile"]).toBeDefined();
     expect(spec.paths["/v1/contributors/{login}/decision-pack"]).toBeDefined();
     expect(spec.paths["/v1/contributors/{login}/open-pr-monitor"]).toBeDefined();
@@ -100,6 +102,12 @@ describe("OpenAPI contract", () => {
     expect(spec.components?.schemas?.GittensorConfigRecommendation).toBeDefined();
     expect(spec.components?.schemas?.PullRequestMaintainerPacket).toBeDefined();
     expect(spec.components?.schemas?.PullRequestReviewability).toBeDefined();
+    expect(spec.components?.schemas?.PullRequestAiReviewFindings).toBeDefined();
+    // #9305: response schema keys must match prAiReviewFindingsOutputSchema in src/mcp/server.ts
+    expect(JSON.stringify(spec.components?.schemas?.PullRequestAiReviewFindings)).toContain("status");
+    expect(JSON.stringify(spec.components?.schemas?.PullRequestAiReviewFindings)).toContain("findings");
+    expect(JSON.stringify(spec.components?.schemas?.PullRequestAiReviewFindings)).toContain("categoryCounts");
+    expect(JSON.stringify(spec.components?.schemas?.PullRequestAiReviewFindings)).toContain("ai_review_off");
     expect(spec.components?.schemas?.LocalBranchAnalysis).toBeDefined();
     expect(spec.components?.schemas?.RepoSettingsPreview).toBeDefined();
     expect(spec.components?.schemas?.InstallationRepair).toBeDefined();

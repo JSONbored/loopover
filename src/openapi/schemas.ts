@@ -2822,6 +2822,29 @@ export const PullRequestReviewabilitySchema = z
   })
   .openapi("PullRequestReviewability");
 
+// Field-level parity with `prAiReviewFindingsOutputSchema` in src/mcp/server.ts (#9305).
+export const PullRequestAiReviewFindingsSchema = z
+  .object({
+    status: z.enum(["ready", "not_found", "ai_review_off"]),
+    repoFullName: z.string().optional(),
+    pullNumber: z.number().optional(),
+    login: z.string().optional(),
+    headSha: z.string().nullable().optional(),
+    findings: z
+      .array(
+        z.object({
+          category: z.string(),
+          path: z.string(),
+          severity: z.enum(["blocker", "nit"]),
+          line: z.number(),
+          body: z.string(),
+        }),
+      )
+      .optional(),
+    categoryCounts: z.record(z.string(), z.number()).optional(),
+  })
+  .openapi("PullRequestAiReviewFindings");
+
 export const RegistryChangeReportSchema = z
   .object({
     generatedAt: z.string(),

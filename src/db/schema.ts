@@ -977,6 +977,11 @@ export const orbRelayPending = sqliteTable(
     // enqueueConfigPushRelay). The dispatch side (#7523) branches on this before treating raw_body as a
     // GitHubWebhookPayload.
     kind: text("kind").notNull().default("github_webhook"),
+    // Pull-mode drain isolation (#9150): which enrollment a GitHub-webhook row was queued for (the same
+    // "winning enrollment" forwardOrbEvent picks for the push path). NULL for config_push rows (installation-
+    // wide, not consumer-specific) and for any pre-#9150 row -- pullRelayPending's WHERE matches NULL
+    // regardless of the asking enrollment, so an untagged row is never silently orphaned.
+    enrollId: text("enroll_id"),
   },
   (table) => ({
     installation: index("idx_orb_relay_pending_install").on(table.installationId, table.createdAt),
@@ -986,6 +991,8 @@ export const orbRelayPending = sqliteTable(
     // pruneRelayPending (src/orb/relay.ts) filters/deletes by created_at alone (fleet-wide TTL sweep, not
     // scoped to one installation) -- neither index above leads with created_at, so that scan was unindexed.
     createdAt: index("idx_orb_relay_pending_created_at").on(table.createdAt),
+    // #9150: pullRelayPending's SELECT/DELETE now filter on (installation_id, enroll_id) together.
+    enroll: index("idx_orb_relay_pending_enroll").on(table.installationId, table.enrollId),
   }),
 );
 

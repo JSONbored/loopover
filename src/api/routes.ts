@@ -4441,7 +4441,9 @@ export function createApp() {
     } catch {
       ack = undefined; // tolerate an empty/invalid body — just no ack this round
     }
-    const events = await pullRelayPending(c.env, enrollment.installationId, { ack }).catch(dbBrokerError);
+    // #9150: scope the drain to THIS enrollment (or untagged/legacy rows) — not merely the installation — so a
+    // second live enrollment for the same install can never steal and destructively-ack this one's events.
+    const events = await pullRelayPending(c.env, enrollment.installationId, { ack, enrollId: enrollment.enrollId }).catch(dbBrokerError);
     if (events === null) return c.json({ error: "broker_error" }, 503);
     return c.json({ events }, 200);
   });

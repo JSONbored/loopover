@@ -3,6 +3,7 @@ import { createApp } from "../../src/api/routes";
 import { issueOrbEnrollment } from "../../src/orb/broker";
 import { relayForward } from "../../src/orb/webhook";
 import { enqueueRelayPending, forwardOrbEvent, MAX_ORB_RELAY_REGISTER_BODY_BYTES, pullRelayPending, readOrbRelayRegisterBody, registerOrbRelay, relaySignature, relayVerify, retryFailedRelays, storeRelayFailure } from "../../src/orb/relay";
+import { counterValue, resetMetrics } from "../../src/selfhost/metrics";
 import { createTestEnv, type TestD1Database } from "../helpers/d1";
 
 const db = (e: Env) => e.DB as unknown as TestD1Database;
@@ -272,6 +273,61 @@ describe("forwardOrbEvent", () => {
     expect(calls[0]?.url).toBe("https://new-host.example/v1/orb/relay");
     const h = calls[0]?.init?.headers as Record<string, string>;
     expect(h["x-orb-signature-256"]).toBe(`sha256=${await relaySignature(freshSecret, body)}`);
+  });
+
+  it("#9150: PULL mode tags each enqueued row with the WINNING enrollment's id, and emits a metric when a second live enrollment exists", async () => {
+    const e = brokeredEnv();
+    await seedInstall(e, 806);
+    resetMetrics();
+    const secretA = ((await issueOrbEnrollment(e, 806)) as { secret: string }).secret;
+    await registerOrbRelay(e, secretA, "https://a.example/v1/orb/relay");
+    await db(e).prepare("UPDATE orb_enrollments SET relay_mode = 'pull' WHERE installation_id = 806").run();
+    // Only ONE live enrollment so far — the metric must not fire yet.
+    expect(await forwardOrbEvent(e, { eventName: "pull_request", installationId: 806, deliveryId: "single-enroll", rawBody: "{}" })).toBe("queued");
+    expect(counterValue("loopover_orb_relay_multiple_live_enrollments_total")).toBe(0);
+    const rowA = await db(e).prepare("SELECT enroll_id FROM orb_enrollments WHERE installation_id = 806 ORDER BY rowid").first<{ enroll_id: string }>();
+    const taggedSingle = await db(e).prepare("SELECT enroll_id FROM orb_relay_pending WHERE delivery_id = 'single-enroll'").first<{ enroll_id: string | null }>();
+    expect(taggedSingle?.enroll_id).toBe(rowA?.enroll_id);
+
+    // A second issuance (blue/green swap, or a rotation that hasn't revoked the old secret yet) leaves TWO live rows.
+    const secretB = ((await issueOrbEnrollment(e, 806)) as { secret: string }).secret;
+    await registerOrbRelay(e, secretB, "https://b.example/v1/orb/relay");
+    await db(e).prepare("UPDATE orb_enrollments SET relay_mode = 'pull' WHERE installation_id = 806").run();
+    const rowB = await db(e).prepare("SELECT enroll_id FROM orb_enrollments WHERE installation_id = 806 ORDER BY rowid DESC").first<{ enroll_id: string }>();
+    expect(await forwardOrbEvent(e, { eventName: "pull_request", installationId: 806, deliveryId: "double-enroll", rawBody: "{}" })).toBe("queued");
+    expect(counterValue("loopover_orb_relay_multiple_live_enrollments_total")).toBe(1); // now observable, not silent
+    const taggedDouble = await db(e).prepare("SELECT enroll_id FROM orb_relay_pending WHERE delivery_id = 'double-enroll'").first<{ enroll_id: string | null }>();
+    expect(taggedDouble?.enroll_id).toBe(rowB?.enroll_id); // tagged for the newest (winning) enrollment, same election as push
+
+    // pullRelayPending scoped to enrollment A must see only its own event (+ any untagged legacy rows) — NOT
+    // enrollment B's, even though both belong to the same installation. This is the actual #9150 fix: before it,
+    // "any valid secret for the installation" could drain and destructively-ack the other consumer's queue.
+    const drainedByA = await pullRelayPending(e, 806, { enrollId: rowA?.enroll_id ?? null });
+    expect(drainedByA.map((ev) => ev.deliveryId)).toEqual(["single-enroll"]);
+    const drainedByB = await pullRelayPending(e, 806, { enrollId: rowB?.enroll_id ?? null });
+    expect(drainedByB.map((ev) => ev.deliveryId)).toEqual(["double-enroll"]);
+  });
+
+  it("#9150: an enrollment scope ALSO drains untagged legacy rows (enroll_id IS NULL never orphaned)", async () => {
+    const e = brokeredEnv();
+    await enqueueRelayPending(e, { deliveryId: "legacy-untagged", installationId: 807, eventName: "pull_request", rawBody: "{}" });
+    await enqueueRelayPending(e, { deliveryId: "tagged-for-x", installationId: 807, eventName: "pull_request", rawBody: '{"n":1}', enrollId: "enroll-x" });
+    const drained = await pullRelayPending(e, 807, { enrollId: "enroll-x" });
+    expect(drained.map((ev) => ev.deliveryId).sort()).toEqual(["legacy-untagged", "tagged-for-x"]);
+    // A DIFFERENT enrollment for the same install sees the untagged row too, but not the one tagged for "enroll-x".
+    const drainedByOther = await pullRelayPending(e, 807, { enrollId: "enroll-y" });
+    expect(drainedByOther.map((ev) => ev.deliveryId)).toEqual(["legacy-untagged"]);
+  });
+
+  it("#9150: ack scoped to an enrollment cannot delete another live enrollment's row for the same installation", async () => {
+    const e = brokeredEnv();
+    await enqueueRelayPending(e, { deliveryId: "owned-by-x", installationId: 808, eventName: "pull_request", rawBody: "{}", enrollId: "enroll-x" });
+    await enqueueRelayPending(e, { deliveryId: "owned-by-y", installationId: 808, eventName: "pull_request", rawBody: '{"n":1}', enrollId: "enroll-y" });
+    // enroll-x tries to ack BOTH its own row and enroll-y's — only its own is removed.
+    const remaining = await pullRelayPending(e, 808, { enrollId: "enroll-x", ack: ["owned-by-x", "owned-by-y"] });
+    expect(remaining).toEqual([]); // enroll-x's own scoped view has nothing left to return
+    const victim = await db(e).prepare("SELECT delivery_id FROM orb_relay_pending WHERE delivery_id = 'owned-by-y'").first();
+    expect(victim ?? null).not.toBeNull(); // enroll-y's row survived enroll-x's ack — the actual #9150 fix
   });
 
   it("returns FAILED (never throws) on a non-ok response or a thrown fetch — the Orb 202 always stands", async () => {

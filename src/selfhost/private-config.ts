@@ -37,6 +37,7 @@ import { randomUUID } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
+import { incr } from "./metrics";
 import type {
   RepoReviewContext,
   RepoReviewSkill,
@@ -269,6 +270,16 @@ export function makeLocalManifestReader(dir: string | undefined): RepoFocusManif
       { text: repoHit?.text ?? null, kind: "repo", sourcePath: repoHit?.path ?? null },
     ]);
     if (loaded.content === null && loaded.warnings.length === 0 && loaded.sharedConfigSource === null) return null;
+    // #9065: previously a private-manifest layer warning (a dropped malformed shared/global/repo layer) had
+    // NO consumer at all outside this one return value -- silent unless an operator happened to inspect
+    // `loopover_admin_config_read --scope effective` (which itself discarded `.warnings`, fixed separately).
+    // Make it observable proactively: a structured log line (greppable/alertable) plus a counter (so a
+    // sustained run of dropped layers -- e.g. a bad `docker cp` truncating a mount repeatedly -- is visible
+    // on a dashboard, not just discoverable after the fact).
+    if (loaded.warnings.length > 0) {
+      console.warn(JSON.stringify({ level: "warn", event: "selfhost_private_manifest_warnings", repoFullName, warnings: loaded.warnings }));
+      incr("loopover_private_manifest_warnings_total", {}, loaded.warnings.length);
+    }
     return loaded;
   };
 }

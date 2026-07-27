@@ -140,6 +140,34 @@ describe("MCP admin config tools: get (#7721)", () => {
     const result = await client.callTool({ name: "loopover_admin_get_config", arguments: { scope: "effective", repoFullName: "JSONbored/loopover" } });
     expect(result.structuredContent).toMatchObject({ found: false, content: null });
   });
+
+  // #9065: previously this scope extracted ONLY `.content` from the registered reader's result and silently
+  // discarded `.warnings` -- an operator asking "what's effectively loaded for this repo" saw a clean-looking
+  // config even when a layer had been dropped as malformed (private-config.ts) or the merged content itself
+  // carried an unknown-key parse warning.
+  it("effective scope surfaces the reader's warnings (a dropped layer, or an unknown-key parse warning) instead of discarding them", async () => {
+    setConfigAdminFunctions({ readGlobal: vi.fn(), readRepo: vi.fn(), writeGlobal: vi.fn(), writeRepo: vi.fn(), listBackups: vi.fn() });
+    setLocalManifestReader(async (repoFullName) => ({
+      content: `merged:${repoFullName}`,
+      sharedConfigSource: null,
+      warnings: ["Container-private global-default manifest (`.loopover.yml`) is malformed or oversized; ignoring it and continuing."],
+    }));
+    const client = await connect(createTestEnv({ LOOPOVER_MCP_ADMIN_ENABLED: "true" }));
+    const result = await client.callTool({ name: "loopover_admin_get_config", arguments: { scope: "effective", repoFullName: "JSONbored/loopover" } });
+    expect(result.structuredContent).toMatchObject({
+      configured: true,
+      found: true,
+      warnings: ["Container-private global-default manifest (`.loopover.yml`) is malformed or oversized; ignoring it and continuing."],
+    });
+  });
+
+  it("effective scope returns an empty warnings array for the legacy string-only reader shape (no .warnings field to surface)", async () => {
+    setConfigAdminFunctions({ readGlobal: vi.fn(), readRepo: vi.fn(), writeGlobal: vi.fn(), writeRepo: vi.fn(), listBackups: vi.fn() });
+    setLocalManifestReader(async (repoFullName) => `raw:${repoFullName}`);
+    const client = await connect(createTestEnv({ LOOPOVER_MCP_ADMIN_ENABLED: "true" }));
+    const result = await client.callTool({ name: "loopover_admin_get_config", arguments: { scope: "effective", repoFullName: "JSONbored/loopover" } });
+    expect(result.structuredContent).toMatchObject({ configured: true, found: true, warnings: [] });
+  });
 });
 
 describe("MCP admin config tools: write (#7721)", () => {

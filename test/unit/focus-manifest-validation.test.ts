@@ -199,4 +199,14 @@ loopEscalation:
     const clean = buildFocusManifestValidation({ content: "wantedPaths:\n  - src/\n" });
     expect(clean.warnings.join(" ")).not.toMatch(/unknown top-level field/i);
   });
+
+  // #9065: parseFocusManifestContent now wires the SAME unknown-top-level-field check into the runtime
+  // parse path (manifest.warnings), which this validator's own `warnings` used to ALSO compute independently
+  // via a second unknownTopLevelWarnings(content) call -- regression guard against that reappearing as a
+  // silent duplicate (both calls would fire on the exact same content and double the warning).
+  it("does not double-count the unknown-top-level-field warning now that parseFocusManifestContent surfaces it too (#9065)", () => {
+    const result = buildFocusManifestValidation({ content: "wantedPaths:\n  - src/\ngates:\n  enabled: true\n" });
+    const unknownFieldWarnings = result.warnings.filter((w) => /unknown top-level field/i.test(w));
+    expect(unknownFieldWarnings).toHaveLength(1);
+  });
 });

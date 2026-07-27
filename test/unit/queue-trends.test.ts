@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as repositoriesModule from "../../src/db/repositories";
 import { getRepoQueueTrendSnapshot, persistRepoGithubTotalsSnapshot, persistSignalSnapshot, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { generateSignalSnapshots } from "../../src/queue/processors";
 import { buildQueueTrendReport, buildUnavailableQueueTrendReport, type QueueTrendReport } from "../../src/services/queue-trends";
@@ -6,6 +7,9 @@ import type { RepoGithubTotalsSnapshotRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
 describe("queue trend windows", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
   it("builds deterministic 7/14/30-day queue pressure and review velocity windows", () => {
     const report = buildQueueTrendReport({
       repoFullName: "owner/repo",
@@ -219,6 +223,37 @@ describe("queue trend windows", () => {
     await generateSignalSnapshots(env, "acme/registered-only");
 
     await expect(getRepoQueueTrendSnapshot(env, "acme/registered-only")).resolves.toBeNull();
+  });
+
+  it("#9293: one repo's data-gathering failure still persists siblings and surfaces an aggregate error", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(
+      env,
+      { name: "ok", full_name: "owner/ok", private: false, owner: { login: "owner" }, default_branch: "main" },
+      701,
+    );
+    await upsertRepositoryFromGitHub(
+      env,
+      { name: "boom", full_name: "owner/boom", private: false, owner: { login: "owner" }, default_branch: "main" },
+      702,
+    );
+
+    const originalListIssueSignalSample = repositoriesModule.listIssueSignalSample;
+    vi.spyOn(repositoriesModule, "listIssueSignalSample").mockImplementation(async (listEnv, fullName) => {
+      if (fullName === "owner/boom") throw new Error("D1 boom for owner/boom");
+      return originalListIssueSignalSample(listEnv, fullName);
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(generateSignalSnapshots(env)).rejects.toThrow(
+      /generate-signal-snapshots: 1\/2 repo\(s\) failed: owner\/boom/,
+    );
+
+    await expect(getRepoQueueTrendSnapshot(env, "owner/ok")).resolves.not.toBeNull();
+    await expect(getRepoQueueTrendSnapshot(env, "owner/boom")).resolves.toBeNull();
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/"event":"generate_signal_snapshots_repo_failed".*"repoFullName":"owner\/boom"/),
+    );
   });
 });
 

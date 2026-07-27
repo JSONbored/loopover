@@ -609,6 +609,10 @@ describe("worker entrypoint", () => {
       { type: "refresh-scoring-model", requestedBy: "schedule" },
       { type: "refresh-upstream-drift", requestedBy: "schedule" },
       { type: "rollup-product-usage", requestedBy: "schedule", days: 7 },
+      // prune-retention is on EVERY hourly tick (was 03:00 daily): at the old cadence and per-table delete
+      // cap, retention could not keep up with the fleet's write rate and the hosted D1 reached its maximum
+      // size, after which every write failed and inbound webhook delivery stopped fleet-wide.
+      { type: "prune-retention", requestedBy: "schedule" },
     ]);
   });
 
@@ -679,6 +683,8 @@ describe("worker entrypoint", () => {
       { type: "refresh-scoring-model", requestedBy: "schedule" },
       { type: "refresh-upstream-drift", requestedBy: "schedule" },
       { type: "rollup-product-usage", requestedBy: "schedule", days: 7 },
+      // Hourly, not daily — see the note on the six-hour-window test above.
+      { type: "prune-retention", requestedBy: "schedule" },
       { type: "generate-signal-snapshots", requestedBy: "schedule" },
       { type: "build-burden-forecasts", requestedBy: "schedule" },
       { type: "build-contributor-evidence", requestedBy: "schedule" },
@@ -723,6 +729,7 @@ describe("worker entrypoint", () => {
       "refresh-scoring-model",
       "refresh-upstream-drift",
       "rollup-product-usage",
+      "prune-retention",
       "generate-signal-snapshots",
       "build-burden-forecasts",
       "build-contributor-evidence",

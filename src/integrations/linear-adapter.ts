@@ -21,18 +21,45 @@ type LinearGraphQlErrorResponse = { errors?: { message: string }[] };
  *  `Bearer` prefix (confirmed against linear.app/developers/graphql -- OAuth tokens use Bearer, personal API
  *  keys do not). Throws on a transport error or a GraphQL-level `errors` array so callers can treat any
  *  failure uniformly with a single `.catch()`. */
+// #9319: bound a transient Linear 429 (its rate-limit status) with a small retry, mirroring the shape of
+// src/github/client.ts's rate-limit retry but with Linear's own status/header semantics and local constants
+// (this file's convention, like LINEAR_FETCH_TIMEOUT_MS). Small cap + capped backoff so the caller never hangs.
+const LINEAR_RATE_LIMIT_MAX_RETRIES = 2;
+const LINEAR_RATE_LIMIT_BASE_BACKOFF_MS = 500;
+const LINEAR_RATE_LIMIT_MAX_BACKOFF_MS = 4_000;
+
+/** Delay before retrying a Linear 429: honor a valid non-negative `Retry-After` (seconds) header when present,
+ *  otherwise a capped exponential backoff. Always bounded by LINEAR_RATE_LIMIT_MAX_BACKOFF_MS. */
+function linearRateLimitDelayMs(retryAfterHeader: string | null, attempt: number): number {
+  const retryAfterSeconds = retryAfterHeader === null ? Number.NaN : Number(retryAfterHeader);
+  if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0) {
+    return Math.min(LINEAR_RATE_LIMIT_MAX_BACKOFF_MS, retryAfterSeconds * 1000);
+  }
+  return Math.min(LINEAR_RATE_LIMIT_MAX_BACKOFF_MS, LINEAR_RATE_LIMIT_BASE_BACKOFF_MS * 2 ** attempt);
+}
+
 async function linearGraphQl<T>(apiKey: string, query: string, variables: Record<string, unknown>): Promise<T> {
-  const response = await fetch(LINEAR_API_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: apiKey },
-    body: JSON.stringify({ query, variables }),
-    signal: AbortSignal.timeout(LINEAR_FETCH_TIMEOUT_MS),
-  });
-  if (!response.ok) throw new Error(`Linear API HTTP ${response.status}`);
-  const body = (await response.json()) as { data?: T } & LinearGraphQlErrorResponse;
-  if (body.errors?.length) throw new Error(`Linear API error: ${body.errors.map((e) => e.message).join("; ")}`);
-  if (!body.data) throw new Error("Linear API returned no data");
-  return body.data;
+  for (let attempt = 0; ; attempt += 1) {
+    const response = await fetch(LINEAR_API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: apiKey },
+      body: JSON.stringify({ query, variables }),
+      signal: AbortSignal.timeout(LINEAR_FETCH_TIMEOUT_MS),
+    });
+    if (response.ok) {
+      const body = (await response.json()) as { data?: T } & LinearGraphQlErrorResponse;
+      if (body.errors?.length) throw new Error(`Linear API error: ${body.errors.map((e) => e.message).join("; ")}`);
+      if (!body.data) throw new Error("Linear API returned no data");
+      return body.data;
+    }
+    // A transient 429 gets a bounded retry; any other non-OK status (a genuine error) throws immediately, and
+    // an exhausted 429 falls through to the same throw so the existing error contract is preserved.
+    if (response.status === 429 && attempt < LINEAR_RATE_LIMIT_MAX_RETRIES) {
+      await new Promise((resolve) => setTimeout(resolve, linearRateLimitDelayMs(response.headers.get("retry-after"), attempt)));
+      continue;
+    }
+    throw new Error(`Linear API HTTP ${response.status}`);
+  }
 }
 
 type LinearProjectNode = { id: string; name: string };

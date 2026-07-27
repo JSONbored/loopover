@@ -27,6 +27,8 @@ import {
   ContributorPrOutcomesSchema,
   NotificationFeedSchema,
   NotificationsMarkedSchema,
+  ContributorWatchRequestSchema,
+  ContributorWatchesResponseSchema,
   ContributorRewardRiskStrategySchema,
   ContributorProfileSchema,
   ContributorScoringProfileSchema,
@@ -150,6 +152,8 @@ export function buildOpenApiSpec() {
   registry.register("ContributorOutcomeHistory", ContributorOutcomeHistorySchema);
   registry.register("ContributorPatternReport", ContributorPatternReportSchema);
   registry.register("ContributorDecisionPack", ContributorDecisionPackSchema);
+  registry.register("ContributorWatchRequest", ContributorWatchRequestSchema);
+  registry.register("ContributorWatchesResponse", ContributorWatchesResponseSchema);
   registry.register("DecisionPackRefreshNeeded", DecisionPackRefreshNeededSchema);
   registry.register("RepoDecisionResponse", RepoDecisionResponseSchema);
   registry.register("RepoIntelligence", RepoIntelligenceSchema);
@@ -1279,6 +1283,60 @@ export function buildOpenApiSpec() {
         content: { "application/json": { schema: NotificationsMarkedSchema } },
       },
       400: { description: "Invalid mark-read body" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/contributors/{login}/watches",
+    summary: "List contributor issue-watch subscriptions — REST mirror of loopover_watch_issues action=list (#9306)",
+    request: { params: z.object({ login: z.string() }) },
+    responses: {
+      200: {
+        description: "The contributor's own issue-watch subscriptions (self-scoped) — mirrors loopover_watch_issues action=list",
+        content: { "application/json": { schema: ContributorWatchesResponseSchema } },
+      },
+      401: { description: "Missing or invalid authentication" },
+      403: { description: "Authenticated principal cannot access this contributor's watches" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/contributors/{login}/watches",
+    summary: "Subscribe to a repo's new issues — REST mirror of loopover_watch_issues action=watch (#9306)",
+    request: {
+      params: z.object({ login: z.string() }),
+      body: {
+        content: { "application/json": { schema: ContributorWatchRequestSchema } },
+      },
+    },
+    responses: {
+      200: {
+        description: "Updated watch list after subscribing — mirrors loopover_watch_issues action=watch",
+        content: { "application/json": { schema: ContributorWatchesResponseSchema } },
+      },
+      400: { description: "Invalid watch request body" },
+      401: { description: "Missing or invalid authentication" },
+      403: { description: "Authenticated principal cannot watch this repo or contributor" },
+    },
+  });
+  registry.registerPath({
+    method: "delete",
+    path: "/v1/contributors/{login}/watches",
+    summary: "Unsubscribe from a repo's issue watches — REST mirror of loopover_watch_issues action=unwatch (#9306)",
+    request: {
+      params: z.object({ login: z.string() }),
+      body: {
+        content: { "application/json": { schema: ContributorWatchRequestSchema } },
+      },
+    },
+    responses: {
+      200: {
+        description: "Updated watch list after unsubscribing — mirrors loopover_watch_issues action=unwatch",
+        content: { "application/json": { schema: ContributorWatchesResponseSchema } },
+      },
+      400: { description: "Invalid unwatch request body" },
+      401: { description: "Missing or invalid authentication" },
+      403: { description: "Authenticated principal cannot unwatch this repo or contributor" },
     },
   });
   registry.registerPath({

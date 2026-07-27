@@ -32,25 +32,39 @@ export function needsSurfaceConvergence(pr: Pick<PullRequestRecord, "headSha" | 
 }
 
 /**
- * Select the open PRs a single repo's backlog-convergence sweep should re-enqueue: drop drafts and anything
- * whose surface is already published at the current head, then take the `max` PRs that have been open longest
- * (oldest `createdAt` first, falling back to the epoch so a PR with no known creation time still sorts
- * deterministically rather than being silently dropped) — this is the explicit "oldest open PRs first" fairness
- * ordering the backlog-drain lane depends on (see queue-fairness.ts, PR2). Ties broken by PR number. Pure +
- * deterministic: same inputs -> same ordered batch.
+ * Every open PR a repo's backlog-convergence sweep considers, in the order it should serve them: drop drafts
+ * and anything whose surface is already published at the current head, then order oldest-open-first (oldest
+ * `createdAt` first, falling back to the epoch so a PR with no known creation time still sorts
+ * deterministically rather than being silently dropped) — this is the explicit "oldest open PRs first"
+ * fairness ordering the backlog-drain lane depends on (see queue-fairness.ts, PR2). Ties broken by PR number.
+ * Deliberately UNSLICED (#9154): selectBacklogConvergenceCandidates below applies the sweep's `max` cap
+ * directly to this order, which shadows every PR behind the first `max` whenever any of THOSE are
+ * permanently repair-exhausted (a caller that also needs to skip exhausted candidates -- see
+ * sweepRepoBacklogConvergence in processors.ts -- must walk this full order and exclude exhausted PRs BEFORE
+ * capping, not after). Pure + deterministic: same inputs -> same ordered list.
+ */
+export function sortedBacklogConvergenceCandidates(pulls: PullRequestRecord[]): PullRequestRecord[] {
+  const ageKey = (pr: PullRequestRecord): number => {
+    const created = pr.createdAt ? Date.parse(pr.createdAt) : Number.NaN;
+    return Number.isFinite(created) ? created : 0;
+  };
+  return pulls
+    .filter((pr) => pr.state === "open" && !pr.isDraft)
+    .filter((pr) => needsSurfaceConvergence(pr))
+    .sort((a, b) => ageKey(a) - ageKey(b) || a.number - b.number);
+}
+
+/**
+ * Select the open PRs a single repo's backlog-convergence sweep should re-enqueue: the first `max` PRs (by
+ * default BACKLOG_CONVERGENCE_SWEEP_MAX_PRS) from sortedBacklogConvergenceCandidates' full oldest-open-first
+ * order. This convenience wrapper caps WITHOUT regard to repair-exhaustion — fine for a caller that doesn't
+ * need that filter, but see sortedBacklogConvergenceCandidates' doc comment for why sweepRepoBacklogConvergence
+ * itself calls that function directly instead. Pure + deterministic.
  */
 export function selectBacklogConvergenceCandidates(input: {
   pulls: PullRequestRecord[];
   max?: number;
 }): PullRequestRecord[] {
   const max = input.max ?? BACKLOG_CONVERGENCE_SWEEP_MAX_PRS;
-  const ageKey = (pr: PullRequestRecord): number => {
-    const created = pr.createdAt ? Date.parse(pr.createdAt) : Number.NaN;
-    return Number.isFinite(created) ? created : 0;
-  };
-  return input.pulls
-    .filter((pr) => pr.state === "open" && !pr.isDraft)
-    .filter((pr) => needsSurfaceConvergence(pr))
-    .sort((a, b) => ageKey(a) - ageKey(b) || a.number - b.number)
-    .slice(0, Math.max(0, max));
+  return sortedBacklogConvergenceCandidates(input.pulls).slice(0, Math.max(0, max));
 }

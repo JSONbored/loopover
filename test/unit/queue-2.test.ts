@@ -2409,6 +2409,137 @@ describe("queue processors", () => {
     }
   }, 60_000);
 
+  it("REGRESSION (#9154): five permanently repair-exhausted old PRs cannot occupy every cap slot and shadow an actionable PR behind them", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({ JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
+    await upsertInstallation(env, { action: "created", installation: { id: 9415, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo6", full_name: "owner/agent-repo6", private: false, owner: { login: "owner" } }, 9415);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo6", autonomy: { merge: "auto" } });
+    await upsertRepoFocusManifest(env, "owner/agent-repo6", { settings: { checkRunMode: "off", commentMode: "off", publicSurface: "off", reviewCheckMode: "required" } });
+
+    // Five OLD PRs -- exactly BACKLOG_CONVERGENCE_SWEEP_MAX_PRS worth -- each already exhausted its shared
+    // repair-attempt budget for its current head SHA (#orb-retry-storm's isRegateRepairExhausted). Before the
+    // #9154 fix, selectBacklogConvergenceCandidates sliced to these 5 FIRST (oldest-open-first), and the
+    // exhaustion filter only ran afterward -- so these five permanently wedged PRs occupied every slot the cap
+    // allows, forever, and the sweep bailed with an empty candidate list every cycle.
+    const wedgedCreated = [
+      "2026-05-01T00:00:00.000Z",
+      "2026-05-02T00:00:00.000Z",
+      "2026-05-03T00:00:00.000Z",
+      "2026-05-04T00:00:00.000Z",
+      "2026-05-05T00:00:00.000Z",
+    ];
+    for (let i = 0; i < 5; i += 1) {
+      const number = i + 1;
+      const headSha = `wedged-${number}`;
+      await upsertPullRequestFromGitHub(env, "owner/agent-repo6", {
+        number,
+        title: `Wedged ${number}`,
+        state: "open",
+        user: { login: "c" },
+        head: { sha: headSha },
+        labels: [],
+        body: "",
+        created_at: wedgedCreated[i]!,
+        updated_at: wedgedCreated[i]!,
+      });
+      const targetKey = `owner/agent-repo6#${number}#${headSha}`;
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        await repositoriesModule.recordAuditEvent(env, {
+          eventType: "agent.sweep.regate.repair_attempt",
+          actor: "loopover",
+          targetKey,
+          outcome: "queued",
+          detail: "prior attempt",
+          metadata: {},
+        });
+      }
+    }
+    // One NEWER, genuinely actionable PR (never attempted before) — sorts LAST (newest createdAt), directly
+    // behind the five wedged PRs above: exactly the position the pre-fix bug shadowed forever.
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo6", {
+      number: 6,
+      title: "Actionable",
+      state: "open",
+      user: { login: "c" },
+      head: { sha: "fresh-6" },
+      labels: [],
+      body: "",
+      created_at: "2026-05-10T00:00:00.000Z",
+      updated_at: "2026-05-10T00:00:00.000Z",
+    });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      await processJob(env, { type: "backlog-convergence-sweep", requestedBy: "test", repoFullName: "owner/agent-repo6" });
+
+      const fanned = sent.filter((job): job is Extract<import("../../src/types").JobMessage, { type: "agent-regate-pr" }> => job.type === "agent-regate-pr");
+      // The actionable PR (#6) IS dispatched — it must not be shadowed by the five wedged PRs ahead of it.
+      expect(fanned.some((job) => job.deliveryId === "backlog-convergence:owner/agent-repo6#6")).toBe(true);
+      // None of the five wedged (exhausted) PRs are dispatched.
+      for (let number = 1; number <= 5; number += 1) {
+        expect(fanned.some((job) => job.deliveryId === `backlog-convergence:owner/agent-repo6#${number}`)).toBe(false);
+      }
+      // A sweep that DOES find an actionable candidate must not log the all-exhausted signal.
+      expect(warned.mock.calls.some(([line]) => typeof line === "string" && line.includes("backlog_convergence_sweep_all_exhausted"))).toBe(false);
+    } finally {
+      errors.mockRestore();
+      warned.mockRestore();
+    }
+  }, 60_000);
+
+  it("REGRESSION (#9154): logs + audits when EVERY backlog-convergence candidate is repair-exhausted, instead of silently returning nothing", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({ JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
+    await upsertInstallation(env, { action: "created", installation: { id: 9416, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo7", full_name: "owner/agent-repo7", private: false, owner: { login: "owner" } }, 9416);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo7", autonomy: { merge: "auto" } });
+    await upsertRepoFocusManifest(env, "owner/agent-repo7", { settings: { checkRunMode: "off", commentMode: "off", publicSurface: "off", reviewCheckMode: "required" } });
+    const headSha = "wedged-only";
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo7", {
+      number: 1,
+      title: "Only wedged PR",
+      state: "open",
+      user: { login: "c" },
+      head: { sha: headSha },
+      labels: [],
+      body: "",
+    });
+    const targetKey = `owner/agent-repo7#1#${headSha}`;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await repositoriesModule.recordAuditEvent(env, {
+        eventType: "agent.sweep.regate.repair_attempt",
+        actor: "loopover",
+        targetKey,
+        outcome: "queued",
+        detail: "prior attempt",
+        metadata: {},
+      });
+    }
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      await processJob(env, { type: "backlog-convergence-sweep", requestedBy: "test", repoFullName: "owner/agent-repo7" });
+
+      const fanned = sent.filter((job) => job.type === "agent-regate-pr");
+      expect(fanned).toHaveLength(0);
+      expect(warned.mock.calls.some(([line]) => typeof line === "string" && line.includes("backlog_convergence_sweep_all_exhausted"))).toBe(true);
+      const skipped = await env.DB.prepare(
+        "select count(*) as n from audit_events where event_type = ? and target_key = ? and outcome = 'denied'",
+      )
+        .bind("agent.sweep.backlog_convergence", "owner/agent-repo7")
+        .first<{ n: number }>();
+      expect(skipped?.n).toBe(1);
+    } finally {
+      errors.mockRestore();
+      warned.mockRestore();
+    }
+  }, 60_000);
+
   it("a fresh backlog-convergence candidate under the cap is dispatched with repairHeadSha set, and executing it charges the SAME shared attempt budget the main sweep's repair path reads", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({ JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });

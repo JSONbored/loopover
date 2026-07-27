@@ -311,6 +311,7 @@ import { backfillContributorGateHistory } from "../review/contributor-gate-histo
 import { isFairnessAnalyticsEnabled, resolveFairnessAnalyticsManifestOverride } from "../review/contributor-trust-profile-wire";
 import { isRagEnabled } from "../review/rag-wire";
 import { loadPublicDecisionRecord, verifyDecisionLedger } from "../review/decision-record";
+import { buildEvalScoreRecordsFromRulePrecision, filterEvalScoreRecords } from "../review/eval-score-records";
 import { getPublicStats, isPublicStatsEnabled, resolvePublicStatsManifestOverride } from "../review/public-stats";
 import { loadPublicAccuracyTrend } from "../services/public-accuracy-trend";
 import { loadPublicRulePrecision } from "../review/public-rule-precision";
@@ -1301,6 +1302,30 @@ export function createApp() {
     if (!published) return c.json({ error: "not_found" }, 404);
     c.header("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
     return c.json({ record: published.record, recordDigest: published.recordDigest });
+  });
+
+  // #9266 (epic #8534, spec #9215): the v1 transport for EvalScoreRecords -- the shape a validator (or
+  // anyone) fetches and independently re-derives rather than trusts. Same flag/cache/error posture as
+  // /v1/public/stats deliberately (this reshapes the SAME already-computed rule-precision data into a
+  // per-record, digest-committed form; it is not a new scoring surface). Wired for the
+  // outcome_confirmed_precision source only today -- a future benchmark_run source (#9265) feeds the same
+  // endpoint, never a second response format.
+  app.get("/v1/public/eval-scores", async (c) => {
+    const publicStatsManifestOverride = await resolvePublicStatsManifestOverride(c.env);
+    if (!isPublicStatsEnabled(c.env, publicStatsManifestOverride)) return c.json({ error: "not_found" }, 404);
+    // No try/catch: loadPublicRulePrecision is fail-safe internally (safeAll swallows every read error into
+    // an empty section, per its own doc comment), and buildEvalScoreRecordsFromRulePrecision/
+    // filterEvalScoreRecords are pure -- there is no reachable throw path in this composition today. A future
+    // IO-touching source (the benchmark_run records from #9265) is exactly where real error handling belongs,
+    // added when that source actually exists, not as untestable defensive code here.
+    const precision = await loadPublicRulePrecision(c.env);
+    const records = await buildEvalScoreRecordsFromRulePrecision(precision, new Date().toISOString());
+    const filtered = filterEvalScoreRecords(records, {
+      subject: c.req.query("subject"),
+      since: c.req.query("since"),
+    });
+    c.header("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+    return c.json({ records: filtered });
   });
 
   app.get("/v1/public/github/repos/:owner/:repo/stats", async (c) => {
@@ -6741,6 +6766,9 @@ function requiresApiToken(path: string): boolean {
   // #9120: this route's own doc comment always claimed "safe unauthenticated" but was missing from this exact
   // list, so it 401'd in prod — verified live: subnet-interface/stats/quality answered 200, this one 401'd.
   if (path === "/v1/public/decision-ledger/verify") return false;
+  // #9266: the eval-scores transport is unauthenticated by the same design as every /v1/public/* sibling
+  // above -- committed to a corpus checksum, independently re-derivable, nothing gated behind a token.
+  if (path === "/v1/public/eval-scores") return false;
   // #9123: the new public decision-record read route — same unauthenticated posture as its ledger-verify
   // sibling immediately above, added in the SAME PR so the two can never drift apart the way #9120 did. The
   // pull segment matches any non-slash text (not just digits): an invalid pull number is the ROUTE's 400 to

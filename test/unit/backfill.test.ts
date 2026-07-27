@@ -676,7 +676,8 @@ describe("GitHub backfill", () => {
           account: { login: "JSONbored", id: 1, type: "User" },
           repository_selection: "selected",
           permissions: { checks: "write", metadata: "read", pull_requests: "write", issues: "write" },
-          events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
+          // #9169 promoted pull_request_review/check_run/check_suite to REQUIRED_INSTALLATION_EVENTS.
+          events: ["issues", "issue_comment", "pull_request", "pull_request_review", "repository", "check_run", "check_suite", "installation_repositories"],
         });
       }
       return new Response("not found", { status: 404 });
@@ -686,7 +687,7 @@ describe("GitHub backfill", () => {
     expect(result.installations[0]).toMatchObject({
       status: "needs_attention",
       missingPermissions: ["pull_requests", "issues"],
-      missingEvents: ["issues", "issue_comment", "repository"],
+      missingEvents: ["issues", "issue_comment", "pull_request_review", "repository", "check_run", "check_suite"],
       repairSteps: expect.arrayContaining(["Update the GitHub App permissions and subscribed events."]),
     });
 
@@ -696,7 +697,7 @@ describe("GitHub backfill", () => {
         account: { login: "JSONbored", id: 1, type: "User" },
         repository_selection: "selected",
         permissions: { checks: "write", metadata: "read", pull_requests: "write", issues: "write" },
-        events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
+        events: ["issues", "issue_comment", "pull_request", "pull_request_review", "repository", "check_run", "check_suite", "installation_repositories"],
       },
     });
     const refreshed = await refreshInstallationHealth(env);
@@ -1358,7 +1359,8 @@ describe("GitHub backfill", () => {
           target_type: "User",
           repository_selection: "selected",
           permissions: { checks: "write", metadata: "read", pull_requests: "write", issues: "write" },
-          events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
+          // #9169 promoted pull_request_review/check_run/check_suite to REQUIRED_INSTALLATION_EVENTS.
+          events: ["issues", "issue_comment", "pull_request", "pull_request_review", "repository", "check_run", "check_suite", "installation_repositories"],
         });
       }
       return new Response("not found", { status: 404 });
@@ -1386,7 +1388,7 @@ describe("GitHub backfill", () => {
           account: { login: "JSONbored", id: 1, type: "User" },
           repository_selection: "selected",
           permissions: { metadata: "read", pull_requests: "write", issues: "write" },
-          events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
+          events: ["issues", "issue_comment", "pull_request", "pull_request_review", "repository", "check_run", "check_suite", "installation_repositories"],
         });
       }
       return new Response("not found", { status: 404 });
@@ -4731,7 +4733,8 @@ describe("GitHub backfill", () => {
           permissions: {},
           events: [],
           missingPermissions: ["metadata", "pull_requests", "issues"],
-          missingEvents: ["issues", "issue_comment", "pull_request", "repository"],
+          // #9169 promoted pull_request_review/check_run/check_suite to REQUIRED_INSTALLATION_EVENTS.
+          missingEvents: ["issues", "issue_comment", "pull_request", "pull_request_review", "repository", "check_run", "check_suite"],
         }),
       ]),
     );

@@ -21,6 +21,10 @@ import {
   gatePrecisionOutputSchema,
   maintainerMeasurementReportOutputSchema,
   activationPreviewOutputSchema,
+  validateLinkedIssueShape,
+  validateLinkedIssueOutputSchema,
+  checkBeforeStartShape,
+  checkBeforeStartOutputSchema,
 } from "../../src/mcp/server";
 
 describe("OpenAPI contract", () => {
@@ -44,6 +48,8 @@ describe("OpenAPI contract", () => {
     expect(spec.paths["/v1/repos/{owner}/{repo}/gate-precision"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/outcome-calibration"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/activation-preview"]).toBeDefined();
+    expect(spec.paths["/v1/repos/{owner}/{repo}/validate-linked-issue"]).toBeDefined();
+    expect(spec.paths["/v1/repos/{owner}/{repo}/check-before-start"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/registration-readiness"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/gittensor-config-recommendation"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/pulls/{number}/maintainer-packet"]).toBeDefined();
@@ -451,6 +457,51 @@ describe("OpenAPI contract", () => {
       expect(op, `${path} should be a documented GET path`).toBeDefined();
 
       expect(schemas[response], `${response} component should be registered`).toBeDefined();
+      expect(propKeys(response)).toEqual(Object.keys(outputShape).sort());
+    }
+  });
+
+  // #9304: validate-linked-issue + check-before-start were live API+MCP routes but missing from the
+  // OpenAPI contract. Assert both POSTs are documented with request/response components whose keys
+  // match the MCP tool shapes (owner/repo stay path params, not request-body fields).
+  it("documents validate-linked-issue and check-before-start with tool-parity schemas (#9304)", () => {
+    const spec = buildOpenApiSpec();
+    const schemas = spec.components?.schemas ?? {};
+
+    const propKeys = (name: string) =>
+      Object.keys((schemas[name] as { properties?: Record<string, unknown> }).properties ?? {}).sort();
+
+    const cases = [
+      {
+        path: "/v1/repos/{owner}/{repo}/validate-linked-issue",
+        request: "ValidateLinkedIssueRequest",
+        response: "ValidateLinkedIssueResponse",
+        inputShape: validateLinkedIssueShape,
+        outputShape: validateLinkedIssueOutputSchema,
+      },
+      {
+        path: "/v1/repos/{owner}/{repo}/check-before-start",
+        request: "CheckBeforeStartRequest",
+        response: "CheckBeforeStartResponse",
+        inputShape: checkBeforeStartShape,
+        outputShape: checkBeforeStartOutputSchema,
+      },
+    ];
+
+    for (const { path, request, response, inputShape, outputShape } of cases) {
+      const op = spec.paths[path]?.post;
+      expect(op, `${path} should be a documented POST path`).toBeDefined();
+      expect(op?.requestBody, `${path} should document a request body`).toBeDefined();
+      expect(op?.responses?.["200"], `${path} should document a 200 response`).toBeDefined();
+
+      expect(schemas[request], `${request} component should be registered`).toBeDefined();
+      expect(schemas[response], `${response} component should be registered`).toBeDefined();
+
+      expect(propKeys(request)).toEqual(
+        Object.keys(inputShape)
+          .filter((k) => k !== "owner" && k !== "repo")
+          .sort(),
+      );
       expect(propKeys(response)).toEqual(Object.keys(outputShape).sort());
     }
   });

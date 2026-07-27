@@ -320,7 +320,9 @@ const bountyShape = {
   id: z.string().min(1),
 };
 
-const validateLinkedIssueShape = {
+// Exported for OpenAPI contract tests (#9304) — request/response components must stay field-for-field
+// in parity with these tool shapes (owner/repo are path params on the REST mirror).
+export const validateLinkedIssueShape = {
   owner: z.string().min(1),
   repo: z.string().min(1),
   issueNumber: z.number().int().positive(),
@@ -333,7 +335,7 @@ const validateLinkedIssueShape = {
     .optional(),
 };
 
-const checkBeforeStartShape = {
+export const checkBeforeStartShape = {
   owner: z.string().min(1),
   repo: z.string().min(1),
   issueNumber: z.number().int().positive().optional(),
@@ -1609,7 +1611,7 @@ const localStatusOutputSchema = {
   supportedTools: z.unknown().optional(),
 };
 
-const validateLinkedIssueOutputSchema = {
+export const validateLinkedIssueOutputSchema = {
   status: z.string().optional(),
   repoFullName: z.string().optional(),
   issueNumber: z.number().optional(),
@@ -1621,7 +1623,7 @@ const validateLinkedIssueOutputSchema = {
   report: z.unknown().optional(),
 };
 
-const checkBeforeStartOutputSchema = {
+export const checkBeforeStartOutputSchema = {
   status: z.string().optional(),
   repoFullName: z.string().optional(),
   found: z.boolean().optional(),

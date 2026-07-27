@@ -1529,14 +1529,14 @@ const markNotificationsReadShape = {
 
 // #699 path B: a miner's self-scoped issue-watch subscriptions. `action` defaults to `list`; `watch`/`unwatch`
 // require repoFullName. `labels` ([]/omitted = any) filters which new issues notify.
-const watchIssuesShape = {
+export const watchIssuesShape = {
   login: z.string().min(1),
   action: z.enum(["watch", "unwatch", "list"]).default("list"),
   repoFullName: z.string().min(3).max(200).optional(),
   labels: z.array(z.string().min(1).max(100)).max(50).optional(),
 };
 
-const watchIssuesOutputSchema = {
+export const watchIssuesOutputSchema = {
   watching: z.array(z.object({ repoFullName: z.string(), labels: z.array(z.string()) })).optional(),
   changed: z.string().optional(),
 };

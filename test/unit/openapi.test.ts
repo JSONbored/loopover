@@ -21,6 +21,7 @@ import {
   gatePrecisionOutputSchema,
   maintainerMeasurementReportOutputSchema,
   activationPreviewOutputSchema,
+  watchIssuesOutputSchema,
 } from "../../src/mcp/server";
 
 describe("OpenAPI contract", () => {
@@ -55,6 +56,7 @@ describe("OpenAPI contract", () => {
     expect(spec.paths["/v1/contributors/{login}/decision-pack"]).toBeDefined();
     expect(spec.paths["/v1/contributors/{login}/open-pr-monitor"]).toBeDefined();
     expect(spec.paths["/v1/contributors/{login}/pr-outcomes"]).toBeDefined();
+    expect(spec.paths["/v1/contributors/{login}/watches"]).toBeDefined();
     expect(spec.paths["/v1/contributors/{login}/repos/{owner}/{repo}/decision"]).toBeDefined();
     expect(spec.paths["/v1/preflight/pr"]).toBeDefined();
     expect(spec.paths["/v1/preflight/review-risk"]).toBeDefined();
@@ -484,6 +486,40 @@ describe("OpenAPI contract", () => {
       expect(schemas[response], `${response} component should be registered`).toBeDefined();
       expect(propKeys(response)).toEqual(Object.keys(outputShape).sort());
     }
+  });
+
+  // #9306: /v1/contributors/{login}/watches (GET/POST/DELETE) mirrors loopover_watch_issues
+  // (LoopoverMcp.watchIssues) — assert every verb is documented and the response component stays
+  // field-for-field in parity with the MCP tool's watchIssuesOutputSchema.
+  it("documents the /v1/contributors/{login}/watches route family with tool-parity schemas (#9306)", () => {
+    const spec = buildOpenApiSpec();
+    const schemas = spec.components?.schemas ?? {};
+
+    const propKeys = (name: string) =>
+      Object.keys((schemas[name] as { properties?: Record<string, unknown> }).properties ?? {}).sort();
+
+    const path = "/v1/contributors/{login}/watches";
+    const getOp = spec.paths[path]?.get;
+    const postOp = spec.paths[path]?.post;
+    const deleteOp = spec.paths[path]?.delete;
+
+    expect(getOp, "GET /v1/contributors/{login}/watches should be documented").toBeDefined();
+    expect(postOp, "POST /v1/contributors/{login}/watches should be documented").toBeDefined();
+    expect(deleteOp, "DELETE /v1/contributors/{login}/watches should be documented").toBeDefined();
+
+    expect(postOp?.requestBody, "POST /v1/contributors/{login}/watches should document a request body").toBeDefined();
+    expect(deleteOp?.requestBody, "DELETE /v1/contributors/{login}/watches should document a request body").toBeDefined();
+
+    expect(schemas.ContributorWatchesResponse, "ContributorWatchesResponse component should be registered").toBeDefined();
+    expect(schemas.ContributorWatchSubscriptionRequest, "ContributorWatchSubscriptionRequest component should be registered").toBeDefined();
+
+    expect(propKeys("ContributorWatchesResponse")).toEqual(Object.keys(watchIssuesOutputSchema).sort());
+    expect(propKeys("ContributorWatchSubscriptionRequest")).toEqual(["labels", "repoFullName"]);
+
+    // every verb is self-scoped and must require auth, same as the sibling /notifications routes
+    expect(getOp?.security).toEqual([{ LoopOverBearer: [] }, { LoopOverSessionCookie: [] }]);
+    expect(postOp?.security).toEqual([{ LoopOverBearer: [] }, { LoopOverSessionCookie: [] }]);
+    expect(deleteOp?.security).toEqual([{ LoopOverBearer: [] }, { LoopOverSessionCookie: [] }]);
   });
 
   it("declares an `in: path` parameter for every {templated} path segment (Cloudflare schema-validation warning 30046)", () => {

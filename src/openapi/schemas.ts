@@ -539,6 +539,25 @@ export const NotificationsMarkedSchema = z
   })
   .openapi("NotificationsMarked");
 
+// #9306: mirrors watchIssuesOutputSchema (src/mcp/server.ts) — the source of truth for
+// loopover_watch_issues — so the REST mirror at /v1/contributors/{login}/watches stays field-for-field
+// in parity with the MCP tool.
+export const ContributorWatchesResponseSchema = z
+  .object({
+    watching: z.array(z.object({ repoFullName: z.string(), labels: z.array(z.string()) })),
+    changed: z.string().optional(),
+  })
+  .openapi("ContributorWatchesResponse");
+
+// Request body for POST/DELETE /v1/contributors/{login}/watches. Mirrors watchSubscriptionBodySchema
+// (src/api/routes.ts): `labels` is POST-only (a DELETE ignores it) but kept optional here for both verbs.
+export const ContributorWatchSubscriptionRequestSchema = z
+  .object({
+    repoFullName: z.string().min(3).max(200),
+    labels: z.array(z.string().min(1).max(100)).max(50).optional(),
+  })
+  .openapi("ContributorWatchSubscriptionRequest");
+
 export const ContributorOpportunitySchema = z
   .object({
     repoFullName: z.string(),

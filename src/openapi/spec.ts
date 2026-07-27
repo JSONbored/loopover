@@ -27,6 +27,8 @@ import {
   ContributorPrOutcomesSchema,
   NotificationFeedSchema,
   NotificationsMarkedSchema,
+  ContributorWatchesResponseSchema,
+  ContributorWatchSubscriptionRequestSchema,
   ContributorRewardRiskStrategySchema,
   ContributorProfileSchema,
   ContributorScoringProfileSchema,
@@ -1329,6 +1331,56 @@ export function buildOpenApiSpec() {
         content: { "application/json": { schema: NotificationsMarkedSchema } },
       },
       400: { description: "Invalid mark-read body" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/contributors/{login}/watches",
+    summary: "List a contributor's issue-watch subscriptions",
+    request: { params: z.object({ login: z.string() }) },
+    responses: {
+      200: {
+        description: "The contributor's own issue-watch subscriptions (self-scoped; mirrors loopover_watch_issues action=list).",
+        content: { "application/json": { schema: ContributorWatchesResponseSchema } },
+      },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/contributors/{login}/watches",
+    summary: "Watch a repo for new grabbable issues",
+    request: {
+      params: z.object({ login: z.string() }),
+      body: {
+        content: { "application/json": { schema: ContributorWatchSubscriptionRequestSchema } },
+      },
+    },
+    responses: {
+      200: {
+        description: "Subscribes the contributor to `repoFullName` (optionally filtered by `labels`); mirrors loopover_watch_issues action=watch.",
+        content: { "application/json": { schema: ContributorWatchesResponseSchema } },
+      },
+      400: { description: "Invalid watch request" },
+      403: { description: "Repo is not watchable" },
+    },
+  });
+  registry.registerPath({
+    method: "delete",
+    path: "/v1/contributors/{login}/watches",
+    summary: "Unwatch a repo",
+    request: {
+      params: z.object({ login: z.string() }),
+      body: {
+        content: { "application/json": { schema: ContributorWatchSubscriptionRequestSchema } },
+      },
+    },
+    responses: {
+      200: {
+        description: "Unsubscribes the contributor from `repoFullName`; mirrors loopover_watch_issues action=unwatch.",
+        content: { "application/json": { schema: ContributorWatchesResponseSchema } },
+      },
+      400: { description: "Invalid watch request" },
+      403: { description: "Repo is not watchable" },
     },
   });
   registry.registerPath({

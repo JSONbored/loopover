@@ -1085,6 +1085,18 @@ const gateConfigEffectiveOutputSchema = {
   status: z.string().optional(),
 };
 
+// #9297: the raw EFFECTIVE settings row GET /v1/repos/:owner/:repo/settings returns (resolveRepositorySettings),
+// distinct from the derived automation-state / gate-config-effective views. Every field optional (non-strict,
+// documentation-only) so this stays byte-for-byte the resolver's output -- extra keys are passed through
+// unmodified and future settings fields need no schema edit here.
+const repoSettingsOutputSchema = {
+  repoFullName: z.string().optional(),
+  commentMode: z.string().optional(),
+  gatePack: z.string().optional(),
+  reviewCheckMode: z.string().optional(),
+  slopGateMode: z.string().optional(),
+};
+
 const maintainerMeasurementReportOutputSchema = {
   repoFullName: z.string().optional(),
   generatedAt: z.string().optional(),
@@ -2043,6 +2055,7 @@ export const MCP_TOOL_CATEGORIES: Record<string, McpToolCategory> = {
   loopover_get_pr_maintainer_packet: "review",
   loopover_get_live_gate_thresholds: "maintainer",
   loopover_get_gate_config_effective: "maintainer",
+  loopover_get_repo_settings: "maintainer",
   loopover_validate_linked_issue: "discovery",
   loopover_check_before_start: "discovery",
   loopover_find_opportunities: "discovery",
@@ -2694,6 +2707,21 @@ export class LoopoverMcp {
         outputSchema: gateConfigEffectiveOutputSchema,
       },
       async (input) => this.toolResult(await this.getGateConfigEffective(input)),
+    );
+
+    // #9297: the last unmirrored read in the settings/automation-state/gate-config-effective trio. Mirrors
+    // GET /v1/repos/:owner/:repo/settings -- the RAW effective settings row those two derived views compute
+    // from, which /settings deliberately returns on its own. Maintainer-only, same shape as
+    // loopover_get_automation_state.
+    register(
+      "loopover_get_repo_settings",
+      {
+        description:
+          "Return a repo's RAW effective maintainer settings row (gate/slop/label/surface/command-auth settings, including agent autonomy controls) -- the same resolveRepositorySettings output GET /v1/repos/:owner/:repo/settings returns, distinct from the derived automation-state / gate-config-effective views. Metadata-only, repo-scoped, no GitHub writes. Maintainer access required.",
+        inputSchema: ownerRepoShape,
+        outputSchema: repoSettingsOutputSchema,
+      },
+      async (input) => this.toolResult(await this.getRepoSettings(input)),
     );
 
     register(
@@ -3855,6 +3883,15 @@ export class LoopoverMcp {
         shadowPending: shadow !== null,
       },
     };
+  }
+
+  private async getRepoSettings(input: { owner: string; repo: string }): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoAccess(fullName);
+    // Shared with GET /v1/repos/:owner/:repo/settings so the two surfaces cannot drift: return the resolved
+    // EFFECTIVE settings row unmodified (spread into a plain Record for ToolPayload.data), no derived fields.
+    const settings = await resolveRepositorySettings(this.env, fullName);
+    return { summary: `Effective settings for ${fullName}.`, data: { ...settings } };
   }
 
   private async validateLinkedIssue(input: {

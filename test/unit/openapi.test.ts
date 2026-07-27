@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { buildOpenApiSpec } from "../../src/openapi/spec";
+import {
+  listPendingActionsOutputSchema,
+  proposeActionOutputSchema,
+  proposeActionShape,
+  decidePendingActionOutputSchema,
+} from "../../src/mcp/server";
 
 describe("OpenAPI contract", () => {
   it("exports the modern private-beta backend contract only", () => {
@@ -133,6 +139,32 @@ describe("OpenAPI contract", () => {
     expect(spec.paths["/v1/auth/session"]?.get?.security).toBeUndefined();
     expect(spec.paths["/v1/auth/logout"]?.post?.security).toBeUndefined();
     expect(spec.paths["/v1/auth/github/token"]?.post?.security).toEqual([{ LoopOverBearer: [] }, { LoopOverSessionCookie: [] }]);
+  });
+
+  // #9307: the three agent/pending-actions approval-queue routes were undocumented while their agent/audit-feed
+  // neighbor was. Assert each is registered with a response schema whose keys match the MCP tool output shape it
+  // mirrors, so the OpenAPI contract can never drift from what loopover_{list,propose,decide}_pending_action validate.
+  it("documents the agent/pending-actions routes with schemas matching their MCP tool shapes", () => {
+    const spec = buildOpenApiSpec();
+    const schemaProps = (name: string) =>
+      Object.keys((spec.components?.schemas?.[name] as { properties?: Record<string, unknown> })?.properties ?? {}).sort();
+
+    const getOp = spec.paths["/v1/repos/{owner}/{repo}/agent/pending-actions"]?.get as { responses?: Record<string, { content?: Record<string, { schema?: { $ref?: string } }> }> };
+    expect(getOp?.responses?.["200"]?.content?.["application/json"]?.schema?.$ref).toBe("#/components/schemas/ListPendingActionsResponse");
+    expect(schemaProps("ListPendingActionsResponse")).toEqual(Object.keys(listPendingActionsOutputSchema).sort());
+
+    const proposeOp = spec.paths["/v1/repos/{owner}/{repo}/agent/pending-actions"]?.post as {
+      requestBody?: { content?: Record<string, { schema?: { $ref?: string } }> };
+      responses?: Record<string, { content?: Record<string, { schema?: { $ref?: string } }> }>;
+    };
+    expect(proposeOp?.requestBody?.content?.["application/json"]?.schema?.$ref).toBe("#/components/schemas/ProposeActionRequest");
+    expect(schemaProps("ProposeActionRequest")).toEqual(Object.keys(proposeActionShape).filter((k) => k !== "owner" && k !== "repo").sort());
+    expect(proposeOp?.responses?.["200"]?.content?.["application/json"]?.schema?.$ref).toBe("#/components/schemas/ProposeActionResponse");
+    expect(schemaProps("ProposeActionResponse")).toEqual(Object.keys(proposeActionOutputSchema).sort());
+
+    const decideOp = spec.paths["/v1/repos/{owner}/{repo}/agent/pending-actions/{id}/{decision}"]?.post as { responses?: Record<string, { content?: Record<string, { schema?: { $ref?: string } }> }> };
+    expect(decideOp?.responses?.["200"]?.content?.["application/json"]?.schema?.$ref).toBe("#/components/schemas/DecidePendingActionResponse");
+    expect(schemaProps("DecidePendingActionResponse")).toEqual(Object.keys(decidePendingActionOutputSchema).sort());
   });
 
   // #5810: every operation needs a title in the generated spec and the rendered API browser. Iterating the built

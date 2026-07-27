@@ -1,0 +1,130 @@
+---
+title: What you can verify
+description: Every claim LoopOver makes, the artifact that proves it, the command that checks it, and the trust assumption behind it — including the things you cannot verify.
+eyebrow: Core concepts
+---
+
+## Why this page exists
+
+[Verify this review](/docs/verify-this-review) walks through *one* check end to end: re-run the
+published backtest corpus and compare the numbers. This page is the wider contract — for **every**
+claim LoopOver makes, what artifact proves it, who can check it, and what you still have to take on
+trust.
+
+The last column is the important one. A verification story that only lists what works is marketing;
+the assumptions and the gaps are what let you decide whether the guarantee is worth anything to you.
+
+## The matrix
+
+### 1. Gate-decision integrity
+
+**Claim:** the sequence of decisions was not silently reordered, deleted, or rewritten.
+
+Every persisted verdict appends to a hash-chained ledger — each row's hash covers the previous row's
+hash, so any edit to history breaks the chain at a point you can locate.
+
+```bash
+curl -s "https://api.loopover.ai/v1/public/decision-ledger/verify" | jq
+```
+
+Returns `{ ok, checked, nextAfterSeq, tipSeq, tipHash, totalCount }`, and a `break` object with a
+`409` status if the chain is inconsistent. No API key — **anyone** can run it.
+
+<Callout variant="note">
+  **Trust assumption: tamper-evident, not tamper-proof.** This detects sequence gaps, predecessor
+  and row-hash mismatches, truncated tails, and records whose content no longer matches their
+  chained digest. It does **not** detect an operator deleting the chain wholesale and re-chaining
+  from genesis — catching that requires an external anchor the operator does not control, which is
+  tracked but **not built today**.
+</Callout>
+
+### 2. Decision-record authenticity
+
+**Claim:** this specific verdict is the document its digest names.
+
+Every review comment prints its decision record's full 64-character digest, and the record itself is
+public:
+
+```bash
+curl -s "https://api.loopover.ai/v1/public/decision-records/OWNER/REPO/123" | jq
+```
+
+Returns `{ record, recordDigest }`. The digest is a SHA-256 over the record's canonical JSON — keys
+sorted, no whitespace — so you can recompute it yourself and confirm nothing was edited after the
+fact. **Anyone** can run it.
+
+Corrections are visible history, not silent replacement: a superseded verdict for the same commit is
+stored as a new revision, never an overwrite.
+
+### 3. Published accuracy numbers
+
+**Claim:** the precision figures on the [fairness report](/fairness) are real computations over real,
+replayable history — not hand-entered numbers.
+
+This is the walkthrough in [Verify this review](/docs/verify-this-review): export the checksummed
+corpus, verify its checksum, re-run the same public scoring functions from `@loopover/engine`, and
+compare. **Anyone** can do this for public repositories.
+
+<Callout variant="warn">
+  **Private repositories are the exception.** A hosted tenant's review history cannot be published
+  for anonymous third-party re-runs. Per-tenant checksummed export — so *you* can verify your own
+  numbers even when the public cannot — is tracked and not yet shipped.
+</Callout>
+
+### 4. Attested execution
+
+**Claim:** the backtest replay ran unmodified, inside genuine AMD SEV-SNP hardware.
+
+When a run carries an attestation envelope, a skeptic verifies it entirely offline — no contact with
+LoopOver at all, trusting only AMD's published root certificate:
+
+```bash
+npx tsx scripts/verify-attested-run.ts --envelope envelope.json --expected expected.json
+```
+
+Exit `0` means verified; `1`–`8` each name a distinct failure class (sample attestation, bad
+envelope, malformed report, untrusted chain, bad signature, TCB mismatch, measurement mismatch,
+`report_data` mismatch); `9` is a usage or IO error.
+
+<Callout variant="note">
+  **Not reachable in production yet.** The verification software is complete and shipped, but no
+  SEV-SNP hardware is deployed, so no production run carries an envelope today. This row describes a
+  path you can audit now and use once the hardware lands — not a guarantee currently in force.
+</Callout>
+
+### 5. What the digests actually pin
+
+**Claim:** the configuration and prompt in force at decision time are committed to.
+
+Each decision record carries a `configDigest` (the resolved gate policy), a `settingsDigest` (raw
+effective settings), a `promptDigest` (the exact system prompt sent), and the model identifiers. A
+changed policy or prompt produces a different digest, so silent reconfiguration is detectable.
+
+<Callout variant="warn">
+  **Digests commit to inputs, never to outputs.** Identical model identifiers and an identical
+  `promptDigest` can still produce different completions — inference is not deterministic. A digest
+  match means *the same question was asked*, never *the same answer came back*.
+</Callout>
+
+## What you cannot verify
+
+Stated plainly, because a boundary you discover later is worse than one published up front.
+
+| Not verifiable | Why | What would change it |
+| --- | --- | --- |
+| **Live gate execution** | The merge/close calls acting on your PR are not attested. Putting an attestation service in the live request path trades real availability for a proof that replay already provides more cheaply. | Standing design, not a pending gap. Revisited only if a tenant contractually requires attested live decisions. |
+| **Ground-truth honesty** | Accuracy numbers are scored against recorded human-override events on maintainer infrastructure. Attestation proves *computation*, not *data provenance* — a perfectly attested run over cherry-picked labels is still cherry-picked. | Provenance at capture time (receipts verifiable by the humans whose overrides they record). Different mechanism entirely. |
+| **Wholesale ledger replacement** | Row 1's limit — self-operated chains are tamper-evident against everyone except the operator. | External anchoring: signed checkpoints, a transparency log, or an on-chain commitment. |
+| **Model behavior** | Row 5's limit — no artifact makes a non-deterministic model reproducible. | Nothing planned; this is a property of the models, not of our record-keeping. |
+
+## Self-hosting versus hosted
+
+| | Self-host operator | Hosted tenant |
+| --- | --- | --- |
+| **What you verify** | Everything, locally — your own database, your own corpus export, your own ledger | Public artifacts: ledger integrity, record authenticity, published numbers (public repos), digest scope |
+| **Corpus access** | Direct, against your own Postgres | Public repos today; private-repo export is tracked and not yet shipped |
+| **Trust surface** | You *are* the operator — you trust your own infrastructure | You trust LoopOver's operator honesty exactly as far as the tamper-evident limit allows |
+
+Self-hosting genuinely closes more of the gap, and the hosted column is the weaker of the two. That
+asymmetry is real, and pretending otherwise would defeat the purpose of publishing this contract at
+all.

@@ -682,6 +682,7 @@ import type {
 } from "../types";
 import { sha256Hex } from "../utils/crypto";
 import { errorMessage, nowIso, repoParts } from "../utils/json";
+import { DISPOSITION_CONSIDERED_EVENT_TYPE } from "../review/surface-disposition-reconciler";
 import { maybeSuggestMilestoneMatchForPr } from "../integrations/project-tracker-adapter";
 
 const OFFICIAL_MINER_DETECTION_TTL_MS = 5 * 60 * 1000;
@@ -1155,6 +1156,24 @@ async function isRegateRepairExhausted(env: Env, repoFullName: string, pr: Pick<
     );
   }
   return true;
+}
+
+/** Record that a real disposition attempt began for this exact head (#8997) -- the signal
+ *  reconcileSurfaceWithoutDisposition (surface-disposition-reconciler.ts) reads to tell "a restart killed the
+ *  pass right after publish, before disposition ever started" apart from "disposition genuinely ran (or is
+ *  still running) for this head". Written the moment maintenance CLAIMS its per-PR actuation lock -- i.e. the
+ *  moment a real attempt begins, before anything about WHAT it decides. Best-effort: a failed write here must
+ *  never block the maintenance pass it is only bookkeeping for -- worst case, a missed write costs one extra
+ *  (safe, actuation-lock-deduplicated) repair dispatch on a later sweep tick. */
+async function recordDispositionConsidered(env: Env, repoFullName: string, prNumber: number, headSha: string): Promise<void> {
+  await recordAuditEvent(env, {
+    eventType: DISPOSITION_CONSIDERED_EVENT_TYPE,
+    actor: "loopover",
+    targetKey: `${repoFullName}#${prNumber}#${headSha}`,
+    outcome: "completed",
+    detail: "maintenance actuation lock claimed; disposition attempt begins for this head",
+    metadata: { repoFullName, prNumber, headSha },
+  }).catch(() => undefined);
 }
 
 export async function surfaceRepairPriorityPullNumbers(
@@ -2500,6 +2519,11 @@ async function maybeRunAgentMaintenance(
     }).catch(() => undefined);
     throw new PrActuationLockContendedError(repoFullName, pr.number, "agent-maintenance");
   }
+  // #8997: the lock is now genuinely held -- a real disposition attempt for this exact head begins here. See
+  // recordDispositionConsidered's own doc comment for why this specific point is what the boot-time repair
+  // sweep checks for. Absent headSha (a sparse/never-synced PR row) has nothing to key the marker on and is
+  // skipped -- the pre-existing lastPublishedSurfaceSha check already covers a PR with no resolvable head.
+  if (pr.headSha) await recordDispositionConsidered(env, repoFullName, pr.number, pr.headSha);
   try {
     await runAgentMaintenancePlanAndExecute(env, {
       installationId,
@@ -10148,9 +10172,26 @@ async function maybePublishPrPublicSurface(
         // #4889: per-repo admin mode swaps the global-allowlist grant for the live per-repo permission.
         (await isPerTenantAdmin(env, installationId, repoFullName, author)) ||
         isProtectedAutomationAuthor(author, env));
+    // #8999: exempt the freeze when the label's own provenance -- as far as this pass can tell -- is the
+    // #9009 lock-contention marker and NOTHING else. Without this, the freeze deadlocked: a lost AI-review lock
+    // race applies this exact label (aiReviewLockContendedResult's hold), the freeze then reads that SAME label
+    // on the very next pass and refuses a FRESH AI review (only replay), so the pass that could produce the
+    // real verdict needed to auto-clear the label (#9009, below in runAgentMaintenancePlanAndExecute) never
+    // runs -- the label outlives the transient contention that caused it, requiring a human to unstick a PR
+    // that was never substantively held. Reading the SAME marker key #9009 already writes/reads keeps this a
+    // single source of truth for "why is this label here right now" rather than a second, drifting one.
+    //
+    // This does not reopen the gaming surface the freeze exists to close (see #regate-churn doc above): that
+    // surface is a CONTRIBUTOR iterating pushes to game the bot. A lock-contention hold is not a contributor
+    // action -- it is an infra artifact of two ORB passes racing -- so exempting it changes nothing about a
+    // contributor's ability to buy a fresh verdict by pushing. If some OTHER reason also justifies the hold,
+    // that reason re-applies the label on this very pass's own disposition regardless of this exemption.
+    const manualReviewLockContentionMarkerKey = `manual-review-lock-contention:${repoFullName.toLowerCase()}#${pr.number}`;
+    const manualReviewLabelIsPurelyLockContention = manualReviewLabel !== null && (await getTransientKey(env, manualReviewLockContentionMarkerKey)) !== null;
     const isFrozenForManualReview =
       webhook.forceAiReview !== true &&
       !authorIsExemptFromFreeze &&
+      !manualReviewLabelIsPurelyLockContention &&
       manualReviewLabel !== null &&
       pr.labels.some((label) => label.toLowerCase() === manualReviewLabel.toLowerCase());
     let reviewManifestForAutoReview: FocusManifest | null = null;

@@ -53,6 +53,7 @@ import { runRetentionPrune } from "./retention";
 import { sweepStaleApprovalQueue } from "../services/agent-approval-queue";
 import { reconcileMissingPrOutcomes } from "../review/pr-outcome-reconciler";
 import { sweepStrandedPendingClosures } from "../review/pending-closure-watchdog";
+import { reconcileSurfaceWithoutDisposition } from "../review/surface-disposition-reconciler";
 // The 15 handlers below have no reason to move -- each is only reachable via this dispatcher (or, for
 // mapWithConcurrency, ALSO used by other still-in-processors.ts code), so they stay put and are exported
 // there purely for this one-directional import-back (processors.ts itself never calls processJob).
@@ -275,7 +276,7 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
     }
     case "agent-regate-sweep":
       if (!message.repoFullName && message.requestedBy !== "test") {
-        // Three bounded repair scans ride the sweep's own fan-out tick rather than each earning a job type and
+        // Four bounded repair scans ride the sweep's own fan-out tick rather than each earning a job type and
         // a cron entry. All are best-effort and deliberately BEFORE the fan-out: none may cost the tick its
         // re-gate work, which is the sweep's actual job.
         //
@@ -287,6 +288,11 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
         //
         // #9031 re-enqueues a pending-closure Pass 2 whose single delayed job was lost, which otherwise strands
         // the PR permanently: flagged, un-mergeable, un-approvable, and sweep-ineligible.
+        //
+        // #8997 re-enqueues a regate for a PR whose published surface has no matching disposition marker for
+        // that exact head -- the "decisive panel, PR still open" shape a restart killing the pass between
+        // publish and disposition leaves behind, which the ordinary stale-surface repair check cannot see
+        // because the surface itself is not stale.
         const staleness = await sweepStaleApprovalQueue(env).catch(() => null);
         if (staleness && (staleness.reminded > 0 || staleness.expired > 0)) {
           console.log(JSON.stringify({ event: "approval_queue_staleness_swept", ...staleness }));
@@ -298,6 +304,10 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
         const stranded = await sweepStrandedPendingClosures(env).catch(() => null);
         if (stranded && stranded.requeued > 0) {
           console.log(JSON.stringify({ event: "pending_closure_verifications_requeued", ...stranded }));
+        }
+        const orphanedDispositions = await reconcileSurfaceWithoutDisposition(env).catch(() => null);
+        if (orphanedDispositions && orphanedDispositions.requeued > 0) {
+          console.log(JSON.stringify({ event: "surface_without_disposition_reconciled", ...orphanedDispositions }));
         }
         await fanOutAgentRegateSweepJobs(env, message.requestedBy);
         return;

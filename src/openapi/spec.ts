@@ -1026,6 +1026,15 @@ export function buildOpenApiSpec() {
   });
   registry.registerPath({
     method: "get",
+    path: "/v1/public/decision-ledger/anchors",
+    summary: "Every external anchoring attempt, success and failure, paginated newest-first — anchoring's own health as a public fact",
+    request: { query: z.object({ backend: z.enum(["rekor", "git", "ots"]).optional(), before: z.string().optional(), limit: z.string().optional() }) },
+    responses: {
+      200: { description: "{ anchors: [{ id, seq, rowHash, keyId, backend, backendRef, status, error, createdAt }], nextBefore } — a failed attempt is returned identically to a successful one, never filtered out or reshaped" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
     path: "/v1/public/decision-records/{owner}/{repo}/{pull}",
     summary: "Fetch the latest published decision record for a PR, verbatim, plus its content digest",
     request: { params: z.object({ owner: z.string(), repo: z.string(), pull: z.string() }) },

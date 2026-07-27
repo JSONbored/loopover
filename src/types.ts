@@ -741,6 +741,12 @@ export type PullRequestRecord = {
    *  screenshotTableGate treats visualCaptureSatisfiedSha === headSha as evidence equivalent to a hand-authored
    *  before/after table. Publish-written; read straight from the row. */
   visualCaptureSatisfiedSha?: string | null | undefined;
+  /** False-positive close guard (#9030): the head SHA a bounded visual-capture recapture retry is currently
+   *  scheduled/in-flight for -- set only when the capture pipeline errored, or the preview is still building,
+   *  AND a retry budget attempt remains. While this equals the PR's current headSha, the screenshotTableGate's
+   *  CLOSE action defers instead of treating the transient blip as missing evidence. Publish-written; read
+   *  straight from the row. */
+  visualCaptureRetryPendingSha?: string | null | undefined;
   /** Screenshot-table PRESENCE-mode staleness correlation (#stale-screenshot-table-fix): the (headSha,
    *  evidenceFingerprint) checkpoint the screenshotTableGate's presence-mode check last satisfied for this PR
    *  (see evaluateScreenshotTableGate's staleness comment). `null`/absent = presence mode has never satisfied

@@ -56,6 +56,7 @@ import {
   markPullRequestReviewsInvalidated,
   markPullRequestSurfacePublished,
   markPullRequestVisualCaptureSatisfied,
+  markPullRequestVisualCaptureRetryPending,
   markPullRequestScreenshotTablePresenceSatisfied,
   getLatestRegatedAt,
   getLatestBacklogConvergenceRegatedAt,
@@ -3239,10 +3240,29 @@ async function runAgentMaintenancePlanAndExecute(
     headSha: pr.headSha,
     presenceModeSatisfied: pr.screenshotTablePresenceSatisfied,
   });
+  // #9030: a visual-capture pipeline ERROR (browserless down, timeout, GitHub hiccup) or a still-building
+  // preview looked IDENTICAL to "capture concluded normally, no visual evidence found" -- both left
+  // visualCaptureSatisfiedSha unset, and the very next maintenance pass could close a legitimate visual PR
+  // purely because an internal service blipped. visualCaptureRetryPendingSha (set only while a bounded
+  // recapture retry is genuinely still scheduled for this exact head -- see the capture block in
+  // maybePublishPrPublicSurface) defers the CLOSE for exactly as long as that retry chance remains; once the
+  // budget is exhausted, the marker is never set again and the gate falls through to its normal, accurate
+  // evaluation on the final attempt -- this can never hold a PR forever.
+  const botCaptureRetryPending = Boolean(pr.headSha) && pr.visualCaptureRetryPendingSha === pr.headSha;
   const screenshotTableMatch =
-    screenshotTableGateResult.violated && screenshotTableGateConfig.action === "close"
+    screenshotTableGateResult.violated && screenshotTableGateConfig.action === "close" && !botCaptureRetryPending
       ? { matched: true, reason: screenshotTableGateResult.reason }
       : undefined;
+  if (screenshotTableGateResult.violated && screenshotTableGateConfig.action === "close" && botCaptureRetryPending) {
+    await recordAuditEvent(env, {
+      eventType: "github_app.screenshot_table_close_deferred_capture_retry",
+      actor: null,
+      targetKey: `${repoFullName}#${pr.number}`,
+      outcome: "queued",
+      detail: "Screenshot-table gate would have closed this PR, but the bot's own visual-capture pipeline has a bounded retry still pending for this head -- deferring the close instead of treating the blip as missing evidence",
+      metadata: { deliveryId, repoFullName, headSha: pr.headSha ?? null },
+    }).catch(() => undefined);
+  }
   // #stale-screenshot-table-fix / #8866: presence or matrix mode just independently re-confirmed the gate for
   // THIS head SHA -- persist the (headSha, evidenceFingerprint) checkpoint so a LATER push that carries the
   // SAME UNCHANGED evidence correctly re-violates instead of silently staying green forever (see
@@ -9174,6 +9194,59 @@ async function logTypeLabelSkip(env: Env, repoFullName: string, pullNumber: numb
   }).catch(() => undefined);
 }
 
+/** False-positive close guard (#9030): schedule the SAME bounded self-heal `recapture-preview` retry for both
+ *  "the preview deploy is still building" (capture.previewPending) and "the capture pipeline itself errored"
+ *  (browserless down, timeout, a GitHub hiccup) -- neither means "this PR genuinely has no visual evidence",
+ *  so neither should let the screenshotTableGate treat it that way. Persists visualCaptureRetryPendingSha for
+ *  the current head ONLY when a retry was actually scheduled (the budget is not yet exhausted) -- once
+ *  MAX_PREVIEW_POLL_ATTEMPTS is reached, the marker is deliberately left unset so the gate falls through to its
+ *  normal (accurate) evaluation on this final attempt rather than holding the PR open forever. Best-effort:
+ *  either write failing only means this ONE recovery chance is silently missed, never a crash. */
+async function scheduleVisualCaptureRetry(
+  env: Env,
+  args: {
+    webhook: { deliveryId: string };
+    repoFullName: string;
+    pr: { number: number; headSha?: string | null | undefined };
+    installationId: number;
+    previewPollAttempt: number;
+  },
+): Promise<void> {
+  if (args.previewPollAttempt >= MAX_PREVIEW_POLL_ATTEMPTS) return;
+  if (args.pr.headSha) {
+    await markPullRequestVisualCaptureRetryPending(env, args.repoFullName, args.pr.number, args.pr.headSha).catch((error) => {
+      console.log(
+        JSON.stringify({
+          event: "visual_capture_retry_pending_mark_failed",
+          repoFullName: args.repoFullName,
+          pull: args.pr.number,
+          message: errorMessage(error).slice(0, 200),
+        }),
+      );
+    });
+  }
+  await env.JOBS.send(
+    {
+      type: "recapture-preview",
+      deliveryId: args.webhook.deliveryId,
+      repoFullName: args.repoFullName,
+      prNumber: args.pr.number,
+      installationId: args.installationId,
+      attempt: args.previewPollAttempt + 1,
+    },
+    { delaySeconds: PREVIEW_POLL_SECONDS },
+  ).catch((error) =>
+    console.log(
+      JSON.stringify({
+        event: "recapture_enqueue_failed",
+        repoFullName: args.repoFullName,
+        pull: args.pr.number,
+        message: errorMessage(error).slice(0, 120),
+      }),
+    ),
+  );
+}
+
 async function maybePublishPrPublicSurface(
   env: Env,
   installationId: number,
@@ -12106,30 +12179,14 @@ async function maybePublishPrPublicSurface(
           // the now-ready shot — bounded by `attempt` so a never-resolving preview can't loop (the deployment_status
           // webhook also refills it; this is the backstop when that event is missed/late).
           const previewPollAttempt = webhook.previewPollAttempt ?? 0;
-          if (
-            capture.previewPending &&
-            previewPollAttempt < MAX_PREVIEW_POLL_ATTEMPTS
-          ) {
-            await env.JOBS.send(
-              {
-                type: "recapture-preview",
-                deliveryId: webhook.deliveryId,
-                repoFullName,
-                prNumber: pr.number,
-                installationId,
-                attempt: previewPollAttempt + 1,
-              },
-              { delaySeconds: PREVIEW_POLL_SECONDS },
-            ).catch((error) =>
-              console.log(
-                JSON.stringify({
-                  event: "recapture_enqueue_failed",
-                  repoFullName,
-                  pull: pr.number,
-                  message: errorMessage(error).slice(0, 120),
-                }),
-              ),
-            );
+          if (capture.previewPending) {
+            await scheduleVisualCaptureRetry(env, {
+              webhook,
+              repoFullName,
+              pr,
+              installationId,
+              previewPollAttempt,
+            });
           }
         } catch (error) {
           console.log(
@@ -12140,6 +12197,17 @@ async function maybePublishPrPublicSurface(
               message: errorMessage(error).slice(0, 200),
             }),
           );
+          // #9030: a capture-pipeline ERROR (browserless down, timeout, a GitHub hiccup fetching a token) must
+          // not be silently indistinguishable from a legitimate "no visual routes found" result -- the
+          // screenshotTableGate's CLOSE action would otherwise fire on a false positive purely because an
+          // internal service blipped. Schedule the SAME bounded self-heal retry previewPending already uses.
+          await scheduleVisualCaptureRetry(env, {
+            webhook,
+            repoFullName,
+            pr,
+            installationId,
+            previewPollAttempt: webhook.previewPollAttempt ?? 0,
+          });
         }
       }
       // AI-vision analysis of a confirmed visual regression (#4111 wiring) — see runVisualVisionForAdvisory's

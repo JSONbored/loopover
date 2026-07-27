@@ -4417,7 +4417,25 @@ export async function markPullRequestVisualCaptureSatisfied(env: Env, fullName: 
   const db = getDb(env.DB);
   await db
     .update(pullRequests)
-    .set({ visualCaptureSatisfiedSha: headSha, updatedAt: nowIso() })
+    // #9030: a proven-successful capture for this head supersedes any earlier "retry pending" marker recorded
+    // for the SAME head (an error or a still-building preview on an earlier attempt) -- clearing it here keeps
+    // the row's state minimal instead of leaving a now-moot marker sitting alongside a satisfied one.
+    .set({ visualCaptureSatisfiedSha: headSha, visualCaptureRetryPendingSha: null, updatedAt: nowIso() })
+    .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number), eq(pullRequests.headSha, headSha)));
+}
+
+/** False-positive close guard (#9030): record that a bounded visual-capture recapture retry is currently
+ *  scheduled/in-flight for `headSha` -- called ONLY when the capture pipeline errored, or the preview is still
+ *  building, AND a retry budget attempt remains (see MAX_PREVIEW_POLL_ATTEMPTS at the call site). While this
+ *  equals the PR's current headSha, the screenshotTableGate's CLOSE action defers instead of treating the
+ *  transient blip as missing evidence. Scoped to headSha (mirrors markPullRequestVisualCaptureSatisfied) so a
+ *  later commit re-arms the requirement; superseded by a later successful capture for the same head (see that
+ *  function's own clearing write above). */
+export async function markPullRequestVisualCaptureRetryPending(env: Env, fullName: string, number: number, headSha: string): Promise<void> {
+  const db = getDb(env.DB);
+  await db
+    .update(pullRequests)
+    .set({ visualCaptureRetryPendingSha: headSha, updatedAt: nowIso() })
     .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number), eq(pullRequests.headSha, headSha)));
 }
 
@@ -7007,6 +7025,7 @@ function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): Pull
     linkedIssueHardRuleViolationIssues: parseJson<number[]>(row.linkedIssueHardRuleViolationIssuesJson, []),
     linkedIssueHardRuleViolationReason: row.linkedIssueHardRuleViolationReason,
     visualCaptureSatisfiedSha: row.visualCaptureSatisfiedSha,
+    visualCaptureRetryPendingSha: row.visualCaptureRetryPendingSha,
     screenshotTablePresenceSatisfied: parseJson<{ headSha: string; evidenceFingerprint: string } | null>(row.screenshotTablePresenceSatisfiedJson, null),
   };
 }

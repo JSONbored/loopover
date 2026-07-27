@@ -450,6 +450,13 @@ export const pullRequests = sqliteTable(
     // new head. loopover-computed (publish-written), omitted from the GitHub-sync SET clause so a later sync
     // cannot clobber it.
     visualCaptureSatisfiedSha: text("visual_capture_satisfied_sha"),
+    // False-positive close guard (#9030): the head SHA a bounded visual-capture recapture retry is currently
+    // scheduled/in-flight for -- set ONLY when the capture pipeline errored or the preview is still building
+    // AND a retry budget attempt remains (MAX_PREVIEW_POLL_ATTEMPTS). While set for the PR's current head, the
+    // screenshotTableGate's CLOSE action defers instead of treating the transient blip as "no visual evidence
+    // provided". Cleared by a subsequent successful capture for the same head. loopover-computed
+    // (publish-written), omitted from the GitHub-sync SET clause so a later sync cannot clobber it.
+    visualCaptureRetryPendingSha: text("visual_capture_retry_pending_sha"),
     // Screenshot-table PRESENCE-mode staleness correlation (#stale-screenshot-table-fix, follow-up to #2006).
     // JSON `{headSha, evidenceFingerprint}` -- the head SHA and before/after-image-URL fingerprint that last
     // satisfied screenshotTableGate's presence-mode check (see evaluateScreenshotTableGate's staleness comment).

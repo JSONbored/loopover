@@ -37,11 +37,11 @@ describe("buildFixHandoffCollapsible (#1962)", () => {
     expect(c).not.toBeNull();
     expect(c?.title).toBe("Fix handoff");
     expect(c?.body).toContain("<!-- loopover:fix-handoff -->");
-    expect(c?.body).toContain("`src/a.ts:10`");
+    expect(c?.body).toContain("` src/a.ts:10 `");
     expect(c?.body).toContain("Possible null dereference on the fetched record.");
     expect(c?.body).toContain("Suggested change:");
     // the path-only (no commentable line) block still identifies WHERE to look
-    expect(c?.body).toContain("`src/b.ts (no specific line)`");
+    expect(c?.body).toContain("` src/b.ts (no specific line) `");
   });
 
   it("escapes adversarial paths before rendering inline-code locations", () => {
@@ -55,7 +55,10 @@ describe("buildFixHandoffCollapsible (#1962)", () => {
     ]);
 
     expect(block?.path).toBe("src/x` [Review required](https://evil.example/phish) | <tag>");
-    expect(block?.body).toContain("`src/x\\` [Review required](https://evil.example/phish) \\| &lt;tag&gt;:7`");
+    // The literal backtick in the path is neutralized by choosing a longer code-span delimiter (``), not by
+    // backslash-escaping it (Markdown ignores that inside code spans) — pipe/angle-brackets stay entity-escaped (#9289).
+    expect(block?.body).toContain("`` src/x` [Review required](https://evil.example/phish) \\| &lt;tag&gt;:7 ``");
+    expect(block?.body).not.toContain("\\`"); // no backslash-escaped backtick anymore
     expect(block?.body).not.toContain("`src/x` [Review required](https://evil.example/phish) | <tag>:7`");
   });
 

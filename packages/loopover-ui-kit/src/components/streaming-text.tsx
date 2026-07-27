@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import {
   useStreamingText,
   type ChunkSource,
-} from "../hooks/use-streaming-text";
+} from "../hooks/use-streaming-text.js";
 
 // prefers-reduced-motion detection via window.matchMedia + a `change` listener — the same technique
 // packages/loopover-ui-kit/src/hooks/use-mobile.tsx uses. Kept internal (not exported) so this file only

@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { StreamingText } from "./streaming-text";
-import type { ChunkSource } from "../hooks/use-streaming-text";
+import { StreamingText } from "./streaming-text.js";
+import type { ChunkSource } from "../hooks/use-streaming-text.js";
 
 afterEach(() => vi.unstubAllGlobals());
 

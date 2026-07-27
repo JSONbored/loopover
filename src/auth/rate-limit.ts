@@ -237,7 +237,15 @@ async function installationRateLimitIdentity(c: Context<{ Bindings: Env }>): Pro
   if (INSTALLATION_KEYED_ORB_BEARER_PATHS.has(path)) {
     const token = extractBearerToken(c.req.header("authorization"));
     if (!token) return null;
-    const enrollment = await validateOrbRelayEnrollment(c.env, token);
+    // #9225: this middleware runs BEFORE the route handler, which has its own well-tested error response for
+    // an unresolvable enrollment (a clean `503 broker_error` for the relay/token routes' own later call to
+    // this same function). A DB error here must never escape uncaught -- it would surface as a bare framework
+    // 500 upstream of that handler, exactly the class of gap #4995 already fixed for the handler's OWN call.
+    // Degrading to null (→ IP-keyed fallback below) matches peekWebhookInstallationId's sibling pattern and
+    // this function's own doc comment: a DB error is just another "not resolvable" case, alongside a
+    // malformed payload or an unenrolled secret.
+    const enrollment = await validateOrbRelayEnrollment(c.env, token).catch(() => null);
+    if (enrollment === null) return null;
     return "error" in enrollment ? null : `installation:${enrollment.installationId}`;
   }
   return null;

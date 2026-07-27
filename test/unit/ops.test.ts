@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   buildCalibrationBins,
+  checkReviewSourceFreshness,
   computeAgentHealth,
   computeCalibration,
   defaultOpsHealthDeps,
@@ -261,14 +262,16 @@ function healthEnv(): Env {
           bind() {
             return {
               first: async () => {
-                if (sql.includes("status IN ('merged', 'closed')")) return { n: 2 }; // recent auto-actions denominator
+                // #9136: recentAutoActions repointed onto review_audit's own gate_decision rows.
+                if (sql.includes("event_type = 'gate_decision'") && sql.includes("decision IN ('merge', 'close')")) return { n: 2 };
                 if (sql.includes("event_type = 'dead_lettered'") && sql.includes("COUNT(*)")) return { n: 0 };
                 return { n: 0 };
               },
               all: async () => {
                 if (sql.includes("GROUP BY status")) return { results: [{ status: "merged", n: 8 }, { status: "manual", n: 2 }, { status: "queued", n: 1 }] };
                 if (sql.includes("GROUP BY verdict")) return { results: [{ verdict: "merge", n: 8 }, { verdict: "manual", n: 2 }] };
-                if (sql.includes("reversal_reverted")) return { results: [{ number: 99, repo: "o/r", status: "merged", event_type: "reversal_reverted" }] };
+                // #9136: repo/number parsed from target_id (owner/repo#n), no review_targets join.
+                if (sql.includes("reversal_reverted")) return { results: [{ target_id: "o/r#99", event_type: "reversal_reverted" }] };
                 if (sql.includes("event_type IN ('reviewed', 'shadow_reviewed')")) return { results: [{ target_id: "t1", decision: "merge", summary: "ok", created_at: "2026-06-13T00:00:00Z" }] };
                 return { results: [] };
               },
@@ -645,13 +648,14 @@ describe("computeAgentHealth empty-ledger fallbacks", () => {
             bind() {
               return {
                 first: async () => {
-                  if (sql.includes("status IN ('merged', 'closed')")) return { n: 1 };
+                  if (sql.includes("event_type = 'gate_decision'") && sql.includes("decision IN ('merge', 'close')")) return { n: 1 };
                   if (sql.includes("event_type = 'dead_lettered'") && sql.includes("COUNT(*)")) return {}; // no n → `?? dlqTargets.length`
                   return {};
                 },
                 all: async () => {
-                  // dead-letter display sample (has rows) — and a row with verdict/last_error null
-                  if (sql.includes("event_type = 'dead_lettered'")) return { results: [{ number: 7, repo: "o/r", verdict: null, last_error: null }] };
+                  // #9136: dead-letter display sample (has rows) — target_id/summary, no review_targets join
+                  // — and a row with a null summary (lastError null).
+                  if (sql.includes("event_type = 'dead_lettered'")) return { results: [{ target_id: "o/r#7", summary: null }] };
                   return {};
                 },
               };
@@ -662,6 +666,165 @@ describe("computeAgentHealth empty-ledger fallbacks", () => {
     } as unknown as Env;
     const h = await computeAgentHealth(env, healthConfig);
     expect(h.dlqTargets).toHaveLength(1);
+    expect(h.dlqTargets?.[0]).toEqual({ number: 7, repo: "o/r", verdict: null, lastError: null });
     expect(h.dlqCount).toBe(1); // fell back to dlqTargets.length
+  });
+});
+
+// ── #9136: the generalizable fix — the NEXT orphaning (a table a downstream module treats as live,
+// silently stopped being written) must be loud, not silent, the way review_targets' own 2026-06-22
+// orphaning was for months. Real D1 (createTestEnv applies every migration), not a hand-rolled mock, so
+// the actual `datetime('now', ?)` window arithmetic is exercised for real. ─────────────────────────────
+describe("checkReviewSourceFreshness (#9136)", () => {
+  it("reads review_targets and review_audit as STALE when both are empty (the ground state right now)", async () => {
+    const env = createTestEnv();
+    const checks = await checkReviewSourceFreshness(env);
+    expect(checks).toEqual([
+      { table: "review_targets", windowDays: 90, fresh: false },
+      { table: "review_audit", windowDays: 7, fresh: false },
+    ]);
+  });
+
+  it("reads review_audit as FRESH when it has a row inside its 7-day window (the live, steady-state case)", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare(
+      `INSERT INTO review_audit (id, project, target_id, event_type, created_at) VALUES (?, ?, ?, 'gate_decision', datetime('now'))`,
+    )
+      .bind("a1", "loopover", "o/r#1")
+      .run();
+    const checks = await checkReviewSourceFreshness(env);
+    expect(checks.find((c) => c.table === "review_audit")).toEqual({ table: "review_audit", windowDays: 7, fresh: true });
+  });
+
+  it("reads review_audit as STALE when its only row is OUTSIDE the 7-day window (the boundary arm)", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare(
+      `INSERT INTO review_audit (id, project, target_id, event_type, created_at) VALUES (?, ?, ?, 'gate_decision', datetime('now', '-8 days'))`,
+    )
+      .bind("a2", "loopover", "o/r#2")
+      .run();
+    const checks = await checkReviewSourceFreshness(env);
+    expect(checks.find((c) => c.table === "review_audit")).toEqual({ table: "review_audit", windowDays: 7, fresh: false });
+  });
+
+  it("reads review_targets as FRESH when it has a row inside its 90-day window", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare(
+      `INSERT INTO review_targets (id, project, kind, repo, number, terminal_at) VALUES (?, ?, 'pull_request', ?, 1, datetime('now'))`,
+    )
+      .bind("loopover:pull_request:o/r#1", "loopover", "o/r")
+      .run();
+    const checks = await checkReviewSourceFreshness(env);
+    expect(checks.find((c) => c.table === "review_targets")).toEqual({ table: "review_targets", windowDays: 90, fresh: true });
+  });
+
+  it("reads review_targets as STALE once its newest row falls outside the 90-day window (the 2026-09-20 cliff this exists to catch)", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare(
+      `INSERT INTO review_targets (id, project, kind, repo, number, terminal_at) VALUES (?, ?, 'pull_request', ?, 1, datetime('now', '-91 days'))`,
+    )
+      .bind("loopover:pull_request:o/r#1", "loopover", "o/r")
+      .run();
+    const checks = await checkReviewSourceFreshness(env);
+    expect(checks.find((c) => c.table === "review_targets")).toEqual({ table: "review_targets", windowDays: 90, fresh: false });
+  });
+
+  it("fails CLOSED (stale) on a read error, e.g. a dropped/missing table, rather than throwing", async () => {
+    const env = {
+      DB: {
+        prepare() {
+          throw new Error("no such table: review_audit");
+        },
+      },
+    } as unknown as Env;
+    const checks = await checkReviewSourceFreshness(env);
+    expect(checks.every((c) => c.fresh === false)).toBe(true);
+  });
+});
+
+// ── #9136: repo/number parsed from review_audit's own target_id (parseReviewAuditTargetId) ────────
+describe("computeAgentHealth target_id parsing (#9136)", () => {
+  it("derives 'closed' status for a reversal_reopened row (the other ternary arm vs 'merged')", async () => {
+    const env = {
+      DB: {
+        prepare(sql: string) {
+          return {
+            bind() {
+              return {
+                first: async () => ({ n: 0 }),
+                all: async () => {
+                  if (sql.includes("reversal_reverted")) return { results: [{ target_id: "o/r#5", event_type: "reversal_reopened" }] };
+                  return {};
+                },
+              };
+            },
+          };
+        },
+      },
+    } as unknown as Env;
+    const h = await computeAgentHealth(env, healthConfig);
+    expect(h.reversedTargets?.[0]).toEqual({ number: 5, repo: "o/r", status: "closed", eventType: "reversal_reopened" });
+  });
+
+  it("filters out a reversal row whose target_id can't be parsed, without dropping a well-formed sibling", async () => {
+    const env = {
+      DB: {
+        prepare(sql: string) {
+          return {
+            bind() {
+              return {
+                first: async () => ({ n: 0 }),
+                all: async () => {
+                  if (sql.includes("reversal_reverted")) {
+                    return {
+                      results: [
+                        { target_id: "no-hash-at-all", event_type: "reversal_reverted" }, // no '#' -> null
+                        { target_id: "#5", event_type: "reversal_reverted" }, // hashIndex === 0 -> null
+                        { target_id: "o/r#not-a-number", event_type: "reversal_reverted" }, // NaN -> null
+                        { target_id: "o/r#12", event_type: "reversal_reverted" }, // well-formed
+                      ],
+                    };
+                  }
+                  return {};
+                },
+              };
+            },
+          };
+        },
+      },
+    } as unknown as Env;
+    const h = await computeAgentHealth(env, healthConfig);
+    expect(h.reversedTargets).toHaveLength(1);
+    expect(h.reversedTargets?.[0]).toEqual({ number: 12, repo: "o/r", status: "merged", eventType: "reversal_reverted" });
+  });
+
+  it("filters out a dead-letter row whose target_id can't be parsed", async () => {
+    const env = {
+      DB: {
+        prepare(sql: string) {
+          return {
+            bind() {
+              return {
+                first: async () => ({ n: 0 }),
+                all: async () => {
+                  if (sql.includes("event_type = 'dead_lettered'")) {
+                    return {
+                      results: [
+                        { target_id: "unparseable", summary: "boom" },
+                        { target_id: "o/r#9", summary: "ok" },
+                      ],
+                    };
+                  }
+                  return {};
+                },
+              };
+            },
+          };
+        },
+      },
+    } as unknown as Env;
+    const h = await computeAgentHealth(env, healthConfig);
+    expect(h.dlqTargets).toHaveLength(1);
+    expect(h.dlqTargets?.[0]).toEqual({ number: 9, repo: "o/r", verdict: null, lastError: "ok" });
   });
 });

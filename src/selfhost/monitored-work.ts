@@ -21,6 +21,13 @@ export type OrbRelayDrainState = {
   // isOrbRelayRegistrationAlerting so a registration failure streak below the alert threshold can still
   // be judged against real evidence the relay connection is (or isn't) making progress.
   lastDrainAtMs: number | null;
+  // #9128: consecutive drain THROWS (a 4xx, a broker schema change, an ack-payload rejection) -- distinct
+  // from registration's OWN consecutiveFailures (OrbRelayRegistrationState), which only ever tracks the
+  // registration call, never the drain loop. Reset to 0 on any drain call that completes without throwing
+  // (mirrors lastDrainAtMs's own "even a zero-event poll is progress" reset). Optional (not set by every
+  // existing state literal, e.g. server.ts's `{ pendingAck: [], lastDrainAtMs: null }`) -- read as 0 when
+  // absent, rather than forcing every construction site to know about this field.
+  consecutiveFailures?: number;
 };
 
 type OrbRelayEnv = {
@@ -95,12 +102,29 @@ export async function drainOrbRelayWithMonitor(args: {
     "orb-relay-drain",
     { jobType: "orb-relay-drain", pendingAckCount: args.state.pendingAck.length },
     async () => {
-      const events = await args.drain(args.relayEnv, args.state.pendingAck);
+      let events: OrbRelayEvent[];
+      try {
+        events = await args.drain(args.relayEnv, args.state.pendingAck);
+      } catch (error) {
+        // #9128: a drain that throws on EVERY tick (a 4xx, a broker-side schema change, an ack-payload
+        // rejection) previously left NO trace behind -- lastDrainAtMs correctly stays untouched (no
+        // progress to claim), but nothing ELSE moved either: loopover_orb_relay_drains_total only ever
+        // incremented on the success path, so there was no failure counter to notice, and
+        // isOrbRelayRegistrationAlerting's own consecutiveFailures tracks REGISTRATION, not drain -- a
+        // healthy registration with a permanently-broken drain had no failure signal anywhere. Count the
+        // throw (both a result="failed" series on the existing counter and a dedicated streak, mirroring
+        // OrbRelayRegistrationState's own consecutiveFailures) before rethrowing, unchanged, to the
+        // reentrancy-guarded caller.
+        args.state.consecutiveFailures = (args.state.consecutiveFailures ?? 0) + 1;
+        incr("loopover_orb_relay_drains_total", { result: "failed" });
+        throw error;
+      }
       args.state.pendingAck = [];
       // A successful round-trip (even zero events) proves the broker link itself is alive -- stamped
       // BEFORE the per-event enqueue loop so a downstream enqueue failure still counts as drain progress
       // (the relay connection, not the local queue, is what registration-alerting cares about).
       args.state.lastDrainAtMs = args.nowMs ?? Date.now();
+      args.state.consecutiveFailures = 0;
       incr("loopover_orb_relay_drains_total", {
         result: events.length > 0 ? "events" : "empty",
       });
@@ -215,21 +239,26 @@ export const ORB_RELAY_DRAIN_NO_PROGRESS_WINDOW_MS = 30 * 60_000;
 /** Pull-mode registration alert gate (#selfhost-runtime-drift follow-up): a lone registration timeout is
  *  routine degraded telemetry, NOT an error, as long as the drain loop is still making progress -- so this
  *  only reports "actually stuck" (as opposed to "one hiccup") when EITHER the failure streak has crossed
- *  {@link ORB_RELAY_REGISTER_UNHEALTHY_FAILURE_STREAK}, OR a KNOWN prior drain has gone stale for over
- *  {@link ORB_RELAY_DRAIN_NO_PROGRESS_WINDOW_MS}. `drainLastAtMs` is `null` when there is no drain-progress
- *  evidence to judge yet (push mode has no drain loop at all; a pull-mode container may simply not have
- *  reached its first drain tick) -- treated as "insufficient signal to escalate on this basis", not as
- *  "stuck", so a lone registration hiccup at boot can't alert before the drain loop has had a chance to
- *  prove itself either way. */
+ *  {@link ORB_RELAY_REGISTER_UNHEALTHY_FAILURE_STREAK}, OR the last known drain progress (a completed
+ *  drain tick, or -- #9128 -- process boot if there has never been one) has gone stale for over
+ *  {@link ORB_RELAY_DRAIN_NO_PROGRESS_WINDOW_MS}. `drainLastAtMs` is `null` when there is no COMPLETED
+ *  drain tick yet -- push mode has no drain loop at all (bootAtMs is unused in that branch, since the
+ *  streak check above always applies for push), and a pull-mode container may simply not have reached its
+ *  first drain tick, OR every tick since boot has thrown (#9128's own trigger: a broker-side schema change
+ *  or ack-payload rejection breaks every single attempt, so lastDrainAtMs never once gets stamped). Either
+ *  way this now ages from {@link bootAtMs} instead of returning `false` forever -- a lone hiccup at boot
+ *  still can't alert before the no-progress window has elapsed, but a container that NEVER completes a
+ *  drain tick for the whole window is exactly "actually stuck", not "insufficient signal". */
 export function isOrbRelayRegistrationAlerting(args: {
   consecutiveFailures: number;
   drainLastAtMs: number | null;
+  bootAtMs: number;
   nowMs?: number;
 }): boolean {
   if (args.consecutiveFailures >= ORB_RELAY_REGISTER_UNHEALTHY_FAILURE_STREAK) return true;
-  if (args.drainLastAtMs === null) return false;
   const nowMs = args.nowMs ?? Date.now();
-  return nowMs - args.drainLastAtMs > ORB_RELAY_DRAIN_NO_PROGRESS_WINDOW_MS;
+  const lastProgressAtMs = args.drainLastAtMs ?? args.bootAtMs;
+  return nowMs - lastProgressAtMs > ORB_RELAY_DRAIN_NO_PROGRESS_WINDOW_MS;
 }
 
 /** Recurring wrapper around the retryable relay-registration attempt (#selfhost-runtime-drift): a bare
@@ -238,12 +267,15 @@ export function isOrbRelayRegistrationAlerting(args: {
  *  network request (`registered` / `failed`) — `already_registered` / `backoff` / `skipped` are silent no-ops
  *  so a healthy or intentionally-idle container does not spam logs/PostHog every tick. `drainState` is the
  *  pull-mode drain loop's shared state (omitted/undefined in push mode, where there is no drain loop) -- its
- *  `lastDrainAtMs` feeds the no-progress-window half of {@link isOrbRelayRegistrationAlerting}. */
+ *  `lastDrainAtMs` feeds the no-progress-window half of {@link isOrbRelayRegistrationAlerting}. `bootAtMs`
+ *  (#9128) is this process's own start time -- the fallback "since" reference isOrbRelayRegistrationAlerting
+ *  ages a never-completed drain from, rather than treating "no drain evidence yet" as permanently benign. */
 export async function registerOrbRelayWithMonitor(args: {
   env: OrbRelayRegisterEnv;
   state: OrbRelayRegistrationState;
   register: (env: OrbRelayRegisterEnv, state: OrbRelayRegistrationState) => Promise<OrbRelayRegisterResult>;
   drainState?: OrbRelayDrainState;
+  bootAtMs: number;
   log?: (line: string) => void;
   nowMs?: number;
 }): Promise<void> {
@@ -275,6 +307,7 @@ export async function registerOrbRelayWithMonitor(args: {
       isOrbRelayRegistrationAlerting({
         consecutiveFailures: args.state.consecutiveFailures,
         drainLastAtMs: args.drainState?.lastDrainAtMs ?? null,
+        bootAtMs: args.bootAtMs,
         ...(args.nowMs !== undefined ? { nowMs: args.nowMs } : {}),
       });
     (alerting ? console.error : console.warn)(

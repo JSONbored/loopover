@@ -33,5 +33,24 @@ describe("dlq-recent gauge helpers (#2083)", () => {
       vi.spyOn(repositories, "countRecentDeadLetters").mockRejectedValue(new Error("db down"));
       expect(await sampleRecentDeadLetters({} as Env)).toBe(0);
     });
+
+    // #9139: on self-host, the audit_events-based cloud-worker source above is structurally always 0 (the
+    // Cloudflare `queue()` handler that writes it is never invoked) -- a passed selfHostQueue reads the
+    // self-host queue's OWN dead-letter path instead, and EXCLUSIVELY (never falls through to the D1 path).
+    describe("selfHostQueue arm (#9139)", () => {
+      it("reads recentDeadCount from the self-host queue instead of countRecentDeadLetters when provided", async () => {
+        const countRecentDeadLettersSpy = vi.spyOn(repositories, "countRecentDeadLetters");
+        const selfHostQueue = { recentDeadCount: vi.fn().mockResolvedValue(4) };
+
+        expect(await sampleRecentDeadLetters({} as Env, undefined, selfHostQueue)).toBe(4);
+        expect(selfHostQueue.recentDeadCount).toHaveBeenCalledWith(DLQ_RECENT_WINDOW_MS);
+        expect(countRecentDeadLettersSpy).not.toHaveBeenCalled();
+      });
+
+      it("degrades to 0 when the self-host queue's own recentDeadCount throws", async () => {
+        const selfHostQueue = { recentDeadCount: vi.fn().mockRejectedValue(new Error("pool exhausted")) };
+        expect(await sampleRecentDeadLetters({} as Env, undefined, selfHostQueue)).toBe(0);
+      });
+    });
   });
 });

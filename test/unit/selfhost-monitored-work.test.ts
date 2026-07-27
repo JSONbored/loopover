@@ -387,32 +387,104 @@ describe("self-host monitored recurring work", () => {
     expect(state.lastDrainAtMs).toBeNull();
   });
 
+  describe("drain failure counting (#9128)", () => {
+    it("counts a drain throw: increments the failed result series and the consecutive-failure streak, then rethrows", async () => {
+      const state: OrbRelayDrainState = { pendingAck: [], lastDrainAtMs: null };
+      const drain = vi.fn().mockRejectedValue(new Error("broker down"));
+
+      await expect(
+        drainOrbRelayWithMonitor({ state, relayEnv: {}, env: {} as Env, drain, enqueue: vi.fn() }),
+      ).rejects.toThrow("broker down");
+
+      expect(state.consecutiveFailures).toBe(1);
+      expect(await renderMetrics()).toContain('loopover_orb_relay_drains_total{result="failed"} 1');
+    });
+
+    it("accumulates the consecutive-failure streak across repeated throws (a drain that only ever throws)", async () => {
+      const state: OrbRelayDrainState = { pendingAck: [], lastDrainAtMs: null };
+      const drain = vi.fn().mockRejectedValue(new Error("still down"));
+
+      for (let i = 0; i < 3; i++) {
+        await expect(
+          drainOrbRelayWithMonitor({ state, relayEnv: {}, env: {} as Env, drain, enqueue: vi.fn() }),
+        ).rejects.toThrow("still down");
+      }
+
+      // REGRESSION (#9128): a drain that only ever throws must produce a firing condition -- both the
+      // consecutive-failure streak and lastDrainAtMs staying null (ageable from boot, see server.ts's own
+      // gauge and isOrbRelayRegistrationAlerting) are exactly that condition.
+      expect(state.consecutiveFailures).toBe(3);
+      expect(state.lastDrainAtMs).toBeNull();
+      expect(await renderMetrics()).toContain('loopover_orb_relay_drains_total{result="failed"} 3');
+    });
+
+    it("resets the consecutive-failure streak to 0 on the next drain that completes without throwing", async () => {
+      const state: OrbRelayDrainState = { pendingAck: [], lastDrainAtMs: null, consecutiveFailures: 2 };
+      const drain = vi.fn().mockResolvedValue([]);
+
+      await drainOrbRelayWithMonitor({ state, relayEnv: {}, env: {} as Env, drain, enqueue: vi.fn(), nowMs: 5_000 });
+
+      expect(state.consecutiveFailures).toBe(0);
+      expect(state.lastDrainAtMs).toBe(5_000);
+    });
+
+    it("treats an absent consecutiveFailures field as 0 on the first throw (the ?? nullish arm)", async () => {
+      // No consecutiveFailures key at all -- mirrors every pre-existing state literal in this test file / server.ts.
+      const state: OrbRelayDrainState = { pendingAck: [], lastDrainAtMs: null };
+      expect(state.consecutiveFailures).toBeUndefined();
+      const drain = vi.fn().mockRejectedValue(new Error("broker down"));
+
+      await expect(
+        drainOrbRelayWithMonitor({ state, relayEnv: {}, env: {} as Env, drain, enqueue: vi.fn() }),
+      ).rejects.toThrow("broker down");
+
+      expect(state.consecutiveFailures).toBe(1);
+    });
+  });
+
   describe("isOrbRelayRegistrationAlerting", () => {
     it("does not alert below the failure streak with no drain-progress evidence yet (a lone boot-time hiccup)", () => {
-      expect(isOrbRelayRegistrationAlerting({ consecutiveFailures: 1, drainLastAtMs: null, nowMs: 1_000 })).toBe(false);
-      expect(isOrbRelayRegistrationAlerting({ consecutiveFailures: 2, drainLastAtMs: null, nowMs: 1_000 })).toBe(false);
+      expect(isOrbRelayRegistrationAlerting({ consecutiveFailures: 1, drainLastAtMs: null, bootAtMs: 1_000, nowMs: 1_000 })).toBe(false);
+      expect(isOrbRelayRegistrationAlerting({ consecutiveFailures: 2, drainLastAtMs: null, bootAtMs: 1_000, nowMs: 1_000 })).toBe(false);
     });
 
     it("does not alert below the failure streak while a known drain is still fresh", () => {
       expect(
-        isOrbRelayRegistrationAlerting({ consecutiveFailures: 1, drainLastAtMs: 1_000, nowMs: 1_000 + ORB_RELAY_DRAIN_NO_PROGRESS_WINDOW_MS }),
+        isOrbRelayRegistrationAlerting({ consecutiveFailures: 1, drainLastAtMs: 1_000, bootAtMs: 0, nowMs: 1_000 + ORB_RELAY_DRAIN_NO_PROGRESS_WINDOW_MS }),
       ).toBe(false); // exactly at the window boundary — not yet OVER it
     });
 
     it("alerts once the consecutive-failure streak reaches the threshold, regardless of drain freshness", () => {
-      expect(isOrbRelayRegistrationAlerting({ consecutiveFailures: 3, drainLastAtMs: Date.now(), nowMs: Date.now() })).toBe(true);
-      expect(isOrbRelayRegistrationAlerting({ consecutiveFailures: 4, drainLastAtMs: null, nowMs: 1_000 })).toBe(true);
+      expect(isOrbRelayRegistrationAlerting({ consecutiveFailures: 3, drainLastAtMs: Date.now(), bootAtMs: 0, nowMs: Date.now() })).toBe(true);
+      expect(isOrbRelayRegistrationAlerting({ consecutiveFailures: 4, drainLastAtMs: null, bootAtMs: 1_000, nowMs: 1_000 })).toBe(true);
     });
 
     it("alerts once a known last-drain timestamp goes stale past the no-progress window, even below the streak threshold", () => {
       expect(
-        isOrbRelayRegistrationAlerting({ consecutiveFailures: 1, drainLastAtMs: 0, nowMs: ORB_RELAY_DRAIN_NO_PROGRESS_WINDOW_MS + 1 }),
+        isOrbRelayRegistrationAlerting({ consecutiveFailures: 1, drainLastAtMs: 0, bootAtMs: 0, nowMs: ORB_RELAY_DRAIN_NO_PROGRESS_WINDOW_MS + 1 }),
       ).toBe(true);
     });
 
     it("defaults nowMs to the real clock when omitted", () => {
-      expect(isOrbRelayRegistrationAlerting({ consecutiveFailures: 0, drainLastAtMs: Date.now() })).toBe(false);
-      expect(isOrbRelayRegistrationAlerting({ consecutiveFailures: 0, drainLastAtMs: Date.now() - ORB_RELAY_DRAIN_NO_PROGRESS_WINDOW_MS - 1 })).toBe(true);
+      expect(isOrbRelayRegistrationAlerting({ consecutiveFailures: 0, drainLastAtMs: Date.now(), bootAtMs: 0 })).toBe(false);
+      expect(isOrbRelayRegistrationAlerting({ consecutiveFailures: 0, drainLastAtMs: Date.now() - ORB_RELAY_DRAIN_NO_PROGRESS_WINDOW_MS - 1, bootAtMs: 0 })).toBe(true);
+    });
+
+    // REGRESSION (#9128): a pull-mode instance that has NEVER completed a single drain tick (every attempt
+    // throws since boot) must still escalate once it's been stuck past the no-progress window -- the exact
+    // "-1 never fires" hole this issue fixes. Ages from bootAtMs, not a flat "insufficient signal" false.
+    describe("never-drained-since-boot ages from bootAtMs, not a permanent false (#9128)", () => {
+      it("does not alert while still within the no-progress grace period since boot", () => {
+        expect(
+          isOrbRelayRegistrationAlerting({ consecutiveFailures: 1, drainLastAtMs: null, bootAtMs: 0, nowMs: ORB_RELAY_DRAIN_NO_PROGRESS_WINDOW_MS }),
+        ).toBe(false); // exactly at the boundary — not yet OVER it
+      });
+
+      it("alerts once a NEVER-drained instance has been stuck past the no-progress window since boot", () => {
+        expect(
+          isOrbRelayRegistrationAlerting({ consecutiveFailures: 1, drainLastAtMs: null, bootAtMs: 0, nowMs: ORB_RELAY_DRAIN_NO_PROGRESS_WINDOW_MS + 1 }),
+        ).toBe(true);
+      });
     });
   });
 
@@ -425,7 +497,7 @@ describe("self-host monitored recurring work", () => {
       state.attempts = 1; // the injected register() already bumped attempts before returning
       const register = vi.fn().mockResolvedValue({ status: "registered" });
 
-      await registerOrbRelayWithMonitor({ env: { ORB_RELAY_MODE: "push" }, state, register, log });
+      await registerOrbRelayWithMonitor({ env: { ORB_RELAY_MODE: "push" }, state, register, bootAtMs: 0, log });
 
       expect(mocks.withPostHogMonitor).toHaveBeenCalledWith(
         "orb-relay-register",
@@ -446,7 +518,7 @@ describe("self-host monitored recurring work", () => {
       state.attempts = 3; // two prior failed attempts before this one succeeded
       const register = vi.fn().mockResolvedValue({ status: "registered" });
 
-      await registerOrbRelayWithMonitor({ env: { ORB_RELAY_MODE: "pull" }, state, register, log });
+      await registerOrbRelayWithMonitor({ env: { ORB_RELAY_MODE: "pull" }, state, register, bootAtMs: 0, log });
 
       expect(log).toHaveBeenCalledWith(
         JSON.stringify({ event: "selfhost_orb_relay_register_recovered", mode: "pull", attempts: 3 }),
@@ -463,7 +535,8 @@ describe("self-host monitored recurring work", () => {
         state.consecutiveFailures = 1;
         const register = vi.fn().mockResolvedValue({ status: "failed", reason: "http_500" });
 
-        await registerOrbRelayWithMonitor({ env: { ORB_RELAY_MODE: "pull" }, state, register });
+        // bootAtMs = right now: the process just started, well inside the no-progress grace period (#9128).
+        await registerOrbRelayWithMonitor({ env: { ORB_RELAY_MODE: "pull" }, state, register, bootAtMs: Date.now() });
 
         expect(warnSpy).toHaveBeenCalledWith(
           JSON.stringify({ level: "warn", event: "selfhost_orb_relay_register_failed", mode: "pull", error: "http_500", attempts: 1, consecutiveFailures: 1 }),
@@ -491,6 +564,7 @@ describe("self-host monitored recurring work", () => {
           state,
           register,
           drainState,
+          bootAtMs: 0,
           nowMs: 1_000 + 60_000, // well inside ORB_RELAY_DRAIN_NO_PROGRESS_WINDOW_MS
         });
 
@@ -512,7 +586,7 @@ describe("self-host monitored recurring work", () => {
         const drainState: OrbRelayDrainState = { pendingAck: [], lastDrainAtMs: 1_000 }; // still draining fine
         const register = vi.fn().mockResolvedValue({ status: "failed", reason: "http_500" });
 
-        await registerOrbRelayWithMonitor({ env: { ORB_RELAY_MODE: "pull" }, state, register, drainState, nowMs: 2_000 });
+        await registerOrbRelayWithMonitor({ env: { ORB_RELAY_MODE: "pull" }, state, register, drainState, bootAtMs: 0, nowMs: 2_000 });
 
         expect(errorSpy).toHaveBeenCalledWith(
           JSON.stringify({ level: "error", event: "selfhost_orb_relay_register_failed", mode: "pull", error: "http_500", attempts: 3, consecutiveFailures: 3 }),
@@ -539,6 +613,7 @@ describe("self-host monitored recurring work", () => {
           state,
           register,
           drainState,
+          bootAtMs: 0,
           nowMs: ORB_RELAY_DRAIN_NO_PROGRESS_WINDOW_MS + 1,
         });
 
@@ -561,7 +636,7 @@ describe("self-host monitored recurring work", () => {
         state.consecutiveFailures = 1;
         const register = vi.fn().mockResolvedValue({ status: "failed" });
 
-        await registerOrbRelayWithMonitor({ env: {}, state, register });
+        await registerOrbRelayWithMonitor({ env: {}, state, register, bootAtMs: 0 });
 
         expect(errorSpy).toHaveBeenCalledWith(
           JSON.stringify({ level: "error", event: "selfhost_orb_relay_register_failed", mode: "push", error: "unknown", attempts: 1, consecutiveFailures: 1 }),
@@ -577,7 +652,7 @@ describe("self-host monitored recurring work", () => {
       const log = vi.fn();
       for (const status of ["skipped", "already_registered", "backoff"] as const) {
         const register = vi.fn().mockResolvedValue({ status });
-        await registerOrbRelayWithMonitor({ env: {}, state: freshState(), register, log });
+        await registerOrbRelayWithMonitor({ env: {}, state: freshState(), register, bootAtMs: 0, log });
       }
       expect(log).not.toHaveBeenCalled();
       expect(await renderMetrics()).not.toContain("loopover_orb_relay_register_total");
@@ -592,6 +667,7 @@ describe("self-host monitored recurring work", () => {
           env: { ORB_RELAY_MODE: "push" },
           state,
           register: vi.fn().mockResolvedValue({ status: "registered" }),
+          bootAtMs: 0,
         });
         expect(consoleLog).toHaveBeenCalledWith(
           JSON.stringify({ event: "selfhost_orb_relay_register", mode: "push", attempts: 1 }),

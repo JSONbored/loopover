@@ -107,7 +107,8 @@ export const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["loopover_orb_relay_drains_total", { help: "Orb relay drain outcomes.", type: "counter" }],
   ["loopover_orb_relay_drain_skipped_total", { help: "Pull-mode orb relay drain ticks skipped because the previous tick was still in flight.", type: "counter" }],
   ["loopover_orb_relay_register_consecutive_failures", { help: "Current consecutive orb relay registration failure streak, reset to 0 on any success.", type: "gauge" }],
-  ["loopover_orb_relay_drain_seconds_since_last", { help: "Seconds since the pull-mode orb relay drain loop last completed successfully, or -1 if never (or in push mode).", type: "gauge" }],
+  ["loopover_orb_relay_drain_consecutive_failures", { help: "Current consecutive pull-mode orb relay drain failure streak (drain threw), reset to 0 on any completed drain tick; always 0 in push mode.", type: "gauge" }],
+  ["loopover_orb_relay_drain_seconds_since_last", { help: "Seconds since the pull-mode orb relay drain loop last completed successfully, or since process boot if it never has; -1 in push mode, where there is no drain loop.", type: "gauge" }],
   ["loopover_orb_webhook_total", { help: "Orb webhook outcomes.", type: "counter" }],
   ["loopover_orb_config_push_received_total", { help: "Config-push relay rows received and logged by the pull-drain loop (#7523).", type: "counter" }],
   ["loopover_ai_requests_total", { help: "AI provider request outcomes.", type: "counter" }],
@@ -178,6 +179,8 @@ export const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["loopover_review_memory_suppressed_total", { help: "Review-memory entries suppressed from surfacing, by repo.", type: "counter" }],
   ["loopover_rees_enrich_requests_total", { help: "REES /v1/enrich call outcomes, by status (ok/empty/http_error/timeout/exception/skipped_auth_rejected).", type: "counter" }],
   ["loopover_rees_enrich_request_duration_seconds", { help: "REES /v1/enrich call duration in seconds, for calls that were actually attempted (excludes the auth-rejected circuit-breaker skip).", type: "histogram" }],
+  ["loopover_metrics_sampler_errors_total", { help: "Scrape-time gauge sampler failures, by metric name -- a failing sampler previously emitted no series at all, silently. Any occurrence means that metric's value is currently invisible to Prometheus this scrape (see the sentinel gauges' own -1-on-failure convention).", type: "counter" }],
+  ["loopover_review_source_fresh", { help: "1 when a review/ops/reputation source table has a row inside its own consumer's window, 0 when stale -- labeled by table and window_days. review_targets was silently orphaned by the 2026-06-22 convergence cutover for months before anyone noticed; this makes the next such orphaning loud instead.", type: "gauge" }],
 ];
 const metricMeta = new Map<string, MetricMeta>(DEFAULT_METRIC_META);
 
@@ -315,21 +318,29 @@ export function observe(name: string, value: number, labels?: Labels, buckets: n
   h.count += 1;
 }
 
-/** Render the registry in Prometheus text exposition format. */
+/** Render the registry in Prometheus text exposition format. Counters render LAST (#9139): a gauge/
+ *  gaugeVector sampler failure below increments loopover_metrics_sampler_errors_total AS PART OF the same
+ *  render call, so counters must be read after those loops run, not before -- otherwise a THIS-scrape
+ *  failure would only ever show up starting with the NEXT scrape's output, one full interval late. */
 export async function renderMetrics(): Promise<string> {
   const lines: string[] = [];
   const emittedMeta = new Set<string>();
-  for (const [k, v] of counters) {
-    pushMetricMeta(lines, emittedMeta, metricNameFromSeriesKey(k));
-    lines.push(`${k} ${v}`);
-  }
   for (const [name, sample] of gauges) {
     try {
       const value = await sample();
       pushMetricMeta(lines, emittedMeta, name);
       lines.push(`${name} ${value}`);
     } catch {
-      /* a failing sampler must not break the scrape */
+      // #9139: a throwing sampler previously emitted NO series at all -- indistinguishable in Grafana from
+      // "idle"/"no data", and every alert rule reading it simply evaluated over an empty set (INACTIVE, not
+      // FIRING) at exactly the DB-incident moment it exists to catch (loopover_queue_pending and friends are
+      // all live DB reads -- see server.ts). Counting the failure AND still emitting a -1 sentinel series --
+      // the SAME "impossible for a healthy gauge, so its absence is itself visible" convention
+      // loopover_clock_skew_sample_age_seconds / loopover_d1_database_size_bytes already use for "never
+      // sampled" -- turns a silently-empty scrape into an actionable, alertable signal.
+      incr("loopover_metrics_sampler_errors_total", { metric: name });
+      pushMetricMeta(lines, emittedMeta, name);
+      lines.push(`${name} -1`);
     }
   }
   for (const [name, sample] of gaugeVectors) {
@@ -343,7 +354,12 @@ export async function renderMetrics(): Promise<string> {
         lines.push(`${seriesKey(name, publicLabelsForMetric(name, labels))} ${value}`);
       }
     } catch {
-      /* a failing sampler must not break the scrape */
+      // #9139: same failure-visibility fix as the plain-gauge loop above, but a gaugeVector's label SET is
+      // unknown at failure time (that's the whole point of it), so there's no single value to sentinel --
+      // counting the failure is still the actionable half; the metric name simply emits zero series this
+      // scrape, same as its own pre-existing "legitimately empty" case just above.
+      incr("loopover_metrics_sampler_errors_total", { metric: name });
+      pushMetricMeta(lines, emittedMeta, name);
     }
   }
   for (const h of histograms.values()) {
@@ -355,6 +371,11 @@ export async function renderMetrics(): Promise<string> {
     lines.push(`${seriesKey(`${h.name}_bucket`, { ...h.labels, le: "+Inf" })} ${h.count}`);
     lines.push(`${seriesKey(`${h.name}_sum`, h.labels)} ${h.sum}`);
     lines.push(`${seriesKey(`${h.name}_count`, h.labels)} ${h.count}`);
+  }
+  // Rendered last (#9139) -- see this function's own header comment.
+  for (const [k, v] of counters) {
+    pushMetricMeta(lines, emittedMeta, metricNameFromSeriesKey(k));
+    lines.push(`${k} ${v}`);
   }
   return `${lines.join("\n")}\n`;
 }

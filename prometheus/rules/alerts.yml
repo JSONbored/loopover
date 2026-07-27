@@ -39,6 +39,49 @@ groups:
           description: "Prometheus has failed to scrape {{ $labels.instance }} (job {{ $labels.job }}) for over 2m. The app is unreachable or not serving /metrics."
           runbook: "Check `docker compose ps` and `docker compose logs loopover`. Look for a missing selfhost_listening log line or a crash-loop (restart count climbing)."
 
+      - alert: LoopoverObservabilityExporterDown
+        # #9139: the generic up==0 counterpart to LoopoverTargetDown above, for the OTHER scrape jobs that
+        # previously had no liveness rule at all -- an exporter dying showed as Grafana "No data",
+        # indistinguishable from a profile that was simply never enabled.
+        #
+        # Deliberately scoped to node-exporter/cadvisor/redis/observability-stack ONLY, not every job in
+        # prometheus.yml -- those four ship in the SAME `--profile observability` bundle as Prometheus/
+        # Alertmanager themselves (docker-compose.yml's own `profiles:` list for each), so they are always
+        # co-started whenever this alerting stack is running at all: `up==0` here can only mean the exporter
+        # itself died, never "the operator hasn't enabled that add-on". postgres/qdrant/gpu/rees/browserless/
+        # backup are each gated behind their OWN SEPARATE profile and legitimately read `up==0` FOREVER on an
+        # install that never opted into that add-on (prometheus.yml's own per-job comments document this) --
+        # a blanket `up{job!="loopover"}==0` would misfire permanently on the common case of "I didn't enable
+        # Qdrant". Those jobs are covered instead by their own metric-VALUE rules elsewhere in this file
+        # (the Postgres group, LoopoverQdrantErrorRateHigh, and LoopoverBackupMissing/…Stale/the new
+        # absent()-based rule below), which naturally stay inactive (empty result set) when the exporter was
+        # never scraped at all, rather than reading a real, continuous `up==0` series.
+        expr: up{job=~"node-exporter|cadvisor|redis|observability-stack"} == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "loopover observability exporter {{ $labels.job }}/{{ $labels.instance }} is down"
+          description: "Prometheus has failed to scrape {{ $labels.instance }} (job {{ $labels.job }}) for over 10m. This exporter ships in the same --profile observability bundle as Prometheus/Alertmanager, so it should always be reachable while this stack is running."
+          runbook: "Check `docker compose ps` for the corresponding service (node-exporter / cadvisor / redis-exporter / prometheus / alertmanager / loki / tempo / grafana / otel-collector) and `docker compose logs <service>`."
+
+      - alert: LoopoverMetricsSamplerFailing
+        # #9139: renderMetrics' own gauge/gaugeVector catch blocks previously swallowed a failing sampler
+        # completely silently -- no series, no counter, nothing. Every queue-backlog gauge is a live DB read
+        # (loopover_queue_pending, pressureSignals()'s pool.query(...) calls, …), so a Postgres outage or
+        # pool exhaustion made `/metrics` still return 200 (non-DB counters/gauges render fine) while every
+        # queue-backlog alert below silently evaluated over an empty set and went INACTIVE -- exactly the
+        # moment they exist to catch. Any occurrence over 15m means at least one metric is currently
+        # invisible to Prometheus.
+        expr: increase(loopover_metrics_sampler_errors_total[15m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "a loopover metrics sampler is failing on scrape"
+          description: "{{ $labels.metric }} failed to sample {{ $value | printf \"%.0f\" }} time(s) over the last 15m (sustained 5m). That gauge is either reading a -1 sentinel (loopover_metrics_sampler_errors_total's own fix) or, for a gaugeVector, emitting zero series this scrape -- either way, treat every OTHER alert reading {{ $labels.metric }} as currently blind."
+          runbook: "Most queue/DB gauges are live Postgres reads -- check Postgres reachability/pool exhaustion first (see the loopover-postgres group and LoopoverPostgresConnectionPressure). If {{ $labels.metric }} keeps failing after the DB recovers, check for a bug in that specific sampler."
+
   # ── Job queue / worker health ─────────────────────────────────────────────
   - name: loopover-jobs
     rules:
@@ -322,6 +365,31 @@ groups:
           description: "The backup profile is exposing metrics, but {{ $labels.target }} has no retained backup file after 2h."
           runbook: "Run `docker compose --profile backup run --rm backup sh /backup.sh` and inspect the loopover-backups volume. For Postgres, confirm DATABASE_URL is available to the backup service."
 
+      - alert: LoopoverBackupExporterMissing
+        # #9139: LoopoverBackupMissing above REQUIRES the exporter to be up and actively reporting a zero
+        # count -- exactly backwards the moment the exporter itself dies (crashes, the sidecar container
+        # exits, the backup volume becomes unreadable): loopover_backup_files then has ZERO SAMPLES at all
+        # (not a reported 0), so the `== 0` comparison evaluates over an empty set and the existing rule goes
+        # silently INACTIVE, even though "we can no longer see whether backups exist" is arguably WORSE than
+        # "we can see there are zero". absent() catches exactly that gap.
+        #
+        # DELIBERATE TRADE-OFF, read before enabling the backup profile: this also reads true, permanently,
+        # on ANY install that has never run `--profile backup` at all (the metric then has zero samples for
+        # the same structural reason -- the exporter was never scraped, not just currently down) -- unlike
+        # every OTHER optional-profile rule in this file, which stays silent until you opt in. That is
+        # intentional here, mirroring the boot-time sqliteBackupAdvisory nag ("no acknowledged backup is a
+        # data-loss SPOF"): an install running with genuinely zero backup visibility should be flagged, not
+        # quietly accepted. If you haven't enabled the backup profile yet, either enable it or remove/comment
+        # this rule for your deployment.
+        expr: absent(loopover_backup_files{target=~"postgres|sqlite"})
+        for: 2h
+        labels:
+          severity: warning
+        annotations:
+          summary: "no loopover backup visibility at all -- the backup exporter is not reporting"
+          description: "loopover_backup_files has had zero samples for over 2h -- either the backup profile was never enabled, or the backup-exporter sidecar died/lost the backups volume."
+          runbook: "If you intend to run backups, start the profile: `docker compose --profile backup up -d backup-exporter backup`. If it's already enabled, check `docker compose ps backup-exporter` and `docker compose logs backup-exporter` for a crash-loop or a lost volume mount."
+
       - alert: LoopoverBackupStale
         # Default backup loop is daily. 26h allows one missed scrape/restart window before warning.
         expr: |
@@ -414,6 +482,22 @@ groups:
           summary: "loopover orb relay registration looks actually stuck, not just a transient hiccup"
           description: "Either the consecutive registration-failure streak has reached {{ $value | printf \"%.0f\" }}, or the pull-mode drain loop hasn't completed in over 30m. A lone registration timeout alone would not trigger this."
           runbook: "Check loopover_orb_relay_register_total{result=\"failed\"} by mode for the failure pattern, and confirm ORB_BROKER_URL / ORB_ENROLLMENT_SECRET are still valid. If pull mode, verify the drain loop itself isn't crash-looping (selfhost_orb_relay_register_failed logs at level=error)."
+
+      - alert: LoopoverOrbRelayDrainFailing
+        # #9128: the rule above catches a drain loop gone TOTALLY quiet (nothing completed in 30m). This
+        # catches the narrower gap it can't see: a FLAPPING pull-mode drain (a 4xx, a broker-side schema
+        # change, an ack-payload rejection on a meaningful fraction of ticks) that still succeeds often
+        # enough to keep resetting loopover_orb_relay_drain_seconds_since_last, so the 30m no-progress
+        # window above never trips even though a real fraction of every drain tick is failing. Any
+        # occurrence over 15m is worth a look, same absolute-increase style as LoopoverDeadLetterJobsGrowing.
+        expr: increase(loopover_orb_relay_drains_total{result="failed"}[15m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "loopover orb relay drain is failing on a meaningful fraction of ticks"
+          description: "{{ $value | printf \"%.0f\" }} drain tick(s) threw over the last 15m (sustained 5m). loopover_orb_relay_drain_consecutive_failures shows the current unbroken streak."
+          runbook: "Tail logs around orb_relay_drain for the thrown error (4xx from the broker, a schema change, an ack-payload rejection). If loopover_orb_relay_drain_consecutive_failures keeps climbing without resetting, this will also eventually trip LoopoverOrbRelayRegistrationStuck once no drain has succeeded for 30m."
 
   # ── HTTP serving health (status label + duration histogram, both live in src/server.ts) ─
   # loopover_http_requests_total carries a status="2xx|3xx|4xx|5xx" label (seeded at zero per
@@ -538,6 +622,24 @@ groups:
           summary: "loopover ops anomaly scan flagged a {{ $labels.kind }} on {{ $labels.repo }}"
           description: "{{ $value | printf \"%.0f\" }} {{ $labels.kind }} detection(s) over the last 2h for {{ $labels.repo }} (sustained 5m). Check the ops_anomaly structured log for the full detail line."
           runbook: "Tail logs for level=error event=ops_anomaly repo={{ $labels.repo }} for the human-readable anomaly text. A review_burst or review_failure_burst usually means a stuck-CI finalize loop or a sweep retry storm -- see #orb-ci-stuck-repeat / #review-burst-blind-spot."
+
+      - alert: LoopoverReviewSourceStale
+        # #9136: the generalizable fix -- review_targets had NO live writer anywhere for months after the
+        # 2026-06-22 convergence cutover before anyone noticed, silently zeroing the Discord anomaly alerter
+        # and (slowly) the reputation signal. loopover_review_source_fresh (checkReviewSourceFreshness)
+        # checks whether each tracked table still has a row inside ITS OWN consumer's window -- this fires
+        # the moment one goes stale instead of requiring a human to notice a suspiciously-quiet dashboard.
+        # 6h tolerates review_audit's occasional quiet stretch on a low-traffic repo without paging on noise;
+        # review_targets is EXPECTED to already read stale (it has no live writer at all -- see #9136's own
+        # scope decision) and reads as a routine, informational warning until it's repointed or restored.
+        expr: loopover_review_source_fresh == 0
+        for: 6h
+        labels:
+          severity: warning
+        annotations:
+          summary: "loopover review source table {{ $labels.table }} has gone stale"
+          description: "{{ $labels.table }} has had no row inside its own {{ $labels.window_days }}-day consumer window for over 6h (sustained). Any reader still treating it as live is silently reading empty/zero results."
+          runbook: "For review_audit: check that parity-wire.ts / outcomes-wire.ts are still writing (gate_decision / pr_outcome / reversal_* rows) -- if this fires for review_audit, the anomaly alerter has likely gone silently inert again, the exact #9136 shape. For review_targets: this is a KNOWN, expected-stale table (no live writer) -- see #9136 for the tracked remainder (submitter-reputation.ts, ams-miner-cohort.ts) before treating this as a new incident."
 
   # ── Host clock sync (#3811) ───────────────────────────────────────────────
   - name: loopover-system-health

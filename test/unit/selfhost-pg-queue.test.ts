@@ -3432,6 +3432,84 @@ describe("createPgQueue (durable #977)", () => {
     );
   });
 
+  // #9139/#9136: nothing wrote review_audit's `dead_lettered` event type before this fix, so ops.ts's DLQ
+  // anomaly signal was permanently 0. Scoped to jobs with an identifiable repo+PR (regateJob); a plain
+  // no-context payload has nothing sensible to attribute a review dead-letter to.
+  describe("review_audit dead-letter recording (#9139/#9136)", () => {
+    afterEach(() => {
+      delete process.env.GITHUB_APP_SLUG;
+    });
+
+    it("writes a dead_lettered review_audit row (default 'loopover' project) when the payload has repo+PR context", async () => {
+      const m = makePool();
+      m.enqueueJob("1", regateJob(null, 42), 0);
+      const q = createPgQueue(m.pool, async () => {
+        throw new Error("ai review failed");
+      }, { maxRetries: 1, backoffMs: () => 0 });
+      await q.init();
+      await q.drain();
+
+      expect(m.pool.query).toHaveBeenCalledWith(
+        expect.stringContaining("INSERT INTO review_audit"),
+        expect.arrayContaining([
+          expect.any(String),
+          "loopover",
+          "jsonbored/gittensory#42",
+          expect.stringContaining("ai review failed"),
+          expect.any(String),
+        ]),
+      );
+    });
+
+    it("uses GITHUB_APP_SLUG as the project when set (the other ?? arm)", async () => {
+      process.env.GITHUB_APP_SLUG = "custom-slug";
+      const m = makePool();
+      m.enqueueJob("1", regateJob(null, 1), 0);
+      const q = createPgQueue(m.pool, async () => {
+        throw new Error("boom");
+      }, { maxRetries: 1, backoffMs: () => 0 });
+      await q.init();
+      await q.drain();
+
+      expect(m.pool.query).toHaveBeenCalledWith(
+        expect.stringContaining("INSERT INTO review_audit"),
+        expect.arrayContaining(["custom-slug"]),
+      );
+    });
+
+    it("does not write a review_audit row when the payload has no repo/PR context", async () => {
+      const m = makePool();
+      m.enqueueJob("1", { type: "orb-export" }, 0);
+      const q = createPgQueue(m.pool, async () => {
+        throw new Error("boom");
+      }, { maxRetries: 1, backoffMs: () => 0 });
+      await q.init();
+      await q.drain();
+
+      expect(m.pool.query).not.toHaveBeenCalledWith(expect.stringContaining("INSERT INTO review_audit"), expect.anything());
+      expect(await q.deadCount()).toBe(3); // makePool's generic COUNT(*) fallback -- the job itself still dead-lettered normally
+    });
+
+    it("swallows a review_audit write failure without breaking the job's own dead-letter transition", async () => {
+      const m = makePool();
+      m.enqueueJob("1", regateJob(null, 7), 0);
+      const realImpl = (m.pool.query as unknown as { getMockImplementation(): (...args: unknown[]) => unknown }).getMockImplementation();
+      vi.spyOn(m.pool, "query").mockImplementation(async (sql: unknown, params?: unknown[]) => {
+        if (String(sql).includes("INSERT INTO review_audit")) throw new Error("connection reset");
+        return realImpl!(sql, params);
+      });
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const q = createPgQueue(m.pool, async () => {
+        throw new Error("boom");
+      }, { maxRetries: 1, backoffMs: () => 0 });
+      await q.init();
+      await q.drain();
+
+      expect(warnSpy.mock.calls.some((c) => String(c[0]).includes("review_audit_dead_letter_record_error"))).toBe(true);
+      warnSpy.mockRestore();
+    });
+  });
+
   it("size() and deadCount() return numeric counts", async () => {
     const { pool } = makePool();
     // makePool returns { c: "3" } for COUNT queries
@@ -3439,6 +3517,28 @@ describe("createPgQueue (durable #977)", () => {
     await q.init();
     expect(await q.size()).toBe(3);
     expect(await q.deadCount()).toBe(3);
+  });
+
+  // #9139: backs loopover_dlq_dead_lettered_recent on self-host (the cloud-worker audit_events source is
+  // structurally unreachable there -- see dlq-recent.ts's own doc comment).
+  it("recentDeadCount() returns a numeric count scoped to status='dead' AND dead_at within the window", async () => {
+    const m = makePool();
+    // makePool returns { c: "3" } for any COUNT(*) query.
+    const q = createPgQueue(m.pool, async () => undefined);
+    await q.init();
+
+    const windowMs = 15 * 60 * 1000;
+    const before = Date.now();
+    expect(await q.recentDeadCount(windowMs)).toBe(3);
+
+    const calls = (m.fn as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    const call = calls.find((c: unknown[]) => String(c[0]).includes("status='dead' AND dead_at IS NOT NULL"));
+    expect(call).toBeDefined();
+    const bound = call![1] as number[];
+    expect(bound).toEqual([expect.any(Number)]);
+    // The bound cutoff is "now - windowMs", not a fixed constant -- sanity-check it's in the right ballpark.
+    expect(bound[0]).toBeLessThanOrEqual(before - windowMs);
+    expect(bound[0]).toBeGreaterThan(before - windowMs - 5_000);
   });
 
   it("stats() returns persisted queue metric counts", async () => {

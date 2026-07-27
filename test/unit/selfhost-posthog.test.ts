@@ -71,10 +71,13 @@ describe("initPostHog", () => {
     expect(mocks.PostHog).toHaveBeenCalledWith("phc_test_key", expect.objectContaining({ host: "https://eu.i.posthog.com" }));
   });
 
-  it("enables exception autocapture and installs the before_send scrubber", async () => {
+  it("disables posthog-node's own exception autocapture (#9133) and installs the before_send scrubber", async () => {
     await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
     const options = mocks.getLastOptions();
-    expect(options.enableExceptionAutocapture).toBe(true);
+    // #9133: OFF, not Sentry's own default-on posture -- server.ts's installSelfHostCrashHandlers is now the
+    // sole, unconditional uncaughtException/unhandledRejection crash contract, so posthog-node must never
+    // install its OWN competing listeners for either event (see posthog.ts's own comment for the full "why").
+    expect(options.enableExceptionAutocapture).toBe(false);
     expect(options.before_send).toBe(scrubPostHogEvent);
   });
 

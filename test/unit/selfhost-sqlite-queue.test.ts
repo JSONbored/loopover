@@ -1986,6 +1986,120 @@ describe("createSqliteQueue (durable #980)", () => {
     });
   });
 
+  // #9139/#9136: nothing wrote review_audit's `dead_lettered` event type before this fix, so ops.ts's DLQ
+  // anomaly signal was permanently 0. Scoped to jobs with an identifiable repo+PR (regateJob); a plain
+  // no-context payload (msg()) has nothing sensible to attribute a review dead-letter to.
+  describe("review_audit dead-letter recording (#9139/#9136)", () => {
+    afterEach(() => {
+      delete process.env.GITHUB_APP_SLUG;
+    });
+
+    it("writes a dead_lettered review_audit row (default 'loopover' project) when the payload has repo+PR context", async () => {
+      const driver = makeDriver();
+      const spy = vi.spyOn(driver, "query");
+      const q = createSqliteQueue(driver, async () => {
+        throw new Error("ai review failed");
+      }, { maxRetries: 1, backoffMs: () => 0 });
+      await q.binding.send(regateJob(null, 42));
+      await q.drain();
+
+      const call = spy.mock.calls.find((c) => String(c[0]).includes("INSERT INTO review_audit"));
+      expect(call).toBeDefined();
+      expect(call![1]).toEqual([
+        expect.any(String),
+        "loopover",
+        "jsonbored/gittensory#42",
+        expect.stringContaining("ai review failed"),
+        expect.any(String),
+      ]);
+    });
+
+    it("uses GITHUB_APP_SLUG as the project when set (the other ?? arm)", async () => {
+      process.env.GITHUB_APP_SLUG = "custom-slug";
+      const driver = makeDriver();
+      const spy = vi.spyOn(driver, "query");
+      const q = createSqliteQueue(driver, async () => {
+        throw new Error("boom");
+      }, { maxRetries: 1, backoffMs: () => 0 });
+      await q.binding.send(regateJob(null, 1));
+      await q.drain();
+
+      const call = spy.mock.calls.find((c) => String(c[0]).includes("INSERT INTO review_audit"));
+      expect(call![1]).toEqual(expect.arrayContaining(["custom-slug"]));
+    });
+
+    it("does not write a review_audit row when the payload has no repo/PR context", async () => {
+      const driver = makeDriver();
+      const spy = vi.spyOn(driver, "query");
+      const q = createSqliteQueue(driver, async () => {
+        throw new Error("boom");
+      }, { maxRetries: 1, backoffMs: () => 0 });
+      await q.binding.send(msg("orb-export"));
+      await q.drain();
+
+      expect(spy.mock.calls.some((c) => String(c[0]).includes("INSERT INTO review_audit"))).toBe(false);
+      expect(await q.deadCount()).toBe(1); // the job itself still dead-lettered normally
+    });
+
+    it("swallows a review_audit write failure without breaking the job's own dead-letter transition", async () => {
+      const driver = makeDriver();
+      const realQuery = driver.query.bind(driver);
+      vi.spyOn(driver, "query").mockImplementation((sql: string, params: unknown[]) => {
+        if (String(sql).includes("INSERT INTO review_audit")) throw new Error("no such table: review_audit");
+        return realQuery(sql, params);
+      });
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const q = createSqliteQueue(driver, async () => {
+        throw new Error("boom");
+      }, { maxRetries: 1, backoffMs: () => 0 });
+      await q.binding.send(regateJob(null, 7));
+      await q.drain();
+
+      expect(await q.deadCount()).toBe(1); // the job's own dead-letter transition still succeeded
+      expect(warnSpy.mock.calls.some((c) => String(c[0]).includes("review_audit_dead_letter_record_error"))).toBe(true);
+      warnSpy.mockRestore();
+    });
+  });
+
+  // #9139: backs loopover_dlq_dead_lettered_recent on self-host -- the cloud-worker audit_events source is
+  // structurally unreachable there (see dlq-recent.ts's own doc comment).
+  describe("recentDeadCount (#9139)", () => {
+    it("counts a job dead-lettered within the trailing window", async () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => {
+        throw new Error("boom");
+      }, { maxRetries: 1, backoffMs: () => 0 });
+      await q.binding.send(msg("x"));
+      await q.drain();
+      expect(await q.deadCount()).toBe(1);
+
+      expect(await q.recentDeadCount(15 * 60 * 1000)).toBe(1);
+    });
+
+    it("excludes a job whose dead_at falls OUTSIDE the trailing window (the boundary arm)", async () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => {
+        throw new Error("boom");
+      }, { maxRetries: 1, backoffMs: () => 0 });
+      await q.binding.send(msg("x"));
+      await q.drain();
+      expect(await q.deadCount()).toBe(1); // still dead in the STANDING count...
+
+      // ...but backdate dead_at well outside a 15m window -- recentDeadCount is a RATE-style window, not
+      // deadCount's unbounded depth, so an old dead-letter must stop counting here even though it's still
+      // sitting in the table.
+      driver.query("UPDATE _selfhost_jobs SET dead_at = ? WHERE status = 'dead'", [Date.now() - 20 * 60 * 1000]);
+
+      expect(await q.recentDeadCount(15 * 60 * 1000)).toBe(0);
+    });
+
+    it("reads 0 when nothing has ever dead-lettered (no rows to match at all)", async () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      expect(await q.recentDeadCount(15 * 60 * 1000)).toBe(0);
+    });
+  });
+
   it("retries then dead-letters after maxRetries", async () => {
     const driver = makeDriver();
     let calls = 0;

@@ -149,6 +149,35 @@ export interface SqliteQueueOptions {
   backgroundConcurrency?: number;
 }
 
+/** #9139/#9136: append a `dead_lettered` review_audit row for a queue job that just permanently failed --
+ *  mirrors pg-queue.ts's identical helper (see its own doc comment for the full "why": ops.ts's DLQ
+ *  anomaly signal reads `event_type = 'dead_lettered'`, but nothing wrote that event type anywhere before
+ *  this fix). Scoped to jobs with an identifiable repo+PR; a job with no PR context has nothing sensible to
+ *  attribute a REVIEW dead-letter to and still increments loopover_jobs_dead_total exactly as before.
+ *  target_id uses the SAME `owner/repo#pr` shape outcomes-wire.ts's reviewAuditTargetId stamps. Best-effort:
+ *  a write failure here must never mask the job's own already-successful dead-letter transition above. */
+function recordReviewAuditDeadLetter(driver: SqliteDriver, payload: string, errMsg: string): void {
+  const context = extractPayloadContext(payload);
+  if (!context?.repo || context.pr_number === undefined) return;
+  const project = process.env.GITHUB_APP_SLUG?.trim() || "loopover";
+  const targetId = `${context.repo.slice(0, 200)}#${context.pr_number}`;
+  try {
+    driver.query(
+      `INSERT INTO review_audit (id, project, target_id, event_type, decision, source, head_sha, summary, created_at)
+       VALUES (?, ?, ?, 'dead_lettered', NULL, 'selfhost-queue', NULL, ?, ?)`,
+      [`dead_lettered:${targetId}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`, project, targetId, errMsg.slice(0, 500), new Date().toISOString()],
+    );
+  } catch (auditError) {
+    console.warn(
+      JSON.stringify({
+        event: "review_audit_dead_letter_record_error",
+        targetId,
+        message: errorMessageWithCause(auditError).slice(0, 160),
+      }),
+    );
+  }
+}
+
 export function createSqliteQueue(
   driver: SqliteDriver,
   consume: (message: JobMessage) => Promise<void>,
@@ -305,11 +334,13 @@ export function createSqliteQueue(
   }
 
   /** Wraps reviveDeadLetterJobs() for the setInterval callback below, which has no error handler of its own --
-   *  a transient driver/metric failure here would otherwise surface as an uncaught exception and can terminate
-   *  the process (fatal when POSTHOG_API_KEY is unset, since initPostHog's enableExceptionAutocapture only
-   *  installs a handler when PostHog is configured), exactly the failure mode pump()'s own try/catch above
-   *  guards against for the main poll loop. A failed revive tick just waits for the next interval, same as a
-   *  failed poll tick waits for the next poll.
+   *  a transient driver/metric failure here would otherwise surface as an uncaught exception and terminate the
+   *  process, uniformly regardless of PostHog config (#9133: installSelfHostCrashHandlers is now the sole,
+   *  unconditional crash-and-restart contract -- previously this was fatal only when POSTHOG_API_KEY was
+   *  UNSET, since initPostHog's enableExceptionAutocapture, when configured, silently captured-without-exiting
+   *  the async/rejection case specifically), exactly the failure mode pump()'s own try/catch above guards
+   *  against for the main poll loop. A failed revive tick just waits for the next interval, same as a failed
+   *  poll tick waits for the next poll.
    *
    *  Also wrapped in a PostHog monitor heartbeat (#1824): dead-letter revival stopping SILENTLY (the timer
    *  never fires again) is worse than one throwing tick -- a crashed tick self-reports via capturePostHogError
@@ -730,6 +761,18 @@ export function createSqliteQueue(
     );
   }
 
+  /** #9139: jobs dead-lettered within the trailing `windowMs` -- see backend-contracts.ts's DurableQueue
+   *  doc comment for the full "why" (the cloud-worker source this backs on self-host is unreachable here). */
+  async function recentDeadCount(windowMs: number): Promise<number> {
+    return Number(
+      (
+        driver.query(`SELECT COUNT(*) AS c FROM ${TABLE} WHERE status='dead' AND dead_at IS NOT NULL AND dead_at > ?`, [
+          Date.now() - windowMs,
+        ]).rows[0] as { c: number }
+      ).c,
+    );
+  }
+
   async function listDeadLetterJobs(limit: number, offset: number): Promise<DeadLetterJob[]> {
     const { rows } = driver.query(
       `SELECT id, payload, attempts, last_error, created_at, dead_at
@@ -1100,6 +1143,7 @@ export function createSqliteQueue(
             [attempts, errMsg, Date.now(), job.id],
           );
           recordQueueMetric(driver, "loopover_jobs_dead_total");
+          recordReviewAuditDeadLetter(driver, job.payload, errMsg);
           console.error(
             JSON.stringify({
               level: "error",
@@ -1287,6 +1331,7 @@ export function createSqliteQueue(
       );
     },
     deadCount,
+    recentDeadCount,
     async processingCount() {
       return Number(
         (

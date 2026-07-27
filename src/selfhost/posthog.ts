@@ -154,11 +154,19 @@ export async function initPostHog(env: NodeJS.ProcessEnv): Promise<boolean> {
     // still exists for explicit drain-before-exit, and PostHog's own recommended client.shutdown() covers
     // graceful process shutdown.
     before_send: scrubPostHogEvent,
-    // Matches Sentry's own Node SDK default posture (Sentry.init() installs global uncaughtException/
-    // unhandledRejection handlers unless explicitly disabled) -- a safety net for genuinely-unhandled cases
-    // beyond the explicit capturePostHogError/capturePostHogReviewFailure call sites below, per PostHog's
-    // own documented recommendation for Node.js error tracking.
-    enableExceptionAutocapture: true,
+    // #9133: OFF, not Sentry's own default-on posture. posthog-node's own autocapture is NOT a safe drop-in
+    // for Sentry.init()'s equivalent default here: its unhandledRejection listener captures but never
+    // rethrows or exits (Node's --unhandled-rejections=throw only escalates a rejection to a fatal
+    // uncaughtException when NO unhandledRejection listener exists at all -- installing this one silently
+    // downgrades every unhandled rejection to a captured telemetry event with no crash, no Docker restart,
+    // and no recovery of whatever in-flight job the crash used to reclaim). Its uncaughtException listener
+    // DOES exit correctly on its own -- but only when it is the SOLE such listener (a foreign listener makes
+    // it skip its own process.exit(1) entirely), which would make server.ts's own crash-handler installation
+    // (src/selfhost/process-lifecycle.ts) silently change posthog-node's behavior for that event depending
+    // on install order. installSelfHostCrashHandlers is now the SOLE, unconditional source of truth for
+    // BOTH events (installed in server.ts's main(), regardless of whether telemetry is configured), so
+    // posthog-node must never install its own competing listeners for either.
+    enableExceptionAutocapture: false,
   });
   active = true;
   return true;

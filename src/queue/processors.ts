@@ -654,7 +654,6 @@ import { AI_JUDGMENT_BLOCKER_CODES } from "../rules/advisory";
 import { computeSalvageabilityForTarget } from "../review/salvageability-wire";
 import { deriveDecisionReasonCode, persistDecisionReplayInputForGate } from "../review/decision-replay";
 import { recordVerdictFlip } from "../review/verdict-flip-store";
-import { REVIEW_PROMPT_VERSION, REVIEW_SYSTEM_PROMPT } from "../services/ai-review";
 import { resolveAutomaticCloseConfidence } from "../review/risk-control-wire";
 import { maybeApplyCloseAuditHoldout } from "../review/close-audit-holdout";
 import { buildDecisionRecord, contentDigest, loadDecisionRecordCollapsible, persistDecisionRecord } from "../review/decision-record";
@@ -3374,6 +3373,11 @@ async function runAgentMaintenancePlanAndExecute(
         })
       ).status === "confirmed"
     : false;
+  // #7986: a cheap, cron-refreshed single-row read (readUntrustworthyRuleCodes) — never a fresh aggregate
+  // query on the hot webhook path. Fail-open (empty set) on any read error, same as isHoldOnly/isCloseHoldOnly.
+  // Hoisted into a variable (rather than read inline below) so the #9124 decision-record's configDigest can
+  // fold in the SAME set the breaker actually consulted this pass, instead of re-reading it a second time.
+  const untrustworthyRuleCodes = await readUntrustworthyRuleCodes(env);
   const breakerOnPlan = applyPrecisionBreakers(
     planned,
     await isHoldOnly(env, repoFullName, breakerMinerAuthored),
@@ -3385,9 +3389,7 @@ async function runAgentMaintenancePlanAndExecute(
       migrationCollisionLabel: settings.migrationCollisionLabel,
       pendingClosureLabel: settings.pendingClosureLabel,
     },
-    // #7986: a cheap, cron-refreshed single-row read (readUntrustworthyRuleCodes) — never a fresh aggregate
-    // query on the hot webhook path. Fail-open (empty set) on any read error, same as isHoldOnly/isCloseHoldOnly.
-    await readUntrustworthyRuleCodes(env),
+    untrustworthyRuleCodes,
   );
   // Observability (#terminal-outcome-audit): a bounded-cardinality counter (direction only — no repo/PR/reason
   // text) so an operator can see, at a glance, how much of the plan a breaker is currently rewriting, without
@@ -3402,10 +3404,13 @@ async function runAgentMaintenancePlanAndExecute(
   // #8831: the randomized close-audit holdout consumes the FINAL post-breaker plan — after this point the
   // close decision is settled, so the draw can divert it to a human but never influence it. ε = 0 (the
   // default, and any repo without the gate.closeAuditHoldoutPct manifest knob) returns the plan untouched
-  // with zero I/O, keeping the common path byte-identical.
-  const holdoutOnPlan = await maybeApplyCloseAuditHoldout(env, {
+  // with zero I/O, keeping the common path byte-identical. #9135: the returned `holdout` outcome (null on
+  // the untouched path) is threaded into both the decision record (`divertedByHoldout`) and its replay
+  // input below, so a hold that was really a diverted close is legible and provable, not just claimed.
+  const { planned: holdoutOnPlan, holdout: closeAuditHoldout } = await maybeApplyCloseAuditHoldout(env, {
     repoFullName,
     pullNumber: pr.number,
+    headSha: pr.headSha,
     planned: breakerOnPlan,
     epsilonPct: settings.closeAuditHoldoutPct,
     closeAutonomyIsAuto: resolveAutonomy(settings.autonomy, "close") === "auto",
@@ -3477,14 +3482,21 @@ async function runAgentMaintenancePlanAndExecute(
   // record hook, to avoid double-recording the same decision here and there). When an AI JUDGMENT shaped this
   // decision (an AI_JUDGMENT_BLOCKER_CODES finding is present), the record carries the prompt-template
   // commitment and the finding's calibrated confidence — the confidence is what joins every decision to the
-  // risk-control calibration set (#8835). modelId stays null at this site: the finding does not carry which
-  // concrete models ran, and recording a guess would be worse than recording nothing (the reviewDiagnostics
-  // ledger holds the per-run model identities).
+  // risk-control calibration set (#8835).
+  // #9124: configDigest now digests the RESOLVED policy (`gate.replay?.policy`, the object `evaluateGateCheck`
+  // actually ran against) PLUS the untrustworthy-rule-code set the precision breaker consulted this pass —
+  // together, everything besides the advisory findings that decided this PR. `gate.replay` is only absent for
+  // a synthetic content-lane/bridge evaluation (documented v1 scope on #8838); configDigest falls back to
+  // raw `settings` for that narrow case so every decision still gets a value. `settingsDigest` keeps the RAW
+  // settings commitment configDigest used to make, as its own field. `modelIds`/`promptDigest` now read the
+  // real per-run identities and the real sent-prompt digest straight off the finding (see
+  // src/queue/ai-review-orchestration.ts) instead of hardcoding null / the base-template digest.
   {
     const aiJudgment = gate.blockers.find((blocker) => AI_JUDGMENT_BLOCKER_CODES.has(blocker.code));
     // #8962: recomputed here (two cheap reads, only when an AI judgment shaped the decision) rather than
     // threaded from the plan site — the record must carry the boundary evidence even when the knob is off.
     const salvageability = aiJudgment !== undefined ? await computeSalvageabilityForTarget(env, repoFullName, pr.number, pr.authorLogin, gate) : null;
+    const resolvedPolicy = gate.replay?.policy ?? settings;
     const { record, recordDigest } = await buildDecisionRecord({
       repoFullName,
       pullNumber: pr.number,
@@ -3494,21 +3506,25 @@ async function runAgentMaintenancePlanAndExecute(
       // #8838: the shared derivation — replayDecision recomputes reasonCode through this SAME function, so
       // the live mapping and the replay mapping can never drift apart.
       reasonCode: deriveDecisionReasonCode(disposition.blockerClass, policyCloseKind ?? null, gate.conclusion),
-      configDigest: await contentDigest(settings),
+      configDigest: await contentDigest({ policy: resolvedPolicy, untrustworthyRuleCodes: [...untrustworthyRuleCodes].sort() }),
+      settingsDigest: await contentDigest(settings),
       gatePack: settings.gatePack,
-      ciState: null,
-      modelId: null,
-      promptDigest: aiJudgment !== undefined ? await contentDigest({ version: REVIEW_PROMPT_VERSION, template: REVIEW_SYSTEM_PROMPT }) : null,
+      ciState: ciAggregate.ciState,
+      modelIds: aiJudgment?.modelIds ?? null,
+      promptDigest: aiJudgment?.promptDigest ?? null,
       aiConfidence: aiJudgment?.confidence ?? null,
       salvageability,
+      // #9135: legible on the record's own face — see maybeApplyCloseAuditHoldout's doc comment.
+      divertedByHoldout: closeAuditHoldout?.diverted ?? false,
     });
     const recordId = await persistDecisionRecord(env, record, recordDigest);
     // #8838: persist the evaluation's own exact inputs beside the record (PRIVATE sibling, migration 0181)
     // so the replay harness can re-derive this decision bit-exactly. Best-effort, like the record itself;
     // the no-replay no-op (synthetic content-lane/bridge evaluations) lives inside the helper. Keyed to the
     // id persistDecisionRecord actually wrote (#9123: a supersession at the same head gets a revisioned id,
-    // not the base one this used to always recompute independently).
-    if (recordId !== null) await persistDecisionReplayInputForGate(env, recordId, gate, policyCloseKind ?? null);
+    // not the base one this used to always recompute independently). #9135: the holdout outcome rides along
+    // so `holdout_consistency` has something to check the public record against.
+    if (recordId !== null) await persistDecisionReplayInputForGate(env, recordId, gate, policyCloseKind ?? null, closeAuditHoldout ?? null);
   }
   // #2349 (PR 1): additive per-contributor calibration data, gated identically to recordNativeGateDecision
   // above -- see src/review/contributor-calibration.ts's doc comment. Currently write-only; nothing reads

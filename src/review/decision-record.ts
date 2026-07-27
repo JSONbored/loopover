@@ -20,10 +20,26 @@
 // tracked follow-up once tenants exist, not yet built. That gap does not reduce the value against every OTHER
 // actor (a maintainer quietly deleting one disputed decision, or an unprivileged bug), or against accidental
 // corruption — both of which the chain below still catches deterministically.
+//
+// #9124 (v4): three of the four commitments this record makes did not commit to what actually decided the
+// PR — fixed together, since all three are computed at the same call site (processors.ts):
+//   - `configDigest` now digests the RESOLVED `gateCheckPolicy(...)` object (the thing `evaluateGateCheck`
+//     actually ran against — including the live-calibrated AI close-confidence floor and the cron-refreshed
+//     untrustworthy-rule-code set) instead of raw `settings`. The raw settings digest survives as the new,
+//     separate `settingsDigest` field.
+//   - `promptDigest` now digests the ACTUAL `buildSystemPrompt(...)` output for this call (base template plus
+//     whichever of its suffixes resolved: grounding/enrichment/profile/security-focus/path-instructions/
+//     `review.instructions`/screenshot-evidence/inline/category/improvement-signal), not the base constant
+//     alone — a changed `review.instructions` now moves this digest.
+//   - `modelIds` (renamed from the always-null `modelId`) carries the REAL parsed-reviewer identities from
+//     `reviewDiagnostics`, the full set when more than one model produced a usable opinion.
+//   - `ciState` is populated from the live CI aggregate already in scope at the call site (was hardcoded null).
+// #9135 (also v4): `divertedByHoldout` records when the randomized close-audit holdout (#8831) converted this
+// decision's plan from a heuristic close to a hold — see that field's own doc comment.
 import { errorMessage, nowIso } from "../utils/json";
 
 /** Bump when the record's FIELD SET changes meaning — consumers compare records only within a version. */
-export const DECISION_RECORD_SCHEMA_VERSION = "3"; // v3 (#8962): + salvageability {score, factors}; v2 (#8834): + aiConfidence, model/prompt commitments
+export const DECISION_RECORD_SCHEMA_VERSION = "4"; // v4 (#9124/#9135): configDigest digests the resolved policy (+ settingsDigest split out), promptDigest digests the actual sent prompt, modelId -> modelIds (real identities), ciState populated, + divertedByHoldout; v3 (#8962): + salvageability {score, factors}; v2 (#8834): + aiConfidence, model/prompt commitments
 
 /**
  * Canonical JSON: recursively key-sorted, no insignificant whitespace — the ONE serialization every digest
@@ -71,15 +87,32 @@ export type DecisionRecord = {
   action: string;
   /** The clause that decided it: a blocker class, `policy_close:<kind>`, or the gate conclusion. */
   reasonCode: string;
-  /** Digest of the RESOLVED effective settings (canonical JSON) — commits the operator to the exact config
-   *  that judged this PR, including private overlays, without publishing their contents. */
+  /** #9124: digest of the RESOLVED `gateCheckPolicy(...)` object (canonical JSON) — the thing
+   *  `evaluateGateCheck` actually ran against, including the live-calibrated AI close-confidence floor
+   *  (`readCalibratedThreshold`/`system_flags`, resolved OUTSIDE `settings`) and the cron-refreshed
+   *  untrustworthy-rule-code set (`readUntrustworthyRuleCodes`) the precision breaker consults. Two decisions
+   *  computed under a different calibrated floor or a different untrustworthy-code set now publish different
+   *  digests even when raw `settings` is unchanged — see `settingsDigest` below for the raw-config commitment
+   *  this field used to make instead. */
   configDigest: string;
+  /** #9124: digest of the RAW resolved effective settings (`.loopover.yml` > DB > defaults, canonical JSON) —
+   *  what `configDigest` digested before v4. Kept as its own field because it is independently useful (an
+   *  operator can diff two decisions' settings without reconstructing the full resolved-policy shape); null
+   *  for a caller that has not computed it. */
+  settingsDigest: string | null;
   /** The gate policy pack in force (public enum, safe to publish alongside the digest). */
   gatePack: string | null;
   /** CI aggregate consumed by the decision, when one was read. */
   ciState: string | null;
-  /** Model + prompt commitments when an AI review contributed; null for rule-only decisions. */
-  modelId: string | null;
+  /** #9124: the distinct provider/model identities (`AiReviewDiagnostic.model`, deduped + sorted) whose
+   *  output actually shaped this decision — the FULL set when more than one model produced a parsed opinion,
+   *  never a representative one. Renamed from the always-null `modelId` (v3 and earlier never threaded the
+   *  real identities through). null for rule-only decisions. */
+  modelIds: string[] | null;
+  /** #9124: sha256 of the ACTUAL system prompt sent (`buildSystemPrompt`'s real output — the base template
+   *  plus whichever of its up-to-ten suffixes resolved for this call), not a digest of the base constant
+   *  alone. A changed `review.instructions` (or any other suffix input) now moves this digest. null for
+   *  rule-only decisions. */
   promptDigest: string | null;
   /** #8834: the calibrated confidence of the AI-judgment finding that shaped this decision (consensus
    *  defect / split), null when no AI judgment contributed. Persisted so every decision joins the
@@ -89,19 +122,28 @@ export type DecisionRecord = {
    *  decision — the second-axis evidence for auditing the close/hold boundary. null for rule-only decisions
    *  (and for reconstructed/backfilled records predating v3). */
   salvageability: { score: number; factors: string[] } | null;
+  /** #9135: true when the randomized close-audit holdout (#8831) diverted this decision's plan — the
+   *  `action` recorded above is a HOLD that the deterministic pipeline would otherwise have executed as a
+   *  heuristic CLOSE. Makes that divergence legible on the record's own face instead of requiring a
+   *  cross-reference against `decision_audit_holdout` audit rows to notice two byte-identical-looking
+   *  records disagree on outcome. false for every decision the holdout never touched, including every
+   *  decision recorded before #9135 shipped (via `buildDecisionRecord`'s normalization below). */
+  divertedByHoldout: boolean;
   decidedAt: string;
 };
 
 /** Assemble the record and its own content digest. PURE given pre-computed digests. Normalizes the
  *  optional-shaped caller fields (undefined -> null) HERE so call sites carry no fallback arms of their own. */
 export async function buildDecisionRecord(
-  input: Omit<DecisionRecord, "schemaVersion" | "decidedAt" | "gatePack" | "ciState" | "baseSha" | "aiConfidence" | "salvageability"> & {
+  input: Omit<DecisionRecord, "schemaVersion" | "decidedAt" | "gatePack" | "ciState" | "baseSha" | "aiConfidence" | "salvageability" | "settingsDigest" | "divertedByHoldout"> & {
     decidedAt?: string;
     gatePack?: string | null | undefined;
     ciState?: string | null | undefined;
     baseSha?: string | null | undefined;
     aiConfidence?: number | null | undefined;
     salvageability?: { score: number; factors: string[] } | null | undefined;
+    settingsDigest?: string | null | undefined;
+    divertedByHoldout?: boolean | undefined;
   },
 ): Promise<{ record: DecisionRecord; recordDigest: string }> {
   const record: DecisionRecord = {
@@ -113,6 +155,8 @@ export async function buildDecisionRecord(
     baseSha: input.baseSha ?? null,
     aiConfidence: input.aiConfidence ?? null,
     salvageability: input.salvageability ?? null,
+    settingsDigest: input.settingsDigest ?? null,
+    divertedByHoldout: input.divertedByHoldout ?? false,
   };
   return { record, recordDigest: await contentDigest(record) };
 }
@@ -173,12 +217,22 @@ export async function persistDecisionRecord(env: Env, record: DecisionRecord, re
  *  not a digest commitment; the full value is the record's own `headSha` field). Returned WITHOUT a details
  *  wrapper — the unified-comment bridge renders the collapsible chrome itself (UnifiedCollapsible). */
 export function renderDecisionRecordSection(record: DecisionRecord, recordDigest: string): string {
+  // Defensive against an OLDER persisted record (a smaller schemaVersion, loaded straight back out of
+  // decision_records.record_json — see loadDecisionRecordCollapsible) whose JSON simply predates a field
+  // this schema version introduced: `?? ` here, not only a `!== null` check, so a genuinely ABSENT key
+  // (`undefined`, not `null`) degrades the same honest way an explicit null does, instead of throwing on
+  // `.length`/`.join` of undefined.
+  const modelIds = record.modelIds ?? null;
+  const divertedByHoldout = record.divertedByHoldout ?? false;
   const lines = [
     `- **action**: ${record.action} · **clause**: \`${record.reasonCode}\``,
     `- **config**: \`${record.configDigest}\`${record.gatePack ? ` · **pack**: ${record.gatePack}` : ""}${record.ciState ? ` · **ci**: ${record.ciState}` : ""}`,
-    ...(record.modelId !== null || record.promptDigest !== null
-      ? [`- **model**: ${record.modelId ?? "n/a"}${record.promptDigest !== null ? ` · **prompt**: \`${record.promptDigest}\`` : ""}${record.aiConfidence !== null ? ` · **confidence**: ${record.aiConfidence}` : ""}`]
+    ...(modelIds !== null || record.promptDigest !== null
+      ? [`- **model**: ${modelIds !== null && modelIds.length > 0 ? modelIds.join("+") : "n/a"}${record.promptDigest !== null ? ` · **prompt**: \`${record.promptDigest}\`` : ""}${record.aiConfidence !== null ? ` · **confidence**: ${record.aiConfidence}` : ""}`]
       : []),
+    // #9135: a hold that is really a diverted close must be legible ON THE FACE of the public comment, not
+    // only inferable by cross-referencing a private audit row.
+    ...(divertedByHoldout ? ["- **note**: diverted by the randomized close-audit holdout (#8831) — the deterministic pipeline would otherwise have closed this PR"] : []),
     `- **record**: \`${recordDigest}\` (schema v${record.schemaVersion}, head \`${record.headSha.slice(0, 7)}\`)`,
   ];
   return lines.join("\n");

@@ -548,6 +548,42 @@ describe("review.profile shapes the reviewer system prompt (#review-profile)", (
     );
   });
 
+  // #9124: `systemPromptDigest` must commit to the ACTUAL system prompt sent (base template + whichever
+  // suffixes resolved), not the base constant alone — this is what lets the decision record's `promptDigest`
+  // move when a repo's `review.instructions` changes, instead of publishing the same digest for two
+  // materially different judges.
+  it("systemPromptDigest (#9124) is sha256 of the real sent prompt, and moves when repoInstructions changes", async () => {
+    const runWith = async (repoInstructions: string | undefined) => {
+      const run = vi.fn(async () => ({ response: reviewJson() }));
+      const env = createTestEnv({
+        AI: { run } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "100000",
+      });
+      const result = await runLoopOverAiReview(env, { ...baseInput, repoInstructions });
+      const calls = (run as ReturnType<typeof vi.fn>).mock.calls;
+      const system = (calls[0]?.[1] as { messages?: Array<{ content?: string }> })?.messages?.[0]?.content ?? "";
+      return { result, system };
+    };
+    const { sha256Hex } = await import("../../src/utils/crypto");
+
+    const none = await runWith(undefined);
+    if (none.result.status !== "ok") throw new Error("expected ok");
+    expect(none.result.systemPromptDigest).toBe(await sha256Hex(none.system));
+
+    const withInstructions = await runWith("Close anything touching src/billing.");
+    if (withInstructions.result.status !== "ok") throw new Error("expected ok");
+    expect(withInstructions.result.systemPromptDigest).toBe(await sha256Hex(withInstructions.system));
+    // Two repos with different review.instructions must NOT publish the same commitment.
+    expect(withInstructions.result.systemPromptDigest).not.toBe(none.result.systemPromptDigest);
+
+    // Same input twice: byte-identical digest (deterministic, not a fresh hash of something incidental).
+    const again = await runWith("Close anything touching src/billing.");
+    if (again.result.status !== "ok") throw new Error("expected ok");
+    expect(again.result.systemPromptDigest).toBe(withInstructions.result.systemPromptDigest);
+  });
+
   it("repoInstructions are passed as systemAppend only for self-host CLI reviewers (#1471)", async () => {
     const optionsFor = async (model: string, repoInstructions: string | undefined) => {
       const run = vi.fn(async () => ({ response: reviewJson() }));

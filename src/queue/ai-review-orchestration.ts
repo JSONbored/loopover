@@ -40,6 +40,7 @@ import {
   formatReviewDiagnosticsForCapture,
   hasPublicReviewAssessment,
   isEnabled,
+  parsedReviewModelIds,
   runLoopOverAiReview,
   type ImprovementMagnitude,
   type InlineFinding,
@@ -855,6 +856,11 @@ export async function runAiReviewForAdvisory(
       });
     }
     const findings: AdvisoryFinding[] = [];
+    // #9124: the model/prompt commitments an AI-judgment finding carries — computed once, shared by both the
+    // consensus-defect and split branches below, so the decision-record call site (processors.ts) can thread
+    // the REAL reviewer identities and the REAL system prompt into DecisionRecord instead of hardcoding null.
+    const aiJudgmentModelIds = parsedReviewModelIds(result.reviewDiagnostics ?? []);
+    const aiJudgmentPromptDigest = result.systemPromptDigest;
     if (result.consensusDefect) {
       findings.push({
         code: "ai_consensus_defect",
@@ -877,6 +883,8 @@ export async function runAiReviewForAdvisory(
         // review instead of one-shot-closing; advisory_only drops it to non-blocking; one_shot ignores the
         // floor. See resolveAiReviewLowConfidenceHold in src/rules/advisory.ts.
         confidence: result.consensusDefect.confidence,
+        modelIds: aiJudgmentModelIds,
+        promptDigest: aiJudgmentPromptDigest,
       });
     } else if (result.split) {
       // The reviewers DISAGREED — exactly one flagged a blocking defect. reviewbot's quorum treats any reviewer
@@ -902,6 +910,8 @@ export async function runAiReviewForAdvisory(
         ...(result.splitConfidence !== undefined
           ? { confidence: result.splitConfidence }
           : {}),
+        modelIds: aiJudgmentModelIds,
+        promptDigest: aiJudgmentPromptDigest,
       });
     } else if (result.inconclusive) {
       // Fail-CLOSED (#ai-fail-closed): block-mode AI could not return a usable verdict. Hold the PR for a human

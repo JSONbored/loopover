@@ -56,6 +56,67 @@ describe("decision replay (#8838)", () => {
     expect(outcome).toMatchObject({ verdict: "divergence", stage: "reason_code", expected: "policy_close:doctored", actual: "policy_close:stale_superseded" });
   });
 
+  // #9135: the PUBLIC record's `divertedByHoldout` claim and the PRIVATE replay input's own `holdout.diverted`
+  // outcome are written from the SAME holdout result at the SAME call site (processors.ts) — they can only
+  // disagree if one was updated without the other, a real bug the pipeline's own re-derivation could never
+  // catch (the holdout sits entirely outside evaluateGateCheck).
+  it("stage 4 — holdout_consistency: an unexplained divergence between the record's claim and the replay input's own account is reported, not silently matched", () => {
+    const [, bundle] = bundles.find(([name]) => name === "ai-consensus-close.json")!;
+    // Case A: the record says diverted, but the replay input recorded no diversion (or none at all) — a hold
+    // that was silently mislabeled as an ordinary decision, or the reverse.
+    const recordClaimsDiverted = { ...replayable(bundle), divertedByHoldout: true };
+    const inputSaysNotDiverted = { ...bundle.replayInput, holdout: { epsilonPct: 5, draw: 0.9, diverted: false } };
+    expect(replayDecision(recordClaimsDiverted, inputSaysNotDiverted)).toMatchObject({
+      verdict: "divergence",
+      stage: "holdout_consistency",
+      expected: "true",
+      actual: "false",
+    });
+    // No holdout recorded at all (undefined) normalizes to false — same divergence.
+    expect(replayDecision(recordClaimsDiverted, { ...bundle.replayInput, holdout: undefined })).toMatchObject({
+      verdict: "divergence",
+      stage: "holdout_consistency",
+    });
+
+    // Case B: the reverse — the record does NOT claim a diversion, but the replay input says it diverted.
+    const recordClaimsNotDiverted = { ...replayable(bundle), divertedByHoldout: false };
+    const inputSaysDiverted = { ...bundle.replayInput, holdout: { epsilonPct: 5, draw: 0.02, diverted: true } };
+    expect(replayDecision(recordClaimsNotDiverted, inputSaysDiverted)).toMatchObject({
+      verdict: "divergence",
+      stage: "holdout_consistency",
+      expected: "false",
+      actual: "true",
+    });
+
+    // Consistent on both sides (including the common absent/absent case, which defaults false on both): MATCH.
+    expect(replayDecision(recordClaimsNotDiverted, { ...bundle.replayInput, holdout: null }).verdict).toBe("match");
+    expect(replayDecision({ ...replayable(bundle) }, bundle.replayInput).verdict).toBe("match"); // divertedByHoldout absent on the record too
+    expect(replayDecision(recordClaimsDiverted, inputSaysDiverted).verdict).toBe("match");
+  });
+
+  it("persistDecisionReplayInputForGate (#9135): the holdout outcome rides along when supplied, and defaults null otherwise", async () => {
+    const env = createTestEnv();
+    const input = bundles[0]![1].replayInput;
+    await persistDecisionReplayInputForGate(
+      env,
+      "record:o/r#20@s",
+      { conclusion: "failure", blockers: [{ code: "secret_leak" }], replay: { findings: input.findings, policy: input.policy } },
+      "kind",
+      { epsilonPct: 5, draw: 0.9, diverted: false },
+    );
+    const withHoldout = await env.DB.prepare("SELECT replay_json FROM decision_replay_inputs WHERE record_id = 'record:o/r#20@s'").first<{ replay_json: string }>();
+    expect((JSON.parse(withHoldout!.replay_json) as DecisionReplayInput).holdout).toEqual({ epsilonPct: 5, draw: 0.9, diverted: false });
+
+    await persistDecisionReplayInputForGate(
+      env,
+      "record:o/r#21@s",
+      { conclusion: "failure", blockers: [{ code: "secret_leak" }], replay: { findings: input.findings, policy: input.policy } },
+      "kind",
+    );
+    const withoutHoldout = await env.DB.prepare("SELECT replay_json FROM decision_replay_inputs WHERE record_id = 'record:o/r#21@s'").first<{ replay_json: string }>();
+    expect((JSON.parse(withoutHoldout!.replay_json) as DecisionReplayInput).holdout).toBeNull();
+  });
+
   it("deriveDecisionReasonCode: blockerClass beats policy_close beats conclusion — the finalize site's exact mapping", () => {
     expect(deriveDecisionReasonCode("secret_leak", "stale", "failure")).toBe("secret_leak");
     expect(deriveDecisionReasonCode("none", "stale", "failure")).toBe("policy_close:stale");

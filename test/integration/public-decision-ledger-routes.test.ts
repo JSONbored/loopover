@@ -37,7 +37,7 @@ describe("public decision-ledger/decision-records routes answer WITHOUT credenti
       configDigest: await contentDigest({ gatePack: "oss-anti-slop" }),
       gatePack: "oss-anti-slop",
       ciState: null,
-      modelId: null,
+      modelIds: null,
       promptDigest: null,
       aiConfidence: null,
       salvageability: null,

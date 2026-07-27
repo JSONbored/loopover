@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createOpaqueToken, hashToken, timingSafeEqual } from "../../src/auth/security";
-import { verifyGitHubSignature, timingSafeEqualHex } from "../../src/utils/crypto";
+import { hmacHex, verifyGitHubSignature, timingSafeEqualHex } from "../../src/utils/crypto";
 
 describe("webhook signature verification", () => {
   it("accepts valid GitHub HMAC signatures and rejects tampering", async () => {
@@ -28,6 +28,14 @@ describe("webhook signature verification", () => {
     expect(timingSafeEqualHex("00", "01")).toBe(false);
     expect(timingSafeEqualHex("00", "00")).toBe(true);
     expect(timingSafeEqualHex("ABCD", "abcd")).toBe(true);
+  });
+
+  it("hmacHex is deterministic per (secret, value) and diverges whenever either input differs (#9135)", async () => {
+    const a = await hmacHex("s1", "v1");
+    expect(a).toBe(await hmacHex("s1", "v1"));
+    expect(a).toMatch(/^[0-9a-f]{64}$/);
+    expect(a).not.toBe(await hmacHex("s1", "v2"));
+    expect(a).not.toBe(await hmacHex("s2", "v1"));
   });
 
   it("uses timing-safe token comparisons and one-way token hashes", async () => {

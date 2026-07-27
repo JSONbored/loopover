@@ -67,7 +67,7 @@ export async function buildBundle(rows: CandidateRow[], stagedAt: string): Promi
       action: target.stratum === "close_arm" ? "close" : "hold",
       reasonCode: target.reasonCode,
       configDigest: "backfill:unavailable",
-      modelId: null,
+      modelIds: null,
       promptDigest: null,
       aiConfidence: target.aiConfidence,
       decidedAt: target.decidedAt,

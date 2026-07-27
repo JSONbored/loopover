@@ -259,7 +259,10 @@ export type DecisionRecordContext =
       gatePack?: string | null | undefined;
       ciState?: string | null | undefined;
       baseSha?: string | null | undefined;
-      modelId?: string | null | undefined;
+      // #9124: renamed from the singular `modelId` -- these call sites (contributor-cap close, review-nag
+      // close, update_branch) have no AI judgment behind them today, so this is always omitted in practice,
+      // but the shape matches DecisionRecord.modelIds (the FULL parsed-reviewer set) rather than a single id.
+      modelIds?: string[] | null | undefined;
       promptDigest?: string | null | undefined;
       aiConfidence?: number | null | undefined;
       salvageability?: { score: number; factors: string[] } | null | undefined;
@@ -311,9 +314,13 @@ async function recordCompletedDecision(env: Env, ctx: AgentActionExecutionContex
     action: action.actionClass,
     reasonCode: dr.reasonCode ?? defaultDecisionRecordReasonCode(action),
     configDigest: dr.configDigest,
+    // #9124: for every call site that reaches this generic path, configDigest already IS the raw resolved-
+    // settings digest (there is no separate gateCheckPolicy resolution behind a policy close or update_branch)
+    // -- so settingsDigest is honestly the same value, not a guess.
+    settingsDigest: dr.configDigest,
     gatePack: dr.gatePack ?? null,
     ciState: dr.ciState ?? null,
-    modelId: dr.modelId ?? null,
+    modelIds: dr.modelIds ?? null,
     promptDigest: dr.promptDigest ?? null,
     aiConfidence: dr.aiConfidence ?? null,
     salvageability: dr.salvageability ?? null,

@@ -8,6 +8,7 @@ import { evaluateGateCheck } from "../../src/rules/advisory";
 import { REVIEW_THREAD_BLOCKER_CODE } from "../../src/review/review-thread-findings";
 import { parseFocusManifest, resolveEffectiveSettings } from "../../src/signals/focus-manifest";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
+import { contentDigest } from "../../src/review/decision-record";
 import type { Advisory, PullRequestRecord, RepositorySettings } from "../../src/types";
 
 function settings(over: Partial<RepositorySettings> = {}): RepositorySettings {
@@ -44,6 +45,38 @@ describe("gateCheckPolicy — #8176 global close-confidence default-override", (
     expect(explicitWins.aiReviewCloseConfidence).toBe(0.97);
     expect(explicitWins.aiReviewCloseConfidenceCalibrated).toBe(false);
     expect(gateCheckPolicy(settings()).aiReviewCloseConfidence).toBeNull();
+  });
+});
+
+// #9124: `configDigest` at the decision-record call site (src/queue/processors.ts) digests
+// `{ policy: gate.replay?.policy ?? settings, untrustworthyRuleCodes }` — the RESOLVED gateCheckPolicy
+// output, not raw settings. Pinned here against the exact Monday/Tuesday scenario the issue described: a PR
+// closed under one calibrated λ̂ and one held under a different λ̂ must publish DIFFERENT configDigests even
+// though raw `settings` (and therefore `settingsDigest`) is byte-identical between the two.
+describe("gateCheckPolicy resolved output feeds configDigest (#9124)", () => {
+  it("a changed calibrated close floor moves the resolved-policy digest even though raw settings is unchanged", async () => {
+    const raw = settings(); // no explicit gate.aiReview.closeConfidence — the default path #9124 describes
+    const monday = gateCheckPolicy(raw, null, undefined, null, undefined, undefined, { value: 0.93, calibrated: true });
+    const tuesday = gateCheckPolicy(raw, null, undefined, null, undefined, undefined, { value: 0.97, calibrated: true });
+    const untrustworthyRuleCodes: string[] = [];
+    const mondayDigest = await contentDigest({ policy: monday, untrustworthyRuleCodes });
+    const tuesdayDigest = await contentDigest({ policy: tuesday, untrustworthyRuleCodes });
+    expect(mondayDigest).not.toBe(tuesdayDigest);
+    // Raw settings — and therefore settingsDigest — is byte-identical between the two: this is exactly the
+    // gap #9124 fixed (before, configDigest was `contentDigest(settings)` alone, so it could not see this).
+    expect(await contentDigest(raw)).toBe(await contentDigest(raw));
+
+    // The untrustworthy-rule-code set the precision breaker consults is folded in too — a repo-agnostic
+    // input the resolved GateCheckPolicy object itself does not carry.
+    const sameFloorDifferentRuleCodes = await contentDigest({ policy: monday, untrustworthyRuleCodes: ["ai_consensus_defect"] });
+    expect(sameFloorDifferentRuleCodes).not.toBe(mondayDigest);
+  });
+
+  it("byte-identical resolved policy + untrustworthy codes reproduce the identical digest", async () => {
+    const raw = settings({ aiReviewCloseConfidence: 0.9 });
+    const a = gateCheckPolicy(raw, null, undefined, null, undefined, undefined, null);
+    const b = gateCheckPolicy(raw, null, undefined, null, undefined, undefined, null);
+    expect(await contentDigest({ policy: a, untrustworthyRuleCodes: ["x"] })).toBe(await contentDigest({ policy: b, untrustworthyRuleCodes: ["x"] }));
   });
 });
 

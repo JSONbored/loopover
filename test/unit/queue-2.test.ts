@@ -366,10 +366,10 @@ describe("queue processors", () => {
     expect(closeAudit?.n).toBe(0);
     const pr18 = await getPullRequest(env, "owner/agent-repo", 18);
     expect(pr18?.state).toBe("open");
-    // The v3 decision record carries the boundary evidence.
+    // The decision record carries the boundary evidence.
     const record = await env.DB.prepare("select record_json from decision_records where repo_full_name = ? and pull_number = ?").bind("owner/agent-repo", 18).first<{ record_json: string }>();
     const parsedRecord = JSON.parse(record!.record_json) as { schemaVersion: string; salvageability: { score: number; factors: string[] } | null };
-    expect(parsedRecord.schemaVersion).toBe("3");
+    expect(parsedRecord.schemaVersion).toBe("4"); // v4 (#9124/#9135) — bumped past the v3 salvageability shape this test targets
     expect(parsedRecord.salvageability?.score).toBe(70);
     expect(parsedRecord.salvageability?.factors.join(" ")).toContain("mechanical defect class");
     // #8838: the replay input persisted beside the record, and the decision re-derives bit-exactly from it.
@@ -378,6 +378,151 @@ describe("queue processors", () => {
     expect(replayRow).toBeTruthy();
     const { replayDecision } = await import("../../src/review/decision-replay");
     const outcome = replayDecision({ id: recordRow!.id, reasonCode: recordRow!.reason_code, action: recordRow!.action }, JSON.parse(replayRow!.replay_json));
+    expect(outcome.verdict).toBe("match");
+  });
+
+  it("#9124: the decision record threads the finding's real modelIds/promptDigest, the live CI aggregate, and both digests — never the hardcoded nulls the pre-fix record shipped", async () => {
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      AI: { run: async () => ({ response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) }) } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { close: "auto" }, gatePack: "oss-anti-slop" });
+    await upsertRepoFocusManifest(env, "owner/agent-repo", { settings: { checkRunMode: "off", commentMode: "off", publicSurface: "off", reviewCheckMode: "required", aiReviewMode: "block" } });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 19, title: "Real defect PR", state: "open", user: { login: "contributor" }, head: { sha: "d19" }, labels: [], body: "Closes #1" });
+    await upsertPullRequestFile(env, { repoFullName: "owner/agent-repo", pullNumber: 19, path: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, payload: { patch: "@@\n+export const ok = value.length;" } });
+    const inputFingerprint = await cachedSubFloorDefectFingerprint("Real defect PR");
+    // #9124: the cached finding carries modelIds/promptDigest exactly as ai-review-orchestration.ts now
+    // attaches them to a FRESH ai_consensus_defect finding (parsedReviewModelIds + systemPromptDigest) — the
+    // cache is a faithful stand-in for that shape, so this proves the processors.ts wiring reads them
+    // straight through rather than re-deriving or dropping them.
+    await putCachedAiReview(env, "owner/agent-repo", 19, "d19", "block", {
+      notes: "cached review",
+      reviewerCount: 2,
+      // 0.95 sits ABOVE the default 0.93 floor: no salvageability hold, so this one-shot-closes cleanly.
+      findings: [{ code: "ai_consensus_defect", severity: "critical", title: "Unused import", detail: "unused import join from node:path is dead code.", confidence: 0.95, modelIds: ["claude-code", "codex"], promptDigest: "p".repeat(64) }],
+      metadata: { inputFingerprint },
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/19/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = value.length;" }]);
+      if (url.endsWith("/pulls/19") && init?.method === "PATCH") return Response.json({ number: 19, state: "closed" });
+      if (url.endsWith("/pulls/19")) return Response.json({ number: 19, title: "Real defect PR", state: "open", user: { login: "contributor" }, head: { sha: "d19" }, labels: [], body: "Closes #1" });
+      if (url.includes("/commits/d19/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/d19/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.endsWith("/pulls/19/reviews") && init?.method === "POST") return Response.json({ id: 1 });
+      if (url.endsWith("/pulls/19/reviews")) return Response.json([]);
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    await sweepAndDrainPerPr(env, "owner/agent-repo");
+
+    const record = await env.DB.prepare("select record_json from decision_records where repo_full_name = ? and pull_number = ?").bind("owner/agent-repo", 19).first<{ record_json: string }>();
+    const parsed = JSON.parse(record!.record_json) as {
+      schemaVersion: string;
+      action: string;
+      modelIds: string[] | null;
+      promptDigest: string | null;
+      ciState: string | null;
+      configDigest: string;
+      settingsDigest: string | null;
+      divertedByHoldout: boolean;
+    };
+    expect(parsed.schemaVersion).toBe("4");
+    expect(parsed.action).toBe("close"); // above-floor confidence, no salvageability config -> a one-shot close DECISION
+    // The exact requirement: modelId is non-null whenever an AI judgment shaped the decision.
+    expect(parsed.modelIds).toEqual(["claude-code", "codex"]);
+    expect(parsed.promptDigest).toBe("p".repeat(64));
+    // #9124: ciState is now populated from the live CI aggregate in scope at the call site, never the old
+    // hardcoded null — the exact resolved value depends on the mocked check-run/status shape, which is not
+    // this test's concern (see gate-outcomes-focused tests for that mapping).
+    expect(parsed.ciState).not.toBeNull();
+    // Both digests are real 64-hex sha256 values, and distinct fields (configDigest != settingsDigest is not
+    // asserted here since they may coincide for a simple policy -- what matters is both are populated).
+    expect(parsed.configDigest).toMatch(/^[0-9a-f]{64}$/);
+    expect(parsed.settingsDigest).toMatch(/^[0-9a-f]{64}$/);
+    // No closeAuditHoldoutPct configured -> the holdout never draws -> never diverted.
+    expect(parsed.divertedByHoldout).toBe(false);
+  });
+
+  it("#9135: with gate.closeAuditHoldoutPct set, a would-close is diverted to a hold and the decision record + replay input both say so", async () => {
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      AI: { run: async () => ({ response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) }) } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    // The production draw is HMAC(instance secret, seed) — deterministic given a KNOWN secret. Pre-seed the
+    // instrument's dedicated system_flags secret so the draw for this test's exact seed
+    // (record:owner/agent-repo#20@d20) is known ahead of time (~0.097), rather than depending on a randomly
+    // generated secret and hoping it lands under the threshold.
+    await env.DB.prepare("INSERT INTO system_flags (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)")
+      .bind("close_audit_holdout:secret", "e9dca8960f9c80ba4e290e5f0947dea5d1d0153703ab389d3bd995706a979a73")
+      .run();
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { close: "auto" }, gatePack: "oss-anti-slop" });
+    // gate.closeAuditHoldoutPct is manifest-only (config-as-code), valid range 0-20 (#8831). 20 with the
+    // pre-seeded secret above yields draw ≈0.097 < 0.20 — a real, deterministic diversion.
+    await upsertRepoFocusManifest(env, "owner/agent-repo", { settings: { checkRunMode: "off", commentMode: "off", publicSurface: "off", reviewCheckMode: "required", aiReviewMode: "block" }, gate: { closeAuditHoldoutPct: 20 } });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 20, title: "Holdout-diverted PR", state: "open", user: { login: "contributor" }, head: { sha: "d20" }, labels: [], body: "Closes #1" });
+    await upsertPullRequestFile(env, { repoFullName: "owner/agent-repo", pullNumber: 20, path: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, payload: { patch: "@@\n+export const ok = value.length;" } });
+    const inputFingerprint = await cachedSubFloorDefectFingerprint("Holdout-diverted PR");
+    await putCachedAiReview(env, "owner/agent-repo", 20, "d20", "block", {
+      notes: "cached review",
+      reviewerCount: 2,
+      // Above-floor confidence: without the holdout this would one-shot-close cleanly, same as the #9124 test.
+      findings: [{ code: "ai_consensus_defect", severity: "critical", title: "Unused import", detail: "unused import join from node:path is dead code.", confidence: 0.95, modelIds: ["claude-code", "codex"], promptDigest: "p".repeat(64) }],
+      metadata: { inputFingerprint },
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/20/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = value.length;" }]);
+      if (url.endsWith("/pulls/20") && init?.method === "PATCH") return Response.json({ number: 20, state: "closed" });
+      if (url.endsWith("/pulls/20")) return Response.json({ number: 20, title: "Holdout-diverted PR", state: "open", user: { login: "contributor" }, head: { sha: "d20" }, labels: [], body: "Closes #1" });
+      if (url.includes("/commits/d20/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/d20/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.endsWith("/pulls/20/reviews") && init?.method === "POST") return Response.json({ id: 1 });
+      if (url.endsWith("/pulls/20/reviews")) return Response.json([]);
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/issues/20/labels")) return Response.json([{ name: "manual-review" }]);
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    await sweepAndDrainPerPr(env, "owner/agent-repo");
+
+    // The holdout diverted the close: the recorded disposition is a hold, never a close.
+    const closeAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and detail like ?").bind("agent.action.close", "%#20%").first<{ n: number }>();
+    expect(closeAudit?.n).toBe(0);
+    const holdoutAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'decision_audit_holdout' and target_key = 'owner/agent-repo#20'").first<{ n: number }>();
+    expect(holdoutAudit?.n).toBe(1);
+
+    const record = await env.DB.prepare("select id, reason_code, record_json from decision_records where repo_full_name = ? and pull_number = ?").bind("owner/agent-repo", 20).first<{ id: string; reason_code: string; record_json: string }>();
+    const parsed = JSON.parse(record!.record_json) as { action: string; divertedByHoldout: boolean };
+    expect(parsed.action).toBe("hold");
+    expect(parsed.divertedByHoldout).toBe(true);
+
+    // The private replay input carries the SAME holdout outcome the public record's claim rests on —
+    // exactly the pair `holdout_consistency` (decision-replay.ts) checks.
+    const replayRow = await env.DB.prepare("select replay_json from decision_replay_inputs where record_id = ?").bind(record!.id).first<{ replay_json: string }>();
+    const replayInput = JSON.parse(replayRow!.replay_json) as { holdout: { epsilonPct: number; draw: number; diverted: boolean } | null };
+    expect(replayInput.holdout?.diverted).toBe(true);
+    expect(replayInput.holdout?.epsilonPct).toBe(20);
+    expect(replayInput.holdout?.draw).toBeLessThan(0.2);
+    const { replayDecision } = await import("../../src/review/decision-replay");
+    const outcome = replayDecision({ id: record!.id, reasonCode: record!.reason_code, action: parsed.action, divertedByHoldout: parsed.divertedByHoldout }, replayInput as never);
     expect(outcome.verdict).toBe("match");
   });
 
@@ -581,7 +726,9 @@ describe("queue processors", () => {
     await putCachedAiReview(env, "owner/agent-repo", 9, "c9", "block", {
       notes: "cached review",
       reviewerCount: 2,
-      findings: [{ code: "ai_consensus_defect", severity: "critical", title: "Cached defect", detail: "Cached critical defect.", confidence: 0.3 }],
+      // #9124: modelIds/promptDigest are the shape a FRESH ai_consensus_defect finding now carries
+      // (ai-review-orchestration.ts); the cached finding mirrors it so the decision record below inherits it.
+      findings: [{ code: "ai_consensus_defect", severity: "critical", title: "Cached defect", detail: "Cached critical defect.", confidence: 0.3, modelIds: ["claude-code"], promptDigest: "f".repeat(64) }],
       metadata: { inputFingerprint },
     });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -620,10 +767,11 @@ describe("queue processors", () => {
     // #8834: an AI-judgment-shaped decision persists its confidence + prompt-template commitment in the
     // decision record — the row every future calibration read keys on.
     const record = await env.DB.prepare("select record_json from decision_records where repo_full_name = 'owner/agent-repo' and pull_number = 9 order by created_at desc limit 1").first<{ record_json: string }>();
-    const parsedRecord = JSON.parse(record!.record_json) as { aiConfidence: number | null; promptDigest: string | null; schemaVersion: string };
-    expect(parsedRecord.schemaVersion).toBe("3"); // v3 (#8962): + salvageability
+    const parsedRecord = JSON.parse(record!.record_json) as { aiConfidence: number | null; promptDigest: string | null; modelIds: string[] | null; schemaVersion: string };
+    expect(parsedRecord.schemaVersion).toBe("4"); // v4 (#9124/#9135): configDigest/promptDigest/modelIds/ciState + divertedByHoldout
     expect(parsedRecord.aiConfidence).toBe(0.3); // the cached sub-floor defect's calibrated confidence
-    expect(typeof parsedRecord.promptDigest).toBe("string");
+    expect(parsedRecord.promptDigest).toBe("f".repeat(64));
+    expect(parsedRecord.modelIds).toEqual(["claude-code"]);
   });
 
   it("posts the 🟪 reviewing placeholder before the AI review runs, then overwrites it with the verdict (#reviewing-placeholder)", async () => {

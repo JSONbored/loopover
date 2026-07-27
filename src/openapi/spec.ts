@@ -1017,6 +1017,16 @@ export function buildOpenApiSpec() {
     },
   });
   registry.registerPath({
+    method: "get",
+    path: "/v1/public/eval-scores",
+    summary: "Fetch EvalScoreRecords (#9215) -- the objective-eval-provider transport, digest-committed and independently re-derivable",
+    request: { query: z.object({ subject: z.string().optional(), since: z.string().optional() }) },
+    responses: {
+      200: { description: "{ records: EvalScoreRecord[] }, optionally filtered by subject id and/or minimum issuedAt -- degrades to an empty array on an internal read error rather than a non-200 status, matching loadPublicRulePrecision's own fail-safe contract" },
+      404: { description: "Public stats disabled (same flag as /v1/public/stats)" },
+    },
+  });
+  registry.registerPath({
     method: "post",
     path: "/v1/orb/ingest",
     summary: "Ingest a batch of Orb events",

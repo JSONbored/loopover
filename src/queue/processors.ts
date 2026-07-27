@@ -9315,7 +9315,7 @@ export function reviewDurationMsSince(startedAt: string | null, nowMs: number): 
 /**
  * Focus-manifest policy gate (#555, opt-in via `manifestPolicyGateMode`). Reloads the CACHED manifest (the
  * settings resolver discards the raw manifest, but loadRepoFocusManifest is cached so this is cheap),
- * recomputes the guidance over the PR's changed files, and pushes ONLY the three enforceable policy findings
+ * recomputes the guidance over the PR's changed files, and pushes ONLY the two enforceable policy findings
  * onto the advisory so isConfiguredGateBlocker can block under `manifestPolicy: block`. Also runs the E2E
  * test-generation auto-trigger (#4196, part of the #4189 epic) — see the inline comments below for the full
  * rationale of each step. `manifestPolicyGateMode: "off"` (the default) is a no-op, so the advisory/gate
@@ -9338,7 +9338,7 @@ async function maybeApplyManifestPolicyGate(
 ): Promise<void> {
   // Focus-manifest policy (#555, opt-in via manifestPolicyGateMode). Reload the CACHED manifest (the
   // settings resolver discards the raw manifest, but loadRepoFocusManifest is cached so this is cheap),
-  // recompute the guidance over the PR's changed files, and push ONLY the three enforceable policy
+  // recompute the guidance over the PR's changed files, and push ONLY the two enforceable policy
   // findings into the advisory so isConfiguredGateBlocker can block under manifestPolicy: block.
   if (args.settings.manifestPolicyGateMode !== "off") {
     // `gateFiles` is threaded in by the ONLY caller (maybePublishPrPublicSurface) already resolved via

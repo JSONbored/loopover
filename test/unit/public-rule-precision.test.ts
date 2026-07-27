@@ -35,8 +35,8 @@ describe("loadPublicRulePrecision (#8230)", () => {
     const block = await loadPublicRulePrecision(env, NOW);
     expect(block.windowDays).toBe(PUBLIC_PRECISION_WINDOW_DAYS);
     expect(block.rules).toEqual([
-      { ruleId: "ai_consensus_defect", decided: 25, precision: 0.8 },
-      { ruleId: "linked_issue_scope_mismatch", decided: 12, precision: 0.75 },
+      { ruleId: "ai_consensus_defect", decided: 25, confirmed: 20, precision: 0.8 },
+      { ruleId: "linked_issue_scope_mismatch", decided: 12, confirmed: 9, precision: 0.75 },
     ]);
   });
 
@@ -52,7 +52,7 @@ describe("loadPublicRulePrecision (#8230)", () => {
     });
 
     const block = await loadPublicRulePrecision(env, NOW);
-    expect(block.rules).toEqual([{ ruleId: "sparse_rule", decided: PUBLIC_PRECISION_MIN_DECIDED - 1, precision: null }]);
+    expect(block.rules).toEqual([{ ruleId: "sparse_rule", decided: PUBLIC_PRECISION_MIN_DECIDED - 1, confirmed: PUBLIC_PRECISION_MIN_DECIDED - 1, precision: null }]);
   });
 
   it("counts all three reversal shapes over the window and surfaces the latest backtest run's corpus checksum", async () => {

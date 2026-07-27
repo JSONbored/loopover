@@ -551,7 +551,8 @@ function effectiveDisplaySeverity(finding: AdvisoryFinding, blockerCodes: Readon
 }
 
 function isCodePath(path: string): boolean {
-  return /\.(ts|tsx|js|jsx|py|go|rs|java|rb|php|cs|cpp|cc|c|h|hpp|swift|kt|m|sql|yaml|yml|json|toml|md|vue|svelte|astro|dart)$/i.test(path);
+  // Keep parity with isCodeFile / SOURCE_FILE_EXTENSION (#9322): include .mts/.cts/.mjs/.cjs/.kts/.scala/.groovy.
+  return /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|go|rs|java|rb|php|cs|cpp|cc|c|h|hpp|swift|kt|kts|scala|groovy|m|sql|yaml|yml|json|toml|md|vue|svelte|astro|dart)$/i.test(path);
 }
 
 function collisionClustersForPull(collisions: CollisionReport, pullNumber: number): CollisionCluster[] {

@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { clockSkewSecondsSample, resetClockSkewForTest } from "../../src/selfhost/clock-skew";
 import { counterValue, resetMetrics } from "../../src/selfhost/metrics";
 import {
   createOrbRelayRegistrationState,
@@ -112,6 +113,34 @@ describe("fetchBrokeredInstallationToken", () => {
   it("throws when the broker response has no token", async () => {
     const fetchImpl = (async () => Response.json({ installationId: 1 })) as typeof fetch;
     await expect(fetchBrokeredInstallationToken({ ORB_ENROLLMENT_SECRET: "s" }, fetchImpl)).rejects.toThrow(/did not include a token/);
+  });
+});
+
+describe("fetchBrokeredInstallationToken samples clock skew from the broker response (#9156)", () => {
+  afterEach(() => {
+    resetClockSkewForTest();
+    vi.useRealTimers();
+  });
+
+  it("records skew from a SUCCESSFUL broker response's Date header -- the broker-mode equivalent of the local JWT-mint sample, unreachable in broker mode", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-06T12:05:00.000Z"));
+    expect(clockSkewSecondsSample()).toBeNaN(); // never sampled yet
+    const fetchImpl = (async () =>
+      Response.json(
+        { token: "ghs_x", installationId: 42, expiresAt: "2026-06-25T09:00:00Z" },
+        { headers: { date: "Mon, 06 Jul 2026 12:00:00 GMT" } },
+      )) as typeof fetch;
+    await fetchBrokeredInstallationToken({ ORB_ENROLLMENT_SECRET: "s" }, fetchImpl);
+    expect(clockSkewSecondsSample()).toBe(300); // 5 minutes ahead of the broker's clock
+  });
+
+  it("records skew even from a FAILED (non-OK) broker response -- sampling must not depend on the exchange succeeding", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-06T12:00:00.000Z"));
+    const fetchImpl = (async () => new Response("nope", { status: 403, headers: { date: "Mon, 06 Jul 2026 12:02:00 GMT" } })) as typeof fetch;
+    await expect(fetchBrokeredInstallationToken({ ORB_ENROLLMENT_SECRET: "s" }, fetchImpl)).rejects.toThrow(/403/);
+    expect(clockSkewSecondsSample()).toBe(-120); // 2 minutes behind, even though the exchange itself failed
   });
 });
 

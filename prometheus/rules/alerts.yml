@@ -672,6 +672,24 @@ groups:
           description: "Clock skew has exceeded 120s (sustained 2m), well past the point GitHub App JWT auth (\"Bad credentials\") is expected to start failing fleet-wide."
           runbook: "Same as LoopoverClockSkewWarning, but treat as urgent: fix NTP sync immediately (chronyc sources, chronyc makestep, restart chrony if every source stays at Reach: 0). Check for github_app_jwt_rejected logs to confirm auth impact."
 
+      - alert: LoopoverClockSkewSampleStale
+        # #9156: loopover_clock_skew_seconds' own companion staleness gauge (#7000) was referenced by ZERO
+        # alert rules until this one -- so LoopoverClockSkewWarning/Critical above could read a flattering
+        # "0" (or, pre-#9156, a hard 0 that never distinguished "fine" from "never measured") forever on a
+        # deployment whose sampling path never runs (a brokered self-host before #9156's broker-path fix, or
+        # any future regression that stops installation-token minting). The gauge ages continuously from
+        # process start when never sampled (#9128), so ONE threshold catches both "never sampled at all" and
+        # "was sampled once, then mint activity stalled". Installation tokens mint roughly hourly by design;
+        # a 2x margin tolerates normal mint-timing jitter without masking a real stall.
+        expr: loopover_clock_skew_sample_age_seconds > 7200
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "loopover has not sampled clock skew in over {{ $value | printf \"%.0f\" }}s"
+          description: "loopover_clock_skew_seconds has gone unmeasured for over 2h (sustained 15m) -- an installation-token mint (local App-JWT or brokered) hasn't happened recently, or the sampling call itself broke. While this fires, LoopoverClockSkewWarning/Critical cannot be trusted -- real drift could be going undetected."
+          runbook: "Confirm installation-token minting is still happening (look for github_installation_token_rejected / orb_broker_unavailable logs). If mint activity looks healthy but this stays stale, the sampling call itself (recordClockSkewFromResponse, src/selfhost/clock-skew.ts) may be broken -- check both requestInstallationTokenWithJwt (src/github/app.ts) and fetchBrokeredInstallationToken (src/orb/broker-client.ts)."
+
   # ── Cloudflare D1 (central cloud) size + signal_snapshots dedup regression (#3810) ────
   # loopover_d1_* metrics come from the OPT-IN Cloudflare Management API probe (src/selfhost/
   # d1-size-probe.ts, CLOUDFLARE_D1_MONITOR_* env vars) -- absent/disabled reads -1 on every gauge below,

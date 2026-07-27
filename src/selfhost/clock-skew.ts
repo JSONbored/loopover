@@ -7,7 +7,12 @@
 // installation-token mint call that's ALREADY made whenever a token needs (re-)minting -- no new
 // outbound request, sampled at exactly the cadence the vulnerable code path itself runs.
 
-let lastSkewSeconds = 0;
+// #9156: NaN (not 0) until the first successful sample -- 0 is a REAL, legitimately-reachable skew value (a
+// perfectly-synced clock), so it can never double as "unmeasured" without masking that exact healthy state
+// forever. `abs(NaN)` and every other comparison against NaN evaluates false in PromQL, so an unmeasured
+// gauge never spuriously satisfies (or fails) either LoopoverClockSkewWarning/Critical alert rule -- it just
+// reads as no signal, exactly like the sample-age gauge already distinguishes via its own reference point.
+let lastSkewSeconds = Number.NaN;
 // The wall-clock time (ms) of the last SUCCESSFUL sample, or null before the first one. Backs the staleness
 // signal below so an old sample can't silently look current if token-mint activity — the only thing that
 // refreshes lastSkewSeconds — stalls (#7000).
@@ -36,7 +41,8 @@ export function recordClockSkewFromResponse(response: Response): void {
   lastSkewSampleAtMs = localMs;
 }
 
-/** The most recently observed clock-skew sample in seconds (0 until the first successful sample). */
+/** The most recently observed clock-skew sample in seconds (#9156: `NaN` until the first successful sample --
+ *  see `lastSkewSeconds`'s own comment for why `0` cannot double as that sentinel). */
 export function clockSkewSecondsSample(): number {
   return lastSkewSeconds;
 }
@@ -56,7 +62,7 @@ export function clockSkewSampleAgeSeconds(): number {
 /** Test-only: reset the module-level sample between tests, including the #9128 boot-time reference (so a
  *  test can control "time since load" precisely, matching resetPostHogForTest-style module resets elsewhere). */
 export function resetClockSkewForTest(): void {
-  lastSkewSeconds = 0;
+  lastSkewSeconds = Number.NaN;
   lastSkewSampleAtMs = null;
   moduleLoadedAtMs = Date.now();
 }

@@ -3,7 +3,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../../src/api/routes";
 import { LoopoverMcp } from "../../src/mcp/server";
-import { upsertIssueWatchSubscription, upsertRepositoryFromGitHub } from "../../src/db/repositories";
+import { upsertInstallation, upsertIssueWatchSubscription, upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
 // #6746: GET/POST/DELETE /v1/contributors/:login/watches — the REST mirror of the loopover_watch_issues MCP tool.
@@ -24,6 +24,20 @@ async function connectMcp(env: Env) {
 async function seedPublicRepo(env: ReturnType<typeof createTestEnv>, fullName: string): Promise<void> {
   const [owner, name] = fullName.split("/");
   await upsertRepositoryFromGitHub(env, { name: name!, full_name: fullName, private: false, owner: { login: owner! } }, 555);
+}
+
+async function seedPrivateRepo(env: ReturnType<typeof createTestEnv>, fullName: string): Promise<void> {
+  const [owner, name] = fullName.split("/");
+  await upsertRepositoryFromGitHub(env, { name: name!, full_name: fullName, private: true, owner: { login: owner! } }, 555);
+}
+
+// Mirrors access-boundary.test.ts's seedOwnedRepo: an installed (not merely upserted) repo, so
+// buildControlPanelAccessScope's ownedInstalledRepos/accountLogins actually grant the owning login access.
+async function seedInstalledPrivateRepo(env: ReturnType<typeof createTestEnv>, owner: string, name: string, installationId: number): Promise<void> {
+  await upsertInstallation(env, {
+    installation: { id: installationId, account: { login: owner, id: installationId, type: "User" }, repository_selection: "selected", permissions: { metadata: "read" }, events: ["repository"] },
+  });
+  await upsertRepositoryFromGitHub(env, { name, full_name: `${owner}/${name}`, private: true, owner: { login: owner } }, installationId);
 }
 
 describe("GET /v1/contributors/:login/watches (#6746)", () => {
@@ -104,6 +118,32 @@ describe("POST /v1/contributors/:login/watches (#6746)", () => {
     );
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({ error: "forbidden_repo" });
+  });
+
+  it("403s a PRIVATE repo the login has no maintainer/owner/operator scope over", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    await seedPrivateRepo(env, "acme/secrets");
+    const response = await app.request(
+      "/v1/contributors/miner1/watches",
+      { method: "POST", headers: jsonHeaders(env), body: JSON.stringify({ repoFullName: "acme/secrets" }) },
+      env,
+    );
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ error: "forbidden_repo" });
+  });
+
+  it("watches a PRIVATE repo the login owns via an installed account (accountLogins match grants canLoginAccessRepo)", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    await seedInstalledPrivateRepo(env, "acme", "secrets", 555);
+    const response = await app.request(
+      "/v1/contributors/acme/watches",
+      { method: "POST", headers: jsonHeaders(env), body: JSON.stringify({ repoFullName: "acme/secrets" }) },
+      env,
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ changed: "watching acme/secrets" });
   });
 
   it("rejects a malformed or non-JSON body with 400", async () => {

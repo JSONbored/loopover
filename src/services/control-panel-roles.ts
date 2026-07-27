@@ -21,21 +21,28 @@ export type ControlPanelAccessScope = {
   accountLogins: string[];
 };
 
-export async function loadControlPanelAccessScope(env: Env, login: string): Promise<ControlPanelAccessScope> {
+// #9126: every function below takes an OPTIONAL `githubUserId` alongside `login` -- when the caller has a
+// live session it should always thread `identity.session.githubUserId` through so isAuthorizedGitHubSessionLogin
+// can bind operator trust to the immutable id (see that function's own doc comment). Passing `undefined` is
+// safe and behavior-preserving whenever no live session exists (e.g. a stored watcher-list login with no
+// session attached) OR no ADMIN_GITHUB_IDS allowlist is configured; it only stops granting the login-only
+// shortcut once an operator has explicitly opted into id-binding without that particular call site also
+// threading the id.
+export async function loadControlPanelAccessScope(env: Env, login: string, githubUserId?: number | null): Promise<ControlPanelAccessScope> {
   const [repositories, installations, pullRequests] = await Promise.all([listRepositories(env), listInstallations(env), listAllPullRequests(env)]);
   return buildControlPanelAccessScope({
     login,
     generatedAt: nowIso(),
     confirmedMiner: false,
-    operator: isAuthorizedGitHubSessionLogin(env, login),
+    operator: isAuthorizedGitHubSessionLogin(env, login, githubUserId),
     repositories,
     installations,
     pullRequests,
   });
 }
 
-export async function canLoginAccessRepo(env: Env, login: string, fullName: string): Promise<boolean> {
-  const [scope, repo] = await Promise.all([loadControlPanelAccessScope(env, login), getRepository(env, fullName)]);
+export async function canLoginAccessRepo(env: Env, login: string, fullName: string, githubUserId?: number | null): Promise<boolean> {
+  const [scope, repo] = await Promise.all([loadControlPanelAccessScope(env, login, githubUserId), getRepository(env, fullName)]);
   if (scope.operator) return true;
   const requestedRepo = fullName.toLowerCase();
   if (scope.repositoryFullNames.some((name) => name.toLowerCase() === requestedRepo)) return true;
@@ -46,14 +53,14 @@ export async function canLoginAccessRepo(env: Env, login: string, fullName: stri
 // PUBLIC gittensor-tracked repos they don't own or maintain, so a tracked public repo is watchable by any
 // contributor. A PRIVATE repo is gated to maintainer/owner/operator scope so its issues never fan out to a
 // non-collaborator. An untracked repo (unknown visibility) is treated as not watchable (fail-closed).
-export async function canWatchRepo(env: Env, login: string, fullName: string): Promise<boolean> {
+export async function canWatchRepo(env: Env, login: string, fullName: string, githubUserId?: number | null): Promise<boolean> {
   const repo = await getRepository(env, fullName);
   if (!repo) return false;
   if (!repo.isPrivate) return true;
-  return canLoginAccessRepo(env, login, fullName);
+  return canLoginAccessRepo(env, login, fullName, githubUserId);
 }
 
-export async function loadControlPanelRoleSummary(env: Env, login: string): Promise<ControlPanelRoleSummary> {
+export async function loadControlPanelRoleSummary(env: Env, login: string, githubUserId?: number | null): Promise<ControlPanelRoleSummary> {
   const [miner, repositories, installations, pullRequests] = await Promise.all([
     getFreshOfficialMinerDetection(env, login).catch(() => null),
     listRepositories(env),
@@ -64,7 +71,7 @@ export async function loadControlPanelRoleSummary(env: Env, login: string): Prom
     login,
     generatedAt: nowIso(),
     confirmedMiner: miner?.status === "confirmed",
-    operator: isAuthorizedGitHubSessionLogin(env, login),
+    operator: isAuthorizedGitHubSessionLogin(env, login, githubUserId),
     repositories,
     installations,
     pullRequests,

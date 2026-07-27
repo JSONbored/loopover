@@ -16,6 +16,19 @@ function fileRecord(over: Partial<PullRequestFileRecord> & { path: string }): Pu
   return { repoFullName: "acme/widgets", pullNumber: 3, status: "modified", additions: 1, deletions: 0, changes: 1, payload: {}, ...over };
 }
 
+// #9131: the reputation burst check (submissions >= 8 && merged < 1) now reads its counts from the
+// WINDOWED submitter_outcome_log, not the all-time submitter_stats row -- seed both so this file's existing
+// burst-simulation tests still exercise the same shape (submitter_stats is also still written by
+// recordSubmissionOutcome and kept here for parity, even though nothing under test reads it directly).
+async function seedBurstSubmitter(env: Env, project: string, submitter: string): Promise<void> {
+  await env.DB.prepare("INSERT INTO submitter_stats (project, submitter, submissions, merged, closed, manual, last_seen) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)")
+    .bind(project, submitter, 8, 0, 8, 0)
+    .run();
+  for (let pullNumber = 1; pullNumber <= 8; pullNumber++) {
+    await env.DB.prepare("INSERT INTO submitter_outcome_log (project, submitter, pull_number, outcome) VALUES (?, ?, ?, 'closed')").bind(project, submitter, pullNumber).run();
+  }
+}
+
 describe("buildAiReviewDiff", () => {
   it("includes patches and headers, lists a patch-less file, and truncates oversized diffs (source-first)", () => {
     const diff = buildAiReviewDiff([
@@ -177,13 +190,13 @@ describe("shouldStartAiReviewForAdvisory", () => {
 
   it("does not start when the reputation gate downgrades the PR to deterministic-only", async () => {
     const env = createTestEnv({ AI: { run: vi.fn() } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", LOOPOVER_REVIEW_REPUTATION: "true", LOOPOVER_REVIEW_REPOS: "acme/widgets" });
-    await env.DB.prepare("INSERT INTO submitter_stats (project, submitter, submissions, merged, closed, manual, last_seen) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)").bind("acme/widgets", "alice", 8, 0, 8, 0).run();
+    await seedBurstSubmitter(env, "acme/widgets", "alice");
     await expect(shouldStartAiReviewForAdvisory(env, base)).resolves.toBe(false);
   });
 
   it("honors aiReviewAllAuthors as an explicit self-host review requirement even when reputation would skip", async () => {
     const env = createTestEnv({ AI: { run: vi.fn() } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", LOOPOVER_REVIEW_REPUTATION: "true", LOOPOVER_REVIEW_REPOS: "acme/widgets" });
-    await env.DB.prepare("INSERT INTO submitter_stats (project, submitter, submissions, merged, closed, manual, last_seen) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)").bind("acme/widgets", "alice", 8, 0, 8, 0).run();
+    await seedBurstSubmitter(env, "acme/widgets", "alice");
     await expect(
       shouldStartAiReviewForAdvisory(env, {
         ...base,
@@ -198,7 +211,7 @@ describe("shouldStartAiReviewForAdvisory", () => {
   // reported.
   it("#9008: forceAiReview bypasses ONLY the reputation skip, not the hard entry gates", async () => {
     const env = createTestEnv({ AI: { run: vi.fn() } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", LOOPOVER_REVIEW_REPUTATION: "true", LOOPOVER_REVIEW_REPOS: "acme/widgets" });
-    await env.DB.prepare("INSERT INTO submitter_stats (project, submitter, submissions, merged, closed, manual, last_seen) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)").bind("acme/widgets", "alice", 8, 0, 8, 0).run();
+    await seedBurstSubmitter(env, "acme/widgets", "alice");
     // Without force, reputation still skips (pinned above) -- WITH force, the same low-reputation author is
     // reviewed.
     await expect(shouldStartAiReviewForAdvisory(env, { ...base, forceAiReview: true })).resolves.toBe(true);

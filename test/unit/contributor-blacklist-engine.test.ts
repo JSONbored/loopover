@@ -70,6 +70,18 @@ describe("normalizeContributorBlacklist (#1425) [engine]", () => {
     expect(entries[2]?.reason?.length).toBe(200);
     expect(entries[2]?.evidence).toHaveLength(10);
   });
+
+  it("accepts a valid githubId and drops a malformed one (#9125)", () => {
+    const { entries } = normalizeContributorBlacklist([
+      { login: "a", githubId: 12345 },
+      { login: "b", githubId: -1 },
+      { login: "c", githubId: 0 },
+      { login: "d", githubId: 1.5 },
+      { login: "e", githubId: "12345" },
+      { login: "f" },
+    ]);
+    expect(entries.map((e) => e.githubId)).toEqual([12345, undefined, undefined, undefined, undefined, undefined]);
+  });
 });
 
 describe("findBlacklistEntry / isAuthorBlacklisted [engine]", () => {
@@ -92,6 +104,32 @@ describe("findBlacklistEntry / isAuthorBlacklisted [engine]", () => {
   it("tolerates an absent list (treated as empty) so callers can pass the optional setting directly", () => {
     expect(findBlacklistEntry("anyone", undefined)).toBeNull();
     expect(isAuthorBlacklisted("anyone", undefined)).toBe(false);
+  });
+
+  describe("id-when-present union login (#9125: a banned contributor cannot clear the block by renaming)", () => {
+    const idList: ContributorBlacklistEntry[] = [{ login: "spammer99", githubId: 555, reason: "farming" }];
+
+    it("a NEW login for the same immutable id still matches (the rename this issue closes)", () => {
+      expect(findBlacklistEntry("spammer99x", idList, 555)?.login).toBe("spammer99");
+      expect(isAuthorBlacklisted("spammer99x", idList, 555)).toBe(true);
+    });
+
+    it("the same login with a NON-matching id still matches on login (union, not AND)", () => {
+      expect(isAuthorBlacklisted("spammer99", idList, 999)).toBe(true);
+    });
+
+    it("a different login and a different id is a genuine non-match", () => {
+      expect(isAuthorBlacklisted("innocent", idList, 999)).toBe(false);
+    });
+
+    it("omitting githubId at the call site falls back to login-only, byte-identical to before #9125", () => {
+      expect(isAuthorBlacklisted("spammer99", idList)).toBe(true);
+      expect(isAuthorBlacklisted("spammer99x", idList)).toBe(false);
+    });
+
+    it("an entry with no githubId of its own is still matched by login regardless of the caller's id", () => {
+      expect(isAuthorBlacklisted("Mona", list, 42)).toBe(true);
+    });
   });
 });
 

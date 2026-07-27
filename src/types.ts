@@ -420,10 +420,7 @@ export type GitHubPullRequestPayload = {
   created_at?: string | null;
   updated_at?: string | null;
   closed_at?: string | null;
-  user?: {
-    login?: string;
-    type?: string;
-  };
+  user?: GitHubWebhookUserPayload;
   author_association?: string;
   head?: {
     sha?: string;
@@ -452,9 +449,7 @@ export type GitHubIssuePayload = {
   created_at?: string | null;
   updated_at?: string | null;
   closed_at?: string | null;
-  user?: {
-    login?: string;
-  };
+  user?: GitHubWebhookUserPayload;
   author_association?: string;
   labels?: Array<{ name?: string }>;
   body?: string | null;
@@ -641,6 +636,10 @@ export type PullRequestRecord = {
   title: string;
   state: string;
   authorLogin?: string | null | undefined;
+  /** #9125: the author's IMMUTABLE numeric GitHub user id, from the webhook payload's `user.id`. Identity-
+   *  keyed contributor controls (blacklist, caps) should match on this when present, since `authorLogin` can
+   *  be changed by the account holder at will. */
+  authorGithubId?: number | null | undefined;
   authorAssociation?: string | null | undefined;
   headSha?: string | null | undefined;
   headRef?: string | null | undefined;
@@ -748,6 +747,8 @@ export type IssueRecord = {
   title: string;
   state: string;
   authorLogin?: string | null | undefined;
+  /** #9125: mirrors PullRequestRecord.authorGithubId -- the immutable id behind the (renameable) login. */
+  authorGithubId?: number | null | undefined;
   authorAssociation?: string | null | undefined;
   htmlUrl?: string | null | undefined;
   body?: string | null | undefined;
@@ -1665,6 +1666,10 @@ export type AdvisoryAiRoutingConfig = {
  *  analysis. Metadata can come from private configuration and must not be echoed to public surfaces. */
 export type ContributorBlacklistEntry = {
   login: string;
+  /** #9125: the login's IMMUTABLE numeric GitHub user id, when the operator has it (e.g. copied from an
+   *  audit event or the API). Optional so existing login-only entries keep working; when present, matching
+   *  is id-when-present UNION login, so a renamed-then-back account still can't shed a ban by renaming. */
+  githubId?: number | undefined;
   /** Why the account is blocked. Free-text maintainer metadata; not published in automated close comments. */
   reason?: string | undefined;
   /** PR/issue URLs (or other maintainer refs) evidencing the block. */

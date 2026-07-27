@@ -482,6 +482,7 @@ export async function upsertPullRequestFromGitHub(
       title: resolvedTitle,
       state: resolvedState,
       authorLogin: pr.user?.login,
+      authorGithubId: pr.user?.id,
       authorAssociation: resolvedAuthorAssociation,
       headSha: resolvedHeadSha,
       headRef: resolvedHeadRef,
@@ -511,6 +512,7 @@ export async function upsertPullRequestFromGitHub(
         title: resolvedTitle,
         state: resolvedState,
         authorLogin: pr.user?.login,
+        authorGithubId: pr.user?.id,
         authorAssociation: resolvedAuthorAssociation,
         headSha: resolvedHeadSha,
         headRef: resolvedHeadRef,
@@ -614,6 +616,7 @@ export async function upsertIssueFromGitHub(env: Env, repoFullName: string, issu
       title: issue.title,
       state: resolvedState,
       authorLogin: issue.user?.login,
+      authorGithubId: issue.user?.id,
       authorAssociation: issue.author_association,
       htmlUrl: issue.html_url,
       labelsJson: resolvedLabelsJson,
@@ -629,6 +632,7 @@ export async function upsertIssueFromGitHub(env: Env, repoFullName: string, issu
         title: issue.title,
         state: resolvedState,
         authorLogin: issue.user?.login,
+        authorGithubId: issue.user?.id,
         authorAssociation: issue.author_association,
         htmlUrl: issue.html_url,
         labelsJson: resolvedLabelsJson,
@@ -4752,12 +4756,25 @@ export async function listOtherOpenPullRequests(env: Env, fullName: string, numb
   return rows.map(toPullRequestRecordFromRow);
 }
 
-export async function listOtherOpenPullRequestsForAuthor(env: Env, fullName: string, number: number, authorLogin: string): Promise<PullRequestRecord[]> {
+// #9125: `authorGithubId` is optional and ADDITIVE -- when the caller has it, a sibling PR matches on the
+// immutable id OR the (renameable) login, so a contributor who renamed between two PRs still gets counted
+// against their own cap. Omit it and this behaves exactly as the login-only match always did.
+export async function listOtherOpenPullRequestsForAuthor(
+  env: Env,
+  fullName: string,
+  number: number,
+  authorLogin: string,
+  authorGithubId?: number | null,
+): Promise<PullRequestRecord[]> {
   const db = getDb(env.DB);
+  const authorMatch =
+    typeof authorGithubId === "number"
+      ? or(sql`lower(${pullRequests.authorLogin}) = lower(${authorLogin})`, eq(pullRequests.authorGithubId, authorGithubId))
+      : sql`lower(${pullRequests.authorLogin}) = lower(${authorLogin})`;
   const rows = await db
     .select()
     .from(pullRequests)
-    .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.state, "open"), not(eq(pullRequests.number, number)), sql`lower(${pullRequests.authorLogin}) = lower(${authorLogin})`))
+    .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.state, "open"), not(eq(pullRequests.number, number)), authorMatch))
     // Keep the per-webhook live-verification and sibling-wake work budget fixed. The cap path only needs the
     // lowest-numbered siblings to preserve the "oldest PRs win" rule, and wake coalescing can discover later
     // over-cap siblings from their own deliveries without letting one delivery fan out across an unbounded set.
@@ -6915,6 +6932,7 @@ function toPullRequestRecord(repoFullName: string, pr: GitHubPullRequestPayload)
     title: pr.title,
     state: pr.state,
     authorLogin: pr.user?.login,
+    authorGithubId: pr.user?.id,
     authorAssociation: pr.author_association,
     headSha: pr.head?.sha,
     headRef: pr.head?.ref,
@@ -6952,6 +6970,7 @@ function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): Pull
     title: row.title,
     state: row.state,
     authorLogin: row.authorLogin,
+    authorGithubId: row.authorGithubId,
     authorAssociation: row.authorAssociation,
     headSha: row.headSha,
     headRef: row.headRef,
@@ -7040,6 +7059,7 @@ function toIssueRecord(repoFullName: string, issue: GitHubIssuePayload): IssueRe
     title: issue.title,
     state: issue.state,
     authorLogin: issue.user?.login,
+    authorGithubId: issue.user?.id,
     authorAssociation: issue.author_association,
     htmlUrl: issue.html_url,
     body: issue.body,
@@ -7114,6 +7134,7 @@ function toIssueRecordFromRow(row: typeof issues.$inferSelect): IssueRecord {
     title: row.title,
     state: row.state,
     authorLogin: row.authorLogin,
+    authorGithubId: row.authorGithubId,
     authorAssociation: row.authorAssociation,
     htmlUrl: row.htmlUrl,
     body: payload.body,

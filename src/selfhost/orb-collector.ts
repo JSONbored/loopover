@@ -11,6 +11,9 @@
 //   ORB_AIR_GAP=true          — air-gapped/offline deployments only: compute locally, never send
 //   ORB_ANONYMIZE=true        — HMAC-hash repo/PR before export (default: true)
 //   ORB_COLLECTOR_TOKEN=<secret> — bearer credential for the hosted collector
+//   ORB_COLLECTOR_INSTANCE_SECRET=<secret> — #9121: per-instance credential returned ONCE by
+//     POST /v1/internal/orb/instances/register; required for the risk_control (published guarantee) field
+//     to be accepted. Unset is fine for an instance not opted into fleet calibration.
 //
 // No diffs, no code, no comments, no logins, no commit SHAs — only verdict + outcome + reversal + a bucketed
 // reason category + cycle time, with repo/PR identifiers HMAC'd by a key the collector never holds (so it
@@ -285,6 +288,11 @@ export async function exportOrbBatch(db: D1Database, batchSize = 200, fetchFn: t
   const body = JSON.stringify(payload);
   const signature = createHmac("sha256", secret).update(body).digest("hex");
   const collectorToken = process.env.ORB_COLLECTOR_TOKEN;
+  // #9121: the per-instance credential the collector issued when an operator registered this instance for
+  // fleet calibration — distinct from collectorToken (shared fleet-wide, proves only "some fleet member")
+  // and from the anonymization secret above (privacy, never shared with the collector). Only meaningful
+  // once the risk_control field is actually populated; an unset value is fine for an unregistered instance.
+  const instanceSecret = process.env.ORB_COLLECTOR_INSTANCE_SECRET;
 
   try {
     const res = await fetchFn(collectorUrl, {
@@ -292,6 +300,7 @@ export async function exportOrbBatch(db: D1Database, batchSize = 200, fetchFn: t
       headers: {
         "content-type": "application/json",
         "x-orb-signature": `sha256=${signature}`,
+        ...(instanceSecret ? { "x-orb-instance-secret": instanceSecret } : {}),
         "x-orb-instance": instance,
         ...(collectorToken ? { authorization: `Bearer ${collectorToken}` } : {}),
       },

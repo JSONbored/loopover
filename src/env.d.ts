@@ -138,6 +138,11 @@ declare global {
       onMerge?: import("./services/ai-review").OnMerge | undefined;
     };
     ADMIN_GITHUB_LOGINS?: string;
+    /** #9126: numeric GitHub user-id allowlist binding fleet-operator trust to the session's IMMUTABLE id
+     *  rather than the renameable/re-registerable ADMIN_GITHUB_LOGINS login. When set and non-empty it is
+     *  AUTHORITATIVE — see isAuthorizedGitHubSessionLogin (src/auth/security.ts). Unset falls back to the
+     *  login-only allowlist, byte-identical to before this existed. */
+    ADMIN_GITHUB_IDS?: string;
     /** Install-wide contributor open-item cap (#2562, anti-abuse): the max PRs+issues a single non-owner/
      *  admin/bot contributor may have open ACROSS EVERY repo this install gates, combined. Purely an
      *  install-scoped aggregate over this same database (no cross-instance networking) -- catches an actor

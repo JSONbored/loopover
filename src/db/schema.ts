@@ -343,6 +343,10 @@ export const pullRequests = sqliteTable(
     title: text("title").notNull(),
     state: text("state").notNull(),
     authorLogin: text("author_login"),
+    // #9125: the login's IMMUTABLE numeric id, from the webhook payload's `user.id` -- a login can be
+    // renamed or the account deleted-and-re-registered by anyone; every contributor-scoped control (the
+    // blacklist, open-item caps, moderation tally) must be able to key on this instead to survive a rename.
+    authorGithubId: integer("author_github_id"),
     authorAssociation: text("author_association"),
     headSha: text("head_sha"),
     headRef: text("head_ref"),
@@ -554,6 +558,8 @@ export const issues = sqliteTable(
     title: text("title").notNull(),
     state: text("state").notNull(),
     authorLogin: text("author_login"),
+    // #9125: mirrors pull_requests.author_github_id -- the immutable id behind the (renameable) login.
+    authorGithubId: integer("author_github_id"),
     authorAssociation: text("author_association"),
     htmlUrl: text("html_url"),
     labelsJson: text("labels_json").notNull().default("[]"),

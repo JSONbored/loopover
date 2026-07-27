@@ -138,8 +138,8 @@ export async function shouldSkipAiForReputation(
  */
 export async function recordReputationOutcome(
   env: Env,
-  args: { project: string; submitter: string | null | undefined; outcome: SubmissionOutcome },
+  args: { project: string; submitter: string | null | undefined; pullNumber: number; outcome: SubmissionOutcome },
 ): Promise<void> {
   if (!isReputationEnabled(env)) return;
-  await recordSubmissionOutcome(env, args.project, args.submitter ?? undefined, args.outcome);
+  await recordSubmissionOutcome(env, args.project, args.submitter ?? undefined, args.pullNumber, args.outcome);
 }

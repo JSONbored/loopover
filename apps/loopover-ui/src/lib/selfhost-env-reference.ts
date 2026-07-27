@@ -402,6 +402,10 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/server.ts",
   },
   {
+    name: "ORB_COLLECTOR_INSTANCE_SECRET",
+    firstReference: "src/selfhost/orb-collector.ts",
+  },
+  {
     name: "ORB_COLLECTOR_TOKEN",
     firstReference: "src/selfhost/orb-collector.ts",
   },
@@ -741,6 +745,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `ORB_ANONYMIZE` | `src/selfhost/orb-collector.ts` |",
   "| `ORB_APP_ID` | `src/selfhost/orb-collector.ts` |",
   "| `ORB_BROKER_URL` | `src/server.ts` |",
+  "| `ORB_COLLECTOR_INSTANCE_SECRET` | `src/selfhost/orb-collector.ts` |",
   "| `ORB_COLLECTOR_TOKEN` | `src/selfhost/orb-collector.ts` |",
   "| `ORB_COLLECTOR_URL` | `src/selfhost/orb-collector.ts` |",
   "| `ORB_ENROLLMENT_SECRET` | `src/selfhost/orb-collector.ts` |",

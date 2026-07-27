@@ -135,10 +135,41 @@ export async function authenticateSessionToken(env: Env, token: string | undefin
   return { kind: "session", actor: session.login, session };
 }
 
-export function isAuthorizedGitHubSessionLogin(env: Env, login: string): boolean {
+/**
+ * #9126: fleet-operator trust by LOGIN ALONE is a released-handle takeover risk — GitHub lets a login be
+ * renamed or an account be deleted, after which the bare handle can be re-registered by anyone. Configuring
+ * `ADMIN_GITHUB_IDS` binds trust to the session's IMMUTABLE `githubUserId` instead, mirroring the one place
+ * in the codebase that already got this right ({@link isPerTenantAdmin}'s live-permission path, and
+ * `verifyInstallationAdmin` in src/orb/oauth.ts, which binds to the immutable `account_id`). When an id
+ * allowlist is configured it is authoritative — a matching LOGIN with a non-matching (or absent) id is
+ * DENIED, since that is exactly the released-handle-takeover shape this closes. Falls back to login-only
+ * when `ADMIN_GITHUB_IDS` is unset, so an existing self-host deployment that hasn't configured it keeps
+ * working byte-identically.
+ */
+export function isAuthorizedGitHubSessionLogin(env: Env, login: string, githubUserId?: number | null | undefined): boolean {
+  const allowedIds = parseGitHubIdList(env.ADMIN_GITHUB_IDS);
+  if (allowedIds.size > 0) return typeof githubUserId === "number" && allowedIds.has(githubUserId);
   const allowedLogins = parseGitHubLoginList(env.ADMIN_GITHUB_LOGINS);
   if (allowedLogins.size === 0) return false;
   return allowedLogins.has(login.toLowerCase());
+}
+
+/** Parse a numeric GitHub-user-id allowlist env (`ADMIN_GITHUB_IDS`) into a Set. Same whitespace-OR-comma
+ *  convention as {@link parseGitHubLoginList}; a non-numeric or non-finite entry is dropped rather than
+ *  widening the match. */
+export function parseGitHubIdList(value: string | undefined): Set<number> {
+  return new Set(
+    (value ?? "")
+      .split(/[\s,]+/)
+      .map((entry) => entry.trim())
+      // `Number("")` is 0, not NaN -- an unset/blank env var must parse to an EMPTY set (no id "0"), or an
+      // env with no ADMIN_GITHUB_IDS configured at all would wrongly treat id 0 as configured and deny every
+      // real operator whose id is never 0. Drop blanks before the numeric parse, mirroring
+      // parseGitHubLoginList's `.filter(Boolean)` after trim.
+      .filter(Boolean)
+      .map((entry) => Number(entry))
+      .filter((id) => Number.isFinite(id) && Number.isInteger(id)),
+  );
 }
 
 /** #4889 hosted per-repo admin mode. When ON, the global ADMIN_GITHUB_LOGINS allowlist stops granting

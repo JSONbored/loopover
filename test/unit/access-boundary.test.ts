@@ -142,6 +142,21 @@ describe("access boundary: per-repo maintainer data is repo-scoped", () => {
     expect((await app.request(SETTINGS_B, { headers: { cookie: `loopover_session=${token}` } }, env)).status).toBe(200);
   });
 
+  it("#9126: with ADMIN_GITHUB_IDS configured, a RELEASED-AND-RE-REGISTERED operator login is denied end-to-end (the id no longer matches)", async () => {
+    const { app, env } = await setup({ ADMIN_GITHUB_LOGINS: "ops-admin", ADMIN_GITHUB_IDS: "9" });
+    // Someone else now holds the "ops-admin" handle, with a DIFFERENT immutable id.
+    const { token } = await createSessionForGitHubUser(env, { login: "ops-admin", id: 12345 });
+    const res = await app.request(SETTINGS_B, { headers: { cookie: `loopover_session=${token}` } }, env);
+    expect(res.status).toBe(403);
+  });
+
+  it("#9126: with ADMIN_GITHUB_IDS configured, the ORIGINAL operator's id still bypasses per-repo scope even under a renamed login", async () => {
+    const { app, env } = await setup({ ADMIN_GITHUB_LOGINS: "ops-admin", ADMIN_GITHUB_IDS: "9" });
+    const { token } = await createSessionForGitHubUser(env, { login: "ops-admin-renamed", id: 9 });
+    const res = await app.request(SETTINGS_B, { headers: { cookie: `loopover_session=${token}` } }, env);
+    expect(res.status).toBe(200);
+  });
+
   it("a server-to-server token reads settings without per-repo session scope", async () => {
     const { app, env } = await setup();
     const res = await app.request(SETTINGS_A, { headers: { authorization: `Bearer ${env.LOOPOVER_API_TOKEN}` } }, env);

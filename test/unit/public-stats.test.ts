@@ -831,19 +831,43 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
   });
 });
 
-describe("fleetAccuracy.guaranteed (#8835)", () => {
-  it("publishes a live per-arm guarantee from the fleet flags; malformed or absent flags read null (fail-open)", async () => {
+describe("fleetAccuracy.guaranteed (#8835/#9121)", () => {
+  it("publishes a live per-arm guarantee from a REGISTERED instance's orb_risk_control_arms row; malformed, unregistered, or absent rows read null (fail-open)", async () => {
     const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "" });
-    await env.DB.prepare(`INSERT INTO system_flags (key, value) VALUES ('riskcontrol:fleet:close', ?)`)
+    await env.DB.prepare(`INSERT INTO orb_instances (instance_id, registered) VALUES ('inst-a', 1)`).run();
+    await env.DB.prepare(`INSERT INTO orb_risk_control_arms (instance_id, arm, payload_json) VALUES ('inst-a', 'close', ?)`)
       .bind(JSON.stringify({ alpha: 0.015, lambda: 0.94, coverageAtLambda: 0.82, nAtLambda: 240 }))
       .run();
-    await env.DB.prepare(`INSERT INTO system_flags (key, value) VALUES ('riskcontrol:fleet:merge', '{broken')`).run();
+    await env.DB.prepare(`INSERT INTO orb_risk_control_arms (instance_id, arm, payload_json) VALUES ('inst-a', 'merge', '{broken')`).run();
     const out = await getPublicStats(env, NOW);
     expect(out.fleetAccuracy.guaranteed.close).toEqual({ alpha: 0.015, lambda: 0.94, coveragePct: 82, n: 240 });
     expect(out.fleetAccuracy.guaranteed.merge).toBeNull();
-    // A structurally-wrong flag (missing fields) also reads null rather than publishing garbage.
-    await env.DB.prepare(`UPDATE system_flags SET value = '{"alpha":"high"}' WHERE key = 'riskcontrol:fleet:close'`).run();
+    // A structurally-wrong row (missing fields) also reads null rather than publishing garbage.
+    await env.DB.prepare(`UPDATE orb_risk_control_arms SET payload_json = '{"alpha":"high"}' WHERE instance_id = 'inst-a' AND arm = 'close'`).run();
     const again = await getPublicStats(env, NOW);
     expect(again.fleetAccuracy.guaranteed.close).toBeNull();
+  });
+
+  it("#9121: an UNREGISTERED instance's row never publishes (the same open-ingest-can't-plant-a-guarantee invariant, now enforced at read time too)", async () => {
+    const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "" });
+    await env.DB.prepare(`INSERT INTO orb_instances (instance_id, registered) VALUES ('inst-b', 0)`).run();
+    await env.DB.prepare(`INSERT INTO orb_risk_control_arms (instance_id, arm, payload_json) VALUES ('inst-b', 'close', ?)`)
+      .bind(JSON.stringify({ alpha: 0.015, lambda: 0.94, coverageAtLambda: 0.82, nAtLambda: 240 }))
+      .run();
+    const out = await getPublicStats(env, NOW);
+    expect(out.fleetAccuracy.guaranteed.close).toBeNull();
+  });
+
+  it("#9121: aggregates across multiple registered instances, preferring the larger sample size (nAtLambda)", async () => {
+    const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "" });
+    await env.DB.prepare(`INSERT INTO orb_instances (instance_id, registered) VALUES ('small-n', 1), ('big-n', 1)`).run();
+    await env.DB.prepare(`INSERT INTO orb_risk_control_arms (instance_id, arm, payload_json) VALUES ('small-n', 'close', ?)`)
+      .bind(JSON.stringify({ alpha: 0.015, lambda: 0.9, coverageAtLambda: 0.7, nAtLambda: 30 }))
+      .run();
+    await env.DB.prepare(`INSERT INTO orb_risk_control_arms (instance_id, arm, payload_json) VALUES ('big-n', 'close', ?)`)
+      .bind(JSON.stringify({ alpha: 0.015, lambda: 0.97, coverageAtLambda: 0.9, nAtLambda: 5000 }))
+      .run();
+    const out = await getPublicStats(env, NOW);
+    expect(out.fleetAccuracy.guaranteed.close).toEqual({ alpha: 0.015, lambda: 0.97, coveragePct: 90, n: 5000 });
   });
 });

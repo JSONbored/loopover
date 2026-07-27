@@ -39,6 +39,13 @@ async function seedReviewTarget(
 }
 
 // A submitter who FLOODED the project with submissions but landed almost none — the burst anti-abuse pattern.
+// #9131: getSubmitterReputation's aggregate (submissions/merged/closed/manual — what the burst check reads)
+// is now WINDOWED from submitter_outcome_log, not the all-time submitter_stats row, so seeding this
+// submitter's history for a burst-detection test must populate that log with one row per DISTINCT
+// (synthetic) pull_number — a global counter keeps every seeded row's key unique even across multiple
+// seedSubmitter calls in the same test. submitter_stats is also written so the /stats-facing all-time
+// aggregate stays internally consistent with whatever was "seeded", even though nothing under test reads it.
+let seedPullNumberCounter = 900_000;
 async function seedSubmitter(
   env: Env,
   args: { project: string; submitter: string; submissions: number; merged: number; closed: number; manual: number },
@@ -48,6 +55,20 @@ async function seedSubmitter(
   )
     .bind(args.project, args.submitter, args.submissions, args.merged, args.closed, args.manual)
     .run();
+  const rows: Array<"merged" | "closed" | "manual"> = [
+    ...Array(args.merged).fill("merged" as const),
+    ...Array(args.closed).fill("closed" as const),
+    ...Array(args.manual).fill("manual" as const),
+  ];
+  // `submissions` may exceed merged+closed+manual (a caller simulating raw webhook-pass noise pre-#9131);
+  // pad the remainder with "manual" rows so the windowed submissions COUNT(*) still matches what was asked.
+  while (rows.length < args.submissions) rows.push("manual");
+  for (const outcome of rows) {
+    seedPullNumberCounter += 1;
+    await env.DB.prepare("INSERT INTO submitter_outcome_log (project, submitter, pull_number, outcome) VALUES (?, ?, ?, ?)")
+      .bind(args.project, args.submitter, seedPullNumberCounter, outcome)
+      .run();
+  }
 }
 
 function aiEnv(over: Partial<Env> = {}) {
@@ -718,12 +739,56 @@ describe("processGitHubWebhook records the reputation outcome on a terminal PR (
     const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM submitter_stats").first<{ n: number }>();
     expect(row?.n).toBe(0);
   });
+
+  it("#9131: a pull_request_review webhook on a rival's held PR NEVER drives the reputation counter, even though the gate re-runs and would otherwise flag 'manual'", async () => {
+    const { processJob } = await import("../../src/queue/processors");
+    const { upsertRepositorySettings } = await import("../../src/db/repositories");
+    const env = createTestEnv({ LOOPOVER_REVIEW_REPUTATION: "true" });
+    // A held PR: gate ON with a blocking rule, so re-gating this same PR would route to "manual" if reached.
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory" });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { publicSurface: "off", commentMode: "off", checkRunMode: "off" } });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      return new Response("not found", { status: 404 });
+    });
+    const pull_request = {
+      number: 4246,
+      title: "Rival's held PR",
+      state: "open" as const,
+      merged_at: null,
+      user: { login: "rival-author" },
+      head: { sha: "riva1sha" },
+      labels: [],
+      body: "no linked issue at all", // no "Fixes #N" → the linked-issue rule blocks → gate routes to manual
+    };
+    try {
+      // A THIRD PARTY's review comment re-gates the same PR -- must never be read as a submission by
+      // "rival-author".
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "rep-review-comment-no-count",
+        eventName: "pull_request_review_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } },
+          pull_request,
+        },
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM submitter_stats WHERE submitter = 'rival-author'").first<{ n: number }>();
+    expect(row?.n).toBe(0);
+  });
 });
 
 describe("recordReputationOutcome + the 0046 submitter_stats migration", () => {
   it("FLAG-OFF (default): records NOTHING — the table stays empty", async () => {
     const env = createTestEnv({ LOOPOVER_REVIEW_REPUTATION: "false" });
-    await recordReputationOutcome(env, { project: "acme/widgets", submitter: "alice", outcome: "closed" });
+    await recordReputationOutcome(env, { project: "acme/widgets", submitter: "alice", pullNumber: 1, outcome: "closed" });
     // The migration applied (the table exists and is queryable) but nothing was written.
     const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM submitter_stats").first<{ n: number }>();
     expect(row?.n).toBe(0);
@@ -731,8 +796,8 @@ describe("recordReputationOutcome + the 0046 submitter_stats migration", () => {
 
   it("FLAG-ON: records the outcome and a round-trip read reflects the counts (migration applied)", async () => {
     const env = createTestEnv({ LOOPOVER_REVIEW_REPUTATION: "true" });
-    await recordReputationOutcome(env, { project: "acme/widgets", submitter: "alice", outcome: "merged" });
-    await recordReputationOutcome(env, { project: "acme/widgets", submitter: "alice", outcome: "closed" });
+    await recordReputationOutcome(env, { project: "acme/widgets", submitter: "alice", pullNumber: 1, outcome: "merged" });
+    await recordReputationOutcome(env, { project: "acme/widgets", submitter: "alice", pullNumber: 2, outcome: "closed" });
     const stats = await getSubmitterReputation(env, "acme/widgets", "alice");
     expect(stats.submissions).toBe(2);
     expect(stats.merged).toBe(1);
@@ -748,14 +813,17 @@ describe("recordReputationOutcome + the 0046 submitter_stats migration", () => {
           preparedSql = sql;
           return {
             bind: vi.fn(() => ({
-              run: vi.fn(async () => ({})),
+              // #9131: the FIRST prepare (the idempotency-log INSERT OR IGNORE) must report a real change or
+              // recordSubmissionOutcome short-circuits before ever reaching the submitter_stats upsert this
+              // test asserts on -- preparedSql ends up holding whichever prepare ran LAST.
+              run: vi.fn(async () => ({ meta: { changes: 1 } })),
             })),
           };
         }),
       },
     } as unknown as Env;
 
-    await recordSubmissionOutcome(env, "acme/widgets", "alice", "merged");
+    await recordSubmissionOutcome(env, "acme/widgets", "alice", 1, "merged");
 
     expect(preparedSql).toContain("submissions = submitter_stats.submissions + 1");
     expect(preparedSql).toContain("merged = submitter_stats.merged + 1");

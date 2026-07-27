@@ -1607,6 +1607,8 @@ export async function sweepRepoRegate(
       duplicateWinnerEnabled,
       linkedIssueAuthorLogins,
       confirmedNoOpenLinkedIssue,
+      copycatGateMode: settings.copycatGateMode,
+      copycatGateMinScore: settings.copycatGateMinScore,
     });
     const gate = evaluateGateCheck(
       advisory,
@@ -3460,7 +3462,7 @@ async function runAgentMaintenancePlanAndExecute(
     autoMaintain.requireApprovals === 0 ||
     (liveReviewDecision ?? pr.reviewDecision) === "APPROVED";
   const duplicateWinnerEnabled = resolveDuplicateWinnerEnabled(isDuplicateWinnerEnabledGlobally(env), settings.duplicateWinnerMode);
-  const openDuplicateSiblings = linkedIssueDuplicatePullRequestRecordsForGate(pr, otherOpenPullRequests);
+  const openDuplicateSiblings = linkedIssueDuplicatePullRequestRecordsForGate(pr, otherOpenPullRequests, settings.copycatGateMode, settings.copycatGateMinScore);
   // AI-review low-confidence guardrail (#4603): resolved PURELY from this pass's own gate evaluation + settings
   // (no extra network/DB call, unlike migrationCollisionHold/unlinkedIssueMatchHold above) -- undefined unless the
   // gate failed SOLELY on a sub-aiReviewCloseConfidence-floor ai_consensus_defect/ai_review_split finding under
@@ -4089,6 +4091,8 @@ export async function reReviewStoredPullRequest(
     duplicateWinnerEnabled: resolveDuplicateWinnerEnabled(isDuplicateWinnerEnabledGlobally(env), settings.duplicateWinnerMode),
     confirmedNoOpenLinkedIssue,
     linkedIssueAuthorLogins,
+    copycatGateMode: settings.copycatGateMode,
+    copycatGateMinScore: settings.copycatGateMinScore,
   });
   await persistAdvisory(env, advisory);
   // #2537 follow-up (gate-flagged): the durable review cache's only invalidation path is markPullRequestReviewsInvalidated
@@ -6944,6 +6948,8 @@ async function handlePullRequestWebhookEvent(
       duplicateWinnerEnabled: resolveDuplicateWinnerEnabled(isDuplicateWinnerEnabledGlobally(env), settings.duplicateWinnerMode),
       confirmedNoOpenLinkedIssue,
       linkedIssueAuthorLogins,
+      copycatGateMode: settings.copycatGateMode,
+      copycatGateMinScore: settings.copycatGateMinScore,
     });
     await persistAdvisory(env, advisory);
     // Auto-project/milestone matching (#3183): independent of the gate/disposition entirely -- a missed or
@@ -10237,6 +10243,8 @@ async function maybePublishPrPublicSurface(
     const linkedDuplicatePrsForGate = linkedIssueDuplicatePullRequestRecordsForGate(
       pr,
       otherOpenPullRequests,
+      settings.copycatGateMode,
+      settings.copycatGateMinScore,
     );
     const duplicateWinnerEnabled = resolveDuplicateWinnerEnabled(isDuplicateWinnerEnabledGlobally(env), settings.duplicateWinnerMode);
     const isDupWinner =
@@ -14294,6 +14302,8 @@ export async function buildAuthorizedPrActionAdvisory(
     duplicateWinnerEnabled: resolveDuplicateWinnerEnabled(isDuplicateWinnerEnabledGlobally(env), settings.duplicateWinnerMode),
     confirmedNoOpenLinkedIssue,
     linkedIssueAuthorLogins,
+    copycatGateMode: settings.copycatGateMode,
+    copycatGateMinScore: settings.copycatGateMinScore,
   });
   return { repo, advisory, otherOpenPullRequests };
 }

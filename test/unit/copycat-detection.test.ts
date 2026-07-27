@@ -136,6 +136,39 @@ describe("runCopycatAssessment", () => {
     expect(result.matches.map((m) => m.pullNumber)).toEqual([7]);
   });
 
+  // #9033: within a bounded merged-candidate budget, the STRONGEST path-overlap signal is chosen over the most
+  // recent one -- a candidate with more shared changed-file paths is a better prior-art guess than a candidate
+  // that merely happens to be newer.
+  it("prioritizes recently-merged candidates by changed-file OVERLAP COUNT, not mere recency, within the bounded budget (#9033)", async () => {
+    const env = createTestEnv();
+    // Shrink the remaining merged-candidate budget to 2 by filling the open-sibling slice with
+    // MAX_COPYCAT_CANDIDATES - 2 unseeded open PRs (no content -- listPullRequestFiles returns [] for them).
+    const openSiblings = Array.from({ length: MAX_COPYCAT_CANDIDATES - 2 }, (_, i) => openSibling(i + 1, "2026-06-01T00:00:00Z"));
+
+    // #500: single-path overlap, but MOST RECENT (mergedAt latest).
+    await upsertRecentMergedPullRequest(env, recentMerged(500, "2026-06-04T00:00:00Z", ["src/a.ts"]));
+    await upsertPullRequestFile(env, file(500, "src/a.ts", "+recent single-overlap content"));
+    // #501: two-path overlap, but OLDER than #500 -- must still win a budget slot over #500 on overlap count.
+    await upsertRecentMergedPullRequest(env, recentMerged(501, "2026-06-01T00:00:00Z", ["src/a.ts", "src/b.ts"]));
+    await upsertPullRequestFile(env, file(501, "src/a.ts", "+older double-overlap content a"));
+    // #502: single-path overlap, OLDEST -- should lose its budget slot to #501's stronger overlap signal.
+    await upsertRecentMergedPullRequest(env, recentMerged(502, "2026-05-30T00:00:00Z", ["src/a.ts"]));
+    await upsertPullRequestFile(env, file(502, "src/a.ts", "+oldest single-overlap content"));
+
+    const result = await runCopycatAssessment(env, {
+      repoFullName: REPO,
+      pr: { number: 100, createdAt: "2026-06-05T00:00:00Z" },
+      files: [file(100, "src/a.ts", "some content"), file(100, "src/b.ts", "some other content")],
+      otherOpenPullRequests: openSiblings,
+      mode: "block",
+      minScore: null,
+    });
+    // #501 (2-path overlap) and #500 (1-path, most recent) fill the 2 merged-candidate slots; #502 (1-path,
+    // oldest, weakest overlap) loses out and is never even fetched/scored.
+    const mergedMatchNumbers = result.matches.map((m) => m.pullNumber).filter((n) => n >= 500);
+    expect(mergedMatchNumbers.sort((a, b) => a - b)).toEqual([500, 501]);
+  });
+
   it("never acts when the only candidate is the earlier (victim) submission's own later, independent PR — direction excludes it", async () => {
     const env = createTestEnv();
     const sourceLines = "+function add(a, b) {\n+const total = a + b;\n+logger.debug(total);\n+return total;\n+}\n+export default add;";

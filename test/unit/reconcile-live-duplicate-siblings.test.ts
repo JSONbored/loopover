@@ -16,6 +16,10 @@ function makePr(number: number, state: string, linkedIssues: number[]): PullRequ
   return { repoFullName: "owner/repo", number, title: `PR ${number}`, state, labels: [], linkedIssues };
 }
 
+function makeCopycatPr(number: number, state: string, linkedIssues: number[], copycatMatchedPullNumber: number, copycatScore = 95): PullRequestRecord {
+  return { ...makePr(number, state, linkedIssues), copycatScore, copycatMatchedPullNumber };
+}
+
 // "inherit" (no per-repo override) preserves every existing test's semantics below unchanged -- the flag alone
 // governs, exactly as before duplicateWinnerMode existed.
 const settings = { duplicateWinnerMode: undefined };
@@ -200,5 +204,54 @@ describe("reconcileLiveDuplicateSiblings (#dup-winner / audit #15)", () => {
     expect(result.map((p) => p.number)).toEqual(siblings.map((p) => p.number));
     expect(maxInFlight).toBeLessThanOrEqual(10);
     expect(maxInFlight).toBeGreaterThan(1);
+  });
+
+  // #9033: a copycat-content-matched sibling (a DIFFERENT linked issue, or none at all) must go through the SAME
+  // live staleness reconciliation as a linked-issue-overlapping sibling, or a stale-cached-open copycat match
+  // could demote the true earliest claimant just like an un-reconciled linked-issue sibling could.
+  describe("copycat-matched siblings (#9033)", () => {
+    it("flag ON, no linked issues but a copycat-matched sibling LIVE-closed ⇒ dropped", async () => {
+      const env = createTestEnv();
+      env.LOOPOVER_DUPLICATE_WINNER = "true";
+      stubLiveStates({ 12: "closed" });
+      const siblings = [makePr(12, "open", [999])]; // different linked issue -- would never overlap on its own
+      const pr = makeCopycatPr(9, "open", [], 12);
+      const result = await reconcileLiveDuplicateSiblings(env, null, "owner/repo", pr, siblings, { ...settings, copycatGateMode: "warn", copycatGateMinScore: 85 });
+      expect(result.map((p) => p.number)).toEqual([]);
+    });
+
+    it("flag ON, a copycat-matched sibling LIVE-open ⇒ kept", async () => {
+      const env = createTestEnv();
+      env.LOOPOVER_DUPLICATE_WINNER = "true";
+      stubLiveStates({ 12: "open" });
+      const siblings = [makePr(12, "open", [999])];
+      const pr = makeCopycatPr(9, "open", [], 12);
+      const result = await reconcileLiveDuplicateSiblings(env, null, "owner/repo", pr, siblings, { ...settings, copycatGateMode: "warn", copycatGateMinScore: 85 });
+      expect(result.map((p) => p.number)).toEqual([12]);
+    });
+
+    it("copycatGateMode off ⇒ the copycat match is never considered, even with a high score", async () => {
+      const env = createTestEnv();
+      env.LOOPOVER_DUPLICATE_WINNER = "true";
+      vi.stubGlobal("fetch", async () => {
+        throw new Error("fetch must not be called -- no linked-issue overlap and copycat mode is off");
+      });
+      const siblings = [makePr(12, "open", [999])];
+      const pr = makeCopycatPr(9, "open", [], 12);
+      const result = await reconcileLiveDuplicateSiblings(env, null, "owner/repo", pr, siblings, { ...settings, copycatGateMode: "off", copycatGateMinScore: 85 });
+      expect(result).toBe(siblings);
+    });
+
+    it("a copycat score below the resolved threshold ⇒ unchanged (not a cluster member)", async () => {
+      const env = createTestEnv();
+      env.LOOPOVER_DUPLICATE_WINNER = "true";
+      vi.stubGlobal("fetch", async () => {
+        throw new Error("fetch must not be called -- score is below threshold");
+      });
+      const siblings = [makePr(12, "open", [999])];
+      const pr = makeCopycatPr(9, "open", [], 12, 40);
+      const result = await reconcileLiveDuplicateSiblings(env, null, "owner/repo", pr, siblings, { ...settings, copycatGateMode: "warn", copycatGateMinScore: 85 });
+      expect(result).toBe(siblings);
+    });
   });
 });

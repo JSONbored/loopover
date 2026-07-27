@@ -9,9 +9,10 @@
 import { createInstallationToken } from "../github/app";
 import { fetchLivePullRequestState } from "../github/backfill";
 import { githubRateLimitAdmissionKeyForToken } from "../github/client";
+import { resolveCopycatDuplicateSibling } from "../signals/copycat-duplicate";
 import { isDuplicateClusterWinnerByClaim, resolveDuplicateClusterWinnerNumber } from "../signals/duplicate-winner";
 import { isDuplicateWinnerEnabledGlobally, resolveDuplicateWinnerEnabled } from "../settings/duplicate-winner-mode";
-import type { PullRequestRecord, RepositorySettings } from "../types";
+import type { CopycatGateMode, PullRequestRecord, RepositorySettings } from "../types";
 import { mapWithConcurrency } from "./map-with-concurrency";
 
 /** Same order of magnitude as processors.ts's other per-item live GitHub fan-outs (#5835). */
@@ -71,7 +72,16 @@ export function dupWinnerLinkedDuplicateWinnerNumber(
  *
  * FAIL-OPEN to the stored state: a sibling is dropped ONLY on a positive "not open" confirmation — an unreadable
  * live fetch keeps it, so a transient GitHub hiccup never newly spares a real loser. Flag-OFF (default), no
- * linked issues, or no overlapping sibling ⇒ returns the input unchanged with no extra API calls.
+ * linked issues (and no copycat-matched sibling, #9033), or no overlapping sibling ⇒ returns the input unchanged
+ * with no extra API calls.
+ *
+ * #9033: the overlapping-sibling set is no longer linked-issue overlap ALONE. `pr`'s own persisted copycat
+ * containment match ({@link resolveCopycatDuplicateSibling}) — when the effective `copycatGateMode` would act on
+ * it — names an OPEN sibling whose added code this PR's content is contained in, even when the two PRs cite
+ * DIFFERENT linked issues. That sibling is a live "two competing submissions for the same work" race exactly
+ * like a same-linked-issue overlap, so it must go through the SAME staleness reconciliation before winner
+ * election runs, or a stale-cached-open copycat match could demote the true earliest claimant just like an
+ * un-reconciled linked-issue sibling could (the bug this function exists to prevent in the first place).
  */
 export async function reconcileLiveDuplicateSiblings(
   env: Env,
@@ -79,15 +89,16 @@ export async function reconcileLiveDuplicateSiblings(
   repoFullName: string,
   pr: PullRequestRecord,
   otherOpenPullRequests: PullRequestRecord[],
-  settings: Pick<RepositorySettings, "duplicateWinnerMode">,
+  settings: Pick<RepositorySettings, "duplicateWinnerMode" | "copycatGateMode" | "copycatGateMinScore">,
 ): Promise<PullRequestRecord[]> {
   if (!resolveDuplicateWinnerEnabled(isDuplicateWinnerEnabledGlobally(env), settings.duplicateWinnerMode)) return otherOpenPullRequests;
   const linkedIssues = new Set(pr.linkedIssues);
-  if (linkedIssues.size === 0) return otherOpenPullRequests;
+  const copycatSibling = resolveCopycatDuplicateSibling(pr, otherOpenPullRequests, settings.copycatGateMode, settings.copycatGateMinScore);
+  if (linkedIssues.size === 0 && copycatSibling === undefined) return otherOpenPullRequests;
   const overlapping = otherOpenPullRequests.filter(
     (other) =>
       other.state === "open" &&
-      other.linkedIssues.some((issue) => linkedIssues.has(issue)),
+      (other.linkedIssues.some((issue) => linkedIssues.has(issue)) || other.number === copycatSibling?.number),
   );
   if (overlapping.length === 0) return otherOpenPullRequests;
   const installationToken =
@@ -126,21 +137,44 @@ export async function reconcileLiveDuplicateSiblings(
 export function linkedIssueDuplicatePullRequestsForGate(
   pr: PullRequestRecord,
   pullRequests: PullRequestRecord[],
+  copycatGateMode?: CopycatGateMode | null | undefined,
+  copycatGateMinScore?: number | null | undefined,
 ): number[] {
-  return linkedIssueDuplicatePullRequestRecordsForGate(pr, pullRequests).map((otherPr) => otherPr.number);
+  return linkedIssueDuplicatePullRequestRecordsForGate(pr, pullRequests, copycatGateMode, copycatGateMinScore).map((otherPr) => otherPr.number);
 }
 
+/**
+ * #9033: this set is no longer linked-issue overlap ALONE. A sibling that `pr`'s own persisted copycat
+ * containment assessment names ({@link resolveCopycatDuplicateSibling}) — when the effective `copycatGateMode`
+ * would act on it — is added too, even when the two PRs cite DIFFERENT linked issues: a cross-issue content match
+ * is the SAME "these are the same work, only one should merge" signal a shared linked issue is, so it must feed
+ * the identical winner-election / close-count / related-work consumers of this function, not a parallel,
+ * disconnected mechanism. `copycatGateMode`/`copycatGateMinScore` default to `undefined` (⇒ never contributes a
+ * copycat sibling) so every pre-#9033 caller that doesn't pass them stays byte-identical.
+ */
 export function linkedIssueDuplicatePullRequestRecordsForGate(
   pr: PullRequestRecord,
   pullRequests: PullRequestRecord[],
+  copycatGateMode?: CopycatGateMode | null | undefined,
+  copycatGateMinScore?: number | null | undefined,
 ): PullRequestRecord[] {
   const linkedIssues = new Set(pr.linkedIssues);
-  if (linkedIssues.size === 0) return [];
+  // Only an OPEN candidate can be a duplicate-cluster sibling (mirrors the flatMap's own `state !== "open"`
+  // skip below) -- resolveCopycatDuplicateSibling's documented contract is "scoped to open siblings only".
+  const copycatSibling = resolveCopycatDuplicateSibling(
+    pr,
+    pullRequests.filter((otherPr) => otherPr.state === "open"),
+    copycatGateMode,
+    copycatGateMinScore,
+  );
+  if (linkedIssues.size === 0 && copycatSibling === undefined) return [];
   return [
     ...new Map(
       pullRequests.flatMap((otherPr) => {
         if (otherPr.number === pr.number || otherPr.state !== "open") return [];
-        return otherPr.linkedIssues.some((issue) => linkedIssues.has(issue)) ? [[otherPr.number, otherPr] as const] : [];
+        const isLinkedIssueOverlap = otherPr.linkedIssues.some((issue) => linkedIssues.has(issue));
+        const isCopycatSibling = copycatSibling !== undefined && otherPr.number === copycatSibling.number;
+        return isLinkedIssueOverlap || isCopycatSibling ? [[otherPr.number, otherPr] as const] : [];
       }),
     ).values(),
   ].sort((left, right) => left.number - right.number);

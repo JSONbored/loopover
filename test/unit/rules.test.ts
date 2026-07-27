@@ -1617,6 +1617,33 @@ describe("advisory rules", () => {
     }
   });
 
+  it("flags Missing test evidence for module-variant/JVM source via isCodePath + isCodeFile parity (#9322)", () => {
+    // Regression: isCodeFile/SOURCE_FILE_EXTENSION already admitted .mts/.cts/.mjs/.cjs and .kts/.scala/.groovy,
+    // but advisory.ts isCodePath lagged, so buildCheckRunAnnotations filtered those files out of annotatableFiles
+    // before missing_tests ran — a PR touching only those extensions was wrongly treated as non-code.
+    const advisory = buildPullRequestAdvisory(repo, {
+      repoFullName: repo.fullName, number: 26, title: "Add ESM/JVM source without tests", state: "open",
+      authorLogin: "contributor", authorAssociation: "NONE", labels: [], linkedIssues: [],
+    });
+    const sourcePaths = [
+      "src/loader.mts", "src/loader.cts", "src/loader.mjs", "src/loader.cjs",
+      "build.kts", "src/main/Widget.scala", "src/main/Task.groovy",
+    ];
+    const files: PullRequestFileRecord[] = sourcePaths.map((path) => ({
+      repoFullName: repo.fullName, pullNumber: 26, path, additions: 11, deletions: 0, changes: 11, payload: {},
+    }));
+    const collisions: CollisionReport = {
+      repoFullName: repo.fullName, generatedAt: "2026-06-10T00:00:00.000Z",
+      summary: { clusterCount: 0, highRiskCount: 0, itemsReviewed: 0 }, clusters: [],
+    };
+
+    const { annotations } = buildCheckRunAnnotations(advisory, { files, collisions, pullNumber: 26 }, "standard");
+
+    for (const path of sourcePaths) {
+      expect(annotations.some((entry) => entry.title === "Missing test evidence" && entry.path === path)).toBe(true);
+    }
+  });
+
   it("flags Missing test evidence for Dart source via isCodePath + isCodeFile parity", () => {
     const advisory = buildPullRequestAdvisory(repo, {
       repoFullName: repo.fullName, number: 25, title: "Add Dart widget without tests", state: "open",

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../src/api/routes";
+import { issueOrbEnrollment, revokeAllLiveEnrollmentsForInstallation } from "../../src/orb/broker";
 import { createTestEnv, type TestD1Database } from "../helpers/d1";
 
 async function pkcs8Pem(): Promise<string> {
@@ -32,6 +33,30 @@ describe("Central Orb installation registry routes (/v1/internal/orb/installatio
 
   it("401 without the internal token", async () => {
     expect((await app.request("/v1/internal/orb/installations", {}, createTestEnv())).status).toBe(401);
+  });
+
+  it("#9149: surfaces liveEnrollmentCount per installation, reflecting a revoke and untouched by ANOTHER installation's enrollments", async () => {
+    const env = createTestEnv({ ORB_BROKER_ENABLED: "true" });
+    await seed(env, 102, 1);
+    await seed(env, 103, 1);
+    await issueOrbEnrollment(env, 102);
+    await issueOrbEnrollment(env, 102);
+    await issueOrbEnrollment(env, 103);
+    const before = (await (await app.request("/v1/internal/orb/installations", { headers: auth }, env)).json()) as { installations: Array<{ installationId: number; liveEnrollmentCount: number }> };
+    expect(before.installations.find((i) => i.installationId === 102)?.liveEnrollmentCount).toBe(2);
+    expect(before.installations.find((i) => i.installationId === 103)?.liveEnrollmentCount).toBe(1);
+
+    await revokeAllLiveEnrollmentsForInstallation(env, 102);
+    const after = (await (await app.request("/v1/internal/orb/installations", { headers: auth }, env)).json()) as { installations: Array<{ installationId: number; liveEnrollmentCount: number }> };
+    expect(after.installations.find((i) => i.installationId === 102)?.liveEnrollmentCount).toBe(0);
+    expect(after.installations.find((i) => i.installationId === 103)?.liveEnrollmentCount).toBe(1); // unaffected by the OTHER install's revoke
+  });
+
+  it("reports liveEnrollmentCount 0 for an installation with no enrollments at all", async () => {
+    const env = createTestEnv();
+    await seed(env, 104);
+    const res = (await (await app.request("/v1/internal/orb/installations", { headers: auth }, env)).json()) as { installations: Array<{ installationId: number; liveEnrollmentCount: number }> };
+    expect(res.installations.find((i) => i.installationId === 104)?.liveEnrollmentCount).toBe(0);
   });
 
   it("registers an installation, then unregisters it", async () => {

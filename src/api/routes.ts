@@ -166,6 +166,7 @@ import {
   isOrbBrokerEnabled,
   issueOrbEnrollment,
   issueOrbStoredSecret,
+  ORB_SECRET_TYPE_GITHUB_TOKEN,
   ORB_SECRET_TYPE_TENANT_DB_CREDENTIAL,
   revokeOrbEnrollment,
 } from "../orb/broker";
@@ -4579,15 +4580,22 @@ export function createApp() {
   // records lands at registered=0; only REGISTERED ones count toward the global public counter (getOrbGlobalStats)
   // and are eligible for token brokering. Bearer-gated by the `/v1/internal/*` middleware (INTERNAL_JOB_TOKEN). The
   // list shows pending + registered installs so an operator knows what they're opting in.
+  //
+  // liveEnrollmentCount (#9149): how many enrollment secrets are currently live ('enrolled', not revoked) for
+  // this install — an operator previously had no way to see that a re-enrollment (issueOrbEnrollment was a bare
+  // INSERT, never revoking) had accumulated a second standing credential. A correlated subquery rather than a
+  // JOIN: each installation has at most a handful of enrollment rows, so this stays cheap without reshaping the
+  // one-row-per-installation result set a GROUP BY would require.
   app.get("/v1/internal/orb/installations", async (c) => {
     const rows = await c.env.DB
       .prepare(
         `SELECT installation_id AS installationId, account_login AS accountLogin, account_type AS accountType,
                 repository_selection AS repositorySelection, registered, suspended_at AS suspendedAt,
-                removed_at AS removedAt, first_seen_at AS firstSeenAt, last_event_at AS lastEventAt
+                removed_at AS removedAt, first_seen_at AS firstSeenAt, last_event_at AS lastEventAt,
+                (SELECT COUNT(*) FROM orb_enrollments oe WHERE oe.installation_id = orb_github_installations.installation_id AND oe.state = 'enrolled' AND oe.revoked_at IS NULL) AS liveEnrollmentCount
          FROM orb_github_installations ORDER BY last_event_at DESC`,
       )
-      .all<{ installationId: number; accountLogin: string | null; accountType: string | null; repositorySelection: string | null; registered: number; suspendedAt: string | null; removedAt: string | null; firstSeenAt: string; lastEventAt: string }>();
+      .all<{ installationId: number; accountLogin: string | null; accountType: string | null; repositorySelection: string | null; registered: number; suspendedAt: string | null; removedAt: string | null; firstSeenAt: string; lastEventAt: string; liveEnrollmentCount: number }>();
     return c.json({ installations: (rows.results ?? []).map((r) => ({ ...r, registered: r.registered === 1 })) });
   });
 
@@ -4623,9 +4631,15 @@ export function createApp() {
   // secret issuance path control-plane's hosted provisioning core (#7180/#8066) calls instead, for a credential
   // that already exists (a tenant's Postgres connection string) rather than a GitHub installation to bind.
   // `installationId` is irrelevant to that path (see issueOrbStoredSecret's own header comment for why).
+  //
+  // Also accepts an optional `{ rotate: true }` (#9149): when set, every PRIOR live enrollment for this
+  // installation is revoked before the new one is minted, mirroring the OAuth landing page's `state=<id>:rotate`
+  // flow (oauth.ts) for the operator-issued path. Defaults to false (append, not replace) -- unchanged behavior
+  // for every existing caller, since a blue/green container swap legitimately relies on two live enrollments
+  // briefly overlapping (see #9150's sibling fix, which makes that overlap safe rather than assuming away).
   app.post("/v1/internal/orb/enrollments", async (c) => {
     if (!isOrbBrokerEnabled(c.env)) return c.json({ error: "not_found" }, 404);
-    const payload = (await c.req.json().catch(() => null)) as { installationId?: unknown; secretType?: unknown; secretValue?: unknown } | null;
+    const payload = (await c.req.json().catch(() => null)) as { installationId?: unknown; secretType?: unknown; secretValue?: unknown; rotate?: unknown } | null;
     if (payload?.secretType === ORB_SECRET_TYPE_TENANT_DB_CREDENTIAL) {
       const secretValue = typeof payload.secretValue === "string" ? payload.secretValue : "";
       const result = await issueOrbStoredSecret(c.env, ORB_SECRET_TYPE_TENANT_DB_CREDENTIAL, secretValue);
@@ -4634,7 +4648,7 @@ export function createApp() {
     }
     const installationId = Number(payload?.installationId);
     if (!Number.isInteger(installationId) || installationId <= 0) return c.json({ error: "installationId required" }, 400);
-    const result = await issueOrbEnrollment(c.env, installationId);
+    const result = await issueOrbEnrollment(c.env, installationId, undefined, ORB_SECRET_TYPE_GITHUB_TOKEN, { rotate: payload?.rotate === true });
     if ("error" in result) return c.json(result, result.error === "installation_not_found" ? 404 : 409);
     return c.json(result); // { enrollId, secret } — secret shown exactly once
   });

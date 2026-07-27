@@ -53,16 +53,26 @@ export type IssueResult = { enrollId: string; secret: string } | { error: "insta
  *  hashed). Issued by the operator (internal endpoint) OR by a maintainer who proved install-admin via OAuth —
  *  in the latter case the maintainer's GitHub identity is recorded for audit. installation_id is bound here and
  *  read back (never from the request) at token-exchange time, so a secret can never mint a token for another
- *  install. `secretType` defaults to the only mintable type today; every existing caller is unaffected. */
+ *  install. `secretType` defaults to the only mintable type today; every existing caller is unaffected.
+ *
+ *  `opts.rotate` (#9149): this was previously a bare INSERT, so re-running the enrollment flow (e.g. after a
+ *  secret leak) minted a SECOND simultaneously-valid secret and revoked nothing — the leaked one kept working
+ *  forever. Deliberately NOT the default: a blue/green container swap or a deliberate multi-container setup
+ *  legitimately relies on two live enrollments overlapping for a short window (see #9150's sibling fix, which
+ *  makes that overlap safe rather than assuming it can't happen) — auto-revoking on every issuance would break
+ *  that. `rotate: true` is the caller's explicit "I want this to be the only valid secret now" confirmation
+ *  (the OAuth landing page's `?rotate=1`/`state=<id>:rotate` flow, oauth.ts). */
 export async function issueOrbEnrollment(
   env: Env,
   installationId: number,
   maintainer?: { login: string; githubId?: number | null | undefined },
   secretType: string = ORB_SECRET_TYPE_GITHUB_TOKEN,
+  opts: { rotate?: boolean } = {},
 ): Promise<IssueResult> {
   const install = await env.DB.prepare("SELECT registered FROM orb_github_installations WHERE installation_id = ?").bind(installationId).first<{ registered: number }>();
   if (!install) return { error: "installation_not_found" };
   if (install.registered !== 1) return { error: "installation_not_registered" };
+  if (opts.rotate === true) await revokeAllLiveEnrollmentsForInstallation(env, installationId);
   const enrollId = createOpaqueToken("orbenr");
   const secret = createOpaqueToken("orbsec");
   await env.DB.prepare(
@@ -72,6 +82,28 @@ export async function issueOrbEnrollment(
     .bind(enrollId, installationId, maintainer?.login ?? null, maintainer?.githubId ?? null, await hashToken(secret), secretType)
     .run();
   return { enrollId, secret };
+}
+
+/** Revokes every currently-live ('enrolled', not yet revoked) enrollment for an installation, regardless of
+ *  secret_type — the self-hoster-reachable counterpart to the single-enrollment {@link revokeOrbEnrollment}
+ *  (#9149). Returns the count actually revoked (0 is a valid, non-error result: an install with no live
+ *  enrollment is not a failure, it's just already in the state the caller wanted). Deliberately does NOT gate
+ *  on `registered`/`suspended_at`/`removed_at` the way issuance does — revoking access should work EVEN ON an
+ *  installation the operator has since disabled or suspended, since a maintainer revoking a leaked secret has
+ *  no reason to be blocked by an unrelated administrative state. */
+export async function revokeAllLiveEnrollmentsForInstallation(env: Env, installationId: number): Promise<number> {
+  const result = await env.DB.prepare("UPDATE orb_enrollments SET revoked_at = CURRENT_TIMESTAMP, state = 'revoked' WHERE installation_id = ? AND state = 'enrolled' AND revoked_at IS NULL")
+    .bind(installationId)
+    .run();
+  return result.meta.changes;
+}
+
+/** How many enrollments are currently live ('enrolled', not revoked) for an installation (#9149) — the count
+ *  surfaced to an operator (the internal installations list) and to a maintainer (the OAuth secret page) so
+ *  neither has to guess whether a re-enrollment minted an extra standing credential. */
+export async function countLiveEnrollmentsForInstallation(env: Env, installationId: number): Promise<number> {
+  const row = await env.DB.prepare("SELECT COUNT(*) AS c FROM orb_enrollments WHERE installation_id = ? AND state = 'enrolled' AND revoked_at IS NULL").bind(installationId).first<{ c: number }>();
+  return row?.c ?? 0;
 }
 
 export type IssueStoredSecretResult = IssueResult | { error: "secret_value_required" | "encryption_unavailable" };

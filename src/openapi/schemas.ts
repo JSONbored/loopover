@@ -3243,3 +3243,181 @@ export const McpCompatibilitySchema = z
     generatedAt: z.string(),
   })
   .openapi("McpCompatibility");
+
+// #9308: request/response bodies for the eight deterministic advisory-check routes under /v1/lint/* and
+// /v1/validate/focus-manifest. Each mirrors the top-level keys of the corresponding MCP tool
+// inputSchema/outputSchema in src/mcp/server.ts (the source of truth), matching the #9309 loop-route pattern
+// above. Deeply nested / opaque payloads are left as `unknown` (the routes pass caller-supplied structures
+// through or the tool composes them), exactly as the #9309 schemas do for their opaque fields.
+
+const ChangedFileSchema = z.object({
+  path: z.string(),
+  additions: z.number().int().optional(),
+  deletions: z.number().int().optional(),
+});
+
+/** Request body for POST /v1/lint/pr-text — parity with `lintPrTextShape` (loopover_lint_pr_text). */
+export const LintPrTextRequestSchema = z
+  .object({
+    commitMessages: z.array(z.string()).optional(),
+    prBody: z.string().optional(),
+    linkedIssue: z.number().int().positive().optional(),
+  })
+  .openapi("LintPrTextRequest");
+
+/** Response body for POST /v1/lint/pr-text — parity with `lintPrTextOutputSchema`. */
+export const LintPrTextResponseSchema = z
+  .object({
+    verdict: z.string().optional(),
+    score: z.number().optional(),
+    components: z.unknown().optional(),
+    fixes: z.unknown().optional(),
+    summary: z.string().optional(),
+    generatedAt: z.string().optional(),
+  })
+  .openapi("LintPrTextResponse");
+
+/** Request body for POST /v1/lint/slop-risk — parity with `checkSlopRiskShape` (loopover_check_slop_risk). */
+export const CheckSlopRiskRequestSchema = z
+  .object({
+    changedFiles: z.array(ChangedFileSchema),
+    description: z.string().optional(),
+    tests: z.array(z.string()).optional(),
+    testFiles: z.array(z.string()).optional(),
+    commitMessages: z.array(z.string()).optional(),
+    hasLinkedIssue: z.boolean().optional(),
+    issueDiscoveryLane: z.boolean().optional(),
+  })
+  .openapi("CheckSlopRiskRequest");
+
+/** Response body for POST /v1/lint/slop-risk — parity with `checkSlopRiskOutputSchema`. */
+export const CheckSlopRiskResponseSchema = z
+  .object({
+    slopRisk: z.number().optional(),
+    band: z.enum(["clean", "low", "elevated", "high"]).optional(),
+    findings: z.unknown().optional(),
+    rubric: z.string().optional(),
+  })
+  .openapi("CheckSlopRiskResponse");
+
+/** Request body for POST /v1/lint/improvement-potential — parity with `checkImprovementPotentialShape`. */
+export const CheckImprovementPotentialRequestSchema = z
+  .object({
+    changedFiles: z.array(ChangedFileSchema).optional(),
+    tests: z.array(z.string()).optional(),
+    testFiles: z.array(z.string()).optional(),
+    patchCoverageDeltaPercent: z.number().optional(),
+    complexityDeltas: z.array(z.unknown()).optional(),
+    duplicationDeltas: z.array(z.unknown()).optional(),
+  })
+  .openapi("CheckImprovementPotentialRequest");
+
+/** Response body for POST /v1/lint/improvement-potential — parity with `checkImprovementPotentialOutputSchema`. */
+export const CheckImprovementPotentialResponseSchema = z
+  .object({
+    improvementScore: z.number().optional(),
+    band: z.enum(["insufficient-signal", "none", "minor", "moderate", "significant"]).optional(),
+    findings: z.unknown().optional(),
+  })
+  .openapi("CheckImprovementPotentialResponse");
+
+/** Request body for POST /v1/lint/open-pr-pressure — parity with `simulateOpenPrPressureShape`. */
+export const SimulateOpenPrPressureRequestSchema = z
+  .object({
+    repoFullName: z.string(),
+    generatedAt: z.string(),
+    queueHealth: z.unknown(),
+    roleContext: z.object({ maintainerLane: z.boolean() }),
+    contributorOpenPrCount: z.number().int().optional(),
+  })
+  .openapi("SimulateOpenPrPressureRequest");
+
+/** Response body for POST /v1/lint/open-pr-pressure — parity with `simulateOpenPrPressureOutputSchema`. */
+export const SimulateOpenPrPressureResponseSchema = z
+  .object({
+    repoFullName: z.string().optional(),
+    generatedAt: z.string().optional(),
+    lane: z.string().optional(),
+    queuePressure: z.string().optional(),
+    recommendedOption: z.string().optional(),
+    scenarios: z.array(z.unknown()).optional(),
+    summary: z.string().optional(),
+  })
+  .openapi("SimulateOpenPrPressureResponse");
+
+/** Request body for POST /v1/lint/boundary-tests — parity with `suggestBoundaryTestsShape`. */
+export const SuggestBoundaryTestsRequestSchema = z
+  .object({
+    changedFiles: z.array(z.object({ path: z.string() })),
+    boundaryTouches: z.array(z.unknown()).optional(),
+    tests: z.array(z.string()).optional(),
+    testFiles: z.array(z.string()).optional(),
+  })
+  .openapi("SuggestBoundaryTestsRequest");
+
+/** Response body for POST /v1/lint/boundary-tests — parity with `suggestBoundaryTestsOutputSchema`. */
+export const SuggestBoundaryTestsResponseSchema = z
+  .object({
+    finding: z.unknown().optional(),
+    spec: z.unknown().optional(),
+  })
+  .openapi("SuggestBoundaryTestsResponse");
+
+/** Request body for POST /v1/lint/test-evidence — parity with `checkTestEvidenceShape`. */
+export const CheckTestEvidenceRequestSchema = z
+  .object({
+    changedPaths: z.array(z.string()),
+    testFiles: z.array(z.string()).optional(),
+    tests: z.array(z.string()).optional(),
+  })
+  .openapi("CheckTestEvidenceRequest");
+
+/** Response body for POST /v1/lint/test-evidence — parity with `checkTestEvidenceOutputSchema`. */
+export const CheckTestEvidenceResponseSchema = z
+  .object({
+    classification: z.enum(["strong", "adequate", "weak", "absent"]).optional(),
+    changedFileCount: z.number().optional(),
+    codeFileCount: z.number().optional(),
+    testFileCount: z.number().optional(),
+    guidance: z.array(z.string()).optional(),
+  })
+  .openapi("CheckTestEvidenceResponse");
+
+/** Request body for POST /v1/lint/issue-slop — parity with `checkIssueSlopShape` (loopover_check_issue_slop). */
+export const CheckIssueSlopRequestSchema = z
+  .object({
+    title: z.string().optional(),
+    body: z.string().optional(),
+  })
+  .openapi("CheckIssueSlopRequest");
+
+/**
+ * Response body for POST /v1/lint/issue-slop — parity with `checkIssueSlopOutputSchema`, which is an alias of
+ * `checkSlopRiskOutputSchema` in src/mcp/server.ts, so the keys match CheckSlopRiskResponse.
+ */
+export const CheckIssueSlopResponseSchema = z
+  .object({
+    slopRisk: z.number().optional(),
+    band: z.enum(["clean", "low", "elevated", "high"]).optional(),
+    findings: z.unknown().optional(),
+    rubric: z.string().optional(),
+  })
+  .openapi("CheckIssueSlopResponse");
+
+/** Request body for POST /v1/validate/focus-manifest — parity with `validateConfigShape` (loopover_validate_config). */
+export const ValidateFocusManifestRequestSchema = z
+  .object({
+    content: z.string(),
+    source: z.enum(["repo_file", "api_record", "none"]).optional(),
+  })
+  .openapi("ValidateFocusManifestRequest");
+
+/** Response body for POST /v1/validate/focus-manifest — parity with `validateConfigOutputSchema`. */
+export const ValidateFocusManifestResponseSchema = z
+  .object({
+    present: z.boolean().optional(),
+    warnings: z.array(z.string()).optional(),
+    normalized: z.record(z.string(), z.unknown()).optional(),
+    status: z.enum(["ok", "warn", "error"]).optional(),
+  })
+  .openapi("ValidateFocusManifestResponse");

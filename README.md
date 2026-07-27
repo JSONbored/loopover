@@ -7,16 +7,20 @@ _Formerly Gittensory._
   <a href="https://www.npmjs.com/package/@loopover/mcp"><img alt="MCP package" src="https://img.shields.io/npm/v/@loopover/mcp?label=mcp" /></a>
   <a href="https://github.com/JSONbored/loopover/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/JSONbored/loopover" /></a>
   <a href="https://loopover.ai/docs"><img alt="Docs" src="https://img.shields.io/badge/docs-loopover.ai-0b6bcb" /></a>
+</p>
+
+<p align="center">
   <a href="https://gittensor.io/miners/repository?name=JSONbored/loopover"><img alt="Gittensor impact" src="https://api.gittensor.io/repos/JSONbored%2Floopover/badge.svg" /></a>
 </p>
 
-LoopOver is a two-sided autonomy layer for Gittensor OSS contribution work: an autonomous maintainer review agent on one side, a miner stack (MCP copilot plus an autonomous miner runtime) on the other, and a statistical accountability layer underneath that scores every decision against its real outcome.
+LoopOver runs the pull-request loop with agents — on any GitHub repo, on both sides.
 
-- **Maintainer side (self-hosted):** works the PR queue end-to-end — AI review grounded in finished CI status, full post-change file content, and codebase RAG — then gates, approves, requests changes, merges, or closes on its own, governed by dry-run / pause / freeze / kill-switch controls.
-- **Miner side:** the [`@loopover/mcp`](https://www.npmjs.com/package/@loopover/mcp) copilot brings predicted gate verdicts, scoreability, duplicate detection, and cross-repo opportunity discovery into the contributor's own AI harness; the autonomous miner runtime (`@loopover/miner`) runs unattended across a fleet of repos, respecting each target repo's `.loopover-miner.yml` goal spec.
-- **Accountability:** merge/close decisions are outcome-confirmed (merged / reopened / reverted), published with coverage and confidence intervals on the live [fairness report](https://loopover.ai/fairness), and backed by a certified close-precision guarantee that self-tightens as data grows. The backtest corpus behind the published numbers is checksummed and [replayable by anyone](https://loopover.ai/docs/verify-this-review).
+- **For maintainers (self-hosted):** an autonomous review agent works the PR queue end-to-end — AI review grounded in finished CI status, full post-change file content, and codebase RAG — then gates, approves, requests changes, merges, or closes on its own, governed by dry-run / pause / freeze / kill-switch controls.
+- **For contributors:** the [`@loopover/mcp`](https://www.npmjs.com/package/@loopover/mcp) copilot brings predicted gate verdicts, branch preflight, duplicate detection, and cross-repo opportunity discovery into your own AI harness; the autonomous miner runtime (`@loopover/miner`) runs unattended across a fleet of repos, respecting each target repo's `.loopover-miner.yml` goal spec.
+- **With proof:** merge/close decisions are outcome-confirmed (merged / reopened / reverted), published with coverage and confidence intervals on the live [fairness report](https://loopover.ai/fairness), and backed by a certified close-precision guarantee that self-tightens as data grows. The backtest corpus behind the published numbers is checksummed and [replayable by anyone](https://loopover.ai/docs/verify-this-review).
+- **Gittensor-native intelligence built in:** for Bittensor SN74 miners the same engine adds scoreability previews, registry economics, and the cross-repo duplicate graph — while keeping wallet, hotkey, and raw trust-score context out of public GitHub output.
 
-It keeps private scoring, wallet, hotkey, and reviewability context out of public GitHub output, and it is the single converged home of the native review system; the legacy separate reviewbot repo/runtime is not part of the active architecture described here.
+It is the single converged home of the native review system; the legacy separate reviewbot repo/runtime is not part of the active architecture described here.
 
 It is not a Gittensor explorer, public leaderboard, reward-farming bot, or wallet dashboard.
 
@@ -73,24 +77,24 @@ See [Tuning your reviews](https://loopover.ai/docs/tuning) for the full flag, se
 
 ## Start Here
 
-| Audience                  | Start                                                                    | Useful next links                                                                                                                                                                                                 |
-| ------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Miners and contributors   | [Quickstart](https://loopover.ai/docs/quickstart)           | [MCP client setup](https://loopover.ai/docs/mcp-clients), [Miner workflow](https://loopover.ai/docs/miner-workflow), [Scoreability](https://loopover.ai/docs/scoreability) |
-| Maintainers               | [GitHub App](https://loopover.ai/docs/github-app)           | [Maintainer workflow](https://loopover.ai/docs/maintainer-workflow), [Self-host reviews](https://loopover.ai/docs/maintainer-self-hosting), [Privacy and security](https://loopover.ai/docs/privacy-security)                         |
-| Repo owners and operators | [Beta onboarding](https://loopover.ai/docs/beta-onboarding) | [Upstream drift](https://loopover.ai/docs/upstream-drift), [Troubleshooting](https://loopover.ai/docs/troubleshooting), [Roadmap](https://loopover.ai/roadmap)             |
-| Agent authors             | [Agents](https://loopover.ai/agents)                        | [API browser](https://loopover.ai/api), [MCP client setup](https://loopover.ai/docs/mcp-clients)                                                                                        |
+| Audience                  | Start                                                       | Useful next links                                                                                                                                                                                             |
+| ------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Miners and contributors   | [Quickstart](https://loopover.ai/docs/quickstart)           | [MCP client setup](https://loopover.ai/docs/mcp-clients), [Miner workflow](https://loopover.ai/docs/miner-workflow), [Scoreability](https://loopover.ai/docs/scoreability)                                    |
+| Maintainers               | [GitHub App](https://loopover.ai/docs/github-app)           | [Maintainer workflow](https://loopover.ai/docs/maintainer-workflow), [Self-host reviews](https://loopover.ai/docs/maintainer-self-hosting), [Privacy and security](https://loopover.ai/docs/privacy-security) |
+| Repo owners and operators | [Beta onboarding](https://loopover.ai/docs/beta-onboarding) | [Upstream drift](https://loopover.ai/docs/upstream-drift), [Troubleshooting](https://loopover.ai/docs/troubleshooting), [Roadmap](https://loopover.ai/roadmap)                                                |
+| Agent authors             | [Agents](https://loopover.ai/agents)                        | [API browser](https://loopover.ai/api), [MCP client setup](https://loopover.ai/docs/mcp-clients)                                                                                                              |
 
 ## Surfaces
 
-| Surface           | Link                                                                                                                               |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| Website           | [loopover.ai](https://loopover.ai/)                                                                      |
-| Docs              | [loopover.ai/docs](https://loopover.ai/docs)                                                             |
-| MCP package       | [@loopover/mcp](https://www.npmjs.com/package/@loopover/mcp)                                               |
-| Engine package    | [`@loopover/engine`](packages/loopover-engine/README.md) — shared deterministic logic for the review stack and miner |
-| Miner package     | [`@loopover/miner`](packages/loopover-miner/README.md) — local foundation CLI for the autonomous miner runtime        |
-| API               | [API browser](https://loopover.ai/api) and [OpenAPI JSON](https://api.loopover.ai/openapi.json)          |
-| GitHub App        | [Setup docs](https://loopover.ai/docs/github-app) — self-hosting is the only currently available path |
+| Surface        | Link                                                                                                                 |
+| -------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Website        | [loopover.ai](https://loopover.ai/)                                                                                  |
+| Docs           | [loopover.ai/docs](https://loopover.ai/docs)                                                                         |
+| MCP package    | [@loopover/mcp](https://www.npmjs.com/package/@loopover/mcp)                                                         |
+| Engine package | [`@loopover/engine`](packages/loopover-engine/README.md) — shared deterministic logic for the review stack and miner |
+| Miner package  | [`@loopover/miner`](packages/loopover-miner/README.md) — local foundation CLI for the autonomous miner runtime       |
+| API            | [API browser](https://loopover.ai/api) and [OpenAPI JSON](https://api.loopover.ai/openapi.json)                      |
+| GitHub App     | [Setup docs](https://loopover.ai/docs/github-app) — self-hosting is the only currently available path                |
 
 ## MCP Install
 

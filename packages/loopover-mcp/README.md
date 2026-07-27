@@ -1,6 +1,6 @@
 # @loopover/mcp
 
-Local stdio MCP wrapper for the LoopOver base-agent layer.
+Local stdio MCP wrapper for the LoopOver contributor stack.
 
 It inspects local git metadata and calls the LoopOver API for branch preflight, score blockers, reward/risk reasoning, contributor decision packs, deterministic next-action planning, and public-safe PR packets. It does not upload source contents in v1.
 
@@ -293,12 +293,12 @@ anything leaves your machine. With the flag off — the default — the key is i
 
 Exactly four fields, and there is no fifth:
 
-| Field | Example | What it is |
-|---|---|---|
-| `tool` | `predict_gate` | The MCP tool name. |
-| `caller_type` | `local` | Which surface dispatched it (`local` for this CLI). |
-| `ok` | `true` | Whether the call succeeded. |
-| `duration_ms` | `142` | Coarse wall-clock duration. |
+| Field         | Example        | What it is                                          |
+| ------------- | -------------- | --------------------------------------------------- |
+| `tool`        | `predict_gate` | The MCP tool name.                                  |
+| `caller_type` | `local`        | Which surface dispatched it (`local` for this CLI). |
+| `ok`          | `true`         | Whether the call succeeded.                         |
+| `duration_ms` | `142`          | Coarse wall-clock duration.                         |
 
 **Never recorded:** your tool arguments, source contents, diffs, repository or issue text, file paths, and any
 wallet, hotkey, coldkey, reward, private ranking, or raw trust-score data. Events carry no identity of yours

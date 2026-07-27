@@ -18,17 +18,17 @@ import { MCP_PACKAGE_NAME, getLatestMcpVersion, useMcpPackageMetadata } from "@/
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "LoopOver — Plan the work. Skip the noise." },
+      { title: "LoopOver — The pull-request loop, run by agents." },
       {
         name: "description",
         content:
-          "Deterministic base-agent layer for Gittensor OSS contribution mining. Plan better work, preflight branches, and keep maintainer review surfaces quiet.",
+          "Agents for both sides of the pull request on any GitHub repo — autonomous reviews with a published, outcome-scored error rate, plus an MCP copilot and autonomous miner for contributors.",
       },
-      { property: "og:title", content: "LoopOver — Plan the work. Skip the noise." },
+      { property: "og:title", content: "LoopOver — The pull-request loop, run by agents." },
       {
         property: "og:description",
         content:
-          "Deterministic base-agent layer for Gittensor OSS contribution mining — MCP for miners and agents, a quiet GitHub App for maintainers.",
+          "Autonomous reviews for maintainers, an MCP copilot and autonomous miner for contributors — with a published error rate. Works on any GitHub repo.",
       },
       { property: "og:url", content: "/" },
       { property: "og:type", content: "website" },
@@ -67,15 +67,17 @@ function Hero() {
         <div>
           <div className="flex items-center gap-2 text-token-xs text-muted-foreground">
             <span aria-hidden className="size-1 rounded-full bg-coral" />
-            MCP v{latestMcpVersion} · deterministic base agent
+            MCP v{latestMcpVersion} · open source · self-hosted
           </div>
           <h1 className="mt-5 text-token-3xl font-medium leading-token-tight tracking-tight text-foreground">
-            Mine Gittensor like an engineer.
-            <span className="block text-muted-foreground">Not like a bot.</span>
+            The pull-request loop, run by agents.
+            <span className="block text-muted-foreground">With a published error rate.</span>
           </h1>
           <p className="mt-5 max-w-lg text-token-md leading-token-normal text-muted-foreground">
-            LoopOver is the deterministic base-agent layer for Gittensor OSS contribution mining.
-            Plan better work, preflight branches, and keep maintainer review surfaces quiet.
+            LoopOver works both sides of the PR on any GitHub repo: an autonomous review agent that
+            gates, merges, and closes with outcome-scored accuracy, and a contributor stack — MCP
+            copilot plus autonomous miner — that plans and ships real, reviewable work.
+            Gittensor-native mining intelligence built in.
           </p>
           <div className="mt-7 flex flex-wrap items-center gap-2">
             <Link
@@ -645,11 +647,11 @@ function ClosingCta() {
               Ready when you are
             </div>
             <h2 className="mt-2 font-display text-token-xl font-medium tracking-tight">
-              Skip the noise. Plan the work.
+              Close the loop on your next PR.
             </h2>
             <p className="mt-2 text-token-sm text-muted-foreground">
-              Install the MCP, run an analysis, and see the next move with five scoreability
-              scenarios — no PATs, no source upload, no public score numbers.
+              Install the MCP and preflight your next branch, or self-host the review agent on your
+              own repos — no PATs, no source upload, no public score numbers.
             </p>
           </div>
           <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">

@@ -90,6 +90,64 @@ describe("LinearAdapter (#3186)", () => {
     await expect(adapter.listOpenProjects({ env, installationId: 123, repoFullName: "acme/widgets" })).rejects.toThrow(/Linear API HTTP 503/);
   });
 
+  it("retries a transient 429 (honoring Retry-After) then returns the successful result (#9319)", async () => {
+    const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET });
+    await upsertRepositoryLinearKey(env, { repoFullName: "acme/widgets", key: "lin_api_test_key" });
+    let calls = 0;
+    vi.stubGlobal("fetch", async () => {
+      calls += 1;
+      if (calls === 1) return new Response("rate limited", { status: 429, headers: { "retry-after": "0" } });
+      return Response.json({ data: { projects: { nodes: [{ id: "proj-1", name: "Roadmap" }], pageInfo: { hasNextPage: false, endCursor: null } } } });
+    });
+    const adapter = new LinearAdapter();
+    const result = await adapter.listOpenProjects({ env, installationId: 123, repoFullName: "acme/widgets" });
+    expect(calls).toBe(2); // one 429 retried, then the 200
+    expect(result).toEqual([{ id: "proj-1", title: "Roadmap" }]);
+  });
+
+  it("throws Linear API HTTP 429 after exhausting the retry cap (#9319)", async () => {
+    const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET });
+    await upsertRepositoryLinearKey(env, { repoFullName: "acme/widgets", key: "lin_api_test_key" });
+    let calls = 0;
+    vi.stubGlobal("fetch", async () => {
+      calls += 1;
+      return new Response("rate limited", { status: 429, headers: { "retry-after": "0" } });
+    });
+    const adapter = new LinearAdapter();
+    await expect(adapter.listOpenProjects({ env, installationId: 123, repoFullName: "acme/widgets" })).rejects.toThrow(/Linear API HTTP 429/);
+    expect(calls).toBe(3); // initial attempt + 2 retries (the retry cap)
+  });
+
+  it("falls back to a capped exponential backoff when a 429 has no Retry-After, then succeeds (#9319)", async () => {
+    const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET });
+    await upsertRepositoryLinearKey(env, { repoFullName: "acme/widgets", key: "lin_api_test_key" });
+    let calls = 0;
+    vi.stubGlobal("fetch", async () => {
+      calls += 1;
+      if (calls === 1) return new Response("rate limited", { status: 429 }); // no Retry-After header -> backoff path
+      return Response.json({ data: { projects: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } } });
+    });
+    const adapter = new LinearAdapter();
+    const result = await adapter.listOpenProjects({ env, installationId: 123, repoFullName: "acme/widgets" });
+    expect(calls).toBe(2);
+    expect(result).toEqual([]);
+  });
+
+  it("treats a negative/invalid Retry-After as absent and uses the backoff instead (#9319)", async () => {
+    const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET });
+    await upsertRepositoryLinearKey(env, { repoFullName: "acme/widgets", key: "lin_api_test_key" });
+    let calls = 0;
+    vi.stubGlobal("fetch", async () => {
+      calls += 1;
+      if (calls === 1) return new Response("rate limited", { status: 429, headers: { "retry-after": "-5" } });
+      return Response.json({ data: { projects: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } } });
+    });
+    const adapter = new LinearAdapter();
+    const result = await adapter.listOpenProjects({ env, installationId: 123, repoFullName: "acme/widgets" });
+    expect(calls).toBe(2);
+    expect(result).toEqual([]);
+  });
+
   it("listOpenProjects throws when the response has no errors but also no data (malformed response)", async () => {
     const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET });
     await upsertRepositoryLinearKey(env, { repoFullName: "acme/widgets", key: "lin_api_test_key" });

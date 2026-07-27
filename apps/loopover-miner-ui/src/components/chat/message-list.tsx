@@ -3,7 +3,7 @@ import { ScrollArea } from "@loopover/ui-kit/components/scroll-area";
 import { StateBoundary } from "@loopover/ui-kit/components/state-views";
 import { isChatViewportNearBottom, scrollChatViewportToBottom } from "@/lib/chat-scroll";
 import { MessageBubble } from "./message-bubble";
-import { TypingIndicator } from "./typing-indicator";
+import { TypingIndicator } from "@loopover/ui-kit/components/typing-indicator";
 import type { ChatMessage } from "./fixtures";
 
 // The scrollable message list for the chat rail (#6515). Backend-agnostic: it renders whatever message

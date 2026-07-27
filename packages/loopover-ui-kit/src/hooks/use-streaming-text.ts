@@ -8,7 +8,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
  */
 export type ChunkSource = () => AsyncIterable<string>;
 
-export type StreamingStatus = "idle" | "streaming" | "done" | "error" | "cancelled";
+export type StreamingStatus =
+  "idle" | "streaming" | "done" | "error" | "cancelled";
 
 export interface StreamingTextState {
   /** Text accumulated from all chunks consumed so far. */
@@ -25,7 +26,9 @@ export interface StreamingTextState {
  * a chunk resolving after a new source starts, after `cancel()`, or after unmount never touches state. This is
  * an unwired primitive: it only ever consumes the source it's handed (a mock in tests, a real stream later).
  */
-export function useStreamingText(source: ChunkSource | null): StreamingTextState {
+export function useStreamingText(
+  source: ChunkSource | null,
+): StreamingTextState {
   const [text, setText] = useState("");
   const [status, setStatus] = useState<StreamingStatus>("idle");
   const [error, setError] = useState<Error | null>(null);

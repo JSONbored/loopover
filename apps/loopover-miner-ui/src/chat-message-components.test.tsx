@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { MessageList } from "./components/chat/message-list";
 import { MessageBubble } from "./components/chat/message-bubble";
-import { TypingIndicator } from "./components/chat/typing-indicator";
+import { TypingIndicator } from "@loopover/ui-kit/components/typing-indicator";
 import { emptyConversation, multiTurnConversation, singleMessage, type ChatMessage } from "./components/chat/fixtures";
 
 describe("MessageList (#6515) — StateBoundary branches", () => {

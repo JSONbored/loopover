@@ -5,6 +5,7 @@ import {
   MAX_PROGRESS_ACTIVITY,
   type LoopProgressActivity,
   type LoopProgressState,
+  type ProgressSnapshot,
 } from "../../packages/loopover-engine/src/loop-progress";
 
 function running(overrides: Partial<LoopProgressState> = {}): LoopProgressState {
@@ -65,6 +66,35 @@ describe("progressChanged — push on change, not on a fixed interval (#4800)", 
 
   it("does not push when nothing displayed has changed", () => {
     expect(progressChanged(base, buildProgressSnapshot(running({ recentActivity: [{ step: "a" }] })))).toBe(false);
+  });
+
+  // #9323: maxIterations and percentComplete are displayed axes too, but were left out of the diff. Raising the
+  // iteration budget mid-run moves the customer's percent while phase/status/iteration/activity all hold — that
+  // must still push, or the progress bar shows a stale percent.
+  it("REGRESSION (#9323): pushes when only the iteration budget (maxIterations, and so percentComplete) changes", () => {
+    const widerBudget = buildProgressSnapshot(running({ maxIterations: 10, recentActivity: [{ step: "a" }] }));
+    // Everything `base` displays is held constant except the budget (5→10) and its derived percent (40→20).
+    expect(base).toMatchObject({ maxIterations: 5, percentComplete: 40 });
+    expect(widerBudget).toMatchObject({ phase: base.phase, status: base.status, iteration: base.iteration, maxIterations: 10, percentComplete: 20 });
+    expect(widerBudget.recentActivity).toEqual(base.recentActivity);
+    expect(progressChanged(base, widerBudget)).toBe(true);
+  });
+
+  // #9323 regression guard against over-triggering: identical on ALL six displayed axes (including the two new
+  // ones) must still not push.
+  it("does not push when maxIterations and percentComplete are identical alongside the other axes", () => {
+    const same = buildProgressSnapshot(running({ recentActivity: [{ step: "a" }] }));
+    expect(same).toMatchObject({ maxIterations: base.maxIterations, percentComplete: base.percentComplete });
+    expect(progressChanged(base, same)).toBe(false);
+  });
+
+  // #9323: percentComplete is compared as its own axis, so a change to just that shown number still pushes even
+  // if maxIterations is unchanged. It is normally derived from iteration/maxIterations, so isolate it by building
+  // the snapshot directly rather than through buildProgressSnapshot.
+  it("REGRESSION (#9323): pushes when only percentComplete differs, with maxIterations and every other axis held", () => {
+    const shiftedPercent: ProgressSnapshot = { ...base, percentComplete: (base.percentComplete ?? 0) + 1 };
+    expect(shiftedPercent.maxIterations).toBe(base.maxIterations);
+    expect(progressChanged(base, shiftedPercent)).toBe(true);
   });
 
   // #6171: the tail is capped, so past the cap every new event evicts the oldest and the LENGTH stops moving.

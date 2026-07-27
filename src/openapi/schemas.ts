@@ -2158,6 +2158,76 @@ export const EvaluateEscalationResponseSchema = z
   .openapi("EvaluateEscalationResponse");
 
 /**
+ * Request body for POST /v1/repos/{owner}/{repo}/validate-linked-issue. Field-level parity with
+ * `validateLinkedIssueShape` (the `loopover_validate_linked_issue` MCP tool `inputSchema`) in
+ * src/mcp/server.ts — #9304. owner/repo are also path params; the body carries the planned-change context.
+ */
+export const ValidateLinkedIssueRequestSchema = z
+  .object({
+    owner: z.string(),
+    repo: z.string(),
+    issueNumber: z.number().int().positive(),
+    plannedChange: z
+      .object({
+        title: z.string().optional(),
+        changedFiles: z.array(z.string()).optional(),
+        contributorLogin: z.string().optional(),
+      })
+      .optional(),
+  })
+  .openapi("ValidateLinkedIssueRequest");
+
+/**
+ * Response body for POST /v1/repos/{owner}/{repo}/validate-linked-issue. Field-level parity with
+ * `validateLinkedIssueOutputSchema` (the `loopover_validate_linked_issue` MCP tool `outputSchema`) — #9304.
+ */
+export const ValidateLinkedIssueResponseSchema = z
+  .object({
+    status: z.string().optional(),
+    repoFullName: z.string().optional(),
+    issueNumber: z.number().optional(),
+    found: z.boolean().optional(),
+    multiplierStatus: z.string().optional(),
+    multiplierWouldApply: z.boolean().optional(),
+    blockingReason: z.string().optional(),
+    reasons: z.unknown().optional(),
+    report: z.unknown().optional(),
+  })
+  .openapi("ValidateLinkedIssueResponse");
+
+/**
+ * Request body for POST /v1/repos/{owner}/{repo}/check-before-start. Field-level parity with
+ * `checkBeforeStartShape` (the `loopover_check_before_start` MCP tool `inputSchema`) in src/mcp/server.ts — #9304.
+ */
+export const CheckBeforeStartRequestSchema = z
+  .object({
+    owner: z.string(),
+    repo: z.string(),
+    issueNumber: z.number().int().positive().optional(),
+    title: z.string().optional(),
+    plannedPaths: z.array(z.string()).optional(),
+  })
+  .openapi("CheckBeforeStartRequest");
+
+/**
+ * Response body for POST /v1/repos/{owner}/{repo}/check-before-start. Field-level parity with
+ * `checkBeforeStartOutputSchema` (the `loopover_check_before_start` MCP tool `outputSchema`) — #9304.
+ */
+export const CheckBeforeStartResponseSchema = z
+  .object({
+    status: z.string().optional(),
+    repoFullName: z.string().optional(),
+    found: z.boolean().optional(),
+    claimStatus: z.string().optional(),
+    duplicateClusterRisk: z.string().optional(),
+    recommendation: z.string().optional(),
+    reasons: z.unknown().optional(),
+    blockers: z.unknown().optional(),
+    report: z.unknown().optional(),
+  })
+  .openapi("CheckBeforeStartResponse");
+
+/**
  * Request body for POST /v1/loop/results-payload. Field-level parity with `buildResultsPayloadShape`
  * (the `loopover_build_results_payload` MCP tool `inputSchema`) in src/mcp/server.ts — #9309.
  */

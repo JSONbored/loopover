@@ -16160,6 +16160,137 @@
           }
         }
       },
+      "ValidateLinkedIssueRequest": {
+        "type": "object",
+        "properties": {
+          "owner": {
+            "type": "string"
+          },
+          "repo": {
+            "type": "string"
+          },
+          "issueNumber": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true
+          },
+          "plannedChange": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "changedFiles": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "contributorLogin": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "required": [
+          "owner",
+          "repo",
+          "issueNumber"
+        ]
+      },
+      "ValidateLinkedIssueResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "repoFullName": {
+            "type": "string"
+          },
+          "issueNumber": {
+            "type": "number"
+          },
+          "found": {
+            "type": "boolean"
+          },
+          "multiplierStatus": {
+            "type": "string"
+          },
+          "multiplierWouldApply": {
+            "type": "boolean"
+          },
+          "blockingReason": {
+            "type": "string"
+          },
+          "reasons": {
+            "nullable": true
+          },
+          "report": {
+            "nullable": true
+          }
+        }
+      },
+      "CheckBeforeStartRequest": {
+        "type": "object",
+        "properties": {
+          "owner": {
+            "type": "string"
+          },
+          "repo": {
+            "type": "string"
+          },
+          "issueNumber": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true
+          },
+          "title": {
+            "type": "string"
+          },
+          "plannedPaths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "owner",
+          "repo"
+        ]
+      },
+      "CheckBeforeStartResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "repoFullName": {
+            "type": "string"
+          },
+          "found": {
+            "type": "boolean"
+          },
+          "claimStatus": {
+            "type": "string"
+          },
+          "duplicateClusterRisk": {
+            "type": "string"
+          },
+          "recommendation": {
+            "type": "string"
+          },
+          "reasons": {
+            "nullable": true
+          },
+          "blockers": {
+            "nullable": true
+          },
+          "report": {
+            "nullable": true
+          }
+        }
+      },
       "FindOpportunitiesResponse": {
         "type": "object",
         "properties": {
@@ -22052,6 +22183,128 @@
           },
           "403": {
             "description": "Insufficient role"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/validate-linked-issue": {
+      "post": {
+        "summary": "Validate a linked issue for a planned change — REST mirror of loopover_validate_linked_issue (#9304)",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ValidateLinkedIssueRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Linked-issue validation over the planned change — mirrors the loopover_validate_linked_issue MCP tool's output shape",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidateLinkedIssueResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid validate-linked-issue request body"
+          },
+          "401": {
+            "description": "Missing or invalid static protected API token"
+          },
+          "403": {
+            "description": "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/check-before-start": {
+      "post": {
+        "summary": "Pre-work claim/duplicate check before starting an issue — REST mirror of loopover_check_before_start (#9304)",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckBeforeStartRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Claim status, duplicate-cluster risk, and a start recommendation — mirrors the loopover_check_before_start MCP tool's output shape",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckBeforeStartResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid check-before-start request body"
+          },
+          "401": {
+            "description": "Missing or invalid static protected API token"
+          },
+          "403": {
+            "description": "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo"
           }
         },
         "security": [

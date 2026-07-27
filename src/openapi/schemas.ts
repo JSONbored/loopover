@@ -141,10 +141,13 @@ export const PublicStatsSchema = z
       closePrecisionCiPct: z.object({ lo: z.number(), hi: z.number() }).nullable(),
       coveragePct: z.number().nullable(),
       decidedCount: z.number(),
-      guaranteed: z.object({ close: z.object({ alpha: z.number(), lambda: z.number(), coveragePct: z.number(), n: z.number() }).nullable(), merge: z.object({ alpha: z.number(), lambda: z.number(), coveragePct: z.number(), n: z.number() }).nullable() }),
+      guaranteed: z.object({
+        close: z.object({ alpha: z.number(), lambda: z.number(), aiJudgedCoveragePct: z.number(), n: z.number(), backfilledPct: z.number().nullable() }).nullable(),
+        merge: z.object({ alpha: z.number(), lambda: z.number(), aiJudgedCoveragePct: z.number(), n: z.number(), backfilledPct: z.number().nullable() }).nullable(),
+      }),
       instanceCount: z.number(),
       windowDays: z.number(),
-      gamingFlagsCaught: z.number(),
+      gamingFlagsCaught: z.number().nullable(),
     }),
     /** Trailing weekly history of totals.accuracyPct's SAME formula (#4447) -- null counts/accuracyPct on a week means
      *  too few decided (merged+closed) PRs to publish meaningful or non-identifying details. */

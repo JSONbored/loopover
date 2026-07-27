@@ -123,11 +123,16 @@ export function FairnessReportPage() {
               <Card className="p-5">
                 <div className="text-token-xs text-muted-foreground">Anti-gaming flags caught</div>
                 <div className="mt-2 text-token-xl font-medium">
-                  {data.fleetAccuracy ? intFmt.format(data.fleetAccuracy.gamingFlagsCaught) : "—"}
+                  {data.fleetAccuracy?.gamingFlagsCaught != null
+                    ? intFmt.format(data.fleetAccuracy.gamingFlagsCaught)
+                    : "—"}
                 </div>
                 <p className="mt-2 text-token-sm text-muted-foreground">
-                  self-hosted instances flagged for mass-submitting easy PRs to inflate their own
-                  precision
+                  {/* #9068: null (not 0) below the fleet's own eligibility floor -- a structural zero must
+                      never read as "checked, found none". */}
+                  {data.fleetAccuracy?.gamingFlagsCaught != null
+                    ? "self-hosted instances flagged for mass-submitting easy PRs to inflate their own precision"
+                    : "not enough registered instances yet to compare for a gaming pattern"}
                 </p>
               </Card>
               <Card className="p-5">

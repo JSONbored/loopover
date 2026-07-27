@@ -457,11 +457,13 @@ describe("GET /v1/internal/fleet/analytics route", () => {
           .prepare("SELECT payload_json FROM orb_risk_control_arms WHERE instance_id='inst1' AND arm='close'")
           .first<{ payload_json: string }>()
       )?.payload_json;
+    // minimumCalibrationLabels(0.015, 0.05) = 199 -- 200 clears the floor with margin to spare.
+    const calibrated = { status: "calibrated", alpha: 0.015, lambda: 0.94, coverageAtLambda: 0.8, nAtLambda: 200, delta: 0.05 };
     const send = (risk_control: unknown, instanceSecret?: string) =>
       handleOrbIngest(JSON.stringify({ instance_id: "inst1", events: [{ repo_hash: "rh", pr_hash: `g${Math.random()}`, outcome: "merged" }], risk_control }), db, instanceSecret);
 
     // Unregistered sender: the strongest homepage claim must not be plantable via open ingest.
-    await send({ close: { alpha: 0.015, lambda: 0.94, coverageAtLambda: 0.8, nAtLambda: 200 } });
+    await send({ close: calibrated });
     expect(await flag()).toBeUndefined();
 
     // #9121: registering now mints a per-instance credential -- the real, HTTP registration route is used
@@ -471,12 +473,12 @@ describe("GET /v1/internal/fleet/analytics route", () => {
     expect(instanceSecret).toMatch(/^orbis_[0-9a-f]{64}$/);
 
     // Registered but WITHOUT the credential: the claim is refused, not silently accepted.
-    const rejected = await send({ close: { alpha: 0.015, lambda: 0.94, coverageAtLambda: 0.8, nAtLambda: 200 } });
+    const rejected = await send({ close: calibrated });
     expect(rejected).toEqual({ error: "instance_unauthenticated" });
     expect(await flag()).toBeUndefined();
 
     // Registered AND credential-authenticated: the claim is accepted.
-    await send({ close: { alpha: 0.015, lambda: 0.94, coverageAtLambda: 0.8, nAtLambda: 200 } }, instanceSecret);
+    await send({ close: calibrated }, instanceSecret);
     expect(JSON.parse((await flag())!)).toMatchObject({ lambda: 0.94 });
 
     // An ABSENT arm is "no change", never an implicit retraction (#9121) -- the stored value survives.
@@ -488,8 +490,36 @@ describe("GET /v1/internal/fleet/analytics route", () => {
     expect(await flag()).toBeUndefined();
 
     // A WRONG credential is also refused, not silently accepted.
-    const wrongSecret = await send({ close: { alpha: 0.015, lambda: 0.5, coverageAtLambda: 0.8, nAtLambda: 200 } }, "orbis_wrongwrongwrong");
+    const wrongSecret = await send({ close: { ...calibrated, lambda: 0.5 } }, "orbis_wrongwrongwrong");
     expect(wrongSecret).toEqual({ error: "instance_unauthenticated" });
     expect(await flag()).toBeUndefined();
+  });
+
+  it("#9068: rejects a malformed/uncertifiable risk_control payload before it ever reaches storage", async () => {
+    const env = createTestEnv();
+    const db = env.DB as unknown as D1Database;
+    const flag = async () =>
+      (
+        await (db as unknown as TestD1Database)
+          .prepare("SELECT payload_json FROM orb_risk_control_arms WHERE instance_id='inst2' AND arm='close'")
+          .first<{ payload_json: string }>()
+      )?.payload_json;
+    const reg = await app.request("/v1/internal/orb/instances/register", { method: "POST", headers: auth, body: JSON.stringify({ instanceId: "inst2" }) }, env);
+    const { instanceSecret } = (await reg.json()) as { instanceSecret: string };
+    const send = (risk_control: unknown) =>
+      handleOrbIngest(JSON.stringify({ instance_id: "inst2", events: [{ repo_hash: "rh", pr_hash: `g${Math.random()}`, outcome: "merged" }], risk_control }), db, instanceSecret);
+
+    // A refusal status must never publish as a guarantee.
+    await send({ close: { status: "insufficient_labels", alpha: 0.015, lambda: 0.94, coverageAtLambda: 0.8, nAtLambda: 200, delta: 0.05 } });
+    expect(await flag()).toBeUndefined();
+    // nAtLambda below the zero-error floor for its own alpha/delta (minimumCalibrationLabels(0.015,0.05)=199).
+    await send({ close: { status: "calibrated", alpha: 0.015, lambda: 0.94, coverageAtLambda: 0.8, nAtLambda: 198, delta: 0.05 } });
+    expect(await flag()).toBeUndefined();
+    // alpha out of the accepted (0, 0.05] range.
+    await send({ close: { status: "calibrated", alpha: 0.2, lambda: 0.94, coverageAtLambda: 0.8, nAtLambda: 200, delta: 0.05 } });
+    expect(await flag()).toBeUndefined();
+    // A subsequent well-formed payload still succeeds -- the guard rejects only the bad rows.
+    await send({ close: { status: "calibrated", alpha: 0.015, lambda: 0.94, coverageAtLambda: 0.8, nAtLambda: 200, delta: 0.05 } });
+    expect(JSON.parse((await flag())!)).toMatchObject({ lambda: 0.94 });
   });
 });

@@ -5,7 +5,14 @@ import { createTestEnv } from "../helpers/d1";
 
 // #8835: the IO around the calibration math. What must never drift: uncertain labels excluded, rule-only
 // (no-confidence) decisions skipped, per-arm scoping, publish-on-certify, RETRACT-on-insufficient.
-async function seedLabeledDecision(env: Env, n: number, verdict: "close" | "merge", adjudication: "correct" | "incorrect" | "uncertain", aiConfidence: number | null): Promise<void> {
+async function seedLabeledDecision(
+  env: Env,
+  n: number,
+  verdict: "close" | "merge",
+  adjudication: "correct" | "incorrect" | "uncertain",
+  aiConfidence: number | null,
+  configDigest?: string,
+): Promise<void> {
   await env.DB.prepare(
     `INSERT INTO decision_audit_labels (id, project, target_id, verdict, outcome, stratum, rubric_version, sampled_at, status, adjudication, adjudicated_at)
      VALUES (?, 'o/r', ?, ?, 'closed', 'close_arm', '1', ?, 'adjudicated', ?, ?)`,
@@ -16,7 +23,7 @@ async function seedLabeledDecision(env: Env, n: number, verdict: "close" | "merg
     `INSERT INTO decision_records (id, repo_full_name, pull_number, head_sha, action, reason_code, record_digest, record_json, created_at)
      VALUES (?, 'o/r', ?, 'sha', ?, 'r', 'd', ?, ?)`,
   )
-    .bind(`record:o/r#${n}@sha`, n, verdict, JSON.stringify({ aiConfidence }), new Date().toISOString())
+    .bind(`record:o/r#${n}@sha`, n, verdict, JSON.stringify({ aiConfidence, ...(configDigest !== undefined ? { configDigest } : {}) }), new Date().toISOString())
     .run();
 }
 
@@ -37,8 +44,8 @@ describe("loadCalibrationPairs", () => {
     await seedLabeledDecision(env, 5, "merge", "correct", 0.99); // other arm
     const pairs = await loadCalibrationPairs(env, "close");
     expect(pairs.sort((a, b) => a.confidence - b.confidence)).toEqual([
-      { confidence: 0.6, correct: false },
-      { confidence: 0.95, correct: true },
+      { confidence: 0.6, correct: false, backfilled: false },
+      { confidence: 0.95, correct: true, backfilled: false },
     ]);
   });
 
@@ -55,7 +62,33 @@ describe("loadCalibrationPairs", () => {
         .bind(`record:o/r#1@${sha}`, sha, JSON.stringify({ aiConfidence: confidence }), new Date(Date.now() + offsetMs).toISOString())
         .run();
     }
-    expect(await loadCalibrationPairs(env, "close")).toEqual([{ confidence: 0.9, correct: true }]);
+    expect(await loadCalibrationPairs(env, "close")).toEqual([{ confidence: 0.9, correct: true, backfilled: false }]);
+  });
+
+  it("#9050: tags provenance from the record's configDigest — the backfill sentinel marks a pair backfilled", async () => {
+    const env = createTestEnv();
+    await seedLabeledDecision(env, 1, "close", "correct", 0.9); // live: no configDigest sentinel
+    await seedLabeledDecision(env, 2, "close", "correct", 0.95, "backfill:unavailable"); // backfilled
+    const pairs = await loadCalibrationPairs(env, "close");
+    expect(pairs.sort((a, b) => a.confidence - b.confidence)).toEqual([
+      { confidence: 0.9, correct: true, backfilled: false },
+      { confidence: 0.95, correct: true, backfilled: true },
+    ]);
+  });
+
+  it("#9050 (latent-risk hardening): only joins a record whose action matches the label's verdict — a later HOLD record must not shadow the acted CLOSE", async () => {
+    const env = createTestEnv();
+    await seedLabeledDecision(env, 1, "close", "correct", 0.9); // the acted close, confidence 0.9
+    // A LATER record for the SAME PR (a later push whose review cycle ended in a hold instead), at a
+    // different confidence. Without `AND dr2.action = dal.verdict`, the "latest record" subquery would pick
+    // this one purely on recency and join the close label to the WRONG decision's confidence.
+    await env.DB.prepare(
+      `INSERT INTO decision_records (id, repo_full_name, pull_number, head_sha, action, reason_code, record_digest, record_json, created_at)
+       VALUES (?, 'o/r', 1, 'sha2', 'hold', 'r', 'd', ?, ?)`,
+    )
+      .bind(`record:o/r#1@sha2`, JSON.stringify({ aiConfidence: 0.4 }), new Date(Date.now() + 60_000).toISOString())
+      .run();
+    expect(await loadCalibrationPairs(env, "close")).toEqual([{ confidence: 0.9, correct: true, backfilled: false }]);
   });
 });
 
@@ -85,6 +118,28 @@ describe("runRiskControlRecalibration", () => {
     expect(stored.alpha).toBe(0.05); // 210 pairs < 350 → the schedule's first tier
     const audit = await env.DB.prepare(`SELECT detail FROM audit_events WHERE event_type = 'risk_control_calibrated'`).first<{ detail: string }>();
     expect(audit!.detail).toContain("P(wrong | acted) ≤ 0.05 guaranteed at 100% coverage");
+    expect(stored).toMatchObject({ backfilledPairs: 0 }); // #9050: none of these seeded pairs are backfilled
+  });
+
+  it("REGRESSION (#9048): NO CERTIFIABLE THRESHOLD — ample labels but no λ clears α reports the true total, not a residual stratum, under a distinct event_type", async () => {
+    const env = createTestEnv({ LOOPOVER_RISK_CONTROL_CLOSE_ALPHA: "0.005" }); // fixed alpha; floor = 598
+    // 600 dirty pairs (all wrong) at 0.5, then 50 clean pairs at 0.99 — 650 total, well over the 598 floor,
+    // but no candidate certifies: 0.5 has ruinous error, 0.99 falls below the floor once 0.5 is dropped.
+    for (let i = 1; i <= 600; i += 1) await seedLabeledDecision(env, i, "close", "incorrect", 0.5);
+    for (let i = 601; i <= 650; i += 1) await seedLabeledDecision(env, i, "close", "correct", 0.99);
+    const summary = await runRiskControlRecalibration(env);
+    expect(summary.close).toBe("no_certifiable_threshold");
+    const flag = await env.DB.prepare(`SELECT value FROM system_flags WHERE key = ?`).bind(riskControlFlagKey("close")).first();
+    expect(flag).toBeFalsy(); // no certifiable guarantee — retracted, same as insufficient_labels
+    const audit = await env.DB.prepare(
+      `SELECT detail FROM audit_events WHERE event_type = 'risk_control_no_certifiable_threshold' AND target_key = 'riskcontrol:close'`,
+    ).first<{ detail: string }>();
+    expect(audit!.detail).toContain("650 labels available but no threshold achieves α=0.005");
+    // The label-shortfall event must NOT also fire for this scope — it is a distinct outcome (#9048).
+    const shortfall = await env.DB.prepare(
+      `SELECT detail FROM audit_events WHERE event_type = 'risk_control_insufficient' AND target_key = 'riskcontrol:close'`,
+    ).first();
+    expect(shortfall).toBeFalsy();
   });
 });
 
@@ -97,7 +152,7 @@ describe("fail-safe arms", () => {
     await env.DB.prepare("UPDATE decision_records SET record_json = '{broken' WHERE pull_number = 1").run();
     await seedLabeledDecision(env, 2, "close", "incorrect", 0.6);
     const pairs = await loadCalibrationPairs(env, "close");
-    expect(pairs).toEqual([{ confidence: 0.6, correct: false }]);
+    expect(pairs).toEqual([{ confidence: 0.6, correct: false, backfilled: false }]);
     expect(warn).toHaveBeenCalled();
     vi.restoreAllMocks();
   });

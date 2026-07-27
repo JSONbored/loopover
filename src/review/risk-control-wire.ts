@@ -2,10 +2,14 @@
 //
 // Reads (adjudication, decision-time confidence) pairs — human labels from decision_audit_labels (#8830/
 // #8831) joined to the confidence each decision persisted in its decision record (#8834) — runs the
-// fixed-sequence calibration PER ARM (Neyman–Pearson: a wrong merge costs more than a wrong close, so each
-// arm carries its own α), and publishes the result: a calibrated λ̂ lands in system_flags plus an audit
-// event carrying the certified statement; an under-powered set DELETES any stale λ̂ (a stale guarantee is a
-// lie) and audits the shortfall so the label-collection burn-down is visible.
+// calibration PER ARM (Neyman–Pearson: a wrong merge costs more than a wrong close, so each arm carries its
+// own α), and publishes the result: a calibrated λ̂ lands in system_flags plus an audit event carrying the
+// certified statement. A non-calibrated result DELETES any stale λ̂ (a stale guarantee is a lie) and audits
+// the shortfall — but #9048 splits WHICH shortfall into two distinct events, because they need opposite
+// remediations: `risk_control_insufficient` (too few usable labels — go collect more) vs
+// `risk_control_no_certifiable_threshold` (plenty of labels, but no λ clears alpha — investigate precision,
+// or accept a weaker alpha). Conflating the two under one message previously sent the label-collection
+// burn-down (#8828) chasing labels a repo already had plenty of.
 //
 // DELIBERATELY CONSULT-ONLY in this change: the calibrated λ̂ is not yet wired into the live gate floor,
 // because ai_review_close_confidence already has an automatic writer (the backtest-gated knob loosening,
@@ -84,13 +88,20 @@ export function riskControlFlagKey(arm: string): string {
  *  PR reviewed across several pushes accumulates several rows): the label adjudicates the decision that was
  *  ACTED — the latest finalized record, the same latest-row semantics loadDecisionRecordCollapsible renders —
  *  and a bare target_id join would fan one label out into N pairs with different confidences, breaking the
- *  one-label-one-trial contract Clopper–Pearson depends on. `id DESC` breaks created_at ties. */
+ *  one-label-one-trial contract Clopper–Pearson depends on. `id DESC` breaks created_at ties.
+ *
+ *  #9050 (latent-risk hardening, not a live bug as of the audit that filed it — every row today already joins
+ *  the right action): `AND dr2.action = dal.verdict` requires the latest record to be the SAME disposition the
+ *  label adjudicates, so a later HOLD (or MERGE) record on the same PR — a later push whose review cycle ended
+ *  differently — can never shadow the CLOSE record the label is actually about, mirroring the sampler's own
+ *  `decision IN ('merge','close')` restriction (decision-audit.ts). */
 export async function loadCalibrationPairs(env: Env, verdict: "close" | "merge", project: string | null = null): Promise<CalibrationPair[]> {
   const base = `SELECT dal.adjudication AS adjudication, dr.record_json AS recordJson
        FROM decision_audit_labels dal
        JOIN decision_records dr ON dr.id = (
             SELECT dr2.id FROM decision_records dr2
              WHERE dr2.repo_full_name || '#' || dr2.pull_number = dal.target_id
+               AND dr2.action = dal.verdict
              ORDER BY dr2.created_at DESC, dr2.id DESC LIMIT 1)
       WHERE dal.status = 'adjudicated'
         AND dal.adjudication IN ('correct', 'incorrect')
@@ -100,9 +111,12 @@ export async function loadCalibrationPairs(env: Env, verdict: "close" | "merge",
   const pairs: CalibrationPair[] = [];
   for (const row of results) {
     try {
-      const record = JSON.parse(row.recordJson) as { aiConfidence?: number | null };
+      const record = JSON.parse(row.recordJson) as { aiConfidence?: number | null; configDigest?: unknown };
       if (typeof record.aiConfidence === "number") {
-        pairs.push({ confidence: record.aiConfidence, correct: row.adjudication === "correct" });
+        // #9050: the 2026-07 calibration-corpus backfill stamps this exact sentinel on every record it
+        // reconstructed (see scripts/backfill-decision-labels.ts) — it is also that backfill's own
+        // provenance marker, deliberately, since the historical resolved config is unrecoverable.
+        pairs.push({ confidence: record.aiConfidence, correct: row.adjudication === "correct", backfilled: record.configDigest === "backfill:unavailable" });
       }
     } catch (error) {
       console.warn(JSON.stringify({ event: "risk_control_pair_parse_error", message: errorMessage(error).slice(0, 120) }));
@@ -131,7 +145,7 @@ async function recalibrateArm(env: Env, arm: "close" | "merge", verdict: "close"
       detail: `${scope}: P(wrong | acted) ≤ ${alpha} guaranteed at ${Math.round(result.coverageAtLambda * 1000) / 10}% coverage (λ=${result.lambda}, n=${result.nAtLambda}, 1−δ=${1 - delta})`,
       metadata: { arm, ...result },
     });
-  } else {
+  } else if (result.status === "insufficient_labels") {
     // A stale guarantee is a lie: retract any previously-published λ̂ the moment the data stops supporting it.
     await env.DB.prepare(`DELETE FROM system_flags WHERE key = ?`).bind(riskControlFlagKey(scope)).run();
     await recordAuditEvent(env, {
@@ -140,6 +154,20 @@ async function recalibrateArm(env: Env, arm: "close" | "merge", verdict: "close"
       targetKey: `riskcontrol:${scope}`,
       outcome: "completed",
       detail: `${scope}: cannot certify α=${alpha} — ${result.have} usable label(s) of ${result.needed} needed`,
+      metadata: { arm, ...result },
+    });
+  } else {
+    // #9048: a DISTINCT outcome from insufficient_labels — this scope has AMPLE labels (result.totalPairs
+    // cleared the floor) but no λ ever certified alpha. A distinct event_type keeps the label-collection
+    // burn-down (which reads risk_control_insufficient) from conflating "needs labels" with "needs a better
+    // error rate" — very different remediations, and only one of them "more labels" can fix.
+    await env.DB.prepare(`DELETE FROM system_flags WHERE key = ?`).bind(riskControlFlagKey(scope)).run();
+    await recordAuditEvent(env, {
+      eventType: "risk_control_no_certifiable_threshold",
+      actor: null,
+      targetKey: `riskcontrol:${scope}`,
+      outcome: "completed",
+      detail: `${scope}: ${result.totalPairs} labels available but no threshold achieves α=${alpha} (best upper bound ${Math.round(result.bestUpperBound * 1000) / 1000} at λ=${result.bestLambda}, n=${result.bestN})`,
       metadata: { arm, ...result },
     });
   }

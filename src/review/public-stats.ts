@@ -51,6 +51,7 @@
 // are over disjoint PR sets and can be added directly.
 import { getOrbGlobalStats } from "../orb/outcomes";
 import { computeFleetAnalytics, wilsonInterval } from "../orb/analytics";
+import { validateCalibrationPayload } from "./risk-control";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { resolveLoopOverSelfRepoFullName } from "../config/loopover-repo-focus-manifest";
 import { errorMessage } from "../utils/json";
@@ -257,15 +258,28 @@ export interface PublicStatsPayload {
     /** merge + close verdicts behind accuracyPct — the denominator a reader needs to judge the claim. */
     decidedCount: number;
     /** #8835: the live finite-sample guarantees, per arm, when a registered instance publishes one —
-     *  "P(wrong | acted) ≤ alpha at coveragePct" with the certification's own sample size. Null arms mean no
-     *  guarantee is currently live (insufficient labels, or the instrument retracted it). */
-    guaranteed: { close: { alpha: number; lambda: number; coveragePct: number; n: number } | null; merge: { alpha: number; lambda: number; coveragePct: number; n: number } | null };
+     *  "P(wrong | acted) ≤ alpha at aiJudgedCoveragePct" with the certification's own sample size. Null arms
+     *  mean no guarantee is currently live (insufficient labels, or the instrument retracted it).
+     *
+     *  #9050: `aiJudgedCoveragePct` (renamed from `coveragePct`, which read as "% of all closes" sitting right
+     *  next to the sibling `coveragePct` above that IS a share of all decided signals) is actually the share
+     *  of the ARM'S AI-JUDGED sub-population the threshold covers — `loadCalibrationPairs` can only join a
+     *  confidence to decisions an AI-judgment blocker actually ran on, which is a minority of real closes.
+     *  `backfilledPct` surfaces how much of the certifying evidence is reconstructed history (the 2026-07
+     *  calibration-corpus backfill) rather than live-accruing labels — null when the stored calibration
+     *  predates that field. */
+    guaranteed: {
+      close: { alpha: number; lambda: number; aiJudgedCoveragePct: number; n: number; backfilledPct: number | null } | null;
+      merge: { alpha: number; lambda: number; aiJudgedCoveragePct: number; n: number; backfilledPct: number | null } | null;
+    };
     instanceCount: number;
     windowDays: number;
-    /** Self-hosted instances currently flagged by computeFleetAnalytics's anti-farming detector
-     *  (gamingPatternFlags, src/orb/analytics.ts) -- proof the fleet actively polices for gaming, not just a
-     *  claim of it. Never identifies which instance; a bare count is public-safe. */
-    gamingFlagsCaught: number;
+    /** #9068: self-hosted instances flagged by computeFleetAnalytics's anti-farming detector
+     *  (gamingPatternFlags, src/orb/analytics.ts). null (not 0) when the fleet has fewer than
+     *  GAMING_MIN_ELIGIBLE eligible instances — below that floor the detector cannot run at all (an instance
+     *  IS the fleet median at n=1), so a structural zero must never be presented as "checked, found none".
+     *  Never identifies which instance; a bare count is public-safe. */
+    gamingFlagsCaught: number | null;
   };
 }
 
@@ -475,21 +489,47 @@ export async function getPublicStats(
   // largest sample size (nAtLambda) — more data is a more trustworthy estimate, so one low-n or stale peer
   // can no longer eclipse a well-calibrated one just by writing last. Fail-open null — a flags blip hides
   // the guarantee rather than fabricating or freezing one.
-  const readGuarantee = async (arm: string): Promise<{ alpha: number; lambda: number; coveragePct: number; n: number } | null> => {
+  //
+  // #9068: rows are re-validated HERE (not just at ingest, validateCalibrationPayload from ./risk-control) —
+  // defense in depth against a row written before this gate existed, or any other path into the table. Reads
+  // every registered row for the arm (not just the top one) and walks them in nAtLambda-descending order,
+  // skipping any that fail validation, so a single malformed/stale peer can no longer hide a good one behind
+  // it in the ORDER BY.
+  const readGuarantee = async (arm: string): Promise<{ alpha: number; lambda: number; aiJudgedCoveragePct: number; n: number; backfilledPct: number | null } | null> => {
     try {
-      const row = await env.DB.prepare(
+      const { results } = await env.DB.prepare(
         `SELECT o.payload_json AS value FROM orb_risk_control_arms o
            JOIN orb_instances i ON i.instance_id = o.instance_id AND i.registered = 1
           WHERE o.arm = ?
           ORDER BY CAST(json_extract(o.payload_json, '$.nAtLambda') AS REAL) DESC, o.updated_at DESC
-          LIMIT 1`,
+          LIMIT 50`,
       )
         .bind(arm)
-        .first<{ value: string }>();
-      if (!row?.value) return null;
-      const parsed = JSON.parse(row.value) as { alpha?: unknown; lambda?: unknown; coverageAtLambda?: unknown; nAtLambda?: unknown };
-      if (typeof parsed.alpha !== "number" || typeof parsed.lambda !== "number" || typeof parsed.coverageAtLambda !== "number" || typeof parsed.nAtLambda !== "number") return null;
-      return { alpha: parsed.alpha, lambda: parsed.lambda, coveragePct: Math.round(parsed.coverageAtLambda * 1000) / 10, n: parsed.nAtLambda };
+        .all<{ value: string }>();
+      for (const row of results ?? []) {
+        if (!row?.value) continue;
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(row.value);
+        } catch {
+          continue;
+        }
+        const validated = validateCalibrationPayload(parsed);
+        if (!validated) continue;
+        // #9050: totalPairs/backfilledPairs are supplementary display fields, not part of the core guarantee
+        // — a calibration stored before they existed simply has no backfilled split to show.
+        const p = parsed as { totalPairs?: unknown; backfilledPairs?: unknown };
+        const totalPairs = typeof p.totalPairs === "number" && p.totalPairs > 0 ? p.totalPairs : null;
+        const backfilledPairs = typeof p.backfilledPairs === "number" ? p.backfilledPairs : null;
+        return {
+          alpha: validated.alpha,
+          lambda: validated.lambda,
+          aiJudgedCoveragePct: Math.round(validated.coverageAtLambda * 1000) / 10,
+          n: validated.nAtLambda,
+          backfilledPct: totalPairs !== null && backfilledPairs !== null ? Math.round((backfilledPairs / totalPairs) * 1000) / 10 : null,
+        };
+      }
+      return null;
     } catch {
       return null;
     }
@@ -541,7 +581,7 @@ export async function getPublicStats(
       guaranteed,
       instanceCount: fleet.instanceCount,
       windowDays: fleet.windowDays,
-      gamingFlagsCaught: fleet.gamingPatternFlags.length,
+      gamingFlagsCaught: fleet.gamingDetectionEligible ? fleet.gamingPatternFlags.length : null,
     },
   };
 }

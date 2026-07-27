@@ -5211,30 +5211,30 @@ export async function getBounty(env: Env, id: string): Promise<BountyRecord | nu
 
 export async function upsertBounty(env: Env, bounty: BountyRecord): Promise<void> {
   const db = getDb(env.DB);
+  const set = {
+    repoFullName: bounty.repoFullName,
+    issueNumber: bounty.issueNumber,
+    status: bounty.status,
+    amountText: bounty.amountText,
+    sourceUrl: bounty.sourceUrl,
+    payloadJson: jsonString(bounty.payload),
+    updatedAt: nowIso(),
+  };
   await db
     .insert(bounties)
-    .values({
-      id: bounty.id,
-      repoFullName: bounty.repoFullName,
-      issueNumber: bounty.issueNumber,
-      status: bounty.status,
-      amountText: bounty.amountText,
-      sourceUrl: bounty.sourceUrl,
-      payloadJson: jsonString(bounty.payload),
-      updatedAt: nowIso(),
-    })
-    .onConflictDoUpdate({
-      target: bounties.id,
-      set: {
-        repoFullName: bounty.repoFullName,
-        issueNumber: bounty.issueNumber,
-        status: bounty.status,
-        amountText: bounty.amountText,
-        sourceUrl: bounty.sourceUrl,
-        payloadJson: jsonString(bounty.payload),
-        updatedAt: nowIso(),
-      },
-    });
+    .values({ id: bounty.id, ...set })
+    // #9080: TWO independent unique constraints can each conflict with this insert -- the primary key
+    // `id` (a re-import of the SAME upstream bounty) and `(repo_full_name, issue_number)`
+    // (`bounties_repo_issue_unique`, upstream re-issuing a bounty on the SAME issue under a NEW id, e.g.
+    // after cancelling and refunding the old one). Before this, only `id` was handled: a re-issued bounty
+    // conflicted on the unhandled unique index, the insert THREW, and — since nothing here caught it —
+    // the whole import batch 500'd and never advanced past that row on any subsequent import either
+    // (a permanent wedge). Chaining a second onConflictDoUpdate matches SQLite's own native multi-target
+    // upsert syntax, so both conflicts resolve to an update instead of one of them throwing. Neither
+    // clause touches `id`: the surviving row always keeps whichever id it already has, so
+    // bounty_lifecycle_events rows already keyed to it are never orphaned by a later re-issue.
+    .onConflictDoUpdate({ target: bounties.id, set })
+    .onConflictDoUpdate({ target: [bounties.repoFullName, bounties.issueNumber], set });
 }
 
 export async function persistAdvisory(env: Env, advisory: Advisory): Promise<void> {

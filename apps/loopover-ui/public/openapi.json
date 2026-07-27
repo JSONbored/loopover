@@ -14856,6 +14856,129 @@
           "recommendation",
           "summary"
         ]
+      },
+      "ValidateLinkedIssueRequest": {
+        "type": "object",
+        "properties": {
+          "issueNumber": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true
+          },
+          "plannedChange": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              },
+              "changedFiles": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 300
+                },
+                "maxItems": 200
+              },
+              "contributorLogin": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              }
+            }
+          }
+        },
+        "required": [
+          "issueNumber"
+        ]
+      },
+      "ValidateLinkedIssueResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "repoFullName": {
+            "type": "string"
+          },
+          "issueNumber": {
+            "type": "number"
+          },
+          "found": {
+            "type": "boolean"
+          },
+          "multiplierStatus": {
+            "type": "string"
+          },
+          "multiplierWouldApply": {
+            "type": "boolean"
+          },
+          "blockingReason": {
+            "type": "string"
+          },
+          "reasons": {
+            "nullable": true
+          },
+          "report": {
+            "nullable": true
+          }
+        }
+      },
+      "CheckBeforeStartRequest": {
+        "type": "object",
+        "properties": {
+          "issueNumber": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "plannedPaths": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 300
+            },
+            "maxItems": 200
+          }
+        }
+      },
+      "CheckBeforeStartResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "repoFullName": {
+            "type": "string"
+          },
+          "found": {
+            "type": "boolean"
+          },
+          "claimStatus": {
+            "type": "string"
+          },
+          "duplicateClusterRisk": {
+            "type": "string"
+          },
+          "recommendation": {
+            "type": "string"
+          },
+          "reasons": {
+            "nullable": true
+          },
+          "blockers": {
+            "nullable": true
+          },
+          "report": {
+            "nullable": true
+          }
+        }
       }
     },
     "parameters": {},
@@ -19359,6 +19482,128 @@
           },
           "404": {
             "description": "No ledger row at that seq (never appended -- distinct from a row with empty fields)"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/validate-linked-issue": {
+      "post": {
+        "summary": "Validate a planned linked-issue claim before opening a PR",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ValidateLinkedIssueRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Linked-issue validation report (mirrors loopover_validate_linked_issue)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidateLinkedIssueResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid validate-linked-issue request body"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Session lacks access to this repository"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/check-before-start": {
+      "post": {
+        "summary": "Pre-start claim and duplicate-cluster check for planned work",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckBeforeStartRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Pre-start check report (mirrors loopover_check_before_start)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckBeforeStartResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid check-before-start request body"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Session lacks access to this repository"
           }
         },
         "security": [

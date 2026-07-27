@@ -17,6 +17,10 @@ describe("OpenAPI contract", () => {
     expect(spec.paths["/v1/repos/{owner}/{repo}/issue-quality"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/outcome-patterns"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/gate-config/effective"]).toBeDefined();
+    expect(spec.paths["/v1/repos/{owner}/{repo}/validate-linked-issue"]).toBeDefined();
+    expect(spec.paths["/v1/repos/{owner}/{repo}/validate-linked-issue"]?.post).toBeDefined();
+    expect(spec.paths["/v1/repos/{owner}/{repo}/check-before-start"]).toBeDefined();
+    expect(spec.paths["/v1/repos/{owner}/{repo}/check-before-start"]?.post).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/registration-readiness"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/gittensor-config-recommendation"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/pulls/{number}/maintainer-packet"]).toBeDefined();
@@ -97,6 +101,16 @@ describe("OpenAPI contract", () => {
     expect(spec.components?.schemas?.RepoIntelligence).toBeDefined();
     expect(spec.components?.schemas?.RepoOutcomePatterns).toBeDefined();
     expect(spec.components?.schemas?.RegistrationReadiness).toBeDefined();
+    expect(spec.components?.schemas?.GateConfigEffectiveResponse).toBeDefined();
+    expect(spec.components?.schemas?.ValidateLinkedIssueResponse).toBeDefined();
+    expect(spec.components?.schemas?.CheckBeforeStartResponse).toBeDefined();
+    // #9304: response keys must match MCP tool output shapes in src/mcp/server.ts
+    expect(JSON.stringify(spec.components?.schemas?.ValidateLinkedIssueResponse)).toContain("multiplierWouldApply");
+    expect(JSON.stringify(spec.components?.schemas?.ValidateLinkedIssueResponse)).toContain("blockingReason");
+    expect(JSON.stringify(spec.components?.schemas?.CheckBeforeStartResponse)).toContain("duplicateClusterRisk");
+    expect(JSON.stringify(spec.components?.schemas?.CheckBeforeStartResponse)).toContain("claimStatus");
+    expect(JSON.stringify(spec.components?.schemas?.ValidateLinkedIssueRequest)).toContain("plannedChange");
+    expect(JSON.stringify(spec.components?.schemas?.CheckBeforeStartRequest)).toContain("plannedPaths");
     expect(spec.components?.schemas?.GittensorConfigRecommendation).toBeDefined();
     expect(spec.components?.schemas?.PullRequestMaintainerPacket).toBeDefined();
     expect(spec.components?.schemas?.PullRequestReviewability).toBeDefined();

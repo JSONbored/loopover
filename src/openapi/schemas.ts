@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { MAX_REVIEW_NAG_COOLDOWN_DAYS } from "../settings/agent-actions";
 import { MAX_CONTRIBUTOR_OPEN_ITEM_CAP } from "../types";
+import { PREFLIGHT_LIMITS } from "../signals/preflight-limits";
 import { extendZodWithOpenApi } from "@asteasolutions/zod-to-openapi";
 
 extendZodWithOpenApi(z);
@@ -1925,6 +1926,57 @@ export const GateConfigEffectiveResponseSchema = z
     shadowPending: z.boolean(),
   })
   .openapi("GateConfigEffectiveResponse");
+
+// Request/response parity with validateLinkedIssueShape + validateLinkedIssueOutputSchema (#9304).
+export const ValidateLinkedIssueRequestSchema = z
+  .object({
+    issueNumber: z.number().int().positive(),
+    plannedChange: z
+      .object({
+        title: z.string().min(1).max(PREFLIGHT_LIMITS.titleChars).optional(),
+        changedFiles: z.array(z.string().max(PREFLIGHT_LIMITS.changedFileChars)).max(PREFLIGHT_LIMITS.changedFiles).optional(),
+        contributorLogin: z.string().min(1).max(PREFLIGHT_LIMITS.contributorLoginChars).optional(),
+      })
+      .optional(),
+  })
+  .openapi("ValidateLinkedIssueRequest");
+
+export const ValidateLinkedIssueResponseSchema = z
+  .object({
+    status: z.string().optional(),
+    repoFullName: z.string().optional(),
+    issueNumber: z.number().optional(),
+    found: z.boolean().optional(),
+    multiplierStatus: z.string().optional(),
+    multiplierWouldApply: z.boolean().optional(),
+    blockingReason: z.string().optional(),
+    reasons: z.unknown().optional(),
+    report: z.unknown().optional(),
+  })
+  .openapi("ValidateLinkedIssueResponse");
+
+// Request/response parity with checkBeforeStartShape + checkBeforeStartOutputSchema (#9304).
+export const CheckBeforeStartRequestSchema = z
+  .object({
+    issueNumber: z.number().int().positive().optional(),
+    title: z.string().min(1).max(PREFLIGHT_LIMITS.titleChars).optional(),
+    plannedPaths: z.array(z.string().max(PREFLIGHT_LIMITS.changedFileChars)).max(PREFLIGHT_LIMITS.changedFiles).optional(),
+  })
+  .openapi("CheckBeforeStartRequest");
+
+export const CheckBeforeStartResponseSchema = z
+  .object({
+    status: z.string().optional(),
+    repoFullName: z.string().optional(),
+    found: z.boolean().optional(),
+    claimStatus: z.string().optional(),
+    duplicateClusterRisk: z.string().optional(),
+    recommendation: z.string().optional(),
+    reasons: z.unknown().optional(),
+    blockers: z.unknown().optional(),
+    report: z.unknown().optional(),
+  })
+  .openapi("CheckBeforeStartResponse");
 
 export const BurdenForecastSchema = z
   .object({

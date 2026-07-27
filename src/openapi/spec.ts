@@ -37,6 +37,10 @@ import {
   IssueQualityReportSchema,
   IssueQualityResponseSchema,
   GateConfigEffectiveResponseSchema,
+  ValidateLinkedIssueRequestSchema,
+  ValidateLinkedIssueResponseSchema,
+  CheckBeforeStartRequestSchema,
+  CheckBeforeStartResponseSchema,
   LabelAuditSchema,
   LaneAdviceSchema,
   LiveGateThresholdsResponseSchema,
@@ -163,6 +167,10 @@ export function buildOpenApiSpec() {
   registry.register("IssueQualityReport", IssueQualityReportSchema);
   registry.register("IssueQualityResponse", IssueQualityResponseSchema);
   registry.register("GateConfigEffectiveResponse", GateConfigEffectiveResponseSchema);
+  registry.register("ValidateLinkedIssueRequest", ValidateLinkedIssueRequestSchema);
+  registry.register("ValidateLinkedIssueResponse", ValidateLinkedIssueResponseSchema);
+  registry.register("CheckBeforeStartRequest", CheckBeforeStartRequestSchema);
+  registry.register("CheckBeforeStartResponse", CheckBeforeStartResponseSchema);
   registry.register("LiveGateThresholdsResponse", LiveGateThresholdsResponseSchema);
   registry.register("BurdenForecast", BurdenForecastSchema);
   registry.register("ContributorScoringProfile", ContributorScoringProfileSchema);
@@ -464,6 +472,54 @@ export function buildOpenApiSpec() {
       },
       401: { description: "Missing or invalid static protected API token" },
       403: { description: "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/repos/{owner}/{repo}/validate-linked-issue",
+    summary: "Validate a planned linked-issue claim before opening a PR",
+    request: {
+      params: z.object({ owner: z.string(), repo: z.string() }),
+      body: {
+        content: {
+          "application/json": {
+            schema: ValidateLinkedIssueRequestSchema,
+          },
+        },
+      },
+    },
+    responses: {
+      200: {
+        description: "Linked-issue validation report (mirrors loopover_validate_linked_issue)",
+        content: { "application/json": { schema: ValidateLinkedIssueResponseSchema } },
+      },
+      400: { description: "Invalid validate-linked-issue request body" },
+      401: { description: "Unauthorized" },
+      403: { description: "Session lacks access to this repository" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/repos/{owner}/{repo}/check-before-start",
+    summary: "Pre-start claim and duplicate-cluster check for planned work",
+    request: {
+      params: z.object({ owner: z.string(), repo: z.string() }),
+      body: {
+        content: {
+          "application/json": {
+            schema: CheckBeforeStartRequestSchema,
+          },
+        },
+      },
+    },
+    responses: {
+      200: {
+        description: "Pre-start check report (mirrors loopover_check_before_start)",
+        content: { "application/json": { schema: CheckBeforeStartResponseSchema } },
+      },
+      400: { description: "Invalid check-before-start request body" },
+      401: { description: "Unauthorized" },
+      403: { description: "Session lacks access to this repository" },
     },
   });
   registry.registerPath({

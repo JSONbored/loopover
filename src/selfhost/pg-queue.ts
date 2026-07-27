@@ -243,6 +243,46 @@ export interface PgQueueOptions {
   backgroundConcurrency?: number;
 }
 
+/** #9139/#9136: append a `dead_lettered` review_audit row for a queue job that just permanently failed --
+ *  the ops.ts anomaly-alerter's DLQ signal (`event_type = 'dead_lettered'`) reads this table, but NOTHING
+ *  wrote that event type anywhere in the codebase before this fix (only 'gate_decision' and the outcome/
+ *  reversal types were ever written), so `h.dlqCount` was permanently 0 and the "N review(s) DEAD-LETTERED"
+ *  alert could never fire.
+ *
+ *  Scoped to jobs with an identifiable repo+PR (extractPayloadContext) -- a maintenance/export job with no
+ *  PR context (orb-export, a cron sweep, ...) has nothing sensible to attribute a REVIEW dead-letter to, and
+ *  writing one anyway would fabricate a target the ops dashboard/alert can't meaningfully act on. Those
+ *  still increment loopover_jobs_dead_total exactly as before; this is additive, review-scoped detail on
+ *  top, not a replacement for the general counter.
+ *
+ *  target_id uses the SAME `owner/repo#pr` shape outcomes-wire.ts's reviewAuditTargetId stamps (the
+ *  target_id NAMESPACE MISMATCH #9136 also fixes: review_targets.id used a different, incompatible
+ *  `project:kind:repo#pr` shape, so a join against it could never match this table's rows even when
+ *  review_targets was still live). `project` mirrors alerts-wire.ts's own GITHUB_APP_SLUG fallback so the
+ *  row is scoped the same way every other ops.ts read already is. Best-effort: a write failure here must
+ *  never mask the job's own already-successful dead-letter transition above. */
+async function recordReviewAuditDeadLetter(pool: Pool, payload: string, errMsg: string): Promise<void> {
+  const context = extractPayloadContext(payload);
+  if (!context?.repo || context.pr_number === undefined) return;
+  const project = process.env.GITHUB_APP_SLUG?.trim() || "loopover";
+  const targetId = `${context.repo.slice(0, 200)}#${context.pr_number}`;
+  try {
+    await pool.query(
+      `INSERT INTO review_audit (id, project, target_id, event_type, decision, source, head_sha, summary, created_at)
+       VALUES ($1, $2, $3, 'dead_lettered', NULL, 'selfhost-queue', NULL, $4, $5)`,
+      [`dead_lettered:${targetId}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`, project, targetId, errMsg.slice(0, 500), new Date().toISOString()],
+    );
+  } catch (auditError) {
+    console.warn(
+      JSON.stringify({
+        event: "review_audit_dead_letter_record_error",
+        targetId,
+        message: errorMessageWithCause(auditError).slice(0, 160),
+      }),
+    );
+  }
+}
+
 export function createPgQueue(
   pool: Pool,
   consume: (message: JobMessage) => Promise<void>,
@@ -515,6 +555,23 @@ export function createPgQueue(
     return Number((await pool.query(`SELECT COUNT(*) AS c FROM ${TABLE} WHERE status='dead'`)).rows[0].c);
   }
 
+  /** #9139: jobs dead-lettered within the trailing `windowMs` -- the self-host counterpart to
+   *  loopover_dlq_dead_lettered_recent's cloud-worker source (countRecentDeadLetters, which reads
+   *  `github_app.dlq_dead_lettered` audit_events written only by processDlqBatch, itself reached only from
+   *  the Cloudflare `queue()` handler that server.ts never calls). Unlike deadCount() above (the STANDING
+   *  depth), this is a RATE-style window over `dead_at`, so it reads 0 once a self-host operator's own
+   *  reviveDeadLetterJobs()/manual replay clears the backlog, exactly like the cloud-side gauge already
+   *  behaves once the DLQ consumer catches up. */
+  async function recentDeadCount(windowMs: number): Promise<number> {
+    return Number(
+      (
+        await pool.query(`SELECT COUNT(*) AS c FROM ${TABLE} WHERE status='dead' AND dead_at IS NOT NULL AND dead_at > $1`, [
+          Date.now() - windowMs,
+        ])
+      ).rows[0].c,
+    );
+  }
+
   async function listDeadLetterJobs(limit: number, offset: number): Promise<DeadLetterJob[]> {
     const res = await pool.query(
       `SELECT id, payload, attempts, last_error, created_at, dead_at
@@ -668,10 +725,12 @@ export function createPgQueue(
 
   /** Wraps reviveDeadLetterJobs() for the setInterval callback below, which has no rejection handler of its
    *  own -- a transient pool/driver/metric failure here would otherwise surface as an unhandled promise
-   *  rejection and can terminate the process (fatal when POSTHOG_API_KEY is unset, since initPostHog's
-   *  enableExceptionAutocapture only installs a handler when PostHog is configured), exactly the failure mode
-   *  pump()'s own try/catch above guards against for the main poll loop. A failed revive tick just waits for
-   *  the next interval, same as a failed poll tick waits for the next poll.
+   *  rejection and terminate the process, uniformly regardless of PostHog config (#9133:
+   *  installSelfHostCrashHandlers is now the sole, unconditional crash-and-restart contract -- previously
+   *  this specific async/rejection case was fatal only when POSTHOG_API_KEY was UNSET, since initPostHog's
+   *  enableExceptionAutocapture, when configured, silently captured the rejection without ever exiting),
+   *  exactly the failure mode pump()'s own try/catch above guards against for the main poll loop. A failed
+   *  revive tick just waits for the next interval, same as a failed poll tick waits for the next poll.
    *
    *  Also wrapped in a PostHog monitor heartbeat (#1824): dead-letter revival stopping SILENTLY (the timer
    *  never fires again, e.g. after an unexpected process-level disruption) is worse than one throwing tick --
@@ -1470,6 +1529,7 @@ export function createPgQueue(
             [attempts, errMsg, Date.now(), job.id],
           );
           await recordQueueMetric("loopover_jobs_dead_total");
+          await recordReviewAuditDeadLetter(pool, job.payload, errMsg);
           console.error(
             JSON.stringify({
               level: "error",
@@ -1649,6 +1709,7 @@ export function createPgQueue(
       );
     },
     deadCount,
+    recentDeadCount,
     async processingCount() {
       return Number(
         (
@@ -1699,6 +1760,7 @@ export function createPgQueue(
         );
         if ((update.rowCount ?? 0) > 0) {
           await recordQueueMetric("loopover_jobs_dead_total");
+          await recordReviewAuditDeadLetter(pool, row.payload, "processing lease expired repeatedly; dead-lettered");
           capturePostHogError(new Error("self-host queue job wedged past its lease repeatedly"), {
             kind: "job_dead",
             reason: "processing_lease_exhausted",

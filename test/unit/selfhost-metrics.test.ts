@@ -236,6 +236,53 @@ describe("metrics registry (#982)", () => {
     incr("ok_total");
     expect((await renderMetrics())).toContain("ok_total 1");
   });
+
+  // #9139: a throwing sampler previously vanished entirely -- no series, no counter, no trace it ever
+  // existed this scrape. Every queue-backlog alert reads exactly this shape of gauge (a live DB read), so a
+  // DB incident silently deactivated the alerts meant to catch it. Now the failure is itself counted and the
+  // gauge still emits a -1 sentinel (the same "impossible for a healthy gauge" convention as
+  // loopover_clock_skew_sample_age_seconds), so its absence is visible instead of silent.
+  describe("failing gauge sampler visibility (#9139)", () => {
+    it("counts the failure by metric name and emits a -1 sentinel series instead of vanishing", async () => {
+      registerMetricMeta("bad_gauge", { help: "A gauge that throws.", type: "gauge" });
+      gauge("bad_gauge", () => {
+        throw new Error("db down");
+      });
+
+      const out = await renderMetrics();
+      expect(out).toContain("bad_gauge -1");
+      expect(out).toContain('loopover_metrics_sampler_errors_total{metric="bad_gauge"} 1');
+    });
+
+    it("accumulates across repeated scrapes (a sustained failure, not a one-shot)", async () => {
+      gauge("still_bad", () => {
+        throw new Error("still down");
+      });
+
+      await renderMetrics();
+      await renderMetrics();
+      const out = await renderMetrics();
+      expect(out).toContain('loopover_metrics_sampler_errors_total{metric="still_bad"} 3');
+    });
+
+    it("does not touch the sampler-errors counter for a gauge that succeeds (the other arm)", async () => {
+      gauge("healthy_gauge", () => 42);
+
+      const out = await renderMetrics();
+      expect(out).toContain("healthy_gauge 42");
+      expect(out).not.toContain("loopover_metrics_sampler_errors_total");
+    });
+
+    it("counts an async gauge sampler's rejection the same as a sync throw", async () => {
+      gauge("bad_async_gauge", async () => {
+        throw new Error("async db down");
+      });
+
+      const out = await renderMetrics();
+      expect(out).toContain("bad_async_gauge -1");
+      expect(out).toContain('loopover_metrics_sampler_errors_total{metric="bad_async_gauge"} 1');
+    });
+  });
 });
 
 describe("gaugeVector (#selfhost-lane-observability)", () => {
@@ -313,6 +360,19 @@ describe("gaugeVector (#selfhost-lane-observability)", () => {
     });
     incr("ok_total");
     expect(await renderMetrics()).toContain("ok_total 1");
+  });
+
+  // #9139: same failure-visibility fix as the plain gauge() case, adapted for a vector's unknown-at-failure
+  // label set -- there's no single value to sentinel, so only the failure counter is the actionable signal.
+  it("counts a failing gaugeVector sampler by metric name, even though it has no single value to sentinel (#9139)", async () => {
+    registerMetricMeta("bad_vector_gauge", { help: "A vector gauge that throws.", type: "gauge" });
+    gaugeVector("bad_vector_gauge", () => {
+      throw new Error("db down");
+    });
+
+    const out = await renderMetrics();
+    expect(out).toContain('loopover_metrics_sampler_errors_total{metric="bad_vector_gauge"} 1');
+    expect(out).not.toMatch(/^bad_vector_gauge\{/m);
   });
 
   it("re-registering the same name replaces the sampler", async () => {

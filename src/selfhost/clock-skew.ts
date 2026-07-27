@@ -12,6 +12,13 @@ let lastSkewSeconds = 0;
 // signal below so an old sample can't silently look current if token-mint activity — the only thing that
 // refreshes lastSkewSeconds — stalls (#7000).
 let lastSkewSampleAtMs: number | null = null;
+// #9128 (sibling audit): module-load time, the fallback "since" reference for clockSkewSampleAgeSeconds
+// when no sample has ever landed -- mirrors the SAME fix applied to the relay-drain "never happened" gauge,
+// which read a flat -1 forever (never ageing into a threshold no matter how long the underlying condition
+// persisted). No alert currently reads this gauge (confirmed: zero references in prometheus/rules/alerts.yml
+// and zero dashboard panels), so today this closes a latent hole rather than an active one -- but the SAME
+// shape would silently defeat any FUTURE alert added on this metric, exactly as it did for relay-drain.
+let moduleLoadedAtMs = Date.now();
 
 /**
  * Update the last-observed clock-skew sample from a GitHub response's `Date` header. Positive means
@@ -35,17 +42,21 @@ export function clockSkewSecondsSample(): number {
 }
 
 /**
- * Seconds since the last successful clock-skew sample, or a -1 sentinel when none has landed yet — the same
- * "never sampled" convention as {@link d1DatabaseSizeBytesSample} (src/selfhost/d1-size-probe.ts). Lets an
- * operator tell a fresh reading apart from an old sample the token-mint path simply hasn't refreshed (#7000).
+ * Seconds since the last successful clock-skew sample -- or, before any sample has ever landed, seconds
+ * since this module was loaded (#9128: previously a flat -1 sentinel that never aged, the same "never
+ * happened" shape that let the relay-drain staleness alarm go permanently quiet). No alert reads this gauge
+ * today, so this only closes a latent hole, but it means a future threshold on it behaves correctly from
+ * the start rather than needing its own follow-up fix.
  */
 export function clockSkewSampleAgeSeconds(): number {
-  if (lastSkewSampleAtMs === null) return -1;
-  return (Date.now() - lastSkewSampleAtMs) / 1000;
+  const sinceMs = lastSkewSampleAtMs ?? moduleLoadedAtMs;
+  return (Date.now() - sinceMs) / 1000;
 }
 
-/** Test-only: reset the module-level sample between tests. */
+/** Test-only: reset the module-level sample between tests, including the #9128 boot-time reference (so a
+ *  test can control "time since load" precisely, matching resetPostHogForTest-style module resets elsewhere). */
 export function resetClockSkewForTest(): void {
   lastSkewSeconds = 0;
   lastSkewSampleAtMs = null;
+  moduleLoadedAtMs = Date.now();
 }

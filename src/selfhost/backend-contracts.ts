@@ -37,6 +37,12 @@ export interface DurableQueue {
   drain(): Promise<void>;
   size(): Promise<number>;
   deadCount(): Promise<number>;
+  /** #9139: jobs dead-lettered within the trailing `windowMs` -- a RATE-style window over `dead_at`, unlike
+   *  deadCount()'s standing depth. Backs loopover_dlq_dead_lettered_recent on self-host, whose cloud-worker
+   *  source (audit_events' `github_app.dlq_dead_lettered`, written only by the Cloudflare `queue()` handler's
+   *  processDlqBatch) is structurally unreachable here -- server.ts calls `worker.fetch`/`worker.scheduled`
+   *  but never `worker.queue`. */
+  recentDeadCount(windowMs: number): Promise<number>;
   /** Jobs currently claimed and mid-flight (status='processing') -- distinct from size(), which also
    *  includes still-pending work. See #selfhost-queue-liveness's own observability additions. */
   processingCount(): Promise<number>;

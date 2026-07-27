@@ -227,7 +227,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "GITHUB_APP_SLUG",
-    firstReference: "src/queue/processors.ts",
+    firstReference: "src/selfhost/pg-queue.ts",
   },
   {
     name: "GITHUB_CACHE_TTL_SECONDS",
@@ -701,7 +701,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `FOREGROUND_LIVENESS_MAX_RELEASE_PER_SWEEP` | `src/selfhost/foreground-liveness.ts` |",
   "| `GITHUB_APP_ID` | `src/selfhost/orb-collector.ts` |",
   "| `GITHUB_APP_PRIVATE_KEY` | `src/selfhost/orb-collector.ts` |",
-  "| `GITHUB_APP_SLUG` | `src/queue/processors.ts` |",
+  "| `GITHUB_APP_SLUG` | `src/selfhost/pg-queue.ts` |",
   "| `GITHUB_CACHE_TTL_SECONDS` | `src/server.ts` |",
   "| `GITHUB_INSTALLATION_CONCURRENCY_DEFER_MS` | `src/selfhost/installation-concurrency-admission.ts` |",
   "| `GITHUB_INSTALLATION_CONCURRENCY_ENABLED` | `src/selfhost/installation-concurrency-admission.ts` |",

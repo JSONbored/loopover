@@ -101,7 +101,9 @@ import {
   runOrbExportWithMonitor,
   runScheduledLoopWithMonitor,
   withOrbRelayDrainReentrancyGuard,
+  type OrbRelayDrainState,
 } from "./selfhost/monitored-work";
+import { installSelfHostCrashHandlers } from "./selfhost/process-lifecycle";
 import {
   currentOtelTraceParent,
   initOpenTelemetry,
@@ -120,6 +122,7 @@ import {
   setLocalReviewContextReader,
 } from "./signals/focus-manifest-loader";
 import { probeReesSecretAtStartup } from "./review/enrichment-wire";
+import { checkReviewSourceFreshness } from "./review/ops";
 import { sampleRecentDeadLetters } from "./selfhost/dlq-recent";
 import type { JobMessage } from "./types";
 
@@ -318,15 +321,28 @@ function resolveReviewAuditBinding(): R2Bucket | undefined {
 }
 
 async function main(): Promise<void> {
+  // #9133: the crash-and-restart contract (an uncaught exception or unhandled rejection kills the process
+  // so Docker's restart policy recovers it, reclaiming any stale in-flight job) must be independent of
+  // whether telemetry is configured -- installed FIRST, before anything else in boot, so it also covers a
+  // failure during preflight/config loading itself, not just the steady-state server loop. See
+  // src/selfhost/process-lifecycle.ts's own header comment for the full "why" (the PREVIOUS reasoning here
+  // -- that PostHog's own enableExceptionAutocapture already installs equivalent handlers -- was correct for
+  // uncaughtException but silently wrong for unhandledRejection, which posthog-node's own handler captures
+  // but never rethrows or exits).
+  /* v8 ignore next -- importing this entrypoint starts the Node server; handler-installation logic itself is unit-tested in selfhost-process-lifecycle.test.ts. */
+  installSelfHostCrashHandlers({ captureError: (error, context) => capturePostHogError(error, context), flush: flushPostHog });
   loadFileSecrets();
   /* v8 ignore next -- importing this entrypoint starts the Node server; pure validation is covered in selfhost-preflight tests. */
   assertSelfHostPreflight(process.env);
   // Error tracking (#1468, epic #8286): opt-in via POSTHOG_API_KEY -- the same var #6235's MCP telemetry
   // already reads -- a complete no-op when unset. REPLACES the old Sentry sink entirely (2026-07-25 epic
-  // correction: full replacement, not a parallel-run). enableExceptionAutocapture (set inside initPostHog)
-  // already installs its own uncaughtException/unhandledRejection handlers per PostHog's own documented
-  // Node.js setup, so no manual process.on wiring is needed here for the crash case; only structured-log
-  // forwarding needs an explicit install.
+  // correction: full replacement, not a parallel-run). enableExceptionAutocapture is now OFF (#9133; set
+  // inside initPostHog) -- installSelfHostCrashHandlers above is the sole, unconditional source of truth
+  // for the uncaughtException/unhandledRejection crash contract, so posthog-node never installs its OWN
+  // competing listeners for either event (avoiding both a double-captured exception and posthog-node's own
+  // foreign-listener-count heuristic for uncaughtException, which would otherwise silently skip ITS
+  // process.exit(1) the moment it saw a foreign listener -- this module's own). Structured-log forwarding is
+  // unaffected and still needs its own explicit install below.
   //
   // #6325 follow-up: initialized HERE, before every boot-time advisory below (emptyConfigDirAdvisory /
   // sqliteBackupAdvisory / publicOriginReachabilityAdvisory all "warn LOUDLY" via console.error, which
@@ -856,7 +872,10 @@ async function main(): Promise<void> {
 
   gauge("loopover_queue_pending", () => backend.queue.size());
   gauge("loopover_queue_dead", () => backend.queue.deadCount());
-  gauge("loopover_dlq_dead_lettered_recent", () => sampleRecentDeadLetters(env));
+  // #9139: pass backend.queue's own recentDeadCount so this reads the self-host dead-letter path (the
+  // audit_events-based cloud-worker source this gauge otherwise reads is unreachable here -- see
+  // sampleRecentDeadLetters's own doc comment).
+  gauge("loopover_dlq_dead_lettered_recent", () => sampleRecentDeadLetters(env, undefined, backend.queue));
   gauge("loopover_queue_processing", () => backend.queue.processingCount());
   const durableJobMetric = async (name: string): Promise<number> =>
     Number((await backend.queue.stats())[name] ?? 0);
@@ -914,6 +933,16 @@ async function main(): Promise<void> {
   gauge("loopover_d1_database_size_bytes", () => d1DatabaseSizeBytesSample());
   gaugeVector("loopover_d1_table_row_count", () => d1TableRowCountSamples());
   gauge("loopover_signal_snapshots_rows_per_key", () => d1SignalSnapshotsRowsPerKeySample());
+  // #9136: the generalizable fix — the NEXT review-source orphaning (a table a downstream module treats as
+  // live, silently stops being written) must be loud, not silent, the way review_targets' own 2026-06-22
+  // orphaning went unnoticed for months. 1 = fresh (a row inside that table's own consumer's window), 0 =
+  // stale. See checkReviewSourceFreshness's own doc comment for exactly which tables/windows are tracked.
+  gaugeVector("loopover_review_source_fresh", async () =>
+    (await checkReviewSourceFreshness(env)).map((check) => ({
+      labels: { table: check.table, window_days: String(check.windowDays) },
+      value: check.fresh ? 1 : 0,
+    })),
+  );
   // Backlog-vs-fresh-intake fairness lanes (#selfhost-lane-observability, see queue-fairness.ts): the SAME
   // `foreground_lane` classification the claim-time fairness mechanism itself consults, so an operator can see
   // whether a stuck-looking queue is actually a real, unresolved PR-review backlog (high backlog-convergence
@@ -1235,7 +1264,8 @@ async function main(): Promise<void> {
   // attempt can consult `relayDrainState.lastDrainAtMs` -- a single registration timeout must not alert
   // while the drain loop is still proving the relay connection itself is alive (#selfhost-runtime-drift
   // follow-up). Stays undefined in push mode, where there is no drain loop.
-  const relayDrainState = process.env.ORB_RELAY_MODE === "pull" ? { pendingAck: [] as string[], lastDrainAtMs: null as number | null } : undefined;
+  const relayDrainState: OrbRelayDrainState | undefined =
+    process.env.ORB_RELAY_MODE === "pull" ? { pendingAck: [], lastDrainAtMs: null, consecutiveFailures: 0 } : undefined;
 
   // Brokered self-host: register our relay target with the central Orb (best-effort). PUSH mode (default)
   // registers a public relay URL the Orb POSTs to; PULL mode (ORB_RELAY_MODE=pull) registers no URL and the
@@ -1257,6 +1287,7 @@ async function main(): Promise<void> {
       env: orbRelayEnv,
       state: orbRelayRegistrationState,
       register: registerOrbRelayTargetWithRetry,
+      bootAtMs: startedAt,
       ...(relayDrainState ? { drainState: relayDrainState } : {}),
     }).catch((error) => {
       capturePostHogError(error, { kind: "orb_relay_register" }, "orb_relay_register");
@@ -1267,9 +1298,21 @@ async function main(): Promise<void> {
   // an operator staring at the registration-failures counter alone can't tell "one hiccup" from "actually
   // stuck" -- these two gauges are the SAME two signals that gate, sampled live at scrape time.
   gauge("loopover_orb_relay_register_consecutive_failures", () => orbRelayRegistrationState.consecutiveFailures);
-  gauge("loopover_orb_relay_drain_seconds_since_last", () =>
-    relayDrainState?.lastDrainAtMs == null ? -1 : Math.floor((Date.now() - relayDrainState.lastDrainAtMs) / 1000),
-  );
+  // #9128: a dedicated DRAIN failure streak, distinct from the registration one above -- a flapping drain
+  // (succeeds often enough that seconds_since_last below never crosses the no-progress window) previously
+  // had no signal of its own at all. 0 in push mode (relayDrainState undefined) -- there is no drain loop.
+  gauge("loopover_orb_relay_drain_consecutive_failures", () => relayDrainState?.consecutiveFailures ?? 0);
+  gauge("loopover_orb_relay_drain_seconds_since_last", () => {
+    // #9128: -1 in push mode ONLY -- there is no drain loop at all, so the metric genuinely doesn't apply
+    // (unchanged from before this fix). In PULL mode, a null lastDrainAtMs (never once completed a drain
+    // tick, whether because boot just happened or because every tick has thrown) now ages from process
+    // BOOT instead of reading a flat -1 forever -- so a never-drained pull-mode instance still climbs past
+    // LoopoverOrbRelayRegistrationStuck's existing >1800s threshold on its own, the same as a
+    // previously-draining instance that's gone stale.
+    if (!relayDrainState) return -1;
+    const sinceMs = relayDrainState.lastDrainAtMs ?? startedAt;
+    return Math.floor((Date.now() - sinceMs) / 1000);
+  });
   /* v8 ignore stop */
 
   // D1 size/row-count observability probe (#3810): a no-op everywhere until an operator sets all three

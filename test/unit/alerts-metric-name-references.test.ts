@@ -64,6 +64,50 @@ function findUnknownMetricReferences(doc: AlertsDoc, registeredNames: ReadonlySe
 
 const registeredNames = new Set(DEFAULT_METRIC_META.map(([name]) => name));
 
+// #9139: alertmanager.yml's inhibit-rule EXAMPLES reference a Prometheus alertname by string
+// (`alertname="…"`), entirely inside YAML comments (every inhibit_rules block ships commented-out until an
+// operator opts in) -- so parseYaml can never see them; a plain regex scan over the RAW file text is the
+// only way to catch a stale/misspelled name before an operator uncomments it and gets a rule that silently
+// never inhibits (the exact live bug: `alertname="LoopOverTargetDown"`, capital O, against the real rule
+// `LoopoverTargetDown`).
+const ALERTNAME_PATTERN = /alertname="([A-Za-z0-9_]+)"/g;
+
+/** Every `alertname="…"` value referenced anywhere in `text` (comments included), in order of appearance. */
+function alertnameReferences(text: string): string[] {
+  return [...text.matchAll(ALERTNAME_PATTERN)].map((match) => match[1]!);
+}
+
+/** Every referenced alertname that does NOT match a real `alert:` rule name in `knownAlertNames`. */
+function findUnknownAlertnameReferences(text: string, knownAlertNames: ReadonlySet<string>): string[] {
+  return alertnameReferences(text).filter((name) => !knownAlertNames.has(name));
+}
+
+describe("alertmanager.yml alertname references (#9139)", () => {
+  const alertsDoc = parseYaml(readFileSync("prometheus/rules/alerts.yml", "utf8")) as AlertsDoc;
+  const knownAlertNames = new Set(alertsDoc.groups.flatMap((group) => group.rules.map((rule) => rule.alert)));
+
+  it("resolves every alertname reference in the real alertmanager.yml (including commented inhibit-rule examples) to a real alerts.yml rule", () => {
+    const raw = readFileSync("alertmanager/alertmanager.yml", "utf8");
+    // Sanity: the file actually contains at least one alertname reference to check -- otherwise this
+    // assertion would trivially pass even if the commented example were deleted entirely.
+    expect(alertnameReferences(raw).length).toBeGreaterThan(0);
+    expect(findUnknownAlertnameReferences(raw, knownAlertNames)).toEqual([]);
+  });
+
+  it("REGRESSION (#9139): flags the exact prior live bug -- a capitalization mismatch against the real rule name", () => {
+    const fixture = '#   - source_matchers:\n#       - alertname="LoopOverTargetDown"\n';
+    expect(findUnknownAlertnameReferences(fixture, knownAlertNames)).toEqual(["LoopOverTargetDown"]);
+    // The corrected spelling is a real rule and is not flagged (the fix this regression test pins).
+    expect(findUnknownAlertnameReferences('alertname="LoopoverTargetDown"', knownAlertNames)).toEqual([]);
+  });
+
+  it("does not flag a fabricated, never-registered alertname", () => {
+    expect(findUnknownAlertnameReferences('alertname="TotallyMadeUpAlertThatDoesNotExist"', knownAlertNames)).toEqual([
+      "TotallyMadeUpAlertThatDoesNotExist",
+    ]);
+  });
+});
+
 describe("alert annotation metric-name references (#5816)", () => {
   it("references only registered metrics, a recognized wildcard family, or a documented external prefix in the real alerts.yml", () => {
     const doc = parseYaml(readFileSync("prometheus/rules/alerts.yml", "utf8")) as AlertsDoc;

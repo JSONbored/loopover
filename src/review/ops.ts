@@ -185,7 +185,27 @@ const NON_TERMINAL = new Set(["queued", "reviewing", "error_retryable"]);
 const ANOMALY_WINDOW = "-7 days";
 // DLQ spike = a RECENT burst of dead-letters whose targets HAVEN'T recovered.
 const DLQ_WINDOW = "-6 hours";
-const DLQ_RECOVERED_STATUSES = "('merged', 'closed', 'commented', 'manual', 'ignored')";
+
+// #9136: `review_targets` has NO live writer anywhere in this codebase (the 2026-06-22 convergence cutover
+// orphaned it -- see src/db/repo-identity-rename.ts / src/review/public-stats.ts's own comments) — every
+// query below that used to join or read it saw a permanently-empty table, silently zeroing the reversals
+// and DLQ anomaly signals. `review_audit` (migration 0049) IS live: parity-wire.ts writes 'gate_decision'
+// rows on every finalized verdict, and outcomes-wire.ts writes 'pr_outcome'/'reversal_reverted'/
+// 'reversal_reopened' rows on the realized outcome. Repointing reversals + DLQ (the two signals detectAnomalies
+// can ACT on directly) onto review_audit alone -- parsing repo/number out of its own target_id instead of
+// joining review_targets for them -- also fixes a SEPARATE bug the join had: review_audit.target_id is
+// `owner/repo#123` (reviewAuditTargetId, outcomes-wire.ts) while review_targets.id is `project:kind:owner/repo#123`
+// (rowId, above) -- a different namespace the join could never actually match, even while review_targets was
+// still live. byStatus/verdictRows/failedRows below are UNCHANGED (still review_targets-sourced, and so still
+// silently zero) -- deferred; see the PR description for the full scope decision and #9136 for the tracked
+// remainder (manualRate/stuckRetryable/failed/calibration bins, submitter-reputation.ts, ams-miner-cohort.ts).
+function parseReviewAuditTargetId(targetId: string): { repo: string; number: number } | null {
+  const hashIndex = targetId.lastIndexOf("#");
+  if (hashIndex <= 0) return null;
+  const repo = targetId.slice(0, hashIndex);
+  const number = Number(targetId.slice(hashIndex + 1));
+  return Number.isInteger(number) && number > 0 ? { repo, number } : null;
+}
 
 // ── Injected runtime-gate deps (config invariants + kill-switch/circuit-breaker flags + AI errors) ───
 
@@ -223,32 +243,43 @@ export async function computeAgentHealth(env: Env, config: OpsAgentConfig, deps:
        WHERE project = ? AND status = 'error' AND updated_at > datetime('now', ?)
        ORDER BY updated_at DESC LIMIT ?`,
     ).bind(slug, ANOMALY_WINDOW, LIST_CAP).all<{ number: number; repo: string; verdict: string | null; last_error: string | null }>(),
-    // Recent human reversals of a bot auto-action. A reopened bot-close the gate SUBSEQUENTLY
-    // RE-TERMINALIZED (terminal_at AFTER the reopen) is excluded — the gate re-reviewed and ACTED on it.
+    // #9136: repointed off review_targets (see this file's own header comment above). Recent human reversals
+    // of a bot auto-action, read directly from review_audit's own reversal_* rows -- repo/number parsed from
+    // target_id, no join. A reopened bot-close the gate SUBSEQUENTLY re-acted on (a LATER gate_decision row
+    // for the same target_id) is excluded, mirroring the review_targets.terminal_at check this replaces.
     storage(env).prepare(
-      `SELECT t.number AS number, t.repo AS repo, t.status AS status, a.event_type AS event_type
-       FROM review_audit a JOIN review_targets t ON t.id = a.target_id
+      `SELECT a.target_id AS target_id, a.event_type AS event_type
+       FROM review_audit a
        WHERE a.project = ? AND a.event_type IN ('reversal_reverted', 'reversal_reopened')
          AND a.created_at > datetime('now', ?)
-         AND NOT (a.event_type = 'reversal_reopened' AND t.terminal_at IS NOT NULL AND t.terminal_at > a.created_at)
+         AND NOT (
+           a.event_type = 'reversal_reopened' AND EXISTS (
+             SELECT 1 FROM review_audit g
+             WHERE g.project = a.project AND g.target_id = a.target_id
+               AND g.event_type = 'gate_decision' AND g.created_at > a.created_at
+           )
+         )
        ORDER BY a.created_at DESC LIMIT ?`,
-    ).bind(slug, ANOMALY_WINDOW, LIST_CAP).all<{ number: number; repo: string; status: string; event_type: string }>(),
-    // Auto-actions in the SAME 7d window — the rate denominator.
-    storage(env).prepare(`SELECT COUNT(*) AS n FROM review_targets WHERE project = ? AND status IN ('merged', 'closed') AND terminal_at > datetime('now', ?)`).bind(slug, ANOMALY_WINDOW).first<{ n: number }>(),
-    // RECENT, UNRECOVERED dead-letter events, WITH the PR.
+    ).bind(slug, ANOMALY_WINDOW, LIST_CAP).all<{ target_id: string; event_type: string }>(),
+    // #9136: auto-actions in the SAME 7d window — the reversalRate denominator. Repointed onto review_audit's
+    // own gate_decision rows (decision IN merge/close) instead of review_targets' terminal-status count.
     storage(env).prepare(
-      `SELECT t.number AS number, t.repo AS repo, t.verdict AS verdict, t.last_error AS last_error
-       FROM review_audit a JOIN review_targets t ON t.id = a.target_id
-       WHERE a.project = ? AND a.event_type = 'dead_lettered' AND a.created_at > datetime('now', ?)
-         AND t.status NOT IN ${DLQ_RECOVERED_STATUSES}
-       ORDER BY a.created_at DESC LIMIT ?`,
-    ).bind(slug, DLQ_WINDOW, LIST_CAP).all<{ number: number; repo: string; verdict: string | null; last_error: string | null }>(),
-    // TRUE count of recent UNRECOVERED dead-letters — a separate COUNT(*) so a storm of >LIST_CAP isn't
-    // undercounted, and so recovered targets never inflate it.
+      `SELECT COUNT(*) AS n FROM review_audit WHERE project = ? AND event_type = 'gate_decision' AND decision IN ('merge', 'close') AND created_at > datetime('now', ?)`,
+    ).bind(slug, ANOMALY_WINDOW).first<{ n: number }>(),
+    // #9136: repointed off review_targets. RECENT dead-letter events, read directly from review_audit (the
+    // event type pg-queue.ts's self-host dead-letter path now writes, #9139) -- repo/number/lastError parsed
+    // from target_id + summary, no join. Unlike the review_targets-joined query this replaces, this does NOT
+    // exclude a target that later recovered (review_targets' terminal-status recheck has no live equivalent
+    // here) -- a conservative direction change: it can only make the alert fire on a real dead-letter more
+    // readily, never mask one.
     storage(env).prepare(
-      `SELECT COUNT(*) AS n FROM review_audit a JOIN review_targets t ON t.id = a.target_id
-       WHERE a.project = ? AND a.event_type = 'dead_lettered' AND a.created_at > datetime('now', ?)
-         AND t.status NOT IN ${DLQ_RECOVERED_STATUSES}`,
+      `SELECT target_id, summary FROM review_audit
+       WHERE project = ? AND event_type = 'dead_lettered' AND created_at > datetime('now', ?)
+       ORDER BY created_at DESC LIMIT ?`,
+    ).bind(slug, DLQ_WINDOW, LIST_CAP).all<{ target_id: string; summary: string | null }>(),
+    // TRUE count of recent dead-letters — a separate COUNT(*) so a storm of >LIST_CAP isn't undercounted.
+    storage(env).prepare(
+      `SELECT COUNT(*) AS n FROM review_audit WHERE project = ? AND event_type = 'dead_lettered' AND created_at > datetime('now', ?)`,
     ).bind(slug, DLQ_WINDOW).first<{ n: number }>(),
   ]);
   const byStatus: Record<string, number> = {};
@@ -259,8 +290,27 @@ export async function computeAgentHealth(env: Env, config: OpsAgentConfig, deps:
   const nonTerminal = Object.entries(byStatus).reduce((sum, [s, n]) => (NON_TERMINAL.has(s) ? sum + n : sum), 0);
   const recentAutoActions = recentActionsRow?.n ?? 0;
   const failedTargets: FailedTarget[] = (failedRows.results ?? []).map((r) => ({ number: r.number, repo: r.repo, verdict: r.verdict, lastError: r.last_error }));
-  const reversedTargets: ReversedTarget[] = (reversedRows.results ?? []).map((r) => ({ number: r.number, repo: r.repo, status: r.status, eventType: r.event_type }));
-  const dlqTargets: FailedTarget[] = (dlqRows.results ?? []).map((r) => ({ number: r.number, repo: r.repo, verdict: r.verdict, lastError: r.last_error }));
+  // #9136: repo/number parsed from review_audit's own target_id (no review_targets join -- see this file's
+  // header comment). A target_id this malformed to parse is skipped (filtered out) rather than crashing the
+  // whole snapshot over one bad row -- defensive only; every writer of this column (outcomes-wire.ts,
+  // pg-queue.ts/sqlite-queue.ts's dead-letter path) always stamps the well-formed `owner/repo#n` shape.
+  const reversedTargets: ReversedTarget[] = (reversedRows.results ?? [])
+    .map((r) => {
+      const parsed = parseReviewAuditTargetId(r.target_id);
+      if (!parsed) return null;
+      // No live review_targets status to read anymore -- derived purely from the reversal's OWN event_type,
+      // which already tells us what the PR's terminal status must have been: a reverted action was a MERGE
+      // (only a merge can be "reverted" by a separate revert PR); a reopened action was a CLOSE.
+      const status = r.event_type === "reversal_reverted" ? "merged" : "closed";
+      return { number: parsed.number, repo: parsed.repo, status, eventType: r.event_type };
+    })
+    .filter((t): t is ReversedTarget => t !== null);
+  const dlqTargets: FailedTarget[] = (dlqRows.results ?? [])
+    .map((r): FailedTarget | null => {
+      const parsed = parseReviewAuditTargetId(r.target_id);
+      return parsed ? { number: parsed.number, repo: parsed.repo, verdict: null, lastError: r.summary } : null;
+    })
+    .filter((t): t is FailedTarget => t !== null);
   const reversals = reversedTargets.length;
   return {
     byStatus,
@@ -477,4 +527,55 @@ export async function handleInternalCalibration(request: Request, env: Env, conf
   const denied = requireInternalAuth(request, env, config);
   if (denied) return denied;
   return Response.json({ project: config.slug, calibration: await computeCalibration(env, config) });
+}
+
+// ── Source-table freshness (#9136, the generalizable fix) ───────────────────────────────────────────
+
+/** One source table's freshness verdict: does it have a row inside ITS OWN consumer's window, not just
+ *  "any row ever". `fresh: false` on a read error too (a missing/dropped table is itself a staleness
+ *  signal — fail CLOSED, never masquerade a broken read as "everything's fine"). */
+export interface ReviewSourceFreshnessCheck {
+  table: string;
+  /** The consuming window (days) a stale table would fall outside of -- the same window value the real
+   *  consumer(s) use, so this check fails at EXACTLY the moment those consumers' own queries would start
+   *  reading an empty result. */
+  windowDays: number;
+  fresh: boolean;
+}
+
+/** Every table an ops/reputation module treats as a LIVE, windowed source, with that consumer's own
+ *  window. `review_targets` was silently orphaned by the 2026-06-22 convergence cutover (no live writer
+ *  anywhere — see src/db/repo-identity-rename.ts / src/review/public-stats.ts's own comments) and nobody
+ *  noticed for months; this is the generalizable fix so the NEXT orphaning is loud, not silent.
+ *   - review_targets: submitter-reputation.ts's own REPUTATION_WINDOW_DAYS (90) — this table's newest row
+ *     is frozen at the 2026-06-22 cutover, so it will fall outside this window (and read permanently stale
+ *     here) around 2026-09-20 if nothing else changes; see #9136 for the full scope decision on that module.
+ *   - review_audit: this module's own ANOMALY_WINDOW (7 days) — IS live today (parity-wire.ts writes
+ *     'gate_decision' rows, outcomes-wire.ts writes the outcome/reversal types), so this should read fresh
+ *     in steady state. If both writers ever stop, this is what catches the alerter going silently inert
+ *     again, exactly the shape review_targets' own orphaning took.
+ */
+const REVIEW_SOURCE_FRESHNESS_SOURCES: ReadonlyArray<{ table: string; timestampColumn: string; windowDays: number }> = [
+  { table: "review_targets", timestampColumn: "terminal_at", windowDays: 90 },
+  { table: "review_audit", timestampColumn: "created_at", windowDays: 7 },
+];
+
+/** Check every tracked source table for a row inside its own consuming window. Read-only; a per-table
+ *  query failure degrades that ONE table to `fresh: false` (fail closed) rather than throwing the whole
+ *  check — a broken table is exactly the condition this exists to surface, not to hide behind an
+ *  unhandled rejection. */
+export async function checkReviewSourceFreshness(env: Env): Promise<ReviewSourceFreshnessCheck[]> {
+  return Promise.all(
+    REVIEW_SOURCE_FRESHNESS_SOURCES.map(async ({ table, timestampColumn, windowDays }): Promise<ReviewSourceFreshnessCheck> => {
+      try {
+        const row = await storage(env)
+          .prepare(`SELECT 1 AS x FROM ${table} WHERE ${timestampColumn} IS NOT NULL AND ${timestampColumn} > datetime('now', ?) LIMIT 1`)
+          .bind(`-${windowDays} days`)
+          .first<{ x: number }>();
+        return { table, windowDays, fresh: row != null };
+      } catch {
+        return { table, windowDays, fresh: false };
+      }
+    }),
+  );
 }

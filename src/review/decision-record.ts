@@ -13,12 +13,16 @@
 // replay" is structurally impossible.
 //
 // HONEST LIMIT (#9122, mirrored from migrations/0180_decision_ledger.sql's own header): the hash-chained
-// ledger below makes this instance's history tamper-EVIDENT, not tamper-PROOF — an operator with direct DB
-// access can still rewrite the chain wholesale (delete every row, recompute a fresh one from genesis) and
-// nothing here can detect that from first principles. External anchoring (a signed checkpoint published
-// somewhere the operator does not control — a git commit, a transparency log, an on-chain commitment) is the
-// tracked follow-up once tenants exist, not yet built. That gap does not reduce the value against every OTHER
-// actor (a maintainer quietly deleting one disputed decision, or an unprivileged bug), or against accidental
+// ledger below makes this instance's history tamper-EVIDENT against every actor except an operator with
+// direct DB access, on its own — such an operator could still rewrite the chain wholesale (delete every row,
+// recompute a fresh one from genesis) and nothing INTERNAL to this table can detect that from first
+// principles. As of #9267, external anchoring closes most of that gap: a scheduled job (ledger-anchor-
+// scheduler.ts) publishes a signed checkpoint of the tip to a Rekor transparency log and a git commit (cross-
+// mirrored by GH Archive / Software Heritage) that the operator does not control — rewriting history before
+// the oldest still-referenced anchor now means forging that signature or fabricating matching external
+// evidence too. The gap that remains: the unanchored tail since the last checkpoint is exactly as tamper-
+// evident-only as before anchoring existed. None of this reduces the value against every OTHER actor (a
+// maintainer quietly deleting one disputed decision, or an unprivileged bug), or against accidental
 // corruption — both of which the chain below still catches deterministically.
 //
 // #9124 (v4): three of the four commitments this record makes did not commit to what actually decided the
@@ -395,7 +399,8 @@ export type LedgerBreak =
  * record (see below) — and the cursor for the next window. Always returns the CURRENT global tip
  * (`tipSeq`/`tipHash`) and total row count, regardless of where this window's pagination stopped, so a
  * third-party checkpoint-keeper can compare it against whatever tip it last observed (#9122 — the exact shape
- * a future external-anchoring job would need). #9078: also reconciles each row against `decision_records` —
+ * the scheduled anchoring job, #9274, now consumes via {@link loadDecisionLedgerTip}). #9078: also reconciles
+ * each row against `decision_records` —
  * recomputing `contentDigest(JSON.parse(record_json))` and comparing it to the digest the chain itself
  * committed to, so a rewrite of `record_json` that left `decision_records.record_digest` untouched (or vice
  * versa) is caught here instead of only being provable by an external challenger who happens to still have the

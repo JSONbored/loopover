@@ -18,7 +18,9 @@ the assumptions and the gaps are what let you decide whether the guarantee is wo
 
 ### 1. Gate-decision integrity
 
-**Claim:** the sequence of decisions was not silently reordered, deleted, or rewritten.
+**Claim:** the sequence of decisions was not silently reordered, deleted, or rewritten — and, since
+external anchoring shipped, that a *wholesale* chain rewrite is independently catchable too, not
+only tampering within it.
 
 Every persisted verdict appends to a hash-chained ledger — each row's hash covers the previous row's
 hash, so any edit to history breaks the chain at a point you can locate.
@@ -31,11 +33,89 @@ Returns `{ ok, checked, nextAfterSeq, tipSeq, tipHash, totalCount }`, and a `bre
 `409` status if the chain is inconsistent. No API key — **anyone** can run it.
 
 <Callout variant="note">
-  **Trust assumption: tamper-evident, not tamper-proof.** This detects sequence gaps, predecessor
-  and row-hash mismatches, truncated tails, and records whose content no longer matches their
-  chained digest. It does **not** detect an operator deleting the chain wholesale and re-chaining
-  from genesis — catching that requires an external anchor the operator does not control, which is
-  tracked but **not built today**.
+  **Trust assumption: tamper-evident, externally anchored.** The check above still catches sequence
+  gaps, predecessor and row-hash mismatches, truncated tails, and content drift exactly as it always
+  has. A scheduled job additionally publishes a *signed*, self-describing checkpoint of the chain's
+  tip — hourly, or every 256 new rows, whichever comes first — to two places the operator does not
+  control: a Sigstore Rekor transparency log, and a git commit cross-mirrored by GH Archive and
+  Software Heritage the moment it's pushed. Rewriting history *back past* an anchor already
+  published before the tamper now means forging that signature or fabricating matching evidence at
+  an external mirror too — not just editing this repo's own tables. **What this does not close:** a
+  rewrite made *since* the last anchor, followed by ordinary appends afterward, gets silently
+  absorbed into every anchor published from then on — see "What you cannot verify" below for the
+  precise boundary. Anchoring bounds how far back an undetected rewrite could reach; it does not make
+  every row individually external-checkable in real time.
+</Callout>
+
+**Verify an anchor end to end**
+
+a. Fetch the most recent anchor and the currently-published signing key:
+
+```bash
+curl -s "https://api.loopover.ai/v1/public/decision-ledger/anchors?limit=1" | jq '.anchors[0]' > anchor.json
+curl -s "https://api.loopover.ai/v1/public/decision-ledger/anchor-key" | jq -c '.keys' > anchor-keys.json
+```
+
+b. Fetch the actual signed payload the anchor committed to. For the git-commit backend,
+`anchor.json`'s `backendRef` names the exact commit — the JSONL line it appended *is* the signed
+artifact:
+
+```bash
+OWNER=$(jq -r '.backendRef.owner' anchor.json)
+REPO=$(jq -r '.backendRef.repo' anchor.json)
+SHA=$(jq -r '.backendRef.sha' anchor.json)
+FILE_PATH=$(jq -r '.backendRef.path' anchor.json)
+curl -s "https://raw.githubusercontent.com/$OWNER/$REPO/$SHA/$FILE_PATH" | tail -n 1 > anchor-signed.json
+```
+
+For the Rekor backend, `backendRef` instead names a transparency-log entry (`shardBaseUrl`, `uuid`)
+— verify with `rekor-cli verify --rekor_server "$SHARD" --uuid "$UUID"`, or fetch the entry directly
+and decode its `hashedRekordRequestV002` body.
+
+c. Verify the signature offline, against the published key — zero contact with LoopOver required:
+
+```bash
+npx tsx -e '
+import { readFileSync } from "node:fs";
+import { verifyLedgerAnchorSignature, anchorKeyById, parseAnchorPublicKeys } from "./src/review/ledger-anchor.ts";
+(async () => {
+  const signed = JSON.parse(readFileSync("anchor-signed.json", "utf8"));
+  const keys = parseAnchorPublicKeys(readFileSync("anchor-keys.json", "utf8"));
+  const key = anchorKeyById(keys, signed.keyId);
+  console.log(key && (await verifyLedgerAnchorSignature(signed, key.publicKeySpki)) ? "signature OK" : "SIGNATURE INVALID");
+})();
+'
+```
+
+d. Bind the anchor back to the *live* chain: fetch the row at the anchored `seq` and recompute its
+hash yourself:
+
+```bash
+SEQ=$(jq -r '.payload.seq' anchor-signed.json)
+curl -s "https://api.loopover.ai/v1/public/decision-ledger/row/$SEQ" | jq > row.json
+npx tsx -e '
+import { readFileSync } from "node:fs";
+import { ledgerRowHash } from "./src/review/decision-record.ts";
+(async () => {
+  const row = JSON.parse(readFileSync("row.json", "utf8"));
+  const signed = JSON.parse(readFileSync("anchor-signed.json", "utf8"));
+  const recomputed = await ledgerRowHash(row.prevHash, { seq: row.seq, recordId: row.recordId, recordDigest: row.recordDigest, createdAt: row.createdAt });
+  console.log(recomputed === row.rowHash && row.rowHash === signed.payload.rowHash ? "row hash OK -- anchor matches the live chain" : "MISMATCH");
+})();
+'
+```
+
+A mismatch here — a live row whose hash no longer matches what was anchored — is exactly what a
+wholesale rewrite before this checkpoint would produce. It's public, and anyone can check it, without
+asking LoopOver anything.
+
+<Callout variant="warn">
+  **Bittensor on-chain anchoring is optional, separate corroboration — not part of this default
+  check.** A third, Gittensor/SN74-audience-specific backend (tracked, not yet
+  shipped — [#9277](https://github.com/JSONbored/loopover/issues/9277)) publishes the same checkpoint
+  as an on-chain commitment, signed by a dedicated hotkey run on the operator's own infrastructure.
+  It's additive corroboration for that specific audience, never folded into the default two-backend
+  claim every verifier above is told to check.
 </Callout>
 
 ### 2. Decision-record authenticity
@@ -114,7 +194,7 @@ Stated plainly, because a boundary you discover later is worse than one publishe
 | --- | --- | --- |
 | **Live gate execution** | The merge/close calls acting on your PR are not attested. Putting an attestation service in the live request path trades real availability for a proof that replay already provides more cheaply. | Standing design, not a pending gap. Revisited only if a tenant contractually requires attested live decisions. |
 | **Ground-truth honesty** | Accuracy numbers are scored against recorded human-override events on maintainer infrastructure. Attestation proves *computation*, not *data provenance* — a perfectly attested run over cherry-picked labels is still cherry-picked. | Provenance at capture time (receipts verifiable by the humans whose overrides they record). Different mechanism entirely. |
-| **Wholesale ledger replacement** | Row 1's limit — self-operated chains are tamper-evident against everyone except the operator. | External anchoring: signed checkpoints, a transparency log, or an on-chain commitment. |
+| **A rewrite made since the last anchor, then re-anchored consistently** | An anchor proves *a* checkpoint existed at *a* time — it has no independent way to know what the tip *would have been* absent tampering. A rewrite to rows since the last published anchor, followed by ordinary appends afterward, gets silently absorbed into every anchor published from then on. Row 1's walkthrough only catches a rewrite that reaches *back past* an anchor already published *before* the tamper happened. | Tighter cadence (currently hourly or every 256 rows, whichever first) shrinks the window of opportunity; it cannot close it fully — that would mean anchoring every single write, at which point it stops being periodic checkpointing at all. |
 | **Model behavior** | Row 5's limit — no artifact makes a non-deterministic model reproducible. | Nothing planned; this is a property of the models, not of our record-keeping. |
 
 ## Self-hosting versus hosted

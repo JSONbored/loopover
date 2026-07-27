@@ -39,7 +39,7 @@
 import { errorMessage, nowIso } from "../utils/json";
 
 /** Bump when the record's FIELD SET changes meaning — consumers compare records only within a version. */
-export const DECISION_RECORD_SCHEMA_VERSION = "4"; // v4 (#9124/#9135): configDigest digests the resolved policy (+ settingsDigest split out), promptDigest digests the actual sent prompt, modelId -> modelIds (real identities), ciState populated, + divertedByHoldout; v3 (#8962): + salvageability {score, factors}; v2 (#8834): + aiConfidence, model/prompt commitments
+export const DECISION_RECORD_SCHEMA_VERSION = "5"; // v5 (#8834): + aiAgreement (inter-run agreement folded with the verbalized confidence); v4 (#9124/#9135): configDigest digests the resolved policy (+ settingsDigest split out), promptDigest digests the actual sent prompt, modelId -> modelIds (real identities), ciState populated, + divertedByHoldout; v3 (#8962): + salvageability {score, factors}; v2 (#8834): + aiConfidence, model/prompt commitments
 
 /**
  * Canonical JSON: recursively key-sorted, no insignificant whitespace — the ONE serialization every digest
@@ -118,6 +118,12 @@ export type DecisionRecord = {
    *  defect / split), null when no AI judgment contributed. Persisted so every decision joins the
    *  risk-control calibration set (#8835) with its confidence attached. */
   aiConfidence: number | null;
+  /** #8834: the per-decision confidence signal — inter-run agreement across the reviewer stances that
+   *  produced the AI judgment, folded together with that judgment's verbalized confidence (see
+   *  src/review/judgment-agreement.ts). `aiConfidence` above records what the model SAID; this records how
+   *  reproducibly the reviewers reached it, which is the input a calibrated abstention threshold (#8835)
+   *  needs. null when no AI judgment contributed, and for every record predating v5. */
+  aiAgreement: { agreement: number; confidence: number; sampleCount: number; uncorroborated: boolean } | null;
   /** #8962: the deterministic salvageability score + its named factors when an AI judgment shaped the
    *  decision — the second-axis evidence for auditing the close/hold boundary. null for rule-only decisions
    *  (and for reconstructed/backfilled records predating v3). */
@@ -135,12 +141,13 @@ export type DecisionRecord = {
 /** Assemble the record and its own content digest. PURE given pre-computed digests. Normalizes the
  *  optional-shaped caller fields (undefined -> null) HERE so call sites carry no fallback arms of their own. */
 export async function buildDecisionRecord(
-  input: Omit<DecisionRecord, "schemaVersion" | "decidedAt" | "gatePack" | "ciState" | "baseSha" | "aiConfidence" | "salvageability" | "settingsDigest" | "divertedByHoldout"> & {
+  input: Omit<DecisionRecord, "schemaVersion" | "decidedAt" | "gatePack" | "ciState" | "baseSha" | "aiConfidence" | "aiAgreement" | "salvageability" | "settingsDigest" | "divertedByHoldout"> & {
     decidedAt?: string;
     gatePack?: string | null | undefined;
     ciState?: string | null | undefined;
     baseSha?: string | null | undefined;
     aiConfidence?: number | null | undefined;
+    aiAgreement?: { agreement: number; confidence: number; sampleCount: number; uncorroborated: boolean } | null | undefined;
     salvageability?: { score: number; factors: string[] } | null | undefined;
     settingsDigest?: string | null | undefined;
     divertedByHoldout?: boolean | undefined;
@@ -154,6 +161,7 @@ export async function buildDecisionRecord(
     ciState: input.ciState ?? null,
     baseSha: input.baseSha ?? null,
     aiConfidence: input.aiConfidence ?? null,
+    aiAgreement: input.aiAgreement ?? null,
     salvageability: input.salvageability ?? null,
     settingsDigest: input.settingsDigest ?? null,
     divertedByHoldout: input.divertedByHoldout ?? false,

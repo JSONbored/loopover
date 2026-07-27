@@ -390,6 +390,29 @@ describe("runAiReviewForAdvisory", () => {
     expect(result?.notes).toContain("Likely crash.");
   });
 
+  it("#8834: the consensus finding carries the inter-run agreement signal, derived from the stances already run", async () => {
+    const adv = advisory();
+    await runAiReviewForAdvisory(aiEnv(async () => ({ response: defectJson() })), {
+      mode: "live",
+      settings: { aiReviewMode: "block" } as RepositorySettings,
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+    });
+    const finding = adv.findings.find((f) => f.code === "ai_consensus_defect");
+    // Present, structurally complete, and consistent with the finding's own verbalized confidence — the
+    // record's per-decision confidence signal (#8835's calibration input) is populated at review time, not
+    // reconstructed later from votes nothing persisted.
+    expect(finding?.agreement).toBeDefined();
+    expect(finding?.agreement?.sampleCount).toBeGreaterThanOrEqual(1);
+    expect(finding?.agreement?.agreement).toBeGreaterThan(0);
+    expect(finding?.agreement?.agreement).toBeLessThanOrEqual(1);
+    // The combined score is never more certain than the verbalized confidence it folds in.
+    expect(finding?.agreement?.confidence).toBeLessThanOrEqual((finding?.confidence ?? 1) + 1e-12);
+  });
+
   it("threads settings.aiReviewCombine/aiReviewOnMerge/aiReviewReviewers (#2567) into the AI review call", async () => {
     // settings.aiReviewCombine/OnMerge/Reviewers are resolved from `.loopover.yml gate.aiReview.*` upstream by
     // resolveEffectiveSettings; runAiReviewForAdvisory must forward them into runLoopOverAiReview's input so a

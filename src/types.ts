@@ -611,6 +611,11 @@ export type AdvisoryFinding = {
    *  inline, category, improvement-signal), NOT a digest of the base constant alone. Two repos with different
    *  `review.instructions` therefore publish different values here. Absent for every deterministic finding. */
   promptDigest?: string;
+  /** #8834: inter-run agreement across the reviewer stances that produced this AI judgment, folded together
+   *  with the verbalized confidence (see src/review/judgment-agreement.ts). Carried on the finding exactly
+   *  like `confidence`/`modelIds` above so the decision-record call site can thread it into
+   *  `DecisionRecord.aiAgreement` without re-deriving the votes. Absent for every deterministic finding. */
+  agreement?: { agreement: number; confidence: number; sampleCount: number; uncorroborated: boolean };
   /** Public-safe screenshot evidence for a `visual_regression_finding` / `visual_unrelated_issue_finding`
    *  (`review.visual.bugAnalysis`) — the SAME shot URLs already rendered in the "Visual preview" collapsible,
    *  carried alongside the finding (not just referenced by route path) so a later consumer — the PR-closed

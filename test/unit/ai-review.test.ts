@@ -5035,6 +5035,50 @@ describe("#8833: enforced boundaries between model judgment and deterministic fa
     expect(EVIDENCE_ABSENCE_PATTERN.test("Missing test coverage for the error branch")).toBe(false);
   });
 
+  it("#8833: whole-PR test-absence blockers demote ONLY when the path classifier contradicts them", async () => {
+    const { demoteTestEvidenceAbsenceBlockers, prHasTestPathEvidence } = await import("../../src/services/ai-review");
+    const claims = ["No tests were added for this change", "The new helper is untested", "Null deref in src/a.ts"];
+    // Arm 1 — the PR really ships no test paths: the claim may well be TRUE, so it keeps its severity and the
+    // zero-demotion path returns the SAME object (no reallocation).
+    const untouched = review(claims);
+    expect(demoteTestEvidenceAbsenceBlockers(untouched, false).review).toBe(untouched);
+    // Arm 2 — the PR DOES change a test path: the claim is a fact error, so it demotes to a nit and survives
+    // there for the human; the code-content blocker is untouched.
+    const { review: out, demoted } = demoteTestEvidenceAbsenceBlockers(review(claims), true);
+    expect(demoted).toHaveLength(2);
+    expect(out.blockers).toEqual(["Null deref in src/a.ts"]);
+    expect(out.nits.filter((nit: string) => nit.includes("decided by the deterministic test-path classifier"))).toHaveLength(2);
+    // Armed but nothing to demote: same object back.
+    const clean = review(["Null deref in src/a.ts"]);
+    expect(demoteTestEvidenceAbsenceBlockers(clean, true).review).toBe(clean);
+  });
+
+  it("#8833: a coverage-DEPTH claim narrowed to a specific target is NOT demoted — only existence claims are", async () => {
+    const { TEST_EVIDENCE_ABSENCE_PATTERN, demoteTestEvidenceAbsenceBlockers } = await import("../../src/services/ai-review");
+    // Existence claims the classifier owns outright.
+    for (const positive of ["no tests", "No new tests were added", "zero unit tests", "tests are missing", "This is untested", "lacks regression tests", "without any automated tests", "not tested"]) {
+      expect(TEST_EVIDENCE_ABSENCE_PATTERN.test(positive)).toBe(true);
+    }
+    // Depth claims the classifier CANNOT check — a real judgment that must keep blocking.
+    for (const negative of ["no tests for the nullish branch", "no test covers the error path", "no tests exercising the retry loop", "no tests against the 403 arm"]) {
+      expect(TEST_EVIDENCE_ABSENCE_PATTERN.test(negative)).toBe(false);
+    }
+    const narrowed = review(["no tests for the nullish branch"]);
+    expect(demoteTestEvidenceAbsenceBlockers(narrowed, true).review.blockers).toEqual(["no tests for the nullish branch"]);
+  });
+
+  it("#8833: prHasTestPathEvidence is whole-PR and total over null/empty/pathless input", async () => {
+    const { prHasTestPathEvidence } = await import("../../src/services/ai-review");
+    expect(prHasTestPathEvidence(null)).toBe(false);
+    expect(prHasTestPathEvidence(undefined)).toBe(false);
+    expect(prHasTestPathEvidence([])).toBe(false);
+    expect(prHasTestPathEvidence([{ path: "" }])).toBe(false);
+    expect(prHasTestPathEvidence([{ path: "src/a.ts" }])).toBe(false);
+    // ONE changed test path is evidence for the whole PR — the same semantics slop.ts's
+    // buildMissingTestEvidenceFinding and buildTestEvidencePromptSection already use.
+    expect(prHasTestPathEvidence([{ path: "src/a.ts" }, { path: "test/unit/a.test.ts" }])).toBe(true);
+  });
+
   it("#8961: the prompt carries the truncation + attachment FACT for a long body, and stays plain otherwise", async () => {
     const { PR_BODY_PROMPT_LIMIT } = await import("../../src/services/ai-review");
     const images = "![a](https://x.io/1.png) ![b](https://x.io/2.png)";

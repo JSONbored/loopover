@@ -177,3 +177,106 @@ describe("decision replay (#8838)", () => {
     expect(runReplayBundle(JSON.stringify({ replayInput: bundle.replayInput })).outcome).toBeNull();
   });
 });
+
+// #9028: wall-clock capture. Time is a decision INPUT — `gate.requireFreshRebaseWindow` compares the base
+// branch's tip against "now", so a decision shaped by it is only replayable if the instant it used was
+// recorded. These are the seeded per-rule regressions the issue requires: replay at the recorded instant is
+// bit-exact, replay at a DIFFERENT instant is never silently accepted.
+describe("staleness rules are clock-injected and replayable (#9028)", () => {
+  // A fixed seed instant, so every assertion below is a pure function of literals — no ambient Date.now().
+  const SEEDED_NOW_MS = 1_800_000_000_000;
+
+  it("requireFreshRebaseWindow: PURE and clock-injected — both arms, at a seeded instant", async () => {
+    const { isWithinFreshRebaseWindow, MS_PER_MINUTE } = await import("../../src/review/staleness-clock");
+    const windowMinutes = 30;
+    // Inside the window: the base moved 29m before the captured instant.
+    expect(isWithinFreshRebaseWindow({ baseAdvancedAtMs: SEEDED_NOW_MS - 29 * MS_PER_MINUTE, windowMinutes, nowMs: SEEDED_NOW_MS })).toBe(true);
+    // Exactly at the boundary is OUTSIDE (`>=` in the original guard) — pinned so the edge cannot drift.
+    expect(isWithinFreshRebaseWindow({ baseAdvancedAtMs: SEEDED_NOW_MS - 30 * MS_PER_MINUTE, windowMinutes, nowMs: SEEDED_NOW_MS })).toBe(false);
+    expect(isWithinFreshRebaseWindow({ baseAdvancedAtMs: SEEDED_NOW_MS - 31 * MS_PER_MINUTE, windowMinutes, nowMs: SEEDED_NOW_MS })).toBe(false);
+    // Clock skew: a base commit dated AFTER the captured instant reads as "just moved", never as stale.
+    expect(isWithinFreshRebaseWindow({ baseAdvancedAtMs: SEEDED_NOW_MS + MS_PER_MINUTE, windowMinutes, nowMs: SEEDED_NOW_MS })).toBe(true);
+    // Unreadable base commit → fail-open (no manufactured rebase), matching the live call site's guard.
+    expect(isWithinFreshRebaseWindow({ baseAdvancedAtMs: Number.NaN, windowMinutes, nowMs: SEEDED_NOW_MS })).toBe(false);
+  });
+
+  it("requireFreshRebaseWindow: the SAME inputs flip answer as the instant moves — which is why it must be recorded", async () => {
+    const { isWithinFreshRebaseWindow, MS_PER_MINUTE } = await import("../../src/review/staleness-clock");
+    const baseAdvancedAtMs = SEEDED_NOW_MS - 10 * MS_PER_MINUTE;
+    const windowMinutes = 30;
+    expect(isWithinFreshRebaseWindow({ baseAdvancedAtMs, windowMinutes, nowMs: SEEDED_NOW_MS })).toBe(true);
+    // Replaying the identical rule inputs an hour later reaches the OPPOSITE answer. This is the whole
+    // hazard #9028 closes: without the recorded instant, that flip is invisible and reads as a match.
+    expect(isWithinFreshRebaseWindow({ baseAdvancedAtMs, windowMinutes, nowMs: SEEDED_NOW_MS + 60 * MS_PER_MINUTE })).toBe(false);
+  });
+
+  it("staleBaseAheadByThreshold: PURE and provably instant-INDEPENDENT (a commit count carries no 'now')", async () => {
+    const { isBaseStaleByAheadBy } = await import("../../src/review/staleness-clock");
+    expect(isBaseStaleByAheadBy({ aheadBy: 20, threshold: 20 })).toBe(true); // boundary is inclusive (`>=`)
+    expect(isBaseStaleByAheadBy({ aheadBy: 19, threshold: 20 })).toBe(false);
+    expect(isBaseStaleByAheadBy({ aheadBy: 21, threshold: 20 })).toBe(true);
+    // Unreadable compare-API response → fail-open, matching the live `typeof aheadBy === "number"` guard.
+    expect(isBaseStaleByAheadBy({ aheadBy: Number.NaN, threshold: 20 })).toBe(false);
+    // The instant-independence property itself: the signature admits no clock, so no reachable instant can
+    // change the answer. Pinned against the same seeded instants the fresh-rebase rule flips across above.
+    const args = { aheadBy: 20, threshold: 20 };
+    vi.useFakeTimers();
+    vi.setSystemTime(SEEDED_NOW_MS);
+    const atSeed = isBaseStaleByAheadBy(args);
+    vi.setSystemTime(SEEDED_NOW_MS + 365 * 24 * 60 * 60 * 1000);
+    expect(isBaseStaleByAheadBy(args)).toBe(atSeed);
+    vi.useRealTimers();
+  });
+
+  it("stage 0 — replay at the RECORDED instant is bit-exact; a DIFFERENT instant diverges at `clock`", () => {
+    const [, bundle] = bundles.find(([name]) => name === "clean-merge.json")!;
+    const withClock: DecisionReplayInput = { ...bundle.replayInput, clock: { nowMs: SEEDED_NOW_MS } };
+    // No instant named → replay at the recorded one → bit-exact match (the CLI default).
+    expect(replayDecision(replayable(bundle), withClock).verdict).toBe("match");
+    // The recorded instant, named explicitly → still a match.
+    expect(replayDecision(replayable(bundle), withClock, { nowMs: SEEDED_NOW_MS }).verdict).toBe("match");
+    // A different instant → NOT silently accepted. `clock` is checked before every other stage.
+    expect(replayDecision(replayable(bundle), withClock, { nowMs: SEEDED_NOW_MS + 1 })).toMatchObject({
+      verdict: "divergence",
+      stage: "clock",
+      expected: String(SEEDED_NOW_MS),
+      actual: String(SEEDED_NOW_MS + 1),
+    });
+  });
+
+  it("stage 0 — a pre-#9028 record has no recorded instant, so the clock stage is skipped, not guessed", () => {
+    const [, bundle] = bundles.find(([name]) => name === "clean-merge.json")!;
+    // No `clock` at all (every record written before this change): nothing to contradict, so the remaining
+    // stages still replay normally rather than the harness inventing an instant and failing every old record.
+    expect(replayDecision(replayable(bundle), bundle.replayInput, { nowMs: SEEDED_NOW_MS }).verdict).toBe("match");
+    expect(replayDecision(replayable(bundle), { ...bundle.replayInput, clock: null }, { nowMs: SEEDED_NOW_MS }).verdict).toBe("match");
+  });
+
+  it("the captured instant round-trips through persistence into replay_json", async () => {
+    const env = createTestEnv();
+    const input = bundles[0]![1].replayInput;
+    await persistDecisionReplayInputForGate(
+      env,
+      "record:o/r#42@s",
+      { conclusion: "success", blockers: [], replay: { findings: input.findings, policy: input.policy } },
+      null,
+      null,
+      { nowMs: SEEDED_NOW_MS },
+    );
+    const row = await env.DB.prepare("SELECT replay_json FROM decision_replay_inputs WHERE record_id = 'record:o/r#42@s'").first<{ replay_json: string }>();
+    expect((JSON.parse(row!.replay_json) as DecisionReplayInput).clock).toEqual({ nowMs: SEEDED_NOW_MS });
+    // Omitting the capture stores an explicit null (a pre-#9028-shaped row), never an invented instant.
+    await persistDecisionReplayInputForGate(env, "record:o/r#43@s", { conclusion: "success", blockers: [], replay: { findings: input.findings, policy: input.policy } }, null);
+    const bare = await env.DB.prepare("SELECT replay_json FROM decision_replay_inputs WHERE record_id = 'record:o/r#43@s'").first<{ replay_json: string }>();
+    expect((JSON.parse(bare!.replay_json) as DecisionReplayInput).clock).toBeNull();
+  });
+
+  it("CLI --at: the recorded instant matches, a different one exits with a clock divergence", () => {
+    const [, bundle] = bundles.find(([name]) => name === "clean-merge.json")!;
+    const withClock = { ...bundle, replayInput: { ...bundle.replayInput, clock: { nowMs: SEEDED_NOW_MS } } };
+    const raw = JSON.stringify(withClock);
+    expect(runReplayBundle(raw).outcome?.verdict).toBe("match");
+    expect(runReplayBundle(raw, SEEDED_NOW_MS).outcome?.verdict).toBe("match");
+    expect(runReplayBundle(raw, SEEDED_NOW_MS + 86_400_000).outcome).toMatchObject({ verdict: "divergence", stage: "clock" });
+  });
+});

@@ -369,7 +369,7 @@ describe("queue processors", () => {
     // The decision record carries the boundary evidence.
     const record = await env.DB.prepare("select record_json from decision_records where repo_full_name = ? and pull_number = ?").bind("owner/agent-repo", 18).first<{ record_json: string }>();
     const parsedRecord = JSON.parse(record!.record_json) as { schemaVersion: string; salvageability: { score: number; factors: string[] } | null };
-    expect(parsedRecord.schemaVersion).toBe("4"); // v4 (#9124/#9135) — bumped past the v3 salvageability shape this test targets
+    expect(parsedRecord.schemaVersion).toBe("5"); // v5 (#8834) — bumped past the v3 salvageability shape this test targets
     expect(parsedRecord.salvageability?.score).toBe(70);
     expect(parsedRecord.salvageability?.factors.join(" ")).toContain("mechanical defect class");
     // #8838: the replay input persisted beside the record, and the decision re-derives bit-exactly from it.
@@ -404,7 +404,7 @@ describe("queue processors", () => {
       notes: "cached review",
       reviewerCount: 2,
       // 0.95 sits ABOVE the default 0.93 floor: no salvageability hold, so this one-shot-closes cleanly.
-      findings: [{ code: "ai_consensus_defect", severity: "critical", title: "Unused import", detail: "unused import join from node:path is dead code.", confidence: 0.95, modelIds: ["claude-code", "codex"], promptDigest: "p".repeat(64) }],
+      findings: [{ code: "ai_consensus_defect", severity: "critical", title: "Unused import", detail: "unused import join from node:path is dead code.", confidence: 0.95, modelIds: ["claude-code", "codex"], promptDigest: "p".repeat(64), agreement: { agreement: 1, confidence: 0.95, sampleCount: 2, uncorroborated: false } }],
       metadata: { inputFingerprint },
     });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -436,7 +436,7 @@ describe("queue processors", () => {
       settingsDigest: string | null;
       divertedByHoldout: boolean;
     };
-    expect(parsed.schemaVersion).toBe("4");
+    expect(parsed.schemaVersion).toBe("5");
     expect(parsed.action).toBe("close"); // above-floor confidence, no salvageability config -> a one-shot close DECISION
     // The exact requirement: modelId is non-null whenever an AI judgment shaped the decision.
     expect(parsed.modelIds).toEqual(["claude-code", "codex"]);
@@ -451,6 +451,11 @@ describe("queue processors", () => {
     expect(parsed.settingsDigest).toMatch(/^[0-9a-f]{64}$/);
     // No closeAuditHoldoutPct configured -> the holdout never draws -> never diverted.
     expect(parsed.divertedByHoldout).toBe(false);
+    // #8834: the per-decision confidence signal threads through to the record exactly like modelIds/
+    // promptDigest above — read straight off the finding, never re-derived or dropped, so every AI-judgment
+    // decision joins the calibration set with its reproducibility attached.
+    const withAgreement = parsed as unknown as { aiAgreement: { agreement: number; confidence: number; sampleCount: number; uncorroborated: boolean } | null };
+    expect(withAgreement.aiAgreement).toEqual({ agreement: 1, confidence: 0.95, sampleCount: 2, uncorroborated: false });
   });
 
   it("#9135: with gate.closeAuditHoldoutPct set, a would-close is diverted to a hold and the decision record + replay input both say so", async () => {
@@ -768,7 +773,7 @@ describe("queue processors", () => {
     // decision record — the row every future calibration read keys on.
     const record = await env.DB.prepare("select record_json from decision_records where repo_full_name = 'owner/agent-repo' and pull_number = 9 order by created_at desc limit 1").first<{ record_json: string }>();
     const parsedRecord = JSON.parse(record!.record_json) as { aiConfidence: number | null; promptDigest: string | null; modelIds: string[] | null; schemaVersion: string };
-    expect(parsedRecord.schemaVersion).toBe("4"); // v4 (#9124/#9135): configDigest/promptDigest/modelIds/ciState + divertedByHoldout
+    expect(parsedRecord.schemaVersion).toBe("5"); // v4 (#9124/#9135): configDigest/promptDigest/modelIds/ciState + divertedByHoldout
     expect(parsedRecord.aiConfidence).toBe(0.3); // the cached sub-floor defect's calibrated confidence
     expect(parsedRecord.promptDigest).toBe("f".repeat(64));
     expect(parsedRecord.modelIds).toEqual(["claude-code"]);

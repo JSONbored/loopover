@@ -8,6 +8,10 @@
 // guarantee is by construction, not by flag.
 //
 // Stages, compared in pipeline order (the first mismatch wins — everything after it is downstream noise):
+//   0. `clock`           — #9028: the instant the caller asked to replay AT vs the instant the live decision
+//                          recorded. Time is a decision input, so replaying a clock-dependent rule at a
+//                          DIFFERENT instant is never silently accepted as a match. Skipped when the caller
+//                          names no instant (replay at the recorded one) or the record predates #9028.
 //   1. `conclusion`      — re-evaluated gate conclusion vs the decision-time snapshot.
 //   2. `blocker_codes`   — ordered blocker code list (order IS meaning: blockerClass is the first code).
 //   3. `reason_code`     — re-derived exactly as the finalize site derives it (blockerClass →
@@ -32,6 +36,7 @@
 // and file it; there is no "close enough" outcome.
 import { evaluateGateCheck, type GateCheckPolicy } from "../rules/advisory";
 import { neutralHoldReasonCode } from "./parity-wire";
+import type { DecisionClockCapture } from "./staleness-clock";
 import type { Advisory, AdvisoryFinding } from "../types";
 import { errorMessage, nowIso } from "../utils/json";
 
@@ -60,6 +65,12 @@ export type DecisionReplayInput = {
    *  this decision (ε absent/0, close autonomy not auto, or no eligible close) — the overwhelmingly common
    *  case, and the SAME zero-I/O common path `maybeApplyCloseAuditHoldout` already guarantees. */
   holdout?: DecisionReplayHoldout | null | undefined;
+  /** #9028: the decision-time wall clock — ONE `Date.now()` read per pass, which every clock-dependent gate
+   *  rule (today: `gate.requireFreshRebaseWindow`) reads instead of calling the clock itself. Recorded here so
+   *  a replay evaluates time-dependent rules at the instant the LIVE decision used, not at replay time.
+   *  undefined/null for a pre-#9028 record — such a record simply has no recorded instant, so the `clock`
+   *  stage cannot check anything and is skipped rather than guessed. */
+  clock?: DecisionClockCapture | null | undefined;
 };
 
 /** The slice of the PUBLIC decision record replay verifies against. */
@@ -79,10 +90,17 @@ export type ReplayOutcome =
       verdict: "divergence";
       recordId: string;
       /** The FIRST divergent stage — later stages are downstream of it and not reported. */
-      stage: "conclusion" | "blocker_codes" | "reason_code" | "holdout_consistency";
+      stage: "clock" | "conclusion" | "blocker_codes" | "reason_code" | "holdout_consistency";
       expected: string;
       actual: string;
     };
+
+/** #9028: options for a replay run. `nowMs` names the instant the caller wants to replay AT — supply it only
+ *  to assert the recorded instant, or to deliberately probe a different one (which must FAIL, never silently
+ *  pass). Omitted (the default) means "replay at the recorded instant", which is the bit-exact case. */
+export type ReplayOptions = {
+  nowMs?: number | undefined;
+};
 
 /** The finalize site's reasonCode derivation, extracted verbatim so replay and live can never disagree
  *  about the mapping itself (single source of truth — processors.ts finalize imports this too). */
@@ -97,7 +115,19 @@ export function deriveBlockerClass(evaluation: { blockers: Array<{ code: string 
 }
 
 /** PURE bit-exact replay. See the module doc for the stage contract. */
-export function replayDecision(record: ReplayableRecord, input: DecisionReplayInput): ReplayOutcome {
+export function replayDecision(record: ReplayableRecord, input: DecisionReplayInput, options: ReplayOptions = {}): ReplayOutcome {
+  // #9028 stage 0: TIME IS AN INPUT. A caller that names the instant it is replaying at must be told when
+  // that instant is not the one the live decision used — a clock-dependent rule (today
+  // `gate.requireFreshRebaseWindow`) can legitimately flip its answer purely because the wall clock moved, so
+  // silently replaying at "now" and reporting `match` would certify a re-derivation that never actually
+  // reproduced the original evaluation. Checked FIRST: every later stage is evaluated as of this instant.
+  // A caller that supplies no instant is replaying at the recorded one by definition, which is the bit-exact
+  // path and the CLI's default. A pre-#9028 record has no recorded instant, so there is nothing to contradict
+  // and the stage is skipped rather than guessed.
+  const recordedNowMs = input.clock?.nowMs;
+  if (typeof recordedNowMs === "number" && typeof options.nowMs === "number" && options.nowMs !== recordedNowMs) {
+    return { verdict: "divergence", recordId: record.id, stage: "clock", expected: String(recordedNowMs), actual: String(options.nowMs) };
+  }
   const advisory: Advisory = {
     id: `replay-${record.id}`,
     targetType: "pull_request",
@@ -141,7 +171,7 @@ export function replayDecision(record: ReplayableRecord, input: DecisionReplayIn
   return { verdict: "match", recordId: record.id, conclusion: evaluation.conclusion, blockerCodes, reasonCode, pinnedAction: record.action };
 }
 
-/** Persist the replay input beside its record (PRIVATE sibling — see migration 0181). Best-effort: replay
+/** Persist the replay input beside its record (PRIVATE sibling — see migration 0182). Best-effort: replay
  *  legibility must never break finalization, mirroring persistDecisionRecord's posture. Accepts the gate
  *  EVALUATION and owns the no-replay no-op: content-lane/bridge evaluations are synthetic (their verdicts
  *  come from their own deterministic pipelines, not the advisory evaluator) and carry no replay input —
@@ -154,6 +184,8 @@ export async function persistDecisionReplayInputForGate(
   // #9135: the close-audit holdout's decision-time outcome for this same decision, when it drew — threaded
   // straight through to the persisted replay input so `holdout_consistency` has something to check against.
   holdout?: DecisionReplayHoldout | null,
+  // #9028: the decision pass's single captured wall-clock instant, so time-dependent rules are replayable.
+  clock?: DecisionClockCapture | null,
 ): Promise<void> {
   if (!gate.replay) return;
   await persistDecisionReplayInput(env, recordId, {
@@ -162,6 +194,7 @@ export async function persistDecisionReplayInputForGate(
     policyCloseKind,
     evaluated: { conclusion: gate.conclusion, blockerCodes: gate.blockers.map((blocker) => blocker.code) },
     holdout: holdout ?? null,
+    clock: clock ?? null,
   });
 }
 

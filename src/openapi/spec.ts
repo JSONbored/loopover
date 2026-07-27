@@ -39,6 +39,10 @@ import {
   GateConfigEffectiveResponseSchema,
   EligibilityPlanResponseSchema,
   ScoreBreakdownResponseSchema,
+  ValidateLinkedIssueRequestSchema,
+  ValidateLinkedIssueResponseSchema,
+  CheckBeforeStartRequestSchema,
+  CheckBeforeStartResponseSchema,
   EvaluateEscalationRequestSchema,
   EvaluateEscalationResponseSchema,
   BuildResultsPayloadRequestSchema,
@@ -186,6 +190,10 @@ export function buildOpenApiSpec() {
   registry.register("GateConfigEffectiveResponse", GateConfigEffectiveResponseSchema);
   registry.register("EligibilityPlanResponse", EligibilityPlanResponseSchema);
   registry.register("ScoreBreakdownResponse", ScoreBreakdownResponseSchema);
+  registry.register("ValidateLinkedIssueRequest", ValidateLinkedIssueRequestSchema);
+  registry.register("ValidateLinkedIssueResponse", ValidateLinkedIssueResponseSchema);
+  registry.register("CheckBeforeStartRequest", CheckBeforeStartRequestSchema);
+  registry.register("CheckBeforeStartResponse", CheckBeforeStartResponseSchema);
   registry.register("EvaluateEscalationRequest", EvaluateEscalationRequestSchema);
   registry.register("EvaluateEscalationResponse", EvaluateEscalationResponseSchema);
   registry.register("BuildResultsPayloadRequest", BuildResultsPayloadRequestSchema);
@@ -524,6 +532,48 @@ export function buildOpenApiSpec() {
       },
       401: { description: "Missing or invalid static protected API token" },
       403: { description: "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/repos/{owner}/{repo}/validate-linked-issue",
+    summary: "Validate a linked-issue claim before opening work — REST mirror of loopover_validate_linked_issue (#9304)",
+    request: {
+      params: z.object({ owner: z.string(), repo: z.string() }),
+      body: {
+        content: { "application/json": { schema: ValidateLinkedIssueRequestSchema } },
+      },
+    },
+    responses: {
+      200: {
+        description:
+          "Linked-issue validation report — mirrors the loopover_validate_linked_issue MCP tool. Advisory only; it does not open issues or PRs",
+        content: { "application/json": { schema: ValidateLinkedIssueResponseSchema } },
+      },
+      400: { description: "Invalid validate-linked-issue request body" },
+      401: { description: "Missing or invalid authentication" },
+      403: { description: "Authenticated principal cannot access this repo" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/repos/{owner}/{repo}/check-before-start",
+    summary: "Pre-start claim and duplicate-risk check — REST mirror of loopover_check_before_start (#9304)",
+    request: {
+      params: z.object({ owner: z.string(), repo: z.string() }),
+      body: {
+        content: { "application/json": { schema: CheckBeforeStartRequestSchema } },
+      },
+    },
+    responses: {
+      200: {
+        description:
+          "Pre-start check with claim status, duplicate-cluster risk, and recommendation — mirrors the loopover_check_before_start MCP tool. Advisory only",
+        content: { "application/json": { schema: CheckBeforeStartResponseSchema } },
+      },
+      400: { description: "Invalid check-before-start request body" },
+      401: { description: "Missing or invalid authentication" },
+      403: { description: "Authenticated principal cannot access this repo" },
     },
   });
   registry.registerPath({

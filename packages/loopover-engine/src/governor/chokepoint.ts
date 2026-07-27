@@ -35,7 +35,7 @@ import { DEFAULT_SELF_REPUTATION_THRESHOLDS, selfReputationThrottle } from "./re
 import type { OwnSubmissionRecord, SelfPlagiarismCandidate, SelfPlagiarismConfig, SelfPlagiarismVerdict } from "./self-plagiarism.js";
 import { DEFAULT_SELF_PLAGIARISM_CONFIG, selfPlagiarismCheck } from "./self-plagiarism.js";
 import type { WriteRateLimitBackoffStore, WriteRateLimitBucketStore, WriteRateLimitPolicies, WriteRateLimitVerdict } from "./write-rate-limit.js";
-import { evaluateWriteRateLimit } from "./write-rate-limit.js";
+import { DEFAULT_WRITE_RATE_LIMIT_POLICIES, evaluateWriteRateLimit } from "./write-rate-limit.js";
 
 /** Which stage of the precedence ladder produced the final verdict. */
 export type GovernorDecisionStage =
@@ -97,6 +97,13 @@ export type GovernorDecisionDetail = {
   convergence?: PortfolioConvergenceVerdict;
   reputation?: SelfReputationThrottleDecision;
   selfPlagiarism?: SelfPlagiarismVerdict;
+  /** #9062: the rate-limit policies actually used to reach `rateLimit` -- identical to the caller-supplied
+   *  `rateLimitPolicies` (or the engine default) UNLESS a non-floored reputation throttle scaled the
+   *  per-repo window. Present once the rate-limit stage has run (mirrors `rateLimit`'s own presence). The
+   *  stateful miner-lib wrapper (`governor-chokepoint.js`) reads this back to advance the SAME bucket
+   *  arithmetic post-decision that produced this verdict -- reusing the caller's raw, un-scaled policy there
+   *  instead would silently disagree with the decision it is recording state for. */
+  effectiveRateLimitPolicies?: WriteRateLimitPolicies;
 };
 
 export type GovernorDecision = {
@@ -109,6 +116,30 @@ export type GovernorDecision = {
   /** The single row to append to the governor ledger for this chokepoint invocation. */
   ledgerEvent: GovernorLedgerEvent;
 };
+
+/** #9062: stretch the PER-REPO rate-limit window for `actionClass` by `1 / cadenceFactor` so a throttled
+ *  miner's write cadence on THIS repo degrades proportionally instead of being denied outright --
+ *  reputation-throttle.ts's own doc comment promises "a recovering ratio restores it -- never a hard
+ *  permanent ban", so consuming `cadenceFactor` here (rather than discarding it, as before) is what actually
+ *  delivers that contract for the common (non-floored) `"throttled"` case. Only the per-repo scope is
+ *  scaled: `RepoOutcomeHistory` is scoped to ONE repo, so a bad ratio there must not also slow the miner's
+ *  unrelated global write velocity across every other repo it works on. Never called with
+ *  `cadenceFactor >= 1` (the caller only invokes this once it has already checked that). */
+function scaleRateLimitPerRepoWindow(policies: WriteRateLimitPolicies, actionClass: string, cadenceFactor: number): WriteRateLimitPolicies {
+  const perRepoConfig = policies.perRepo[actionClass];
+  if (!perRepoConfig) return policies;
+  // Defensive floor: cadenceFactor is documented as "never 0" by resolveSelfReputationThresholds's clamped
+  // minCadenceFactor, but that field has no enforced lower bound of its own -- guard the division regardless
+  // of what a caller-supplied threshold override might set it to.
+  const safeFactor = cadenceFactor > 0 ? cadenceFactor : 0.001;
+  return {
+    ...policies,
+    perRepo: {
+      ...policies.perRepo,
+      [actionClass]: { ...perRepoConfig, windowMs: Math.round(perRepoConfig.windowMs / safeFactor) },
+    },
+  };
+}
 
 function denyResult(input: {
   stage: GovernorDecisionStage;
@@ -184,6 +215,35 @@ export function evaluateGovernorChokepoint(input: GovernorChokepointInput): Gove
     };
   }
 
+  const isSelfSubmissionAction = SELF_SUBMISSION_ACTION_CLASSES.has(input.actionClass);
+
+  // #9062: computed here -- BEFORE rate-limit -- rather than after budget/convergence (where its own HARD
+  // DENY for `reason === "floored"` still stays, preserving the ladder's documented precedence for that
+  // path) so a non-floored `cadenceFactor` can scale the per-repo rate-limit window below. Discarding
+  // cadenceFactor and hard-denying on ANY throttled verdict (the pre-#9062 behavior) is exactly what turned a
+  // recoverable soft throttle into a permanent self-ban: submissions are the miner's only source of new
+  // decided outcomes, so a miner that can never submit can never dilute a bad ratio back down.
+  let reputation: SelfReputationThrottleDecision | undefined;
+  if (isSelfSubmissionAction && input.reputationHistory !== undefined) {
+    try {
+      reputation = selfReputationThrottle(input.reputationHistory, input.reputationThresholds ?? DEFAULT_SELF_REPUTATION_THRESHOLDS);
+    } catch (error) {
+      return denyResult({
+        stage: "internal_error",
+        reason: `reputation_throttle_calculator_error: ${error instanceof Error ? error.message : String(error)}`,
+        mode,
+        detail: baseDetail,
+        eventType: "denied",
+        actionClass: input.actionClass,
+        repoFullName: input.repoFullName,
+      });
+    }
+  }
+  const rateLimitPolicies =
+    reputation && reputation.cadenceFactor < 1
+      ? scaleRateLimitPerRepoWindow(input.rateLimitPolicies ?? DEFAULT_WRITE_RATE_LIMIT_POLICIES, input.actionClass, reputation.cadenceFactor)
+      : input.rateLimitPolicies;
+
   let rateLimit: WriteRateLimitVerdict;
   try {
     rateLimit = evaluateWriteRateLimit({
@@ -192,7 +252,7 @@ export function evaluateGovernorChokepoint(input: GovernorChokepointInput): Gove
       buckets: input.rateLimitBuckets,
       backoffAttempts: input.rateLimitBackoffAttempts,
       nowMs: input.nowMs,
-      ...(input.rateLimitPolicies ? { policies: input.rateLimitPolicies } : {}),
+      ...(rateLimitPolicies ? { policies: rateLimitPolicies } : {}),
       ...(input.rateLimitRandomFn ? { randomFn: input.rateLimitRandomFn } : {}),
     });
   } catch (error) {
@@ -206,7 +266,11 @@ export function evaluateGovernorChokepoint(input: GovernorChokepointInput): Gove
       repoFullName: input.repoFullName,
     });
   }
-  const detailWithRateLimit: GovernorDecisionDetail = { ...baseDetail, rateLimit };
+  const detailWithRateLimit: GovernorDecisionDetail = {
+    ...baseDetail,
+    rateLimit,
+    effectiveRateLimitPolicies: rateLimitPolicies ?? DEFAULT_WRITE_RATE_LIMIT_POLICIES,
+  };
   if (!rateLimit.allowed) {
     return denyResult({
       stage: "rate_limit",
@@ -216,7 +280,13 @@ export function evaluateGovernorChokepoint(input: GovernorChokepointInput): Gove
       eventType: "throttled",
       actionClass: input.actionClass,
       repoFullName: input.repoFullName,
-      extraPayload: { retryAfterMs: rateLimit.retryAfterMs, blockedBy: rateLimit.blockedBy },
+      extraPayload: {
+        retryAfterMs: rateLimit.retryAfterMs,
+        blockedBy: rateLimit.blockedBy,
+        // Surfaced only when the reputation throttle actually degraded this window, so an operator reading
+        // the ledger can tell "genuinely busy" apart from "a reputation-scaled cadence caught up with it".
+        ...(reputation && reputation.cadenceFactor < 1 ? { reputationCadenceFactor: reputation.cadenceFactor } : {}),
+      },
     });
   }
 
@@ -275,29 +345,17 @@ export function evaluateGovernorChokepoint(input: GovernorChokepointInput): Gove
     });
   }
 
-  const isSelfSubmissionAction = SELF_SUBMISSION_ACTION_CLASSES.has(input.actionClass);
-
+  // #9062: `reputation` was already computed above (before rate-limit, so its cadenceFactor could scale that
+  // stage's per-repo window). Its own hard-deny stays at its documented ladder position -- AFTER budget/
+  // convergence -- but is now reserved for `reason === "floored"` only: the extreme, near-certain-abuse case.
+  // A plain `"throttled"` verdict already had its cadence effect folded into the rate-limit evaluation above,
+  // so it no longer denies here at all -- it either already got caught by the tightened rate limit, or it
+  // didn't need to be, and either way the miner keeps submitting (at a degraded cadence) instead of being
+  // structurally unable to ever generate the new clean outcomes that would dilute its ratio back down.
   let detailWithReputation = detailWithConvergence;
-  // `!== undefined` (not a truthy check): an omitted key means "skip this stage"; any OTHER value the caller
-  // supplied -- including a bad `null` from a malformed upstream source -- must reach the calculator and, if it
-  // cannot handle it, fail closed via the catch below, never silently skip.
-  if (isSelfSubmissionAction && input.reputationHistory !== undefined) {
-    let reputation: SelfReputationThrottleDecision;
-    try {
-      reputation = selfReputationThrottle(input.reputationHistory, input.reputationThresholds ?? DEFAULT_SELF_REPUTATION_THRESHOLDS);
-    } catch (error) {
-      return denyResult({
-        stage: "internal_error",
-        reason: `reputation_throttle_calculator_error: ${error instanceof Error ? error.message : String(error)}`,
-        mode,
-        detail: detailWithConvergence,
-        eventType: "denied",
-        actionClass: input.actionClass,
-        repoFullName: input.repoFullName,
-      });
-    }
+  if (reputation) {
     detailWithReputation = { ...detailWithConvergence, reputation };
-    if (reputation.throttled) {
+    if (reputation.reason === "floored") {
       return denyResult({
         stage: "reputation_throttle",
         reason: reputation.reason,

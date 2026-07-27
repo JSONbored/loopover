@@ -47,7 +47,11 @@ export function evaluateGovernorChokepointGate(
       input.actionClass,
       input.repoFullName,
       input.nowMs,
-      input.rateLimitPolicies,
+      // #9062: use the policy the DECISION was actually evaluated against, not the caller's raw
+      // `input.rateLimitPolicies` -- a non-floored reputation throttle may have scaled the per-repo window
+      // down before evaluateWriteRateLimit ran, and advancing the bucket with a different (unscaled) window
+      // than the one that produced this "allow" would silently disagree with its own decision.
+      decision.detail.effectiveRateLimitPolicies ?? input.rateLimitPolicies,
     );
     rateLimitBackoffAttempts = clearWriteRateLimitBackoff(input.rateLimitBackoffAttempts, input.actionClass, input.repoFullName);
   } else if (decision.stage === "rate_limit") {

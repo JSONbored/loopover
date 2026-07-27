@@ -106,12 +106,43 @@ test("non-convergence: a stuck item denies before reputation/self-plagiarism run
   assert.equal(decision.detail.reputation, undefined);
 });
 
-test("reputation throttle: a degraded track record denies open_pr before self-plagiarism runs", () => {
+// #9062: a non-floored "throttled" ratio used to hard-deny outright, discarding cadenceFactor entirely -- an
+// absorbing state, since submissions are the miner's only source of new decided outcomes and a denied miner
+// can never submit one. It must now scale the per-repo rate-limit window instead of denying; only the
+// extreme "floored" ratio still hard-denies (see the dedicated tests below).
+test("reputation throttle: a degraded (non-floored) track record no longer denies -- it scales the per-repo rate-limit window instead (#9062)", () => {
   const decision = evaluateGovernorChokepoint(
-    baseInput({ reputationHistory: { decided: 10, unfavorable: 8 } }),
+    baseInput({ reputationHistory: { decided: 10, unfavorable: 8 } }), // ratio 0.8 -> "throttled", not "floored"
+  );
+  assert.equal(decision.allowed, true, "a non-floored throttle must no longer hard-deny");
+  assert.equal(decision.stage, "allow");
+  assert.equal(decision.detail.reputation?.reason, "throttled");
+  assert.equal(decision.detail.reputation?.cadenceFactor, 0.325);
+});
+
+test("reputation throttle: the scaled per-repo window denies a write the UNSCALED window would still allow (#9062)", () => {
+  // Default perRepo open_pr policy is {limit: 3, windowMs: 60_000}. A bucket at its cap with a window that
+  // started 70s before `nowMs` (10_000) has already ROLLED OVER under the unscaled 60s window (allowed) --
+  // but ratio 0.8 gives cadenceFactor 0.325, stretching the window to round(60_000 / 0.325) = 184_615ms, well
+  // past 70s, so under the SCALED window the bucket has NOT rolled over and is still at its cap (denied).
+  const decision = evaluateGovernorChokepoint(
+    baseInput({
+      reputationHistory: { decided: 10, unfavorable: 8 },
+      rateLimitBuckets: { global: {}, perRepo: { "open_pr:acme/widgets": { count: 3, windowStartMs: -60_000 } } },
+    }),
+  );
+  assert.equal(decision.allowed, false);
+  assert.equal(decision.stage, "rate_limit", "the reputation throttle manifests as a tightened rate-limit denial, not its own stage");
+  assert.equal(decision.ledgerEvent.payload?.reputationCadenceFactor, 0.325, "the ledger records WHY the window tightened");
+});
+
+test("reputation throttle: a floored ratio (the extreme case) still hard-denies open_pr before self-plagiarism runs (#9062)", () => {
+  const decision = evaluateGovernorChokepoint(
+    baseInput({ reputationHistory: { decided: 10, unfavorable: 9 } }), // ratio 0.9 >= floorAtRatio (0.9 default)
   );
   assert.equal(decision.allowed, false);
   assert.equal(decision.stage, "reputation_throttle");
+  assert.equal(decision.detail.reputation?.reason, "floored");
   assert.equal(decision.ledgerEvent.eventType, "throttled");
   assert.equal(decision.detail.selfPlagiarism, undefined);
 });

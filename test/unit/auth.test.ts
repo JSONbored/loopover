@@ -515,6 +515,42 @@ describe("private-beta auth and rate limiting", () => {
     expect(observedKeys[0]).toMatch(/^strict:\/v1\/orb\/token:ip:/);
   });
 
+  it("REGRESSION (#9225): a DB error resolving installation identity falls back to IP-keying instead of escaping uncaught, for all three bearer-keyed paths", async () => {
+    // The bug: installationRateLimitIdentity's ORB_BEARER_PATHS branch called validateOrbRelayEnrollment
+    // unguarded. This middleware runs BEFORE the route handler, so an uncaught rejection here previously
+    // surfaced as a bare framework 500 -- upstream of, and bypassing, the route's own #4995 fix (its `.catch`
+    // around its OWN later call to the same function). Forcing the underlying orb_enrollments lookup to
+    // reject exercises exactly that earlier call site.
+    const observedKeys: string[] = [];
+    const env = rateLimitTestEnv({}, observedKeys);
+    const db = env.DB as unknown as TestD1Database;
+    await db.prepare("INSERT INTO orb_github_installations (installation_id, registered) VALUES (?, 1)").bind(603).run();
+    const { secret } = (await issueOrbEnrollment(env, 603)) as { secret: string };
+
+    const realPrepare = db.prepare.bind(db);
+    db.prepare = ((sql: string) => {
+      const statement = realPrepare(sql);
+      if (!/select .* from ["`]?orb_enrollments["`]?/i.test(sql)) return statement;
+      return {
+        ...statement,
+        bind(...values: unknown[]) {
+          const bound = statement.bind(...(values as never[]));
+          return { ...bound, first: () => Promise.reject(new Error("db unavailable")) };
+        },
+      };
+    }) as typeof realPrepare;
+
+    for (const path of ["/v1/orb/token", "/v1/orb/relay/register", "/v1/orb/relay/pull"] as const) {
+      observedKeys.length = 0;
+      // Falls back to IP-keying (never rejects, never throws) -- the middleware itself must resolve cleanly
+      // regardless of what the route handler downstream will separately decide to respond with.
+      await expect(
+        enforceRateLimit(fakeContext(env, path, { authorization: `Bearer ${secret}`, "cf-connecting-ip": "203.0.113.27" }), "strict"),
+      ).resolves.toBeNull();
+      expect(observedKeys[0]).toMatch(new RegExp(`^strict:${path.replace(/\//g, "\\/")}:ip:`));
+    }
+  });
+
   it("ignores proxy fallback headers when cf-connecting-ip is absent", async () => {
     const observedKeys: string[] = [];
     const env = rateLimitTestEnv({}, observedKeys);

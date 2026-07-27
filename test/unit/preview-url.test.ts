@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearGitHubResponseCacheForTest, githubRateLimitAdmissionKeyForInstallation, latestGitHubRestRateLimitObservation } from "../../src/github/client";
-import { extractPreviewUrl, findPreviewUrlFromChecks, findPreviewUrlFromPrComments, getLatestDeploymentStatus, getPreviewBuildState } from "../../src/review/visual/preview-url";
+import type { DeploymentStatusPayload } from "../../src/review/visual/preview-url";
+import { deploymentStatusToPreview, extractPreviewUrl, findPreviewUrlFromChecks, findPreviewUrlFromPrComments, getLatestDeploymentStatus, getPreviewBuildState } from "../../src/review/visual/preview-url";
 
 /** GitHub's `Link` header for a page that advertises a next page (the exact shape findAcrossPages walks). */
 const NEXT_LINK = '<https://api.github.com/resource?per_page=100&page=99>; rel="next", <https://api.github.com/resource?per_page=100&page=99>; rel="last"';
@@ -473,5 +474,106 @@ describe("extractPreviewUrl", () => {
     expect(
       extractPreviewUrl("https://github.com/acme/widgets/pull/7 and https://pr-3.site.pages.dev/preview"),
     ).toBe("https://pr-3.site.pages.dev");
+  });
+});
+
+describe("deploymentStatusToPreview branch logic (#9292)", () => {
+  // Each case builds its own minimal DeploymentStatusPayload rather than reusing queue-2.test.ts's
+  // integration fixture, so the branch under test is the only thing that varies between cases.
+  const successStatus = { state: "success", environment_url: "https://pr-42.app.workers.dev" };
+
+  it("maps a success state with an environment_url to a preview carrying the URL and PR number", () => {
+    const payload: DeploymentStatusPayload = {
+      deployment_status: successStatus,
+      deployment: { sha: "abc123", ref: "feature/x", payload: JSON.stringify({ pr: 42 }) },
+    };
+    expect(deploymentStatusToPreview(payload)).toEqual({
+      prNumber: 42,
+      headSha: "abc123",
+      headRef: "feature/x",
+      previewUrl: "https://pr-42.app.workers.dev",
+    });
+  });
+
+  it("maps a failure state to a previewFailed shape with no previewUrl", () => {
+    const preview = deploymentStatusToPreview({
+      deployment_status: { state: "failure" },
+      deployment: { payload: JSON.stringify({ pr: 7 }) },
+    });
+    expect(preview).toEqual({ prNumber: 7, previewFailed: true });
+    expect(preview).not.toHaveProperty("previewUrl");
+  });
+
+  it("maps an error state the same as a failure (previewFailed, no URL)", () => {
+    const preview = deploymentStatusToPreview({
+      deployment_status: { state: "error" },
+      deployment: { payload: JSON.stringify({ pr: 7 }) },
+    });
+    expect(preview).toEqual({ prNumber: 7, previewFailed: true });
+    expect(preview).not.toHaveProperty("previewUrl");
+  });
+
+  it("returns null for an in-flight state carrying no new preview signal", () => {
+    for (const state of ["queued", "in_progress", "pending"]) {
+      expect(
+        deploymentStatusToPreview({
+          deployment_status: { state, environment_url: "https://pr-42.app.workers.dev" },
+          deployment: { payload: JSON.stringify({ pr: 42 }) },
+        }),
+      ).toBeNull();
+    }
+  });
+
+  it("returns null for a success state that is missing its environment_url", () => {
+    expect(
+      deploymentStatusToPreview({
+        deployment_status: { state: "success" },
+        deployment: { payload: JSON.stringify({ pr: 42 }) },
+      }),
+    ).toBeNull();
+  });
+
+  it("resolves the PR number from an already-decoded object payload (not a JSON string)", () => {
+    expect(
+      deploymentStatusToPreview({
+        deployment_status: successStatus,
+        deployment: { payload: { pr: 99 } },
+      }),
+    ).toEqual({ prNumber: 99, previewUrl: "https://pr-42.app.workers.dev" });
+  });
+
+  it("returns null when a malformed JSON string payload leaves prNumber undefined", () => {
+    expect(
+      deploymentStatusToPreview({
+        deployment_status: successStatus,
+        deployment: { payload: "{ not valid json" },
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null when neither the string nor object payload carries a PR number", () => {
+    expect(
+      deploymentStatusToPreview({
+        deployment_status: successStatus,
+        deployment: { payload: JSON.stringify({ other: 1 }) },
+      }),
+    ).toBeNull();
+    expect(
+      deploymentStatusToPreview({
+        deployment_status: successStatus,
+        deployment: { payload: { pr: 0 } },
+      }),
+    ).toBeNull();
+    expect(
+      deploymentStatusToPreview({
+        deployment_status: successStatus,
+        deployment: { payload: null },
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null when the payload has no deployment_status or no deployment block", () => {
+    expect(deploymentStatusToPreview({ deployment: { payload: { pr: 1 } } })).toBeNull();
+    expect(deploymentStatusToPreview({ deployment_status: successStatus })).toBeNull();
   });
 });

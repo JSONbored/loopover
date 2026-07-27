@@ -410,6 +410,7 @@ function buildPreviewMarkdown(preview: RepoOnboardingPackPreview): string {
     preview.contributionLanes.forEach((lane) => {
       lines.push(`- ${lane.title}: ${lane.summary}`);
       appendNestedList(lines, "Preferred paths", lane.preferredPaths);
+      appendNestedList(lines, "Discouraged paths", lane.discouragedPaths);
       appendNestedList(lines, "Validation", lane.validationExpectations);
       appendNestedList(lines, "Notes", lane.publicNotes);
     });

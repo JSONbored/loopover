@@ -16,7 +16,7 @@ import { closeDefaultWorktreeAllocator, openWorktreeAllocator } from "../../pack
 import { closeDefaultPortfolioQueueStore } from "../../packages/loopover-miner/lib/portfolio-queue";
 import { closeDefaultGovernorState } from "../../packages/loopover-miner/lib/governor-state";
 import { buildAttemptDeps, parseAttemptArgs, runAttempt, resolveAttemptHouseRulesConfig } from "../../packages/loopover-miner/lib/attempt-cli";
-import type { RunAttemptOptions } from "../../packages/loopover-miner/lib/attempt-cli";
+import type { AttemptCliResult, RunAttemptOptions } from "../../packages/loopover-miner/lib/attempt-cli";
 import type { RuleFiredEvent, SignalStore } from "../../packages/loopover-engine/src/calibration/signal-tracking";
 import * as minerSentryModule from "../../packages/loopover-miner/lib/sentry";
 import * as liveIssueSnapshotModule from "../../packages/loopover-miner/lib/live-issue-snapshot";
@@ -141,6 +141,29 @@ afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+describe("AttemptCliResult union (#9331)", () => {
+  it("includes the blocked_own_open_pr outcome with the runtime duplicateResult shape", () => {
+    // Compile-time guard: this object is the exact shape runAttempt builds for a crash-retry duplicate
+    // (#8808). Before the union member was added it only type-checked behind an `as` cast; removing the
+    // member makes this assignment a type error, so the .d.ts drift can't silently return.
+    const result: AttemptCliResult = {
+      outcome: "blocked_own_open_pr",
+      reason: "this miner already has an open PR for this issue",
+      repoFullName: "acme/widgets",
+      issueNumber: 7,
+      existingPullRequestNumber: 42,
+      minerLogin: "miner",
+      base: "main",
+      mode: "live",
+      attemptId: "attempt-1",
+    };
+    expect(result.outcome).toBe("blocked_own_open_pr");
+    if (result.outcome === "blocked_own_open_pr") {
+      expect(result.existingPullRequestNumber).toBe(42);
+    }
+  });
 });
 
 describe("parseAttemptArgs (#5132)", () => {
@@ -533,6 +556,35 @@ describe("runAttempt (#5132)", () => {
       // Real accumulated tokens (#5653), read the same way as costUsd -- from the loop's own finalMeterTotals.
       tokensUsed: 1234,
     });
+  });
+
+  it("surfaces the verification payload in the CLI JSON for a verification_failed outcome (#9328)", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const verification = { ok: false, expectedRepo: "acme/widgets", observedRepo: "acme/other" };
+    const runMinerAttemptSpy = vi.fn().mockResolvedValue({
+      outcome: "verification_failed",
+      verification,
+      loopResult: fakeLoopResult(),
+    });
+
+    await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      attemptId: "fixed-attempt-id",
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({ runMinerAttempt: runMinerAttemptSpy }),
+    });
+
+    const printed = JSON.parse(
+      String(log.mock.calls.map((call) => call[0]).find((arg) => String(arg).includes("attempt_verification_failed"))),
+    );
+    expect(printed.outcome).toBe("attempt_verification_failed");
+    // The verification payload the "verification_failed" outcome carries is now present, not dropped.
+    expect(printed.verification).toEqual(verification);
   });
 
   it("schedules an AMS attempt-started notification before the attempt runs, and no failure notification on submit (#7657)", async () => {

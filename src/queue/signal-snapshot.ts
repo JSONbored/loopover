@@ -62,176 +62,208 @@ export async function generateSignalSnapshots(
     (repo) =>
       repo.isInstalled && (!repoFullName || repo.fullName === repoFullName),
   );
-  for (const repo of repositories) {
-    const trendSince = new Date(
-      Date.now() - QUEUE_TREND_HISTORY_DAYS * 24 * 60 * 60 * 1000,
-    ).toISOString();
-    const [
-      issues,
-      pullRequests,
-      recentMergedPullRequests,
-      labels,
-      queueCounts,
-      bounties,
-      totalsHistory,
-      queueHealthHistory,
-    ] = await Promise.all([
-      listIssueSignalSample(env, repo.fullName),
-      listOpenPullRequests(env, repo.fullName),
-      listRecentMergedPullRequests(env, repo.fullName),
-      listRepoLabels(env, repo.fullName),
-      loadOpenQueueCounts(env, repo.fullName),
-      listBountiesByRepo(env, repo.fullName),
-      listRepoGithubTotalsSnapshotHistory(env, repo.fullName, {
-        sinceIso: trendSince,
-        limit: 120,
-      }),
-      listSignalSnapshots(env, "queue-health", repo.fullName),
-    ]);
-    const collisions = buildCollisionReport(
-      repo.fullName,
-      issues,
-      pullRequests,
-      recentMergedPullRequests,
+  // #9293: Promise.allSettled (not a bare sequential for-loop) so one repo's data-gathering or
+  // persist failure never silently skips every subsequent repo in the same multi-repo invocation —
+  // same isolation shape as job-dispatch.ts's "backfill-registered-repos" fan-out (#8355). Every
+  // repo is attempted exactly once; successes persist regardless of a sibling's outcome; failures
+  // are collected and rethrown as one aggregate error so the invocation stays observably failed.
+  const settled = await Promise.allSettled(
+    repositories.map((repo) => generateSignalSnapshotForRepo(env, repo)),
+  );
+  const failedRepoFullNames: string[] = [];
+  settled.forEach((result, index) => {
+    if (result.status === "rejected") {
+      const failedRepoFullName = repositories[index]!.fullName;
+      failedRepoFullNames.push(failedRepoFullName);
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "generate_signal_snapshots_repo_failed",
+          repoFullName: failedRepoFullName,
+          reason: String(result.reason),
+        }),
+      );
+    }
+  });
+  if (failedRepoFullNames.length > 0) {
+    throw new Error(
+      `generate-signal-snapshots: ${failedRepoFullNames.length}/${repositories.length} repo(s) failed: ${failedRepoFullNames.join(", ")}`,
     );
-    const queueHealth = buildQueueHealth(
-      repo,
-      issues,
-      pullRequests,
-      collisions,
-      queueCounts,
-    );
-    const configQuality = buildConfigQuality(
-      repo,
-      issues,
-      pullRequests,
-      repo.fullName,
-    );
-    const labelAudit = buildLabelAudit(
-      repo,
-      labels,
-      issues,
-      pullRequests,
-      repo.fullName,
-    );
-    const maintainerLane = buildMaintainerLaneReport(
-      repo,
-      issues,
-      pullRequests,
-      repo.fullName,
-      collisions,
-      queueCounts,
-    );
-    const maintainerCutReadiness = buildMaintainerCutReadiness(
-      repo,
-      issues,
-      pullRequests,
-      repo.fullName,
-      queueCounts,
-      collisions,
-    );
-    const contributorIntakeHealth = buildContributorIntakeHealth(
-      repo,
-      issues,
-      pullRequests,
-      repo.fullName,
-      collisions,
-      queueCounts,
-    );
-    const issueQuality = buildIssueQualityReport(
-      repo,
-      issues,
-      pullRequests,
-      repo.fullName,
-      bounties,
-      collisions,
-      recentMergedPullRequests,
-    );
-    await replaceCollisionEdges(
-      env,
-      repo.fullName,
-      buildCollisionEdges(collisions),
-    );
-    const generatedAt = new Date().toISOString();
-    await persistSignalSnapshot(env, {
-      id: crypto.randomUUID(),
-      signalType: "queue-health",
-      targetKey: repo.fullName,
-      repoFullName: repo.fullName,
-      payload: queueHealth as unknown as Record<string, never>,
-      generatedAt,
-    });
-    await upsertRepoQueueTrendSnapshot(env, {
-      repoFullName: repo.fullName,
-      payload: buildQueueTrendReport({
-        repoFullName: repo.fullName,
-        totalsSnapshots: totalsHistory,
-        queueHealthSnapshots: queueHealthHistory,
-        currentQueueHealth: queueHealth,
-        generatedAt,
-      }) as unknown as Record<string, never>,
-      generatedAt,
-    });
-    await persistSignalSnapshot(env, {
-      id: crypto.randomUUID(),
-      signalType: "config-quality",
-      targetKey: repo.fullName,
-      repoFullName: repo.fullName,
-      payload: configQuality as unknown as Record<string, never>,
-      generatedAt,
-    });
-    await persistSignalSnapshot(env, {
-      id: crypto.randomUUID(),
-      signalType: "label-audit",
-      targetKey: repo.fullName,
-      repoFullName: repo.fullName,
-      payload: labelAudit as unknown as Record<string, never>,
-      generatedAt,
-    });
-    await persistSignalSnapshot(env, {
-      id: crypto.randomUUID(),
-      signalType: "maintainer-lane",
-      targetKey: repo.fullName,
-      repoFullName: repo.fullName,
-      payload: maintainerLane as unknown as Record<string, never>,
-      generatedAt,
-    });
-    await persistSignalSnapshot(env, {
-      id: crypto.randomUUID(),
-      signalType: "maintainer-cut-readiness",
-      targetKey: repo.fullName,
-      repoFullName: repo.fullName,
-      payload: maintainerCutReadiness as unknown as Record<string, never>,
-      generatedAt,
-    });
-    await persistSignalSnapshot(env, {
-      id: crypto.randomUUID(),
-      signalType: "contributor-intake-health",
-      targetKey: repo.fullName,
-      repoFullName: repo.fullName,
-      payload: contributorIntakeHealth as unknown as Record<string, never>,
-      generatedAt,
-    });
-    await persistSignalSnapshot(env, {
-      id: crypto.randomUUID(),
-      signalType: "issue-quality",
-      targetKey: repo.fullName,
-      repoFullName: repo.fullName,
-      payload: issueQuality as unknown as Record<string, never>,
-      generatedAt,
-    });
-    const repoOutcomePatterns = await computeRepoOutcomePatterns(
-      env,
-      repo.fullName,
-      repo,
-    );
-    await persistSignalSnapshot(env, {
-      id: crypto.randomUUID(),
-      signalType: REPO_OUTCOME_PATTERNS_SIGNAL,
-      targetKey: repo.fullName,
-      repoFullName: repo.fullName,
-      payload: repoOutcomePatterns as unknown as Record<string, never>,
-      generatedAt,
-    });
   }
+}
+
+async function generateSignalSnapshotForRepo(
+  env: Env,
+  repo: Awaited<ReturnType<typeof listRepositories>>[number],
+): Promise<void> {
+  const trendSince = new Date(
+    Date.now() - QUEUE_TREND_HISTORY_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const [
+    issues,
+    pullRequests,
+    recentMergedPullRequests,
+    labels,
+    queueCounts,
+    bounties,
+    totalsHistory,
+    queueHealthHistory,
+  ] = await Promise.all([
+    listIssueSignalSample(env, repo.fullName),
+    listOpenPullRequests(env, repo.fullName),
+    listRecentMergedPullRequests(env, repo.fullName),
+    listRepoLabels(env, repo.fullName),
+    loadOpenQueueCounts(env, repo.fullName),
+    listBountiesByRepo(env, repo.fullName),
+    listRepoGithubTotalsSnapshotHistory(env, repo.fullName, {
+      sinceIso: trendSince,
+      limit: 120,
+    }),
+    listSignalSnapshots(env, "queue-health", repo.fullName),
+  ]);
+  const collisions = buildCollisionReport(
+    repo.fullName,
+    issues,
+    pullRequests,
+    recentMergedPullRequests,
+  );
+  const queueHealth = buildQueueHealth(
+    repo,
+    issues,
+    pullRequests,
+    collisions,
+    queueCounts,
+  );
+  const configQuality = buildConfigQuality(
+    repo,
+    issues,
+    pullRequests,
+    repo.fullName,
+  );
+  const labelAudit = buildLabelAudit(
+    repo,
+    labels,
+    issues,
+    pullRequests,
+    repo.fullName,
+  );
+  const maintainerLane = buildMaintainerLaneReport(
+    repo,
+    issues,
+    pullRequests,
+    repo.fullName,
+    collisions,
+    queueCounts,
+  );
+  const maintainerCutReadiness = buildMaintainerCutReadiness(
+    repo,
+    issues,
+    pullRequests,
+    repo.fullName,
+    queueCounts,
+    collisions,
+  );
+  const contributorIntakeHealth = buildContributorIntakeHealth(
+    repo,
+    issues,
+    pullRequests,
+    repo.fullName,
+    collisions,
+    queueCounts,
+  );
+  const issueQuality = buildIssueQualityReport(
+    repo,
+    issues,
+    pullRequests,
+    repo.fullName,
+    bounties,
+    collisions,
+    recentMergedPullRequests,
+  );
+  await replaceCollisionEdges(
+    env,
+    repo.fullName,
+    buildCollisionEdges(collisions),
+  );
+  const generatedAt = new Date().toISOString();
+  await persistSignalSnapshot(env, {
+    id: crypto.randomUUID(),
+    signalType: "queue-health",
+    targetKey: repo.fullName,
+    repoFullName: repo.fullName,
+    payload: queueHealth as unknown as Record<string, never>,
+    generatedAt,
+  });
+  await upsertRepoQueueTrendSnapshot(env, {
+    repoFullName: repo.fullName,
+    payload: buildQueueTrendReport({
+      repoFullName: repo.fullName,
+      totalsSnapshots: totalsHistory,
+      queueHealthSnapshots: queueHealthHistory,
+      currentQueueHealth: queueHealth,
+      generatedAt,
+    }) as unknown as Record<string, never>,
+    generatedAt,
+  });
+  await persistSignalSnapshot(env, {
+    id: crypto.randomUUID(),
+    signalType: "config-quality",
+    targetKey: repo.fullName,
+    repoFullName: repo.fullName,
+    payload: configQuality as unknown as Record<string, never>,
+    generatedAt,
+  });
+  await persistSignalSnapshot(env, {
+    id: crypto.randomUUID(),
+    signalType: "label-audit",
+    targetKey: repo.fullName,
+    repoFullName: repo.fullName,
+    payload: labelAudit as unknown as Record<string, never>,
+    generatedAt,
+  });
+  await persistSignalSnapshot(env, {
+    id: crypto.randomUUID(),
+    signalType: "maintainer-lane",
+    targetKey: repo.fullName,
+    repoFullName: repo.fullName,
+    payload: maintainerLane as unknown as Record<string, never>,
+    generatedAt,
+  });
+  await persistSignalSnapshot(env, {
+    id: crypto.randomUUID(),
+    signalType: "maintainer-cut-readiness",
+    targetKey: repo.fullName,
+    repoFullName: repo.fullName,
+    payload: maintainerCutReadiness as unknown as Record<string, never>,
+    generatedAt,
+  });
+  await persistSignalSnapshot(env, {
+    id: crypto.randomUUID(),
+    signalType: "contributor-intake-health",
+    targetKey: repo.fullName,
+    repoFullName: repo.fullName,
+    payload: contributorIntakeHealth as unknown as Record<string, never>,
+    generatedAt,
+  });
+  await persistSignalSnapshot(env, {
+    id: crypto.randomUUID(),
+    signalType: "issue-quality",
+    targetKey: repo.fullName,
+    repoFullName: repo.fullName,
+    payload: issueQuality as unknown as Record<string, never>,
+    generatedAt,
+  });
+  const repoOutcomePatterns = await computeRepoOutcomePatterns(
+    env,
+    repo.fullName,
+    repo,
+  );
+  await persistSignalSnapshot(env, {
+    id: crypto.randomUUID(),
+    signalType: REPO_OUTCOME_PATTERNS_SIGNAL,
+    targetKey: repo.fullName,
+    repoFullName: repo.fullName,
+    payload: repoOutcomePatterns as unknown as Record<string, never>,
+    generatedAt,
+  });
 }

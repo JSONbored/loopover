@@ -98,6 +98,7 @@ type CommonAttemptResultFields = {
 export type AttemptCliResult =
   | (CommonAttemptResultFields & { outcome: "dry_run" })
   | (CommonAttemptResultFields & { outcome: "blocked_rejection_signaled"; reason: string })
+  | (CommonAttemptResultFields & { outcome: "blocked_own_open_pr"; reason: string; existingPullRequestNumber: number })
   | (CommonAttemptResultFields & { outcome: "blocked_worktree_preparation_failed"; reason: string })
   | (CommonAttemptResultFields & {
       outcome: "blocked_infeasible";
@@ -117,6 +118,9 @@ export type AttemptCliResult =
       decision?: unknown;
       spec?: LocalWriteActionSpec;
       execResult?: unknown;
+      // #9328: surfaced from the AttemptResult "verification_failed" outcome (#8807's target-repo gate),
+      // mirroring the other optional sibling fields' conditional spread in finalResult below.
+      verification?: unknown;
       claimConflict?: ClaimConflictResult;
     });
 
@@ -1018,6 +1022,8 @@ export async function runAttempt(args: string[], options: RunAttemptOptions = {}
       ...("decision" in result ? { decision: result.decision } : {}),
       ...("spec" in result ? { spec: result.spec } : {}),
       ...("execResult" in result ? { execResult: result.execResult } : {}),
+      // #9328: the "verification_failed" outcome carries a `verification` payload the CLI JSON was dropping.
+      ...("verification" in result ? { verification: result.verification } : {}),
       // Present only on a real "submitted" outcome whose PR number was recoverable from execResult -- omitted
       // (not fabricated as "checked: false") on every other outcome, and on a submitted outcome where the new
       // PR's number genuinely couldn't be parsed (an honest gap, not silently swallowed).

@@ -7,6 +7,7 @@ vi.mock("@loopover/engine", async () => {
   return import("../../packages/loopover-engine/src/index");
 });
 
+import * as engineModule from "@loopover/engine";
 import { evaluateRunLoopBoundaryGate } from "../../packages/loopover-miner/lib/governor-run-halt";
 import {
   closeDefaultGovernorLedger,
@@ -102,11 +103,11 @@ describe("evaluateRunLoopBoundaryGate (#2347)", () => {
     expect(halted.recorded?.reason).toBe("budget_cap_exceeded");
   });
 
-  it("never halts or records a halt for a healthy run under both signals", () => {
-    const root = mkdtempSync(join(tmpdir(), "loopover-miner-governor-run-halt-healthy-"));
-    roots.push(root);
-    const ledger = initGovernorLedger(join(root, "governor-ledger.sqlite3"));
-    ledgers.push(ledger);
+  // #9326: the steady (wasHalted=false, shouldHalt=false) case is not a transition -- it must not append a
+  // ledger row on every single healthy iteration. A vi.fn() append spy proves this directly (never called),
+  // not just that the returned `recorded` field is null.
+  it("never halts and never appends a ledger row for a healthy run under both signals", () => {
+    const append = vi.fn();
 
     const healthy = evaluateRunLoopBoundaryGate(
       {
@@ -115,13 +116,56 @@ describe("evaluateRunLoopBoundaryGate (#2347)", () => {
         limits: LIMITS,
         convergence: HEALTHY_CONVERGENCE,
       },
-      { append: (event) => ledger.appendGovernorEvent(event) },
+      { append },
     );
 
     expect(healthy.runHalted).toBe(false);
     expect(healthy.canClaimNext).toBe(true);
-    expect(healthy.recorded?.eventType).toBe("allowed");
+    expect(healthy.recorded).toBeNull();
     expect(healthy.releasedItem).toBeNull();
+    expect(append).not.toHaveBeenCalled();
+  });
+
+  // #9326: the resume transition (wasHalted=true, shouldHalt=false) -- symmetric with the halt-trip case
+  // above -- previously left no ledger trace at all. It must now record, the same way a halt trip does.
+  // evaluateRunLoopHalt's own real implementation latches shouldHalt:true unconditionally whenever
+  // runHalted:true is passed in (its "prior_halt" branch) -- a genuine resume only happens once an
+  // operator externally clears that latch outside this call, so this test forces the collaborator's verdict
+  // for one call to exercise evaluateRunLoopBoundaryGate's OWN transition-detection condition directly,
+  // independent of whether evaluateRunLoopHalt's current coupling makes this reachable today.
+  it("records a resume transition when a previously-halted run recovers", () => {
+    const root = mkdtempSync(join(tmpdir(), "loopover-miner-governor-run-halt-resume-"));
+    roots.push(root);
+    const ledger = initGovernorLedger(join(root, "governor-ledger.sqlite3"));
+    ledgers.push(ledger);
+
+    // A real, correctly-shaped "cleared" verdict (from the real function, runHalted:false) spliced in for
+    // the next call, rather than hand-constructing every nested cap/convergence field.
+    const clearedVerdict = engineModule.evaluateRunLoopHalt({
+      runHalted: false,
+      usage: HEALTHY_USAGE,
+      limits: LIMITS,
+      convergence: HEALTHY_CONVERGENCE,
+    });
+    expect(clearedVerdict.shouldHalt).toBe(false);
+    const spy = vi.spyOn(engineModule, "evaluateRunLoopHalt").mockReturnValueOnce(clearedVerdict);
+
+    const resumed = evaluateRunLoopBoundaryGate(
+      {
+        runHalted: true,
+        usage: HEALTHY_USAGE,
+        limits: LIMITS,
+        convergence: HEALTHY_CONVERGENCE,
+      },
+      { append: (event) => ledger.appendGovernorEvent(event) },
+    );
+    spy.mockRestore();
+
+    expect(resumed.runHalted).toBe(false);
+    expect(resumed.canClaimNext).toBe(true);
+    expect(resumed.recorded).not.toBeNull();
+    expect(resumed.recorded?.eventType).toBe("allowed");
+    expect(resumed.releasedItem).toBeNull();
   });
 
   it("does not re-append ledger rows while a prior halt remains latched", () => {
@@ -156,7 +200,7 @@ describe("evaluateRunLoopBoundaryGate (#2347)", () => {
     expect(append).toHaveBeenCalledTimes(1);
   });
 
-  it("forwards custom convergenceThresholds and records via the default ledger append", () => {
+  it("forwards custom convergenceThresholds to keep a run healthy, using the default ledger append (never invoked, steady state)", () => {
     const root = mkdtempSync(join(tmpdir(), "loopover-miner-governor-run-halt-thresholds-"));
     roots.push(root);
     previousConfigDirs.push(process.env.LOOPOVER_MINER_CONFIG_DIR);
@@ -172,7 +216,9 @@ describe("evaluateRunLoopBoundaryGate (#2347)", () => {
     });
     expect(healthy.runHalted).toBe(false);
     expect(healthy.canClaimNext).toBe(true);
-    expect(healthy.recorded?.eventType).toBe("allowed");
+    // #9326: steady never-halted state -- no transition, so nothing is recorded (would have used the
+    // default ledger append if it had recorded, but the whole point of the fix is that it doesn't).
+    expect(healthy.recorded).toBeNull();
     expect(healthy.releasedItem).toBeNull();
   });
 

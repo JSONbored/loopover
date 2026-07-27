@@ -352,6 +352,26 @@ NOVELTY_BONUS_SCALAR = 3
     expect(refreshed.warnings.join(" ")).toMatch(/recognized active-model indicator/i);
   });
 
+  it("warns when fetched constants include both saturation and density indicators", async () => {
+    const env = createTestEnv();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("constants.py")) {
+        return new Response(
+          VALID_CONSTANTS_PY + "SRC_TOK_SATURATION_SCALE = 58.0\nMIN_TOKEN_SCORE_FOR_BASE_SCORE = 5\nMAX_CODE_DENSITY_MULTIPLIER = 1.15\n",
+        );
+      }
+      if (url.includes("programming_languages.json")) return Response.json({});
+      return new Response("not found", { status: 404 });
+    });
+
+    const refreshed = await refreshScoringModelSnapshot(env);
+
+    expect(refreshed.warnings).toContain(
+      "Scoring constants include both exponential saturation and density-era indicators; using exponential saturation as the active model.",
+    );
+  });
+
   it("flags upstream scoring constants loopover does not model (staleness visibility)", () => {
     // SRC_TOK_SATURATION_SCALE and the TIME_DECAY_* constants are now modeled (#703); a hypothetical new
     // upstream dimension is NOT — so only that surfaces as unmodeled drift.

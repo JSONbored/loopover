@@ -58,6 +58,27 @@ describe("parseSimpleFrontmatter", () => {
     expect(f.title).toBe("Real");
     expect(Object.keys(f)).toEqual(["title"]);
   });
+
+  it("reads a |2- block-scalar header (digit-before-chomp order) and its indented body (#9290)", () => {
+    const src = ["---", "description: |2-", "  line one", "  line two", "title: T", "---", "", "body"].join("\n");
+    const f = parseSimpleFrontmatter(src);
+    expect(f.description).toBe("line one\nline two");
+    expect(f.title).toBe("T");
+  });
+
+  it("reads a |- # comment block-scalar header and its indented body (#9290)", () => {
+    const src = ["---", "description: |- # trailing note", "  hidden content", "title: T", "---", "", "body"].join("\n");
+    const f = parseSimpleFrontmatter(src);
+    expect(f.description).toBe("hidden content");
+    expect(f.title).toBe("T");
+  });
+
+  it("reads a > # comment folded block-scalar header and joins its indented body (#9290)", () => {
+    const src = ["---", "description: > # folded note", "  word one", "  word two", "title: T", "---", "", "body"].join("\n");
+    const f = parseSimpleFrontmatter(src);
+    expect(f.description).toBe("word one word two");
+    expect(f.title).toBe("T");
+  });
 });
 
 describe("findDuplicateFrontmatterKeys", () => {
@@ -282,6 +303,49 @@ describe("findDuplicateFrontmatterKeys — block-scalar + sequence skipping", ()
     const src = ["---", "", "# comment line", "title: A", "slug: a", "---", "", "body"].join("\n");
     // The blank + comment lines fail the key regex → the `if (!head) continue` branch runs; no dupes.
     expect(findDuplicateFrontmatterKeys(src)).toEqual([]);
+  });
+
+  it("skips a |2- block-scalar body without false-flagging indented pseudo-keys (#9290)", () => {
+    const src = [
+      "---",
+      "description: |2-",
+      "  title: not-a-real-key",
+      "  another: line",
+      "title: Real",
+      "title: DupReal",
+      "---",
+      "",
+      "body",
+    ].join("\n");
+    expect(findDuplicateFrontmatterKeys(src)).toEqual(["title"]);
+  });
+
+  it("skips a |- # comment block-scalar body without false-flagging indented pseudo-keys (#9290)", () => {
+    const src = [
+      "---",
+      "description: |- # trailing note",
+      "  title: not-a-real-key",
+      "slug: a",
+      "slug: b",
+      "---",
+      "",
+      "body",
+    ].join("\n");
+    expect(findDuplicateFrontmatterKeys(src)).toEqual(["slug"]);
+  });
+
+  it("skips a > # comment folded block-scalar body without false-flagging indented pseudo-keys (#9290)", () => {
+    const src = [
+      "---",
+      "description: > # folded note",
+      "  title: not-a-real-key",
+      "category: x",
+      "category: y",
+      "---",
+      "",
+      "body",
+    ].join("\n");
+    expect(findDuplicateFrontmatterKeys(src)).toEqual(["category"]);
   });
 });
 

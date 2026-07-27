@@ -38,7 +38,9 @@ import {
   countOpenPullRequests,
   createPendingAgentActionIfAbsent,
   getBounty,
+  listBounties,
   listBountiesByRepo,
+  listBountyLifecycleEvents,
   getContributorEvidence,
   getLatestRepoGithubTotalsSnapshot,
   getInstallation,
@@ -78,6 +80,7 @@ import {
   MAX_NOTIFICATION_MARK_READ_IDS,
   markNotificationDeliveriesRead,
   recordAuditEvent,
+  recordPostMergeIncidentReport,
   recordProductUsageEvent,
 } from "../db/repositories";
 import { decidePendingAgentAction } from "../services/agent-approval-queue";
@@ -254,6 +257,20 @@ const clearSelftuneOverrideShape = {
   owner: z.string().min(1),
   repo: z.string().min(1),
   confirm: z.literal(true),
+};
+
+// (#9298) owner/repo/pull (mirrors ownerRepoPullShape) plus the same body fields the REST route's
+// postMergeIncidentReportSchema validates. Declared inline rather than spread from that schema's `.shape`
+// because src/api/routes.ts imports this module before it defines postMergeIncidentReportSchema, so reading
+// `.shape` at module-init time would dereference `undefined` (circular-import temporal dead zone).
+const fileIncidentReportShape = {
+  ...ownerRepoPullShape,
+  description: z.string().min(1).max(4000),
+  severity: z.enum(["low", "medium", "high", "critical"]),
+  mergedSha: z
+    .string()
+    .regex(/^[0-9a-f]{7,40}$/i)
+    .optional(),
 };
 
 const windowOnlyShape = {
@@ -1085,6 +1102,18 @@ const gateConfigEffectiveOutputSchema = {
   status: z.string().optional(),
 };
 
+// #9297: the raw EFFECTIVE settings row GET /v1/repos/:owner/:repo/settings returns (resolveRepositorySettings),
+// distinct from the derived automation-state / gate-config-effective views. Every field optional (non-strict,
+// documentation-only) so this stays byte-for-byte the resolver's output -- extra keys are passed through
+// unmodified and future settings fields need no schema edit here.
+const repoSettingsOutputSchema = {
+  repoFullName: z.string().optional(),
+  commentMode: z.string().optional(),
+  gatePack: z.string().optional(),
+  reviewCheckMode: z.string().optional(),
+  slopGateMode: z.string().optional(),
+};
+
 const maintainerMeasurementReportOutputSchema = {
   repoFullName: z.string().optional(),
   generatedAt: z.string().optional(),
@@ -1118,6 +1147,17 @@ const selftuneOverrideAuditOutputSchema = {
 const clearSelftuneOverrideOutputSchema = {
   repoFullName: z.string().optional(),
   cleared: z.boolean().optional(),
+};
+
+// (#9298) mirrors the REST incident-report route's response: `{ ok: true, repoFullName, pullNumber, ...report }`
+// on success, or `{ ok: false, error }` when the PR is missing/unmerged (the REST route's 404/409 bodies).
+const fileIncidentReportOutputSchema = {
+  ok: z.boolean(),
+  repoFullName: z.string(),
+  pullNumber: z.number().int().positive(),
+  id: z.string().optional(),
+  createdAt: z.string().optional(),
+  error: z.enum(["pull_request_not_found", "pull_request_not_merged"]).optional(),
 };
 
 // #5825 - maintainer-authenticated skipped-PR audit trail, mirroring GET /v1/app/skipped-pr-audit's
@@ -1748,6 +1788,13 @@ const bountyAdvisoryOutputSchema = {
   linkedPrs: z.unknown().optional(),
   findings: z.array(z.unknown()).optional(),
 };
+const bountyListOutputSchema = {
+  bounties: z.array(z.unknown()).optional(),
+};
+const bountyLifecycleOutputSchema = {
+  bountyId: z.string().optional(),
+  events: z.array(z.unknown()).optional(),
+};
 const preflightLocalDiffOutputSchema = {
   ...preflightResultOutputSchema,
   localDiff: z.unknown().optional(),
@@ -1994,6 +2041,7 @@ export const MCP_TOOL_CATEGORIES: Record<string, McpToolCategory> = {
   loopover_get_maintainer_noise: "maintainer",
   loopover_get_ams_miner_cohort: "maintainer",
   loopover_get_repo_focus_manifest: "maintainer",
+  loopover_refresh_repo_focus_manifest: "maintainer",
   loopover_get_activation_preview: "maintainer",
   loopover_get_label_audit: "maintainer",
   loopover_get_maintainer_lane: "maintainer",
@@ -2006,6 +2054,7 @@ export const MCP_TOOL_CATEGORIES: Record<string, McpToolCategory> = {
   loopover_get_gate_precision: "maintainer",
   loopover_get_selftune_override_audit: "maintainer",
   loopover_clear_selftune_override: "maintainer",
+  loopover_file_incident_report: "maintainer",
   loopover_get_skipped_pr_audit: "maintainer",
   loopover_get_fleet_analytics: "maintainer",
   loopover_get_recommendation_quality: "maintainer",
@@ -2033,6 +2082,8 @@ export const MCP_TOOL_CATEGORIES: Record<string, McpToolCategory> = {
   loopover_explain_repo_decision: "discovery",
   loopover_preflight_pr: "discovery",
   loopover_get_bounty_advisory: "discovery",
+  loopover_list_bounties: "discovery",
+  loopover_get_bounty_lifecycle: "discovery",
   loopover_get_registry_changes: "utility",
   loopover_get_registry_snapshot: "utility",
   loopover_get_upstream_drift: "utility",
@@ -2042,6 +2093,7 @@ export const MCP_TOOL_CATEGORIES: Record<string, McpToolCategory> = {
   loopover_get_pr_maintainer_packet: "review",
   loopover_get_live_gate_thresholds: "maintainer",
   loopover_get_gate_config_effective: "maintainer",
+  loopover_get_repo_settings: "maintainer",
   loopover_validate_linked_issue: "discovery",
   loopover_check_before_start: "discovery",
   loopover_find_opportunities: "discovery",
@@ -2164,6 +2216,17 @@ export class LoopoverMcp {
         outputSchema: repoFocusManifestOutputSchema,
       },
       async (input) => this.toolResult(await this.getRepoFocusManifest(input)),
+    );
+
+    register(
+      "loopover_refresh_repo_focus_manifest",
+      {
+        description:
+          "Force an immediate refresh of a repo's cached focus manifest (.loopover.yml policy) from GitHub, then return the reloaded manifest plus its compiled policy. Write access required -- same requireRepoWriteAccess boundary as POST /v1/repos/:owner/:repo/focus-manifest/refresh, stricter than the read-only loopover_get_repo_focus_manifest. Bypasses the manifest cache (refresh: true), matching loopover_refresh_repo_docs's force-a-fresh-artifact shape.",
+        inputSchema: ownerRepoShape,
+        outputSchema: repoFocusManifestOutputSchema,
+      },
+      async (input) => this.toolResult(await this.refreshRepoFocusManifest(input)),
     );
 
     register(
@@ -2295,6 +2358,20 @@ export class LoopoverMcp {
         outputSchema: clearSelftuneOverrideOutputSchema,
       },
       async (input) => this.toolResult(await this.clearSelftuneOverride(input)),
+    );
+
+    // (#9298) MCP mirror of POST /v1/repos/:owner/:repo/pulls/:number/incident-reports (#5672): the missing
+    // write tool next to the already-wrapped PR read surfaces (maintainer-packet, reviewability). Same
+    // maintainer-manage boundary and recordPostMergeIncidentReport persistence path as the REST route.
+    register(
+      "loopover_file_incident_report",
+      {
+        description:
+          "File a post-merge incident report on an already-merged rented-loop PR later found harmful, mirroring POST /v1/repos/:owner/:repo/pulls/:number/incident-reports. Persists an audit_events row keyed to the PR; the PR must exist and be merged. Maintainer access required.",
+        inputSchema: fileIncidentReportShape,
+        outputSchema: fileIncidentReportOutputSchema,
+      },
+      async (input) => this.toolResult(await this.fileIncidentReport(input)),
     );
 
     register(
@@ -2590,6 +2667,26 @@ export class LoopoverMcp {
     );
 
     register(
+      "loopover_list_bounties",
+      {
+        description: "List all cached Gittensor bounties (mirrors the public GET /v1/bounties route; no repo/owner input).",
+        inputSchema: {},
+        outputSchema: bountyListOutputSchema,
+      },
+      async () => this.toolResult(await this.getBountyList()),
+    );
+
+    register(
+      "loopover_get_bounty_lifecycle",
+      {
+        description: "Return the lifecycle-event history for a cached Gittensor bounty by id (mirrors GET /v1/bounties/:id/lifecycle).",
+        inputSchema: bountyShape,
+        outputSchema: bountyLifecycleOutputSchema,
+      },
+      async (input) => this.toolResult(await this.getBountyLifecycle(input.id)),
+    );
+
+    register(
       "loopover_get_registry_changes",
       {
         description: "Return the diff between the latest cached Gittensor registry snapshots.",
@@ -2682,6 +2779,21 @@ export class LoopoverMcp {
         outputSchema: gateConfigEffectiveOutputSchema,
       },
       async (input) => this.toolResult(await this.getGateConfigEffective(input)),
+    );
+
+    // #9297: the last unmirrored read in the settings/automation-state/gate-config-effective trio. Mirrors
+    // GET /v1/repos/:owner/:repo/settings -- the RAW effective settings row those two derived views compute
+    // from, which /settings deliberately returns on its own. Maintainer-only, same shape as
+    // loopover_get_automation_state.
+    register(
+      "loopover_get_repo_settings",
+      {
+        description:
+          "Return a repo's RAW effective maintainer settings row (gate/slop/label/surface/command-auth settings, including agent autonomy controls) -- the same resolveRepositorySettings output GET /v1/repos/:owner/:repo/settings returns, distinct from the derived automation-state / gate-config-effective views. Metadata-only, repo-scoped, no GitHub writes. Maintainer access required.",
+        inputSchema: ownerRepoShape,
+        outputSchema: repoSettingsOutputSchema,
+      },
+      async (input) => this.toolResult(await this.getRepoSettings(input)),
     );
 
     register(
@@ -3537,6 +3649,23 @@ export class LoopoverMcp {
     };
   }
 
+  // #9299 - thin MCP surface over POST /v1/repos/:owner/:repo/focus-manifest/refresh, the refresh COUNTERPART to
+  // getRepoFocusManifest above (#7808). Forces a live reload of the cached .loopover.yml manifest from GitHub via the
+  // SAME loadRepoFocusManifest(..., { refresh: true }) + compileFocusManifestPolicy pair the REST route uses, returning
+  // the identical { repoFullName, manifest, policy } shape. Because it forces a live refresh it takes the write-access
+  // boundary (requireRepoManageAccess, mirroring the route's requireRepoWriteAccess) -- stricter than the read tool's
+  // requireFocusManifestReadAccess, matching loopover_refresh_repo_docs's refresh-action auth.
+  private async refreshRepoFocusManifest(input: { owner: string; repo: string }): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoManageAccess(fullName);
+    const manifest = await loadRepoFocusManifest(this.env, fullName, { refresh: true });
+    const policy = compileFocusManifestPolicy(manifest);
+    return {
+      summary: `Refreshed the LoopOver focus manifest for ${fullName} from GitHub.`,
+      data: { repoFullName: fullName, manifest, policy } as unknown as Record<string, unknown>,
+    };
+  }
+
   // (#7799/#8338) MCP surface for GET /v1/repos/:owner/:repo/activation-preview. Same requireRepoAccess gate
   // as sibling read-only maintainer reports (REST requireRepoMaintainer). Assembles the same inputs the REST
   // route does (getRepository + resolveRepositorySettings + listPullRequests) and defers to the guarded
@@ -3826,6 +3955,15 @@ export class LoopoverMcp {
         shadowPending: shadow !== null,
       },
     };
+  }
+
+  private async getRepoSettings(input: { owner: string; repo: string }): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoAccess(fullName);
+    // Shared with GET /v1/repos/:owner/:repo/settings so the two surfaces cannot drift: return the resolved
+    // EFFECTIVE settings row unmodified (spread into a plain Record for ToolPayload.data), no derived fields.
+    const settings = await resolveRepositorySettings(this.env, fullName);
+    return { summary: `Effective settings for ${fullName}.`, data: { ...settings } };
   }
 
   private async validateLinkedIssue(input: {
@@ -4238,6 +4376,43 @@ export class LoopoverMcp {
     return {
       summary: `Cleared the live self-tune gate override for ${fullName}.`,
       data: { repoFullName: fullName, cleared: true },
+    };
+  }
+
+  // (#9298) Mirrors POST /v1/repos/:owner/:repo/pulls/:number/incident-reports (#5672): maintainer-manage
+  // gate, then the REST route's exact PR-must-exist-and-be-merged validation, then the same
+  // recordPostMergeIncidentReport persistence (reporterKind "customer", the calling actor) and response shape.
+  // Missing/unmerged PRs return the route's 404/409 error codes as a normal `{ ok: false, error }` tool result.
+  private async fileIncidentReport(input: z.infer<z.ZodObject<typeof fileIncidentReportShape>>): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoManageAccess(fullName);
+    const pullRequest = await getPullRequest(this.env, fullName, input.number);
+    if (!pullRequest) {
+      return {
+        summary: `No pull request ${fullName}#${input.number} to file a post-merge incident report against.`,
+        data: { ok: false, error: "pull_request_not_found", repoFullName: fullName, pullNumber: input.number },
+      };
+    }
+    if (!pullRequest.mergedAt) {
+      return {
+        summary: `Pull request ${fullName}#${input.number} is not merged; a post-merge incident report cannot be filed.`,
+        data: { ok: false, error: "pull_request_not_merged", repoFullName: fullName, pullNumber: input.number },
+      };
+    }
+    const actor = this.identity.kind === "session" ? this.identity.actor : "mcp";
+    const report = await recordPostMergeIncidentReport(this.env, {
+      repoFullName: fullName,
+      pullNumber: input.number,
+      description: input.description,
+      severity: input.severity,
+      mergedSha: input.mergedSha,
+      reporterKind: "customer",
+      actor,
+      route: `/v1/repos/${input.owner}/${input.repo}/pulls/${input.number}/incident-reports`,
+    });
+    return {
+      summary: `Filed a post-merge incident report on ${fullName}#${input.number} (severity ${input.severity}).`,
+      data: { ok: true, repoFullName: fullName, pullNumber: input.number, ...report },
     };
   }
 
@@ -5478,6 +5653,26 @@ export class LoopoverMcp {
     return {
       summary: `LoopOver bounty advisory for ${id}.`,
       data: buildBountyAdvisory(bounty, repo, issue, pullRequests) as unknown as Record<string, unknown>,
+    };
+  }
+
+  // #9296 — mirror the public GET /v1/bounties route: list every cached bounty, no repo/owner scoping.
+  private async getBountyList(): Promise<ToolPayload> {
+    const bounties = await listBounties(this.env);
+    return {
+      summary: `LoopOver bounties: ${bounties.length} cached.`,
+      data: { bounties } as unknown as Record<string, unknown>,
+    };
+  }
+
+  // #9296 — mirror GET /v1/bounties/:id/lifecycle: the bounty's event history, 404 when the id is unknown.
+  private async getBountyLifecycle(id: string): Promise<ToolPayload> {
+    const bounty = await getBounty(this.env, id);
+    if (!bounty) throw new Error("Bounty not found.");
+    const events = await listBountyLifecycleEvents(this.env, id);
+    return {
+      summary: `LoopOver bounty lifecycle for ${id}: ${events.length} event(s).`,
+      data: { bountyId: id, events } as unknown as Record<string, unknown>,
     };
   }
 

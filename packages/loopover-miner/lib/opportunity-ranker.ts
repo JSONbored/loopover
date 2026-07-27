@@ -54,6 +54,14 @@ function normalizeCandidate(candidate: Record<string, unknown>) {
         .filter((label) => typeof label === "string" && label.trim())
         .map((label) => label.trim())
     : [];
+  // #9330: RankedCandidateIssue's `RawCandidateIssue &` type promises `assignees`, but this function
+  // dropped it. Mirror `labels`'s array-of-strings validation; no `.trim()` because the producer
+  // (opportunity-fanout.ts assigneeLogins) already emits clean GitHub logins filtered to length > 0.
+  const assignees = Array.isArray(candidate.assignees)
+    ? candidate.assignees.filter(
+        (assignee): assignee is string => typeof assignee === "string" && assignee.length > 0,
+      )
+    : [];
   return {
     owner,
     repo,
@@ -61,6 +69,7 @@ function normalizeCandidate(candidate: Record<string, unknown>) {
     issueNumber,
     title,
     labels,
+    assignees,
     commentsCount: Number.isFinite(candidate.commentsCount) ? (candidate.commentsCount as number) : 0,
     createdAt: typeof candidate.createdAt === "string" ? candidate.createdAt : null,
     updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : null,

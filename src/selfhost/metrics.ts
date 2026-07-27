@@ -168,6 +168,7 @@ export const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["loopover_active_review_reconciliation_terminalized_total", { help: "Orphaned active_review_tracking rows terminalized after a live GitHub check confirmed the PR is closed, by repo.", type: "counter" }],
   ["loopover_open_pr_reconciliation_missing_total", { help: "Open PRs found missing from local tracking during reconciliation, by repo.", type: "counter" }],
   ["loopover_orb_relay_malformed_events_total", { help: "Orb relay batch entries dropped for missing/mistyped required fields (deliveryId/eventName/rawBody).", type: "counter" }],
+  ["loopover_orb_relay_multiple_live_enrollments_total", { help: "Forwarded orb events where more than one LIVE enrollment existed for the installation (a blue/green swap, or a secret rotated but not yet revoked) -- the winner is still elected deterministically, but the overlap is no longer silent (#9150).", type: "counter" }],
   ["loopover_orb_relay_register_total", { help: "Orb relay registration attempts, by mode and result (registered/recovered/failed).", type: "counter" }],
   ["loopover_pr_outcomes_total", { help: "Recorded PR gate outcomes, by decision.", type: "counter" }],
   ["loopover_close_audit_holdouts_total", { help: "Would-auto-close PRs diverted to human adjudication by the close-audit holdout (#8831).", type: "counter" }],
@@ -181,6 +182,7 @@ export const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["loopover_rees_enrich_request_duration_seconds", { help: "REES /v1/enrich call duration in seconds, for calls that were actually attempted (excludes the auth-rejected circuit-breaker skip).", type: "histogram" }],
   ["loopover_metrics_sampler_errors_total", { help: "Scrape-time gauge sampler failures, by metric name -- a failing sampler previously emitted no series at all, silently. Any occurrence means that metric's value is currently invisible to Prometheus this scrape (see the sentinel gauges' own -1-on-failure convention).", type: "counter" }],
   ["loopover_review_source_fresh", { help: "1 when a review/ops/reputation source table has a row inside its own consumer's window, 0 when stale -- labeled by table and window_days. review_targets was silently orphaned by the 2026-06-22 convergence cutover for months before anyone noticed; this makes the next such orphaning loud instead.", type: "gauge" }],
+  ["loopover_private_manifest_warnings_total", { help: "Private-manifest layer warnings (a malformed shared/global/repo config layer dropped during load), counted one per warning rather than one per load -- a sustained run means a mount is repeatedly serving truncated or invalid config (#9065).", type: "counter" }],
 ];
 const metricMeta = new Map<string, MetricMeta>(DEFAULT_METRIC_META);
 

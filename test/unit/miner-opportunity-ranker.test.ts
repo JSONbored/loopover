@@ -296,3 +296,28 @@ describe("rankCandidateIssues (#2302 follow-up)", () => {
     vi.useRealTimers();
   });
 });
+
+describe("rankCandidateIssues carries assignees through normalizeCandidate (#9330)", () => {
+  it("preserves a populated assignees array in the ranked output", () => {
+    const ranked = rankCandidateIssues(
+      [rawIssue({ assignees: ["octocat", "hubot"] })],
+      { nowMs: NOW },
+    );
+    expect(ranked[0]?.assignees).toEqual(["octocat", "hubot"]);
+  });
+
+  it("normalizes a missing or malformed assignees field to [] without throwing", () => {
+    const ranked = rankCandidateIssues(
+      [
+        rawIssue({ issueNumber: 1, assignees: undefined }),
+        rawIssue({ issueNumber: 2, assignees: "not-an-array" as unknown as string[] }),
+        rawIssue({ issueNumber: 3, assignees: [42, "", "keep"] as unknown as string[] }),
+      ],
+      { nowMs: NOW },
+    );
+    const byNumber = new Map(ranked.map((entry) => [entry.issueNumber, entry.assignees]));
+    expect(byNumber.get(1)).toEqual([]);
+    expect(byNumber.get(2)).toEqual([]);
+    expect(byNumber.get(3)).toEqual(["keep"]);
+  });
+});

@@ -92,6 +92,35 @@ export function evaluateVisualVisionGate(input: {
   return { run: true, routes };
 }
 
+/** The advisory finding code recorded when vision scrutiny is SKIPPED for a low-reputation submitter on a
+ *  route the pixel-diff threshold already confirmed changed (#9136, a compensating signal for the
+ *  `low_reputation` skip above). Restoring the reputation signal (#9136) without this reproduces #9015's
+ *  "suspicion buys less scrutiny" shape: the ONE extra check a low-reputation submitter's confirmed visual
+ *  change would otherwise get was silently skipped with no trace anywhere. `severity: "warning"` (never a
+ *  blocker — this module stays STRICTLY ADVISORY, see the file header) puts it in `gate.warnings`
+ *  (`evaluateGateCheckCore`, src/rules/advisory.ts) so a maintainer reviewing the unified comment actually
+ *  sees it, instead of the skip being completely invisible. */
+export const VISUAL_VISION_SKIPPED_LOW_REPUTATION_FINDING_CODE = "visual_vision_skipped_low_reputation";
+
+/** Build the compensating advisory finding for a low-reputation vision skip (#9136). `confirmedRegressionRouteCount`
+ *  is how many routes the pixel-diff threshold already flagged changed — the routes vision would have looked at
+ *  had reputation not skipped it (the caller resolves this via {@link selectRoutesForVisualVision} BEFORE
+ *  calling {@link evaluateVisualVisionGate}, since the gate itself short-circuits on reputation before ever
+ *  computing that count). Returns `null` when there was nothing to compensate for — no confirmed regression at
+ *  all means vision would have been skipped for `no_confirmed_regression` regardless of reputation, so a
+ *  "skipped due to low reputation" finding would be misleading. Pure + total, mirrors every other finding
+ *  builder in this file. */
+export function buildVisualVisionSkippedForReputationFinding(confirmedRegressionRouteCount: number): AdvisoryFinding | null {
+  if (confirmedRegressionRouteCount <= 0) return null;
+  return {
+    code: VISUAL_VISION_SKIPPED_LOW_REPUTATION_FINDING_CODE,
+    severity: "warning",
+    title: "Visual-regression vision check skipped (low submitter reputation)",
+    detail: `${confirmedRegressionRouteCount} route(s) crossed the visual-diff threshold, but the AI vision check was skipped because this submitter's reputation signal is currently "low".`,
+    action: "Advisory only — manually review the before/after captures for this PR before deciding.",
+  };
+}
+
 /** One vision observation the model reported for a specific route — `path`/`body` already public-safe (see
  *  {@link parseVisualVisionResponse}). `category` is only ever populated when the caller used
  *  {@link VISUAL_BUG_ANALYSIS_SYSTEM_PROMPT} (`review.visual.bugAnalysis`) — the default prompt

@@ -8,22 +8,32 @@
 // REDESIGN (#reputation-redesign): the old signal was a raw close ratio over ALL-TIME submitter_stats counts,
 // which (a) trapped high-volume contributors who sometimes ship good PRs purely on a ratio, and (b) counted
 // merge-conflict closes (a rebase artifact, not quality) and OLD closes from a since-relaxed/over-strict bar.
-// The new signal is QUALITY-weighted + RECENCY-aware: it reads review_targets (the source of truth) over a
-// RECENT WINDOW, classifies each terminal outcome by its reasonCode, IGNORES conflict / out-of-band artifacts,
-// and only brands "low" on CLEAR, RECENT, genuine abuse or serial quality-failure. The reputation signal ONLY
-// routes to manual review (it NEVER closes), so we default GENEROUS to keep auto-merge flowing — old closes age
-// out of the window and trapped contributors auto-correct with no migration. recordSubmissionOutcome still
-// maintains submitter_stats for /stats, but the SIGNAL is now derived from review_targets.
+// The new signal is QUALITY-weighted + RECENCY-aware: it classifies each terminal outcome by its reasonCode
+// over a RECENT WINDOW, IGNORES conflict / out-of-band artifacts, and only brands "low" on CLEAR, RECENT,
+// genuine abuse or serial quality-failure. The reputation signal ONLY routes to manual review (it NEVER
+// closes), so we default GENEROUS to keep auto-merge flowing — old closes age out of the window and trapped
+// contributors auto-correct with no migration. recordSubmissionOutcome still maintains submitter_stats for
+// /stats, but the SIGNAL below is derived from the live ledgers (see #9136).
+//
+// #9136: the quality signal used to read `review_targets`, which stopped receiving writes at the 2026-06-22
+// self-host cutover (no live writer anywhere in this codebase — see src/db/repo-identity-rename.ts's own
+// comment) — its newest row is frozen at the cutover date, so a 90-day recency window reads a shrinking set
+// that goes permanently empty around 2026-09-20. Repointed onto the SAME live ledgers getSubmitterCadence
+// (#9015) already reads, mirroring that repoint: `review_audit`'s `pr_outcome` rows (outcomes-wire.ts,
+// written on every realized merge/close — the ground truth, not just the bot's own prediction) joined to
+// `pull_requests` for the submitter's login (review_audit carries no author identity of its own), with the
+// reasonCode pulled from that same target's latest `gate_decision` row (mirrors resolveDispositionReason's
+// own lookup). A target can carry more than one `pr_outcome` row in practice (recordPrOutcome's webhook path
+// has no existence check unlike recordTerminalActionOutcome's direct-write path, so a redelivered `closed`
+// webhook can double-insert) — every query below reads only the LATEST `pr_outcome` per target_id so a
+// duplicate never double-counts one PR's outcome.
 //
 // SELF-CONTAINED NATIVE PORT (reviewbot→loopover convergence): every type + helper this module needs is
 // defined HERE. No imports from reviewbot — the reviewbot `storage(env)` adapter is inlined as `env.DB`, and
 // the `Env` / `ReputationConfig` types are declared locally. The CLASSIFY/SIGNAL/COUNT logic is byte-faithful
 // to the reviewbot source (src/core/submitter-reputation.ts); the only deltas are mechanical guards for
 // loopover's stricter tsconfig (noUncheckedIndexedAccess / exactOptionalPropertyTypes), which don't change
-// behavior. ADDITIVE + DORMANT: the DB-touching reads/writes assume the reviewbot D1 tables (review_targets,
-// submitter_stats) — loopover does not yet have them, so getSubmitterReputation / recordSubmissionOutcome
-// degrade fail-safe (neutral / no-op) until a later migration lands them. The PURE classifiers
-// (classifyOutcome / countOutcomes / signalFromCounts) are usable immediately.
+// behavior.
 
 // ── Inlined minimal deps (no reviewbot imports) ─────────────────────────────────────────────────────────
 
@@ -292,6 +302,32 @@ export async function recordSubmissionOutcome(env: Env, project: string, submitt
   }
 }
 
+// ── #9136 live-ledger source fragments (shared by every quality-signal query below) ──────────────────────
+//
+// review_audit carries no author identity of its own (see this file's header comment) -- `pr.number` is
+// recovered from `po.target_id` (`project#number`, reviewAuditTargetId in outcomes-wire.ts) via string
+// concatenation rather than a stored column, since `project` IS `pr.repo_full_name` for every native writer
+// (parity-wire.ts / outcomes-wire.ts both pass `repoFullName` as `project`).
+const PR_OUTCOME_JOIN = `JOIN pull_requests pr ON pr.repo_full_name = po.project AND (po.project || '#' || pr.number) = po.target_id`;
+
+// A target can carry more than one `pr_outcome` row in practice (recordPrOutcome's webhook path has no
+// existence check unlike recordTerminalActionOutcome's direct-write path, so a redelivered `closed` webhook
+// can double-insert) -- restrict to each target's LATEST `pr_outcome` row so a duplicate never double-counts.
+const LATEST_PR_OUTCOME_FILTER = `po.event_type = 'pr_outcome'
+     AND po.created_at = (
+       SELECT MAX(po2.created_at) FROM review_audit po2
+       WHERE po2.target_id = po.target_id AND po2.event_type = 'pr_outcome'
+     )`;
+
+// The reasonCode a pr_outcome row's OWN bot decision recorded, if any -- a pr_outcome row never carries a
+// summary itself (appendReviewAudit's default), only a gate_decision row does. Mirrors
+// resolveDispositionReason's own "latest gate_decision summary for this target" lookup (outcomes-wire.ts).
+const REASON_CODE_SUBQUERY = `(
+      SELECT gd.summary FROM review_audit gd
+      WHERE gd.target_id = po.target_id AND gd.event_type = 'gate_decision' AND gd.summary IS NOT NULL
+      ORDER BY gd.created_at DESC LIMIT 1
+    )`;
+
 /** Read a submitter's internal reputation. The SIGNAL is derived from review_targets over the recency window
  *  (quality-weighted, conflict-excluded); the all-time counts come from submitter_stats for the /stats view.
  *  Fail-safe → "neutral" on ANY error (it must never throw into the gate). */
@@ -328,12 +364,16 @@ export async function getSubmitterReputation(env: Env, project: string, submitte
 
   let signal: ReputationSignal = "neutral";
   try {
+    // #9136: repointed off review_targets (frozen since the 2026-06-22 cutover) onto the live review_audit
+    // pr_outcome ledger -- see this file's header comment + the shared fragments above for the full shape.
     const result = await storage(env)
       .prepare(
-        `SELECT status, json_extract(decision_json, '$.reasonCode') AS reasonCode
-           FROM review_targets
-          WHERE project = ? AND submitter = ? AND terminal_at IS NOT NULL AND terminal_at >= datetime('now', ?)
-          ORDER BY terminal_at DESC LIMIT ?`,
+        `SELECT po.decision AS status, ${REASON_CODE_SUBQUERY} AS reasonCode
+           FROM review_audit po
+           ${PR_OUTCOME_JOIN}
+          WHERE po.project = ? AND LOWER(pr.author_login) = LOWER(?) AND ${LATEST_PR_OUTCOME_FILTER}
+            AND po.created_at >= datetime('now', ?)
+          ORDER BY po.created_at DESC LIMIT ?`,
       )
       .bind(project, submitter, `-${cfg.windowDays} days`, REPUTATION_WINDOW_ROW_CAP)
       .all<{ status: string; reasonCode: string | null }>();
@@ -347,10 +387,15 @@ export async function getSubmitterReputation(env: Env, project: string, submitte
   return { ...agg, closeRate: decided > 0 ? agg.closed / decided : 0, signal };
 }
 
-/** One submitter's raw, recency-windowed terminal-outcome tally for a repo (#6488) — the same `review_targets`
- *  source {@link getSubmitterReputation} reads, but grouped by submitter instead of scoped to one. `avgAttemptCount`
- *  reuses `attempt_count` (the gate's own re-review counter) as the review-cycle-count proxy; `avgMergeMs` is
- *  `AVG(terminal_at - created_at)` over MERGED rows only (`null` when this submitter has no merges in the window). */
+/** One submitter's raw, recency-windowed terminal-outcome tally for a repo (#6488) — the same live-ledger
+ *  source {@link getSubmitterReputation} reads, but grouped by submitter instead of scoped to one.
+ *  `avgAttemptCount` (#9136): the pre-repoint source (`review_targets.attempt_count`, the gate's own
+ *  re-review counter) has no live equivalent — `pull_requests.merge_attempt_count` is the closest LIVE
+ *  per-PR retry counter, but it is narrower (only FAILED merge attempts — permission/check/conflict — reset
+ *  per head SHA; see its own schema comment), not every re-review cycle. Documented substitution, not a
+ *  fabricated value: still a genuine review-friction signal, just not byte-identical in meaning to the
+ *  pre-cutover figure. `avgMergeMs` is `AVG(merged_at - created_at)` over MERGED rows only, sourced from
+ *  `pull_requests`' own timestamps (`null` when this submitter has no merges in the window). */
 export interface SubmitterCohortRow {
   submitter: string;
   submissions: number;
@@ -361,21 +406,23 @@ export interface SubmitterCohortRow {
 }
 
 /** Per-submitter cohort tally for a repo over the recency window (#6488, AMS-vs-human dashboard comparison).
- *  Reuses the SAME `review_targets` terminal-row convention {@link getSubmitterReputation} does (terminal_at
- *  within `windowDays`), just grouped by submitter instead of read for one. Fail-safe: any read error degrades
- *  to an empty array (never throws — the caller treats that identically to "no activity in the window"). */
+ *  Reuses the SAME live review_audit pr_outcome ledger {@link getSubmitterReputation} does (#9136), just
+ *  grouped by submitter instead of read for one. Fail-safe: any read error degrades to an empty array (never
+ *  throws — the caller treats that identically to "no activity in the window"). */
 export async function listSubmitterCohortRows(env: Env, project: string, windowDays: number = REPUTATION_WINDOW_DAYS): Promise<SubmitterCohortRow[]> {
   try {
     const result = await storage(env)
       .prepare(
-        `SELECT submitter,
+        `SELECT pr.author_login AS submitter,
                 COUNT(*) AS submissions,
-                SUM(CASE WHEN status = 'merged' THEN 1 ELSE 0 END) AS merged,
-                SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) AS closed,
-                AVG(attempt_count) AS avgAttemptCount,
-                AVG(CASE WHEN status = 'merged' THEN (julianday(terminal_at) - julianday(created_at)) * 86400000 ELSE NULL END) AS avgMergeMs
-           FROM review_targets
-          WHERE project = ? AND submitter IS NOT NULL AND submitter != '' AND terminal_at IS NOT NULL AND terminal_at >= datetime('now', ?)
+                SUM(CASE WHEN po.decision = 'merged' THEN 1 ELSE 0 END) AS merged,
+                SUM(CASE WHEN po.decision = 'closed' THEN 1 ELSE 0 END) AS closed,
+                AVG(pr.merge_attempt_count) AS avgAttemptCount,
+                AVG(CASE WHEN po.decision = 'merged' AND pr.merged_at IS NOT NULL THEN (julianday(pr.merged_at) - julianday(pr.created_at)) * 86400000 ELSE NULL END) AS avgMergeMs
+           FROM review_audit po
+           ${PR_OUTCOME_JOIN}
+          WHERE po.project = ? AND pr.author_login IS NOT NULL AND pr.author_login != '' AND ${LATEST_PR_OUTCOME_FILTER}
+            AND po.created_at >= datetime('now', ?)
           GROUP BY submitter`,
       )
       .bind(project, `-${windowDays} days`)
@@ -394,16 +441,19 @@ export async function listSubmitterCohortRows(env: Env, project: string, windowD
 }
 
 /** Install-wide sibling of {@link getSubmitterReputation} (#4513): the SAME quality-weighted, recency-windowed
- *  signal derivation, but aggregated across EVERY repo `review_targets` has recorded for this installation_id
- *  (migrations/0050), not just one project. Closes a real blind spot: a fleet identity spreading thin across
- *  many repos in one self-hosted install never accumulates same-repo sample density for the per-project
- *  signal to ever leave "neutral," even while it burns full paid AI-review spend on every submission. Callers
- *  should reserve this for a CONFIRMED official Gittensor miner identity (this function does not itself check
- *  that) -- an ordinary contributor's reputation stays intentionally scoped per-repo. The all-time
- *  submitter_stats aggregate (submissions/merged/closed/manual, /stats-view only, not the signal) is NOT
- *  widened here: that table is keyed (project, submitter) with no installation_id column, and only the
- *  SIGNAL — not the display counts — gates the AI-spend decision. Fail-safe: any read error degrades to
- *  "neutral", identical to the per-project function. */
+ *  signal derivation, but aggregated across EVERY repo the live ledgers have recorded for this
+ *  installation_id (the `repositories` table's own `installation_id` column), not just one project. Closes a
+ *  real blind spot: a fleet identity spreading thin across many repos in one self-hosted install never
+ *  accumulates same-repo sample density for the per-project signal to ever leave "neutral," even while it
+ *  burns full paid AI-review spend on every submission. Callers should reserve this for a CONFIRMED official
+ *  Gittensor miner identity (this function does not itself check that) -- an ordinary contributor's
+ *  reputation stays intentionally scoped per-repo. The all-time submitter_stats aggregate
+ *  (submissions/merged/closed/manual, /stats-view only, not the signal) is NOT widened here: that table is
+ *  keyed (project, submitter) with no installation_id column, and only the SIGNAL — not the display counts —
+ *  gates the AI-spend decision. Fail-safe: any read error degrades to "neutral", identical to the per-project
+ *  function. #9136: repointed off review_targets onto the same live review_audit pr_outcome ledger as
+ *  {@link getSubmitterReputation}, joined through `repositories` to resolve `project` (repo_full_name) →
+ *  installation_id (review_audit itself carries no installation scope). */
 export async function getSubmitterReputationAcrossInstall(
   env: Env,
   installationId: number,
@@ -416,10 +466,13 @@ export async function getSubmitterReputationAcrossInstall(
   try {
     const result = await storage(env)
       .prepare(
-        `SELECT status, json_extract(decision_json, '$.reasonCode') AS reasonCode
-           FROM review_targets
-          WHERE installation_id = ? AND submitter = ? AND terminal_at IS NOT NULL AND terminal_at >= datetime('now', ?)
-          ORDER BY terminal_at DESC LIMIT ?`,
+        `SELECT po.decision AS status, ${REASON_CODE_SUBQUERY} AS reasonCode
+           FROM review_audit po
+           ${PR_OUTCOME_JOIN}
+           JOIN repositories r ON r.full_name = po.project
+          WHERE r.installation_id = ? AND LOWER(pr.author_login) = LOWER(?) AND ${LATEST_PR_OUTCOME_FILTER}
+            AND po.created_at >= datetime('now', ?)
+          ORDER BY po.created_at DESC LIMIT ?`,
       )
       .bind(installationId, submitter, `-${cfg.windowDays} days`, REPUTATION_WINDOW_ROW_CAP)
       .all<{ status: string; reasonCode: string | null }>();

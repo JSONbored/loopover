@@ -486,9 +486,11 @@ import {
 import {
   buildVisualBugAnalysisUserPrompt,
   buildVisualRegressionFindings,
+  buildVisualVisionSkippedForReputationFinding,
   buildVisualVisionUserPrompt,
   evaluateVisualVisionGate,
   parseVisualVisionResponse,
+  selectRoutesForVisualVision,
   VISUAL_BUG_ANALYSIS_SYSTEM_PROMPT,
   VISUAL_VISION_SYSTEM_PROMPT,
 } from "../review/visual/visual-findings";
@@ -641,6 +643,7 @@ import { DEFAULT_SCREENSHOT_CONTRACT_MESSAGE, DEFAULT_SCREENSHOT_TABLE_GATE, eva
 import { isSafeHttpUrl } from "../review/content-lane/safe-url";
 import {
   buildScreenshotTableVisionFindings,
+  buildScreenshotTableVisionSkippedForReputationFinding,
   buildScreenshotTableVisionUserPrompt,
   evaluateScreenshotTableVisionGate,
   parseScreenshotTableVisionResponse,
@@ -8774,7 +8777,18 @@ export async function runVisualVisionForAdvisory(
       providerKey: visionProviderKey,
       selfHostVisionAvailable,
     });
-    if (!visionGate.run) return;
+    if (!visionGate.run) {
+      // #9136 compensating hold: a low-reputation skip on a route the pixel-diff threshold already confirmed
+      // changed must not go completely silent -- see buildVisualVisionSkippedForReputationFinding's own doc
+      // comment for why (the #9015 "suspicion buys less scrutiny" shape). Only reachable for low_reputation --
+      // the other two skip reasons (byok_not_configured, no_confirmed_regression) have nothing to compensate
+      // for: either there was no confirmed regression at all, or vision simply isn't configured this run.
+      if (visionGate.reason === "low_reputation") {
+        const skippedFinding = buildVisualVisionSkippedForReputationFinding(selectRoutesForVisualVision(args.routes).length);
+        if (skippedFinding) args.advisory.findings.push(skippedFinding);
+      }
+      return;
+    }
     // evaluateVisualVisionGate only ever returns run:true when providerKey OR selfHostVisionAvailable (the
     // SAME two values resolved above) was truthy -- this is a defensive type-narrowing guard, not a reachable
     // false case: if neither is set here, the gate itself would already have returned run:false above.
@@ -9111,6 +9125,14 @@ export async function runScreenshotTableVisionForAdvisory(
           // summary -- the caller's own "absent means omit" contract for the AI review prompt param.
           evidenceSummary = parseScreenshotTableVisionSummary(visionText);
         }
+      } else if (gate.reason === "low_reputation") {
+        // #9136 compensating hold: mirrors runVisualVisionForAdvisory's own low_reputation compensating
+        // finding above -- a low-reputation submitter's real (different-bytes) screenshot-table pair is
+        // EXACTLY the gaming case this check exists to catch, so skipping it silently reproduces #9015's
+        // "suspicion buys less scrutiny" shape. The other two skip reasons (byok_not_configured,
+        // no_image_pairs) have nothing to compensate for.
+        const skippedFinding = buildScreenshotTableVisionSkippedForReputationFinding(fetchedPairs.length);
+        if (skippedFinding) findings.push(skippedFinding);
       }
     }
     if (findings.length > 0) args.advisory.findings.push(...findings);

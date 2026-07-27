@@ -147,7 +147,7 @@ describe("runVisualVisionForAdvisory", () => {
     expect(fetchMock.mock.calls.map((c) => String(c[0]))).toEqual(["https://api.gittensor.io/miners"]);
   });
 
-  it("declines for a low-reputation submitter even with a confirmed regression and BYOK configured", async () => {
+  it("declines for a low-reputation submitter even with a confirmed regression and BYOK configured, but leaves a compensating advisory finding (#9136)", async () => {
     const env = byokEnv();
     await upsertRepositoryAiKey(env, { repoFullName, provider: "anthropic", key: "sk-ant-vision-key", model: null });
     // Reputation-signal derivation is submitter-reputation.ts's own concern (see submitter-reputation.test.ts);
@@ -172,6 +172,40 @@ describe("runVisualVisionForAdvisory", () => {
       settings: byokSettings(),
       advisory: adv,
       routes: [route({ path: "/app", diffUrl: "https://x/loopover/shot?key=diff", beforeUrl: "https://x/loopover/shot?key=b", afterUrl: "https://x/loopover/shot?key=a" })],
+    });
+    // #9136: the vision call itself is still skipped (never spends), but the confirmed-regression skip must
+    // not be completely silent -- a compensating "warning"-severity advisory finding takes its place instead
+    // of the pre-#9136 empty findings array (the #9015 "suspicion buys less scrutiny" shape).
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(adv.findings).toEqual([
+      expect.objectContaining({ code: "visual_vision_skipped_low_reputation", severity: "warning" }),
+    ]);
+  });
+
+  it("does NOT leave a compensating finding for a low-reputation submitter with NO confirmed regression (#9136)", async () => {
+    const env = byokEnv();
+    vi.spyOn(submitterReputation, "getSubmitterReputation").mockResolvedValueOnce({
+      submissions: 6,
+      merged: 0,
+      closed: 6,
+      manual: 0,
+      closeRate: 1,
+      signal: "low",
+    });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const adv = findingsHolder();
+    await runVisualVisionForAdvisory(env, {
+      mode: "live",
+      repoFullName,
+      pr,
+      author: "bob",
+      confirmedContributor: true,
+      settings: byokSettings(),
+      advisory: adv,
+      // No diffUrl/diffUrlMobile -- routeHasConfirmedVisualRegression is false, so there is nothing a vision
+      // call would have looked at even absent the reputation skip.
+      routes: [route({ path: "/app" })],
     });
     expect(adv.findings).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();

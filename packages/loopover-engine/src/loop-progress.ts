@@ -85,6 +85,11 @@ export function progressChanged(prev: ProgressSnapshot | null, next: ProgressSna
     prev.phase !== next.phase ||
     prev.status !== next.status ||
     prev.iteration !== next.iteration ||
+    // #9323: maxIterations and percentComplete are displayed axes too -- raising the iteration budget mid-run
+    // changes percentComplete (and maxIterations) while phase/status/iteration/activity stay the same, so
+    // without these the customer-facing progress bar goes stale on a real, displayed change.
+    prev.maxIterations !== next.maxIterations ||
+    prev.percentComplete !== next.percentComplete ||
     activityChanged(prev.recentActivity, next.recentActivity)
   );
 }

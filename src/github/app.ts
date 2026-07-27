@@ -769,6 +769,10 @@ export async function createOrUpdateCheckRun(
   detailLevel: "minimal" | "standard" = "minimal",
   annotationContext?: CheckRunAnnotationContext,
   mode: AgentActionMode = "live",
+  // #9085: the real blocker codes from THIS SAME advisory's GateCheckEvaluation, when the caller already has
+  // one (see formatCheckRunOutput's doc comment) -- optional and additive, so an omitted call site keeps
+  // today's exact authored-severity-only rendering.
+  blockerCodes?: ReadonlySet<string>,
 ): Promise<CheckRunOutcome | null> {
   return createOrUpdateNamedCheckRun(
     env,
@@ -778,7 +782,7 @@ export async function createOrUpdateCheckRun(
     {
       name: LOOPOVER_CONTEXT_CHECK_NAME,
       conclusion: advisory.conclusion,
-      output: formatCheckRunOutput(advisory, detailLevel, annotationContext),
+      output: formatCheckRunOutput(advisory, detailLevel, annotationContext, blockerCodes),
       mode,
     },
   );

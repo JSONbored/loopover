@@ -12061,6 +12061,11 @@ async function maybePublishPrPublicSurface(
           pullNumber: pr.number,
         },
         mode,
+        // #9085: thread the SAME evaluation's real blocker codes through so the informational "context" check
+        // never shows a lower-alarm icon on a finding that this SAME gate run actually closed the PR for.
+        // Undefined when the gate wasn't evaluated for this pass (e.g. shouldEvaluateGate false) -- falls
+        // back to today's authored-severity-only rendering, same as before this change.
+        gateEvaluation ? new Set(gateEvaluation.blockers.map((blocker) => blocker.code)) : undefined,
       );
       if (checkRunResult?.kind === "permission_missing") {
         failedOutputs.push({

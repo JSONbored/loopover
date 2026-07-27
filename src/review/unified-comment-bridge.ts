@@ -146,7 +146,8 @@ export function panelRowsToSignalRows(rows: PublicPrPanelSignalRow[]): UnifiedSi
  *  observations — keep them OUT of the Nits list so the nit count reflects real code review, not boilerplate that
  *  padded nearly every review (#review-accuracy). */
 const BOILERPLATE_NIT_CODES = new Set([
-  "repo_not_registered",
+  // #9085: renamed from `repo_not_registered` (rules/advisory.ts) -- see that rename's own comment there.
+  "repo_not_cached",
   "repo_not_seen",
   "pr_not_cached",
   "pre_merge_check_unresolved",

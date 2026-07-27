@@ -83,7 +83,7 @@ describe("neutralHoldReasonCode — bounded hold-reason class for a neutral gate
   });
 
   it("returns the recognized code for each known neutral-hold class (guardrail, size, ai-inconclusive, sync-state)", () => {
-    for (const code of ["guardrail_hold", "oversized_pr", "ai_review_inconclusive", "repo_not_registered", "repo_not_seen", "pr_not_cached", "pre_merge_check_unresolved", "cla_check_unresolved"]) {
+    for (const code of ["guardrail_hold", "oversized_pr", "ai_review_inconclusive", "repo_not_cached", "repo_not_seen", "pr_not_cached", "pre_merge_check_unresolved", "cla_check_unresolved"]) {
       expect(neutralHoldReasonCode({ conclusion: "neutral", warnings: [finding(code)] })).toBe(code);
     }
   });

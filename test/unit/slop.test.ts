@@ -31,7 +31,7 @@ const FORBIDDEN_PUBLIC_TERMS =
 // without a minScore (see DEFAULT_SLOP_BLOCK_THRESHOLD in src/rules/advisory.ts).
 const DEFAULT_SLOP_BLOCK_THRESHOLD = 60;
 
-// A PR advisory with no app-state findings — overriding findings to [] avoids the `repo_not_registered`
+// A PR advisory with no app-state findings — overriding findings to [] avoids the `repo_not_cached`
 // short-circuit so evaluateGateCheck reaches the slop blocker (mirrors the rules.test.ts pattern).
 const cleanAdvisory = () => ({ ...buildPullRequestAdvisory(null, null), findings: [] });
 

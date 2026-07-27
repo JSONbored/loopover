@@ -306,7 +306,7 @@ describe("predicted-gate engine module coverage (#2283)", () => {
 
   it("exercises advisory edge cases and gate failures", () => {
     const missingRepo = buildPullRequestAdvisory(null, PR);
-    expect(missingRepo.findings.some((f) => f.code === "repo_not_registered")).toBe(true);
+    expect(missingRepo.findings.some((f) => f.code === "repo_not_cached")).toBe(true);
     const missingPr = buildPullRequestAdvisory(REPO, null);
     expect(missingPr.findings.some((f) => f.code === "pr_not_cached")).toBe(true);
     // #9129 (host-parity): a duplicate_pr_risk finding under block mode now HOLDS (neutral), never closes.
@@ -962,7 +962,7 @@ describe("predicted-gate engine module coverage (#2283)", () => {
         severity: "warning",
         title: "t",
         summary: "s",
-        findings: [{ code: "repo_not_registered", severity: "warning", title: "hold", detail: "hold" }],
+        findings: [{ code: "repo_not_cached", severity: "warning", title: "hold", detail: "hold" }],
         generatedAt: "2026-01-01T00:00:00.000Z",
       },
       {},
@@ -1114,7 +1114,7 @@ describe("predicted-gate engine module coverage (#2283)", () => {
     };
     expect(buildPullRequestAdvisory(splitRepo, PR).findings.some((f) => f.code === "issue_discovery_disabled")).toBe(false);
     expect(buildPullRequestAdvisory(splitRepo, PR).findings.some((f) => f.code === "direct_pr_pool_disabled")).toBe(false);
-    expect(buildPullRequestAdvisory(null, null).findings.some((f) => f.code === "repo_not_registered")).toBe(true);
+    expect(buildPullRequestAdvisory(null, null).findings.some((f) => f.code === "repo_not_cached")).toBe(true);
 
     expect(evaluateClaCheck(claConfig({ checkRunName: "CLA Bot" }), { checkRunConclusion: "failure" })[0]?.detail).toContain("CLA Bot");
     expect(evaluateClaCheck(claConfig({ consentPhrase: "agree" }), { body: "nope" })[0]?.detail).toContain("agree");
@@ -1618,14 +1618,17 @@ describe("predicted-gate engine branch coverage (#2283)", () => {
         { ...block, aiReviewLowConfidenceDisposition: "advisory_only", aiReviewCloseConfidence: 0.93 },
       ),
     ).toBe(true);
-    // A finding with no confidence reported at all defaults to fully-confident (?? 1), so it still blocks
-    // even under advisory_only regardless of the configured floor.
+    // #9085 (host-parity): a finding with no confidence reported at all used to default to fully-confident
+    // (?? 1), so it still blocked even under advisory_only regardless of the configured floor -- "the model
+    // said nothing" read as maximum certainty. It now defaults to CONFIDENCE_WHEN_UNSTATED (0.5), below the
+    // default 0.93 floor, so advisory_only correctly demotes it to non-blocking like any other sub-floor
+    // confidence.
     expect(
       gateAdvisoryInternals.isConfiguredGateBlocker(finding("ai_consensus_defect"), {
         ...block,
         aiReviewLowConfidenceDisposition: "advisory_only",
       }),
-    ).toBe(true);
+    ).toBe(false);
     expect(gateAdvisoryInternals.isConfiguredGateBlocker(finding("manifest_linked_issue_required"), advisory)).toBe(false);
     expect(gateAdvisoryInternals.isConfiguredGateBlocker(finding("manifest_linked_issue_required"), block)).toBe(true);
     expect(gateAdvisoryInternals.isConfiguredGateBlocker(finding("manifest_missing_tests"), advisory)).toBe(false);

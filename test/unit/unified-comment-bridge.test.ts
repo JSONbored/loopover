@@ -280,7 +280,7 @@ describe("buildDualReviewNotes", () => {
       aiReview: { notes: "Looks fine." },
       warnings: [
         { code: "missing_linked_issue", severity: "warning", title: "No linked issue detected", detail: "...", action: "Link it." },
-        { code: "repo_not_registered", severity: "warning", title: "Registration is not available in the local LoopOver cache", detail: "..." },
+        { code: "repo_not_cached", severity: "warning", title: "Registration is not available in the local LoopOver cache", detail: "..." },
         { code: "real_code_nit", severity: "warning", title: "Missing test", detail: "...", action: "Add a test." },
       ],
       recommendation: "merge",

@@ -32,10 +32,15 @@ function makeRetentionPgPool(remaining: Record<string, number> = {}): MockPgPool
       return { rows: [{ n: remaining[table] ?? 0 }], rowCount: 1 };
     }
 
-    const deleteMatch = /^DELETE FROM (\w+) WHERE ctid IN \(SELECT ctid FROM \1 WHERE .*? LIMIT (\d+)\)$/i.exec(q);
+    // #9083 (via #9237) changed the emitted shape: retention now deletes by PRIMARY KEY (`id`, `delivery_id`,
+    // ...) with an explicit `ORDER BY <retention column>`, falling back to the physical row key only for the
+    // composite-key tables that have no single-column PK -- an index-backed range delete replacing a
+    // full-scan-per-batch semi-join. Group 2 captures whichever key column is in play, so BOTH paths (mapped
+    // PK and the `ctid` fallback) stay exercised by this mock rather than one silently ceasing to match.
+    const deleteMatch = /^DELETE FROM (\w+) WHERE (\w+) IN \(SELECT \2 FROM \1 WHERE .*? ORDER BY \w+ LIMIT (\d+)\)$/i.exec(q);
     if (deleteMatch) {
       const table = deleteMatch[1] as string;
-      const limit = Number(deleteMatch[2]);
+      const limit = Number(deleteMatch[3]);
       const have = remaining[table] ?? 0;
       const changes = Math.min(have, limit);
       remaining[table] = have - changes;

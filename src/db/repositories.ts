@@ -33,6 +33,7 @@ import {
   installations,
   issues,
   githubRateLimitObservations,
+  linkedIssueClaims,
   notificationDeliveries,
   issueWatchSubscriptions,
   notificationSubscriptions,
@@ -453,6 +454,11 @@ export async function upsertPullRequestFromGitHub(
     existingClaimRow,
     observedLinkedIssueClaimedAt,
   );
+  // #9160: alongside the blended PR-level column above, durably record each CURRENTLY-linked issue's own
+  // first-observed claim time (immutable, per-issue) -- a brand-new issue gets `syncedAt` here regardless of
+  // what the blended column resolves to, so the duplicate-winner election can read a claim time that a
+  // different, already-linked issue can never backdate. Best-effort: never fails the PR upsert itself.
+  await recordLinkedIssueClaims(env, repoFullName, pr.number, linkedIssues, syncedAt).catch(() => undefined);
   // A genuinely observed body (even an explicitly empty one) proves this PR's linked-issue extraction is
   // trustworthy going forward; a sparse payload (pr.body === undefined) proves nothing either way and must not
   // start the clock. Set once, keep forever (#linked-issue-sparse-first-upsert).
@@ -584,6 +590,39 @@ function linkedIssueSetsOverlap(left: number[], right: number[]): boolean {
   if (left.length === 0 || right.length === 0) return false;
   const leftSet = new Set(left);
   return right.some((value) => leftSet.has(value));
+}
+
+/** #9160: record an IMMUTABLE first-observed claim time for each of `issueNumbers` on (repoFullName,
+ *  pullNumber) -- INSERT ... ON CONFLICT DO NOTHING, so an issue already claimed here keeps its ORIGINAL
+ *  claimedAt forever, while a genuinely NEW issue (never linked to this PR before) gets `observedAt` as its
+ *  own fresh clock -- regardless of what pull_requests.linked_issue_claimed_at's blended value says (see that
+ *  column's own #linked-issue-claim-overlap-preserve doc comment for the backdating bug this ledger exists to
+ *  close). A no-op for an empty `issueNumbers`. Called from upsertPullRequestFromGitHub on every sync; safe to
+ *  call repeatedly with the same issue numbers (idempotent). */
+export async function recordLinkedIssueClaims(env: Env, repoFullName: string, pullNumber: number, issueNumbers: readonly number[], observedAt: string): Promise<void> {
+  if (issueNumbers.length === 0) return;
+  const bounded = boundedString(repoFullName, 200);
+  await getDb(env.DB)
+    .insert(linkedIssueClaims)
+    .values(issueNumbers.map((issueNumber) => ({ repoFullName: bounded, pullNumber, issueNumber, claimedAt: observedAt })))
+    .onConflictDoNothing({ target: [linkedIssueClaims.repoFullName, linkedIssueClaims.pullNumber, linkedIssueClaims.issueNumber] });
+}
+
+/** #9160: the EARLIEST recorded per-issue claim time among `issueNumbers` for (repoFullName, pullNumber), or
+ *  `null` when none of them has ever been recorded (a pre-migration PR, or a caller passing an issue number
+ *  this PR never actually linked) -- fails closed the same way resolveDuplicateClusterWinnerNumber's own
+ *  sparse-row handling does, rather than guessing. Callers scope `issueNumbers` to the issue(s) ACTUALLY
+ *  contested with a specific sibling (see queue/duplicate-detection.ts) so an unrelated issue also linked to
+ *  this PR can never backdate (or postdate) the comparison. */
+export async function getEarliestLinkedIssueClaim(env: Env, repoFullName: string, pullNumber: number, issueNumbers: readonly number[]): Promise<string | null> {
+  if (issueNumbers.length === 0) return null;
+  const [row] = await getDb(env.DB)
+    .select({ claimedAt: linkedIssueClaims.claimedAt })
+    .from(linkedIssueClaims)
+    .where(and(eq(linkedIssueClaims.repoFullName, boundedString(repoFullName, 200)), eq(linkedIssueClaims.pullNumber, pullNumber), inArray(linkedIssueClaims.issueNumber, [...issueNumbers])))
+    .orderBy(asc(linkedIssueClaims.claimedAt))
+    .limit(1);
+  return row?.claimedAt ?? null;
 }
 
 export async function upsertIssueFromGitHub(env: Env, repoFullName: string, issue: GitHubIssuePayload, options: { seenOpenAt?: string } = {}): Promise<IssueRecord> {

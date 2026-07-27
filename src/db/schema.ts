@@ -482,6 +482,29 @@ export const pullRequests = sqliteTable(
   }),
 );
 
+// #9160: durable per-(PR, issue) claim ledger. `pullRequests.linkedIssueClaimedAt` above is a single PR-level
+// timestamp that BLENDS every currently-linked issue into one value -- resolveLinkedIssueClaimedAt preserves it
+// whenever the new linked-issue set overlaps the old one, so a PR that claimed issue #1 on day 1 and later adds
+// "Fixes #7" keeps the day-1 timestamp for #7 too, letting an old placeholder PR backdate a claim on a
+// newly-added, more valuable issue and steal the duplicate-cluster winner slot from whoever actually claimed it
+// first (queue/duplicate-detection.ts). Each row here is written ONCE, immutably, the first time loopover
+// observes THIS SPECIFIC (repo, PR, issue) triple (INSERT ... ON CONFLICT DO NOTHING) -- so a newly-added issue
+// always gets its own fresh claim time here regardless of what the blended column says, and the duplicate-
+// winner election can be scoped to only the issue(s) actually contested with a sibling instead of the blended
+// PR-level value.
+export const linkedIssueClaims = sqliteTable(
+  "linked_issue_claims",
+  {
+    repoFullName: text("repo_full_name").notNull(),
+    pullNumber: integer("pull_number").notNull(),
+    issueNumber: integer("issue_number").notNull(),
+    claimedAt: text("claimed_at").notNull(),
+  },
+  (table) => ({
+    primary: primaryKey({ columns: [table.repoFullName, table.pullNumber, table.issueNumber] }),
+  }),
+);
+
 export const pullRequestFiles = sqliteTable(
   "pull_request_files",
   {

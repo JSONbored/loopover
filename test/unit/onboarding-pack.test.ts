@@ -96,9 +96,29 @@ describe("buildRepoOnboardingPackPreview", () => {
       "Confirm contribution guidance stays previewable before publication.",
     );
     expect(preview.previewMarkdown).toContain("Direct PR quality lane");
+    expect(preview.previewMarkdown).toContain("Discouraged paths: scripts/release/");
     expect(preview.previewMarkdown).toContain("Label policy");
     expect(preview.previewMarkdown).toContain("Validation expectations");
     expect(preview.previewMarkdown).toContain("Readiness warnings");
+  });
+
+  it("omits the Discouraged paths lane entry when discouragedPaths is empty", () => {
+    const preview = buildRepoOnboardingPackPreview({
+      ...POLICY_COMPILER_FIXTURE,
+      contributionLanes: [
+        {
+          id: "docs-lane",
+          title: "Docs lane",
+          summary: "Documentation-only improvements.",
+          preferredPaths: ["docs/"],
+          discouragedPaths: [],
+          validationExpectations: ["Run npm run test:ci before submission."],
+        },
+      ],
+    });
+
+    expect(preview.previewMarkdown).toContain("Preferred paths: docs/");
+    expect(preview.previewMarkdown).not.toContain("Discouraged paths");
   });
 
   it("keeps private owner context out of public onboarding material", () => {

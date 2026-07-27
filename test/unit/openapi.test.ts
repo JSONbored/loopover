@@ -40,6 +40,8 @@ describe("OpenAPI contract", () => {
     expect(spec.paths["/v1/repos/{owner}/{repo}/issue-quality"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/outcome-patterns"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/gate-config/effective"]).toBeDefined();
+    expect(spec.paths["/v1/opportunities/find"]).toBeDefined();
+    expect(spec.paths["/v1/issue-rag/retrieve"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/selftune/overrides/audit"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/selftune/overrides"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/maintainer-noise"]).toBeDefined();
@@ -149,6 +151,11 @@ describe("OpenAPI contract", () => {
     expect(spec.components?.schemas?.UpstreamStatus).toBeDefined();
     expect(spec.components?.schemas?.UpstreamRulesetSnapshot).toBeDefined();
     expect(spec.components?.schemas?.UpstreamDriftReport).toBeDefined();
+    expect(spec.components?.schemas?.FindOpportunitiesResponse).toBeDefined();
+    expect(spec.components?.schemas?.IssueRagRetrieveResponse).toBeDefined();
+    // #9310: response schemas must actually mirror the MCP tools' own output shapes, not drift from them.
+    expect(JSON.stringify(spec.components?.schemas?.FindOpportunitiesResponse)).toContain("aiPolicyAllowed");
+    expect(JSON.stringify(spec.components?.schemas?.IssueRagRetrieveResponse)).toContain("retrievedPathCount");
     expect(JSON.stringify(spec.components?.schemas?.ScorePreviewResult)).toContain("scenarioPreviews");
     expect(JSON.stringify(spec.components?.schemas?.AgentAction)).toContain("explanationCard");
     expect(JSON.stringify(spec.components?.schemas?.RepoIntelligence)).toContain("burdenForecastFreshness");

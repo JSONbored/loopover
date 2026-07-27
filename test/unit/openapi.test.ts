@@ -39,6 +39,8 @@ describe("OpenAPI contract", () => {
     expect(spec.paths["/v1/repos/{owner}/{repo}/issue-quality"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/outcome-patterns"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/gate-config/effective"]).toBeDefined();
+    expect(spec.paths["/v1/repos/{owner}/{repo}/selftune/overrides/audit"]).toBeDefined();
+    expect(spec.paths["/v1/repos/{owner}/{repo}/selftune/overrides"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/maintainer-noise"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/ams-miner-cohort"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/gate-precision"]).toBeDefined();
@@ -169,6 +171,35 @@ describe("OpenAPI contract", () => {
     expect(spec.paths["/v1/auth/session"]?.get?.security).toBeUndefined();
     expect(spec.paths["/v1/auth/logout"]?.post?.security).toBeUndefined();
     expect(spec.paths["/v1/auth/github/token"]?.post?.security).toEqual([{ LoopOverBearer: [] }, { LoopOverSessionCookie: [] }]);
+  });
+
+  // #9303: selftune-override routes were live but undocumented; assert both paths, their HTTP methods, and the
+  // response schema keys matching each route's MCP tool output shape (selftuneOverrideAuditOutputSchema /
+  // clearSelftuneOverrideOutputSchema in src/mcp/server.ts).
+  it("documents the selftune-override audit and clear routes with matching MCP output shapes (#9303)", () => {
+    const spec = buildOpenApiSpec();
+
+    const auditPath = spec.paths["/v1/repos/{owner}/{repo}/selftune/overrides/audit"];
+    expect(auditPath?.get).toBeDefined();
+    expect(auditPath?.get?.responses?.["200"]?.content?.["application/json"]?.schema).toEqual({
+      $ref: "#/components/schemas/SelftuneOverrideAuditResponse",
+    });
+
+    const clearPath = spec.paths["/v1/repos/{owner}/{repo}/selftune/overrides"];
+    expect(clearPath?.delete).toBeDefined();
+    expect(clearPath?.delete?.responses?.["200"]?.content?.["application/json"]?.schema).toEqual({
+      $ref: "#/components/schemas/ClearSelftuneOverrideResponse",
+    });
+
+    const auditSchema = spec.components?.schemas?.SelftuneOverrideAuditResponse as
+      | { properties?: Record<string, unknown> }
+      | undefined;
+    expect(Object.keys(auditSchema?.properties ?? {}).sort()).toEqual(["audit", "repoFullName"]);
+
+    const clearSchema = spec.components?.schemas?.ClearSelftuneOverrideResponse as
+      | { properties?: Record<string, unknown> }
+      | undefined;
+    expect(Object.keys(clearSchema?.properties ?? {}).sort()).toEqual(["cleared", "repoFullName"]);
   });
 
   // #9307: the three agent/pending-actions approval-queue routes were undocumented while their agent/audit-feed

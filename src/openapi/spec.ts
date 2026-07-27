@@ -117,6 +117,8 @@ import {
   RewardRiskActionSchema,
   ScorePreviewSchema,
   ScoringModelSnapshotSchema,
+  SelftuneOverrideAuditResponseSchema,
+  ClearSelftuneOverrideResponseSchema,
   SignalFidelitySchema,
   SkippedPrAuditExportSchema,
   SyncStatusSchema,
@@ -203,6 +205,8 @@ export function buildOpenApiSpec() {
   registry.register("IssueQualityReport", IssueQualityReportSchema);
   registry.register("IssueQualityResponse", IssueQualityResponseSchema);
   registry.register("GateConfigEffectiveResponse", GateConfigEffectiveResponseSchema);
+  registry.register("SelftuneOverrideAuditResponse", SelftuneOverrideAuditResponseSchema);
+  registry.register("ClearSelftuneOverrideResponse", ClearSelftuneOverrideResponseSchema);
   registry.register("EligibilityPlanResponse", EligibilityPlanResponseSchema);
   registry.register("ScoreBreakdownResponse", ScoreBreakdownResponseSchema);
   registry.register("EvaluateEscalationRequest", EvaluateEscalationRequestSchema);
@@ -562,6 +566,52 @@ export function buildOpenApiSpec() {
       },
       401: { description: "Missing or invalid static protected API token" },
       403: { description: "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/repos/{owner}/{repo}/selftune/overrides/audit",
+    summary: "Self-tune gate override audit trail for a repo (#9303)",
+    request: {
+      params: z.object({ owner: z.string(), repo: z.string() }),
+      query: z.object({
+        limit: z.string().optional().openapi({
+          param: { description: "Optional row cap for the returned audit history (positive integer)." },
+          example: "50",
+        }),
+      }),
+    },
+    responses: {
+      200: {
+        description:
+          "Newest-first override_audit rows recording why the self-tune loop promoted, shadowed, or cleared a live gate override",
+        content: { "application/json": { schema: SelftuneOverrideAuditResponseSchema } },
+      },
+      403: { description: "Insufficient role" },
+    },
+  });
+  registry.registerPath({
+    method: "delete",
+    path: "/v1/repos/{owner}/{repo}/selftune/overrides",
+    summary: "Clear the live self-tune gate override for a repo (#9303)",
+    request: {
+      params: z.object({ owner: z.string(), repo: z.string() }),
+      body: {
+        required: false,
+        content: {
+          "application/json": {
+            schema: z.object({ confirm: z.literal(true) }),
+          },
+        },
+      },
+    },
+    responses: {
+      200: {
+        description: "Live override cleared; the automatic self-tune promote path is untouched",
+        content: { "application/json": { schema: ClearSelftuneOverrideResponseSchema } },
+      },
+      400: { description: "Malformed confirmation body" },
+      403: { description: "Insufficient role" },
     },
   });
   registry.registerPath({

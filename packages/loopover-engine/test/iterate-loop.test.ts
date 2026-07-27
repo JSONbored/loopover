@@ -22,8 +22,22 @@ function openIssue(number: number, title: string): IssueRecord {
   return { repoFullName: "acme/widgets", number, title, state: "open", labels: [], linkedPrs: [] };
 }
 
+/** The rival PR every duplicate-blocker fixture below needs. `changedFiles` is load-bearing since #9129:
+ *  a duplicate overlap corroborated only by body text now raises the always-advisory
+ *  `duplicate_pr_risk_unconfirmed` code instead of the blocking `duplicate_pr_risk`, so a rival with no
+ *  changed files would no longer block the predicted gate at all. Naming the same file the attempt itself
+ *  touches ("src/upload.ts") exercises the changed-file-overlap arm of hasDuplicateOverlapCorroboration. */
 function openPr(number: number, title: string, linkedIssues: number[] = []): PullRequestRecord {
-  return { repoFullName: "acme/widgets", number, title, state: "open", authorLogin: "someone-else", linkedIssues, labels: [] };
+  return {
+    repoFullName: "acme/widgets",
+    number,
+    title,
+    state: "open",
+    authorLogin: "someone-else",
+    linkedIssues,
+    labels: [],
+    changedFiles: ["src/upload.ts"],
+  };
 }
 
 const noopSlop: SelfReviewSlopAssessment = { slopRisk: 0, band: "clean", findings: [] };

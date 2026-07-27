@@ -334,6 +334,98 @@ describe("self-host environment preflight (#2080)", () => {
     );
   });
 
+  describe("numeric env knobs (#9157: a malformed value must fail boot, not silently NaN into a runaway/disabled feature)", () => {
+    const baseEnv = {
+      REDIS_URL: "redis://redis:6379",
+      GITHUB_APP_ID: "123",
+      GITHUB_APP_PRIVATE_KEY: privateKey,
+    };
+
+    it("accepts every knob when unset — presence is never required, only format when set", () => {
+      expect(preflightEnv(baseEnv)).toEqual({ ok: true, problems: [] });
+    });
+
+    it("accepts valid values for CRON_INTERVAL_MS, PORT, and GITHUB_CACHE_TTL_SECONDS", () => {
+      expect(
+        preflightEnv({ ...baseEnv, CRON_INTERVAL_MS: "120000", PORT: "8787", GITHUB_CACHE_TTL_SECONDS: "20" }),
+      ).toEqual({ ok: true, problems: [] });
+    });
+
+    it("accepts GITHUB_CACHE_TTL_SECONDS=0 (the documented 'disable the cache' value)", () => {
+      expect(preflightEnv({ ...baseEnv, GITHUB_CACHE_TTL_SECONDS: "0" })).toEqual({ ok: true, problems: [] });
+    });
+
+    it("rejects a unit-suffixed or separator-formatted value instead of silently NaN-ing", () => {
+      for (const CRON_INTERVAL_MS of ["2m", "120s", "120_000", "12.5", "-5", "abc"]) {
+        const result = preflightEnv({ ...baseEnv, CRON_INTERVAL_MS });
+        expect(result).toEqual({
+          ok: false,
+          problems: [expect.objectContaining({ var: "CRON_INTERVAL_MS" })],
+        });
+      }
+    });
+
+    it("rejects CRON_INTERVAL_MS=0 — NOT a supported 'disable the cron' value, unlike GITHUB_CACHE_TTL_SECONDS", () => {
+      expect(preflightEnv({ ...baseEnv, CRON_INTERVAL_MS: "0" })).toEqual({
+        ok: false,
+        problems: [expect.objectContaining({ var: "CRON_INTERVAL_MS" })],
+      });
+    });
+
+    it("rejects CRON_INTERVAL_MS below the floor and above the ceiling", () => {
+      expect(preflightEnv({ ...baseEnv, CRON_INTERVAL_MS: "9999" })).toEqual({
+        ok: false,
+        problems: [expect.objectContaining({ var: "CRON_INTERVAL_MS" })],
+      });
+      expect(preflightEnv({ ...baseEnv, CRON_INTERVAL_MS: String(24 * 60 * 60_000 + 1) })).toEqual({
+        ok: false,
+        problems: [expect.objectContaining({ var: "CRON_INTERVAL_MS" })],
+      });
+    });
+
+    it("rejects PORT of 0 or above 65535", () => {
+      expect(preflightEnv({ ...baseEnv, PORT: "0" })).toEqual({
+        ok: false,
+        problems: [expect.objectContaining({ var: "PORT" })],
+      });
+      expect(preflightEnv({ ...baseEnv, PORT: "65536" })).toEqual({
+        ok: false,
+        problems: [expect.objectContaining({ var: "PORT" })],
+      });
+    });
+
+    it("rejects a negative GITHUB_CACHE_TTL_SECONDS and one above its ceiling", () => {
+      expect(preflightEnv({ ...baseEnv, GITHUB_CACHE_TTL_SECONDS: "-1" })).toEqual({
+        ok: false,
+        problems: [expect.objectContaining({ var: "GITHUB_CACHE_TTL_SECONDS" })],
+      });
+      expect(preflightEnv({ ...baseEnv, GITHUB_CACHE_TTL_SECONDS: "86401" })).toEqual({
+        ok: false,
+        problems: [expect.objectContaining({ var: "GITHUB_CACHE_TTL_SECONDS" })],
+      });
+    });
+
+    it("rejects a digit string so large it overflows to a non-finite number despite matching the digit-only regex", () => {
+      const result = preflightEnv({ ...baseEnv, PORT: "9".repeat(400) });
+      expect(result).toEqual({
+        ok: false,
+        problems: [expect.objectContaining({ var: "PORT" })],
+      });
+    });
+
+    it("collects a problem for every affected numeric knob at once, not just the first", () => {
+      const result = preflightEnv({ ...baseEnv, CRON_INTERVAL_MS: "2m", PORT: "not-a-port", GITHUB_CACHE_TTL_SECONDS: "-1" });
+      expect(result).toEqual({
+        ok: false,
+        problems: [
+          expect.objectContaining({ var: "CRON_INTERVAL_MS" }),
+          expect.objectContaining({ var: "PORT" }),
+          expect.objectContaining({ var: "GITHUB_CACHE_TTL_SECONDS" }),
+        ],
+      });
+    });
+  });
+
   it("asserts the preflight result for the boot path", () => {
     expect(() =>
       assertSelfHostPreflight({

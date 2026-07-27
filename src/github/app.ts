@@ -242,12 +242,33 @@ async function mintInstallationToken(
   if (isOrbBrokerMode(env)) {
     try {
       const brokered = await fetchBrokeredInstallationToken(env, fetch, { forceRefresh });
-      await writeCachedToken(installationId, {
+      // #9152: the broker's installationId is either 0 (fetchBrokeredInstallationToken's default for an older/
+      // minimal broker reply that never echoed the field back) or must equal the install THIS call requested.
+      // Previously the cache write and the returned token were UNGUARDED — only the permissions write below
+      // checked this — so a stale caller-side installationId (e.g. `repositories.installation_id` left behind
+      // after the maintainer uninstalled/reinstalled the App, which GitHub assigns a NEW id) could cache and
+      // return a token the broker minted for a DIFFERENT install under THIS install's cache key. In a hosted/
+      // multi-tenant broker that is real cross-tenant token exposure, not just a stale-cache correctness bug.
+      // Throw instead of silently serving another install's token; the catch below still applies its existing
+      // stale-cache grace / rethrow behavior for this like any other broker-call failure.
+      if (brokered.installationId !== 0 && brokered.installationId !== installationId) {
+        throw new Error(
+          `Orb broker minted a token for installation ${brokered.installationId}, not the requested ${installationId}.`,
+        );
+      }
+      // Cache under the broker's own claimed id when it provided one (guaranteed equal to installationId by the
+      // guard above) so the cache key always reflects what was ACTUALLY minted, not just what was asked for.
+      const mintedInstallationId = brokered.installationId || installationId;
+      await writeCachedToken(mintedInstallationId, {
         token: brokered.token,
         expiresAtMs: brokered.expiresAtMs,
       });
-      if (brokered.installationId === installationId && Object.keys(brokered.permissions).length > 0) {
-        await updateInstallationPermissions(env, installationId, brokered.permissions).catch((error) => {
+      // No longer gated on `brokered.installationId === installationId`: that condition was ALWAYS false for a
+      // legacy broker reply that omits installationId (defaults to 0), so permissions from such a reply were
+      // silently never persisted. The mismatch case above already throws, so every reply reaching here is
+      // either explicitly confirmed for this install or carries no installationId claim to check.
+      if (Object.keys(brokered.permissions).length > 0) {
+        await updateInstallationPermissions(env, mintedInstallationId, brokered.permissions).catch((error) => {
           console.warn(
             JSON.stringify({
               level: "warn",
@@ -480,8 +501,15 @@ export async function getRepositoryCollaboratorPermission(
   }
   const payload = (await response.json()) as {
     permission?: GitHubRepositoryCollaboratorPermission;
+    role_name?: string;
   };
-  return payload.permission ?? null;
+  // #9152: `permission` is GitHub's coarse legacy field — only ever admin/write/read/none, so Maintain collapses
+  // into "write" and Triage into "read" — making `permission === "maintain"` dead at both call sites
+  // (isPerTenantAdmin, resolveRealRepoPermissionAssociation). `role_name` carries the actual granular tier
+  // (including "maintain"/"triage", or a custom org role) and is always present on this endpoint's real response;
+  // prefer it, falling back to `permission` only for a response that omits it (defensive — keeps the pre-#9152
+  // behavior for any caller/fixture that only ever set `permission`).
+  return payload.role_name ?? payload.permission ?? null;
 }
 
 /** Account-age throttle (#2561, anti-abuse): `GET /users/{login}` for `created_at`, so a repo can flag a

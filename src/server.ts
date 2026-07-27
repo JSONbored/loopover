@@ -63,12 +63,12 @@ import {
 import { clockSkewSampleAgeSeconds, clockSkewSecondsSample } from "./selfhost/clock-skew";
 import { d1DatabaseSizeBytesSample, d1SignalSnapshotsRowsPerKeySample, d1TableRowCountSamples, isD1SizeProbeEnabled, runD1SizeProbe } from "./selfhost/d1-size-probe";
 import { gauge, gaugeVector, incr, observe, renderMetrics, setSelfHostedMetricsMode, setSelfHostedRawRepoLabels } from "./selfhost/metrics";
-import { delayToNextWallClockBoundaryMs } from "./selfhost/cron-alignment";
+import { CRON_INTERVAL_MIN_MS, delayToNextWallClockBoundaryMs } from "./selfhost/cron-alignment";
 import { runSelfHostMigrations } from "./selfhost/migrate";
 import { createPgAdapter, tuneGithubRateLimitObservationsAutovacuum, widenGithubIdColumnsToBigint } from "./selfhost/pg-adapter";
 import { createPgQueue } from "./selfhost/pg-queue";
 import { createPgVectorize, initPgVectorize } from "./selfhost/pg-vectorize";
-import { resolvePostgresPoolMax } from "./selfhost/queue-common";
+import { parsePositiveIntEnv, resolvePostgresPoolMax } from "./selfhost/queue-common";
 import type { DurableQueue } from "./selfhost/backend-contracts";
 import { createSqliteQueue } from "./selfhost/sqlite-queue";
 import { createSqliteVectorize } from "./selfhost/vectorize";
@@ -753,7 +753,12 @@ async function main(): Promise<void> {
   // Enable/disable gate for the GitHub GET-response cache (dedups the ~24 reads per review); NOT a per-entry
   // TTL — each cached class (branch-protection/metadata/commit/GraphQL) resolves its own TTL env var, so the
   // value here only matters as >0 (enabled) vs 0 (disabled) (#2505).
-  const ghCacheTtl = Math.max(0, Number(process.env.GITHUB_CACHE_TTL_SECONDS ?? "20"));
+  // #9157: parsePositiveIntEnv rejects NaN/out-of-range instead of a bare Number(...) silently producing NaN,
+  // which `Math.max(0, NaN)` would pass straight through — `ghCacheTtl > 0` below is then always false,
+  // silently disabling the GitHub response cache with no signal. Defense-in-depth: assertSelfHostPreflight
+  // (called earlier in main()) already hard-fails boot on a malformed value; this is the runtime floor for
+  // any caller that reaches this code without going through that gate (e.g. a future direct import).
+  const ghCacheTtl = parsePositiveIntEnv("GITHUB_CACHE_TTL_SECONDS", { min: 0, max: 86_400, fallback: 20 });
   if (ghCacheTtl > 0) {
     const { createRedisResponseCache } = await import("./selfhost/redis-response-cache");
     setGitHubResponseCache(createRedisResponseCache(redisClient));
@@ -995,7 +1000,10 @@ async function main(): Promise<void> {
     passThroughOnException: () => undefined,
   } as unknown as ExecutionContext;
 
-  const port = Number(process.env.PORT ?? 8787);
+  // #9157: see the GITHUB_CACHE_TTL_SECONDS comment above — a malformed PORT previously NaN'd through to
+  // @hono/node-server's serve(), which silently binds a random port instead of the intended one, breaking the
+  // compose healthcheck with no boot-time error.
+  const port = parsePositiveIntEnv("PORT", { min: 1, max: 65_535, fallback: 8787 });
   const server = serve(
     {
       fetch: async (request: Request, httpBindings: HttpBindings | Http2Bindings) => {
@@ -1219,7 +1227,11 @@ async function main(): Promise<void> {
   // intervalMs` lands on the same boundaries Cloudflare's cron would for any intervalMs that evenly divides
   // an hour (the default 120_000 included) — with a one-shot setTimeout, then hand off to setInterval from
   // that aligned moment so every subsequent tick keeps landing on those boundaries.
-  const intervalMs = Number(process.env.CRON_INTERVAL_MS ?? 120_000);
+  // #9157: see the GITHUB_CACHE_TTL_SECONDS comment above — a malformed CRON_INTERVAL_MS previously NaN'd
+  // through to both the one-shot setTimeout and the follow-on setInterval below, which Node coerces a NaN
+  // delay to 1ms, spinning the scheduler at ~1000 ticks/second instead of once every two minutes. Floored at
+  // CRON_INTERVAL_MIN_MS (not 0 — see that constant's own doc comment on why 0 is not a supported "disable").
+  const intervalMs = parsePositiveIntEnv("CRON_INTERVAL_MS", { min: CRON_INTERVAL_MIN_MS, fallback: 120_000 });
   /* v8 ignore start -- self-host entrypoint timers start a live server; monitor semantics are covered in selfhost tests. */
   const runCronTick = (): void => {
     const controller = {

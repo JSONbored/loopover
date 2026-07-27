@@ -46,6 +46,7 @@ const {
   resolveDualAiTieBreakWithOrderStability,
   synthesizeDefect,
   toPublicSafe,
+  toPublicSafeBySentence,
   runWorkersOpinion,
   coerceAiUsage,
   aggregateActualUsage,
@@ -2150,6 +2151,17 @@ describe("resolveEffectiveAiReviewPlan (#2567 gate-review follow-up: combine/rev
 });
 
 describe("pure helpers", () => {
+  it("toPublicSafeBySentence returns null for absent or blank input, without splitting", () => {
+    // Both arms of the `text ?? ""` nullish coalesce: a model that returns no assessment field at all reaches
+    // this as undefined, and composeAdvisoryNotes' own `assessments[0] ?? ""` reaches it as "". Neither may be
+    // split into sentences -- an empty assessment must fall through to the existing placeholder path, not
+    // become an empty joined string that would read as a real (blank) narrative.
+    expect(toPublicSafeBySentence(undefined)).toBeNull();
+    expect(toPublicSafeBySentence(null)).toBeNull();
+    expect(toPublicSafeBySentence("")).toBeNull();
+    expect(toPublicSafeBySentence("   \n  ")).toBeNull();
+  });
+
   it("toPublicSafe drops forbidden public text and neutralizes markdown, mentions, links, and control characters", () => {
     expect(toPublicSafe("This change is solid.")).toBe("This change is solid.");
     expect(toPublicSafe("Boost your reward payout")).toBeNull();
@@ -3767,6 +3779,65 @@ describe("pure helpers", () => {
         },
       ]),
     ).toBeNull();
+  });
+
+  // REGRESSION: FORBIDDEN_PUBLIC_COMMENT_WORDS is matched with a plain case-insensitive `.includes()` over a
+  // list containing ordinary review vocabulary ("reward", "ranking", "cohort", "farming", "reviewability"), and
+  // toPublicSafe drops its WHOLE input when sanitizePublicComment throws. A safe review of this codebase's own
+  // gate/scoring code therefore lost its entire narrative to the generic no-summary placeholder -- observed
+  // live across ~40% of reviews, with the model's assessment confirmed present (no ai_review_missing_assessment
+  // diagnostic was emitted for those PRs, so the text was produced and then discarded downstream).
+  it("REGRESSION: keeps the safe sentences of an assessment that mentions ordinary review vocabulary", () => {
+    const notes = composeAdvisoryNotes([
+      {
+        assessment:
+          "Updates the ranking comparator so ties resolve deterministically. The change is correct and adds matching coverage.",
+        suggestions: [],
+        nits: ["Rename the helper."],
+        blockers: [],
+        inlineFindings: [],
+        confidence: 1,
+      },
+    ]);
+    // The offending sentence is dropped ...
+    expect(notes).not.toContain("ranking comparator");
+    // ... the safe one survives, instead of the whole narrative being replaced by the placeholder.
+    expect(notes).toContain("The change is correct and adds matching coverage.");
+    expect(notes).not.toContain("did not include a separate narrative summary");
+    expect(notes).toContain("**Nits (1)**");
+  });
+
+  // SAFETY: the point of the filter is a leaked private VALUE, which necessarily sits in the same sentence as
+  // the term naming it -- so sentence-level dropping removes it just as completely as the old whole-text drop.
+  it("SAFETY: a sentence carrying a private value is removed, and an all-unsafe assessment still falls back", () => {
+    const leak = composeAdvisoryNotes([
+      {
+        assessment: "This looks correct overall. The contributor trust score is 0.82 and the reward estimate is 12 TAO.",
+        suggestions: [],
+        nits: ["Rename the helper."],
+        blockers: [],
+        inlineFindings: [],
+        confidence: 1,
+      },
+    ]);
+    expect(leak).not.toContain("0.82");
+    expect(leak).not.toContain("12 TAO");
+    expect(leak).not.toContain("trust score");
+    expect(leak).toContain("This looks correct overall.");
+
+    // Every sentence unsafe ⇒ null assessment ⇒ existing placeholder path, unchanged.
+    const allUnsafe = composeAdvisoryNotes([
+      {
+        assessment: "The trust score is 0.9. The reward estimate is 12 TAO.",
+        suggestions: [],
+        nits: ["Rename the helper."],
+        blockers: [],
+        inlineFindings: [],
+        confidence: 1,
+      },
+    ]);
+    expect(allUnsafe).toContain("did not include a separate narrative summary");
+    expect(allUnsafe).toContain("Rename the helper.");
   });
 
   it("composeAdvisoryNotes preserves blockers and nits when the model omits a narrative assessment", () => {

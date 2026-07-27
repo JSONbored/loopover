@@ -674,6 +674,50 @@ export function toPublicSafe(text: string | null | undefined, options?: { allowB
   }
 }
 
+/** Sentence boundary: a `.`/`!`/`?` followed by whitespace. Deliberately simple — the narrative assessment the
+ *  prompt asks for is 2-4 sentences of plain prose ("a substantive but CONCISE summary"), not markdown with
+ *  embedded code blocks, so an abbreviation like "e.g." at worst keeps two sentences joined (a slightly larger
+ *  unit is dropped) and never splits mid-word. It can never merge separate sentences, which is the direction
+ *  that would matter for safety. */
+const SENTENCE_BOUNDARY = /(?<=[.!?])\s+/;
+
+/**
+ * Public-safe filter for the narrative assessment, applied PER SENTENCE instead of all-or-nothing.
+ *
+ * {@link toPublicSafe} drops its whole input when `sanitizePublicComment` throws, and
+ * FORBIDDEN_PUBLIC_COMMENT_WORDS is matched with a plain case-insensitive `.includes()` over a list that
+ * contains ordinary English review vocabulary -- "reward", "rewards", "ranking", "rankings", "cohort",
+ * "farming", "reviewability". A perfectly safe review of this codebase's own gate/scoring code ("updates the
+ * ranking comparator so ties resolve deterministically") therefore had its ENTIRE narrative discarded and
+ * replaced by the generic "did not include a separate narrative summary" placeholder -- observed live across
+ * ~40% of reviews, with the model's assessment confirmed present (no `ai_review_missing_assessment` diagnostic
+ * was ever emitted for those PRs, so the text was produced and then thrown away downstream).
+ *
+ * Dropping only the offending SENTENCE is both more useful and no less safe. A leaked private VALUE ("trust
+ * score 0.82", "reward estimate 12 TAO") necessarily sits in the same sentence as the term that names it, so
+ * removing that sentence removes the risky content -- whereas discarding the whole assessment protected
+ * nothing additional and cost the reader every other sentence. It also matches how this file ALREADY treats
+ * findings: `safeNits`/`safeBlockers` filter per item and keep the survivors, so granular filtering is the
+ * existing convention and the assessment was the lone all-or-nothing holdout.
+ *
+ * Returns null when no sentence survives, so the caller's existing fallback path is unchanged for the genuinely
+ * unsafe case.
+ */
+export function toPublicSafeBySentence(text: string | null | undefined, options?: { allowBareScoreTerm?: boolean }): string | null {
+  const trimmed = (text ?? "").trim();
+  if (!trimmed) return null;
+  // Whole-text pass first: the common case is entirely safe, and this preserves the exact original spacing
+  // (a split/rejoin would normalise interior whitespace) plus any multi-sentence markdown the splitter would
+  // otherwise chop.
+  const whole = toPublicSafe(trimmed, options);
+  if (whole) return whole;
+  const kept = trimmed
+    .split(SENTENCE_BOUNDARY)
+    .map((sentence) => toPublicSafe(sentence, options))
+    .filter((sentence): sentence is string => Boolean(sentence));
+  return kept.length > 0 ? kept.join(" ") : null;
+}
+
 /** Coerce the varied Workers-AI / provider response envelopes into a scannable string. */
 export function coerceAiText(result: unknown): string {
   if (typeof result === "string") return result;
@@ -1979,7 +2023,10 @@ export function composeAdvisoryNotes(reviews: ModelReview[], options?: { allowBa
   const nits = [
     ...new Set(reviews.flatMap((r) => [...r.nits, ...r.suggestions])),
   ].slice(0, 5);
-  const assessment = toPublicSafe(assessments[0] ?? "", options);
+  // Per-sentence, not all-or-nothing: see toPublicSafeBySentence. The findings below already filter per item
+  // (`safeBlockers`/`safeNits`); this makes the narrative consistent with them instead of being discarded whole
+  // because one sentence used ordinary review vocabulary like "ranking" or "reward".
+  const assessment = toPublicSafeBySentence(assessments[0] ?? "", options);
   const safeBlockers = blockers
     .map((s) => toPublicSafe(s, options))
     .filter((s): s is string => Boolean(s));
@@ -3147,6 +3194,7 @@ export const __aiReviewInternals = {
   resolveDualAiTieBreakWithOrderStability,
   synthesizeDefect,
   toPublicSafe,
+  toPublicSafeBySentence,
   estimateNeurons,
   runWorkersOpinion,
   coerceAiUsage,

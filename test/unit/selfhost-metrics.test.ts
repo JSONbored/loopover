@@ -2,13 +2,28 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { backupAcknowledgedGaugeValue } from "../../src/selfhost/health";
-import { DEFAULT_METRIC_META, counterValue, gauge, gaugeVector, hitRatio, incr, observe, registerMetricMeta, renderMetrics, resetMetrics, setSelfHostedMetricsMode } from "../../src/selfhost/metrics";
+import {
+  DEFAULT_METRIC_META,
+  counterValue,
+  gauge,
+  gaugeVector,
+  hitRatio,
+  incr,
+  observe,
+  registerMetricMeta,
+  renderMetrics,
+  resetMetrics,
+  setSelfHostedMetricsMode,
+  setSelfHostedRawRepoLabels,
+} from "../../src/selfhost/metrics";
 
 afterEach(() => {
   resetMetrics();
-  // setSelfHostedMetricsMode is a separate module-level flag from the counters/gauges resetMetrics() clears --
-  // reset it explicitly so a test that turns it on can never leak into an unrelated later test.
+  // setSelfHostedMetricsMode/setSelfHostedRawRepoLabels are separate module-level flags from the
+  // counters/gauges resetMetrics() clears -- reset them explicitly so a test that turns either on can never
+  // leak into an unrelated later test.
   setSelfHostedMetricsMode(false);
+  setSelfHostedRawRepoLabels(false);
 });
 
 describe("metrics registry (#982)", () => {
@@ -136,11 +151,28 @@ describe("metrics registry (#982)", () => {
     expect(await renderMetrics()).toContain('debug_total{repo="public-owner/public-repo"} 1');
   });
 
-  // #terminal-outcome-audit: a self-hosted instance's /metrics is the operator's own private scrape target, not
-  // a publicly reachable one -- setSelfHostedMetricsMode(true) (called once at self-host boot) must stop
-  // redacting `repo` from these counters so an operator can actually slice their OWN dashboards by repo.
-  it("setSelfHostedMetricsMode(true) stops redacting the repo label on the cloud-private counters", async () => {
+  // #terminal-outcome-audit / #9142: a self-hosted instance's /metrics is the operator's own private scrape
+  // target, not a publicly reachable one, but /metrics is commonly exposed by a reverse proxy before any
+  // application auth -- setSelfHostedMetricsMode(true) (called unconditionally at self-host boot) must NOT
+  // serve the raw repo name by default. It now pseudonymizes (the SAME redacted-N scheme
+  // ALWAYS_REDACT_REPO_LABEL_METRICS already uses) so an operator's own dashboards still get a stable
+  // per-repo series to group by, without the real name leaving the instance by default.
+  it("setSelfHostedMetricsMode(true) pseudonymizes (not strips, not raw) the repo label on the private counters by default", async () => {
     setSelfHostedMetricsMode(true);
+    incr("loopover_gate_decisions_total", { repo: "owner/repo", conclusion: "success" });
+    incr("loopover_reviews_published_total", { repo: "owner/repo" });
+    incr("loopover_ops_anomaly_total", { repo: "owner/repo", kind: "review_burst" });
+
+    const out = await renderMetrics();
+    expect(out).toContain('loopover_gate_decisions_total{conclusion="success",repo="redacted-1"} 1');
+    expect(out).toContain('loopover_reviews_published_total{repo="redacted-1"} 1');
+    expect(out).toContain('loopover_ops_anomaly_total{kind="review_burst",repo="redacted-1"} 1');
+    expect(out).not.toContain("owner/repo");
+  });
+
+  it("setSelfHostedRawRepoLabels(true) restores raw repo labels in self-hosted metrics mode (explicit operator opt-in)", async () => {
+    setSelfHostedMetricsMode(true);
+    setSelfHostedRawRepoLabels(true);
     incr("loopover_gate_decisions_total", { repo: "owner/repo", conclusion: "success" });
     incr("loopover_reviews_published_total", { repo: "owner/repo" });
     incr("loopover_ops_anomaly_total", { repo: "owner/repo", kind: "review_burst" });
@@ -150,6 +182,16 @@ describe("metrics registry (#982)", () => {
     expect(out).toContain('loopover_reviews_published_total{repo="owner/repo"} 1');
     expect(out).toContain('loopover_ops_anomaly_total{kind="review_burst",repo="owner/repo"} 1');
     expect(out).toContain('repo="owner/repo"');
+  });
+
+  it("setSelfHostedRawRepoLabels(true) has no effect while self-hosted metrics mode is off (still strips)", async () => {
+    setSelfHostedRawRepoLabels(true);
+    incr("loopover_gate_decisions_total", { repo: "owner/repo", conclusion: "success" });
+
+    const out = await renderMetrics();
+    expect(out).toContain('loopover_gate_decisions_total{conclusion="success"} 1');
+    expect(out).not.toContain("owner/repo");
+    expect(out).not.toContain('repo="');
   });
 
   it("setSelfHostedMetricsMode(false) (the default) still redacts — byte-identical to the cloud worker", async () => {
@@ -332,6 +374,17 @@ describe("histograms (observe)", () => {
     observe("z_seconds", 1);
     resetMetrics();
     expect(await renderMetrics()).toBe("\n");
+  });
+
+  // #9142: observe() used to build its series key and store its labels WITHOUT routing through
+  // publicLabelsForMetric -- the one metric-recording path that bypassed redaction entirely, including the
+  // ALWAYS_REDACT_REPO_LABEL_METRICS set incr()/gaugeVector() always honor. Reuses an ALWAYS_REDACT name here
+  // (rather than a PRIVATE_REPO_LABEL_METRICS one) so the assertion holds regardless of selfHostedMetricsMode.
+  it("redacts a repo label on a histogram observation the same as incr()/gaugeVector() (#9142)", async () => {
+    observe("loopover_merge_train_deferred_total", 1, { repo: "owner/repo" });
+    const out = await renderMetrics();
+    expect(out).toContain('loopover_merge_train_deferred_total_bucket{le="+Inf",repo="redacted-1"}');
+    expect(out).not.toContain("owner/repo");
   });
 });
 

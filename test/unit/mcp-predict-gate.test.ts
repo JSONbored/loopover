@@ -275,6 +275,55 @@ testExpectations:
     });
   });
 
+  // #9138: predict_gate/explain_gate_disposition previously called neither enforceToolRateLimit, so the only
+  // ceiling was the shared /mcp route class (120/min) -- comfortably enough for a contributor to flood
+  // predicted_gate_calls and drive the agreement metric toward 100% (see predicted-gate-agreement.test.ts's
+  // dedup coverage for the other half of that fix). Mirrors mcp-output-schemas.test.ts's own
+  // mockRateLimiter helper for the sibling slop-oracle tools.
+  describe("shares the per-tool rate limit with the sibling slop-oracle tools (#9138)", () => {
+    function mockRateLimiter(status: number, body: Record<string, unknown> = {}): NonNullable<Env["RATE_LIMITER"]> {
+      return {
+        idFromName: (name: string) => name as unknown as DurableObjectId,
+        get: () => ({
+          async fetch() {
+            return Response.json(body, { status });
+          },
+        }),
+      } as unknown as NonNullable<Env["RATE_LIMITER"]>;
+    }
+
+    it("skips the rate-limit when RATE_LIMITER is absent (test/local env)", async () => {
+      const client = await connect(createTestEnv());
+      const result = await client.callTool({ name: "loopover_predict_gate", arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "x" } });
+      expect(result.isError).toBeFalsy();
+    });
+
+    it("allows the call when the tool rate-limit returns 200", async () => {
+      const env = createTestEnv({ RATE_LIMITER: mockRateLimiter(200, { allowed: true, remaining: 19 }) });
+      const client = await connect(env);
+      const result = await client.callTool({ name: "loopover_predict_gate", arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "x" } });
+      expect(result.isError).toBeFalsy();
+    });
+
+    it("blocks loopover_predict_gate with a rate-limit error when the limiter returns 429", async () => {
+      const env = createTestEnv({ RATE_LIMITER: mockRateLimiter(429, { retryAfterSeconds: 42 }) });
+      const client = await connect(env);
+      const result = await client.callTool({ name: "loopover_predict_gate", arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "x" } });
+      expect(result.isError).toBe(true);
+      const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? "";
+      expect(text).toMatch(/rate limit exceeded/i);
+    });
+
+    it("also blocks loopover_explain_gate_disposition -- both tools share computePredictedGateVerdict's rate limit", async () => {
+      const env = createTestEnv({ RATE_LIMITER: mockRateLimiter(429, { retryAfterSeconds: 42 }) });
+      const client = await connect(env);
+      const result = await client.callTool({ name: "loopover_explain_gate_disposition", arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "x" } });
+      expect(result.isError).toBe(true);
+      const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? "";
+      expect(text).toMatch(/rate limit exceeded/i);
+    });
+  });
+
   describe("personalized calibration wiring (#2349)", () => {
     async function seedLedgerRow(env: Env, opts: { login: string; agreed: boolean; pullNumber: number }) {
       const now = new Date().toISOString();

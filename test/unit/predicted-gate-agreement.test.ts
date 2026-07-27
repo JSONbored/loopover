@@ -64,7 +64,12 @@ describe("computePredictedGateAgreement — predicted-vs-live gate agreement (#p
     expect(row).toMatchObject({ pairedSamples: 1, disagree: 1, unsafeDisagreements: 0 });
   });
 
-  it("pairs MULTIPLE predicted calls (a contributor iterating) against the SAME eventual real decision", async () => {
+  // #9138 core regression: N predictions before one real decision must yield EXACTLY ONE paired sample --
+  // previously every one of them paired against the same eventual decision, inflating pairedSamples (and
+  // agreementRate) by a factor of N. Only the LATEST predicted call (the one closest to, and agreeing with,
+  // the real merge) is kept; the earlier "hold" guess is dropped from the aggregate, not double-counted as a
+  // second disagreement.
+  it("#9138: collapses MULTIPLE predicted calls before one real decision down to exactly ONE paired sample (the latest call)", async () => {
     const env = createTestEnv();
     await seedPredicted(env, { login: "octocat", project: "owner/repo", action: "hold", createdAt: T0 });
     await seedPredicted(env, { login: "octocat", project: "owner/repo", action: "merge", createdAt: hoursAfter(T0, 1) });
@@ -72,8 +77,59 @@ describe("computePredictedGateAgreement — predicted-vs-live gate agreement (#p
 
     const report = await computePredictedGateAgreement(env, { days: 90, nowMs: NOW });
     const row = report.rows.find((r) => r.project === "owner/repo");
-    // Both predicted calls pair to the one real decision: the first (hold) disagrees, the second (merge) agrees.
-    expect(row).toMatchObject({ pairedSamples: 2, bothMerge: 1, disagree: 1 });
+    // Exactly one paired sample: the latest call ("merge") agrees with the real "merge" -- the earlier
+    // ("hold") call is dropped entirely from the aggregate, not counted as its own disagreement.
+    expect(row).toMatchObject({ pairedSamples: 1, bothMerge: 1, bothHold: 0, disagree: 0, agreementRate: 1 });
+  });
+
+  it("#9138: collapses N (many more than 2) predictions before one real decision down to exactly ONE paired sample", async () => {
+    const env = createTestEnv();
+    const N = 50; // representative of the issue's "500 calls in ~5 min" trigger; kept smaller here for test speed
+    for (let i = 0; i < N; i++) {
+      await seedPredicted(env, { login: "octocat", project: "owner/repo", action: "merge", createdAt: hoursAfter(T0, i / 3600) });
+    }
+    await seedReal(env, { login: "octocat", project: "owner/repo", decision: "merge", createdAt: hoursAfter(T0, 1) });
+
+    const report = await computePredictedGateAgreement(env, { days: 90, nowMs: NOW });
+    const row = report.rows.find((r) => r.project === "owner/repo");
+    // Without the dedup this would report pairedSamples: N, bothMerge: N, agreementRate: 1 -- a contributor
+    // flooding predict_gate could not, by itself, manufacture N samples of "signal".
+    expect(row).toMatchObject({ pairedSamples: 1, bothMerge: 1, agreementRate: 1 });
+  });
+
+  it("#9138: keeps the chronologically-latest predicted call as the pairing even when it isn't the last one READ from the DB", async () => {
+    const env = createTestEnv();
+    // predicted_gate_calls carries no ORDER BY on the read side, so the read order is not guaranteed to match
+    // insertion (chronological) order -- insert the LATER-timestamped call first, so a naive "last one wins"
+    // read-order assumption would keep the WRONG (earlier) one. The dedup must compare `created_at`, not rely
+    // on read/array order, to correctly keep the chronologically-latest call either way.
+    await seedPredicted(env, { login: "octocat", project: "owner/repo", action: "merge", createdAt: hoursAfter(T0, 5) }); // later, inserted first
+    await seedPredicted(env, { login: "octocat", project: "owner/repo", action: "hold", createdAt: hoursAfter(T0, 1) }); // earlier, inserted second
+    await seedReal(env, { login: "octocat", project: "owner/repo", decision: "merge", createdAt: hoursAfter(T0, 6) });
+
+    const report = await computePredictedGateAgreement(env, { days: 90, nowMs: NOW });
+    const row = report.rows.find((r) => r.project === "owner/repo");
+    // The chronologically-latest call ("merge" at +5h) is kept -- not overwritten by the earlier ("hold" at
+    // +1h) call even if that one happens to be read/iterated after it.
+    expect(row).toMatchObject({ pairedSamples: 1, bothMerge: 1, bothHold: 0, disagree: 0 });
+  });
+
+  it("#9138: two separate real decisions for the same login each get their own paired sample, still deduped independently", async () => {
+    const env = createTestEnv();
+    // First round: two predictions, then a real 'hold'.
+    await seedPredicted(env, { login: "octocat", project: "owner/repo", action: "merge", createdAt: T0 });
+    await seedPredicted(env, { login: "octocat", project: "owner/repo", action: "hold", createdAt: hoursAfter(T0, 1) });
+    await seedReal(env, { login: "octocat", project: "owner/repo", decision: "hold", createdAt: hoursAfter(T0, 2), pullNumber: 1 });
+    // Second round, later: two more predictions, then a real 'merge'.
+    await seedPredicted(env, { login: "octocat", project: "owner/repo", action: "hold", createdAt: hoursAfter(T0, 10) });
+    await seedPredicted(env, { login: "octocat", project: "owner/repo", action: "merge", createdAt: hoursAfter(T0, 11) });
+    await seedReal(env, { login: "octocat", project: "owner/repo", decision: "merge", createdAt: hoursAfter(T0, 12), pullNumber: 2 });
+
+    const report = await computePredictedGateAgreement(env, { days: 90, nowMs: NOW });
+    const row = report.rows.find((r) => r.project === "owner/repo");
+    // Two real decisions -> two paired samples (one per real decision, each deduped to its own latest call),
+    // both agreeing (latest call before the hold was "hold"; latest call before the merge was "merge").
+    expect(row).toMatchObject({ pairedSamples: 2, bothHold: 1, bothMerge: 1, disagree: 0 });
   });
 
   it("does not pair a predicted call with no real decision at all (project absent from the report)", async () => {

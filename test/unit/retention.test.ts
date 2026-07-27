@@ -166,6 +166,32 @@ describe("pruneExpiredRecords", () => {
     const rows = await env.DB.prepare("SELECT id FROM notification_deliveries").all<{ id: string }>();
     expect(rows.results.map((row) => row.id)).toEqual(["nd-recent"]);
   });
+
+  // #9138: predicted_gate_calls (src/review/predicted-gate-calls.ts) deliberately never dedups at write time --
+  // "every call gets its own row" -- so it needed the same retention path as the other unbounded, contributor-
+  // driven append-only log tables above.
+  it("prunes predicted_gate_calls older than 90d and keeps recent rows (#9138)", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare(
+      `INSERT INTO predicted_gate_calls (id, login, project, predicted_action, conclusion, reason_code, created_at)
+       VALUES
+         ('pgc-old-1', 'octocat', 'owner/repo', 'merge', 'success', 'success', ?),
+         ('pgc-old-2', 'octocat', 'owner/repo', 'hold', 'action_required', 'missing_linked_issue', ?),
+         ('pgc-recent', 'octocat', 'owner/repo', 'merge', 'success', 'success', ?)`,
+    )
+      .bind(daysAgo(100), daysAgo(95), daysAgo(1))
+      .run();
+
+    expect(RETENTION_POLICY.some((rule) => rule.table === "predicted_gate_calls" && rule.column === "created_at" && rule.days === 90)).toBe(true);
+
+    const results = await pruneExpiredRecords(env, {
+      nowMs: NOW,
+      policy: [{ table: "predicted_gate_calls", column: "created_at", days: 90 }],
+    });
+    expect(results[0]?.deleted).toBe(2);
+    const rows = await env.DB.prepare("SELECT id FROM predicted_gate_calls").all<{ id: string }>();
+    expect(rows.results.map((row) => row.id)).toEqual(["pgc-recent"]);
+  });
 });
 
 describe("dedupeSignalSnapshots", () => {

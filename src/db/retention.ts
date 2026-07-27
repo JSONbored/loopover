@@ -29,6 +29,10 @@ export const RETENTION_POLICY: readonly RetentionRule[] = [
   { table: "webhook_events", column: "received_at", days: 90 },
   // One row per outbound notification delivery (#8899); same append-only log shape as webhook_events.
   { table: "notification_deliveries", column: "created_at", days: 90 },
+  // #9138: one row per loopover_predict_gate/explain_gate_disposition MCP call (unbounded, contributor-
+  // driven growth -- predicted-gate-calls.ts deliberately never dedups at write time, see that file's own
+  // header comment) -- same 90-day append-only-log window as audit_events/ai_usage_events above.
+  { table: "predicted_gate_calls", column: "created_at", days: 90 },
 ];
 
 export type PruneResult = { table: string; column: string; cutoff: string; deleted: number };

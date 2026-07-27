@@ -186,9 +186,26 @@ export function scrubUrl(value: string): string {
   }
 }
 
+/** #9142: OPERATIONAL_TAG_KEYS are structured identifiers (repo full names, PR/pull numbers, SHAs, model ids,
+ *  ...) -- never free text a human wrote. PUBLIC_UNSAFE_SCRUB's bare `\b(reward|score|wallet|hotkey|...)\w*\b`
+ *  match and PRIVATE_TEXT's phrase list both assume they're scanning prose; over an identifier like
+ *  "ossf/scorecard" (`/` is a non-word char, so `\b` still anchors at the segment start) PUBLIC_UNSAFE_SCRUB
+ *  corrupts the very label a reader groups events/metrics by, and two differently-named repos whose second
+ *  segment happens to start with the same vocabulary word (scorecard, score-keeper, ...) collapse into one
+ *  series once corrupted identically. */
+const STRUCTURED_IDENTIFIER_KEYS = new Set<string>(OPERATIONAL_TAG_KEYS);
+
+/** Credential-shape scrubbers ONLY (no vocabulary/phrase matching) -- used for {@link STRUCTURED_IDENTIFIER_KEYS}.
+ *  A leaked token/JWT/query secret that landed in an identifier-shaped field by mistake is still a real leak,
+ *  so this stays unconditional even for a field whose vocabulary scrubbing is skipped. */
+function scrubStructuredIdentifierString(value: string): string {
+  return value.replace(QUERY_SECRET_VALUE, `$1${REDACTED}`).replace(SECRET_VALUE, REDACTED).replace(JWT_VALUE, REDACTED);
+}
+
 export function scrubStringField(key: string, value: string): string {
   if (isUrlKey(key)) return scrubUrl(value);
   if (isQueryKey(key)) return scrubQueryString(value);
+  if (STRUCTURED_IDENTIFIER_KEYS.has(key)) return scrubStructuredIdentifierString(value);
   return scrubString(value);
 }
 

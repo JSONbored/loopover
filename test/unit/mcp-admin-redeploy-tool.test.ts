@@ -120,6 +120,20 @@ describe("MCP admin redeploy tool: trigger call (#7723)", () => {
     expect(result.structuredContent).toEqual({ configured: true, ok: false, exitCode: 1, error: "health check timed out", log: ["pulling...", "restarting..."] });
   });
 
+  // #9137: exitCode/error nullish fallbacks ("unknown"/"see log") in both the summary AND the audit-event
+  // detail -- the test above always supplies both fields, so this exercises the OTHER side of each `??`.
+  it("falls back to 'unknown'/'see log' in the summary when a failed run reports no exitCode/error", async () => {
+    setRedeployTrigger(vi.fn().mockResolvedValue({ ok: false, exitCode: null, log: [] }));
+    const client = await connect(createTestEnv({ LOOPOVER_MCP_ADMIN_ENABLED: "true" }));
+
+    const result = await client.callTool({ name: "loopover_admin_trigger_redeploy", arguments: {} });
+
+    expect(result.isError).toBeFalsy();
+    const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? "";
+    expect(text).toContain("exit unknown");
+    expect(text).toContain("see log");
+  });
+
   it("catches a connection/protocol failure to the companion itself and reports it as a normal tool result, distinct from a ran-but-failed redeploy", async () => {
     setRedeployTrigger(vi.fn().mockRejectedValue(new Error("connect ECONNREFUSED /run/loopover-redeploy.sock")));
     const client = await connect(createTestEnv({ LOOPOVER_MCP_ADMIN_ENABLED: "true" }));

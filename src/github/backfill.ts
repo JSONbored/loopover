@@ -3276,6 +3276,19 @@ export function isStatusRollupGraphQlEnabled(env: { GITHUB_STATUS_ROLLUP_GRAPHQL
   return /^(1|true|yes|on)$/i.test(env.GITHUB_STATUS_ROLLUP_GRAPHQL ?? "");
 }
 
+// Mirrors parseRepoFullName in labels.ts / assignees.ts (#8311): backfill keeps its own local copy rather than
+// importing a shared one. Returns null for malformed input so each GraphQL read helper preserves its existing
+// fail-soft return contract (null / undefined / []).
+function parseBackfillRepoFullName(repoFullName: string): { owner: string; name: string } | null {
+  const parts = repoFullName.split("/");
+  const owner = parts[0];
+  const name = parts[1];
+  if (parts.length !== 2 || !owner || !name || /\s/.test(repoFullName)) {
+    return null;
+  }
+  return { owner, name };
+}
+
 /**
  * GraphQL equivalent of {@link fetchLiveCiAggregate}: ONE bounded query returns the head commit's statusCheckRollup
  * (check-runs AND classic statuses, unified) plus its check-suites — replacing the paginated /check-runs + /status
@@ -3295,8 +3308,9 @@ export async function fetchLiveCiAggregateViaGraphQl(
   advisoryCheckRuns?: ReadonlyArray<{ name: string; appSlug: string }> | null,
 ): Promise<LiveCiAggregate | null> {
   if (!headSha || !token) return null;
-  const [owner, name] = repoFullName.split("/");
-  if (!owner || !name) return null;
+  const parsed = parseBackfillRepoFullName(repoFullName);
+  if (!parsed) return null;
+  const { owner, name } = parsed;
   const query = `query LoopOverLiveCiRollup { repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { object(oid: ${JSON.stringify(headSha)}) { ... on Commit { statusCheckRollup { contexts(first: 100) { nodes { __typename ... on CheckRun { name conclusion status startedAt detailsUrl title summary checkSuite { databaseId app { slug } } } ... on StatusContext { context state description targetUrl } } pageInfo { hasNextPage } } } checkSuites(first: 100) { nodes { status app { slug } } pageInfo { hasNextPage } } } } } }`;
   const result = await githubGraphQl<{
     data?: {
@@ -4058,8 +4072,9 @@ export async function fetchLivePullRequestReviewDecision(
   admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<string | undefined> {
   if (!token) return undefined;
-  const [owner, name] = repoFullName.split("/");
-  if (!owner || !name) return undefined;
+  const parsed = parseBackfillRepoFullName(repoFullName);
+  if (!parsed) return undefined;
+  const { owner, name } = parsed;
   const query = `query { repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { pullRequest(number: ${prNumber}) { reviewDecision } } }`;
   const result = await githubGraphQl<{ data?: { repository?: { pullRequest?: { reviewDecision?: string | null } | null } | null }; errors?: unknown[] }>(
     env,
@@ -4130,8 +4145,9 @@ export async function fetchLiveReviewThreadBlockers(
   admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<ReviewThreadBlocker[]> {
   if (!token) return [];
-  const [owner, name] = repoFullName.split("/");
-  if (!owner || !name) return [];
+  const parsed = parseBackfillRepoFullName(repoFullName);
+  if (!parsed) return [];
+  const { owner, name } = parsed;
   const threads: Array<GitHubReviewThreadNode | null> = [];
   let cursor: string | null = null;
   const seenCursors = new Set<string>();

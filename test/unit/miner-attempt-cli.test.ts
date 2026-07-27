@@ -535,6 +535,35 @@ describe("runAttempt (#5132)", () => {
     });
   });
 
+  it("surfaces the verification payload in the CLI JSON for a verification_failed outcome (#9328)", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const verification = { ok: false, expectedRepo: "acme/widgets", observedRepo: "acme/other" };
+    const runMinerAttemptSpy = vi.fn().mockResolvedValue({
+      outcome: "verification_failed",
+      verification,
+      loopResult: fakeLoopResult(),
+    });
+
+    await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      attemptId: "fixed-attempt-id",
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({ runMinerAttempt: runMinerAttemptSpy }),
+    });
+
+    const printed = JSON.parse(
+      String(log.mock.calls.map((call) => call[0]).find((arg) => String(arg).includes("attempt_verification_failed"))),
+    );
+    expect(printed.outcome).toBe("attempt_verification_failed");
+    // The verification payload the "verification_failed" outcome carries is now present, not dropped.
+    expect(printed.verification).toEqual(verification);
+  });
+
   it("schedules an AMS attempt-started notification before the attempt runs, and no failure notification on submit (#7657)", async () => {
     const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
     vi.spyOn(console, "log").mockImplementation(() => undefined);

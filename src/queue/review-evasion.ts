@@ -290,6 +290,8 @@ async function closeDraftDodgeAttemptIfBlocked(
     draftDodgeAuthorLogin.length > 0 &&
     // #4889: per-repo admin mode swaps the global-allowlist grant for the live per-repo permission.
     (await isPerTenantAdmin(env, installationId, repoFullName, draftDodgeAuthorLogin));
+  if (isProtectedAutomationAuthor(pr.authorLogin, env)) return;
+  if (isAutoCloseExempt(pr.authorLogin, settings.autoCloseExemptLogins)) return;
   if (
     block &&
     block.headSha === pr.headSha &&

@@ -73,6 +73,9 @@ describe("GitHubMilestonesAdapter (#3183)", () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
     await expect(adapter.listOpenMilestones({ env, installationId: 123, repoFullName: "invalid" })).rejects.toThrow(/Invalid repository full name/);
     await expect(adapter.attachToMilestone({ env, installationId: 123, repoFullName: "owner/repo/extra" }, 4, "14")).rejects.toThrow(/Invalid repository full name/);
+    for (const padded of ["owner/ repo", "owner /repo"]) {
+      await expect(adapter.listOpenMilestones({ env, installationId: 123, repoFullName: padded })).rejects.toThrow(/Invalid repository full name/);
+    }
   });
 
   it("listOpenMilestones fetches and maps open milestones from the REST API", async () => {
@@ -331,6 +334,9 @@ describe("GitHubProjectsAdapter (#3184)", () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
     await expect(adapter.listOpenProjects({ env, installationId: 123, repoFullName: "invalid" })).rejects.toThrow(/Invalid repository full name/);
     await expect(adapter.attachToProject({ env, installationId: 123, repoFullName: "owner/repo/extra" }, 4, "PVT_1")).rejects.toThrow(/Invalid repository full name/);
+    for (const padded of ["owner/ repo", "owner /repo"]) {
+      await expect(adapter.listOpenProjects({ env, installationId: 123, repoFullName: padded })).rejects.toThrow(/Invalid repository full name/);
+    }
   });
 });
 

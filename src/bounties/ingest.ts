@@ -21,8 +21,27 @@ export function normalizeGittBountySnapshot(payload: unknown): BountyRecord[] {
   // empty list — matching how every other non-object value already yields `[]` — instead of throwing.
   const data = payload as GittIssueListPayload | null | undefined;
   return (data?.issues ?? []).flatMap((issue) => {
-    if (issue.id === undefined || !issue.repository_full_name || !issue.issue_number || !issue.status) return [];
-    const amountText = issue.bounty_alpha ?? (issue.bounty_amount === undefined ? undefined : String(issue.bounty_amount));
+    // #9313: `issue` is cast from an UNTRUSTED Gitt payload, so its declared field types are not guaranteed at
+    // runtime. Type-guard every field the BountyRecord contract requires (id: string|number, repoFullName:
+    // string, issueNumber: number, status: string) -- mirroring registry/normalize.ts's typed value guards --
+    // so a wrong-typed field drops the whole record instead of being trusted into a mistyped BountyRecord.
+    if (
+      (typeof issue.id !== "string" && typeof issue.id !== "number") ||
+      typeof issue.repository_full_name !== "string" ||
+      !issue.repository_full_name ||
+      typeof issue.issue_number !== "number" ||
+      !Number.isFinite(issue.issue_number) ||
+      typeof issue.status !== "string" ||
+      !issue.status
+    ) {
+      return [];
+    }
+    const amountText =
+      typeof issue.bounty_alpha === "string"
+        ? issue.bounty_alpha
+        : typeof issue.bounty_amount === "number" && Number.isFinite(issue.bounty_amount)
+          ? String(issue.bounty_amount)
+          : undefined;
     return [
       {
         id: String(issue.id),

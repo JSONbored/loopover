@@ -81,11 +81,21 @@ describe("resolveAiReviewSalvageableHold", () => {
     expect(hold!.comment).toContain("HELD with guidance");
   });
 
-  it("defaults: no configured floor uses the gate default, and a confidence-less blocker counts as certainty (at/above floor)", () => {
+  // #9085 (landed via #9237): an absent confidence used to degrade to 1.0 -- maximum certainty -- so "the
+  // model said nothing" silently cleared even the default floor here. It now degrades to
+  // CONFIDENCE_WHEN_UNSTATED (0.5), which is sub-floor against the 0.93 gate default, so the low-confidence
+  // hold owns that case and this resolver stands down. #9085 renamed both sibling assertions in
+  // rules.test.ts but missed this third consumption site, leaving it asserting the pre-change semantics.
+  // Both calls are load-bearing for coverage: the first is the ONLY case in this file that exercises the
+  // `aiReviewCloseConfidence ?? DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE` default arm (every other case passes an
+  // explicit floor), and the second is the only one exercising the `confidence ?? CONFIDENCE_WHEN_UNSTATED`
+  // nullish arm.
+  it("defaults: no configured floor uses the gate default (0.93), and a confidence-less blocker is sub-floor", () => {
+    expect(resolveAiReviewSalvageableHold(aiEval(0.99), { aiReviewSalvageabilityMinScore: 60 }, salv)).toBeDefined();
+
     const noConfidence = aiEval(0.99);
     delete (noConfidence.blockers[0] as { confidence?: number }).confidence;
-    const hold = resolveAiReviewSalvageableHold(noConfidence, { aiReviewSalvageabilityMinScore: 60 }, salv);
-    expect(hold).toBeDefined();
+    expect(resolveAiReviewSalvageableHold(noConfidence, { aiReviewSalvageabilityMinScore: 60 }, salv)).toBeUndefined();
   });
 
   it("knob unset (the default) or no score: never changes a disposition", () => {

@@ -63,7 +63,7 @@ export function evaluateRunLoopBoundaryGate(
   }
 
   const recorded =
-    newlyHalted || (!wasHalted && !verdict.shouldHalt)
+    wasHalted !== verdict.shouldHalt
       ? append(
           // Engine ledger events allow explicit `undefined` on optional fields; the miner append
           // contract uses exactOptionalPropertyTypes (`?: T` without `| undefined`).

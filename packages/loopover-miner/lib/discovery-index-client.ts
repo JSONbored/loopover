@@ -107,7 +107,10 @@ export async function queryDiscoveryIndex(
     if (!response.ok) return EMPTY_QUERY_RESPONSE;
     const payload = await response.json().catch(() => null);
     return normalizeDiscoveryIndexResponse(payload).response;
-  } catch {
+  } catch (error) {
+    // #9329: log before failing open, matching submitSoftClaim's best-effort-network convention; the
+    // EMPTY_QUERY_RESPONSE return type has no slot to surface the error, so a debug line is the only visibility.
+    getLogger().debug("discovery_plane_query_failed", { error: describeCliError(error) });
     return EMPTY_QUERY_RESPONSE;
   }
 }

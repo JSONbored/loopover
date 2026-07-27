@@ -57,11 +57,13 @@ function recordInput(over: Partial<DecisionRecord> = {}): Omit<DecisionRecord, "
     action: "close",
     reasonCode: "ci_readiness",
     configDigest: "c".repeat(64),
+    settingsDigest: "s".repeat(64),
     gatePack: "gittensor",
     ciState: "failed",
-    modelId: null,
+    modelIds: null,
     promptDigest: null,
     aiConfidence: null,
+    divertedByHoldout: false,
     ...over,
   };
 }
@@ -73,14 +75,28 @@ describe("buildDecisionRecord / persistDecisionRecord", () => {
     expect(typeof record.decidedAt).toBe("string");
     expect(recordDigest).toBe(await contentDigest(record));
     // Call sites pass optional-shaped settings fields raw; normalization happens HERE, once.
-    const { record: bare } = await buildDecisionRecord({ ...recordInput(), gatePack: undefined, ciState: undefined, baseSha: undefined, aiConfidence: undefined });
+    const { record: bare } = await buildDecisionRecord({
+      ...recordInput(),
+      gatePack: undefined,
+      ciState: undefined,
+      baseSha: undefined,
+      aiConfidence: undefined,
+      settingsDigest: undefined,
+      divertedByHoldout: undefined,
+    });
     expect(bare.gatePack).toBeNull();
     expect(bare.ciState).toBeNull();
     expect(bare.baseSha).toBeNull();
     expect(bare.aiConfidence).toBeNull();
+    // #9124/#9135: the two newest optional-normalized fields default the same way — null/false, not undefined.
+    expect(bare.settingsDigest).toBeNull();
+    expect(bare.divertedByHoldout).toBe(false);
     // #8834: a stated confidence (including explicit 0) survives normalization.
     const { record: withConf } = await buildDecisionRecord({ ...recordInput(), aiConfidence: 0 });
     expect(withConf.aiConfidence).toBe(0);
+    // #9135: an explicit true is never coerced back to the false default.
+    const { record: diverted } = await buildDecisionRecord({ ...recordInput(), divertedByHoldout: true });
+    expect(diverted.divertedByHoldout).toBe(true);
   });
 
   it("a re-persist at the SAME (repo, pull, head) is a NEW revisioned row, never an overwrite (#9123)", async () => {
@@ -184,7 +200,7 @@ describe("renderDecisionRecordSection", () => {
     // The head sha keeps its conventional 7-char git-abbreviation — a display convention, not a digest.
     expect(body).toContain(`\`${record.headSha.slice(0, 7)}\``);
 
-    const ai = await buildDecisionRecord(recordInput({ modelId: "claude-sonnet-5", promptDigest: "p".repeat(64), aiConfidence: 0.97 }));
+    const ai = await buildDecisionRecord(recordInput({ modelIds: ["claude-sonnet-5"], promptDigest: "p".repeat(64), aiConfidence: 0.97 }));
     const aiBody = renderDecisionRecordSection(ai.record, ai.recordDigest);
     expect(aiBody).toContain("**model**: claude-sonnet-5");
     expect(aiBody).toContain(`\`${"p".repeat(64)}\``);
@@ -192,17 +208,39 @@ describe("renderDecisionRecordSection", () => {
     // Bounded: a record section must stay a small fixed-size block even with three full 64-hex digests inline.
     expect(aiBody.length).toBeLessThan(900);
 
+    // #9124: more than one parsed reviewer joins with "+" — the full set, never a representative one.
+    const dual = await buildDecisionRecord(recordInput({ modelIds: ["claude-code", "codex"], promptDigest: "p".repeat(64), aiConfidence: 0.8 }));
+    expect(renderDecisionRecordSection(dual.record, dual.recordDigest)).toContain("**model**: claude-code+codex");
+
     // Null pack/ci render nothing for those segments; a prompt digest without a model id renders "n/a".
-    const bare = await buildDecisionRecord(recordInput({ gatePack: null, ciState: null, modelId: null, promptDigest: "q".repeat(64) }));
+    const bare = await buildDecisionRecord(recordInput({ gatePack: null, ciState: null, modelIds: null, promptDigest: "q".repeat(64) }));
     const bareBody = renderDecisionRecordSection(bare.record, bare.recordDigest);
     expect(bareBody).not.toContain("**pack**");
     expect(bareBody).not.toContain("**ci**");
     expect(bareBody).toContain("**model**: n/a");
     expect(bareBody).toContain(`\`${"q".repeat(64)}\``);
     // Model id present with NO prompt digest: the model line renders without a prompt segment.
-    const modelOnly = await buildDecisionRecord(recordInput({ modelId: "claude-sonnet-5" }));
+    const modelOnly = await buildDecisionRecord(recordInput({ modelIds: ["claude-sonnet-5"] }));
     expect(renderDecisionRecordSection(modelOnly.record, modelOnly.recordDigest)).toContain("**model**: claude-sonnet-5");
     expect(renderDecisionRecordSection(modelOnly.record, modelOnly.recordDigest)).not.toContain("**prompt**");
+  });
+
+  it("#9135: a diverted-by-holdout decision surfaces the note on the record's own face", async () => {
+    const notDiverted = await buildDecisionRecord(recordInput());
+    expect(renderDecisionRecordSection(notDiverted.record, notDiverted.recordDigest)).not.toContain("**note**");
+    const diverted = await buildDecisionRecord(recordInput({ action: "hold", divertedByHoldout: true }));
+    const body = renderDecisionRecordSection(diverted.record, diverted.recordDigest);
+    expect(body).toContain("**note**");
+    expect(body).toContain("close-audit holdout");
+  });
+
+  it("defends against a genuinely ABSENT (not merely null) field from an older persisted record's JSON", async () => {
+    const { record, recordDigest } = await buildDecisionRecord(recordInput());
+    // Simulate a pre-#9135 stored record.json: divertedByHoldout was never a key at all, not present-as-null.
+    const preExisting = { ...record } as Partial<DecisionRecord>;
+    delete preExisting.divertedByHoldout;
+    const body = renderDecisionRecordSection(preExisting as DecisionRecord, recordDigest);
+    expect(body).not.toContain("**note**"); // degrades to false, same as an explicit false
   });
 });
 

@@ -31,6 +31,7 @@ import { convergedFeatureActive } from "../review/feature-activation";
 import { labelSelfHostReviewerModels, labelSelfHostReviewerNames, resolveConfiguredProviderNames } from "../selfhost/ai-config";
 import { incr } from "../selfhost/metrics";
 import { errorMessage } from "../utils/json";
+import { sha256Hex } from "../utils/crypto";
 import type { ReviewProfile } from "../signals/focus-manifest";
 import { isCodeFile } from "../signals/local-branch";
 import { isTestPath } from "../signals/test-evidence";
@@ -455,6 +456,12 @@ export type LoopOverAiReviewResult =
        *  review's two opinions combine into one. ADVISORY ONLY, never a gate input. */
       valueAssessment: { magnitude: ImprovementMagnitude; rationale: string } | null;
       reviewDiagnostics?: AiReviewDiagnostic[] | undefined;
+      /** #9124: sha256 of the ACTUAL `buildSystemPrompt(promptInput)` output for this call — the base
+       *  template plus whichever suffixes actually resolved (grounding/enrichment/profile/security-focus/
+       *  path-instructions/repo-instructions/screenshot-evidence/inline/category/improvement-signal). Lets a
+       *  caller commit to the real prompt sent instead of the base constant alone (a changed
+       *  `review.instructions` moves this digest). Always present on an "ok" result. */
+      systemPromptDigest: string;
     };
 
 /** A line-anchored review finding the model can emit for quiet inline PR comments (#inline-comments). `line` is
@@ -552,6 +559,15 @@ export function formatReviewDiagnosticsForCapture(
     (diagnostic) =>
       `${diagnostic.model}#${diagnostic.attempt}:${diagnostic.status}${diagnostic.error ? `:${diagnostic.error}` : ""}`,
   );
+}
+
+/** #9124: the distinct model identities that actually PRODUCED a usable opinion (`status: "parsed"`) — the
+ *  reviewer(s) whose output shaped a consensus-defect/split verdict, as opposed to every model attempted
+ *  (which can include a fallback that never fired, or a provider error). Sorted for a stable, order-
+ *  independent commitment. Empty when nothing parsed (an inconclusive/failed run never reaches a finding that
+ *  would read this). */
+export function parsedReviewModelIds(diagnostics: readonly AiReviewDiagnostic[]): string[] {
+  return [...new Set(diagnostics.filter((diagnostic) => diagnostic.status === "parsed").map((diagnostic) => diagnostic.model))].sort();
 }
 
 type ReviewerOpinionOutcome = {
@@ -2595,6 +2611,9 @@ export async function runLoopOverAiReview(
   // reviewers are told to verify claims against the attached CI/files; otherwise this is REVIEW_SYSTEM_PROMPT
   // unchanged (byte-identical). Computed from `promptInput` so it travels with the (possibly defanged) input.
   const system = buildSystemPrompt(promptInput);
+  // #9124: commit to the prompt actually sent, not the base constant — see `systemPromptDigest`'s own doc
+  // comment on `LoopOverAiReviewResult`.
+  const systemPromptDigest = await sha256Hex(system);
   const repoInstructionsSystemAppend = buildRepoInstructionsSystemAppend(promptInput.repoInstructions);
   // The daily neuron budget governs FREE/default-reviewer spend only. BYOK advisory calls bill the maintainer's
   // own provider account, so they are not counted here (and a BYOK advisory still runs when the free
@@ -2948,6 +2967,7 @@ export async function runLoopOverAiReview(
     inlineFindings,
     valueAssessment,
     reviewDiagnostics,
+    systemPromptDigest,
   };
 }
 

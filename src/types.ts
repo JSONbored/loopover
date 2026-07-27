@@ -591,6 +591,18 @@ export type AdvisoryFinding = {
    *  no model confidence); an absent/unparseable reviewer confidence degrades to 1.0 upstream, so omitting it here
    *  behaves exactly like an at-or-above-floor confidence. */
   confidence?: number;
+  /** #9124: the distinct provider/model identities (`AiReviewDiagnostic.model`, deduped + sorted) whose
+   *  diagnostic reached `status: "parsed"` for an `ai_consensus_defect` / `ai_review_split` finding — the
+   *  reviewer(s) that actually produced the opinion the finding reports. Carried on the finding (mirroring
+   *  `confidence` immediately above) so the decision-record call site can thread the real model identity into
+   *  `DecisionRecord.modelIds` instead of hardcoding `null`. Absent for every deterministic finding. */
+  modelIds?: string[];
+  /** #9124: sha256 of the ACTUAL system prompt sent for this AI judgment (`buildSystemPrompt`'s real output —
+   *  base template plus whichever of its up-to-ten suffixes were resolved for this call: grounding,
+   *  enrichment, profile/tone, security-focus, path instructions, `review.instructions`, screenshot evidence,
+   *  inline, category, improvement-signal), NOT a digest of the base constant alone. Two repos with different
+   *  `review.instructions` therefore publish different values here. Absent for every deterministic finding. */
+  promptDigest?: string;
   /** Public-safe screenshot evidence for a `visual_regression_finding` / `visual_unrelated_issue_finding`
    *  (`review.visual.bugAnalysis`) — the SAME shot URLs already rendered in the "Visual preview" collapsible,
    *  carried alongside the finding (not just referenced by route path) so a later consumer — the PR-closed

@@ -98,4 +98,19 @@ verified.
   [#8136](https://github.com/JSONbored/loopover/issues/8136) and
   [#8137](https://github.com/JSONbored/loopover/issues/8137). This walkthrough is honest about
   stopping at the reproducibility line rather than implying the stronger guarantee.
+
+  **Live decision execution is permanently out of scope for attestation, by decision.** The
+  attested-evaluation epic ([#8534](https://github.com/JSONbored/loopover/issues/8534)) attests the
+  *offline* backtest replay only. Attesting the *live* gate-decision path (the merge/close calls
+  that actually act on a PR) was evaluated and declined —
+  [#9141](https://github.com/JSONbored/loopover/issues/9141) — because a network-reachable
+  attestation service in the live request path trades a real availability guarantee for a proof the
+  deterministic rule stage already gives more cheaply through replay
+  ([#8832](https://github.com/JSONbored/loopover/issues/8832),
+  [#8838](https://github.com/JSONbored/loopover/issues/8838)), and because attestation proves
+  *computation*, not the decision record's own honesty — the actual gap a skeptical verifier cares
+  about, closed instead by an externally anchored, complete, replayable decision record. What "not
+  proved" above means in practice: every live decision's provenance rests on the decision-record +
+  replay + ledger-anchoring trust surface, never on attested execution — and that is not a temporary
+  gap awaiting hardware, it is the standing design.
 </Callout>

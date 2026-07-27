@@ -3,6 +3,16 @@ export async function sha256Hex(input: string): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+/** HMAC-SHA256 `value` with `secret`, returned as lowercase hex. Web Crypto (worker + node) — the same
+ *  primitive `src/orb/relay.ts`'s `relaySignature` and `verifyGitHubSignature` below each inline their own
+ *  copy of; a generic export here is for a NEW single-purpose HMAC (e.g. the close-audit holdout draw,
+ *  #9135) that has no reason to take on either of those modules' unrelated concerns. */
+export async function hmacHex(secret: string, value: string): Promise<string> {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value));
+  return [...new Uint8Array(signature)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 export async function verifyGitHubSignature(rawBody: string, signatureHeader: string | null, secret: string | undefined): Promise<boolean> {
   if (!signatureHeader?.startsWith("sha256=")) return false;
   if (!secret) return false;

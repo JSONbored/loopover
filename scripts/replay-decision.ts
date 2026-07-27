@@ -7,7 +7,14 @@
 //
 // The bundle is one JSON object: { record: {...decision_records row}, replayInput: {...replay_json} }.
 // EXTRACT (operator, against the instance DB):
-//   SELECT json_build_object('record', to_jsonb(dr), 'replayInput', dri.replay_json::jsonb)
+//   SELECT json_build_object(
+//            -- #9135: `|| dr.record_json::jsonb` overlays every field the PUBLIC record carries (including
+//            -- camelCase fields that live only inside record_json, e.g. `divertedByHoldout`) on top of the
+//            -- raw snake_case row columns, so a field added to the record schema needs no matching change
+//            -- here to reach the CLI.
+//            'record', to_jsonb(dr) || dr.record_json::jsonb,
+//            'replayInput', dri.replay_json::jsonb
+//          )
 //     FROM decision_records dr JOIN decision_replay_inputs dri ON dri.record_id = dr.id
 //    WHERE dr.id = 'record:<owner/repo>#<pr>@<head sha>';
 //
@@ -33,6 +40,8 @@ export function runReplayBundle(raw: string): { outcome: ReturnType<typeof repla
           id: rawRecord.id,
           reasonCode: String(rawRecord.reasonCode ?? rawRecord.reason_code ?? ""),
           action: String(rawRecord.action ?? ""),
+          // #9135: absent for a pre-#9135 record — normalizes to false, matching DecisionRecord's own default.
+          divertedByHoldout: Boolean(rawRecord.divertedByHoldout ?? rawRecord.diverted_by_holdout ?? false),
         }
       : null;
   if (!record || !replayInput || !Array.isArray(replayInput.findings) || typeof replayInput.evaluated !== "object") {

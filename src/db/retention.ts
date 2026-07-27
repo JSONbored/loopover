@@ -192,9 +192,9 @@ export type SignalSnapshotDedupeResult = { signalType: string; deleted: number }
 
 /** Exported so the D1 size/row-count observability probe (#3810, src/selfhost/d1-size-probe.ts) can scope its
  *  signal_snapshots "rows per dedup key" ratio to exactly the population this dedup job converges to ~1 row
- *  per key -- NOT the whole table, which intentionally keeps bounded multi-row history for other signal
- *  types (queue-health, contributor-decision-pack, ...). Single source of truth: if this list changes, the
- *  probe's ratio scope changes with it automatically. */
+ *  per key -- NOT the whole table, which intentionally keeps bounded multi-row history for the one signal
+ *  type genuinely read as a trend/change series (queue-health). Single source of truth: if this list
+ *  changes, the probe's ratio scope changes with it automatically. */
 export const LATEST_ONLY_SIGNAL_SNAPSHOT_TYPES = [
   "repo-culture-profile",
   "repo-doc-refresh-attempt",
@@ -205,12 +205,25 @@ export const LATEST_ONLY_SIGNAL_SNAPSHOT_TYPES = [
   // weeks at current review volume, refilling D1's 10GB cap before the 90-day age window could ever
   // engage. No reader consumes them as a series (the canonical latest lives in the dedicated
   // contributor_evidence / contributor_scoring_profiles upsert tables; nothing calls
-  // listSignalSnapshots for contributor-* types), so latest-only is lossless for every actual consumer.
-  // contributor-decision-pack stays EXCLUDED: the retention doc above records it as a bounded
-  // trend/change series by design, and its volume is a fraction of these three.
+  // listSignalSnapshots for contributor-* types other than contributor-decision-pack, which itself only
+  // ever reads index [0] — see below), so latest-only is lossless for every actual consumer.
   "contributor-evidence-graph",
   "contributor-outcome-history",
   "contributor-strategy",
+  // #9435/#9459: 2026-07-27 recurrence, and the single largest signal_snapshots offender measured to
+  // date -- 6.3 GB across 18,549 rows (~350 KB/row; the profile/outcome-history/registry-activity payload
+  // each build embeds), 71% of the entire hosted D1's file size, still ENTIRELY inside the 90-day age
+  // window (the database itself is only ~65 days old, so age-based pruning had not touched a single one of
+  // these rows) and accumulating ~700-1,300 rows/day since 2026-07-06 -- refilling the 10GB cap from empty
+  // in roughly 3-4 weeks even with the #9415 fixes applied, since those addressed five OTHER tables
+  // totaling well under 1 GB combined. This entry was previously excluded by a doc comment claiming
+  // decision-pack is "a bounded trend/change series by design" with volume "a fraction of" the three
+  // contributor-* types above -- both claims were wrong: `src/services/decision-pack.ts`'s only reader
+  // (`buildContributorDecisionPack`) calls `listSignalSnapshots(...)[0]`, exactly the same latest-only
+  // contract as its neighbors, and its measured volume is ~750x theirs, not a fraction. queue-health is
+  // the one signal type that genuinely IS read as a series (src/services/maintainer-slop-duplicate-trend.ts
+  // shapes multiple weeks of queue-health snapshots into a trend card) and correctly stays excluded here.
+  "contributor-decision-pack",
   // #8900: these eight writers also INSERT a fresh row every run (persistSignalSnapshot is not an
   // upsert) while every consumer reads only index [0] / the latest row — same latest-only contract as
   // the repo-* and contributor-intelligence types above. queue-health stays EXCLUDED (feeds
@@ -230,8 +243,8 @@ export const LATEST_ONLY_SIGNAL_SNAPSHOT_TYPES = [
  * target_key) on every run rather than replacing the prior one, so within RETENTION_POLICY's 90-day
  * age window a key can accumulate hundreds of superseded snapshots (#3810 -- 342,243 rows for 2,183
  * distinct keys contributed to hitting D1's size cap). Only latest-only cache signal types are
- * deduped; historical series such as queue-health and contributor-decision-pack keep their bounded
- * RETENTION_POLICY history for trend/change readers. This keeps only the latest row per
+ * deduped; the one genuine historical series (queue-health) keeps its bounded RETENTION_POLICY history
+ * for its trend/change reader. This keeps only the latest row per
  * (signal_type, target_key), batched PER signal_type (not one table-wide window-function delete) so
  * each statement stays within D1's per-statement CPU budget -- the same batching split used during
  * the incident's manual remediation. "Latest" is the highest rowid per key: signal_snapshots is

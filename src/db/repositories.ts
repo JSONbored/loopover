@@ -365,6 +365,11 @@ export async function upsertPullRequestFromGitHub(
       mergedAt: pullRequests.mergedAt,
       githubUpdatedAt: pullRequests.githubUpdatedAt,
       labelsJson: pullRequests.labelsJson,
+      // #9057: also read the columns a stale payload could revert (see resolvedTitle/baseRef/etc. below).
+      title: pullRequests.title,
+      baseRef: pullRequests.baseRef,
+      headRef: pullRequests.headRef,
+      authorAssociation: pullRequests.authorAssociation,
     })
     .from(pullRequests)
     .where(and(eq(pullRequests.repoFullName, repoFullName), eq(pullRequests.number, pr.number)))
@@ -407,8 +412,33 @@ export async function upsertPullRequestFromGitHub(
   // disposition label (pending-closure, manual-review) even while state/headSha stayed correctly protected —
   // breaking the flag-then-close two-pass machine, whose Pass 2 keys on the label's presence.
   const resolvedLabelsJson = isStalePayload ? existingClaimRow!.labelsJson : jsonString(record.labels);
+  // #9057: the out-of-order guard protected only state/headSha/mergedAt/githubUpdatedAt/labels. Every OTHER
+  // column was written unconditionally from a possibly-stale payload — including the ones the linked-issue
+  // gate reads, which is a hard blocker and a close reason.
+  //
+  // Sequence: a contributor pushes (`synchronize`, updated_at=T1), then edits the body to add "Fixes #123"
+  // (`edited`, updated_at=T2). GitHub does not guarantee delivery order, and once heads diverge the two jobs
+  // have different coalesce keys, so `synchronize` can be dequeued AFTER `edited`. The guard correctly
+  // preserved state/headSha/labels — and then reverted `body` and `linkedIssuesJson` to the pre-edit
+  // snapshot. `synchronize` is itself in PR_PUBLIC_SURFACE_ACTIONS, so the same pass re-ran the gate against
+  // the reverted body: a wrong autonomous close for "No linked issue detected" on a PR that has one. That
+  // close reason appears in the live ledger.
+  //
+  // These columns are now protected on exactly the same condition. `payloadJson` carries `body`, which feeds
+  // the AI-review prompt, the screenshot gate, and linked-issue extraction; `baseRef` feeds required contexts,
+  // migration-collision detection, and the CI aggregate key; `title` feeds the PR-type label and the AI-review
+  // cache key.
+  const resolvedTitle = isStalePayload ? existingClaimRow!.title : pr.title;
+  const resolvedBaseRef = isStalePayload ? (existingClaimRow!.baseRef ?? undefined) : pr.base?.ref;
+  const resolvedHeadRef = isStalePayload ? (existingClaimRow!.headRef ?? undefined) : pr.head?.ref;
+  const resolvedAuthorAssociation = isStalePayload ? (existingClaimRow!.authorAssociation ?? undefined) : pr.author_association;
   const lastSeenOpenAt = resolvedState === "open" ? (options.seenOpenAt ?? syncedAt) : null;
-  const preserveSparseBody = pr.body === undefined && existingClaimRow !== undefined;
+  // #9057: a STALE payload's body must be preserved for exactly the same reason a SPARSE one's is — in both
+  // cases the incoming body is not the current truth, and re-deriving linked issues from it reverts a
+  // just-added "Fixes #123" and can drive a wrong "No linked issue detected" close on the very next gate pass.
+  // Folding it into this one flag keeps the body, payloadJson, linkedIssuesJson and linkedIssueClaimedAt
+  // derivations below consistent by construction rather than needing four parallel stale-branches.
+  const preserveSparseBody = (pr.body === undefined || isStalePayload) && existingClaimRow !== undefined;
   const existingPayload = preserveSparseBody ? parseJson<{ body?: string | null }>(existingClaimRow.payloadJson, {}) : undefined;
   const existingBody = existingPayload?.body ?? null;
   const body = preserveSparseBody ? existingBody : record.body;
@@ -449,13 +479,13 @@ export async function upsertPullRequestFromGitHub(
       id: `${repoFullName}#${pr.number}`,
       repoFullName,
       number: pr.number,
-      title: pr.title,
+      title: resolvedTitle,
       state: resolvedState,
       authorLogin: pr.user?.login,
-      authorAssociation: pr.author_association,
+      authorAssociation: resolvedAuthorAssociation,
       headSha: resolvedHeadSha,
-      headRef: pr.head?.ref,
-      baseRef: pr.base?.ref,
+      headRef: resolvedHeadRef,
+      baseRef: resolvedBaseRef,
       mergedAt: resolvedMergedAt,
       htmlUrl: pr.html_url,
       labelsJson: resolvedLabelsJson,
@@ -476,13 +506,15 @@ export async function upsertPullRequestFromGitHub(
     .onConflictDoUpdate({
       target: [pullRequests.repoFullName, pullRequests.number],
       set: {
-        title: pr.title,
+        // #9057: the UPDATE path is the one that actually runs for an existing row, so the stale-payload
+        // protections must be applied here too — not only in the INSERT values above.
+        title: resolvedTitle,
         state: resolvedState,
         authorLogin: pr.user?.login,
-        authorAssociation: pr.author_association,
+        authorAssociation: resolvedAuthorAssociation,
         headSha: resolvedHeadSha,
-        headRef: pr.head?.ref,
-        baseRef: pr.base?.ref,
+        headRef: resolvedHeadRef,
+        baseRef: resolvedBaseRef,
         mergedAt: resolvedMergedAt,
         htmlUrl: pr.html_url,
         labelsJson: resolvedLabelsJson,
@@ -496,7 +528,9 @@ export async function upsertPullRequestFromGitHub(
         updatedAt: syncedAt,
       },
     });
-  return { ...record, state: resolvedState, headSha: resolvedHeadSha, mergedAt: resolvedMergedAt ?? null, labels: parseJson<string[]>(resolvedLabelsJson, []), body, linkedIssues, linkedIssueClaimedAt, bodyObservedAt, headShaObservedAt };
+  // #9057: the returned record must describe what was PERSISTED, not the stale incoming payload — every caller
+  // (handlePullRequestWebhookEvent's own closed-check, the gate pass that follows) acts on this in-process.
+  return { ...record, title: resolvedTitle, authorAssociation: resolvedAuthorAssociation ?? null, state: resolvedState, headSha: resolvedHeadSha, headRef: resolvedHeadRef ?? null, baseRef: resolvedBaseRef ?? null, mergedAt: resolvedMergedAt ?? null, labels: parseJson<string[]>(resolvedLabelsJson, []), body, linkedIssues, linkedIssueClaimedAt, bodyObservedAt, headShaObservedAt };
 }
 
 function resolveLinkedIssueClaimedAt(

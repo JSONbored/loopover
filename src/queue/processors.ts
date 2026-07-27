@@ -4874,10 +4874,12 @@ async function maybeReReviewOnCiCompletion(
 
 /**
  * Invalidate the durable CI-state cache on a legacy `status`/`workflow_run` event (#selfhost-ci-verification gate
- * review finding). These two event types are NOT wired to re-review triggering (see maybeReReviewOnCiCompletion's
- * own doc comment) -- that stays out of scope here -- but leaving the cache itself untouched meant a real legacy
+ * review finding), and (#9059) wake the affected PRs. Leaving the cache untouched meant a real legacy
  * status/workflow_run transition could leave prReadyForReview reading a stale, pre-transition CI aggregate for up
- * to the full cache TTL. Deliberately narrower than maybeReReviewOnCiCompletion: only resolves PR numbers via the
+ * to the full cache TTL; invalidating WITHOUT re-reviewing (the prior behavior) merely moved the stall, since the
+ * PR then waited on the ~2-minute sweep, which backpressure can skip. `codecov/patch` arrives as a commit
+ * STATUS and is the gate's hardest required check, so a repo whose last green signal is a status previously got
+ * no webhook wake at all. Deliberately narrower than maybeReReviewOnCiCompletion: only resolves PR numbers via the
  * fast stored-DB head-SHA lookup (no live GitHub fork-fallback call) -- a cache entry only exists for a PR this
  * process already tracks, so there is nothing to invalidate for an untracked/fork PR the DB lookup misses.
  */
@@ -4909,6 +4911,13 @@ async function maybeInvalidateCiCacheOnLegacyCiEvent(
       for (const pr of open) {
         if (pr.headSha !== headSha) continue;
         await invalidateCiStateCache(env, repoFullName, pr.number).catch(() => undefined);
+        // #9059: invalidating the cache without waking a re-review left the PR waiting for the ~2-minute
+        // sweep -- which is itself skipped under REST-budget backpressure. That matters specifically because
+        // `codecov/patch` is a COMMIT STATUS, and it is the gate's hardest required check: a repo whose last
+        // green signal arrives as a status got no webhook wake at all, so the gate looked hung. Same coalesce
+        // guard and same call as the check_run/check_suite completion path, so a status storm cannot amplify.
+        if (await ciReReviewCoalesced(env, repoFullName, pr.number)) continue;
+        await reReviewStoredPullRequest(env, deliveryId, installationId, repoFullName, pr.number).catch(() => undefined);
       }
     }
   }
@@ -5898,6 +5907,35 @@ async function maybeHandleForeignAppInstallationWebhookEvent(
 }
 
 /**
+ * #9056: resolve the PREVIOUS full name for a `repository.renamed` or `repository.transferred` delivery, or
+ * undefined when it cannot be determined (in which case the caller must do nothing rather than migrate toward
+ * a guessed identity). A rename changes the NAME under the same owner; a transfer changes the OWNER and keeps
+ * the name, carrying the old one in `changes.owner.from.{organization,user}.login`.
+ *
+ * Pure and exported so every shape — including the ones the live pipeline cannot reach, because the repository
+ * upsert running alongside this handler requires a full_name and would fail first — is directly testable.
+ * Returns undefined for a same-name result so an idempotent redelivery is a no-op.
+ */
+export function resolveRepositoryIdentityPredecessor(
+  action: string | undefined,
+  newFullName: string | undefined,
+  changes: GitHubWebhookPayload["changes"],
+): string | undefined {
+  if (!newFullName) return undefined;
+  const { owner: currentOwner, name: currentName } = repoParts(newFullName);
+  const oldFullName =
+    action === "transferred"
+      ? ((): string | undefined => {
+          const previousOwner = changes?.owner?.from?.organization?.login ?? changes?.owner?.from?.user?.login;
+          return previousOwner ? `${previousOwner}/${currentName}` : undefined;
+        })()
+      : changes?.repository?.name?.from
+        ? `${currentOwner}/${changes.repository.name.from}`
+        : undefined;
+  return oldFullName && oldFullName !== newFullName ? oldFullName : undefined;
+}
+
+/**
  * Handles a `repository` webhook with `action: "renamed"`: migrates the repo's identity forward across
  * every structural repo-identity column (see repo-identity-rename.ts) BEFORE the caller's normal
  * upsertRepositoryFromGitHub(payload.repository) runs, so that upsert correctly UPDATEs the now-renamed
@@ -5910,16 +5948,21 @@ async function maybeHandleRepositoryRenamedWebhookEvent(
   eventName: string,
   payload: GitHubWebhookPayload,
 ): Promise<void> {
-  if (eventName !== "repository" || payload.action !== "renamed") return;
-  const oldName = payload.changes?.repository?.name?.from;
+  // #9056: `transferred` was never handled even though it is already in WEBHOOK_METRIC_ACTIONS, so the case
+  // was anticipated and simply never implemented. On a transfer GitHub sends `repository.transferred` carrying
+  // `changes.owner.from`, then ordinary events under the NEW full_name — and since `repositories` is keyed by
+  // full_name with no github_id, upsertRepositoryFromGitHub just INSERTs a fresh row. Every table
+  // renameRepositoryIdentity migrates is then orphaned, including repository_settings: autonomy and gate
+  // config silently revert to defaults while the repo keeps operating, and staged maintainer approvals in
+  // agent_pending_actions are lost. Calibration/reversal joins on `project` split across two names, and
+  // nothing ever heals it.
+  if (eventName !== "repository" || (payload.action !== "renamed" && payload.action !== "transferred")) return;
   const newFullName = payload.repository?.full_name;
-  if (!oldName || !newFullName) return;
-  const owner = payload.repository?.owner?.login ?? repoParts(newFullName).owner;
-  const oldFullName = `${owner}/${oldName}`;
-  if (oldFullName === newFullName) return;
+  const oldFullName = resolveRepositoryIdentityPredecessor(payload.action, newFullName, payload.changes);
+  if (!oldFullName || !newFullName) return;
   await renameRepositoryIdentity(env, oldFullName, newFullName);
   await recordAuditEvent(env, {
-    eventType: "github_app.repository_renamed",
+    eventType: payload.action === "transferred" ? "github_app.repository_transferred" : "github_app.repository_renamed",
     actor: "loopover",
     targetKey: newFullName,
     outcome: "completed",

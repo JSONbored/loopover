@@ -3251,6 +3251,11 @@ describe("queue processors", () => {
         await processJob(env, { type: "agent-regate-pr", deliveryId: "legacy-ci-cache-seed", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
         expect(await getPullRequestDetailSyncState(env, "owner/agent-repo", 7)).toMatchObject({ ciState: "passed" });
 
+        // #9059: the same delivery now also WAKES a re-review, whose own aggregate read would immediately
+        // repopulate the row -- racing this assertion. Pre-claim the ci-coalesce window so this delivery's
+        // re-review is skipped, leaving the invalidation itself directly observable. (Same technique the
+        // check_run invalidation test one describe over already uses, for the same reason.)
+        await env.SELFHOST_TRANSIENT_CACHE?.set("ci-coalesce:owner/agent-repo#7", "1", 60);
         await processJob(env, {
           type: "github-webhook",
           deliveryId: `${eventName}-event`,
@@ -3260,6 +3265,50 @@ describe("queue processors", () => {
 
         // Invalidated -- ciState is cleared to null, not left at the stale pre-transition "passed".
         expect(await getPullRequestDetailSyncState(env, "owner/agent-repo", 7)).toMatchObject({ ciState: null, ciStateFetchedAt: null });
+      } finally {
+        liveCiSpy.mockRestore();
+        requiredContextsSpy.mockRestore();
+      }
+    });
+
+    // #9059: invalidating the cache without waking a re-review just moved the stall — the PR then waited on the
+    // ~2-minute sweep, which REST-budget backpressure can skip entirely. That matters specifically because
+    // `codecov/patch` arrives as a commit STATUS and is the gate's hardest required check, so a repo whose last
+    // green signal is a status got no webhook wake at all and the gate looked hung.
+    it("#9059: a settled status event also WAKES a re-review for the matching PR (not just cache invalidation)", async () => {
+      const { env } = await seedRepoAndPr("a7");
+      const requiredContextsSpy = vi.spyOn(backfillModule, "fetchRequiredStatusContexts").mockResolvedValue(null);
+      const liveCiSpy = vi.spyOn(backfillModule, "fetchLiveCiAggregatePreferGraphQl").mockResolvedValue({
+        ciState: "passed",
+        hasPending: false,
+        hasVisiblePending: false,
+        hasMissingRequiredContext: false,
+        failingDetails: [],
+        nonRequiredFailingDetails: [],
+        advisoryHoldDetails: [],
+        ciCompletenessWarning: null,
+      });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (url === "https://api.gittensor.io/miners") return Response.json([]);
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (/\/pulls\/7(?:\?|$)/.test(url) && method === "GET") return Response.json({ number: 7, title: "Cross-job CI cache", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, mergeable_state: "clean", labels: [], body: "Closes #1" });
+        if (url.includes("/pulls/7/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+        return Response.json({});
+      });
+
+      try {
+        // No coalesce pre-claim this time, so the wake is allowed to run. A re-review repopulates the durable
+        // row it just invalidated — which is exactly the observable proof that the wake happened.
+        await processJob(env, {
+          type: "github-webhook",
+          deliveryId: "status-wakes-rereview",
+          eventName: "status",
+          payload: { sha: "a7", state: "success", repository: { name: "agent-repo", full_name: "owner/agent-repo", owner: { login: "owner" } }, installation: { id: 9001 } },
+        } as never);
+
+        expect(await getPullRequestDetailSyncState(env, "owner/agent-repo", 7)).toMatchObject({ ciState: "passed" });
       } finally {
         liveCiSpy.mockRestore();
         requiredContextsSpy.mockRestore();

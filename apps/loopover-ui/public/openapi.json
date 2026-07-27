@@ -14189,6 +14189,462 @@
           "shadowPending"
         ]
       },
+      "EligibilityPlanResponse": {
+        "type": "object",
+        "properties": {
+          "eligible": {
+            "type": "boolean"
+          },
+          "linkedIssueStatus": {
+            "type": "string"
+          },
+          "branchEligibilityStatus": {
+            "type": "string"
+          },
+          "blockers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cleanupPaths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "linkedIssueProjection": {
+            "type": "string",
+            "nullable": true
+          },
+          "publicSummary": {
+            "type": "string"
+          }
+        }
+      },
+      "ScoreBreakdownResponse": {
+        "type": "object",
+        "properties": {
+          "repoFullName": {
+            "type": "string"
+          },
+          "scoreabilityStatus": {
+            "type": "string"
+          },
+          "effectiveEstimatedScore": {
+            "type": "number"
+          },
+          "components": {
+            "nullable": true
+          },
+          "gateHighlights": {
+            "nullable": true
+          },
+          "highestLeverageLever": {
+            "nullable": true
+          }
+        }
+      },
+      "EvaluateEscalationRequest": {
+        "type": "object",
+        "properties": {
+          "runStatus": {
+            "type": "string",
+            "enum": [
+              "running",
+              "converged",
+              "abandoned",
+              "error"
+            ]
+          },
+          "healthStatus": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "degraded",
+              "critical"
+            ]
+          },
+          "customerFlagged": {
+            "type": "boolean"
+          },
+          "killRequested": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "runStatus"
+        ]
+      },
+      "EvaluateEscalationResponse": {
+        "type": "object",
+        "properties": {
+          "shouldEscalate": {
+            "type": "boolean"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "none",
+              "notify",
+              "human_review",
+              "stop"
+            ]
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "none",
+              "low",
+              "medium",
+              "high"
+            ]
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "BuildResultsPayloadRequest": {
+        "type": "object",
+        "properties": {
+          "repoFullName": {
+            "type": "string",
+            "minLength": 1
+          },
+          "prNumber": {
+            "type": "integer",
+            "nullable": true
+          },
+          "title": {
+            "type": "string"
+          },
+          "changedFiles": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "additions": {
+                  "type": "integer"
+                },
+                "deletions": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "path"
+              ]
+            },
+            "maxItems": 5000
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "merged",
+              "closed"
+            ]
+          }
+        },
+        "required": [
+          "repoFullName",
+          "title"
+        ]
+      },
+      "BuildResultsPayloadResponse": {
+        "type": "object",
+        "properties": {
+          "prLink": {
+            "type": "string",
+            "nullable": true
+          },
+          "summary": {
+            "type": "string"
+          },
+          "diffPreview": {
+            "nullable": true
+          },
+          "totals": {
+            "nullable": true
+          }
+        }
+      },
+      "BuildProgressSnapshotRequest": {
+        "type": "object",
+        "properties": {
+          "iteration": {
+            "type": "integer"
+          },
+          "maxIterations": {
+            "type": "integer",
+            "nullable": true
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "claiming",
+              "coding",
+              "reviewing",
+              "submitting",
+              "done"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "converged",
+              "abandoned",
+              "error"
+            ]
+          },
+          "recentActivity": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "step": {
+                  "type": "string"
+                },
+                "detail": {
+                  "type": "string"
+                },
+                "at": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "step"
+              ]
+            },
+            "maxItems": 1000
+          }
+        },
+        "required": [
+          "iteration",
+          "phase",
+          "status"
+        ]
+      },
+      "BuildProgressSnapshotResponse": {
+        "type": "object",
+        "properties": {
+          "phase": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "iteration": {
+            "type": "number"
+          },
+          "maxIterations": {
+            "type": "number",
+            "nullable": true
+          },
+          "percentComplete": {
+            "type": "number",
+            "nullable": true
+          },
+          "recentActivity": {
+            "nullable": true
+          },
+          "done": {
+            "type": "boolean"
+          }
+        }
+      },
+      "IntakeIdeaRequest": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "targetRepo": {
+            "type": "string"
+          },
+          "constraints": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50
+          },
+          "acceptanceHints": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50
+          },
+          "priority": {
+            "type": "string"
+          },
+          "decomposition": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "body": {
+                  "type": "string"
+                },
+                "dependsOn": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "maxItems": 50
+                }
+              },
+              "required": [
+                "key",
+                "title",
+                "body"
+              ]
+            },
+            "maxItems": 50
+          }
+        }
+      },
+      "IntakeIdeaResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "go",
+              "raise",
+              "avoid"
+            ]
+          },
+          "taskGraph": {
+            "nullable": true
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "ok"
+        ]
+      },
+      "PlanIdeaClaimsRequest": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "targetRepo": {
+            "type": "string"
+          },
+          "constraints": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50
+          },
+          "acceptanceHints": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50
+          },
+          "priority": {
+            "type": "string"
+          },
+          "decomposition": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "body": {
+                  "type": "string"
+                },
+                "dependsOn": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "maxItems": 50
+                }
+              },
+              "required": [
+                "key",
+                "title",
+                "body"
+              ]
+            },
+            "maxItems": 50
+          }
+        }
+      },
+      "PlanIdeaClaimsResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "go",
+              "raise",
+              "avoid"
+            ]
+          },
+          "claimPlan": {
+            "nullable": true
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "ok"
+        ]
+      },
       "LiveGateThresholdsResponse": {
         "type": "object",
         "properties": {
@@ -14592,6 +15048,108 @@
           "humanCohort"
         ]
       },
+      "GatePrecisionResponse": {
+        "type": "object",
+        "properties": {
+          "repoFullName": {
+            "type": "string"
+          },
+          "generatedAt": {
+            "type": "string"
+          },
+          "windowDays": {
+            "type": "number",
+            "nullable": true
+          },
+          "perGateType": {
+            "type": "array",
+            "items": {
+              "nullable": true
+            }
+          },
+          "overall": {
+            "nullable": true
+          },
+          "signals": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "OutcomeCalibrationResponse": {
+        "type": "object",
+        "properties": {
+          "repoFullName": {
+            "type": "string"
+          },
+          "generatedAt": {
+            "type": "string"
+          },
+          "windowDays": {
+            "type": "number",
+            "nullable": true
+          },
+          "slop": {
+            "nullable": true
+          },
+          "recommendations": {
+            "nullable": true
+          },
+          "signals": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "ActivationPreviewResponse": {
+        "type": "object",
+        "properties": {
+          "repoFullName": {
+            "type": "string"
+          },
+          "generatedAt": {
+            "type": "string"
+          },
+          "currentReviewCheckMode": {
+            "type": "string"
+          },
+          "aiReviewConfigured": {
+            "type": "boolean"
+          },
+          "evaluatedCount": {
+            "type": "number"
+          },
+          "withFindingsCount": {
+            "type": "number"
+          },
+          "findingCodeCounts": {
+            "type": "array",
+            "items": {
+              "nullable": true
+            }
+          },
+          "samples": {
+            "type": "array",
+            "items": {
+              "nullable": true
+            }
+          },
+          "recommendedAction": {
+            "type": "string",
+            "nullable": true
+          },
+          "summary": {
+            "type": "string"
+          }
+        }
+      },
       "PullRequestReviewability": {
         "type": "object",
         "properties": {
@@ -14930,462 +15488,6 @@
           "login",
           "marked"
         ]
-      },
-      "EvaluateEscalationRequest": {
-        "type": "object",
-        "properties": {
-          "runStatus": {
-            "type": "string",
-            "enum": [
-              "running",
-              "converged",
-              "abandoned",
-              "error"
-            ]
-          },
-          "healthStatus": {
-            "type": "string",
-            "enum": [
-              "healthy",
-              "degraded",
-              "critical"
-            ]
-          },
-          "customerFlagged": {
-            "type": "boolean"
-          },
-          "killRequested": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "runStatus"
-        ]
-      },
-      "EvaluateEscalationResponse": {
-        "type": "object",
-        "properties": {
-          "shouldEscalate": {
-            "type": "boolean"
-          },
-          "action": {
-            "type": "string",
-            "enum": [
-              "none",
-              "notify",
-              "human_review",
-              "stop"
-            ]
-          },
-          "severity": {
-            "type": "string",
-            "enum": [
-              "none",
-              "low",
-              "medium",
-              "high"
-            ]
-          },
-          "reasons": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        }
-      },
-      "BuildResultsPayloadRequest": {
-        "type": "object",
-        "properties": {
-          "repoFullName": {
-            "type": "string",
-            "minLength": 1
-          },
-          "prNumber": {
-            "type": "integer",
-            "nullable": true
-          },
-          "title": {
-            "type": "string"
-          },
-          "changedFiles": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "path": {
-                  "type": "string"
-                },
-                "additions": {
-                  "type": "integer"
-                },
-                "deletions": {
-                  "type": "integer"
-                }
-              },
-              "required": [
-                "path"
-              ]
-            },
-            "maxItems": 5000
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "open",
-              "merged",
-              "closed"
-            ]
-          }
-        },
-        "required": [
-          "repoFullName",
-          "title"
-        ]
-      },
-      "BuildResultsPayloadResponse": {
-        "type": "object",
-        "properties": {
-          "prLink": {
-            "type": "string",
-            "nullable": true
-          },
-          "summary": {
-            "type": "string"
-          },
-          "diffPreview": {
-            "nullable": true
-          },
-          "totals": {
-            "nullable": true
-          }
-        }
-      },
-      "BuildProgressSnapshotRequest": {
-        "type": "object",
-        "properties": {
-          "iteration": {
-            "type": "integer"
-          },
-          "maxIterations": {
-            "type": "integer",
-            "nullable": true
-          },
-          "phase": {
-            "type": "string",
-            "enum": [
-              "queued",
-              "claiming",
-              "coding",
-              "reviewing",
-              "submitting",
-              "done"
-            ]
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "running",
-              "converged",
-              "abandoned",
-              "error"
-            ]
-          },
-          "recentActivity": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "step": {
-                  "type": "string"
-                },
-                "detail": {
-                  "type": "string"
-                },
-                "at": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "step"
-              ]
-            },
-            "maxItems": 1000
-          }
-        },
-        "required": [
-          "iteration",
-          "phase",
-          "status"
-        ]
-      },
-      "BuildProgressSnapshotResponse": {
-        "type": "object",
-        "properties": {
-          "phase": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string"
-          },
-          "iteration": {
-            "type": "number"
-          },
-          "maxIterations": {
-            "type": "number",
-            "nullable": true
-          },
-          "percentComplete": {
-            "type": "number",
-            "nullable": true
-          },
-          "recentActivity": {
-            "nullable": true
-          },
-          "done": {
-            "type": "boolean"
-          }
-        }
-      },
-      "IntakeIdeaRequest": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          },
-          "body": {
-            "type": "string"
-          },
-          "targetRepo": {
-            "type": "string"
-          },
-          "constraints": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "maxItems": 50
-          },
-          "acceptanceHints": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "maxItems": 50
-          },
-          "priority": {
-            "type": "string"
-          },
-          "decomposition": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "key": {
-                  "type": "string"
-                },
-                "title": {
-                  "type": "string"
-                },
-                "body": {
-                  "type": "string"
-                },
-                "dependsOn": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  },
-                  "maxItems": 50
-                }
-              },
-              "required": [
-                "key",
-                "title",
-                "body"
-              ]
-            },
-            "maxItems": 50
-          }
-        }
-      },
-      "IntakeIdeaResponse": {
-        "type": "object",
-        "properties": {
-          "ok": {
-            "type": "boolean"
-          },
-          "verdict": {
-            "type": "string",
-            "enum": [
-              "go",
-              "raise",
-              "avoid"
-            ]
-          },
-          "taskGraph": {
-            "nullable": true
-          },
-          "errors": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        },
-        "required": [
-          "ok"
-        ]
-      },
-      "PlanIdeaClaimsRequest": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          },
-          "body": {
-            "type": "string"
-          },
-          "targetRepo": {
-            "type": "string"
-          },
-          "constraints": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "maxItems": 50
-          },
-          "acceptanceHints": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "maxItems": 50
-          },
-          "priority": {
-            "type": "string"
-          },
-          "decomposition": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "key": {
-                  "type": "string"
-                },
-                "title": {
-                  "type": "string"
-                },
-                "body": {
-                  "type": "string"
-                },
-                "dependsOn": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  },
-                  "maxItems": 50
-                }
-              },
-              "required": [
-                "key",
-                "title",
-                "body"
-              ]
-            },
-            "maxItems": 50
-          }
-        }
-      },
-      "PlanIdeaClaimsResponse": {
-        "type": "object",
-        "properties": {
-          "ok": {
-            "type": "boolean"
-          },
-          "verdict": {
-            "type": "string",
-            "enum": [
-              "go",
-              "raise",
-              "avoid"
-            ]
-          },
-          "claimPlan": {
-            "nullable": true
-          },
-          "errors": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        },
-        "required": [
-          "ok"
-        ]
-      },
-      "EligibilityPlanResponse": {
-        "type": "object",
-        "properties": {
-          "eligible": {
-            "type": "boolean"
-          },
-          "linkedIssueStatus": {
-            "type": "string"
-          },
-          "branchEligibilityStatus": {
-            "type": "string"
-          },
-          "blockers": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "cleanupPaths": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "linkedIssueProjection": {
-            "type": "string",
-            "nullable": true
-          },
-          "publicSummary": {
-            "type": "string"
-          }
-        }
-      },
-      "ScoreBreakdownResponse": {
-        "type": "object",
-        "properties": {
-          "repoFullName": {
-            "type": "string"
-          },
-          "scoreabilityStatus": {
-            "type": "string"
-          },
-          "effectiveEstimatedScore": {
-            "type": "number"
-          },
-          "components": {
-            "nullable": true
-          },
-          "gateHighlights": {
-            "nullable": true
-          },
-          "highestLeverageLever": {
-            "nullable": true
-          }
-        }
       },
       "ListPendingActionsResponse": {
         "type": "object",
@@ -16464,6 +16566,62 @@
         ]
       }
     },
+    "/v1/scoring/eligibility-plan": {
+      "post": {
+        "summary": "Derive a contributor eligibility plan from a scoring preview — REST mirror of loopover_get_eligibility_plan (#9301)",
+        "responses": {
+          "200": {
+            "description": "Structured eligibility plan over a server-built score preview — mirrors the loopover_get_eligibility_plan MCP tool. Advisory only; it explains eligibility, it does not open issues or PRs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EligibilityPlanResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid scoring preview input"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/scoring/explain-breakdown": {
+      "post": {
+        "summary": "Explain a score breakdown from a scoring preview — REST mirror of loopover_explain_score_breakdown (#9301)",
+        "responses": {
+          "200": {
+            "description": "Score multiplier breakdown and gate highlights over a server-built score preview — mirrors the loopover_explain_score_breakdown MCP tool. Requires contributorLogin in the request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScoreBreakdownResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid scoring preview input or missing contributorLogin"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
     "/v1/sync/status": {
       "get": {
         "summary": "Repository and installation sync status",
@@ -17026,6 +17184,191 @@
         ]
       }
     },
+    "/v1/loop/evaluate-escalation": {
+      "post": {
+        "summary": "Evaluate whether a loop outcome should escalate — REST mirror of loopover_evaluate_escalation (#9309)",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvaluateEscalationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Escalation decision over caller-supplied loop outcome + health signals — mirrors the loopover_evaluate_escalation MCP tool. Pure, source-free evaluator; it decides, the caller wires the action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvaluateEscalationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid evaluate-escalation request body"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/loop/results-payload": {
+      "post": {
+        "summary": "Compose a loop results-delivery payload — REST mirror of loopover_build_results_payload (#9309)",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BuildResultsPayloadRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Formatted results payload over caller-supplied iteration metadata — mirrors the loopover_build_results_payload MCP tool. Pure composer; it formats the result, it does not fetch, open, or deliver anything",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildResultsPayloadResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid results-payload request body"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/loop/progress-snapshot": {
+      "post": {
+        "summary": "Compose a running-loop progress snapshot — REST mirror of loopover_build_progress_snapshot (#9309)",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BuildProgressSnapshotRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Formatted progress snapshot over caller-supplied loop state — mirrors the loopover_build_progress_snapshot MCP tool. Pure composer; it formats the snapshot, it does not fetch or stream anything",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildProgressSnapshotResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid progress-snapshot request body"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/loop/intake-idea": {
+      "post": {
+        "summary": "Validate an idea submission and assemble its task-graph — REST mirror of loopover_intake_idea (#9309)",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IntakeIdeaRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Idea verdict + assembled task-graph — mirrors the loopover_intake_idea MCP tool. Pure composer over the caller-supplied idea and optional decomposition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntakeIdeaResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid intake-idea request body, or an empty/malformed idea submission (actionable error list returned)"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/loop/plan-idea-claims": {
+      "post": {
+        "summary": "Disposition an idea's task-graph into a claim plan — REST mirror of loopover_plan_idea_claims (#9309)",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanIdeaClaimsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Idea verdict + claim plan (which constituent issues can be claimed now vs. deferred) — mirrors the loopover_plan_idea_claims MCP tool. Pure composer over the caller-supplied idea and optional decomposition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanIdeaClaimsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid plan-idea-claims request body, or an empty/malformed idea submission (actionable error list returned)"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
     "/v1/repos/{owner}/{repo}/live-gate-thresholds": {
       "get": {
         "summary": "Live self-tuned gate thresholds for AMS probe (#6486)",
@@ -17063,6 +17406,271 @@
           },
           "404": {
             "description": "No live or shadow gate override is active for this repo"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/maintainer-noise": {
+      "get": {
+        "summary": "Maintainer queue-noise triage report for a repository (#9302)",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Noise score/level, specific noise sources to clear first, and recommended maintainer actions — mirrors the loopover_get_maintainer_noise MCP tool. Maintainer-authenticated; advisory only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaintainerNoiseReport"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid static protected API token"
+          },
+          "403": {
+            "description": "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/ams-miner-cohort": {
+      "get": {
+        "summary": "AMS-vs-human contributor-mix cohort comparison for a repository (#9302)",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Submitter counts, PR volume, acceptance rate, review-cycle, and time-to-merge metrics for AMS-tracked vs human submitters — mirrors the loopover_get_ams_miner_cohort MCP tool. Maintainer-authenticated; advisory only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AmsMinerCohortComparison"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid static protected API token"
+          },
+          "403": {
+            "description": "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/gate-precision": {
+      "get": {
+        "summary": "Per-gate-type false-positive precision measurement for a repository (#9302)",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "exclusiveMinimum": true
+            },
+            "required": false,
+            "name": "windowDays",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Blocked / blocked-then-merged / overridden counts and false-positive rates with low-sample guards — mirrors the loopover_get_gate_precision MCP tool. Maintainer-authenticated; measurement only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatePrecisionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid static protected API token"
+          },
+          "403": {
+            "description": "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/outcome-calibration": {
+      "get": {
+        "summary": "Slop-band and recommendation outcome calibration for a repository (#9302)",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "exclusiveMinimum": true
+            },
+            "required": false,
+            "name": "windowDays",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Whether higher-slop bands merge less often and how agent recommendations are panning out — mirrors the loopover_get_outcome_calibration MCP tool. Maintainer-authenticated; measurement only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutcomeCalibrationResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid static protected API token"
+          },
+          "403": {
+            "description": "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/activation-preview": {
+      "get": {
+        "summary": "Deterministic maintainer activation preview for a repository (#9302)",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A deterministic \"here's what LoopOver would have surfaced\" run of the advisory engine over recent PRs — mirrors the loopover_get_activation_preview MCP tool. Maintainer-authenticated; advisory only, never runs AI",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActivationPreviewResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid static protected API token"
+          },
+          "403": {
+            "description": "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo"
           }
         },
         "security": [
@@ -20698,247 +21306,6 @@
           },
           "401": {
             "description": "Invalid internal token"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ]
-      }
-    },
-    "/v1/loop/evaluate-escalation": {
-      "post": {
-        "summary": "Evaluate whether a loop outcome should escalate — REST mirror of loopover_evaluate_escalation (#9309)",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EvaluateEscalationRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Escalation decision over caller-supplied loop outcome + health signals — mirrors the loopover_evaluate_escalation MCP tool. Pure, source-free evaluator; it decides, the caller wires the action",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EvaluateEscalationResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid evaluate-escalation request body"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ]
-      }
-    },
-    "/v1/loop/results-payload": {
-      "post": {
-        "summary": "Compose a loop results-delivery payload — REST mirror of loopover_build_results_payload (#9309)",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BuildResultsPayloadRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Formatted results payload over caller-supplied iteration metadata — mirrors the loopover_build_results_payload MCP tool. Pure composer; it formats the result, it does not fetch, open, or deliver anything",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BuildResultsPayloadResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid results-payload request body"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ]
-      }
-    },
-    "/v1/loop/progress-snapshot": {
-      "post": {
-        "summary": "Compose a running-loop progress snapshot — REST mirror of loopover_build_progress_snapshot (#9309)",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BuildProgressSnapshotRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Formatted progress snapshot over caller-supplied loop state — mirrors the loopover_build_progress_snapshot MCP tool. Pure composer; it formats the snapshot, it does not fetch or stream anything",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BuildProgressSnapshotResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid progress-snapshot request body"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ]
-      }
-    },
-    "/v1/loop/intake-idea": {
-      "post": {
-        "summary": "Validate an idea submission and assemble its task-graph — REST mirror of loopover_intake_idea (#9309)",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/IntakeIdeaRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Idea verdict + assembled task-graph — mirrors the loopover_intake_idea MCP tool. Pure composer over the caller-supplied idea and optional decomposition",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/IntakeIdeaResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid intake-idea request body, or an empty/malformed idea submission (actionable error list returned)"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ]
-      }
-    },
-    "/v1/loop/plan-idea-claims": {
-      "post": {
-        "summary": "Disposition an idea's task-graph into a claim plan — REST mirror of loopover_plan_idea_claims (#9309)",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PlanIdeaClaimsRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Idea verdict + claim plan (which constituent issues can be claimed now vs. deferred) — mirrors the loopover_plan_idea_claims MCP tool. Pure composer over the caller-supplied idea and optional decomposition",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PlanIdeaClaimsResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid plan-idea-claims request body, or an empty/malformed idea submission (actionable error list returned)"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ]
-      }
-    },
-    "/v1/scoring/eligibility-plan": {
-      "post": {
-        "summary": "Derive a contributor eligibility plan from a scoring preview — REST mirror of loopover_get_eligibility_plan (#9301)",
-        "responses": {
-          "200": {
-            "description": "Structured eligibility plan over a server-built score preview — mirrors the loopover_get_eligibility_plan MCP tool. Advisory only; it explains eligibility, it does not open issues or PRs",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EligibilityPlanResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid scoring preview input"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ]
-      }
-    },
-    "/v1/scoring/explain-breakdown": {
-      "post": {
-        "summary": "Explain a score breakdown from a scoring preview — REST mirror of loopover_explain_score_breakdown (#9301)",
-        "responses": {
-          "200": {
-            "description": "Score multiplier breakdown and gate highlights over a server-built score preview — mirrors the loopover_explain_score_breakdown MCP tool. Requires contributorLogin in the request body",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ScoreBreakdownResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid scoring preview input or missing contributorLogin"
           }
         },
         "security": [

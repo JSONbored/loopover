@@ -48,6 +48,7 @@ import {
   MaintainerNoiseReportSchema,
   AmsMinerCohortComparisonSchema,
   McpCompatibilitySchema,
+  PullRequestAiReviewFindingsSchema,
   PullRequestMaintainerPacketSchema,
   PullRequestReviewIntelligenceSchema,
   PullRequestReviewabilitySchema,
@@ -173,6 +174,7 @@ export function buildOpenApiSpec() {
   registry.register("MaintainerNoiseReport", MaintainerNoiseReportSchema);
   registry.register("AmsMinerCohortComparison", AmsMinerCohortComparisonSchema);
   registry.register("PullRequestReviewability", PullRequestReviewabilitySchema);
+  registry.register("PullRequestAiReviewFindings", PullRequestAiReviewFindingsSchema);
 
   registry.registerPath({
     method: "get",
@@ -756,6 +758,24 @@ export function buildOpenApiSpec() {
     request: { params: z.object({ owner: z.string(), repo: z.string(), number: z.string() }) },
     responses: {
       200: { description: "Private PR reviewability score and maintainer action", content: { "application/json": { schema: PullRequestReviewabilitySchema } } },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/repos/{owner}/{repo}/pulls/{number}/ai-review-findings",
+    summary: "Contributor-owned AI review findings for a pull request",
+    request: {
+      params: z.object({ owner: z.string(), repo: z.string(), number: z.string() }),
+      query: z.object({ login: z.string().min(1) }),
+    },
+    responses: {
+      200: {
+        description: "Structured AI-review findings for the authenticated contributor's own PR (mirrors loopover_get_pr_ai_review_findings)",
+        content: { "application/json": { schema: PullRequestAiReviewFindingsSchema } },
+      },
+      400: { description: "Invalid pull number or missing login query" },
+      403: { description: "Caller is not the PR author" },
+      404: { description: "Pull request not found" },
     },
   });
   registry.registerPath({

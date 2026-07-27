@@ -221,3 +221,37 @@ test("createKvTenantRegistry: unlinking a tenant's installation ID (upsert witho
   assert.equal(kv.store.get("installation:555"), undefined);
   assert.equal(await registry.getByOrbInstallationId(555), undefined);
 });
+
+// #9143 (defect 2, deploy blocker): load-bearing isolation regression test. Before this fix, `upsert` deleted
+// the OLD installation-index entry unconditionally whenever a tenant's own orbInstallationId changed/cleared
+// -- WITHOUT checking whether that index entry still actually pointed at THIS tenant. http-app.ts's
+// isRecreatableState lets a "failed"/"torn down" tenant's installation claim be taken over by a brand-new
+// tenant of a different name; a stale record (still carrying the OLD installationId from its own creation)
+// being re-created or torn down LONG after the ID was reclaimed by someone else would then silently delete
+// the CURRENT claimant's live routing pointer, even though the current claimant's own installationId never
+// changed. That tenant stays "active" but permanently unreachable by webhook forever (create 409s since it
+// already exists; orbInstallationId is otherwise settable only at create) -- until this test's own scenario
+// no longer reproduces it.
+test("createKvTenantRegistry: an unrelated tenant's installation-index entry SURVIVES a stale record's later re-creation/teardown upsert (#9143)", async () => {
+  const kv = fakeKv();
+  const registry = createKvTenantRegistry(kv);
+
+  // Tenant "old" was originally created claiming installation 555, but its provisioning failed -- its own
+  // record still carries orbInstallationId: 555 from that original creation.
+  await registry.upsert({ ...recordFor("old", "orb", "failed"), orbInstallationId: 555 });
+
+  // A brand-new tenant "newcomer" legitimately re-claims installation 555 (http-app.ts's own
+  // isRecreatableState lets a "failed" tenant's claim be taken over) -- the index now points at newcomer.
+  await registry.upsert({ ...recordFor("newcomer", "orb", "active"), orbInstallationId: 555 });
+  assert.equal(kv.store.get("installation:555"), "tenant:orb:newcomer");
+  assert.equal((await registry.getByOrbInstallationId(555))?.tenant.name, "newcomer");
+
+  // "old" is now (much later) re-created or torn down -- its own upsert no longer carries orbInstallationId
+  // at all. Before #9143 this unconditionally deleted "installation:555", which by now points at "newcomer",
+  // NOT "old" -- destroying newcomer's live webhook-routing pointer even though newcomer's own
+  // installationId never changed.
+  await registry.upsert(recordFor("old", "orb", "torn down"));
+
+  assert.equal(kv.store.get("installation:555"), "tenant:orb:newcomer");
+  assert.equal((await registry.getByOrbInstallationId(555))?.tenant.name, "newcomer");
+});

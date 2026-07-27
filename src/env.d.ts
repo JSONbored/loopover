@@ -166,8 +166,18 @@ declare global {
     GITHUB_WEBHOOK_SECRET?: string;
     GITHUB_WEBHOOK_MAX_BODY_BYTES?: string;
     /** Webhook secret for the central LoopOver Orb GitHub App (#1255) — distinct from the review app's
-     *  GITHUB_WEBHOOK_SECRET. Verifies inbound POST /v1/orb/webhook deliveries. Inject as a wrangler secret. */
+     *  GITHUB_WEBHOOK_SECRET. Verifies inbound POST /v1/orb/webhook deliveries. Inject as a wrangler secret.
+     *  Manual self-host/cloud only — a hosted control-plane tenant container (see LOOPOVER_TENANT_SECRET_TOKEN
+     *  below) never has this set directly; it resolves its own value via the broker instead. */
     ORB_GITHUB_WEBHOOK_SECRET?: string;
+    /** #9143 (defect 5, #8202): the one-time bootstrap credential a HOSTED control-plane tenant container
+     *  reads at cold boot (`control-plane/src/container-driver.ts`'s `TENANT_SECRET_ENV_VAR`) to exchange, via
+     *  `fetchBrokeredStoredSecret` (src/orb/broker-client.ts) against `POST /v1/orb/token`, for whatever the
+     *  broker has custodied under it — for an ORB tenant, a bundle containing its own per-tenant webhook
+     *  secret (see `src/orb/hosted-webhook-secret.ts`). Manual self-host/cloud never set this — only a
+     *  container control-plane itself starts does (`createTenantContainer`). Cloud never sets it ⇒ this whole
+     *  path is inert there, same as ORB_ENROLLMENT_SECRET's own "cloud never sets it" convention above. */
+    LOOPOVER_TENANT_SECRET_TOKEN?: string;
     /** Cloudflare Worker error tracking (PostHog, #8288). REPLACES the old @sentry/hono/cloudflare middleware
      *  entirely (2026-07-25 epic #8286 correction). Deliberately NAMED DIFFERENTLY from the dual-purpose
      *  POSTHOG_API_KEY/POSTHOG_HOST (MCP telemetry #6228/#6235 + self-host error tracking #8287): self-host's

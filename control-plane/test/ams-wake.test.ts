@@ -261,6 +261,92 @@ test("wakeDueAmsTenants: wakes multiple due tenants sequentially, not concurrent
   assert.deepEqual(order, ["acme-start", "beta-start"]);
 });
 
+// #9143 (defect 7): the load-bearing overlap-guard regression test. Before this fix, nextDueAt only advanced
+// AFTER a woken tenant's poll resolved -- a genuinely-overlapping tick (the 5-minute cron firing again while a
+// slow/hung poll from the PRIOR tick was still running) would see the SAME tenant still due and wake it a
+// second time concurrently, with no lock or in-flight marker anywhere to stop it. nextDueAt is now claimed
+// BEFORE the poll starts, so an overlapping tick observes the claim and skips the tenant entirely.
+test("wakeDueAmsTenants: an overlapping tick does not re-wake a tenant whose poll from the PRIOR tick hasn't resolved yet (#9143)", async () => {
+  const registry = createFakeTenantRegistry();
+  await registry.upsert({
+    tenant: { name: "acme" },
+    product: "ams",
+    // A 1-hour cadence: long enough that tick 2 (5 minutes after tick 1, per wrangler.jsonc's `*/5 * * * *`)
+    // is NOT yet due again on its own merits -- the only way tick 2 could still see "acme" as due is the
+    // PRE-#9143 bug (nextDueAt never advanced until the poll resolved), not a legitimately-elapsed interval.
+    state: "active",
+    createdAt: "t0",
+    updatedAt: "t0",
+    amsSchedule: { command: "discover", args: [], intervalMs: 60 * 60_000, nextDueAt: PAST },
+  });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let getStateCallCount = 0;
+  const stub: FakeWakeStub = {
+    starts: [],
+    getStateCalls: 0,
+    async start() {},
+    async getState() {
+      getStateCallCount += 1;
+      await gate; // simulates a hung/slow container: the PRIOR tick's poll is still in flight
+      return { status: "stopped_with_code", exitCode: 0 };
+    },
+  };
+  const namespace = fakeNamespace({ "ams:acme": stub });
+
+  // Tick 1 (the current cron invocation) starts waking "acme" and gets stuck mid-poll.
+  const tick1 = wakeDueAmsTenants(baseConfig({ binding: namespace, registry, now: () => NOW }));
+  await new Promise((resolve) => setImmediate(resolve));
+
+  try {
+    // Tick 2 (the SAME cron firing again 5 minutes later) must NOT see "acme" as due anymore -- its
+    // nextDueAt was already claimed forward by tick 1, before tick 1's poll ever started, not after it
+    // resolves.
+    const tick2 = await wakeDueAmsTenants(baseConfig({ binding: namespace, registry, now: () => new Date(NOW.getTime() + 5 * 60_000) }));
+
+    assert.deepEqual(tick2, []);
+    assert.equal(getStateCallCount, 1); // tick 2 never touched this tenant's container at all
+  } finally {
+    // Always unblock tick 1 and let it finish, even if an assertion above threw -- otherwise its promise
+    // dangles past the end of this test and the runner cancels every later test in the file.
+    release();
+    await tick1;
+  }
+});
+
+// #9143 (defect 7): bounds a single tick's total wall-clock exposure across MULTIPLE due tenants, not just
+// one hung tenant -- a fleet with more due tenants than the cap in one 5-minute window defers the excess to
+// the next tick instead.
+test("wakeDueAmsTenants: maxTenantsPerTick bounds how many due tenants ONE tick wakes, deferring the rest to the next tick (#9143)", async () => {
+  const registry = createFakeTenantRegistry();
+  for (const name of ["acme", "beta", "gamma"]) {
+    await registry.upsert({
+      tenant: { name },
+      product: "ams",
+      state: "active",
+      createdAt: "t0",
+      updatedAt: "t0",
+      amsSchedule: { command: "discover", args: [], intervalMs: 60_000, nextDueAt: PAST },
+    });
+  }
+  const namespace = fakeNamespace({
+    "ams:acme": fakeWakeStub([{ status: "stopped_with_code", exitCode: 0 }]),
+    "ams:beta": fakeWakeStub([{ status: "stopped_with_code", exitCode: 0 }]),
+    "ams:gamma": fakeWakeStub([{ status: "stopped_with_code", exitCode: 0 }]),
+  });
+
+  const results = await wakeDueAmsTenants(baseConfig({ binding: namespace, registry, now: () => NOW, maxTenantsPerTick: 2 }));
+
+  assert.equal(results.length, 2);
+  assert.deepEqual(results.map((r) => r.tenant.name), ["acme", "beta"]);
+  // "gamma" was left completely untouched -- still due (nextDueAt unchanged), ready for the next tick.
+  const gamma = await registry.get("gamma", "ams");
+  assert.equal(gamma?.amsSchedule?.nextDueAt, PAST);
+  assert.deepEqual(namespace.requestedNames, ["ams:acme", "ams:beta"]);
+});
+
 test("wakeDueAmsTenants: defaults now/pollIntervalMs/pollTimeoutMs when not given", async () => {
   const registry = createFakeTenantRegistry();
   await registry.upsert({

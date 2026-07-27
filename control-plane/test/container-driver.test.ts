@@ -18,13 +18,15 @@ import {
   type TenantProvisioningRequest,
 } from "../dist/index.js";
 
-type FakeContainerStub = ContainerStubLike & { calls: string[] };
+type FakeContainerStub = ContainerStubLike & { calls: string[]; markProvisionedEnvVars: Array<Record<string, string> | undefined> };
 
 function fakeContainerStub(initial: { provisioned?: boolean } = {}): FakeContainerStub {
   let provisioned = initial.provisioned ?? false;
   const calls: string[] = [];
+  const markProvisionedEnvVars: Array<Record<string, string> | undefined> = [];
   return {
     calls,
+    markProvisionedEnvVars,
     async start() {
       calls.push("start");
     },
@@ -34,8 +36,9 @@ function fakeContainerStub(initial: { provisioned?: boolean } = {}): FakeContain
     async isProvisioned() {
       return provisioned;
     },
-    async markProvisioned() {
+    async markProvisioned(envVars) {
       calls.push("markProvisioned");
+      markProvisionedEnvVars.push(envVars);
       provisioned = true;
     },
     async markDeprovisioned() {
@@ -67,6 +70,9 @@ test("createTenantContainer starts a fresh (never-provisioned) container and mar
 
   assert.deepEqual(stub.calls, ["start", "markProvisioned"]);
   assert.equal(await stub.isProvisioned(), true);
+  // #9143 (defect 4): a tenant with no env vars at all still calls markProvisioned with no envVars argument --
+  // byte-identical to the pre-#9143 call shape.
+  assert.deepEqual(stub.markProvisionedEnvVars, [undefined]);
 });
 
 test("createTenantContainer is idempotent: an already-provisioned tenant is never restarted", async () => {
@@ -139,11 +145,13 @@ test("createContainerDriver bundles all three functions closed over one config",
 // level. The stub here captures start()'s options, which the package's shared fake deliberately doesn't.
 type StartOptions = Parameters<ContainerStubLike["start"]>[0];
 
-function optionCapturingStub(): ContainerStubLike & { startOptions: StartOptions[] } {
+function optionCapturingStub(): ContainerStubLike & { startOptions: StartOptions[]; markProvisionedEnvVars: Array<Record<string, string> | undefined> } {
   let provisioned = false;
   const startOptions: StartOptions[] = [];
+  const markProvisionedEnvVars: Array<Record<string, string> | undefined> = [];
   return {
     startOptions,
+    markProvisionedEnvVars,
     async start(options?: StartOptions) {
       startOptions.push(options);
     },
@@ -151,7 +159,8 @@ function optionCapturingStub(): ContainerStubLike & { startOptions: StartOptions
     async isProvisioned() {
       return provisioned;
     },
-    async markProvisioned() {
+    async markProvisioned(envVars) {
+      markProvisionedEnvVars.push(envVars);
       provisioned = true;
     },
     async markDeprovisioned() {
@@ -170,6 +179,9 @@ test("a pinned tenant's container starts with PINNED_VERSION_ENV_VAR carrying it
   await createTenantContainer(configFor(stub), { tenant: { name: "acme", pinnedVersion: "v1.4.2" }, product: "orb" });
 
   assert.deepEqual(stub.startOptions, [{ envVars: { [PINNED_VERSION_ENV_VAR]: "v1.4.2" } }]);
+  // #9143 (defect 4): the SAME envVars markProvisioned receives, so the real DO-backed stub can persist them
+  // and reload them into `this.envVars` on a future restart -- see ContainerStubLike's own doc comment.
+  assert.deepEqual(stub.markProvisionedEnvVars, [{ [PINNED_VERSION_ENV_VAR]: "v1.4.2" }]);
 });
 
 test("an unpinned tenant's container start is byte-identical to the pre-#4898 call (no options at all)", async () => {
@@ -179,6 +191,7 @@ test("an unpinned tenant's container start is byte-identical to the pre-#4898 ca
     await createTenantContainer(configFor(stub), { tenant, product: "orb" });
 
     assert.deepEqual(stub.startOptions, [undefined]);
+    assert.deepEqual(stub.markProvisionedEnvVars, [undefined]);
   }
 });
 
@@ -247,5 +260,8 @@ test("the central PostHog key merges with per-tenant pinned-version and bootstra
 
   assert.deepEqual(stub.startOptions, [
     { envVars: { [PINNED_VERSION_ENV_VAR]: "v1.4.2", [TENANT_SECRET_ENV_VAR]: "orbsec_xyz", [CENTRAL_POSTHOG_KEY_ENV_VAR]: "phc_central123" } },
+  ]);
+  assert.deepEqual(stub.markProvisionedEnvVars, [
+    { [PINNED_VERSION_ENV_VAR]: "v1.4.2", [TENANT_SECRET_ENV_VAR]: "orbsec_xyz", [CENTRAL_POSTHOG_KEY_ENV_VAR]: "phc_central123" },
   ]);
 });

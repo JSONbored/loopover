@@ -31,7 +31,7 @@ function config(fetchImpl: typeof fetch): SecretDriverConfig {
   return { baseUrl: "https://api.loopover.test", internalJobToken: "internal-test-token", fetchImpl };
 }
 
-test("injectTenantSecrets: stores the WHOLE database connection details JSON-encoded, returns enrollId as secretRef and the one-time secret as bootstrapSecret", async () => {
+test("injectTenantSecrets: stores the database connection details JSON-encoded, returns enrollId as secretRef and the one-time secret as bootstrapSecret", async () => {
   const { fetchImpl, calls } = fakeFetch(() => Response.json({ enrollId: "orbenr_abc", secret: "orbsec_xyz" }, { status: 200 }));
 
   const result = await injectTenantSecrets(config(fetchImpl), REQUEST);
@@ -43,7 +43,52 @@ test("injectTenantSecrets: stores the WHOLE database connection details JSON-enc
   assert.equal((calls[0]!.init.headers as Record<string, string>).authorization, "Bearer internal-test-token");
   const body = JSON.parse(calls[0]!.init.body as string) as { secretType: string; secretValue: string };
   assert.equal(body.secretType, "tenant_db_credential");
-  assert.deepEqual(JSON.parse(body.secretValue), DATABASE);
+  const bundled = JSON.parse(body.secretValue) as { database: DatabaseConnectionDetails; orbWebhookSecret?: string };
+  assert.deepEqual(bundled.database, DATABASE);
+});
+
+// #9143 (defect 5, deploy blocker): an ORB tenant's bundled enrollment ALSO carries a freshly generated
+// webhook secret -- container-driver.ts's createTenantContainer never had a way to inject
+// ORB_GITHUB_WEBHOOK_SECRET into a hosted tenant's container, so every correctly-signed GitHub delivery would
+// 401 forever. Bundled into the SAME enrollment/bootstrapSecret as the database credential (see
+// injectTenantSecrets' own doc comment for why), rather than a second one.
+test("injectTenantSecrets: an ORB tenant's bundled payload also carries a freshly generated orbWebhookSecret (#9143)", async () => {
+  const { fetchImpl, calls } = fakeFetch(() => Response.json({ enrollId: "orbenr_abc", secret: "orbsec_xyz" }));
+
+  await injectTenantSecrets(config(fetchImpl), REQUEST);
+
+  const body = JSON.parse(calls[0]!.init.body as string) as { secretValue: string };
+  const bundled = JSON.parse(body.secretValue) as { database: DatabaseConnectionDetails; orbWebhookSecret?: string };
+  assert.equal(typeof bundled.orbWebhookSecret, "string");
+  assert.match(bundled.orbWebhookSecret!, /^[0-9a-f]{64}$/);
+});
+
+test("injectTenantSecrets: two ORB tenants get two DIFFERENT randomly generated webhook secrets, never a shared/hardcoded value (#9143)", async () => {
+  const { fetchImpl: fetchA, calls: callsA } = fakeFetch(() => Response.json({ enrollId: "orbenr_a", secret: "orbsec_a" }));
+  const { fetchImpl: fetchB, calls: callsB } = fakeFetch(() => Response.json({ enrollId: "orbenr_b", secret: "orbsec_b" }));
+
+  await injectTenantSecrets(config(fetchA), { tenant: { name: "acme" }, product: "orb", database: DATABASE });
+  await injectTenantSecrets(config(fetchB), { tenant: { name: "beta" }, product: "orb", database: DATABASE });
+
+  const secretFor = (calls: typeof callsA) => {
+    const body = JSON.parse(calls[0]!.init.body as string) as { secretValue: string };
+    return (JSON.parse(body.secretValue) as { orbWebhookSecret?: string }).orbWebhookSecret;
+  };
+  const secretA = secretFor(callsA);
+  const secretB = secretFor(callsB);
+  assert.ok(secretA);
+  assert.ok(secretB);
+  assert.notEqual(secretA, secretB);
+});
+
+test("injectTenantSecrets: an AMS tenant's bundled payload never carries an orbWebhookSecret (its image never verifies a webhook)", async () => {
+  const { fetchImpl, calls } = fakeFetch(() => Response.json({ enrollId: "orbenr_abc", secret: "orbsec_xyz" }));
+
+  await injectTenantSecrets(config(fetchImpl), { tenant: { name: "acme" }, product: "ams", database: DATABASE });
+
+  const body = JSON.parse(calls[0]!.init.body as string) as { secretValue: string };
+  const bundled = JSON.parse(body.secretValue) as Record<string, unknown>;
+  assert.equal("orbWebhookSecret" in bundled, false);
 });
 
 test("injectTenantSecrets: throws when the request has no database connection details attached", async () => {

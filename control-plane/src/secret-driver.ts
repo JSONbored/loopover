@@ -19,9 +19,19 @@
 // Deliberately does NOT implement the full `TenantProvisioningDriver` interface -- only injectSecrets/
 // revokeSecrets (see `SecretDriver` below). `withRealSecretDriver` (driver-factory.ts) composes this onto an
 // otherwise fake/real-mixed driver, same shape as `withRealDatabaseDriver`/`withRealContainerDriver`.
-import type { TenantProvisioningRequest } from "./tenant-provisioning-driver.js";
+//
+// #9143 (defect 5, deploy blocker): an ORB tenant's own webhook secret rides in the SAME bundled enrollment as
+// its database credential -- see injectTenantSecrets' own doc comment for why this bundles rather than mints a
+// second enrollment/bootstrap token. `src/orb/hosted-webhook-secret.ts` (the main app, a separate workspace) is
+// the consumer that unwraps this payload via `fetchBrokeredStoredSecret` and feeds it to
+// `handleOrbWebhook`/`verifyGitHubSignature` -- the two files agree on the wire shape by convention (the
+// existing "no cross-package import, duplicate the constant/shape" posture this whole package already uses),
+// not by a shared type.
+import { randomBytes } from "node:crypto";
+import type { DatabaseConnectionDetails, TenantProvisioningRequest } from "./tenant-provisioning-driver.js";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
+const ORB_WEBHOOK_SECRET_BYTE_LENGTH = 32;
 
 // #8064's own `ORB_SECRET_TYPE_TENANT_DB_CREDENTIAL` constant, duplicated here rather than imported -- this
 // package has no dependency on the main app's `src/` (a separate npm workspace, its own package.json/tsconfig),
@@ -68,19 +78,52 @@ async function mainAppFetch<T>(config: SecretDriverConfig, method: string, path:
   return (text ? JSON.parse(text) : undefined) as T;
 }
 
-/** Stores a tenant's already-provisioned database connection details (`request.database`, #7653) in the main
- *  app's token broker as a #8064 `tenant_db_credential` enrollment. The WHOLE `DatabaseConnectionDetails`
- *  object is stored (JSON-encoded), not just the bare `connectionString` -- a later reader gets every field
- *  back, not just what it can re-parse out of a URI, mirroring that type's own "kept alongside the parts"
- *  rationale. Returns the enrollment's `enrollId` as this driver's `secretRef` -- the caller (`provisionTenant`,
- *  via its own result) must persist this to revoke it later -- AND the one-time exchange `secret` as
- *  `bootstrapSecret` (#8202): the caller threads this into the tenant's container at its next `createContainer`
- *  call, so the container can itself present it to `/v1/orb/token` and get this exact value back. Previously
- *  discarded here (see this file's former header comment); #8202 is what actually consumes it now. */
+/** #9143 (defect 5): a fresh, per-tenant, cryptographically random webhook secret for an ORB tenant's own
+ *  container to verify inbound GitHub deliveries with -- see this module's header comment on why it's bundled
+ *  into the SAME enrollment as the database credential rather than minted as a second one. Hex-encoded (not
+ *  base64) purely so it reads identically to every other opaque token this codebase generates (`createHash`
+ *  suffixes in neon-database-driver.ts, etc.) -- the value is never parsed back apart, only compared
+ *  byte-for-byte by `verifyGitHubSignature`, so any sufficiently random encoding would do. */
+function generateOrbWebhookSecret(): string {
+  return randomBytes(ORB_WEBHOOK_SECRET_BYTE_LENGTH).toString("hex");
+}
+
+/** The JSON shape bundled into a single `tenant_db_credential` enrollment's `secretValue` (#8064's storage is
+ *  a free-text JSON blob, keyed only by the opaque `secretType` string -- this is a private wire contract
+ *  between this function and `src/orb/hosted-webhook-secret.ts`'s consumer, not a shared type). `orbWebhookSecret`
+ *  is present only for `product: "orb"` tenants -- AMS's one-shot CLI image never verifies an inbound webhook,
+ *  so generating one for it would be dead material with no consumer, ever. */
+type TenantBootstrapPayload = { database: DatabaseConnectionDetails; orbWebhookSecret?: string };
+
+/** Stores a tenant's already-provisioned database connection details (`request.database`, #7653) -- and, for
+ *  an ORB tenant, a freshly generated webhook secret (#9143, defect 5) -- in the main app's token broker as a
+ *  single #8064 `tenant_db_credential` enrollment. The WHOLE bundled payload is stored (JSON-encoded), not
+ *  just the bare `connectionString` -- a later reader gets every field back, not just what it can re-parse
+ *  out of a URI, mirroring `DatabaseConnectionDetails`' own "kept alongside the parts" rationale.
+ *
+ *  #9143 (defect 5, deploy blocker): orb-webhook-router.ts's own header comment claims a hosted tenant's
+ *  container "runs the SAME self-host webhook-handling code unmodified and re-verifies independently" -- but
+ *  that handler (`src/orb/webhook.ts#handleOrbWebhook`) fails closed on a missing `ORB_GITHUB_WEBHOOK_SECRET`,
+ *  and `createTenantContainer` (container-driver.ts) never injected one: every correctly-signed delivery would
+ *  401 forever. Rather than mint a SECOND enrollment/bootstrap-token pair purely for this one extra value
+ *  (doubling the container's cold-boot exchange traffic and this driver's own interface surface for what is,
+ *  from the container's perspective, a single "give me my secrets" moment), the webhook secret rides in the
+ *  SAME bundle the container already fetches for its database credential -- one enrollment, one
+ *  `bootstrapSecret`, one `POST /v1/orb/token` exchange at boot/first-request (`src/orb/hosted-webhook-secret.ts`
+ *  is the consumer that unwraps it and feeds `handleOrbWebhook`).
+ *
+ *  Returns the enrollment's `enrollId` as this driver's `secretRef` -- the caller (`provisionTenant`, via its
+ *  own result) must persist this to revoke it later -- AND the one-time exchange `secret` as `bootstrapSecret`
+ *  (#8202): the caller threads this into the tenant's container at its next `createContainer` call, so the
+ *  container can itself present it to `/v1/orb/token` and get this exact bundled payload back. */
 export async function injectTenantSecrets(config: SecretDriverConfig, request: TenantProvisioningRequest): Promise<{ secretRef?: string; bootstrapSecret?: string }> {
   if (!request.database) {
     throw new Error(`injectTenantSecrets: no database connection details on the request for tenant "${request.tenant.name}"`);
   }
+  const payload: TenantBootstrapPayload = {
+    database: request.database,
+    ...(request.product === "orb" ? { orbWebhookSecret: generateOrbWebhookSecret() } : {}),
+  };
   // The route's own error responses (#8064: secret_value_required/encryption_unavailable) always pair an
   // `{error}` body with a non-2xx status -- mainAppFetch already throws on those, so there's no in-band
   // `{error}`-at-200 shape for this driver to check for separately.
@@ -88,7 +131,7 @@ export async function injectTenantSecrets(config: SecretDriverConfig, request: T
     config,
     "POST",
     "/v1/internal/orb/enrollments",
-    { secretType: SECRET_TYPE_TENANT_DB_CREDENTIAL, secretValue: JSON.stringify(request.database) },
+    { secretType: SECRET_TYPE_TENANT_DB_CREDENTIAL, secretValue: JSON.stringify(payload) },
   );
   return { secretRef: result.enrollId, bootstrapSecret: result.secret };
 }

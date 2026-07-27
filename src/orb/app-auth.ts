@@ -31,6 +31,11 @@ export interface OrbAppInstallation {
   accountType: string | null;
   accountId: number | null;
   repositorySelection: string | null;
+  // #9151: GitHub's own suspension signal — the App can be suspended by the account owner without an
+  // `uninstall`, and `GET /app/installations` keeps listing a suspended install (unlike a real uninstall,
+  // which drops it from this list entirely) with this populated. Parsed here so the backfill can write it
+  // through instead of assuming every install GitHub returns is unsuspended.
+  suspendedAt: string | null;
 }
 
 /** Lists every installation of the Orb App (paginated). The backfill reads this to recover installs whose
@@ -44,9 +49,9 @@ export async function listOrbAppInstallations(env: Env): Promise<OrbAppInstallat
       const body = await response.text();
       throw new Error(`Failed to list Orb App installations (${response.status}): ${body.slice(0, 200)}`);
     }
-    const rows = (await response.json()) as Array<{ id?: number; account?: { login?: string; type?: string; id?: number } | null; repository_selection?: string }>;
+    const rows = (await response.json()) as Array<{ id?: number; account?: { login?: string; type?: string; id?: number } | null; repository_selection?: string; suspended_at?: string | null }>;
     for (const row of rows) {
-      if (row.id) installs.push({ id: row.id, accountLogin: row.account?.login ?? null, accountType: row.account?.type ?? null, accountId: row.account?.id ?? null, repositorySelection: row.repository_selection ?? null });
+      if (row.id) installs.push({ id: row.id, accountLogin: row.account?.login ?? null, accountType: row.account?.type ?? null, accountId: row.account?.id ?? null, repositorySelection: row.repository_selection ?? null, suspendedAt: row.suspended_at ?? null });
     }
     if (rows.length < 100) break; // short page → last page
     /* v8 ignore next 2 -- runaway-loop backstop: a single App would need 1000+ installs (>10 pages) to reach this */

@@ -32,7 +32,16 @@ describe("listOrbAppInstallations", () => {
     vi.stubGlobal("fetch", async (url: RequestInfo | URL) => Response.json(String(url).includes("&page=1") ? page1 : page2));
     const installs = await listOrbAppInstallations(env);
     expect(installs).toHaveLength(102); // 100 (full page → continue) + 101 + 102; the no-id row is skipped
-    expect(installs.at(-1)).toEqual({ id: 102, accountLogin: null, accountType: null, accountId: null, repositorySelection: null });
+    expect(installs.at(-1)).toEqual({ id: 102, accountLogin: null, accountType: null, accountId: null, repositorySelection: null, suspendedAt: null });
+  });
+
+  it("parses a suspended install's suspended_at instead of discarding it (#9151)", async () => {
+    const env = orbEnv({ ORB_GITHUB_APP_PRIVATE_KEY: await pkcs8Pem() });
+    vi.stubGlobal("fetch", async () =>
+      Response.json([{ id: 900, account: { login: "acme", type: "Organization", id: 20 }, repository_selection: "all", suspended_at: "2026-06-01T00:00:00Z" }]),
+    );
+    const installs = await listOrbAppInstallations(env);
+    expect(installs).toEqual([{ id: 900, accountLogin: "acme", accountType: "Organization", accountId: 20, repositorySelection: "all", suspendedAt: "2026-06-01T00:00:00Z" }]);
   });
 
   it("throws on a non-ok response", async () => {
@@ -77,5 +86,36 @@ describe("backfillOrbInstallations", () => {
       { installation_id: 5, account_login: "acme", account_id: 20, registered: 1 }, // stayed registered (backfill never re-trusts/untrusts)
       { installation_id: 6, account_login: "bob", account_id: 21, registered: 0 }, // new → default opt-out
     ]);
+  });
+
+  it("#9151: a suspended install SURVIVES a backfill (suspended_at is written through, not hardcoded NULL)", async () => {
+    const env = orbEnv({ ORB_GITHUB_APP_PRIVATE_KEY: await pkcs8Pem() });
+    // Simulate the `installation.suspend` webhook having already recorded the suspension.
+    await (env.DB as unknown as TestD1Database)
+      .prepare("INSERT INTO orb_github_installations (installation_id, registered, suspended_at) VALUES (7, 1, '2026-06-01T00:00:00Z')")
+      .run();
+    vi.stubGlobal("fetch", async () =>
+      Response.json([{ id: 7, account: { login: "acme", type: "Organization", id: 20 }, repository_selection: "all", suspended_at: "2026-06-01T00:00:00Z" }]),
+    );
+    expect(await backfillOrbInstallations(env)).toEqual({ backfilled: 1 });
+    const row = await (env.DB as unknown as TestD1Database)
+      .prepare("SELECT suspended_at FROM orb_github_installations WHERE installation_id = 7")
+      .first<{ suspended_at: string | null }>();
+    expect(row?.suspended_at).toBe("2026-06-01T00:00:00Z"); // NOT erased by the backfill
+  });
+
+  it("#9151: an active (non-suspended) install still clears suspended_at through the backfill", async () => {
+    const env = orbEnv({ ORB_GITHUB_APP_PRIVATE_KEY: await pkcs8Pem() });
+    await (env.DB as unknown as TestD1Database)
+      .prepare("INSERT INTO orb_github_installations (installation_id, registered, suspended_at) VALUES (8, 1, '2026-06-01T00:00:00Z')")
+      .run(); // stale suspension recorded — GitHub now reports it active again (e.g. missed unsuspend webhook)
+    vi.stubGlobal("fetch", async () =>
+      Response.json([{ id: 8, account: { login: "acme", type: "Organization", id: 20 }, repository_selection: "all" }]), // no suspended_at → active
+    );
+    expect(await backfillOrbInstallations(env)).toEqual({ backfilled: 1 });
+    const row = await (env.DB as unknown as TestD1Database)
+      .prepare("SELECT suspended_at FROM orb_github_installations WHERE installation_id = 8")
+      .first<{ suspended_at: string | null }>();
+    expect(row?.suspended_at).toBeNull();
   });
 });

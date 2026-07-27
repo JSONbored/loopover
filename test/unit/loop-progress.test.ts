@@ -67,6 +67,35 @@ describe("progressChanged — push on change, not on a fixed interval (#4800)", 
     expect(progressChanged(base, buildProgressSnapshot(running({ recentActivity: [{ step: "a" }] })))).toBe(false);
   });
 
+  // #9323: maxIterations and percentComplete are displayed axes too. Raising the iteration budget mid-run
+  // leaves phase/status/iteration/activity untouched but moves both of these, so the diff must push.
+  it("pushes when only maxIterations (and the derived percentComplete) changes", () => {
+    const prev = buildProgressSnapshot(running({ iteration: 2, maxIterations: 5, recentActivity: [{ step: "a" }] }));
+    const next = buildProgressSnapshot(running({ iteration: 2, maxIterations: 10, recentActivity: [{ step: "a" }] }));
+    // Same iteration/phase/status/activity, but the budget (and therefore the displayed percent) moved.
+    expect(next.maxIterations).toBe(10);
+    expect(prev.percentComplete).toBe(40);
+    expect(next.percentComplete).toBe(20);
+    expect(progressChanged(prev, next)).toBe(true);
+  });
+
+  // A percentComplete-only delta (every other displayed axis, maxIterations included, held identical) still
+  // pushes — progressChanged diffs the displayed field, so this isolates the percentComplete comparison.
+  it("pushes when only percentComplete differs", () => {
+    const prev = buildProgressSnapshot(running({ recentActivity: [{ step: "a" }] }));
+    expect(progressChanged(prev, { ...prev, percentComplete: (prev.percentComplete ?? 0) + 10 })).toBe(true);
+  });
+
+  // REGRESSION: a guard against over-triggering — with all six displayed axes (the two new ones included)
+  // identical between snapshots, progressChanged must still return false.
+  it("does not push when all six displayed axes are identical", () => {
+    const prev = buildProgressSnapshot(running({ recentActivity: [{ step: "a" }] }));
+    const next = buildProgressSnapshot(running({ recentActivity: [{ step: "a" }] }));
+    expect(next.maxIterations).toBe(prev.maxIterations);
+    expect(next.percentComplete).toBe(prev.percentComplete);
+    expect(progressChanged(prev, next)).toBe(false);
+  });
+
   // #6171: the tail is capped, so past the cap every new event evicts the oldest and the LENGTH stops moving.
   // A length-only check went permanently blind here — exactly on the long runs that stream the most.
   describe("activity tail at its cap (#6171)", () => {

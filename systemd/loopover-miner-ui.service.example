@@ -43,7 +43,11 @@ User=loopover
 WorkingDirectory=/var/lib/loopover-miner/src
 # REQUIRED: absolute path to the workspace-scoped npm binary (see `which npm`; typically /usr/bin or
 # /usr/local/bin, or an nvm/asdf shim path). `vite preview` binds 127.0.0.1 by default -- do not add
-# `--host` unless you have put real auth in front of this port; the dashboard has none of its own.
+# `--host` regardless: the dashboard's auth (apps/loopover-miner-ui/vite-auth.ts) is a same-host,
+# console-access mechanism, not a network-facing one. On first start, `journalctl -u loopover-miner-ui`
+# prints a one-shot bootstrap URL (visit it once from a browser on this host to authenticate; treat the
+# token in it like a password) -- GHSA-v6v4-mh5m-5mqq fixed the earlier behavior where any local process
+# could read a valid session token straight off an ordinary `curl http://127.0.0.1:4174/`.
 ExecStart=/usr/bin/npm --workspace @loopover/ui-miner run preview
 # A crashed dashboard should come back; it holds no in-memory state of its own to lose.
 Restart=on-failure

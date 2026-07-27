@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -2548,6 +2548,72 @@ describe("local MCP git metadata collection (#7329 coverage)", () => {
     // check -- not its `=== ""` exact-match shortcut -- is what proves it's still inside.
     const metadata = collectLocalBranchMetadata({ cwd: "packages/app", workspaceRoots: roots, baseRef: "HEAD", login: "oktofeesh1" });
     expect(metadata.repoFullName).toBe("entrius/allways-ui");
+  });
+});
+
+describe("git argument-injection hardening (GHSA-v3j4-j27j-fxw6)", () => {
+  let tempDir: string | null = null;
+
+  afterEach(() => {
+    if (tempDir) rmSync(tempDir, { recursive: true, force: true });
+    tempDir = null;
+  });
+
+  it("isSafeGitRef rejects any ref starting with '-', accepts everything else", async () => {
+    const { isSafeGitRef } = await import("../../packages/loopover-mcp/lib/local-branch");
+    expect(isSafeGitRef("--output=/tmp/evil")).toBe(false);
+    expect(isSafeGitRef("-x")).toBe(false);
+    expect(isSafeGitRef("origin/main")).toBe(true);
+    expect(isSafeGitRef("HEAD~1")).toBe(true);
+    expect(isSafeGitRef("a1b2c3d4")).toBe(true);
+    expect(isSafeGitRef("feature/my-branch")).toBe(true);
+  });
+
+  it("assertSafeGitRef throws for a leading-dash ref and is silent for a safe one", async () => {
+    const { assertSafeGitRef } = await import("../../packages/loopover-mcp/lib/local-branch");
+    expect(() => assertSafeGitRef("--output=/tmp/evil")).toThrow(/must not start with '-'/);
+    expect(() => assertSafeGitRef("origin/main")).not.toThrow();
+  });
+
+  it("collectLocalBranchMetadata rejects a malicious baseRef instead of letting git interpret it as an option", async () => {
+    const { collectLocalBranchMetadata } = await import("../../packages/loopover-mcp/lib/local-branch");
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-local-"));
+    git(tempDir, "init");
+    git(tempDir, "config", "user.email", "test@example.com");
+    git(tempDir, "config", "user.name", "LoopOver Test");
+    git(tempDir, "config", "commit.gpgsign", "false");
+    writeFileSync(join(tempDir, "victim.txt"), "VICTIM CONTENT\n");
+    git(tempDir, "add", "victim.txt");
+    git(tempDir, "commit", "-m", "initial commit");
+
+    const maliciousBaseRef = `--output=${join(tempDir, "victim.txt")}`;
+    expect(() => collectLocalBranchMetadata({ cwd: tempDir!, baseRef: maliciousBaseRef, login: "oktofeesh1" })).toThrow(/must not start with '-'/);
+    // The file must survive completely untouched -- this is the actual exploit this issue reports.
+    expect(readFileSync(join(tempDir, "victim.txt"), "utf8")).toBe("VICTIM CONTENT\n");
+  });
+
+  it("still resolves ordinary refs (branch name, HEAD~N, short SHA) exactly as before the fix", async () => {
+    const { collectLocalBranchMetadata } = await import("../../packages/loopover-mcp/lib/local-branch");
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-local-"));
+    git(tempDir, "init");
+    git(tempDir, "config", "user.email", "test@example.com");
+    git(tempDir, "config", "user.name", "LoopOver Test");
+    git(tempDir, "config", "commit.gpgsign", "false");
+    git(tempDir, "remote", "add", "origin", "git@github.com:entrius/allways-ui.git");
+    writeFileSync(join(tempDir, "a.ts"), "a\n");
+    git(tempDir, "add", "a.ts");
+    git(tempDir, "commit", "-m", "base commit");
+    git(tempDir, "checkout", "-b", "feature");
+    writeFileSync(join(tempDir, "b.ts"), "b\n");
+    git(tempDir, "add", "b.ts");
+    git(tempDir, "commit", "-m", "feature commit");
+
+    const byBranchName = collectLocalBranchMetadata({ cwd: tempDir, baseRef: "HEAD~1", login: "oktofeesh1" });
+    expect(byBranchName.changedFiles).toEqual(expect.arrayContaining([expect.objectContaining({ path: "b.ts", status: "added" })]));
+
+    const baseSha = execFileSync("git", ["rev-parse", "HEAD~1"], { cwd: tempDir }).toString().trim();
+    const byShaRef = collectLocalBranchMetadata({ cwd: tempDir, baseRef: baseSha, login: "oktofeesh1" });
+    expect(byShaRef.changedFiles).toEqual(expect.arrayContaining([expect.objectContaining({ path: "b.ts", status: "added" })]));
   });
 });
 

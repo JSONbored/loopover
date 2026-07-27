@@ -55,8 +55,10 @@ describe("buildFixHandoffCollapsible (#1962)", () => {
     ]);
 
     expect(block?.path).toBe("src/x` [Review required](https://evil.example/phish) | <tag>");
-    expect(block?.body).toContain("`src/x\\` [Review required](https://evil.example/phish) \\| &lt;tag&gt;:7`");
-    expect(block?.body).not.toContain("`src/x` [Review required](https://evil.example/phish) | <tag>:7`");
+    // The literal backtick in the path is neutralized by choosing a longer code-span delimiter (``), not by
+    // backslash-escaping it (Markdown ignores that inside code spans) — pipe/angle-brackets stay entity-escaped (#9289).
+    expect(block?.body).toContain("``src/x` [Review required](https://evil.example/phish) \\| &lt;tag&gt;:7``");
+    expect(block?.body).not.toContain("\\`"); // no backslash-escaped backtick anymore
   });
 
   it("carries the no-server-side-write local-execution boundary on every block", () => {

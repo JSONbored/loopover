@@ -37,15 +37,20 @@ export type FixHandoffBlock = {
  *  parse fix-handoff blocks in a comment body without depending on markdown structure alone. */
 const FIX_HANDOFF_MARKER = "<!-- loopover:fix-handoff -->";
 
-/** Public-safe inline-code escaping for a finding path/location. GitHub comments still render markdown inside
- *  collapsibles, so neutralize delimiters that can break out of the `...` span or table-like contexts before
- *  composing the location label. */
+/** Public-safe inline-code rendering for a finding path/location. GitHub comments still render markdown inside
+ *  collapsibles, so choose a code-span delimiter longer than any backtick run inside the value instead of trying
+ *  to backslash-escape backticks (Markdown does not honor that inside code spans) — mirroring `markdownPathCode`
+ *  in `src/review/unified-comment-bridge.ts`. Entity-escape the remaining table/HTML metacharacters (`|`, `<`,
+ *  `>`) and backslashes first, then wrap the whole value in the computed delimiter so a path containing a literal
+ *  backtick still renders as one unbroken code span. */
 function markdownPathCodeText(value: string): string {
-  return value
+  const safeValue = value
     .replace(/\\/g, "\\\\")
-    .replace(/`/g, "\\`")
     .replace(/\|/g, "\\|")
     .replace(/[<>]/g, (char) => (char === "<" ? "&lt;" : "&gt;"));
+  const longestBacktickRun = Math.max(0, ...Array.from(safeValue.matchAll(/`+/g), (match) => match[0].length));
+  const delimiter = "`".repeat(longestBacktickRun + 1);
+  return `${delimiter}${safeValue}${delimiter}`;
 }
 
 /** PURE: build a single finding's fix-handoff block. Never throws; a finding whose `line` is not a positive
@@ -54,8 +59,9 @@ function markdownPathCodeText(value: string): string {
 export function buildFixHandoffBlock(finding: InlineFinding): FixHandoffBlock {
   const hasLine = Number.isInteger(finding.line) && finding.line > 0;
   const line = hasLine ? finding.line : 0;
-  const safePath = markdownPathCodeText(finding.path);
-  const location = hasLine ? `${safePath}:${line}` : `${safePath} (no specific line)`;
+  // `markdownPathCodeText` returns the full delimiter-wrapped code span, so consume it directly instead of
+  // re-wrapping in a fixed single backtick (which a backtick in the path would break out of).
+  const location = markdownPathCodeText(hasLine ? `${finding.path}:${line}` : `${finding.path} (no specific line)`);
   const label = finding.severity === "blocker" ? "Blocker" : "Nit";
   const suggestedChange = finding.suggestion?.trim() || undefined;
   // Skip the fenced block when the suggestion itself contains a ``` sequence, which would close the outer fence
@@ -64,7 +70,7 @@ export function buildFixHandoffBlock(finding: InlineFinding): FixHandoffBlock {
     suggestedChange && !suggestedChange.includes("```") ? `\n\nSuggested change:\n\`\`\`\n${suggestedChange}\n\`\`\`` : "";
   const body = [
     FIX_HANDOFF_MARKER,
-    `**Fix handoff — ${label} at \`${location}\`**`,
+    `**Fix handoff — ${label} at ${location}**`,
     finding.body,
     suggestionBlock,
     `\n_${LOCAL_WRITE_BOUNDARY}_`,
@@ -105,14 +111,15 @@ const FIX_HANDOFF_AGGREGATE_MARKER = "<!-- loopover:fix-handoff-aggregate -->";
  *  buildFixHandoffBlock, just indented under a shared numbered list instead of standing alone. */
 function fixHandoffAggregateItem(finding: InlineFinding, index: number): string {
   const hasLine = Number.isInteger(finding.line) && finding.line > 0;
-  const safePath = markdownPathCodeText(finding.path);
-  const location = hasLine ? `${safePath}:${finding.line}` : `${safePath} (no specific line)`;
+  // Consume markdownPathCodeText's own delimiter-wrapped span directly (see buildFixHandoffBlock) rather than
+  // re-wrapping in a fixed single backtick.
+  const location = markdownPathCodeText(hasLine ? `${finding.path}:${finding.line}` : `${finding.path} (no specific line)`);
   const label = finding.severity === "blocker" ? "Blocker" : "Nit";
   const suggestion = finding.suggestion?.trim();
   // Same fence-safety guard as buildFixHandoffBlock / safeSuggestionBlock: an embedded ``` would break the block.
   const suggestionBlock =
     suggestion && !suggestion.includes("```") ? `\n   \`\`\`\n   ${suggestion.replace(/\n/g, "\n   ")}\n   \`\`\`` : "";
-  return `${index + 1}. **${label} at \`${location}\`** — ${finding.body}${suggestionBlock}`;
+  return `${index + 1}. **${label} at ${location}** — ${finding.body}${suggestionBlock}`;
 }
 
 /** PURE: combine every current finding into ONE fix-handoff block for a single local-agent run across the

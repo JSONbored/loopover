@@ -1926,6 +1926,23 @@ export const GateConfigEffectiveResponseSchema = z
   })
   .openapi("GateConfigEffectiveResponse");
 
+/** #9303: mirrors selftuneOverrideAuditOutputSchema (src/mcp/server.ts) — audit rows stay z.unknown(),
+ * listOverrideAudit is the single source of truth for the event fields. */
+export const SelftuneOverrideAuditResponseSchema = z
+  .object({
+    repoFullName: z.string(),
+    audit: z.array(z.unknown()),
+  })
+  .openapi("SelftuneOverrideAuditResponse");
+
+/** #9303: mirrors clearSelftuneOverrideOutputSchema (src/mcp/server.ts) — the write-side confirmation shape. */
+export const ClearSelftuneOverrideResponseSchema = z
+  .object({
+    repoFullName: z.string(),
+    cleared: z.boolean(),
+  })
+  .openapi("ClearSelftuneOverrideResponse");
+
 export const BurdenForecastSchema = z
   .object({
     repoFullName: z.string(),

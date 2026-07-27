@@ -551,7 +551,9 @@ function effectiveDisplaySeverity(finding: AdvisoryFinding, blockerCodes: Readon
 }
 
 function isCodePath(path: string): boolean {
-  return /\.(ts|tsx|js|jsx|py|go|rs|java|rb|php|cs|cpp|cc|c|h|hpp|swift|kt|m|sql|yaml|yml|json|toml|md|vue|svelte|astro|dart)$/i.test(path);
+  // Keep in sync with isCodeFile/isSourcePath — advisory.ts can't import the engine predicate here (#2722),
+  // so mirror every extension isSourcePath recognizes (.mts/.cts/.mjs/.cjs/.kts/.scala/.groovy; #9322).
+  return /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|go|rs|java|rb|php|cs|cpp|cc|c|h|hpp|swift|kt|kts|scala|groovy|m|sql|yaml|yml|json|toml|md|vue|svelte|astro|dart)$/i.test(path);
 }
 
 function collisionClustersForPull(collisions: CollisionReport, pullNumber: number): CollisionCluster[] {

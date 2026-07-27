@@ -129,8 +129,11 @@ export function authPlugin(deps: Partial<AuthDeps> = {}): Plugin {
   const { generateToken, logToken } = { ...defaultDeps, ...deps };
   const token = generateToken();
   logToken(token);
-  const setSessionCookie = (res: ConnectResponse) => res.setHeader("Set-Cookie", `${COOKIE_NAME}=${token}; HttpOnly; SameSite=Strict; Path=/`);
-  const attach = (middlewares: { use: (fn: (req: ConnectRequest, res: ConnectResponse, next: () => void) => void) => void }) => {
+  const setSessionCookie = (res: ConnectResponse) =>
+    res.setHeader("Set-Cookie", `${COOKIE_NAME}=${token}; HttpOnly; SameSite=Strict; Path=/`);
+  const attach = (middlewares: {
+    use: (fn: (req: ConnectRequest, res: ConnectResponse, next: () => void) => void) => void;
+  }) => {
     middlewares.use((req, res, next) => {
       const bootstrap = handleBootstrapRequest(req.url, token);
       if (bootstrap) {

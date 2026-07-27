@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { AUTH_BOOTSTRAP_PATH, authPlugin, handleAuthRequest, handleBootstrapRequest, isAuthenticatedRequest } from "../vite-auth";
+import {
+  AUTH_BOOTSTRAP_PATH,
+  authPlugin,
+  handleAuthRequest,
+  handleBootstrapRequest,
+  isAuthenticatedRequest,
+} from "../vite-auth";
 
 const TOKEN = "deterministic-test-token";
 
@@ -78,7 +84,10 @@ describe("handleBootstrapRequest (GHSA-v6v4-mh5m-5mqq)", () => {
   });
 
   it("returns a 404 for the bootstrap path with the wrong token", () => {
-    expect(handleBootstrapRequest(`${AUTH_BOOTSTRAP_PATH}?token=wrong`, TOKEN)).toEqual({ status: 404, body: "Not Found" });
+    expect(handleBootstrapRequest(`${AUTH_BOOTSTRAP_PATH}?token=wrong`, TOKEN)).toEqual({
+      status: 404,
+      body: "Not Found",
+    });
   });
 });
 
@@ -88,7 +97,12 @@ type CapturedRequestHandler = (
   next: () => void,
 ) => void;
 
-function captureMiddleware(deps: { generateToken?: () => string; logToken?: (token: string) => void } = { generateToken: () => TOKEN, logToken: () => {} }): CapturedRequestHandler {
+function captureMiddleware(
+  deps: { generateToken?: () => string; logToken?: (token: string) => void } = {
+    generateToken: () => TOKEN,
+    logToken: () => {},
+  },
+): CapturedRequestHandler {
   let captured: CapturedRequestHandler | undefined;
   const plugin = authPlugin({ logToken: () => {}, ...deps });
   const server = { middlewares: { use: (fn: CapturedRequestHandler) => (captured = fn) } };

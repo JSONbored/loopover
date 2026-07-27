@@ -27,6 +27,7 @@ import { LATEST_ONLY_SIGNAL_SNAPSHOT_TYPES, RETENTION_POLICY } from "../db/reten
 import { errorMessage } from "../utils/json";
 import { incr } from "./metrics";
 import type { VectorSample } from "./metrics";
+import { capturePostHogReviewFailure } from "./posthog";
 
 export interface D1SizeProbeEnv {
   CLOUDFLARE_D1_MONITOR_ACCOUNT_ID?: string | undefined;
@@ -175,6 +176,61 @@ interface D1ProbeSample {
 
 let lastSample: D1ProbeSample | null = null;
 
+// -- Size-threshold ALERTING (#9435). The gauges below this block only ever reach /metrics, which means an
+// operator with no scrape/dashboard stack gets NOTHING when the database approaches its cap -- and the cap is
+// an outage, not a degradation: at 10 GB every write fails with `D1_ERROR: Exceeded maximum DB size`,
+// including the webhook relay's own INSERT, so inbound delivery stops fleet-wide (observed 2026-07-06 and
+// again 2026-07-26). These thresholds turn the same sample into an explicit structured console.error plus a
+// PostHog capture, both of which land in surfaces the operator already watches, with no metrics stack needed.
+//
+// Latched per level: an alert fires when a sample CROSSES a threshold, not on every probe tick, and re-arms
+// only after the size drops back below that threshold (hysteresis via strict-less-than on reset). -1/absent
+// samples (probe failure keeps the previous reading) never change the latch.
+/** D1's documented per-database maximum; file_size at this value = every write fails. */
+const D1_SIZE_CAP_BYTES = 10 * 1024 ** 3;
+/** Early heads-up: ~3 GB of headroom left. Plenty of time to widen retention or plan a migration. */
+const D1_SIZE_WARN_RATIO = 0.7;
+/** Act NOW: at the fleet's measured write rate the remaining headroom is weeks, not months. */
+const D1_SIZE_CRITICAL_RATIO = 0.85;
+
+type D1SizeAlertLevel = "none" | "warn" | "critical";
+let lastAlertLevel: D1SizeAlertLevel = "none";
+
+function d1SizeAlertLevelFor(fileSizeBytes: number): D1SizeAlertLevel {
+  if (fileSizeBytes >= D1_SIZE_CAP_BYTES * D1_SIZE_CRITICAL_RATIO) return "critical";
+  if (fileSizeBytes >= D1_SIZE_CAP_BYTES * D1_SIZE_WARN_RATIO) return "warn";
+  return "none";
+}
+
+const D1_SIZE_ALERT_RANK: Record<D1SizeAlertLevel, number> = { none: 0, warn: 1, critical: 2 };
+
+/** Evaluate the freshly-sampled file size against the alert thresholds; exported for direct unit testing. */
+export function checkD1SizeThreshold(fileSizeBytes: number): void {
+  const level = d1SizeAlertLevelFor(fileSizeBytes);
+  if (D1_SIZE_ALERT_RANK[level] > D1_SIZE_ALERT_RANK[lastAlertLevel]) {
+    const percentOfCap = Math.round((fileSizeBytes / D1_SIZE_CAP_BYTES) * 100);
+    const message = `Cloudflare D1 database size ${percentOfCap}% of the 10 GB cap (${fileSizeBytes} bytes) — at 100% every write fails and inbound webhook delivery stops fleet-wide`;
+    incr("loopover_d1_size_threshold_alerts_total", { level });
+    console.error(
+      JSON.stringify({
+        level: "error",
+        event: "d1_size_threshold",
+        alertLevel: level,
+        fileSizeBytes,
+        percentOfCap,
+        capBytes: D1_SIZE_CAP_BYTES,
+      }),
+    );
+    capturePostHogReviewFailure(new Error(message), { kind: "infra", alert_level: level, file_size_bytes: fileSizeBytes, percent_of_cap: percentOfCap }, "d1_size_threshold");
+  } else if (D1_SIZE_ALERT_RANK[level] < D1_SIZE_ALERT_RANK[lastAlertLevel]) {
+    // Recovery (retention widened, data migrated): note it once, at plain log grade, and re-arm the latch.
+    console.log(
+      JSON.stringify({ level: "info", event: "d1_size_threshold_recovered", from: lastAlertLevel, to: level, fileSizeBytes }),
+    );
+  }
+  lastAlertLevel = level;
+}
+
 function redactD1ProbeSecret(message: string, apiToken: string): string {
   return message.split(apiToken).join("[redacted]");
 }
@@ -227,6 +283,9 @@ export async function runD1SizeProbe(env: D1SizeProbeEnv, fetchImpl: typeof fetc
     fileSizeBytes: freshInfo?.fileSizeBytes ?? lastSample?.fileSizeBytes ?? -1,
     tableRowCounts: [...tableRowCountsByTable.values()],
   };
+  // Threshold check only on a FRESH size reading: a failed fetch (carried-forward or -1 sample) must neither
+  // fire a duplicate alert nor "recover" the latch on stale data.
+  if (freshInfo) checkD1SizeThreshold(freshInfo.fileSizeBytes);
 }
 
 /** -1 sentinel (matching loopover_host_load_avg1_per_core's convention): distinguishes "probe disabled or
@@ -254,7 +313,8 @@ export function d1SignalSnapshotsRowsPerKeySample(): number {
   return dedup.rowCount / dedup.distinctKeyCount;
 }
 
-/** Test-only: reset the module-level sample between tests. */
+/** Test-only: reset the module-level sample and alert latch between tests. */
 export function resetD1SizeProbeForTest(): void {
   lastSample = null;
+  lastAlertLevel = "none";
 }

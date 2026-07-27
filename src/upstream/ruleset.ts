@@ -107,6 +107,10 @@ export async function refreshUpstreamSourceSnapshots(env: Env): Promise<Upstream
   const config = upstreamConfig(env);
   const fetchedAt = nowIso();
   const [previousByKey, commitSha] = await Promise.all([latestSourcesByKey(env), resolveUpstreamCommitSha(env, config)]);
+  // Per-source degradation, not all-or-nothing (#9165): fetchTrackedSource always RESOLVES (contents-API
+  // failure -> raw-fallback -> a `status: "error"` snapshot on the previous?.parsed carry-forward), it never
+  // throws, so one stalled/failing TRACKED_SOURCES entry can never reject this Promise.all or block its
+  // siblings from completing.
   const snapshots = await Promise.all(
     TRACKED_SOURCES.map((source) => fetchTrackedSource(env, config, source, fetchedAt, commitSha, previousByKey.get(source.key))),
   );
@@ -517,7 +521,11 @@ async function fetchTrackedSource(
   }
 
   try {
-    const response = await fetch(rawUrl(config, source.path), { headers: githubHeaders({ token: env.GITHUB_PUBLIC_TOKEN, accept: "text/plain" }) });
+    // #9165: this raw-GitHub fallback was the only fetch in this file with no timeout -- a stalled
+    // raw.githubusercontent.com connection (a real CDN failure mode, and exactly the case this fallback exists
+    // to handle) hung the whole scheduled refreshUpstreamDrift job indefinitely. timeoutFetch matches every
+    // other call site in this file (the primary contents-API read above, plus the drift-issue GitHub calls).
+    const response = await timeoutFetch(rawUrl(config, source.path), { headers: githubHeaders({ token: env.GITHUB_PUBLIC_TOKEN, accept: "text/plain" }) });
     if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
     return sourceSnapshotFromContent({
       config,

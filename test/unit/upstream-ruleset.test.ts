@@ -149,6 +149,27 @@ describe("upstream ruleset drift tracking", () => {
     expect(stored).toHaveLength(6);
   });
 
+  it("degrades a single hung/timed-out source to an error snapshot without blocking its siblings (#9165)", async () => {
+    // The raw-GitHub fallback used to be the only fetch in ruleset.ts with no timeout: a stalled
+    // raw.githubusercontent.com connection hung the entire scheduled refresh. This simulates exactly that --
+    // the registry source's contents-API read fails (forcing the fallback) and its fallback fetch rejects the
+    // way AbortSignal.timeout does -- and asserts the fan-out still completes: the registry source degrades to
+    // an "error" snapshot instead of the whole Promise.all hanging, and every other source is unaffected.
+    const env = driftEnv({ GITHUB_PUBLIC_TOKEN: "token" });
+    const files = fixtures("58", 0.01);
+    const failingPath = "gittensor/validator/weights/master_repositories.json";
+    vi.stubGlobal("fetch", upstreamPartialTimeoutFetch(files, failingPath));
+
+    const sources = await refreshUpstreamSourceSnapshots(env);
+    const byKey = new Map(sources.map((source) => [source.sourceKey, source]));
+
+    expect(byKey.get("registry")?.status).toBe("error");
+    expect(byKey.get("registry")?.warnings).toEqual(expect.arrayContaining([expect.stringContaining("Raw fallback failed")]));
+    for (const key of ["constants", "programming_languages", "mirror_scoring", "issue_discovery_scan", "mirror_models"]) {
+      expect(byKey.get(key)?.status).toBe("fetched");
+    }
+  });
+
   it("reuses previous snapshots on not-modified responses", async () => {
     const env = driftEnv({ GITHUB_PUBLIC_TOKEN: "token" });
     vi.stubGlobal("fetch", upstreamFetch(fixtures("58", 0.01), { etag: "\"etag-58\"" }));
@@ -1509,6 +1530,27 @@ function upstreamFetch(files: Record<string, string>, options: { etag?: string }
       sha: `blob-${path}-${scaleFrom(files)}`,
       download_url: `https://raw.githubusercontent.com/entrius/gittensor/test/${path}`,
     }, options.etag ? { headers: { etag: options.etag } } : undefined);
+  };
+}
+
+// One source's contents-API read fails (forcing the raw-GitHub fallback), and that source's fallback fetch
+// rejects the way AbortSignal.timeout does on a real stalled connection -- every other source's contents-API
+// read succeeds normally. Exercises the #9165 fix: the failing source degrades to an "error" snapshot instead
+// of the Promise.all fan-out hanging on it.
+function upstreamPartialTimeoutFetch(files: Record<string, string>, failingPath: string) {
+  return async (input: RequestInfo | URL): Promise<Response> => {
+    const url = input.toString();
+    if (url.includes("/commits/")) return Response.json({ sha: `commit-${scaleFrom(files)}` });
+    if (url.includes(`/contents/${failingPath}`)) return new Response("server error", { status: 500 });
+    if (url.endsWith(failingPath)) throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    const path = Object.keys(files).find((candidate) => url.includes(`/contents/${candidate}`));
+    if (!path) return new Response("not found", { status: 404 });
+    return Response.json({
+      content: Buffer.from(files[path]!, "utf8").toString("base64"),
+      encoding: "base64",
+      sha: `blob-${path}-${scaleFrom(files)}`,
+      download_url: `https://raw.githubusercontent.com/entrius/gittensor/test/${path}`,
+    });
   };
 }
 

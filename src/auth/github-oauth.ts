@@ -42,7 +42,11 @@ type GitHubWebOAuthState = {
 
 export async function startGitHubDeviceFlow(env: Env): Promise<GitHubDeviceCodeResponse> {
   if (!env.GITHUB_OAUTH_CLIENT_ID) throw new Error("github_oauth_not_configured");
-  const response = await fetch("https://github.com/login/device/code", {
+  // #9165 sweep: this file's OTHER GitHub calls (createSessionFromGitHubToken, verifyTokenBelongsToApp,
+  // refreshGitHubUserToken below) already route through timeoutFetch -- this bare fetch and the two below it
+  // were the only ones left with no timeout, so a stalled github.com connection during device-flow start/poll
+  // or the web-OAuth code exchange would have hung indefinitely instead of failing bounded.
+  const response = await timeoutFetch("https://github.com/login/device/code", {
     method: "POST",
     headers: {
       accept: "application/json",
@@ -68,7 +72,7 @@ export async function startGitHubDeviceFlow(env: Env): Promise<GitHubDeviceCodeR
 
 export async function pollGitHubDeviceFlow(env: Env, deviceCode: string) {
   if (!env.GITHUB_OAUTH_CLIENT_ID) throw new Error("github_oauth_not_configured");
-  const tokenResponse = await fetch("https://github.com/login/oauth/access_token", {
+  const tokenResponse = await timeoutFetch("https://github.com/login/oauth/access_token", {
     method: "POST",
     headers: {
       accept: "application/json",
@@ -145,7 +149,7 @@ export async function completeGitHubWebOAuth(
   if (!args.cookieState || !(await timingSafeEqual(args.state, args.cookieState))) throw new Error("github_oauth_state_invalid");
   const state = await verifyOAuthState(env, args.state);
   if (!state) throw new Error("github_oauth_state_invalid");
-  const response = await fetch("https://github.com/login/oauth/access_token", {
+  const response = await timeoutFetch("https://github.com/login/oauth/access_token", {
     method: "POST",
     headers: {
       accept: "application/json",

@@ -8,6 +8,11 @@ import type { RegistrySnapshot } from "../types";
 import { errorMessage, jsonString, nowIso, repoParts } from "../utils/json";
 import { normalizeRegistryPayload } from "./normalize";
 
+// #9165 sweep: this loop's `fallbackUrl` candidate is the same raw-GitHub-fallback shape as
+// src/upstream/ruleset.ts's fetchTrackedSource -- a stalled connection to any candidate (API or raw fallback)
+// hung this whole sequential probe with no bound, since `fetch()` has no default timeout.
+const REGISTRY_SYNC_FETCH_TIMEOUT_MS = 12_000;
+
 const API_CANDIDATES = [
   "https://api.gittensor.io/repositories",
   "https://api.gittensor.io/api/repositories",
@@ -40,6 +45,7 @@ export async function refreshRegistry(env: Env): Promise<RegistrySnapshot> {
             accept: "application/json",
             "user-agent": PRODUCT_USER_AGENT,
           },
+          signal: AbortSignal.timeout(REGISTRY_SYNC_FETCH_TIMEOUT_MS),
         });
         if (!response.ok) {
           warnings.push(`Registry probe failed: ${url} (${response.status})`);

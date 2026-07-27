@@ -65,7 +65,7 @@ jobs:
         if: ${{ github.event_name == 'pull_request' }}
         run: sleep 45
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       # `git diff --check` with no args compares the working tree against the index -- on this checkout's
@@ -269,7 +269,7 @@ jobs:
       # Shallow (default depth): this job no longer uploads to Codecov -- that moved to validate-tests
       # (#ci-shard-coverage) -- so it has no reason to fetch full history anymore.
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       # See .github/actions/setup-workspace for what this covers (npmrc, Node, node_modules cache) --
@@ -855,7 +855,7 @@ jobs:
       VITE_LOOPOVER_API_ORIGIN: https://api.loopover.ai
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Full history so Codecov can resolve the merge base for patch coverage.
           fetch-depth: 0

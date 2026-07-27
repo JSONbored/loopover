@@ -38,7 +38,9 @@ import {
   countOpenPullRequests,
   createPendingAgentActionIfAbsent,
   getBounty,
+  listBounties,
   listBountiesByRepo,
+  listBountyLifecycleEvents,
   getContributorEvidence,
   getLatestRepoGithubTotalsSnapshot,
   getInstallation,
@@ -1760,6 +1762,13 @@ const bountyAdvisoryOutputSchema = {
   linkedPrs: z.unknown().optional(),
   findings: z.array(z.unknown()).optional(),
 };
+const bountyListOutputSchema = {
+  bounties: z.array(z.unknown()).optional(),
+};
+const bountyLifecycleOutputSchema = {
+  bountyId: z.string().optional(),
+  events: z.array(z.unknown()).optional(),
+};
 const preflightLocalDiffOutputSchema = {
   ...preflightResultOutputSchema,
   localDiff: z.unknown().optional(),
@@ -2046,6 +2055,8 @@ export const MCP_TOOL_CATEGORIES: Record<string, McpToolCategory> = {
   loopover_explain_repo_decision: "discovery",
   loopover_preflight_pr: "discovery",
   loopover_get_bounty_advisory: "discovery",
+  loopover_list_bounties: "discovery",
+  loopover_get_bounty_lifecycle: "discovery",
   loopover_get_registry_changes: "utility",
   loopover_get_registry_snapshot: "utility",
   loopover_get_upstream_drift: "utility",
@@ -2612,6 +2623,26 @@ export class LoopoverMcp {
         outputSchema: bountyAdvisoryOutputSchema,
       },
       async (input) => this.toolResult(await this.getBountyAdvisory(input.id)),
+    );
+
+    register(
+      "loopover_list_bounties",
+      {
+        description: "List all cached Gittensor bounties (mirrors the public GET /v1/bounties route; no repo/owner input).",
+        inputSchema: {},
+        outputSchema: bountyListOutputSchema,
+      },
+      async () => this.toolResult(await this.getBountyList()),
+    );
+
+    register(
+      "loopover_get_bounty_lifecycle",
+      {
+        description: "Return the lifecycle-event history for a cached Gittensor bounty by id (mirrors GET /v1/bounties/:id/lifecycle).",
+        inputSchema: bountyShape,
+        outputSchema: bountyLifecycleOutputSchema,
+      },
+      async (input) => this.toolResult(await this.getBountyLifecycle(input.id)),
     );
 
     register(
@@ -5544,6 +5575,26 @@ export class LoopoverMcp {
     return {
       summary: `LoopOver bounty advisory for ${id}.`,
       data: buildBountyAdvisory(bounty, repo, issue, pullRequests) as unknown as Record<string, unknown>,
+    };
+  }
+
+  // #9296 — mirror the public GET /v1/bounties route: list every cached bounty, no repo/owner scoping.
+  private async getBountyList(): Promise<ToolPayload> {
+    const bounties = await listBounties(this.env);
+    return {
+      summary: `LoopOver bounties: ${bounties.length} cached.`,
+      data: { bounties } as unknown as Record<string, unknown>,
+    };
+  }
+
+  // #9296 — mirror GET /v1/bounties/:id/lifecycle: the bounty's event history, 404 when the id is unknown.
+  private async getBountyLifecycle(id: string): Promise<ToolPayload> {
+    const bounty = await getBounty(this.env, id);
+    if (!bounty) throw new Error("Bounty not found.");
+    const events = await listBountyLifecycleEvents(this.env, id);
+    return {
+      summary: `LoopOver bounty lifecycle for ${id}: ${events.length} event(s).`,
+      data: { bountyId: id, events } as unknown as Record<string, unknown>,
     };
   }
 

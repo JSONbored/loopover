@@ -2822,6 +2822,26 @@ export const PullRequestReviewabilitySchema = z
   })
   .openapi("PullRequestReviewability");
 
+export const PullRequestAiReviewFindingsSchema = z
+  .object({
+    status: z.enum(["ready", "not_found", "ai_review_off"]),
+    repoFullName: z.string(),
+    pullNumber: z.number(),
+    login: z.string(),
+    headSha: z.string().nullable().optional(),
+    findings: z.array(
+      z.object({
+        category: z.string(),
+        path: z.string(),
+        severity: z.enum(["blocker", "nit"]),
+        line: z.number(),
+        body: z.string(),
+      }),
+    ),
+    categoryCounts: z.record(z.string(), z.number()),
+  })
+  .openapi("PullRequestAiReviewFindings");
+
 export const RegistryChangeReportSchema = z
   .object({
     generatedAt: z.string(),

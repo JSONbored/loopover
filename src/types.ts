@@ -366,6 +366,14 @@ export type GitHubWebhookPayload = {
         from?: string;
       };
     };
+    /** #9056: `repository.transferred` carries the PREVIOUS owner here (the repo name itself is unchanged),
+     *  so the old full name is `changes.owner.from.{organization,user}.login` + the current repo name. */
+    owner?: {
+      from?: {
+        organization?: { login?: string };
+        user?: { login?: string };
+      };
+    };
   };
 };
 

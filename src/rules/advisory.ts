@@ -551,7 +551,10 @@ function effectiveDisplaySeverity(finding: AdvisoryFinding, blockerCodes: Readon
 }
 
 function isCodePath(path: string): boolean {
-  return /\.(ts|tsx|js|jsx|py|go|rs|java|rb|php|cs|cpp|cc|c|h|hpp|swift|kt|m|sql|yaml|yml|json|toml|md|vue|svelte|astro|dart)$/i.test(path);
+  // #9322: keep in parity with SOURCE_FILE_EXTENSION/isCodeFile — the module-variant (.mts/.cts/.mjs/.cjs) and
+  // JVM (.kts/.scala/.groovy) extensions were missing, so a PR touching only those files was wrongly treated as
+  // non-code by the annotation gate. Purely additive.
+  return /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|go|rs|java|kt|kts|scala|groovy|rb|php|cs|cpp|cc|c|h|hpp|swift|m|sql|yaml|yml|json|toml|md|vue|svelte|astro|dart)$/i.test(path);
 }
 
 function collisionClustersForPull(collisions: CollisionReport, pullNumber: number): CollisionCluster[] {

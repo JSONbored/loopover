@@ -3,6 +3,7 @@ import * as repositories from "../../src/db/repositories";
 import {
   clearLoopEscalationManifestOverrideCacheForTest,
   isLoopEscalationSweepEnabled,
+  isValidDiscordWebhook,
   loadActiveLoopsFromEnv,
   parseActiveLoopFacts,
   resolveLoopEscalationManifestOverride,
@@ -12,6 +13,24 @@ import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader
 import { createTestEnv } from "../helpers/d1";
 
 const SELF_REPO = "JSONbored/loopover";
+
+describe("isValidDiscordWebhook host allowlist (#9288)", () => {
+  it("accepts all four Discord webhook hosts its sibling validators accept — including canary/ptb", () => {
+    for (const host of ["discord.com", "discordapp.com", "canary.discord.com", "ptb.discord.com"]) {
+      // canary/ptb were rejected before the fix, dropping a valid webhook as invalid_global_webhook.
+      expect(isValidDiscordWebhook(`https://${host}/api/webhooks/123/abc`)).toBe(true);
+      expect(isValidDiscordWebhook(`https://${host.toUpperCase()}/api/webhooks/123/abc`)).toBe(true); // host match is case-insensitive
+    }
+  });
+
+  it("still rejects non-Discord hosts, non-https, and non-webhook paths", () => {
+    expect(isValidDiscordWebhook("https://evil.example.com/api/webhooks/123/abc")).toBe(false);
+    expect(isValidDiscordWebhook("https://notdiscord.com/api/webhooks/123/abc")).toBe(false);
+    expect(isValidDiscordWebhook("http://discord.com/api/webhooks/123/abc")).toBe(false); // not https
+    expect(isValidDiscordWebhook("https://discord.com/not/a/webhook")).toBe(false); // wrong path
+    expect(isValidDiscordWebhook("not a url")).toBe(false);
+  });
+});
 
 describe("isLoopEscalationSweepEnabled (#6349)", () => {
   it("defaults OFF and accepts the standard truthy env forms", () => {

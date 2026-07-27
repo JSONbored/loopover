@@ -37,15 +37,17 @@ export type FixHandoffBlock = {
  *  parse fix-handoff blocks in a comment body without depending on markdown structure alone. */
 const FIX_HANDOFF_MARKER = "<!-- loopover:fix-handoff -->";
 
-/** Public-safe inline-code escaping for a finding path/location. GitHub comments still render markdown inside
- *  collapsibles, so neutralize delimiters that can break out of the `...` span or table-like contexts before
- *  composing the location label. */
+/** Public-safe inline-code rendering for a finding path/location. GitHub renders markdown inside review
+ *  comments, so choose a code-span delimiter longer than any backtick run inside the value instead of
+ *  backslash-escaping backticks (Markdown does not honor that inside code spans — the same reason
+ *  `markdownPathCode` in unified-comment-bridge.ts uses this approach). Entity-escape the other
+ *  span/table-breaking metacharacters, then wrap the value in that delimiter (with the surrounding spaces a
+ *  code span strips, so a value that itself starts/ends with a backtick still renders as one whole span). */
 function markdownPathCodeText(value: string): string {
-  return value
-    .replace(/\\/g, "\\\\")
-    .replace(/`/g, "\\`")
-    .replace(/\|/g, "\\|")
-    .replace(/[<>]/g, (char) => (char === "<" ? "&lt;" : "&gt;"));
+  const safeValue = value.replace(/\|/g, "\\|").replace(/[<>]/g, (char) => (char === "<" ? "&lt;" : "&gt;"));
+  const longestBacktickRun = Math.max(0, ...Array.from(safeValue.matchAll(/`+/g), (match) => match[0].length));
+  const delimiter = "`".repeat(longestBacktickRun + 1);
+  return `${delimiter} ${safeValue} ${delimiter}`;
 }
 
 /** PURE: build a single finding's fix-handoff block. Never throws; a finding whose `line` is not a positive
@@ -64,7 +66,7 @@ export function buildFixHandoffBlock(finding: InlineFinding): FixHandoffBlock {
     suggestedChange && !suggestedChange.includes("```") ? `\n\nSuggested change:\n\`\`\`\n${suggestedChange}\n\`\`\`` : "";
   const body = [
     FIX_HANDOFF_MARKER,
-    `**Fix handoff — ${label} at \`${location}\`**`,
+    `**Fix handoff — ${label} at ${location}**`,
     finding.body,
     suggestionBlock,
     `\n_${LOCAL_WRITE_BOUNDARY}_`,
@@ -112,7 +114,7 @@ function fixHandoffAggregateItem(finding: InlineFinding, index: number): string 
   // Same fence-safety guard as buildFixHandoffBlock / safeSuggestionBlock: an embedded ``` would break the block.
   const suggestionBlock =
     suggestion && !suggestion.includes("```") ? `\n   \`\`\`\n   ${suggestion.replace(/\n/g, "\n   ")}\n   \`\`\`` : "";
-  return `${index + 1}. **${label} at \`${location}\`** — ${finding.body}${suggestionBlock}`;
+  return `${index + 1}. **${label} at ${location}** — ${finding.body}${suggestionBlock}`;
 }
 
 /** PURE: combine every current finding into ONE fix-handoff block for a single local-agent run across the

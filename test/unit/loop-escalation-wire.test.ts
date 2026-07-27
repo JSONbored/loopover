@@ -309,6 +309,36 @@ describe("runLoopEscalationSweep (#6349)", () => {
     ).resolves.toMatchObject({ notified: false, reason: "invalid_global_webhook" });
   });
 
+  // #9288: ALLOWED_DISCORD_HOSTS previously only had discord.com/discordapp.com, unlike alerts.ts and
+  // notify-discord.ts's four-host set -- a canary.discord.com or ptb.discord.com webhook was silently
+  // rejected as invalid_global_webhook. Both must now be accepted the same way the other two paths accept
+  // them, and a non-Discord host must still be rejected (the "unknown hosts" regression guard above already
+  // covers that, but this test pins it alongside the newly-accepted hosts for a single clear diff anchor).
+  it("accepts canary.discord.com and ptb.discord.com webhooks, and still rejects a non-Discord host (#9288)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const load = () => [{ loopId: "broken", tenantId: "acme", runStatus: "abandoned" as const }];
+
+    await expect(
+      runLoopEscalationSweep(createTestEnv({ DISCORD_WEBHOOK_URL: "https://canary.discord.com/api/webhooks/123/abc" }), {
+        loadActiveLoops: load,
+        fetchImpl: (async () => new Response(null, { status: 204 })) as typeof fetch,
+      }),
+    ).resolves.toMatchObject({ notified: true });
+
+    await expect(
+      runLoopEscalationSweep(createTestEnv({ DISCORD_WEBHOOK_URL: "https://ptb.discord.com/api/webhooks/123/abc" }), {
+        loadActiveLoops: load,
+        fetchImpl: (async () => new Response(null, { status: 204 })) as typeof fetch,
+      }),
+    ).resolves.toMatchObject({ notified: true });
+
+    await expect(
+      runLoopEscalationSweep(createTestEnv({ DISCORD_WEBHOOK_URL: "https://fake.discord.com/api/webhooks/123/abc" }), {
+        loadActiveLoops: load,
+      }),
+    ).resolves.toMatchObject({ notified: false, reason: "invalid_global_webhook" });
+  });
+
   it("honors an explicit cooldownMinutes override", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const env = createTestEnv({ DISCORD_WEBHOOK_URL: "https://discord.com/api/webhooks/123/abc" });

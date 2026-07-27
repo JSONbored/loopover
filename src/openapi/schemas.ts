@@ -1862,6 +1862,33 @@ export const ScorePreviewSchema = z
   })
   .openapi("ScorePreview");
 
+// #9301: response shapes for the two documented-sibling scoring POST routes (/v1/scoring/eligibility-plan,
+// /v1/scoring/explain-breakdown). Field names/types mirror loopover_get_eligibility_plan /
+// loopover_explain_score_breakdown's own MCP outputSchemas (eligibilityPlanOutputSchema /
+// scoreBreakdownOutputSchema in src/mcp/server.ts) -- the same data these HTTP routes return.
+export const EligibilityPlanResponseSchema = z
+  .object({
+    eligible: z.boolean().optional(),
+    linkedIssueStatus: z.string().optional(),
+    branchEligibilityStatus: z.string().optional(),
+    blockers: z.array(z.string()).optional(),
+    cleanupPaths: z.array(z.string()).optional(),
+    linkedIssueProjection: z.string().nullable().optional(),
+    publicSummary: z.string().optional(),
+  })
+  .openapi("EligibilityPlanResponse");
+
+export const ScoreBreakdownResponseSchema = z
+  .object({
+    repoFullName: z.string().optional(),
+    scoreabilityStatus: z.string().optional(),
+    effectiveEstimatedScore: z.number().optional(),
+    components: z.unknown().optional(),
+    gateHighlights: z.unknown().optional(),
+    highestLeverageLever: z.unknown().optional(),
+  })
+  .openapi("ScoreBreakdownResponse");
+
 export const IssueQualityReportSchema = z
   .object({
     repoFullName: z.string(),

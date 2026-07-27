@@ -37,6 +37,8 @@ import {
   IssueQualityReportSchema,
   IssueQualityResponseSchema,
   GateConfigEffectiveResponseSchema,
+  EligibilityPlanResponseSchema,
+  ScoreBreakdownResponseSchema,
   LabelAuditSchema,
   LaneAdviceSchema,
   LiveGateThresholdsResponseSchema,
@@ -163,6 +165,8 @@ export function buildOpenApiSpec() {
   registry.register("IssueQualityReport", IssueQualityReportSchema);
   registry.register("IssueQualityResponse", IssueQualityResponseSchema);
   registry.register("GateConfigEffectiveResponse", GateConfigEffectiveResponseSchema);
+  registry.register("EligibilityPlanResponse", EligibilityPlanResponseSchema);
+  registry.register("ScoreBreakdownResponse", ScoreBreakdownResponseSchema);
   registry.register("LiveGateThresholdsResponse", LiveGateThresholdsResponseSchema);
   registry.register("BurdenForecast", BurdenForecastSchema);
   registry.register("ContributorScoringProfile", ContributorScoringProfileSchema);
@@ -308,6 +312,24 @@ export function buildOpenApiSpec() {
     summary: "Generate a scoring preview artifact for a candidate contribution",
     responses: {
       200: { description: "Private scoring preview artifact", content: { "application/json": { schema: ScorePreviewSchema } } },
+      400: { description: "Invalid scoring preview input" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/scoring/eligibility-plan",
+    summary: "Eligibility plan derived from a scoring preview for a candidate contribution (#9301)",
+    responses: {
+      200: { description: "Eligibility plan (eligible, linked-issue/branch status, blockers, cleanup paths, public summary)", content: { "application/json": { schema: EligibilityPlanResponseSchema } } },
+      400: { description: "Invalid scoring preview input" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/scoring/explain-breakdown",
+    summary: "Human-readable explanation of a scoring preview's score breakdown (#9301)",
+    responses: {
+      200: { description: "Score breakdown explanation (scoreability status, effective estimated score, components, gate highlights, highest-leverage lever)", content: { "application/json": { schema: ScoreBreakdownResponseSchema } } },
       400: { description: "Invalid scoring preview input" },
     },
   });

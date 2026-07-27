@@ -14856,6 +14856,62 @@
           "login",
           "marked"
         ]
+      },
+      "EligibilityPlanResponse": {
+        "type": "object",
+        "properties": {
+          "eligible": {
+            "type": "boolean"
+          },
+          "linkedIssueStatus": {
+            "type": "string"
+          },
+          "branchEligibilityStatus": {
+            "type": "string"
+          },
+          "blockers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cleanupPaths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "linkedIssueProjection": {
+            "type": "string",
+            "nullable": true
+          },
+          "publicSummary": {
+            "type": "string"
+          }
+        }
+      },
+      "ScoreBreakdownResponse": {
+        "type": "object",
+        "properties": {
+          "repoFullName": {
+            "type": "string"
+          },
+          "scoreabilityStatus": {
+            "type": "string"
+          },
+          "effectiveEstimatedScore": {
+            "type": "number"
+          },
+          "components": {
+            "nullable": true
+          },
+          "gateHighlights": {
+            "nullable": true
+          },
+          "highestLeverageLever": {
+            "nullable": true
+          }
+        }
       }
     },
     "parameters": {},
@@ -19426,6 +19482,62 @@
           },
           "401": {
             "description": "Invalid internal token"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/scoring/eligibility-plan": {
+      "post": {
+        "summary": "Eligibility plan derived from a scoring preview for a candidate contribution (#9301)",
+        "responses": {
+          "200": {
+            "description": "Eligibility plan (eligible, linked-issue/branch status, blockers, cleanup paths, public summary)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EligibilityPlanResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid scoring preview input"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/scoring/explain-breakdown": {
+      "post": {
+        "summary": "Human-readable explanation of a scoring preview's score breakdown (#9301)",
+        "responses": {
+          "200": {
+            "description": "Score breakdown explanation (scoreability status, effective estimated score, components, gate highlights, highest-leverage lever)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScoreBreakdownResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid scoring preview input"
           }
         },
         "security": [

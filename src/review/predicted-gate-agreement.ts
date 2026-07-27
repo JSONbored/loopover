@@ -1,6 +1,6 @@
 // Predicted-vs-live gate agreement (#predicted-live-gate-agreement, maintainer review-stack x AMS integration
 // audit 2026-07-09) -- a SIBLING to computeGateEval/computeGateParity (src/review/parity.ts), answering a
-// DIFFERENT question than either: not "does gittensory match reviewbot" (computeGateParity) and not "does one
+// DIFFERENT question than either: not "does loopover match reviewbot" (computeGateParity) and not "does one
 // system's prediction match the human's realized merge/close" (computeGateEval), but "does the MCP predict_gate
 // tool's pre-submission verdict for a contributor match the REAL gate decision their eventual PR receives."
 //

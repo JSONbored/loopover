@@ -37,6 +37,41 @@ describe("resolveAgentActionMode (#776 safety gate)", () => {
     expect(agentActionModeExecutes("dry_run")).toBe(false);
     expect(agentActionModeExecutes("paused")).toBe(false);
   });
+
+  // #9130: instanceMode is the instance-wide SELFHOST_DEPLOYMENT_MODE kill switch (forcedSelfhostMode(env),
+  // threaded in by every caller with env in scope) -- the FIRST precedence term, folded in via the same
+  // "most restrictive wins" ordering as the other two terms.
+  describe("instanceMode (#9130 instance-wide kill switch)", () => {
+    it("instanceMode: 'paused' forces paused even when every per-repo/global signal says live", () => {
+      expect(resolveAgentActionMode({ globalPaused: false, agentPaused: false, agentDryRun: false, instanceMode: "paused" })).toBe("paused");
+    });
+
+    it("instanceMode: 'paused' beats a per-repo dry-run too (most restrictive wins)", () => {
+      expect(resolveAgentActionMode({ globalPaused: false, agentDryRun: true, instanceMode: "paused" })).toBe("paused");
+    });
+
+    it("instanceMode: 'dry_run' forces dry_run even when every per-repo/global signal says live", () => {
+      expect(resolveAgentActionMode({ globalPaused: false, agentPaused: false, agentDryRun: false, instanceMode: "dry_run" })).toBe("dry_run");
+    });
+
+    it("a global or per-repo pause still beats instanceMode: 'dry_run' (paused is the most restrictive term overall)", () => {
+      expect(resolveAgentActionMode({ globalPaused: true, instanceMode: "dry_run" })).toBe("paused");
+      expect(resolveAgentActionMode({ globalPaused: false, agentPaused: true, instanceMode: "dry_run" })).toBe("paused");
+    });
+
+    it("instanceMode: 'live' never forces anything -- behaves exactly like instanceMode absent", () => {
+      expect(resolveAgentActionMode({ globalPaused: false, instanceMode: "live" })).toBe("live");
+      expect(resolveAgentActionMode({ globalPaused: false, agentDryRun: true, instanceMode: "live" })).toBe("dry_run");
+      expect(resolveAgentActionMode({ globalPaused: true, instanceMode: "live" })).toBe("paused");
+    });
+
+    it("instanceMode absent/null/undefined is byte-identical to today (the cloud Worker never sets SELFHOST_DEPLOYMENT_MODE)", () => {
+      expect(resolveAgentActionMode({ globalPaused: false })).toBe("live");
+      expect(resolveAgentActionMode({ globalPaused: false, instanceMode: null })).toBe("live");
+      expect(resolveAgentActionMode({ globalPaused: false, instanceMode: undefined })).toBe("live");
+      expect(resolveAgentActionMode({ globalPaused: false, agentDryRun: true, instanceMode: null })).toBe("dry_run");
+    });
+  });
 });
 
 describe("isGlobalAgentPause", () => {

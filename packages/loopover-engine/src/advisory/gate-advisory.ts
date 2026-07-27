@@ -268,6 +268,19 @@ function addRepoFindings(repo: RepositoryRecord, findings: AdvisoryFinding[]): v
   }
 }
 
+/** #9129 (host-parity, src/rules/advisory.ts): corroboration for a duplicate-issue-link finding, beyond
+ *  authored body text alone -- see the host copy's own doc comment for the full rationale. Kept in lock-step
+ *  with the host's `hasDuplicateOverlapCorroboration` by the live-gate-parity contract test. */
+function hasDuplicateOverlapCorroboration(pr: PullRequestRecord, otherPr: PullRequestRecord): boolean {
+  const mineFiles = pr.changedFiles;
+  const theirsFiles = otherPr.changedFiles;
+  if (mineFiles && mineFiles.length > 0 && theirsFiles && theirsFiles.length > 0) {
+    const mine = new Set(mineFiles);
+    if (theirsFiles.some((path) => mine.has(path))) return true;
+  }
+  return Boolean(theirsFiles && theirsFiles.length > 0);
+}
+
 function addPullRequestFindings(
   repo: RepositoryRecord | null,
   pr: PullRequestRecord,
@@ -312,13 +325,30 @@ function addPullRequestFindings(
     // suppressing duplicate evidence with arbitrary PR-number ordering.
     // Flag-OFF (default) short-circuits ⇒ the finding is pushed exactly as before (byte-identical).
     if (overlappingPrs.length > 0 && !(duplicateWinnerEnabled && isDuplicateClusterWinnerByClaim(pr, overlappingPrs))) {
-      findings.push({
-        code: "duplicate_pr_risk",
-        severity: "warning",
-        title: "Linked issue overlaps another open PR",
-        detail: `Other open pull requests reference the same linked issue set: ${overlappingPrs.map((otherPr) => `#${otherPr.number}`).join(", ")}.`,
-        action: "Review the related PRs before spending reviewer time on duplicate work.",
-      });
+      // #9129 (host-parity): split by corroboration -- see hasDuplicateOverlapCorroboration + the host's own
+      // doc comment. A CONCRETE finding code (`duplicate_pr_risk`) is reserved for a sibling with real
+      // corroborating evidence beyond body text; a PURELY body-text overlap gets the separate, always-non-
+      // blocking `duplicate_pr_risk_unconfirmed` code (see resolveConfiguredGateMode below).
+      const corroboratedPrs = overlappingPrs.filter((otherPr) => hasDuplicateOverlapCorroboration(pr, otherPr));
+      const uncorroboratedPrs = overlappingPrs.filter((otherPr) => !hasDuplicateOverlapCorroboration(pr, otherPr));
+      if (corroboratedPrs.length > 0) {
+        findings.push({
+          code: "duplicate_pr_risk",
+          severity: "warning",
+          title: "Linked issue overlaps another open PR with corroborating changes",
+          detail: `Other open pull requests reference the same linked issue set AND show corroborating changed-file overlap or a non-trivial diff: ${corroboratedPrs.map((otherPr) => `#${otherPr.number}`).join(", ")}.`,
+          action: "This looks like a genuine race for the same issue. Coordinate with the other contributor, or wait for a maintainer to triage before assuming priority.",
+        });
+      }
+      if (uncorroboratedPrs.length > 0) {
+        findings.push({
+          code: "duplicate_pr_risk_unconfirmed",
+          severity: "info",
+          title: "Linked issue is also cited by another open PR",
+          detail: `Other open pull requests cite the same linked issue number, with no corroborating changed-file evidence yet: ${uncorroboratedPrs.map((otherPr) => `#${otherPr.number}`).join(", ")}.`,
+          action: "This may be coincidental, or an early race that hasn't produced comparable code yet — verify manually before assuming it's a genuine duplicate.",
+        });
+      }
     }
   }
   // Self-authored linked-issue detection: the PR author also filed the linked issue. Raised when at least
@@ -566,6 +596,21 @@ function evaluateGateCheckCore(advisoryResult: Advisory, policy: GateCheckPolicy
       warnings: gateWarnings,
     };
   }
+  // Duplicate-only HOLD (#9129, host-parity): a gate that would otherwise FAIL solely because of a
+  // same-linked-issue duplicate_pr_risk blocker is HELD for a human instead of closed outright — see the
+  // host copy's own doc comment for the full rationale. There is no duplicatePrGateMode configuration that
+  // can close a PR through this finding anymore. A blocker set that mixes it with a genuinely critical
+  // finding still falls through to the unconditional failure below.
+  if (blockers.every((blocker) => blocker.code === "duplicate_pr_risk")) {
+    return {
+      enabled: true,
+      conclusion: "neutral",
+      title: `${LOOPOVER_GATE_CHECK_NAME} — held for manual review`,
+      summary: blockers.map((finding) => sanitizeForCheckRun(finding.title)).join("; "),
+      blockers: [],
+      warnings: [...gateWarnings, ...blockers],
+    };
+  }
   // Name the exact blocker(s) + fix in the title so the contributor sees WHY at a glance.
   const firstBlocker = blockers[0];
   const titleDetail = blockers.length === 1 && firstBlocker ? sanitizeForCheckRun(firstBlocker.title) : `${blockers.length} blockers`;
@@ -603,9 +648,18 @@ function gatePolicyBlocks(mode: GateRuleMode | undefined, defaultMode: GateRuleM
 function isConfiguredGateBlocker(finding: AdvisoryFinding, policy: GateCheckPolicy): boolean {
   const code = finding.code;
   // Missing linked issue defaults to ADVISORY — issues aren't always available, so it only blocks when a
-  // repo explicitly opts in with linkedIssueGateMode: "block". Duplicates still default to blocking.
+  // repo explicitly opts in with linkedIssueGateMode: "block".
   if (code === "missing_linked_issue") return gatePolicyBlocks(policy.linkedIssueGateMode, "advisory");
-  if (code === "duplicate_pr_risk") return gatePolicyBlocks(policy.duplicatePrGateMode, "block");
+  // #9129 (host-parity): default changed from "block" to "advisory" -- this finding is derived from another
+  // contributor's own PR body text, so blocking-by-default let anyone force-close a rival's PR for free. A
+  // maintainer who explicitly opts into "block" still gets real effect: evaluateGateCheckCore HOLDS (never
+  // closes) a gate that fails solely on this finding (see the duplicate-only hold there). Only ever produced
+  // for a CORROBORATED overlap (see hasDuplicateOverlapCorroboration) -- a purely body-text overlap uses the
+  // separate, always-non-blocking duplicate_pr_risk_unconfirmed code below.
+  if (code === "duplicate_pr_risk") return gatePolicyBlocks(policy.duplicatePrGateMode, "advisory");
+  // #9129 (host-parity): an UNCORROBORATED duplicate-issue citation is NEVER a configured gate blocker,
+  // regardless of duplicatePrGateMode -- an adversary can manufacture this signal for free.
+  if (code === "duplicate_pr_risk_unconfirmed") return false;
   // A dual-model AI consensus defect blocks ONLY when the maintainer opted into aiReview: block. It is the
   // most conservative AI signal (two independent models) but still confirmed-contributor gated by
   // evaluateGateCheck, and advisory by default.

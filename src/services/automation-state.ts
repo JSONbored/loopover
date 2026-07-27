@@ -4,6 +4,7 @@
 // `pendingActionCount` view that `GET /settings` deliberately does not return (settings returns only the
 // resolved row). Keeping this in one function is what stops the three surfaces from drifting.
 import { countPendingAgentActions, getInstallation, getRepository, isGlobalAgentFrozen } from "../db/repositories";
+import { forcedSelfhostMode } from "../github/client";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness } from "../settings/agent-execution";
 import { AGENT_ACTION_CLASSES, isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
@@ -41,6 +42,7 @@ export async function buildAutomationState(env: Env, repoFullName: string): Prom
   const installation = repo?.installationId ? await getInstallation(env, repo.installationId) : null;
   const mode = resolveAgentActionMode({
     globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
+    instanceMode: forcedSelfhostMode(env),
     agentPaused: settings.agentPaused,
     agentDryRun: settings.agentDryRun,
   });

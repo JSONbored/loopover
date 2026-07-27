@@ -2340,19 +2340,24 @@ describe("createSqliteQueue (durable #980)", () => {
      *  "recapture-preview" by default -- a foreground type NOT in GITHUB_BUDGET_BACKGROUND_TYPES and not
      *  "github-webhook"/"agent-regate-pr", so githubRateLimitAdmissionTargetForJob returns null for it and the
      *  rate-limit-clear condition (isRateLimitAdmissionNowClear) is trivially/always true for these rows --
-     *  isolating the AGE-based condition cleanly for tests that aren't specifically about rate-limit clearing. */
+     *  isolating the AGE-based condition cleanly for tests that aren't specifically about rate-limit clearing.
+     *  `deferredBy` defaults to 'rate_limit' (#9127): a row must have SOME admission-gate provenance tag to even
+     *  be a release candidate at all (the SELECT's own `deferred_by IS NOT NULL` filter) -- pass `null` explicitly
+     *  to model a row deferred by enqueue()'s own delaySeconds instead, which must NEVER be released regardless
+     *  of age or rate-limit state (see the dedicated #9127 provenance tests below). */
     function seedForegroundPendingRow(
       driver: ReturnType<typeof makeDriver>,
-      opts: { createdAt: number; runAfter: number; priority?: number; type?: string },
+      opts: { createdAt: number; runAfter: number; priority?: number; type?: string; deferredBy?: string | null },
     ): void {
       driver.query(
-        `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
-         VALUES (?, 'pending', 0, ?, ?, ?, NULL, 0)`,
+        `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance, deferred_by)
+         VALUES (?, 'pending', 0, ?, ?, ?, NULL, 0, ?)`,
         [
           JSON.stringify({ type: opts.type ?? "recapture-preview", deliveryId: `seed:${opts.createdAt}`, repoFullName: "o/r", prNumber: 1, attempt: 1 }),
           opts.runAfter,
           opts.createdAt,
           opts.priority ?? 9,
+          opts.deferredBy === undefined ? "rate_limit" : opts.deferredBy,
         ],
       );
     }
@@ -2417,8 +2422,8 @@ describe("createSqliteQueue (durable #980)", () => {
       const q = createSqliteQueue(driver, async () => undefined);
       const futureRunAfter = now + 60 * 60_000;
       driver.query(
-        `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
-         VALUES (?, 'pending', 0, ?, ?, 10, NULL, 0)`,
+        `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance, deferred_by)
+         VALUES (?, 'pending', 0, ?, ?, 10, NULL, 0, 'rate_limit')`,
         [
           JSON.stringify({ type: "github-webhook", deliveryId: "still-blocked", eventName: "x", payload: { installation: { id: 123 } } }),
           futureRunAfter,
@@ -2445,8 +2450,8 @@ describe("createSqliteQueue (durable #980)", () => {
       const futureRunAfter = now + 60 * 60_000;
       for (const deliveryId of ["fg-fresh-1", "fg-fresh-2"]) {
         driver.query(
-          `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
-           VALUES (?, 'pending', 0, ?, ?, 10, NULL, 0)`,
+          `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance, deferred_by)
+           VALUES (?, 'pending', 0, ?, ?, 10, NULL, 0, 'rate_limit')`,
           [
             JSON.stringify({
               type: "github-webhook",
@@ -2479,8 +2484,8 @@ describe("createSqliteQueue (durable #980)", () => {
       const futureRunAfter = now + 60 * 60_000;
       // No github_rate_limit_observations table/row at all -- rateLimitAdmissionDelayMs degrades to "clear".
       driver.query(
-        `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
-         VALUES (?, 'pending', 0, ?, ?, 10, NULL, 0)`,
+        `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance, deferred_by)
+         VALUES (?, 'pending', 0, ?, ?, 10, NULL, 0, 'rate_limit')`,
         [JSON.stringify({ type: "github-webhook", deliveryId: "now-clear", eventName: "x", payload: {} }), futureRunAfter, now - 1_000],
       );
 
@@ -2500,8 +2505,8 @@ describe("createSqliteQueue (durable #980)", () => {
       const now = Date.now();
       const futureRunAfter = now + 60 * 60_000;
       driver.query(
-        `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
-         VALUES (?, 'pending', 0, ?, ?, 10, NULL, 0)`,
+        `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance, deferred_by)
+         VALUES (?, 'pending', 0, ?, ?, 10, NULL, 0, 'rate_limit')`,
         ["not valid json", futureRunAfter, now - 1_000],
       );
 
@@ -2626,8 +2631,8 @@ describe("createSqliteQueue (durable #980)", () => {
       ];
       for (const row of rows) {
         driver.query(
-          `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
-           VALUES (?, 'pending', 0, ?, ?, 10, NULL, 0)`,
+          `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance, deferred_by)
+           VALUES (?, 'pending', 0, ?, ?, 10, NULL, 0, 'rate_limit')`,
           [
             JSON.stringify({
               type: "github-webhook",
@@ -2669,8 +2674,8 @@ describe("createSqliteQueue (durable #980)", () => {
       // "oldest N" window is entirely consumed by these and never reaches the newer row below.
       for (let i = 0; i < 6; i += 1) {
         driver.query(
-          `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
-           VALUES (?, 'pending', 0, ?, ?, 10, NULL, 0)`,
+          `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance, deferred_by)
+           VALUES (?, 'pending', 0, ?, ?, 10, NULL, 0, 'rate_limit')`,
           [
             JSON.stringify({ type: "github-webhook", deliveryId: `blocked-${i}`, eventName: "x", payload: { installation: { id: 111 } } }),
             farFuture,
@@ -2680,8 +2685,8 @@ describe("createSqliteQueue (durable #980)", () => {
       }
       // The single newest pending row, on a different (clear) admission target.
       driver.query(
-        `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
-         VALUES (?, 'pending', 0, ?, ?, 10, NULL, 0)`,
+        `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance, deferred_by)
+         VALUES (?, 'pending', 0, ?, ?, 10, NULL, 0, 'rate_limit')`,
         [JSON.stringify({ type: "github-webhook", deliveryId: "clear-newer", eventName: "x", payload: { installation: { id: 222 } } }), farFuture, now - 1_000],
       );
 
@@ -2712,7 +2717,7 @@ describe("createSqliteQueue (durable #980)", () => {
         let armed = false;
         const realQuery = driver.query.bind(driver);
         vi.spyOn(driver, "query").mockImplementation((sql: string, params: unknown[]) => {
-          if (armed && sql.includes("SELECT id, payload, created_at FROM") && sql.includes("priority>=? AND run_after>?")) {
+          if (armed && sql.includes("SELECT id, payload, created_at, deferred_by FROM") && sql.includes("priority>=? AND run_after>?")) {
             throw new Error("disk I/O error");
           }
           return realQuery(sql, params);
@@ -2734,6 +2739,100 @@ describe("createSqliteQueue (durable #980)", () => {
       } finally {
         delete process.env.FOREGROUND_LIVENESS_CHECK_INTERVAL_MS;
       }
+    });
+
+    // INVARIANT (#9127): enqueue(message, delaySeconds) is the ONLY place a foreground job's run_after is pushed
+    // into the future by a DELIBERATE delay (as opposed to an admission gate deferring it) -- such a row must
+    // never be released by the liveness sweep before its delay elapses, no matter how soon after enqueue the
+    // sweep fires or how long the delay is. Before #9127, this failed: recapture-preview has no rate-limit
+    // bucket (githubRateLimitAdmissionTargetForJob returns null for it), so isRateLimitAdmissionNowClear degraded
+    // to "clear" unconditionally, and the pre-fix candidate SELECT had no provenance filter at all -- the very
+    // next sweep tick released it regardless of delaySeconds.
+    it("INVARIANT (#9127): a job enqueued with delaySeconds is not runnable before its delay elapses, regardless of liveness-sweep activity", async () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      const now = Date.now();
+      const delaySeconds = 300;
+      await q.binding.send(
+        { type: "recapture-preview", deliveryId: "delay-test", repoFullName: "o/r", prNumber: 1, installationId: 1, attempt: 0 } as unknown as JobMessage,
+        { delaySeconds },
+      );
+
+      // Simulate the liveness sweep firing on the very next tick -- as little as one
+      // FOREGROUND_LIVENESS_CHECK_INTERVAL_MS after enqueue (60s default), long before delaySeconds elapses.
+      const released = await q.releaseStaleForegroundDeferrals();
+
+      expect(released).toBe(0);
+      const row = driver.query("SELECT run_after, deferred_by FROM _selfhost_jobs", []).rows[0] as {
+        run_after: number;
+        deferred_by: string | null;
+      };
+      // Untouched: still (approximately) delaySeconds out, and never tagged as admission-gate-deferred.
+      expect(row.run_after).toBeGreaterThan(now + (delaySeconds - 1) * 1000);
+      expect(row.deferred_by).toBeNull();
+      expect(await renderMetrics()).not.toContain("loopover_jobs_foreground_liveness_released_total");
+    });
+
+    // REGRESSION (#9127): the contributor-facing trigger. processors.ts's linked-issue flag-then-close grace
+    // window enqueues exactly this "recapture-preview" shape with delaySeconds = closeDelaySeconds (up to 300s)
+    // after applying the pending-closure label, promising the contributor that many seconds to push a fix before
+    // Pass 2 re-verifies and closes. The bug collapsed this to one sweep tick (<=60s default); this test proves
+    // the grace window survives even a very aggressive liveness sweep configuration (tiny maxDeferMs), which
+    // would previously have released it via the AGE arm too if enqueue-time delays weren't structurally excluded
+    // from the candidate SELECT.
+    it("REGRESSION (#9127): the linked-issue flag-then-close grace window survives a liveness sweep", async () => {
+      process.env.FOREGROUND_LIVENESS_MAX_DEFER_MS = "60000"; // 1m floor -- deliberately aggressive
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      const closeDelaySeconds = 300;
+      await q.binding.send(
+        {
+          type: "recapture-preview",
+          deliveryId: "linked-issue-verify:o/r#42",
+          repoFullName: "o/r",
+          prNumber: 42,
+          installationId: 1,
+          attempt: 0,
+        } as unknown as JobMessage,
+        { delaySeconds: closeDelaySeconds },
+      );
+
+      const released = await q.releaseStaleForegroundDeferrals();
+
+      expect(released).toBe(0);
+      const row = driver.query("SELECT run_after FROM _selfhost_jobs WHERE payload LIKE '%linked-issue-verify%'", [])
+        .rows[0] as { run_after: number };
+      expect(row.run_after).toBeGreaterThan(Date.now());
+    });
+
+    // The rate-limit-clear recheck is scoped to deferred_by==='rate_limit' ONLY (#9127): a row deferred by
+    // maintenance-admission or installation-concurrency has no rate-limit bucket either, so treating it as
+    // trivially "clear" would release it on the very next sweep regardless of whether ITS OWN gate cleared.
+    // Covers both outcomes: the age-stale row (deferred_by='installation_concurrency') releases via the AGE arm
+    // alone, and the fresh row (deferred_by='maintenance_admission') stays parked since neither arm applies.
+    it("scopes the rate-limit-clear recheck to deferred_by='rate_limit' -- other admission-gate tags only release via the age arm", async () => {
+      process.env.FOREGROUND_LIVENESS_MAX_DEFER_MS = "60000"; // 1m floor
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      const now = Date.now();
+      const farFuture = now + 60 * 60_000;
+      seedForegroundPendingRow(driver, {
+        createdAt: now - 5 * 60_000,
+        runAfter: farFuture,
+        deferredBy: "installation_concurrency",
+      });
+      seedForegroundPendingRow(driver, {
+        createdAt: now - 1_000,
+        runAfter: farFuture,
+        deferredBy: "maintenance_admission",
+      });
+
+      const released = await q.releaseStaleForegroundDeferrals();
+
+      expect(released).toBe(1);
+      const remaining = driver.query(`SELECT COUNT(*) AS c FROM _selfhost_jobs WHERE status='pending' AND run_after>?`, [now])
+        .rows[0] as { c: number };
+      expect(remaining.c).toBe(1); // the fresh, non-rate-limit-deferred row stays parked
     });
   });
 

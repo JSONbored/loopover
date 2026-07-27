@@ -662,6 +662,7 @@ export async function resolveRepoActionMode(env: Env, settings: Pick<RepositoryS
   const { isGlobalAgentFrozen } = await import("../db/repositories");
   return resolveAgentActionMode({
     globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
+    instanceMode: forcedSelfhostMode(env),
     agentPaused: settings?.agentPaused,
     agentDryRun: settings?.agentDryRun,
   });

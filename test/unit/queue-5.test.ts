@@ -390,7 +390,10 @@ describe("queue processors", () => {
     });
 
     it("close policy on a PR thread: labels + closes once the threshold is crossed, with no merit review", async () => {
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      // #9132: LOOPOVER_REVIEW_PARITY_AUDIT: "true" so recordNativeGateDecision/recordContributorGateDecision/
+      // recordPredictedGateCalibration (all flag-gated the same way) actually write, letting this test observe
+      // the gate_decision row #9132's fix now produces for a review-nag close.
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_PARITY_AUDIT: "true" });
       await upsertInstallation(env, {
         installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["issue_comment"] },
         repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
@@ -420,11 +423,81 @@ describe("queue processors", () => {
       expect(seen.comments.some((c) => c.includes("chatty") && c.includes("4 times"))).toBe(true);
       const closeAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'agent.action.close'").first<{ n: number }>();
       expect(closeAudit?.n).toBeGreaterThanOrEqual(1);
-      // #9134 REGRESSION: this review-nag close previously wrote NO decision record at all.
-      const decisionRecord = await env.DB.prepare("select action, reason_code from decision_records where repo_full_name = ? and pull_number = 203").bind("JSONbored/gittensory").first<{ action: string; reason_code: string }>();
+      // #9134 REGRESSION: this review-nag close previously wrote NO decision record at all -- now covered by
+      // executeAgentMaintenanceActions' own hoisted recordCompletedDecision (the generic, non-managedByCaller
+      // path this call site's `decisionRecord: { configDigest }` context takes).
+      const decisionRecord = await env.DB.prepare("select action, reason_code from decision_records where repo_full_name = ? and pull_number = ?").bind("JSONbored/gittensory", 203).first<{ action: string; reason_code: string }>();
       expect(decisionRecord).toMatchObject({ action: "close", reason_code: "policy_close:review_nag" });
       const ledgerRows = await env.DB.prepare("select count(*) as n from decision_ledger").first<{ n: number }>();
       expect(ledgerRows?.n).toBeGreaterThanOrEqual(1);
+
+      // #9132 REGRESSION: the review-nag close ALSO records a gate_decision row through the SAME
+      // applyPrecisionBreakers + recordNativeGateDecision sequence the main disposition path uses -- #9086's
+      // breaker coverage is now actually reachable, and the decision is no longer invisible to
+      // queryRuleGateCells (the #8825 misprediction-poisoning bug this closes). This is a DIFFERENT row than
+      // #9134's decision_records check above: #9134 hoisted decision_records/decision_ledger into the executor
+      // for every completed merge/close; #9132 is the review_audit `gate_decision` calibration row, which the
+      // executor's hoist does not write and finalizePolicyCloseDisposition (processors.ts) still records
+      // directly, breaker-downgrade-and-all, BEFORE the executor ever runs.
+      const gateDecision = await env.DB.prepare(
+        "select decision, summary from review_audit where target_id = ? and event_type = 'gate_decision' order by created_at desc limit 1",
+      )
+        .bind("JSONbored/gittensory#203")
+        .first<{ decision: string; summary: string }>();
+      expect(gateDecision?.decision).toBe("close");
+      expect(gateDecision?.summary).toBe("policy_close:review_nag");
+    });
+
+    // #9132 REGRESSION: #9086 added "review_nag" to CONTENT_INSPECTION_CLOSE_KINDS so the close-precision
+    // breaker (downgradeCloseToHold) would cover it -- but neither review-nag close site ever called
+    // applyPrecisionBreakers, so the breaker could never actually engage no matter how wrong the close was.
+    // With the project's close-precision breaker engaged (closehold:<repo> in system_flags), a review-nag
+    // close must now be DOWNGRADED TO A HOLD (manual-review label instead of a close) -- proving the close is
+    // genuinely breaker-eligible, not just carrying the right code in a set no one consults.
+    it("REGRESSION (#9132): a review-nag close is downgraded to a hold when the project's close-precision breaker is engaged", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_PARITY_AUDIT: "true" });
+      await upsertInstallation(env, {
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["issue_comment"] },
+        repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+      });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { close: "auto", label: "auto" } });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "close", reviewNagMaxPings: 3 } }, "repo_file");
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 204, title: "Breaker-held close", state: "open", user: { login: "chatty" }, head: { sha: "sha204" }, author_association: "NONE", labels: [], body: "" });
+      // The close-precision breaker is engaged repo-wide -- mirrors how queue-lifecycle-guards.test.ts and the
+      // main-disposition-path breaker tests seed the same system_flags row directly.
+      await env.DB.prepare("INSERT OR REPLACE INTO system_flags (key, value, updated_at) VALUES ('closehold:JSONbored/gittensory', '1', CURRENT_TIMESTAMP)").run();
+      for (let i = 0; i < 3; i += 1) {
+        await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "JSONbored/gittensory#204", outcome: "completed" });
+      }
+      const seen = { comments: [] as string[], labels: [] as string[], closed: false };
+      stubReviewNagFetch(204, seen);
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "nag-breaker-held",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          issue: { number: 204, title: "Breaker-held close", state: "open", pull_request: {}, user: { login: "chatty" }, author_association: "NONE" },
+          comment: { id: 4, body: "@loopover help", user: { login: "chatty", type: "User" }, author_association: "NONE" },
+        },
+      });
+      // The breaker downgraded the close: never closed, and the manual-review label (not the review-nag label)
+      // was applied instead.
+      expect(seen.closed).toBe(false);
+      expect(seen.labels).toContain("manual-review");
+      const closeAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'agent.action.close'").first<{ n: number }>();
+      expect(closeAudit?.n ?? 0).toBe(0);
+      // The disposition still records as a hold (no close action survived the breaker), still naming the
+      // review-nag reason code -- so this genuinely-blocked close is STILL visible to calibration, unlike
+      // before #9132 where it was invisible either way.
+      const gateDecision = await env.DB.prepare(
+        "select decision from review_audit where target_id = ? and event_type = 'gate_decision' order by created_at desc limit 1",
+      )
+        .bind("JSONbored/gittensory#204")
+        .first<{ decision: string }>();
+      expect(gateDecision?.decision).toBe("hold");
     });
 
     it("REGRESSION (#review-nag-cross-pr-carryover): a contributor who exhausted their pings on PR A carries the count over to a BRAND-NEW PR B instead of resetting to a clean 0/maxPings slate", async () => {
@@ -962,7 +1035,10 @@ describe("queue processors", () => {
     });
 
     it("close policy on a PR thread: labels + closes once the threshold is crossed, reusing reviewNagLabel", async () => {
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      // #9132: LOOPOVER_REVIEW_PARITY_AUDIT: "true" so recordNativeGateDecision/recordContributorGateDecision/
+      // recordPredictedGateCalibration actually write, letting this test observe the gate_decision row #9132's
+      // fix now produces for the monitored-mention nag close (the SECOND review-nag close site).
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_PARITY_AUDIT: "true" });
       await upsertInstallation(env, {
         installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["issue_comment"] },
         repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
@@ -992,11 +1068,23 @@ describe("queue processors", () => {
       // #label-scoping: close: "auto" alone (no broad label: "auto") is sufficient for the label AND the close.
       // #9134 REGRESSION: this monitored-mentions close (the @mention-triggered review-nag variant) previously
       // wrote NO decision record at all -- same closeKind ("review_nag") as its ping-count sibling above,
-      // since planAgentMaintenanceActions tags both through the same reviewNagMatch field.
-      const decisionRecord = await env.DB.prepare("select action, reason_code from decision_records where repo_full_name = ? and pull_number = 305").bind("JSONbored/gittensory").first<{ action: string; reason_code: string }>();
+      // since planAgentMaintenanceActions tags both through the same reviewNagMatch field. Now covered by
+      // executeAgentMaintenanceActions' own hoisted recordCompletedDecision.
+      const decisionRecord = await env.DB.prepare("select action, reason_code from decision_records where repo_full_name = ? and pull_number = ?").bind("JSONbored/gittensory", 305).first<{ action: string; reason_code: string }>();
       expect(decisionRecord).toMatchObject({ action: "close", reason_code: "policy_close:review_nag" });
       const ledgerRows = await env.DB.prepare("select count(*) as n from decision_ledger").first<{ n: number }>();
       expect(ledgerRows?.n).toBeGreaterThanOrEqual(1);
+
+      // #9132 REGRESSION: the SECOND review-nag close site (monitored-mention) also now records a gate_decision
+      // row through the shared finalizePolicyCloseDisposition sequence -- a DIFFERENT row than #9134's
+      // decision_records check above (see the ping-count sibling test's comment for why both are expected).
+      const gateDecision = await env.DB.prepare(
+        "select decision, summary from review_audit where target_id = ? and event_type = 'gate_decision' order by created_at desc limit 1",
+      )
+        .bind("JSONbored/gittensory#305")
+        .first<{ decision: string; summary: string }>();
+      expect(gateDecision?.decision).toBe("close");
+      expect(gateDecision?.summary).toBe("policy_close:review_nag");
     });
 
     it("REGRESSION (#review-nag-cross-pr-carryover): a contributor who exhausted their @-mention pings for ONE login on PR A carries that login's count over to a BRAND-NEW PR B", async () => {
@@ -2777,9 +2865,14 @@ describe("queue processors", () => {
     expect(winnerAdvisory?.findings_json ?? "").not.toContain("duplicate_pr_risk");
   });
 
-  it("#dup-winner: flag OFF keeps every same-issue sibling blocked (byte-identical) — the winner is also closed-eligible", async () => {
-    // Same cluster, flag OFF (default). The lowest open PR (#91) STILL gets the duplicate block + finding,
-    // exactly like today — no winner is spared.
+  it("#9129 REGRESSION: an uncorroborated same-issue overlap no longer force-closes, even with duplicatePrGateMode: block set explicitly", async () => {
+    // Same cluster, duplicate-winner flag OFF (default). Before #9129, the lowest open PR (#91) got a hard
+    // duplicate BLOCK + gate failure here purely from the sibling's own linked-issue body text -- exactly the
+    // adversarial primitive #9129 closes (an attacker's throwaway PR body, no code required, forcing a rival's
+    // clean PR closed). Neither PR has changed-file data resolved for the OTHER side (the gate's own
+    // otherOpenPullRequests input is deliberately not enriched with changedFiles by default -- see
+    // hasDuplicateOverlapCorroboration's doc comment), so this overlap is UNCORROBORATED: it now surfaces only
+    // as the non-blocking duplicate_pr_risk_unconfirmed finding, and the gate passes.
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await persistRegistrySnapshot(
       env,
@@ -2823,10 +2916,11 @@ describe("queue processors", () => {
       },
     });
 
-    // Flag OFF: the duplicate block still fires for the lowest sibling — the Gate fails, the finding persists.
-    expect(gatePatchBody.conclusion).toBe("failure");
+    // #9129: an uncorroborated overlap is advisory-only -- the gate passes, and the finding fired is the
+    // never-blocking unconfirmed code, not the concrete one.
+    expect(gatePatchBody.conclusion).toBe("success");
     const winnerAdvisory = await env.DB.prepare("select findings_json from advisories where target_type = 'pull_request' and repo_full_name = ? and pull_number = ?").bind("JSONbored/gittensory", 91).first<{ findings_json: string }>();
-    expect(winnerAdvisory?.findings_json ?? "").toContain("duplicate_pr_risk");
+    expect(winnerAdvisory?.findings_json ?? "").toContain("duplicate_pr_risk_unconfirmed");
   });
 
   it("REGRESSION (#dup-winner-slop-drift): maybePublishPrPublicSurface's slop penalty uses the LIVE-reconciled siblings, not a raw stale-cached read — a stale-cached-open lower sibling that is actually CLOSED on GitHub must not deny this PR winner status / slop-penalize it for the cluster", async () => {

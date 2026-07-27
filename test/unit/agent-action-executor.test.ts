@@ -3,7 +3,7 @@ import * as notifyDiscordModule from "../../src/services/notify-discord";
 
 vi.mock("../../src/github/pr-actions", () => ({
   createPullRequestReview: vi.fn(async () => ({ id: 1 })),
-  mergePullRequest: vi.fn(async () => ({ merged: true, sha: "merged-sha" })),
+  mergePullRequest: vi.fn(async () => ({ merged: true, sha: "merged-sha", suppressed: false })),
   closePullRequest: vi.fn(async () => ({ state: "closed" })),
   closeIssue: vi.fn(async () => ({ state: "closed" })),
   createIssueComment: vi.fn(async () => ({ id: 2 })),
@@ -210,6 +210,81 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect(updatePullRequestBranch).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "sha7");
     expect(fetchPullRequestFreshness).toHaveBeenCalledTimes(6);
     expect((await auditFor(env, "merge"))?.outcome).toBe("completed");
+  });
+
+  // #9130: a suppressed merge (the instance-wide SELFHOST_DEPLOYMENT_MODE kill switch, or any future caller
+  // that reaches performAction without mergePullRequest's own suppression having already been screened out
+  // upstream) must never be recorded as ground truth -- the whole point of the mergePullRequest.suppressed
+  // field. Defense-in-depth: production never reaches this via the normal call path (the loop's own mode gate
+  // already skips performAction under dry_run/paused), but the executor must still handle a suppressed result
+  // correctly if it's ever reached.
+  it("#9130: does NOT record a pr_outcome row when mergePullRequest reports suppressed: true", async () => {
+    const env = createTestEnv({});
+    vi.mocked(mergePullRequest).mockResolvedValueOnce({ merged: true, sha: null, suppressed: true });
+
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [merge]);
+
+    expect(outcomes.map((o) => o.outcome)).toEqual(["completed"]);
+    const outcomeRow = await env.DB.prepare("SELECT 1 AS x FROM review_audit WHERE target_id = ? AND event_type = 'pr_outcome' LIMIT 1")
+      .bind("owner/repo#7")
+      .first<{ x: number }>();
+    // The D1 test double's .first() resolves undefined (not null) for no match -- assert loosely so this test
+    // isn't coupled to that fake's exact nullish shape.
+    expect(outcomeRow ?? null).toBeNull();
+  });
+
+  // #9130 INVARIANT: the instance-wide SELFHOST_DEPLOYMENT_MODE=dry-run kill switch, with every PER-REPO signal
+  // still saying "live" (agentPaused: false, agentDryRun: false) -- the exact split-brain scenario the issue
+  // describes, where the executor used to believe it was live while the instance switch meant to suppress
+  // everything. Runs a merge disposition AND a moderation-escalating close (closeKind: "blacklist", with the
+  // global ban threshold set to 1 -- i.e. this SINGLE close would normally ban+blacklist the author outright)
+  // in one pass, and asserts every one of the four side effects #9130 names is completely absent:
+  //   1. zero GitHub writes (mergePullRequest / closePullRequest / ensurePullRequestLabel never called)
+  //   2. zero pr_outcome rows
+  //   3. zero Discord/Slack notifications
+  //   4. zero moderation escalations (no blacklist entry, despite banThreshold: 1)
+  it("#9130 INVARIANT: SELFHOST_DEPLOYMENT_MODE=dry-run produces ZERO GitHub writes, zero outcome rows, zero notifications, and zero moderation escalations, even though every per-repo setting says live", async () => {
+    const env = createTestEnv({ SELFHOST_DEPLOYMENT_MODE: "dry-run" });
+    await upsertGlobalModerationConfig(env, { enabled: true, banThreshold: 1 });
+    const notifySpy = vi.spyOn(notifyDiscordModule, "notifyActionToDiscord").mockResolvedValue(undefined);
+    const blacklistClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "banned", closeComment: "closing", closeKind: "blacklist" };
+    const blacklistLabel: PlannedAgentAction = {
+      actionClass: "label",
+      autonomyClass: "close",
+      requiresApproval: false,
+      reason: "banned",
+      label: "banned-contributor",
+      labelOp: "add",
+      closeKind: "blacklist",
+    };
+
+    const outcomes = await executeAgentMaintenanceActions(
+      env,
+      ctx({ authorLogin: "attacker", agentPaused: false, agentDryRun: false }),
+      [merge, blacklistClose, blacklistLabel],
+    );
+
+    // Every action is recorded as a dry-run shadow, never "completed" (which would mean a real mutation ran).
+    expect(outcomes.map((o) => o.outcome)).toEqual(["dry_run", "dry_run", "dry_run"]);
+
+    // 1) Zero GitHub writes.
+    expect(mergePullRequest).not.toHaveBeenCalled();
+    expect(closePullRequest).not.toHaveBeenCalled();
+    expect(ensurePullRequestLabel).not.toHaveBeenCalled();
+    expect(createOrUpdateCloseExplanationComment).not.toHaveBeenCalled();
+
+    // 2) Zero pr_outcome rows.
+    const outcomeRow = await env.DB.prepare("SELECT 1 AS x FROM review_audit WHERE target_id = ? AND event_type = 'pr_outcome' LIMIT 1")
+      .bind("owner/repo#7")
+      .first<{ x: number }>();
+    expect(outcomeRow ?? null).toBeNull();
+
+    // 3) Zero notifications.
+    expect(notifySpy).not.toHaveBeenCalled();
+
+    // 4) Zero moderation escalations -- despite banThreshold: 1 (this single close would normally ban+blacklist
+    // "attacker" outright), the global blacklist stays empty.
+    expect(await getGlobalContributorBlacklist(env)).toEqual([]);
   });
 
   // #terminal-outcome-audit: a heuristic close's reason is built by joining every blocker title

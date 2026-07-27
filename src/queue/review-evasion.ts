@@ -20,6 +20,7 @@ import {
   terminalizeActiveReviewTracking,
 } from "../db/repositories";
 import { getRepositoryCollaboratorPermission } from "../github/app";
+import { forcedSelfhostMode } from "../github/client";
 import { ensurePullRequestLabel } from "../github/labels";
 import { fetchPullRequestFreshness, pullRequestFreshnessDetail, type PullRequestFreshness } from "../github/pr-freshness";
 import { closePullRequest, createIssueComment, getLastCloserLogin, getLastReopenerLogin, reopenPullRequest } from "../github/pr-actions";
@@ -148,6 +149,7 @@ async function evaluateCloseEnforcementGate(args: {
   const { env, installationId, repoFullName, pr, settings, eventType, targetKey } = args;
   const mode = resolveAgentActionMode({
     globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
+    instanceMode: forcedSelfhostMode(env),
     agentPaused: settings.agentPaused,
     agentDryRun: settings.agentDryRun,
   });

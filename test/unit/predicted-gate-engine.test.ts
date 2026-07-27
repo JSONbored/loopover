@@ -221,7 +221,10 @@ describe("predicted-gate engine module coverage (#2283)", () => {
       },
       { duplicatePrGateMode: "block" },
     );
-    expect(evaluation.conclusion).toBe("failure");
+    // #9129 (host-parity): a duplicate_pr_risk finding under block mode now HOLDS (neutral), never closes --
+    // see gate-advisory.ts's own duplicate-only-hold branch. The sanitizer still runs on the hold's
+    // title/summary (built from the same blocker findings), so the redaction assertions are unaffected.
+    expect(evaluation.conclusion).toBe("neutral");
     expect(`${evaluation.title} ${evaluation.summary}`).not.toMatch(/likely_duplicate|reviewability/);
     expect(evaluation.summary).toContain("[context]");
   });
@@ -306,7 +309,8 @@ describe("predicted-gate engine module coverage (#2283)", () => {
     expect(missingRepo.findings.some((f) => f.code === "repo_not_registered")).toBe(true);
     const missingPr = buildPullRequestAdvisory(REPO, null);
     expect(missingPr.findings.some((f) => f.code === "pr_not_cached")).toBe(true);
-    const blocked = evaluateGateCheck(
+    // #9129 (host-parity): a duplicate_pr_risk finding under block mode now HOLDS (neutral), never closes.
+    const held = evaluateGateCheck(
       {
         id: "a",
         targetType: "pull_request",
@@ -321,7 +325,7 @@ describe("predicted-gate engine module coverage (#2283)", () => {
       },
       { duplicatePrGateMode: "block" },
     );
-    expect(blocked.conclusion).toBe("failure");
+    expect(held.conclusion).toBe("neutral");
   });
 
   it("exercises the inactive lane advice branch", () => {

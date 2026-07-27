@@ -298,13 +298,19 @@ export function resolveAiReviewSalvageableHold(
 
 // DUPLICATE-ONLY blocker codes: findings whose own severity is always "warning" (advisory by nature — a
 // same-linked-issue overlap is a lead for a human, not proof of a defect) but that a per-repo gate-mode config
-// can still escalate into a hard blocker (`duplicate_pr_risk` under `duplicatePrGateMode: "block"`, its ONLY
-// escalation path — see isConfiguredGateBlocker). Kept to exactly this code, NOT "every warning-severity finding":
-// `missing_linked_issue`, `self_authored_linked_issue`, `manifest_linked_issue_required`, and
+// can still escalate into a configured blocker (`duplicate_pr_risk` under `duplicatePrGateMode: "block"`, its
+// ONLY escalation path — see isConfiguredGateBlocker). Kept to exactly this code, NOT "every warning-severity
+// finding": `missing_linked_issue`, `self_authored_linked_issue`, `manifest_linked_issue_required`, and
 // `manifest_missing_tests` are ALSO severity "warning" and ALSO block-mode-escalatable via their own maintainer-
 // configured gate (linkedIssueGateMode / selfAuthoredLinkedIssueGateMode / manifestPolicyGateMode), and a
 // maintainer who explicitly opted one of THOSE into "block" must have it still close a PR outright — only the
-// same-linked-issue overlap concern is meant to downgrade to a hold for a decisive surface-lane merge.
+// same-linked-issue overlap concern downgrades to a hold instead.
+// #9129: evaluateGateCheckCore itself now downgrades a duplicate-only blocker set straight to a HOLD (neutral),
+// generalizing what USED to be a content-lane-only override (content-lane-wire.ts's applySurfaceGate, guard #4)
+// to every repo — so a GateCheckEvaluation this module produces can no longer reach `conclusion: "failure"` with
+// every blocker in this set; `isDuplicateOnlyFailure` below stays exported/tested for content-lane-wire.ts's own
+// (now largely defense-in-depth) narrower use and for any hand-constructed evaluation that bypasses
+// evaluateGateCheckCore.
 export const DUPLICATE_ONLY_BLOCKER_CODES = new Set<string>(["duplicate_pr_risk"]);
 
 /** True when the gate FAILED *solely* because of duplicate-only blockers (every blocker is in
@@ -800,6 +806,27 @@ function evaluateGateCheckCore(advisoryResult: Advisory, policy: GateCheckPolicy
       warnings: gateWarnings,
     };
   }
+  // Duplicate-only HOLD (#9129): a gate that would otherwise FAIL solely because of a same-linked-issue
+  // duplicate_pr_risk blocker (escalated by duplicatePrGateMode: "block") is HELD for a human instead of closed
+  // outright — never a failure, so this can never one-shot-close a contributor PR. Two independent PRs racing
+  // for the same issue is a maintainer-triage decision, not one ORB should resolve unilaterally using data the
+  // "losing" PR's own rival controls (the adversarial attack this issue closes: cite the same issue number in a
+  // throwaway PR, no code required, and force the victim's clean PR to close). Reuses DUPLICATE_ONLY_BLOCKER_CODES
+  // (previously scoped only to content-lane-wire.ts's narrower surface-gate override, guard #4) so "block" mode's
+  // meaning for this one finding is "hold both sides", never "close either" — there is no duplicatePrGateMode
+  // configuration that can close a PR through this finding anymore. A blocker set that MIXES a duplicate finding
+  // with a genuinely critical one, or another maintainer-configured block-mode finding, is NOT duplicate-only and
+  // still falls through to the unconditional failure below (a real defect still closes).
+  if (blockers.every((blocker) => DUPLICATE_ONLY_BLOCKER_CODES.has(blocker.code))) {
+    return {
+      enabled: true,
+      conclusion: "neutral",
+      title: `${LOOPOVER_GATE_CHECK_NAME} — held for manual review`,
+      summary: blockers.map((finding) => sanitizeForCheckRun(finding.title)).join("; "),
+      blockers: [],
+      warnings: [...gateWarnings, ...blockers],
+    };
+  }
   // Name the exact blocker(s) + fix in the title so the contributor sees WHY at a glance.
   const firstBlocker = blockers[0];
   const titleDetail = blockers.length === 1 && firstBlocker ? sanitizeForCheckRun(firstBlocker.title) : `${blockers.length} blockers`;
@@ -899,6 +926,27 @@ function addRepoFindings(repo: RepositoryRecord, findings: AdvisoryFinding[]): v
   }
 }
 
+/** #9129: corroboration for a duplicate-issue-link finding, beyond authored body text alone. `pr.linkedIssues`
+ *  (and therefore the overlap itself) is entirely contributor-controlled body text — an adversary can cite any
+ *  issue number in their own throwaway PR's body for free, with no code required, and force this PR to be seen
+ *  as "duplicated". Corroboration requires EITHER a genuine changed-file-path overlap with the sibling (both
+ *  PRs' `changedFiles` are resolved and share at least one path — they are plausibly touching the same area of
+ *  the codebase, not just citing the same issue number) OR the sibling itself being a non-trivial real change
+ *  (it has at least one resolved changed file at all, ruling out a hollow, no-diff PR that exists purely to cite
+ *  the issue and force a close). Absent `changedFiles` data on either side — the common case today, since the
+ *  open-PR file-collision enrichment (`enrichOpenPullRequestsWithChangedFiles`, #2653) is deliberately scoped
+ *  away from the gate's own `otherOpenPullRequests` input (see its own scoping note in processors.ts) — degrades
+ *  to "uncorroborated", the safe default: it can never manufacture false corroboration from missing data. PURE. */
+function hasDuplicateOverlapCorroboration(pr: PullRequestRecord, otherPr: PullRequestRecord): boolean {
+  const mineFiles = pr.changedFiles;
+  const theirsFiles = otherPr.changedFiles;
+  if (mineFiles && mineFiles.length > 0 && theirsFiles && theirsFiles.length > 0) {
+    const mine = new Set(mineFiles);
+    if (theirsFiles.some((path) => mine.has(path))) return true;
+  }
+  return Boolean(theirsFiles && theirsFiles.length > 0);
+}
+
 function addPullRequestFindings(
   repo: RepositoryRecord | null,
   pr: PullRequestRecord,
@@ -945,13 +993,33 @@ function addPullRequestFindings(
     // suppressing duplicate evidence with arbitrary PR-number ordering.
     // Flag-OFF (default) short-circuits ⇒ the finding is pushed exactly as before (byte-identical).
     if (overlappingPrs.length > 0 && !(duplicateWinnerEnabled && isDuplicateClusterWinnerByClaim(pr, overlappingPrs))) {
-      findings.push({
-        code: "duplicate_pr_risk",
-        severity: "warning",
-        title: "Linked issue overlaps another open PR",
-        detail: `Other open pull requests reference the same linked issue set: ${overlappingPrs.map((otherPr) => `#${otherPr.number}`).join(", ")}.`,
-        action: "Review the related PRs before spending reviewer time on duplicate work.",
-      });
+      // #9129: split by corroboration (hasDuplicateOverlapCorroboration) — see its own doc comment. A CONCRETE
+      // finding code (`duplicate_pr_risk`) is reserved for a sibling with real corroborating evidence beyond body
+      // text; it stays configurable via duplicatePrGateMode and evaluateGateCheckCore now HOLDS (never closes) a
+      // gate that fails solely on it (#9129, see the duplicate-only hold below). A PURELY body-text overlap gets
+      // a SEPARATE, always-non-blocking code (`duplicate_pr_risk_unconfirmed`, see resolveConfiguredGateMode) —
+      // an adversary who cites the same issue number in a throwaway PR body, with no code required, can never
+      // manufacture a hold or a close through this path.
+      const corroboratedPrs = overlappingPrs.filter((otherPr) => hasDuplicateOverlapCorroboration(pr, otherPr));
+      const uncorroboratedPrs = overlappingPrs.filter((otherPr) => !hasDuplicateOverlapCorroboration(pr, otherPr));
+      if (corroboratedPrs.length > 0) {
+        findings.push({
+          code: "duplicate_pr_risk",
+          severity: "warning",
+          title: "Linked issue overlaps another open PR with corroborating changes",
+          detail: `Other open pull requests reference the same linked issue set AND show corroborating changed-file overlap or a non-trivial diff: ${corroboratedPrs.map((otherPr) => `#${otherPr.number}`).join(", ")}.`,
+          action: "This looks like a genuine race for the same issue. Coordinate with the other contributor, or wait for a maintainer to triage before assuming priority.",
+        });
+      }
+      if (uncorroboratedPrs.length > 0) {
+        findings.push({
+          code: "duplicate_pr_risk_unconfirmed",
+          severity: "info",
+          title: "Linked issue is also cited by another open PR",
+          detail: `Other open pull requests cite the same linked issue number, with no corroborating changed-file evidence yet: ${uncorroboratedPrs.map((otherPr) => `#${otherPr.number}`).join(", ")}.`,
+          action: "This may be coincidental, or an early race that hasn't produced comparable code yet — verify manually before assuming it's a genuine duplicate.",
+        });
+      }
     }
   }
   // Self-authored linked-issue detection: the PR author also filed the linked issue. Raised when at least
@@ -1105,9 +1173,23 @@ export const DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE = 0.93;
 function resolveConfiguredGateMode(finding: AdvisoryFinding, policy: GateCheckPolicy): GateRuleMode {
   const code = finding.code;
   // Missing linked issue defaults to ADVISORY — issues aren't always available, so it only blocks when a
-  // repo explicitly opts in with linkedIssueGateMode: "block". Duplicates still default to blocking.
+  // repo explicitly opts in with linkedIssueGateMode: "block".
   if (code === "missing_linked_issue") return gateMode(policy.linkedIssueGateMode ?? "advisory");
-  if (code === "duplicate_pr_risk") return gateMode(policy.duplicatePrGateMode ?? "block");
+  // #9129: default changed from "block" to "advisory" — the input this finding is derived from (another
+  // contributor's own PR body text) is adversary-controlled, so blocking-by-default let anyone force-close a
+  // rival's PR for free. A maintainer who explicitly opts into "block" still gets real effect: evaluateGateCheckCore
+  // now HOLDS (never closes) a gate that fails solely on this finding (see the duplicate-only hold there, reusing
+  // DUPLICATE_ONLY_BLOCKER_CODES) — "block" mode's meaning for this one code is "hold both sides for a human",
+  // never "close either automatically". This code is ALSO only ever produced for a CORROBORATED overlap (real
+  // changed-file evidence, not just body text — see hasDuplicateOverlapCorroboration); a purely body-text overlap
+  // uses the separate, always-non-blocking duplicate_pr_risk_unconfirmed code below.
+  if (code === "duplicate_pr_risk") return gateMode(policy.duplicatePrGateMode ?? "advisory");
+  // #9129: an UNCORROBORATED duplicate-issue citation (body-text overlap only) is NEVER a configured gate
+  // blocker, regardless of duplicatePrGateMode — an adversary can manufacture this signal for free (cite the
+  // same issue number in a throwaway PR body, no code required). This branch exists to make that guarantee
+  // explicit rather than relying on the default "off" fallback at the bottom of this function, so it can never
+  // silently regress if a future edit adds an unrelated case above it.
+  if (code === "duplicate_pr_risk_unconfirmed") return "off";
   // A dual-model AI consensus defect blocks ONLY when the maintainer opted into aiReview: block. It is the
   // most conservative AI signal (two independent models) but still confirmed-contributor gated by
   // evaluateGateCheck, and advisory by default.

@@ -1,6 +1,6 @@
 {
-  "$comment": "Golden gate corpus (#8832, epic #8828). Each entry replays the PURE gate evaluation (evaluateGateCheck) against a decision-input snapshot drawn from a REAL production failure archetype, pinning the expected conclusion and blocker set. knownBad entries additionally assert the invariant that they may NEVER evaluate to success \u2014 the exact regression class that motivated the epic. Version bumps when entry semantics change; additions are append-only.",
-  "version": 1,
+  "$comment": "Golden gate corpus (#8832, epic #8828). Each entry replays the PURE gate evaluation (evaluateGateCheck) against a decision-input snapshot drawn from a REAL production failure archetype, pinning the expected conclusion and blocker set. knownBad entries additionally assert the invariant that they may NEVER evaluate to success \u2014 the exact regression class that motivated the epic. Version bumps when entry semantics change; additions are append-only. v2 (#9129): duplicate-block-mode-fails renamed duplicate-block-mode-holds and its pinned verdict changed from failure to neutral \u2014 a duplicate_pr_risk finding under duplicatePrGateMode: block now HOLDS the gate instead of closing (the close-authority fix for the offensive-close attack).",
+  "version": 2,
   "entries": [
     {
       "id": "clean-pr-succeeds",
@@ -150,9 +150,9 @@
       }
     },
     {
-      "id": "duplicate-block-mode-fails",
+      "id": "duplicate-block-mode-holds",
       "source": "reversal-class",
-      "description": "Duplicate-PR risk under block mode fails the gate.",
+      "description": "#9129: a duplicate_pr_risk finding under block mode now HOLDS the gate (never closes) -- the close-authority fix for the offensive-close attack (cite the same issue number in a rival's throwaway PR body to force a close). duplicatePrGateMode: block still has real effect (a hold for a human), but no configuration lets this finding close a PR outright anymore.",
       "knownBad": false,
       "findings": [
         {
@@ -166,10 +166,8 @@
         "duplicatePrGateMode": "block"
       },
       "expected": {
-        "conclusion": "failure",
-        "blockerCodes": [
-          "duplicate_pr_risk"
-        ]
+        "conclusion": "neutral",
+        "blockerCodes": []
       }
     },
     {

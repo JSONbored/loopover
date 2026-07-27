@@ -7,6 +7,7 @@ import { recordGitHubRateLimitObservation, updateInstallationPermissions } from 
 import { recordClockSkewFromResponse } from "../selfhost/clock-skew";
 import {
   clearGitHubResponseCacheForTest,
+  forcedSelfhostMode,
   githubHeaders,
   githubRateLimitAdmissionKeyForInstallation,
   makeInstallationOctokit,
@@ -514,11 +515,15 @@ export async function getGithubUserCreatedAt(
 
 /** Sentinel result for cancelInFlightWorkflowRunsForHeadSha (#2462) -- mirrors CheckRunOutcome's shape (a
  *  typed "degraded, not thrown" result) so a missing `actions: write` grant never has to be distinguished
- *  from a genuine network/API failure by the caller via exception type-narrowing. */
+ *  from a genuine network/API failure by the caller via exception type-narrowing.
+ *  `suppressed` (#9130): the instance-wide SELFHOST_DEPLOYMENT_MODE kill switch forced this call to no-op --
+ *  see cancelInFlightWorkflowRunsForHeadSha's own doc comment. Distinct from every other kind: no network call
+ *  was even attempted, so a caller must never treat it as either a success or a failure worth alerting on. */
 export type CancelWorkflowRunsOutcome =
   | { kind: "cancelled"; cancelledCount: number; totalFound: number }
   | { kind: "permission_missing"; warning: string }
-  | { kind: "error"; warning: string };
+  | { kind: "error"; warning: string }
+  | { kind: "suppressed" };
 
 // A rate-limit / secondary-limit 403 is NOT a permission gap -- mirrors isCheckRunPermissionError's own
 // exclusion (src/github/app.ts, isRateLimitedError check) so a burst-load 403 is never misrecorded as a
@@ -625,7 +630,16 @@ async function cancelOneWorkflowRun(
  *  Needs `actions: write` (list needs `actions: read`, effectively granted alongside write) -- an
  *  installation that hasn't granted it gets a typed `permission_missing` result, never a thrown error, so
  *  this can run as a best-effort side effect AFTER a close has already succeeded without risking that
- *  success being misrecorded as a failure. Greenfield: no existing Actions-API wrapper to extend. */
+ *  success being misrecorded as a failure. Greenfield: no existing Actions-API wrapper to extend.
+ *
+ *  #9130: this is the last installation-scoped write that ran on raw `timeoutFetch`, entirely OUTSIDE
+ *  `makeInstallationOctokit`'s own suppression hook -- a direct sibling of the #9067 gap. Every other write this
+ *  executor performs is suppressed the instant the instance-wide SELFHOST_DEPLOYMENT_MODE kill switch is set
+ *  (the octokit hook, or -- since #9130 -- the executor's own `mode` never even reaching the "9) live" branch
+ *  that calls this). This one didn't go through either mechanism, so a suppressed instance still cancelled a
+ *  contributor's real CI run. Consulting `forcedSelfhostMode(env)` directly, the SAME chokepoint
+ *  `makeInstallationOctokit` uses, closes that gap even for a future caller that reaches this function without
+ *  going through executeAgentMaintenanceActions's own (now instance-mode-aware) gate. */
 export async function cancelInFlightWorkflowRunsForHeadSha(
   env: Env,
   installationId: number,
@@ -633,6 +647,7 @@ export async function cancelInFlightWorkflowRunsForHeadSha(
   headSha: string,
   pullNumber: number,
 ): Promise<CancelWorkflowRunsOutcome> {
+  if (forcedSelfhostMode(env) !== null) return { kind: "suppressed" };
   const parsed = parseRepoFullNameStrict(repoFullName);
   if (!parsed) return { kind: "error", warning: `Invalid repository full name: ${repoFullName}` };
   const { owner, repo } = parsed;

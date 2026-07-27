@@ -242,14 +242,18 @@ function concreteCloseEvidenceCodes(input: AgentActionPlanInput): string[] {
  *  concrete — the concrete signal alone already justifies the close regardless of what else is present. */
 function hasConcreteCloseEvidence(input: AgentActionPlanInput, ciFailed: boolean, isConflict: boolean): boolean {
   if (ciFailed || isConflict) return true;
-  // A duplicate-PR link stays concrete evidence even now that the close has its own live staleness recheck
-  // (closeRequiresDuplicateStillOpen, see the field's doc comment) -- exactly the same relationship isConflict
-  // above already has with #3863's live mergeable-state recheck. The breaker exists to catch a SYSTEMATICALLY
-  // WRONG judgment call (an AI verdict that's often mistaken), not to guard against an otherwise-correct
-  // deterministic fact going STALE between planning and actuation -- that staleness risk is what the recheck
-  // itself closes. A duplicate-issue-link, like a base conflict, is still a deterministic, zero-hallucination
-  // fact about the linked-issue graph; it just needs to be re-verified fresh, which it now is.
-  if ((input.pr.linkedDuplicateCount ?? 0) > 0) return true;
+  // #9129: a duplicate-PR link is DELIBERATELY excluded from concrete evidence, unlike a base conflict (#3863) or
+  // red CI. Those two are facts about THIS PR's own state, verifiable by loopover itself. A duplicate-issue-link
+  // is a fact about a SIBLING PR's author-controlled body text -- any contributor can manufacture it for free by
+  // citing the same issue number in a throwaway PR, with no code required, and thereby force ANY other PR
+  // claiming that issue to look "duplicated" from the breaker's point of view. The previous justification here
+  // reasoned only about the value going STALE between planning and actuation (closeRequiresDuplicateStillOpen's
+  // live recheck already covers that); it never addressed an ADVERSARY choosing the value in the first place --
+  // exactly the gap that let this become an offensive close primitive against a rival contributor. Excluding it
+  // here lets downgradeCloseToHold's per-rule precision check apply to a duplicate-driven close like any other
+  // heuristic judgment, instead of exempting it from the one safety net meant to catch a systematically wrong
+  // call. (In practice evaluateGateCheckCore's own duplicate-only HOLD, #9129, already prevents this finding from
+  // producing a close outright -- this exclusion is defense-in-depth for any other path that still reaches here.)
   return concreteCloseEvidenceCodes(input).length > 0;
 }
 

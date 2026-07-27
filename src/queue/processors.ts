@@ -177,6 +177,7 @@ import {
   removePullRequestLabel,
 } from "../github/labels";
 import {
+  forcedSelfhostMode,
   githubRateLimitAdmissionKeyForInstallation,
   githubRateLimitAdmissionKeyForToken,
   resolveRepoActionMode,
@@ -1451,6 +1452,7 @@ export async function sweepRepoRegate(
     return;
   const mode = resolveAgentActionMode({
     globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), // env brake OR DB kill-switch (#audit-§5.2)
+    instanceMode: forcedSelfhostMode(env), // #9130: the instance-level kill switch is now a first-class precedence term here
     agentPaused: settings.agentPaused,
     agentDryRun: settings.agentDryRun,
   });
@@ -1827,6 +1829,7 @@ export async function sweepRepoBacklogConvergence(
   if (!(isConvergenceRepoAllowed(env, repoFullName) || isAgentConfigured(settings.autonomy))) return;
   const mode = resolveAgentActionMode({
     globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
+    instanceMode: forcedSelfhostMode(env),
     agentPaused: settings.agentPaused,
     agentDryRun: settings.agentDryRun,
   });
@@ -2261,6 +2264,132 @@ export function agentDispositionLabels(
       ? "close"
       : "hold";
   return { actionClass, blockerClass: gateBlockerCodes[0] ?? holdReasonCode ?? "none" };
+}
+
+/**
+ * #9132: the reusable core of the main disposition path's precision-breaker + gate-decision-recording sequence
+ * (the inline block just below `buildAgentMaintenancePlanInput`'s own call site, `applyPrecisionBreakers` through
+ * `recordPredictedGateCalibration`), scoped to a POLICY close that never went through a real gate evaluation --
+ * today, the two review-nag close sites (maybeThrottleReviewNagPing / the monitored-mention nag handler).
+ *
+ * #9086 added `"review_nag"` to `CONTENT_INSPECTION_CLOSE_KINDS` (agent-actions.ts) so `downgradeCloseToHold`
+ * (the close-precision breaker) would cover it — but that fix was INERT: neither review-nag close site ever
+ * called `applyPrecisionBreakers` or `recordNativeGateDecision` at all; they built a plan with
+ * `planAgentMaintenanceActions` and handed it straight to `executeAgentMaintenanceActions`. Two consequences:
+ * the breaker can never engage for a wrong review-nag close no matter how wrong it is, and — because no
+ * `gate_decision` row is ever written — `queryRuleGateCells`'s `gd JOIN po` later pairs the close's `pr_outcome`
+ * against whatever the PR's LAST real quality verdict happened to be, scoring a review-nag close as a MERGE
+ * misprediction and dragging the repo's measured merge precision toward the holdonly floor (#8825's exact bug
+ * class, whose `policy_close:${closeKind}` reasonCode fix landed only at the main disposition site).
+ *
+ * Does NOT write the `decision_records`/`decision_ledger` row itself: #9134 (merged separately, ahead of this
+ * fix on rebase) hoisted that write into `executeAgentMaintenanceActions` itself via the now-required
+ * `AgentActionExecutionContext.decisionRecord` field, so every caller of this function already gets a record
+ * for whatever this function's returned plan actually executes to, by construction, with NO extra call here --
+ * an extra call here would double-write. `defaultDecisionRecordReasonCode`'s `policy_close:<kind>` fallback
+ * (the executor's generic case, used whenever a caller's `decisionRecord` context omits `reasonCode`, which
+ * both call sites below do) is the exact same convention `deriveDecisionReasonCode` computes for a policy close
+ * below, so the calibration join sees an identical `reasonCode` either way.
+ *
+ * A policy close has no gate: no blockers, no AI judgment, no CI state, no base SHA — this deliberately omits
+ * every gate-specific input the main disposition path also threads through (AI-judgment confidence/salvageability,
+ * ciState, the decision-replay input) since none of them apply to a policy-only close. `conclusion: "skipped"`
+ * (the same value `planAgentMaintenanceActions`'s own `conclusion` input already uses for this scenario) stands
+ * in for "no gate ran" everywhere a `GateCheckConclusion` is required.
+ *
+ * Returns the FINAL, breaker-and-holdout-applied plan for the caller to execute via
+ * `executeAgentMaintenanceActions` — the caller must never execute the pre-breaker `planned` array directly, or
+ * every one of the fixes below is silently bypassed.
+ */
+async function finalizePolicyCloseDisposition(
+  env: Env,
+  args: {
+    repoFullName: string;
+    pullNumber: number;
+    headSha: string | null | undefined;
+    authorLogin?: string | null | undefined;
+    deliveryId: string;
+    planned: PlannedAgentAction[];
+    settings: Awaited<ReturnType<typeof resolveRepositorySettings>>;
+  },
+): Promise<PlannedAgentAction[]> {
+  const labelSettings: AgentDispositionLabelSettings = {
+    manualReviewLabel: args.settings.manualReviewLabel,
+    readyToMergeLabel: args.settings.readyToMergeLabel,
+    changesRequestedLabel: args.settings.changesRequestedLabel,
+    migrationCollisionLabel: args.settings.migrationCollisionLabel,
+    pendingClosureLabel: args.settings.pendingClosureLabel,
+  };
+  // Mirrors the main disposition path's own breakerMinerAuthored derivation exactly (#2352 scope parity) --
+  // a review-nag close on a confirmed official miner's PR must join the SAME miner-scoped precision track
+  // record as every other close, not silently fall back to the non-miner scope.
+  const breakerMinerAuthored = args.authorLogin
+    ? (
+        await getCachedOfficialMinerDetection(env, args.authorLogin, {
+          targetKey: `${args.repoFullName}#${args.pullNumber}`,
+          deliveryId: args.deliveryId,
+        })
+      ).status === "confirmed"
+    : false;
+  const breakerOnPlan = applyPrecisionBreakers(
+    args.planned,
+    await isHoldOnly(env, args.repoFullName, breakerMinerAuthored),
+    await isCloseHoldOnly(env, args.repoFullName, breakerMinerAuthored),
+    labelSettings,
+    await readUntrustworthyRuleCodes(env),
+  );
+  for (const direction of precisionBreakerDowngradeDirections(args.planned, breakerOnPlan)) {
+    incr("loopover_precision_breaker_downgrades_total", { direction });
+  }
+  // #9135: holdout diversion only ever targets a `closeKind: "heuristic"` close (holdoutEligibleClose's own
+  // filter) -- a policy close routed through this function is always some OTHER closeKind (e.g. "review_nag"),
+  // so `holdout` is structurally always null here and there is no divertedByHoldout to thread onward; only the
+  // (possibly-diverted, harmlessly-unmodified-in-practice) plan matters to this function's callers.
+  const { planned: holdoutOnPlan } = await maybeApplyCloseAuditHoldout(env, {
+    repoFullName: args.repoFullName,
+    pullNumber: args.pullNumber,
+    headSha: args.headSha,
+    planned: breakerOnPlan,
+    epsilonPct: args.settings.closeAuditHoldoutPct,
+    closeAutonomyIsAuto: resolveAutonomy(args.settings.autonomy, "close") === "auto",
+    labelSettings,
+  });
+  const disposition = agentDispositionLabels(holdoutOnPlan, [], null);
+  incr("loopover_agent_disposition_total", {
+    repo: args.repoFullName,
+    action_class: disposition.actionClass,
+    blocker_class: disposition.blockerClass,
+    autonomy_level: resolveAutonomy(args.settings.autonomy, disposition.actionClass === "merge" ? "merge" : "close"),
+  });
+  const policyCloseKind =
+    disposition.actionClass === "close"
+      ? holdoutOnPlan.find((planned) => planned.actionClass === "close" && planned.closeKind !== undefined)?.closeKind
+      : undefined;
+  const reasonCode = deriveDecisionReasonCode(disposition.blockerClass, policyCloseKind ?? null, "skipped");
+  await recordNativeGateDecision(env, {
+    project: args.repoFullName,
+    pullNumber: args.pullNumber,
+    headSha: args.headSha,
+    conclusion: "skipped",
+    action: disposition.actionClass,
+    reasonCode,
+    minerAuthored: breakerMinerAuthored,
+  });
+  await recordContributorGateDecision(env, {
+    login: args.authorLogin,
+    project: args.repoFullName,
+    pullNumber: args.pullNumber,
+    headSha: args.headSha,
+    decision: disposition.actionClass,
+  });
+  await recordPredictedGateCalibration(env, {
+    login: args.authorLogin,
+    project: args.repoFullName,
+    pullNumber: args.pullNumber,
+    headSha: args.headSha,
+    decision: disposition.actionClass,
+  });
+  return holdoutOnPlan;
 }
 
 const AGENT_HOLD_AUDIT_REASON_MAX_LENGTH = 240;
@@ -2889,6 +3018,7 @@ async function maybeCloseForContributorCapOnOpen(
     if (isNewAccount && resolveAutonomy(settings.autonomy, "review_state_label") === "auto") {
       const newAccountMode = resolveAgentActionMode({
         globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
+        instanceMode: forcedSelfhostMode(env),
         agentPaused: settings.agentPaused,
         agentDryRun: settings.agentDryRun,
       });
@@ -3283,6 +3413,7 @@ async function runAgentMaintenancePlanAndExecute(
     if (isNewAccount && resolveAutonomy(settings.autonomy, "review_state_label") === "auto") {
       const newAccountMode = resolveAgentActionMode({
         globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
+        instanceMode: forcedSelfhostMode(env),
         agentPaused: settings.agentPaused,
         agentDryRun: settings.agentDryRun,
       });
@@ -6514,7 +6645,7 @@ async function maybeHandleIssueCommentCommandWebhookEvent(
  *  rest of this webhook delivery's processing. */
 async function recordDraftConversionCiCancelOutcome(env: Env, installationId: number, repoFullName: string, pullNumber: number, headSha: string, settings: RepositorySettings): Promise<void> {
   const targetKey = `${repoFullName}#${pullNumber}`;
-  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
+  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), instanceMode: forcedSelfhostMode(env), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
   if (mode !== "live") {
     await recordAuditEvent(env, {
       eventType: "github_app.draft_convert_ci_cancel_skipped",
@@ -6539,6 +6670,11 @@ async function recordDraftConversionCiCancelOutcome(env: Env, installationId: nu
     }).catch(() => undefined);
     return;
   }
+  // #9130: structurally unreachable here in practice -- the mode !== "live" check above already returns before
+  // ever calling cancelInFlightWorkflowRunsForHeadSha once forcedSelfhostMode(env) makes `mode` non-live -- but
+  // handled explicitly rather than falling through to the generic error branch below and reading a `.warning`
+  // field this variant does not have.
+  if (outcome.kind === "suppressed") return;
   const eventType = outcome.kind === "permission_missing" ? "github_app.draft_convert_ci_cancel_permission_missing" : "github_app.draft_convert_ci_cancel_failed";
   await recordAuditEvent(env, { eventType, actor: "loopover", targetKey, outcome: "error", detail: outcome.warning, metadata: { repoFullName, headSha, reason: outcome.kind } }).catch(() => undefined);
 }
@@ -7263,6 +7399,7 @@ async function handleIssueWebhookEvent(
           if (resolveAutonomy(issueSettings.autonomy, "review_state_label") === "auto") {
             const newAccountMode = resolveAgentActionMode({
               globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
+              instanceMode: forcedSelfhostMode(env),
               agentPaused: issueSettings.agentPaused,
               agentDryRun: issueSettings.agentDryRun,
             });
@@ -9130,7 +9267,7 @@ async function maybeApplyManifestPolicyGate(
       // the cost of a maintainer choosing to ask twice).
       const alreadyTriggered = await hasAuditEventForHeadSha(env, "github_app.e2e_tests_generation", e2eTargetKey, args.pr.headSha);
       if (!alreadyTriggered) {
-        const e2eMode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), agentPaused: args.settings.agentPaused, agentDryRun: args.settings.agentDryRun });
+        const e2eMode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), instanceMode: forcedSelfhostMode(env), agentPaused: args.settings.agentPaused, agentDryRun: args.settings.agentDryRun });
         if (e2eMode === "live") {
           await runE2eTestGenerationAndDeliver(env, {
             repoFullName: args.repoFullName,
@@ -12684,6 +12821,7 @@ async function maybeProcessGateOverrideCommand(
   // flipping the live Gate check-run to neutral and posting a real confirmation comment.
   const mode = resolveAgentActionMode({
     globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
+    instanceMode: forcedSelfhostMode(env),
     agentPaused: settings.agentPaused,
     agentDryRun: settings.agentDryRun,
   });
@@ -12849,7 +12987,7 @@ async function maybeProcessResolveCommand(env: Env, deliveryId: string, payload:
   const gate = evaluateGateCheck(advisory, gateCheckPolicy(settings, null, undefined, pr.slopRisk ?? null, undefined, undefined, await resolveAutomaticCloseConfidence(env, req.repoFullName, await getAiReviewCloseConfidenceOverride(env, req.repoFullName))));
   const selection = selectWarningsForResolve(gate.warnings, findingRef);
   if (selection.reason === "finding_not_found") { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_skipped", actor: req.actor, targetKey, outcome: "completed", detail: selection.reason, metadata: { deliveryId, repoFullName: req.repoFullName, reason: selection.reason } }); await recordGithubProductUsage(env, "finding_resolved_skipped", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "skipped", metadata: { reason: selection.reason } }); return true; }
-  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
+  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), instanceMode: forcedSelfhostMode(env), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
   if (mode !== "live") { const skipReason = mode === "dry_run" ? "dry_run" : "agent_paused"; await recordAuditEvent(env, { eventType: "github_app.finding_resolved_skipped", actor: req.actor, targetKey, outcome: "completed", detail: skipReason, metadata: { deliveryId, repoFullName: req.repoFullName, reason: skipReason } }); await recordGithubProductUsage(env, "finding_resolved_skipped", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "skipped", metadata: { reason: skipReason } }); return true; }
   const reviewManifest = await loadRepoFocusManifest(env, req.repoFullName).catch(() => null);
   const reviewMemoryEnabled = shouldApplyReviewMemory(env, resolveReviewMemoryManifestToggle(reviewManifest));
@@ -12901,7 +13039,7 @@ async function maybeProcessReviewCommand(env: Env, deliveryId: string, payload: 
   }
   // Same dry-run/paused gate every other action command respects (pause/resolve/explain/gate-override/
   // generate-tests) -- a paused or dry-run repo must not dispatch a live re-review or post a confirmation.
-  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
+  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), instanceMode: forcedSelfhostMode(env), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
   if (mode !== "live") {
     await recordReviewCommandSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, mode === "dry_run" ? "dry_run" : "agent_paused");
     return true;
@@ -13154,7 +13292,7 @@ async function maybeProcessGenerateTestsCommand(env: Env, deliveryId: string, pa
   }
   // Same dry-run/paused gate every other action command respects (mirrors maybeProcessResolveCommand's own
   // resolveAgentActionMode check) — an agent-paused or dry-run repo gets no generated content posted at all.
-  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
+  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), instanceMode: forcedSelfhostMode(env), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
   if (mode !== "live") {
     const skipReason = mode === "dry_run" ? "dry_run" : "agent_paused";
     await recordGenerateTestsSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, skipReason);
@@ -13366,6 +13504,7 @@ async function maybeProcessConfigurationCommand(
   }
   const mode = resolveAgentActionMode({
     globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
+    instanceMode: forcedSelfhostMode(env),
     agentPaused: settings.agentPaused,
     agentDryRun: settings.agentDryRun,
   });
@@ -13505,6 +13644,7 @@ async function maybeProcessPlanCommand(
   // both dry_run and paused, not just paused.
   const planMode = resolveAgentActionMode({
     globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
+    instanceMode: forcedSelfhostMode(env),
     agentPaused: settings.agentPaused,
     agentDryRun: settings.agentDryRun,
   });
@@ -13912,7 +14052,7 @@ async function maybeProcessPrPanelGenerateTests(
     await recordGenerateTestsSkip(env, deliveryId, repoFullName, `${repoFullName}#${pr.number}`, actor, "feature_disabled");
     return true;
   }
-  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
+  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), instanceMode: forcedSelfhostMode(env), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
   if (mode !== "live") {
     const skipReason = mode === "dry_run" ? "dry_run" : "agent_paused";
     await recordGenerateTestsSkip(env, deliveryId, repoFullName, `${repoFullName}#${pr.number}`, actor, skipReason);
@@ -14255,6 +14395,7 @@ async function maybeThrottleReviewNagPing(
 
   const mode = resolveAgentActionMode({
     globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
+    instanceMode: forcedSelfhostMode(env),
     agentPaused: settings.agentPaused,
     agentDryRun: settings.agentDryRun,
   });
@@ -14325,6 +14466,20 @@ async function maybeThrottleReviewNagPing(
     return true;
   }
 
+  // #9132: route the plan through the SAME precision-breaker + gate-decision-recording sequence the main
+  // disposition path uses (finalizePolicyCloseDisposition) before ever executing it -- previously `planned`
+  // was handed to executeAgentMaintenanceActions directly, so #9086's review_nag breaker coverage never
+  // actually engaged and no gate_decision row was ever written for this close.
+  const finalPlanned = await finalizePolicyCloseDisposition(env, {
+    repoFullName,
+    pullNumber: pr.number,
+    headSha: pr.headSha,
+    authorLogin: pr.authorLogin,
+    deliveryId,
+    planned,
+    settings,
+  });
+
   const installation = await getInstallation(env, installationId);
   await executeAgentMaintenanceActions(
     env,
@@ -14343,7 +14498,7 @@ async function maybeThrottleReviewNagPing(
       // contributor-disputable close the issue flagged as biasing the risk-control calibration join.
       decisionRecord: { configDigest: await contentDigest(settings) },
     },
-    planned,
+    finalPlanned,
   );
   return true;
 }
@@ -14456,6 +14611,7 @@ async function maybeThrottleMonitoredMentions(
 
   const mode = resolveAgentActionMode({
     globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
+    instanceMode: forcedSelfhostMode(env),
     agentPaused: settings.agentPaused,
     agentDryRun: settings.agentDryRun,
   });
@@ -14519,6 +14675,20 @@ async function maybeThrottleMonitoredMentions(
     return true;
   }
 
+  // #9132: route the plan through the SAME precision-breaker + gate-decision-recording sequence the main
+  // disposition path uses (finalizePolicyCloseDisposition) before ever executing it -- previously `planned`
+  // was handed to executeAgentMaintenanceActions directly, so #9086's review_nag breaker coverage never
+  // actually engaged and no gate_decision row was ever written for this close.
+  const finalPlanned = await finalizePolicyCloseDisposition(env, {
+    repoFullName,
+    pullNumber: pr.number,
+    headSha: pr.headSha,
+    authorLogin: pr.authorLogin,
+    deliveryId,
+    planned,
+    settings,
+  });
+
   const installation = await getInstallation(env, installationId);
   await executeAgentMaintenanceActions(
     env,
@@ -14537,7 +14707,7 @@ async function maybeThrottleMonitoredMentions(
       // all -- the same gap as its comment-thread-cooldown sibling immediately above.
       decisionRecord: { configDigest: await contentDigest(settings) },
     },
-    planned,
+    finalPlanned,
   );
   return true;
 }
@@ -14938,6 +15108,7 @@ async function maybeProcessLoopOverMentionCommand(
   // card is a live public comment post, same as gate-override's confirmation comment.
   const mentionMode = resolveAgentActionMode({
     globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
+    instanceMode: forcedSelfhostMode(env),
     agentPaused: settings.agentPaused,
     agentDryRun: settings.agentDryRun,
   });

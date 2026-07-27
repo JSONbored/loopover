@@ -200,8 +200,9 @@ describe("buildMaintainerActivationPreview", () => {
     });
     const winner = preview.samples.find((sample) => sample.number === 1)!;
     const loser = preview.samples.find((sample) => sample.number === 2)!;
-    expect(winner.findings.map((finding) => finding.code)).not.toContain("duplicate_pr_risk");
-    expect(loser.findings.map((finding) => finding.code)).toContain("duplicate_pr_risk");
+    // Neither PR has changedFiles resolved (#9129: the uncorroborated code fires, not the concrete one).
+    expect(winner.findings.map((finding) => finding.code)).not.toContain("duplicate_pr_risk_unconfirmed");
+    expect(loser.findings.map((finding) => finding.code)).toContain("duplicate_pr_risk_unconfirmed");
   });
 
   it("flags every duplicate-cluster member when LOOPOVER_DUPLICATE_WINNER is off (default)", () => {
@@ -215,7 +216,8 @@ describe("buildMaintainerActivationPreview", () => {
       ],
       generatedAt: "2026-06-14T00:00:00.000Z",
     });
-    expect(preview.findingCodeCounts).toContainEqual({ code: "duplicate_pr_risk", count: 2 });
+    // Neither PR has changedFiles resolved (#9129: uncorroborated code).
+    expect(preview.findingCodeCounts).toContainEqual({ code: "duplicate_pr_risk_unconfirmed", count: 2 });
   });
 
   it("ignores closed/merged siblings when detecting duplicate overlap", () => {

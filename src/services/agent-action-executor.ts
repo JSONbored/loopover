@@ -20,7 +20,7 @@ import { notifyActionToDiscord, notifyActionToSlack, type NotifyOutcome } from "
 import { recordTerminalActionOutcome, resolveDispositionReason } from "../review/outcomes-wire";
 import { cancelInFlightWorkflowRunsForHeadSha, createInstallationToken, githubErrorStatus, isGitHubRateLimitedError } from "../github/app";
 import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestState, fetchLiveReviewThreadBlockers, refreshInstallationHealthForInstallation } from "../github/backfill";
-import { githubRateLimitAdmissionKeyForToken } from "../github/client";
+import { forcedSelfhostMode, githubRateLimitAdmissionKeyForToken } from "../github/client";
 import { ensurePullRequestAssignee } from "../github/assignees";
 import { ensurePullRequestLabel, removePullRequestLabel } from "../github/labels";
 import { closeIssue, closePullRequest, createIssueComment, createPullRequestReview, dismissLatestBotApproval, mergePullRequest, updatePullRequestBranch } from "../github/pr-actions";
@@ -379,7 +379,7 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
   const targetKey = `${ctx.repoFullName}#${ctx.pullNumber}`;
   // globalPaused folds the env-var brake AND the DB-backed kill-switch (#audit-§5.2) so an operator can halt the
   // fleet instantly via one DB row, without a redeploy.
-  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), agentPaused: ctx.agentPaused, agentDryRun: ctx.agentDryRun });
+  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), instanceMode: forcedSelfhostMode(env), agentPaused: ctx.agentPaused, agentDryRun: ctx.agentDryRun });
 
   for (const action of planned) {
     // #label-scoping: a `label` action may be authorized by a class OTHER than `label` itself (an anti-abuse
@@ -971,6 +971,11 @@ async function recordCiCancelOutcome(env: Env, reasonKind: CiCancelReasonKind, c
     await auditCiCancelled(env, reasonKind, targetKey, ctx.repoFullName, headSha, outcome);
     return;
   }
+  // #9130: the instance-wide kill switch suppressed this call before any network request was even attempted --
+  // never a failure worth a `_ci_cancel_failed` audit/error log, since nothing went wrong. Silent no-op, matching
+  // how the outer loop already skips a whole action pass under dry_run/paused without a special per-side-effect
+  // audit here.
+  if (outcome.kind === "suppressed") return;
   console.error(
     JSON.stringify({
       level: "error",
@@ -1013,7 +1018,7 @@ export type IssueActionExecutionContext = {
 export async function executeIssueMaintenanceActions(env: Env, ctx: IssueActionExecutionContext, planned: PlannedAgentAction[]): Promise<AgentActionOutcome[]> {
   const outcomes: AgentActionOutcome[] = [];
   const targetKey = `${ctx.repoFullName}#${ctx.issueNumber}`;
-  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), agentPaused: ctx.agentPaused, agentDryRun: ctx.agentDryRun });
+  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), instanceMode: forcedSelfhostMode(env), agentPaused: ctx.agentPaused, agentDryRun: ctx.agentDryRun });
 
   for (const action of planned) {
     // #label-scoping: a `label` action may be authorized by a class OTHER than `label` itself (an anti-abuse
@@ -1166,7 +1171,14 @@ async function performAction(env: Env, ctx: AgentActionExecutionContext, action:
       // staging fails safe with a 409 (→ terminal hold) instead of merging un-reviewed code. A live sweep plans
       // expectedHeadSha == ctx.headSha, so its behavior is unchanged; the fallback covers any unpinned plan.
       const mergeSha = action.expectedHeadSha ?? ctx.headSha;
-      await mergePullRequest(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, { mergeMethod: action.mergeMethod ?? "squash", ...(mergeSha ? { sha: mergeSha } : {}) });
+      const mergeResult = await mergePullRequest(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, { mergeMethod: action.mergeMethod ?? "squash", ...(mergeSha ? { sha: mergeSha } : {}) });
+      // #9130: a suppressed merge (the instance-wide kill switch fired) is a SYNTHETIC shadow response, not a
+      // real GitHub mutation -- structurally unreachable via the normal call path (the loop above already
+      // gates on `mode` before ever reaching performAction under dry_run/paused), but defense in depth for any
+      // future caller that bypasses that gate. Never record it as ground truth: a real later outcome must still
+      // be able to write this row, which recordTerminalActionOutcome's own first-write-wins probe would
+      // otherwise permanently block.
+      if (mergeResult.suppressed) return "merge suppressed by the instance-wide dry-run/paused kill switch — no GitHub write attempted";
       // #8823: record ground truth from the action we just completed rather than depending on the inbound
       // `pull_request.closed` webhook — a delivery this instance never processes used to lose the outcome
       // permanently, dropping the PR out of fleet calibration entirely. Idempotent against the webhook path.

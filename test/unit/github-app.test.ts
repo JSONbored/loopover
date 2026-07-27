@@ -822,6 +822,49 @@ describe("GitHub check runs", () => {
     expect(cancelledIds.sort()).toEqual([1, 2, 3]);
   });
 
+  // #9130: this is the last installation-scoped write that ran on raw timeoutFetch, entirely outside
+  // makeInstallationOctokit's own suppression hook -- a suppressed instance must never even ATTEMPT the
+  // network call (createInstallationToken/list/cancel), not merely fail to act on its result.
+  it("#9130: cancelInFlightWorkflowRunsForHeadSha is suppressed under SELFHOST_DEPLOYMENT_MODE=dry-run, with ZERO network calls attempted", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    let fetchCallCount = 0;
+    vi.stubGlobal("fetch", async () => {
+      fetchCallCount += 1;
+      return new Response("not found", { status: 404 });
+    });
+
+    const outcome = await cancelInFlightWorkflowRunsForHeadSha(
+      createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey, SELFHOST_DEPLOYMENT_MODE: "dry-run" }),
+      123,
+      "owner/repo",
+      "abc123",
+      55,
+    );
+
+    expect(outcome).toEqual({ kind: "suppressed" });
+    expect(fetchCallCount).toBe(0);
+  });
+
+  it("#9130: cancelInFlightWorkflowRunsForHeadSha is suppressed under SELFHOST_DEPLOYMENT_MODE=disabled too", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    let fetchCallCount = 0;
+    vi.stubGlobal("fetch", async () => {
+      fetchCallCount += 1;
+      return new Response("not found", { status: 404 });
+    });
+
+    const outcome = await cancelInFlightWorkflowRunsForHeadSha(
+      createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey, SELFHOST_DEPLOYMENT_MODE: "disabled" }),
+      123,
+      "owner/repo",
+      "abc123",
+      55,
+    );
+
+    expect(outcome).toEqual({ kind: "suppressed" });
+    expect(fetchCallCount).toBe(0);
+  });
+
   it("cancelInFlightWorkflowRunsForHeadSha only cancels workflow runs attached to the closed PR", async () => {
     const privateKey = await generatePrivateKeyPem();
     const cancelledIds: number[] = [];

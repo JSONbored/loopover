@@ -158,6 +158,20 @@ describe("resolveRepoActionMode", () => {
     await setGlobalAgentFrozen(env, false);
     expect(await resolveRepoActionMode(env, { agentPaused: false, agentDryRun: false })).toBe("live");
   });
+
+  // #9130: SELFHOST_DEPLOYMENT_MODE is now folded in as the FIRST precedence term, not an HTTP-layer
+  // afterthought -- resolveRepoActionMode is the SAME chokepoint executeAgentMaintenanceActions/
+  // executeIssueMaintenanceActions and every other resolveAgentActionMode call site now consults.
+  it("#9130: SELFHOST_DEPLOYMENT_MODE forces dry_run/paused even when every per-repo/global signal says live", async () => {
+    const env = createTestEnv();
+    expect(await resolveRepoActionMode({ ...env, SELFHOST_DEPLOYMENT_MODE: "dry-run" }, { agentPaused: false, agentDryRun: false })).toBe("dry_run");
+    expect(await resolveRepoActionMode({ ...env, SELFHOST_DEPLOYMENT_MODE: "disabled" }, { agentPaused: false, agentDryRun: false })).toBe("paused");
+    // A per-repo/global signal that is ALREADY more restrictive than the instance switch still wins.
+    expect(await resolveRepoActionMode({ ...env, SELFHOST_DEPLOYMENT_MODE: "dry-run", AGENT_ACTIONS_PAUSED: "true" }, { agentPaused: false, agentDryRun: false })).toBe("paused");
+    // Unset / "live" behaves exactly as before this switch existed.
+    expect(await resolveRepoActionMode({ ...env, SELFHOST_DEPLOYMENT_MODE: "live" }, { agentPaused: false, agentDryRun: false })).toBe("live");
+    expect(await resolveRepoActionMode(env, { agentPaused: false, agentDryRun: false })).toBe("live");
+  });
 });
 
 describe("githubRateLimitAdmissionKeyForToken — the single token→admission-key resolver (no duplication, no drift)", () => {

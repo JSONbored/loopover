@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nodeSqliteDriver } from "../../src/selfhost/d1-adapter";
 import { createSqliteQueue } from "../../src/selfhost/sqlite-queue";
 import { jobCoalesceKey, queueSnapshotFromBinding } from "../../src/selfhost/queue-common";
+import { DEFAULT_FOREGROUND_LANE_MAX_STARVE_AGE_MS } from "../../src/selfhost/queue-fairness";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { RetryableJobError } from "../../src/queue/retryable";
 import { hostLoadAvg1PerCore } from "../../src/selfhost/host-pressure";
@@ -1516,6 +1517,60 @@ describe("createSqliteQueue (durable #980)", () => {
       await q.binding.send(backlogJob("owner/repo", 2));
       await q.drain();
       expect(seen).toEqual(["manual-regate:owner/repo#1:operator", "backlog-convergence:owner/repo#2"]);
+    });
+
+    it("REGRESSION (#9153): a continuous stream of unclassified priority-10 webhooks cannot starve an aged backlog row past the bounded escape", async () => {
+      const driver = makeDriver();
+      const seen: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void seen.push((m as unknown as { deliveryId?: string; type: string }).deliveryId ?? typeOf(m)), { concurrency: 1 });
+      // A backlog-convergence row old enough to have crossed the bounded starve-age escape. Inserted directly
+      // (not via binding.send) and BEFORE the webhook below, so both rows already exist in the table before
+      // drain() ever claims anything -- send()'s own kickOne() would otherwise race a claim against this insert.
+      const staleCreatedAt = Date.now() - (DEFAULT_FOREGROUND_LANE_MAX_STARVE_AGE_MS + 60_000);
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, foreground_lane) VALUES (?, 'pending', 0, 0, ?, 9, ?, 'backlog')",
+        [JSON.stringify(backlogJob("owner/repo", 1)), staleCreatedAt, "agent-regate-pr:owner/repo#1"],
+      );
+      // An unclassified priority-10 webhook, always due -- e.g. check_suite.completed, #9153's trigger scenario
+      // (githubWebhookPriority returns 10 for every webhook OTHER than a fresh pull_request open/reopen/
+      // synchronize/ready_for_review event). Also inserted directly, for the same race-free reason as above.
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, foreground_lane) VALUES (?, 'pending', 0, 0, ?, 10, NULL, NULL)",
+        [JSON.stringify(ciWebhook("ci-1")), Date.now()],
+      );
+      await q.drain();
+      // The stale backlog row is claimed FIRST (preferentially, via the lane-scoped claim) despite the
+      // perpetually-due unclassified webhook -- before the fix, the lane-scoped claim's `priority > 10` gate
+      // could never be satisfied by a priority-9 backlog row, so this preference was permanently inert.
+      expect(seen).toEqual(["backlog-convergence:owner/repo#1", "ci-1"]);
+      expect(await renderMetrics()).toContain('loopover_jobs_claimed_by_lane_total{lane="backlog"} 1');
+    });
+
+    it("REGRESSION (#9153, control arm): a FRESH backlog row (under the starve threshold) is not preferentially claimed over a due unclassified priority-10 webhook", async () => {
+      const driver = makeDriver();
+      const seen: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void seen.push((m as unknown as { deliveryId?: string; type: string }).deliveryId ?? typeOf(m)), { concurrency: 1 });
+      // Both rows inserted directly (not via binding.send) BEFORE drain() ever runs -- see the escape-arm test
+      // above for why send()'s own kickOne() would otherwise race a claim against these inserts.
+      const freshCreatedAt = Date.now() - (DEFAULT_FOREGROUND_LANE_MAX_STARVE_AGE_MS - 60_000);
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, foreground_lane) VALUES (?, 'pending', 0, 0, ?, 9, ?, 'backlog')",
+        [JSON.stringify(backlogJob("owner/repo", 1)), freshCreatedAt, "agent-regate-pr:owner/repo#1"],
+      );
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, foreground_lane) VALUES (?, 'pending', 0, 0, ?, 10, NULL, NULL)",
+        [JSON.stringify(ciWebhook("ci-1")), Date.now()],
+      );
+      await q.drain();
+      // The unclassified priority-10 webhook wins the very first claim (the lane-scoped claim's `priority > 10`
+      // gate is still unsatisfiable, so it falls through to the plain unscoped priority-DESC ordering) -- the
+      // backlog row still runs eventually, just never PREFERRED, exactly the inert-mechanism symptom #9153
+      // reports. Once the webhook is consumed there's no due unclassified row left AT ALL, so the SECOND cycle's
+      // lane-scoped claim legitimately succeeds on its own merits (unclassifiedPriority is genuinely null by
+      // then, not merely escaped) -- this is real end-to-end driver state, unlike a mocked pool that could hold
+      // the unclassified signal artificially constant across both cycles.
+      expect(seen).toEqual(["ci-1", "backlog-convergence:owner/repo#1"]);
+      expect(await renderMetrics()).toContain('loopover_jobs_claimed_by_lane_total{lane="backlog"} 1');
     });
 
     it("falls through to the plain unscoped foreground claim when the preferred lane has nothing pending", async () => {

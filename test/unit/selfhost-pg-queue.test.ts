@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Pool, QueryResult } from "pg";
 import { createPgQueue, setPgRetryPoolQueryDelayMsForTest } from "../../src/selfhost/pg-queue";
 import { queueSnapshotFromBinding } from "../../src/selfhost/queue-common";
+import { DEFAULT_FOREGROUND_LANE_MAX_STARVE_AGE_MS } from "../../src/selfhost/queue-fairness";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { RetryableJobError } from "../../src/queue/retryable";
 import { hostLoadAvg1PerCore } from "../../src/selfhost/host-pressure";
@@ -75,6 +76,16 @@ interface MockPool {
    *  on a specific row (rowCount 0) while another succeeds (rowCount 1). */
   setReviveUpdateRowCounts(rowCounts: number[]): void;
   setRateLimitRows(rows: Array<{ admission_key?: string | null; repo_full_name?: string | null; remaining: number | string | null; reset_at: string | null; observed_at?: string | null }>): void;
+  /** #9153: the best DUE, UNCLASSIFIED foreground priority claimNextForegroundLane gates the lane-scoped claim
+   *  against (maxDueUnclassifiedForegroundPriority's own query) — null (the default) means no due unclassified
+   *  row exists, matching every pre-existing test that doesn't care about this gate. */
+  setMaxDueUnclassifiedForegroundPriority(value: number | null): void;
+  /** #9153: the raw (job_key, created_at) rows claimNextForegroundLane's backlog branch reads to pick a repo
+   *  AND (post-fix) to compute the oldest due backlog row's age for the starvation escape. Empty by default. */
+  setBacklogLaneRows(rows: Array<{ job_key: string | null; created_at: number }>): void;
+  /** #9153: the created_at of the oldest DUE fresh-lane row, backing oldestDueForegroundLaneAgeMs("fresh").
+   *  Null (the default) means no due fresh row exists. */
+  setOldestDueFreshLaneCreatedAt(value: number | null): void;
   /** Configures the four maintenance-admission pressure aggregate queries (live + maintenance + backlog-
    *  convergence + fresh-intake lane). Defaults to zero pending / null oldest in all lanes (pressure clear)
    *  until set. `runnableCnt`/`oldestRunnable` back the #selfhost-queue-liveness runnable-now split (see
@@ -130,6 +141,9 @@ function makePool(): MockPool {
   let pressureMaintenance: { cnt: number; oldest: number | null } = { cnt: 0, oldest: null };
   let pressureBacklogConvergence: { cnt: number } = { cnt: 0 };
   let pressureFreshIntake: { cnt: number } = { cnt: 0 };
+  let unclassifiedForegroundPriority: number | null = null;
+  let backlogLaneRows: Array<{ job_key: string | null; created_at: number }> = [];
+  let oldestDueFreshLaneCreatedAt: number | null = null;
   let foregroundLivenessOldestCandidates: Array<{ id: string; created_at: number; payload?: string; deferred_by?: string | null }> = [];
   let foregroundLivenessNewestCandidates: Array<{ id: string; created_at: number; payload?: string; deferred_by?: string | null }> = [];
   const foregroundLivenessUpdateRowCounts: number[] = [];
@@ -192,6 +206,21 @@ function makePool(): MockPool {
     if (q.includes("AS cnt") && q.includes("foreground_lane='fresh'")) {
       return { rows: [{ cnt: String(pressureFreshIntake.cnt) }], rowCount: 1 };
     }
+    // #9153: maxDueUnclassifiedForegroundPriority's own query (no "AS cnt" — distinguishes it from the
+    // pressure-signal aggregates above).
+    if (q.includes("SELECT MAX(priority) AS priority FROM")) {
+      return { rows: [{ priority: unclassifiedForegroundPriority }], rowCount: 1 };
+    }
+    // #9153: claimNextForegroundLane's backlog-repo-candidate row read (job_key + created_at, unaggregated —
+    // distinguishes it from the "AS cnt"-bearing backlog-convergence pressure count above).
+    if (q.includes("SELECT job_key, created_at FROM") && q.includes("foreground_lane='backlog'")) {
+      return { rows: backlogLaneRows, rowCount: backlogLaneRows.length };
+    }
+    // #9153: oldestDueForegroundLaneAgeMs's own query (parameterized foreground_lane=$2, only ever called with
+    // "fresh" in practice — the backlog lane derives its age from the row read above instead).
+    if (q.includes("SELECT MIN(created_at) AS oldest FROM") && q.includes("foreground_lane=$2")) {
+      return { rows: [{ oldest: oldestDueFreshLaneCreatedAt }], rowCount: 1 };
+    }
     if (q.includes("FROM github_rate_limit_observations")) {
       const admissionKey = typeof params?.[0] === "string" ? params[0] : null;
       const newest = (rows: typeof rateLimitRows) =>
@@ -248,6 +277,15 @@ function makePool(): MockPool {
     setReviveUpdateRowCounts(rowCounts) {
       reviveUpdateRowCounts.length = 0;
       reviveUpdateRowCounts.push(...rowCounts);
+    },
+    setMaxDueUnclassifiedForegroundPriority(value) {
+      unclassifiedForegroundPriority = value;
+    },
+    setBacklogLaneRows(rows) {
+      backlogLaneRows = rows;
+    },
+    setOldestDueFreshLaneCreatedAt(value) {
+      oldestDueFreshLaneCreatedAt = value;
     },
     setPressureSignals(signals) {
       if (signals.live) pressureLive = signals.live;
@@ -1316,6 +1354,11 @@ describe("createPgQueue (durable #977)", () => {
         prNumber: 1,
         installationId: 1,
       };
+      // #9153: created_at must be RECENT (well under DEFAULT_FOREGROUND_LANE_MAX_STARVE_AGE_MS), not the
+      // epoch-adjacent placeholder used elsewhere in this file -- an ancient created_at here would trip the
+      // bounded age escape and switch the predicate away from the `> 99` this test asserts on, which is not
+      // the scenario under test (that's covered by the dedicated #9153 regression tests above).
+      const recentCreatedAt = Date.now() - 60_000;
       const fn = vi.fn().mockImplementation(async (sql: unknown, params?: unknown[]) => {
         const q = String(sql);
         if (q.includes("UPDATE _selfhost_queue_fairness SET claim_sequence=claim_sequence+1") && q.includes("RETURNING claim_sequence, last_backlog_repo")) {
@@ -1325,7 +1368,7 @@ describe("createPgQueue (durable #977)", () => {
           return { rows: [{ priority: 99 }], rowCount: 1 };
         }
         if (q.includes("SELECT job_key, created_at") && q.includes("foreground_lane='backlog'")) {
-          return { rows: [{ job_key: "agent-regate-pr:owner/repo#2", created_at: 1000 }], rowCount: 1 };
+          return { rows: [{ job_key: "agent-regate-pr:owner/repo#2", created_at: recentCreatedAt }], rowCount: 1 };
         }
         if (q.includes("UPDATE _selfhost_jobs SET status='processing'")) {
           claimSql.push(q);
@@ -1353,6 +1396,104 @@ describe("createPgQueue (durable #977)", () => {
       expect(seen).toEqual(["manual-regate:owner/repo#1:operator"]);
       expect(claimSql[0]).toContain("foreground_lane='backlog'");
       expect(claimSql[0]).toContain("candidate.priority > $2");
+      expect(claimSql[1]).not.toContain("foreground_lane");
+      expect(await renderMetrics()).not.toContain("loopover_jobs_claimed_by_lane_total");
+    });
+
+    it("REGRESSION (#9153): a continuous stream of unclassified priority-10 webhooks cannot starve an aged backlog row past the bounded escape", async () => {
+      const claimSql: string[] = [];
+      let claimed = false;
+      const now = Date.now();
+      const staleAgeMs = DEFAULT_FOREGROUND_LANE_MAX_STARVE_AGE_MS + 60_000;
+      const fn = vi.fn().mockImplementation(async (sql: unknown, params?: unknown[]) => {
+        const q = String(sql);
+        if (q.includes("UPDATE _selfhost_queue_fairness SET claim_sequence=claim_sequence+1") && q.includes("RETURNING claim_sequence, last_backlog_repo")) {
+          return { rows: [{ claim_sequence: 0, last_backlog_repo: null }], rowCount: 1 }; // sequence 0 -> backlog lane
+        }
+        // An unclassified priority-10 row is ALWAYS due -- e.g. a check_suite.completed webhook (#9153's
+        // trigger): githubWebhookPriority returns 10 for every webhook OTHER than a fresh pull_request
+        // open/reopen/synchronize/ready_for_review event.
+        if (q.includes("SELECT MAX(priority) AS priority") && q.includes("foreground_lane IS NULL")) {
+          return { rows: [{ priority: 10 }], rowCount: 1 };
+        }
+        if (q.includes("SELECT job_key, created_at") && q.includes("foreground_lane='backlog'")) {
+          return { rows: [{ job_key: "agent-regate-pr:owner/repo#1", created_at: now - staleAgeMs }], rowCount: 1 };
+        }
+        if (q.includes("UPDATE _selfhost_jobs SET status='processing'")) {
+          claimSql.push(q);
+          if (!claimed && q.includes("foreground_lane='backlog'")) {
+            claimed = true;
+            // Escaped: predicate falls back to `>=` against the plain floor, NOT `>` against the due
+            // unclassified priority (10) that a priority-9 backlog row could never satisfy.
+            expect(q).toContain("candidate.priority >= $2");
+            expect((params as unknown[])[1]).not.toBe(10);
+            return {
+              rows: [{ id: "backlog-1", payload: JSON.stringify(backlogJob("owner/repo", 1)), attempts: 0, job_key: "agent-regate-pr:owner/repo#1", priority: 9, created_at: now - staleAgeMs }],
+              rowCount: 1,
+            };
+          }
+          return { rows: [], rowCount: 0 };
+        }
+        return { rows: [], rowCount: 0 };
+      });
+      const seen: string[] = [];
+      const q = createPgQueue({ query: fn } as unknown as Pool, async (m) => void seen.push(typeOf(m)));
+
+      await q.init();
+      await q.drain();
+
+      expect(seen).toEqual(["agent-regate-pr"]);
+      expect(claimSql[0]).toContain("foreground_lane='backlog'");
+      expect(await renderMetrics()).toContain('loopover_jobs_claimed_by_lane_total{lane="backlog"} 1');
+    });
+
+    it("REGRESSION (#9153, control arm): a FRESH backlog row (under the starve threshold) stays gated behind a due unclassified priority-10 row this cycle", async () => {
+      const claimSql: string[] = [];
+      let unscopedClaimed = false;
+      const now = Date.now();
+      const freshAgeMs = DEFAULT_FOREGROUND_LANE_MAX_STARVE_AGE_MS - 60_000;
+      const fn = vi.fn().mockImplementation(async (sql: unknown, params?: unknown[]) => {
+        const q = String(sql);
+        if (q.includes("UPDATE _selfhost_queue_fairness SET claim_sequence=claim_sequence+1") && q.includes("RETURNING claim_sequence, last_backlog_repo")) {
+          return { rows: [{ claim_sequence: 0, last_backlog_repo: null }], rowCount: 1 };
+        }
+        if (q.includes("SELECT MAX(priority) AS priority") && q.includes("foreground_lane IS NULL")) {
+          return { rows: [{ priority: 10 }], rowCount: 1 };
+        }
+        if (q.includes("SELECT job_key, created_at") && q.includes("foreground_lane='backlog'")) {
+          return { rows: [{ job_key: "agent-regate-pr:owner/repo#1", created_at: now - freshAgeMs }], rowCount: 1 };
+        }
+        if (q.includes("UPDATE _selfhost_jobs SET status='processing'")) {
+          claimSql.push(q);
+          if (q.includes("foreground_lane='backlog'")) {
+            // NOT escaped: predicate stays `>` against the due unclassified priority (10), which a priority-9
+            // backlog row can never satisfy -- the exact unsatisfiable gate #9153 reports.
+            expect(q).toContain("candidate.priority > $2");
+            expect((params as unknown[])[1]).toBe(10);
+            return { rows: [], rowCount: 0 };
+          }
+          if (!unscopedClaimed && !q.includes("foreground_lane")) {
+            unscopedClaimed = true;
+            return {
+              rows: [{ id: "backlog-1", payload: JSON.stringify(backlogJob("owner/repo", 1)), attempts: 0, job_key: "agent-regate-pr:owner/repo#1", priority: 9, created_at: now - freshAgeMs }],
+              rowCount: 1,
+            };
+          }
+          return { rows: [], rowCount: 0 };
+        }
+        return { rows: [], rowCount: 0 };
+      });
+      const seen: string[] = [];
+      const q = createPgQueue({ query: fn } as unknown as Pool, async (m) => void seen.push(typeOf(m)));
+
+      await q.init();
+      await q.drain();
+
+      // The job still eventually runs (via the unscoped fallback claim) -- #9153 is a FAIRNESS bug, not job
+      // loss -- but it was never PREFERRED by the lane-scoped claim, exactly the inert-mechanism symptom #9153
+      // reports.
+      expect(seen).toEqual(["agent-regate-pr"]);
+      expect(claimSql[0]).toContain("foreground_lane='backlog'");
       expect(claimSql[1]).not.toContain("foreground_lane");
       expect(await renderMetrics()).not.toContain("loopover_jobs_claimed_by_lane_total");
     });

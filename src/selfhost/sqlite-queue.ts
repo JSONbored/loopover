@@ -66,6 +66,7 @@ import {
   foregroundLaneForJob,
   nextForegroundLane,
   pickBacklogRepo,
+  shouldEscapeLanePriorityGate,
   type BacklogRepoCount,
   type ForegroundLane,
 } from "./queue-fairness";
@@ -697,8 +698,11 @@ export function createSqliteQueue(
    *  cycle," never "no foreground work at all." One slot per fairness window is deliberately left unscoped, and
    *  lane-scoped claims must beat the best unclassified foreground priority, so manual/repair work the classifier
    *  intentionally leaves as lane `null` keeps its plain priority ordering instead of sitting behind a perpetually
-   *  non-empty classified lane. The fairness singleton's claim_sequence always advances (best-effort, hit or
-   *  miss) so the ratio cycle keeps progressing even through empty cycles. */
+   *  non-empty classified lane -- UNLESS that gate has starved the lane past shouldEscapeLanePriorityGate's
+   *  bounded age (#9153: an unclassified priority-10 webhook is essentially always due on a repo with CI, which
+   *  would otherwise make the `>` gate permanently unsatisfiable and this whole mechanism inert; see
+   *  queue-fairness.ts's module comment on that constant). The fairness singleton's claim_sequence always
+   *  advances (best-effort, hit or miss) so the ratio cycle keeps progressing even through empty cycles. */
   function claimNextForegroundLane(now: number): JobRow | null {
     const fairness = driver.query(
       `SELECT claim_sequence, last_backlog_repo FROM ${FAIRNESS_TABLE} WHERE id='singleton'`,
@@ -710,10 +714,12 @@ export function createSqliteQueue(
     driver.query(`UPDATE ${FAIRNESS_TABLE} SET claim_sequence=claim_sequence+1 WHERE id='singleton'`, []);
     if (sequence % (fairnessWindow + 1) === fairnessWindow) return null;
     const unclassifiedPriority = maxDueUnclassifiedForegroundPriority(now);
-    const lanePriorityPredicate =
-      unclassifiedPriority === null ? "candidate.priority>=?" : "candidate.priority>?";
-    const lanePriorityFloor = unclassifiedPriority ?? FOREGROUND_QUEUE_PRIORITY_FLOOR;
     if (lane === "fresh") {
+      const oldestDueLaneAgeMs = oldestDueForegroundLaneAgeMs(now, "fresh");
+      const { predicate: lanePriorityPredicate, floor: lanePriorityFloor } = lanePriorityGate(
+        unclassifiedPriority,
+        oldestDueLaneAgeMs,
+      );
       const freshRow = claimNextWhere(now, lanePriorityPredicate, { sql: "candidate.foreground_lane='fresh'", params: [] }, lanePriorityFloor);
       if (freshRow) incr("loopover_jobs_claimed_by_lane_total", { lane: "fresh" });
       return freshRow;
@@ -722,8 +728,17 @@ export function createSqliteQueue(
       `SELECT job_key, created_at FROM ${TABLE} WHERE status='pending' AND run_after<=? AND foreground_lane='backlog'`,
       [now],
     );
+    const backlogRowsTyped = backlogRows as Array<{ job_key: string | null; created_at: number }>;
+    // Oldest due backlog row's age, computed straight from the rows just fetched above -- no extra query needed
+    // (unlike the fresh lane, which has no equivalent pre-fetched row set to reuse).
+    const oldestDueLaneAgeMs =
+      backlogRowsTyped.length === 0 ? null : Math.max(...backlogRowsTyped.map((row) => now - Number(row.created_at)));
+    const { predicate: lanePriorityPredicate, floor: lanePriorityFloor } = lanePriorityGate(
+      unclassifiedPriority,
+      oldestDueLaneAgeMs,
+    );
     const candidates = backlogRepoCandidatesFromJobKeys(
-      (backlogRows as Array<{ job_key: string | null; created_at: number }>).map((row) => ({
+      backlogRowsTyped.map((row) => ({
         jobKey: row.job_key,
         createdAtMs: Number(row.created_at),
       })),
@@ -742,12 +757,37 @@ export function createSqliteQueue(
     return row;
   }
 
+  /** The lane-scoped claim's priority predicate + floor for this cycle: strictly beat `unclassifiedPriority`
+   *  (when there is a due unclassified row) unless the age escape (#9153) fires, in which case fall back to the
+   *  same `>=` floor the unscoped claim itself uses -- letting the lane's own priority ordering (still scoped to
+   *  this lane via claimNextWhere's `extra` predicate) decide instead of being blocked outright. */
+  function lanePriorityGate(
+    unclassifiedPriority: number | null,
+    oldestDueLaneAgeMs: number | null,
+  ): { predicate: string; floor: number } {
+    if (unclassifiedPriority === null || shouldEscapeLanePriorityGate(oldestDueLaneAgeMs)) {
+      return { predicate: "candidate.priority>=?", floor: FOREGROUND_QUEUE_PRIORITY_FLOOR };
+    }
+    return { predicate: "candidate.priority>?", floor: unclassifiedPriority };
+  }
+
   function maxDueUnclassifiedForegroundPriority(now: number): number | null {
     const row = driver.query(
       `SELECT MAX(priority) AS priority FROM ${TABLE} WHERE status='pending' AND run_after<=? AND priority>=? AND foreground_lane IS NULL`,
       [now, FOREGROUND_QUEUE_PRIORITY_FLOOR],
     ).rows[0] as { priority: number | null } | undefined;
     return row?.priority === null || row?.priority === undefined ? null : Number(row.priority);
+  }
+
+  /** Age (ms) of the oldest DUE row currently in the given classified lane -- null when the lane has no due
+   *  candidate at all right now. Only needed for the fresh lane; the backlog lane derives this directly from
+   *  the row set claimNextForegroundLane already fetches for repo selection, without a separate query. */
+  function oldestDueForegroundLaneAgeMs(now: number, lane: "fresh" | "backlog"): number | null {
+    const row = driver.query(
+      `SELECT MIN(created_at) AS oldest FROM ${TABLE} WHERE status='pending' AND run_after<=? AND foreground_lane=?`,
+      [now, lane],
+    ).rows[0] as { oldest: number | null } | undefined;
+    return row?.oldest != null ? now - Number(row.oldest) : null;
   }
 
   /** Top-N repos by backlog-convergence pending DEPTH, for the observability dashboard's per-repo backlog panel

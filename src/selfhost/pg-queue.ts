@@ -153,6 +153,7 @@ import {
   foregroundLaneForJob,
   nextForegroundLane,
   pickBacklogRepo,
+  shouldEscapeLanePriorityGate,
   type BacklogRepoCount,
   type ForegroundLane,
 } from "./queue-fairness";
@@ -1124,12 +1125,15 @@ export function createPgQueue(
    *  this cycle," never "no foreground work at all." One slot per fairness window is deliberately left unscoped,
    *  and lane-scoped claims must beat the best unclassified foreground priority, so manual/repair work the
    *  classifier intentionally leaves as lane `null` keeps its plain priority ordering instead of sitting behind a
-   *  perpetually non-empty classified lane. The fairness singleton's claim_sequence always advances (best-effort,
-   *  hit or miss) so the ratio cycle keeps progressing even through empty cycles. Sequence
-   *  allocation is a single atomic UPDATE ... RETURNING (not a separate SELECT-then-UPDATE): this backend is
-   *  the multi-instance one (multiple app instances can share one Postgres, see the file header), so two
-   *  concurrent callers reading the same pre-increment value would both compute the SAME lane and defeat the
-   *  bounded-ratio guarantee -- the row's own lock serializes concurrent allocations instead. */
+   *  perpetually non-empty classified lane -- UNLESS that gate has starved the lane past
+   *  shouldEscapeLanePriorityGate's bounded age (#9153: an unclassified priority-10 webhook is essentially always
+   *  due on a repo with CI, which would otherwise make the `>` gate permanently unsatisfiable and this whole
+   *  mechanism inert; see queue-fairness.ts's module comment on that constant). The fairness singleton's
+   *  claim_sequence always advances (best-effort, hit or miss) so the ratio cycle keeps progressing even through
+   *  empty cycles. Sequence allocation is a single atomic UPDATE ... RETURNING (not a separate SELECT-then-
+   *  UPDATE): this backend is the multi-instance one (multiple app instances can share one Postgres, see the file
+   *  header), so two concurrent callers reading the same pre-increment value would both compute the SAME lane
+   *  and defeat the bounded-ratio guarantee -- the row's own lock serializes concurrent allocations instead. */
   async function claimNextForegroundLane(now: number): Promise<JobRow | null> {
     const fairnessRes = await pool.query(
       `UPDATE ${FAIRNESS_TABLE} SET claim_sequence=claim_sequence+1 WHERE id='singleton' RETURNING claim_sequence, last_backlog_repo`,
@@ -1140,10 +1144,12 @@ export function createPgQueue(
     const lane: ForegroundLane = nextForegroundLane(sequence);
     if (sequence % (fairnessWindow + 1) === fairnessWindow) return null;
     const unclassifiedPriority = await maxDueUnclassifiedForegroundPriority(now);
-    const lanePriorityPredicate =
-      unclassifiedPriority === null ? "candidate.priority >= $2" : "candidate.priority > $2";
-    const lanePriorityFloor = unclassifiedPriority ?? FOREGROUND_QUEUE_PRIORITY_FLOOR;
     if (lane === "fresh") {
+      const oldestDueLaneAgeMs = await oldestDueForegroundLaneAgeMs(now, "fresh");
+      const { predicate: lanePriorityPredicate, floor: lanePriorityFloor } = lanePriorityGate(
+        unclassifiedPriority,
+        oldestDueLaneAgeMs,
+      );
       const freshRow = await claimNextWhere(now, lanePriorityPredicate, { sql: "candidate.foreground_lane='fresh'", params: [] }, lanePriorityFloor);
       if (freshRow) incr("loopover_jobs_claimed_by_lane_total", { lane: "fresh" });
       return freshRow;
@@ -1152,8 +1158,17 @@ export function createPgQueue(
       `SELECT job_key, created_at FROM ${TABLE} WHERE status='pending' AND run_after<=$1 AND foreground_lane='backlog'`,
       [now],
     );
+    const backlogRows = backlogRes.rows as Array<{ job_key: string | null; created_at: number | string }>;
+    // Oldest due backlog row's age, computed straight from the rows just fetched above -- no extra query needed
+    // (unlike the fresh lane, which has no equivalent pre-fetched row set to reuse).
+    const oldestDueLaneAgeMs =
+      backlogRows.length === 0 ? null : Math.max(...backlogRows.map((row) => now - Number(row.created_at)));
+    const { predicate: lanePriorityPredicate, floor: lanePriorityFloor } = lanePriorityGate(
+      unclassifiedPriority,
+      oldestDueLaneAgeMs,
+    );
     const candidates = backlogRepoCandidatesFromJobKeys(
-      (backlogRes.rows as Array<{ job_key: string | null; created_at: number | string }>).map((row) => ({
+      backlogRows.map((row) => ({
         jobKey: row.job_key,
         createdAtMs: Number(row.created_at),
       })),
@@ -1172,6 +1187,20 @@ export function createPgQueue(
     return row;
   }
 
+  /** The lane-scoped claim's priority predicate + floor for this cycle: strictly beat `unclassifiedPriority`
+   *  (when there is a due unclassified row) unless the age escape (#9153) fires, in which case fall back to the
+   *  same `>=` floor the unscoped claim itself uses -- letting the lane's own priority ordering (still scoped to
+   *  this lane via claimNextWhere's `extra` predicate) decide instead of being blocked outright. */
+  function lanePriorityGate(
+    unclassifiedPriority: number | null,
+    oldestDueLaneAgeMs: number | null,
+  ): { predicate: string; floor: number } {
+    if (unclassifiedPriority === null || shouldEscapeLanePriorityGate(oldestDueLaneAgeMs)) {
+      return { predicate: "candidate.priority >= $2", floor: FOREGROUND_QUEUE_PRIORITY_FLOOR };
+    }
+    return { predicate: "candidate.priority > $2", floor: unclassifiedPriority };
+  }
+
   async function maxDueUnclassifiedForegroundPriority(now: number): Promise<number | null> {
     const res = await pool.query(
       `SELECT MAX(priority) AS priority FROM ${TABLE} WHERE status='pending' AND run_after<=$1 AND priority>=$2 AND foreground_lane IS NULL`,
@@ -1179,6 +1208,18 @@ export function createPgQueue(
     );
     const row = res.rows[0] as { priority: number | string | null } | undefined;
     return row?.priority === null || row?.priority === undefined ? null : Number(row.priority);
+  }
+
+  /** Age (ms) of the oldest DUE row currently in the given classified lane -- null when the lane has no due
+   *  candidate at all right now. Only needed for the fresh lane; the backlog lane derives this directly from
+   *  the row set claimNextForegroundLane already fetches for repo selection, without a separate query. */
+  async function oldestDueForegroundLaneAgeMs(now: number, lane: "fresh" | "backlog"): Promise<number | null> {
+    const res = await pool.query(
+      `SELECT MIN(created_at) AS oldest FROM ${TABLE} WHERE status='pending' AND run_after<=$1 AND foreground_lane=$2`,
+      [now, lane],
+    );
+    const row = res.rows[0] as { oldest: number | string | null } | undefined;
+    return row?.oldest != null ? now - Number(row.oldest) : null;
   }
 
   async function claimNextWhere(

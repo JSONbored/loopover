@@ -6,11 +6,11 @@ import {
   DEFAULT_MAX_CLAIM_AGE_MS,
   findExpiredClaims,
   sweepExpiredClaims,
-} from "../../packages/loopover-miner/lib/claim-ledger-expiry.js";
+} from "../../packages/loopover-miner/lib/claim-ledger-expiry";
 import {
   closeDefaultClaimLedger,
   openClaimLedger,
-} from "../../packages/loopover-miner/lib/claim-ledger.js";
+} from "../../packages/loopover-miner/lib/claim-ledger";
 
 const roots: string[] = [];
 const ledgers: Array<{ close(): void }> = [];

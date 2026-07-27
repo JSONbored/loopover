@@ -7,7 +7,7 @@ import {
   resetGitHubTokenResolutionForTesting,
   resolveGitHubToken,
   resolveLoopoverBackendSession,
-} from "../../packages/loopover-miner/lib/github-token-resolution.js";
+} from "../../packages/loopover-miner/lib/github-token-resolution";
 
 function writeConfig(dir: string, config: unknown) {
   writeFileSync(join(dir, "config.json"), JSON.stringify(config), { mode: 0o600 });

@@ -5,7 +5,7 @@ import {
   ErrorState,
   LoadingState,
   StateBoundary,
-} from "./state-views";
+} from "./state-views.js";
 
 describe("LoadingState / EmptyState / ErrorState copy (#793)", () => {
   it("LoadingState shows its default copy under a polite status role", () => {

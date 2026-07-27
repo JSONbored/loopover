@@ -10,7 +10,7 @@ import {
   resolveOwnOpenPrForIssue,
   resolveOwnRejectionHistory,
   resolveRejectionSignaled,
-} from "../../packages/loopover-miner/lib/rejection-signal.js";
+} from "../../packages/loopover-miner/lib/rejection-signal";
 
 // resolveRejectionSignaled fetches plain markdown text (AI-USAGE.md/CONTRIBUTING.md), never JSON, so
 // json() is never actually called -- it's here only to satisfy SelfReviewContextFetch's response shape.

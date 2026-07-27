@@ -20,7 +20,7 @@ import {
   buildCodingTaskAcceptanceCriteria,
   buildCodingTaskFeasibility,
   writeAcceptanceCriteriaFile,
-} from "../../packages/loopover-miner/lib/coding-task-spec.js";
+} from "../../packages/loopover-miner/lib/coding-task-spec";
 
 const roots: string[] = [];
 

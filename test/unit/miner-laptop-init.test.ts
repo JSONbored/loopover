@@ -29,7 +29,7 @@ vi.mock("node:sqlite", async (importOriginal) => {
   }
   return { ...actual, DatabaseSync: RecordingDatabaseSync };
 });
-import { cleanupResourceCount, resetProcessLifecycleForTesting } from "../../packages/loopover-miner/lib/process-lifecycle.js";
+import { cleanupResourceCount, resetProcessLifecycleForTesting } from "../../packages/loopover-miner/lib/process-lifecycle";
 
 // Import the .ts SOURCE (not the build-time .js) via a non-literal specifier. Once `build:miner` has produced
 // the artifact, a plain `.js` import loads that .js and leaves coverage.include's `.ts` entry at 0% — the
@@ -41,7 +41,7 @@ const {
   initLaptopState,
   resolveLaptopStateDbPath,
   runInit,
-} = (await import(LAPTOP_INIT_MODULE)) as typeof import("../../packages/loopover-miner/lib/laptop-init.js");
+} = (await import(LAPTOP_INIT_MODULE)) as typeof import("../../packages/loopover-miner/lib/laptop-init");
 
 const roots: string[] = [];
 

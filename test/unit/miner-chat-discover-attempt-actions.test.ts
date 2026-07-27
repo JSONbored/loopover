@@ -10,15 +10,15 @@ import {
   CHAT_ACTION_DISPATCH_ENABLE_VALUE,
   CHAT_ACTION_DISPATCH_FLAG,
   dispatchChatAction,
-} from "../../packages/loopover-miner/lib/chat-action-dispatch.js";
-import { chatActionRegistry, createChatActionRegistry } from "../../packages/loopover-miner/lib/chat-action-registry.js";
+} from "../../packages/loopover-miner/lib/chat-action-dispatch";
+import { chatActionRegistry, createChatActionRegistry } from "../../packages/loopover-miner/lib/chat-action-registry";
 import {
   ATTEMPT_CHAT_ACTION,
   DISCOVER_CHAT_ACTION,
   isAttemptChatParams,
   isDiscoverChatParams,
   registerDiscoverAttemptChatActions,
-} from "../../packages/loopover-miner/lib/chat-discover-attempt-actions.js";
+} from "../../packages/loopover-miner/lib/chat-discover-attempt-actions";
 
 const enabledEnv = { [CHAT_ACTION_DISPATCH_FLAG]: CHAT_ACTION_DISPATCH_ENABLE_VALUE };
 

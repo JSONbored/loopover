@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { run } from "../../scripts/check-changelog.js";
+import { run } from "../../scripts/check-changelog";
 
 /**
  * #7772: when a command can't even launch (binary missing from PATH), spawnSync returns `status: null` with

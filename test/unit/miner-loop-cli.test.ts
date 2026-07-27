@@ -7,21 +7,21 @@ vi.mock("@loopover/engine", async () => {
   return import("../../packages/loopover-engine/src/index");
 });
 
-import { parseLoopArgs, runLoop } from "../../packages/loopover-miner/lib/loop-cli.js";
-import { initEventLedger } from "../../packages/loopover-miner/lib/event-ledger.js";
-import { initGovernorLedger } from "../../packages/loopover-miner/lib/governor-ledger.js";
-import { initPortfolioQueueStore } from "../../packages/loopover-miner/lib/portfolio-queue.js";
-import { initRunStateStore } from "../../packages/loopover-miner/lib/run-state.js";
-import { openGovernorState } from "../../packages/loopover-miner/lib/governor-state.js";
+import { parseLoopArgs, runLoop } from "../../packages/loopover-miner/lib/loop-cli";
+import { initEventLedger } from "../../packages/loopover-miner/lib/event-ledger";
+import { initGovernorLedger } from "../../packages/loopover-miner/lib/governor-ledger";
+import { initPortfolioQueueStore } from "../../packages/loopover-miner/lib/portfolio-queue";
+import { initRunStateStore } from "../../packages/loopover-miner/lib/run-state";
+import { openGovernorState } from "../../packages/loopover-miner/lib/governor-state";
 import { DEFAULT_AMS_POLICY_SPEC } from "../../packages/loopover-engine/src/index";
-import * as governorStateModule from "../../packages/loopover-miner/lib/governor-state.js";
-import * as eventLedgerModule from "../../packages/loopover-miner/lib/event-ledger.js";
-import * as governorLedgerModule from "../../packages/loopover-miner/lib/governor-ledger.js";
-import * as portfolioQueueModule from "../../packages/loopover-miner/lib/portfolio-queue.js";
-import * as runStateModule from "../../packages/loopover-miner/lib/run-state.js";
-import * as discoverCliModule from "../../packages/loopover-miner/lib/discover-cli.js";
-import * as amsPolicyModule from "../../packages/loopover-miner/lib/ams-policy.js";
-import * as killSwitchModule from "../../packages/loopover-miner/lib/governor-kill-switch.js";
+import * as governorStateModule from "../../packages/loopover-miner/lib/governor-state";
+import * as eventLedgerModule from "../../packages/loopover-miner/lib/event-ledger";
+import * as governorLedgerModule from "../../packages/loopover-miner/lib/governor-ledger";
+import * as portfolioQueueModule from "../../packages/loopover-miner/lib/portfolio-queue";
+import * as runStateModule from "../../packages/loopover-miner/lib/run-state";
+import * as discoverCliModule from "../../packages/loopover-miner/lib/discover-cli";
+import * as amsPolicyModule from "../../packages/loopover-miner/lib/ams-policy";
+import * as killSwitchModule from "../../packages/loopover-miner/lib/governor-kill-switch";
 
 // Built from parts so the miner-bot changed-file secret scanner never sees a literal token shape.
 const fakeGithubLoopToken = ["ghp", "_loop_test"].join("");
@@ -1318,7 +1318,7 @@ describe("runLoop (#5135)", () => {
       if (typeof opts?.initPortfolioQueue === "function") (opts.initPortfolioQueue as () => unknown)();
       return 0;
     });
-    const tokenModule = await import("../../packages/loopover-miner/lib/github-token-resolution.js");
+    const tokenModule = await import("../../packages/loopover-miner/lib/github-token-resolution");
     const resolveSpy = vi.spyOn(tokenModule, "resolveGitHubToken").mockResolvedValue("resolved-from-session");
     try {
       await runLoop(["acme/widgets", "--miner-login", "alice", "--max-cycles", "0", "--json"], {
@@ -1345,7 +1345,7 @@ describe("runLoop (#5135)", () => {
       if (typeof opts?.initPortfolioQueue === "function") (opts.initPortfolioQueue as () => unknown)();
       return 0;
     });
-    const tokenModule = await import("../../packages/loopover-miner/lib/github-token-resolution.js");
+    const tokenModule = await import("../../packages/loopover-miner/lib/github-token-resolution");
     const resolveSpy = vi.spyOn(tokenModule, "resolveGitHubToken").mockResolvedValue(null);
     try {
       await runLoop(["acme/widgets", "--miner-login", "alice", "--max-cycles", "0", "--json"], {

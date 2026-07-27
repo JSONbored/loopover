@@ -2,14 +2,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { closeDefaultEventLedger } from "../../packages/loopover-miner/lib/event-ledger.js";
-import { initPolicyDocCacheStore } from "../../packages/loopover-miner/lib/policy-doc-cache.js";
-import { initPolicyVerdictCacheStore } from "../../packages/loopover-miner/lib/policy-verdict-cache.js";
+import { closeDefaultEventLedger } from "../../packages/loopover-miner/lib/event-ledger";
+import { initPolicyDocCacheStore } from "../../packages/loopover-miner/lib/policy-doc-cache";
+import { initPolicyVerdictCacheStore } from "../../packages/loopover-miner/lib/policy-verdict-cache";
 import {
   closeDefaultPortfolioQueueStore,
   initPortfolioQueueStore,
-} from "../../packages/loopover-miner/lib/portfolio-queue.js";
-import { initRankedCandidatesStore } from "../../packages/loopover-miner/lib/ranked-candidates.js";
+} from "../../packages/loopover-miner/lib/portfolio-queue";
+import { initRankedCandidatesStore } from "../../packages/loopover-miner/lib/ranked-candidates";
 
 // Import the .ts SOURCE via a non-literal specifier so CI's `--coverage.all=false` run grades discover-cli.ts,
 // not a stale post-build .js artifact (#8544, same pattern as miner-replay-snapshot.test.ts / #8510).
@@ -20,7 +20,7 @@ const {
   ELIGIBILITY_EXCLUSION_METADATA_MAX_STRING_CHARS,
   buildEligibilityExclusionMetadata,
   runDiscover,
-} = (await import(DISCOVER_CLI_MODULE)) as typeof import("../../packages/loopover-miner/lib/discover-cli.js");
+} = (await import(DISCOVER_CLI_MODULE)) as typeof import("../../packages/loopover-miner/lib/discover-cli");
 
 const NOW = Date.parse("2026-07-09T12:00:00.000Z");
 

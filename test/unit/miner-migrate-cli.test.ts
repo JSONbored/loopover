@@ -3,13 +3,13 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runMigrate, runMigrateChecks } from "../../packages/loopover-miner/lib/migrate-cli.js";
-import { initPortfolioQueueStore, resolvePortfolioQueueDbPath } from "../../packages/loopover-miner/lib/portfolio-queue.js";
-import { resolveEventLedgerDbPath } from "../../packages/loopover-miner/lib/event-ledger.js";
-import { applySchemaMigrations, BASELINE_SCHEMA_VERSION } from "../../packages/loopover-miner/lib/schema-version.js";
-import { openWorktreeAllocator, resolveWorktreeAllocatorDbPath } from "../../packages/loopover-miner/lib/worktree-allocator.js";
-import { openLaptopStateStore, resolveLaptopStateDbPath } from "../../packages/loopover-miner/lib/laptop-init.js";
-import { openReplaySnapshotStore, resolveReplaySnapshotDbPath } from "../../packages/loopover-miner/lib/replay-snapshot.js";
+import { runMigrate, runMigrateChecks } from "../../packages/loopover-miner/lib/migrate-cli";
+import { initPortfolioQueueStore, resolvePortfolioQueueDbPath } from "../../packages/loopover-miner/lib/portfolio-queue";
+import { resolveEventLedgerDbPath } from "../../packages/loopover-miner/lib/event-ledger";
+import { applySchemaMigrations, BASELINE_SCHEMA_VERSION } from "../../packages/loopover-miner/lib/schema-version";
+import { openWorktreeAllocator, resolveWorktreeAllocatorDbPath } from "../../packages/loopover-miner/lib/worktree-allocator";
+import { openLaptopStateStore, resolveLaptopStateDbPath } from "../../packages/loopover-miner/lib/laptop-init";
+import { openReplaySnapshotStore, resolveReplaySnapshotDbPath } from "../../packages/loopover-miner/lib/replay-snapshot";
 
 const roots: string[] = [];
 

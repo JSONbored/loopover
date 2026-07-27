@@ -1,4 +1,4 @@
-import { checkNodeVersion } from "../../scripts/check-node-version.js";
+import { checkNodeVersion } from "../../scripts/check-node-version";
 
 /**
  * Vitest `globalSetup` -- the only mechanism that covers *every* vitest invocation path, not just

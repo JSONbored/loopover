@@ -2,7 +2,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { latestSemverTag, renderMcpChangelog, selectMcpReleaseCommits, type McpReleaseCommit } from "./mcp-release-core.js";
+import { latestSemverTag, renderMcpChangelog, selectMcpReleaseCommits, type McpReleaseCommit } from "./mcp-release-core";
 
 const defaultOutput = "packages/loopover-mcp/CHANGELOG.md";
 const defaultPackageJson = "packages/loopover-mcp/package.json";

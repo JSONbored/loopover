@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 // Direct src-path import — the coverage-twin pattern this calibration module's merged tests established
 // (the engine's node:test suite runs against dist/, outside root vitest's coverage instrumentation).
-import { compareBacktestScores } from "../../packages/loopover-engine/src/calibration/backtest-compare.js";
-import type { BacktestScoreReport } from "../../packages/loopover-engine/src/calibration/backtest-score.js";
-import { computeRegressedVerdictTrackRecord } from "../../packages/loopover-engine/src/calibration/backtest-track-record.js";
+import { compareBacktestScores } from "../../packages/loopover-engine/src/calibration/backtest-compare";
+import type { BacktestScoreReport } from "../../packages/loopover-engine/src/calibration/backtest-score";
+import { computeRegressedVerdictTrackRecord } from "../../packages/loopover-engine/src/calibration/backtest-track-record";
 
 function score(ruleId: string, overrides: Partial<BacktestScoreReport> = {}): BacktestScoreReport {
   return { ruleId, caseCount: 10, truePositive: 4, falsePositive: 1, trueNegative: 4, falseNegative: 1, precision: 0.8, recall: 0.8, ...overrides };

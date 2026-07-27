@@ -3,7 +3,7 @@ import {
   fetchGtLogoSvg,
   fetchJson,
   GITTENSOR_IMPACT_CARD_FETCH_TIMEOUT_MS,
-} from "../../scripts/gittensor-impact-card.js";
+} from "../../scripts/gittensor-impact-card";
 
 describe("gittensor-impact-card.ts (#7231)", () => {
   afterEach(() => {

@@ -7,11 +7,11 @@ vi.mock("@loopover/engine", async () => {
   return import("../../packages/loopover-engine/src/index");
 });
 
-import { attemptLoopReentry, countConsecutiveDisengagements, countReentriesSince, LOOP_REENTRY_DECISION_EVENT } from "../../packages/loopover-miner/lib/loop-reentry.js";
-import { initEventLedger } from "../../packages/loopover-miner/lib/event-ledger.js";
-import { initPortfolioQueueStore } from "../../packages/loopover-miner/lib/portfolio-queue.js";
-import { initRunStateStore } from "../../packages/loopover-miner/lib/run-state.js";
-import { recordPrOutcomeSnapshot } from "../../packages/loopover-miner/lib/pr-outcome.js";
+import { attemptLoopReentry, countConsecutiveDisengagements, countReentriesSince, LOOP_REENTRY_DECISION_EVENT } from "../../packages/loopover-miner/lib/loop-reentry";
+import { initEventLedger } from "../../packages/loopover-miner/lib/event-ledger";
+import { initPortfolioQueueStore } from "../../packages/loopover-miner/lib/portfolio-queue";
+import { initRunStateStore } from "../../packages/loopover-miner/lib/run-state";
+import { recordPrOutcomeSnapshot } from "../../packages/loopover-miner/lib/pr-outcome";
 
 const roots: string[] = [];
 const closers: Array<{ close(): void }> = [];

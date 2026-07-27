@@ -2,9 +2,9 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { runDenyHooks } from "../../packages/loopover-miner/lib/deny-hooks-cli.js";
-import { initDenyHookSynthesisStore } from "../../packages/loopover-miner/lib/deny-hook-synthesis.js";
-import { resolveAttemptHouseRulesConfig } from "../../packages/loopover-miner/lib/attempt-cli.js";
+import { runDenyHooks } from "../../packages/loopover-miner/lib/deny-hooks-cli";
+import { initDenyHookSynthesisStore } from "../../packages/loopover-miner/lib/deny-hook-synthesis";
+import { resolveAttemptHouseRulesConfig } from "../../packages/loopover-miner/lib/attempt-cli";
 
 // #8806: the operate half of the deny-hook loop — refresh (explicit --history file) → approve → the
 // attempt-side resolver picks the approved rule up. The end-to-end test below is the loop the audit found

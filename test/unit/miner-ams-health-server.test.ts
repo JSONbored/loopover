@@ -5,7 +5,7 @@ import {
   createAmsHealthHandler,
   readiness,
   startAmsHealthServer,
-} from "../../packages/loopover-miner/lib/ams-health-server.js";
+} from "../../packages/loopover-miner/lib/ams-health-server";
 
 const servers: Server[] = [];
 afterEach(() => {

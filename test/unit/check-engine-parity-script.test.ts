@@ -49,7 +49,7 @@ describe("check-engine-parity script", () => {
     expect(normalizeImportSpec("../types/predicted-gate-types.js")).toBe("../types");
     expect(normalizeImportSpec("../focus-manifest/guidance.js")).toBe("../signals/focus-manifest");
     const host = 'import type { X } from "../types/predicted-gate-types";\n';
-    const engine = 'import type { X } from "../types/manifest-deps-types.js";\n';
+    const engine = 'import type { X } from "../types/manifest-deps-types";\n';
     expect(normalizeEngineParityText(host)).toBe(normalizeEngineParityText(engine));
   });
 

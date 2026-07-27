@@ -11,8 +11,8 @@ import {
   createSampleAttester,
   isSampleAttestationReport,
   type Attester,
-} from "../../packages/loopover-engine/src/calibration/attester.js";
-import { buildAttestationReportData } from "../../packages/loopover-engine/src/calibration/attestation-envelope.js";
+} from "../../packages/loopover-engine/src/calibration/attester";
+import { buildAttestationReportData } from "../../packages/loopover-engine/src/calibration/attestation-envelope";
 
 const CORPUS_CHECKSUM = "a1".repeat(32); // 64 hex
 const HEAD_SHA = "b2".repeat(20); // 40 hex

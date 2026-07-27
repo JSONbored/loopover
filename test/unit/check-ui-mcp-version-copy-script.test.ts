@@ -15,7 +15,7 @@ import {
   SCAN_TARGETS,
   SOURCE_LATEST_PATH,
   writeKnownLatestVersion,
-} from "../../scripts/check-ui-mcp-version-copy.js";
+} from "../../scripts/check-ui-mcp-version-copy";
 
 const root = process.cwd();
 const SCRIPT_PATH = "scripts/check-ui-mcp-version-copy.ts";

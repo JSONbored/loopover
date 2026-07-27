@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { loadMinerFileSecrets } from "../../packages/loopover-miner/lib/env-file-indirection.js";
+import { loadMinerFileSecrets } from "../../packages/loopover-miner/lib/env-file-indirection";
 import { loadFileSecrets } from "../../src/selfhost/load-file-secrets";
 
 /**

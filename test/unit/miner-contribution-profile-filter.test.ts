@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import type { ContributionProfile } from "../../packages/loopover-miner/lib/contribution-profile.js";
+import type { ContributionProfile } from "../../packages/loopover-miner/lib/contribution-profile";
 import {
   ELIGIBILITY_EXCLUSION_REASONS,
   filterCandidatesByProfiles,
-} from "../../packages/loopover-miner/lib/contribution-profile-filter.js";
+} from "../../packages/loopover-miner/lib/contribution-profile-filter";
 
 type Candidate = {
   repoFullName: string;

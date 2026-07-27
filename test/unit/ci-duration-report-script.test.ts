@@ -4,7 +4,7 @@ import {
   durationSeconds,
   percentile,
   summarize,
-} from "../../scripts/ci-duration-report.js";
+} from "../../scripts/ci-duration-report";
 
 // #7456: percentile/summarize/durationSeconds are the non-obvious pure logic in ci-duration-report.ts
 // (a specific nearest-rank percentile with a floor clamp; a summarize() that excludes `cancelled` runs from

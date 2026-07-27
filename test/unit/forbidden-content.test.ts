@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { FORBIDDEN_CONTENT } from "../../scripts/forbidden-content.js";
+import { FORBIDDEN_CONTENT } from "../../scripts/forbidden-content";
 
 // forbidden-content.ts calls itself the single source of truth for the packaged secret-shape detector, but
 // nothing enforced it: check-mcp-package.ts re-declared the regex as its own local constant and the two could
@@ -51,7 +51,7 @@ function runChecker(
 describe("FORBIDDEN_CONTENT is the single source of truth (#6290)", () => {
   it.each(PACKAGE_CHECKERS)("%s imports the shared constant instead of re-declaring it", (checker) => {
     const source = readFileSync(checker, "utf8");
-    expect(source).toContain('import { FORBIDDEN_CONTENT } from "./forbidden-content.js";');
+    expect(source).toContain('import { FORBIDDEN_CONTENT } from "./forbidden-content";');
     expect(source).toContain("FORBIDDEN_CONTENT.test(");
     // The drift this guards against: a checker owning its own copy of the detector.
     expect(source).not.toMatch(/const\s+FORBIDDEN_CONTENT\s*=/);

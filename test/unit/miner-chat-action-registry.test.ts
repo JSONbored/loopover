@@ -12,7 +12,7 @@ import {
   governorGatedHandler,
   isGovernorGatedHandler,
   registerChatAction,
-} from "../../packages/loopover-miner/lib/chat-action-registry.js";
+} from "../../packages/loopover-miner/lib/chat-action-registry";
 
 const allowGate = () => ({ decision: { stage: "allow" } });
 const denyGate = () => ({ decision: { stage: "kill_switch" } });

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { checkSubmissionFreshness, SUBMISSION_FRESHNESS_ABORT_EVENT } from "../../packages/loopover-miner/lib/submission-freshness-check.js";
+import { checkSubmissionFreshness, SUBMISSION_FRESHNESS_ABORT_EVENT } from "../../packages/loopover-miner/lib/submission-freshness-check";
 
 function stubClaimLedger(claims: Array<{ repoFullName: string; issueNumber: number; status: string }> = []) {
   const listClaims = vi.fn((filter: { repoFullName?: string; status?: string }) =>

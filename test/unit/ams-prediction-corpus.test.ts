@@ -8,8 +8,8 @@ import {
   filterCasesByEngineVersion,
   type AmsPredictionRecord,
   type AmsRealizedOutcome,
-} from "../../packages/loopover-engine/src/calibration/ams-prediction-corpus.js";
-import { splitBacktestCorpus } from "../../packages/loopover-engine/src/calibration/backtest-split.js";
+} from "../../packages/loopover-engine/src/calibration/ams-prediction-corpus";
+import { splitBacktestCorpus } from "../../packages/loopover-engine/src/calibration/backtest-split";
 
 // #8183: the AMS corpus adapter. The load-bearing properties: the class mapping (agreement = confirmed,
 // contradiction = reversed), the latest-per-head collapse, conservative skipping of everything

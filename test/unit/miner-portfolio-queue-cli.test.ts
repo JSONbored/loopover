@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   closeDefaultPortfolioQueueStore,
   initPortfolioQueueStore,
-} from "../../packages/loopover-miner/lib/portfolio-queue.js";
+} from "../../packages/loopover-miner/lib/portfolio-queue";
 import {
   parseQueueDoneArgs,
   parseQueueListArgs,
@@ -24,7 +24,7 @@ import {
   runQueueRequeue,
   runQueueClaimBatch,
   selectNextEligibleTarget,
-} from "../../packages/loopover-miner/lib/portfolio-queue-cli.js";
+} from "../../packages/loopover-miner/lib/portfolio-queue-cli";
 import type { QueueEntry } from "../../packages/loopover-miner/lib/portfolio-queue.d.ts";
 
 const roots: string[] = [];
@@ -465,7 +465,7 @@ describe("loopover-miner portfolio queue CLI (#2292)", () => {
   });
 
   it("REGRESSION: runQueueCli dispatches the dashboard subcommand", async () => {
-    const dashboardModule = await import("../../packages/loopover-miner/lib/portfolio-dashboard.js");
+    const dashboardModule = await import("../../packages/loopover-miner/lib/portfolio-dashboard");
     const spy = vi.spyOn(dashboardModule, "runPortfolioDashboard").mockReturnValue(0);
     expect(runQueueCli("dashboard", ["--json"])).toBe(0);
     expect(spy).toHaveBeenCalledWith(["--json"], expect.any(Object));
@@ -593,7 +593,7 @@ describe("loopover-miner portfolio queue CLI (#2292)", () => {
       claimNextBatch: vi.fn().mockReturnValue([]),
       close: vi.fn(),
     };
-    const pqManagerModule = await import("../../packages/loopover-miner/lib/portfolio-queue-manager.js");
+    const pqManagerModule = await import("../../packages/loopover-miner/lib/portfolio-queue-manager");
     const initSpy = vi.spyOn(pqManagerModule, "initPortfolioQueueManager").mockReturnValue(ownedManager as never);
     try {
       log.mockClear();

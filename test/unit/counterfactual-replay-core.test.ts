@@ -15,7 +15,7 @@ import {
   parseVariantVerdict,
   planReplay,
   scoreReplay,
-} from "../../scripts/counterfactual-replay-core.js";
+} from "../../scripts/counterfactual-replay-core";
 
 // #8221: the harness's pure core. Provider IO lives in the wrapper; every mapping/aggregation arm is here.
 

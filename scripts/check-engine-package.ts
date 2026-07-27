@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { FORBIDDEN_CONTENT } from "./forbidden-content.js";
+import { FORBIDDEN_CONTENT } from "./forbidden-content";
 
 // Unlike MCP/miner's small, hand-curated lib/*.js lists, engine's dist/ mirrors its src/ tree 1:1
 // (tsc's default output shape) and grows every time a follow-up issue extracts more logic from the

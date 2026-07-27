@@ -16,7 +16,7 @@ const {
   removeReplaySnapshotWorktree,
   REPLAY_SNAPSHOT_SUBDIR,
   validateSnapshotFreshness,
-} = (await import(REPLAY_SNAPSHOT_MODULE)) as typeof import("../../packages/loopover-miner/lib/replay-snapshot.js");
+} = (await import(REPLAY_SNAPSHOT_MODULE)) as typeof import("../../packages/loopover-miner/lib/replay-snapshot");
 
 const FIELD_SEP = "\x1f";
 

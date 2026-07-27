@@ -5,7 +5,7 @@ import {
   requestDeviceCode,
   resolveAmsOauthClientId,
   runDeviceFlowAuthorization,
-} from "../../packages/loopover-miner/lib/oauth-device-flow.js";
+} from "../../packages/loopover-miner/lib/oauth-device-flow";
 
 function jsonResponse(body: unknown, ok = true, status = 200) {
   return { ok, status, json: async () => body };

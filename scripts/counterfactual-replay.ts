@@ -38,7 +38,7 @@ import {
   parseVariantVerdict,
   planReplay,
   renderCounterfactualComment,
-} from "./counterfactual-replay-core.js";
+} from "./counterfactual-replay-core";
 
 type Args = {
   fixtures: string | undefined;
@@ -190,7 +190,7 @@ async function main(): Promise<number> {
   const prompt = args.promptFile ? readFileSync(args.promptFile, "utf8") : DEFAULT_JUDGE_PROMPT;
   writeFileSync(join(args.artifacts, `prompt-${variant.promptVersion}.txt`), prompt);
 
-  const { scoreReplay } = await import("./counterfactual-replay-core.js");
+  const { scoreReplay } = await import("./counterfactual-replay-core");
   const verdicts = new Map<string, CounterfactualVerdict>();
   let neuronsSpent = 0;
   for (const fixture of plan.fixtures) {

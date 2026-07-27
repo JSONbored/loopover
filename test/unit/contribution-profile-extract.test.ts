@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { extractContributionProfile } from "../../packages/loopover-miner/lib/contribution-profile-extract.js";
+import { extractContributionProfile } from "../../packages/loopover-miner/lib/contribution-profile-extract";
 
 const AT = "2026-07-18T00:00:00.000Z";
 

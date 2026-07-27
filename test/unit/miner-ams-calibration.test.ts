@@ -20,8 +20,8 @@ import {
   recordAmsThresholdBacktestRun,
   revertMinRankOverride,
   type PersistedAmsBacktestRun,
-} from "../../packages/loopover-miner/lib/ams-calibration.js";
-import { initEventLedger, resolveEventLedgerDbPath, type EventLedger } from "../../packages/loopover-miner/lib/event-ledger.js";
+} from "../../packages/loopover-miner/lib/ams-calibration";
+import { initEventLedger, resolveEventLedgerDbPath, type EventLedger } from "../../packages/loopover-miner/lib/event-ledger";
 
 // #8184-#8187: the miner-side calibration seam. The engine replay math has its own suite
 // (ams-rank-corpus-engine.test.ts); these tests pin the ledger join, run persistence + read-back, the

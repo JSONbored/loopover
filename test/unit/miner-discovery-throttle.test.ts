@@ -8,11 +8,11 @@ import {
   DEFAULT_RATE_LIMIT_HIGH_WATER_MARK,
   DEFAULT_RATE_LIMIT_LOW_WATER_MARK,
   resolveThrottledConcurrency,
-} from "../../packages/loopover-miner/lib/discovery-throttle.js";
+} from "../../packages/loopover-miner/lib/discovery-throttle";
 import {
   fetchCandidateIssuesWithSummary,
   mapWithConcurrency,
-} from "../../packages/loopover-miner/lib/opportunity-fanout.js";
+} from "../../packages/loopover-miner/lib/opportunity-fanout";
 
 const instant = async () => {};
 

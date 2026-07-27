@@ -15,8 +15,8 @@
 // deterministic `backfill:` prefix are ever touched — live capture rows are out of reach by construction.
 import { readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { openPgDatabase, resolvePgConnection, type PgCliSession } from "./pg-cli.js";
-import { extractLinkedIssueNumbers } from "../src/db/repositories.js";
+import { openPgDatabase, resolvePgConnection, type PgCliSession } from "./pg-cli";
+import { extractLinkedIssueNumbers } from "../src/db/repositories";
 import {
   backfillFiredId,
   backfillOverrideId,
@@ -29,8 +29,8 @@ import {
   type HistoricalCloseSide,
   type Phase2Report,
   type SuccessorSide,
-} from "./backfill-calibration-corpus-phase2-core.js";
-import { BACKFILL_RULE_ID } from "./backfill-calibration-corpus-core.js";
+} from "./backfill-calibration-corpus-phase2-core";
+import { BACKFILL_RULE_ID } from "./backfill-calibration-corpus-core";
 
 type Pass = "successors" | "raw-context" | "reason-codes";
 type Args = {

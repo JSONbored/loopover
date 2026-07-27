@@ -7,7 +7,7 @@
 // know about a field the spec doesn't mention. This is a structural key-set diff, not a value/type check.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { RepositorySettingsSchema, RepoSettingsPreviewSchema } from "../src/openapi/schemas.js";
+import { RepositorySettingsSchema, RepoSettingsPreviewSchema } from "../src/openapi/schemas";
 
 export const TYPES_PATH = "src/types.ts";
 const TYPE_START = "export type RepositorySettings = {";

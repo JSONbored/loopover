@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it } from "vitest";
-import { createMinerMcpServer } from "../../packages/loopover-miner/bin/loopover-miner-mcp.js";
-import { initGovernorLedger } from "../../packages/loopover-miner/lib/governor-ledger.js";
+import { createMinerMcpServer } from "../../packages/loopover-miner/bin/loopover-miner-mcp";
+import { initGovernorLedger } from "../../packages/loopover-miner/lib/governor-ledger";
 
 // loopover_miner_get_governor_decisions (#5159). Driven against a REAL temp governor ledger (not a fake) so the
 // redaction assertion exercises the actual explicit-named-column SQL — it must fail if a future edit widens the

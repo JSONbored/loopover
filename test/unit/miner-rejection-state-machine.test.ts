@@ -5,7 +5,7 @@ import {
   isRejectedPr,
   classifyRejectionReason,
   resolveRejection,
-} from "../../packages/loopover-miner/lib/rejection-state-machine.js";
+} from "../../packages/loopover-miner/lib/rejection-state-machine";
 
 const CONTEXT = { repoFullName: "JSONbored/loopover", prNumber: 4278 } as const;
 const closedUnmerged = { state: "closed", merged: false, merged_at: null, closed_at: "2026-07-09T18:00:00Z" };

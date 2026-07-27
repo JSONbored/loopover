@@ -14,19 +14,19 @@ import {
   runManageStatus,
   type ManageStatusRow,
   type RunPortfolioRow,
-} from "../../packages/loopover-miner/lib/manage-status.js";
+} from "../../packages/loopover-miner/lib/manage-status";
 import {
   closeDefaultEventLedger,
   initEventLedger,
-} from "../../packages/loopover-miner/lib/event-ledger.js";
+} from "../../packages/loopover-miner/lib/event-ledger";
 import {
   closeDefaultPortfolioQueueStore,
   initPortfolioQueueStore,
-} from "../../packages/loopover-miner/lib/portfolio-queue.js";
+} from "../../packages/loopover-miner/lib/portfolio-queue";
 import {
   closeDefaultRunStateStore,
   initRunStateStore,
-} from "../../packages/loopover-miner/lib/run-state.js";
+} from "../../packages/loopover-miner/lib/run-state";
 
 const roots: string[] = [];
 const stores: Array<{ close(): void }> = [];

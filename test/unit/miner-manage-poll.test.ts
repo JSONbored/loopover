@@ -5,11 +5,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   closeDefaultEventLedger,
   initEventLedger,
-} from "../../packages/loopover-miner/lib/event-ledger.js";
+} from "../../packages/loopover-miner/lib/event-ledger";
 import {
   MANAGE_PR_UPDATE_EVENT,
   collectManageStatus,
-} from "../../packages/loopover-miner/lib/manage-status.js";
+} from "../../packages/loopover-miner/lib/manage-status";
 import {
   buildManagePollEventPayload,
   mapPollConclusionToGateVerdict,
@@ -17,13 +17,13 @@ import {
   parseManagePollArgs,
   recordManagePollSnapshot,
   runManagePoll,
-} from "../../packages/loopover-miner/lib/manage-poll.js";
+} from "../../packages/loopover-miner/lib/manage-poll";
 import type { PollCheckRunsResult } from "../../packages/loopover-miner/lib/ci-poller.d.ts";
 import {
   closeDefaultPortfolioQueueStore,
   initPortfolioQueueStore,
-} from "../../packages/loopover-miner/lib/portfolio-queue.js";
-import { DEFAULT_FORGE_CONFIG } from "../../packages/loopover-miner/lib/forge-config.js";
+} from "../../packages/loopover-miner/lib/portfolio-queue";
+import { DEFAULT_FORGE_CONFIG } from "../../packages/loopover-miner/lib/forge-config";
 
 const roots: string[] = [];
 const stores: Array<{ close(): void }> = [];

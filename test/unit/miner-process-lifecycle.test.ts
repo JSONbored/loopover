@@ -5,7 +5,7 @@ import {
   installCliSignalHandlers,
   registerCleanupResource,
   resetProcessLifecycleForTesting,
-} from "../../packages/loopover-miner/lib/process-lifecycle.js";
+} from "../../packages/loopover-miner/lib/process-lifecycle";
 
 type Listener = (...args: unknown[]) => void;
 

@@ -14,13 +14,13 @@
 // pg path rides the same selfhost adapter the Worker uses, so INSERT OR IGNORE keeps its idempotency
 // contract through the dialect translation.
 import { spawnSync } from "node:child_process";
-import { openPgDatabase, resolvePgConnection, type PgCliSession } from "./pg-cli.js";
+import { openPgDatabase, resolvePgConnection, type PgCliSession } from "./pg-cli";
 import {
   buildBackfillInsertStatements,
   renderBackfillReport,
   synthesizeBackfillRows,
   type ReviewTargetDecisionRow,
-} from "./backfill-calibration-corpus-core.js";
+} from "./backfill-calibration-corpus-core";
 
 type Args = { db: string; remote: boolean; apply: boolean; pgPresent: boolean; pgValue: string | undefined };
 

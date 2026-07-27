@@ -10,15 +10,15 @@ import {
   CHAT_ACTION_DISPATCH_ENABLE_VALUE,
   CHAT_ACTION_DISPATCH_FLAG,
   dispatchChatAction,
-} from "../../packages/loopover-miner/lib/chat-action-dispatch.js";
-import { createChatActionRegistry } from "../../packages/loopover-miner/lib/chat-action-registry.js";
+} from "../../packages/loopover-miner/lib/chat-action-dispatch";
+import { createChatActionRegistry } from "../../packages/loopover-miner/lib/chat-action-registry";
 import {
   GOVERNOR_PAUSE_CHAT_ACTION,
   GOVERNOR_RESUME_CHAT_ACTION,
   isGovernorPauseChatParams,
   isGovernorResumeChatParams,
   registerGovernorChatActions,
-} from "../../packages/loopover-miner/lib/chat-governor-actions.js";
+} from "../../packages/loopover-miner/lib/chat-governor-actions";
 
 const enabledEnv = { [CHAT_ACTION_DISPATCH_FLAG]: CHAT_ACTION_DISPATCH_ENABLE_VALUE };
 

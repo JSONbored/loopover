@@ -7,7 +7,7 @@ vi.mock("@loopover/engine", async () => {
 import {
   fetchCandidateIssuesWithSummary,
   searchCandidateIssuesWithSummary,
-} from "../../packages/loopover-miner/lib/opportunity-fanout.js";
+} from "../../packages/loopover-miner/lib/opportunity-fanout";
 
 const API = "https://api.test";
 const TARGET = [{ owner: "acme", repo: "widgets" }];

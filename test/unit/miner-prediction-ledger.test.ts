@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { initPredictionLedger, resolvePredictionLedgerDbPath } from "../../packages/loopover-miner/lib/prediction-ledger.js";
-import { readSchemaVersion } from "../../packages/loopover-miner/lib/schema-version.js";
+import { initPredictionLedger, resolvePredictionLedgerDbPath } from "../../packages/loopover-miner/lib/prediction-ledger";
+import { readSchemaVersion } from "../../packages/loopover-miner/lib/schema-version";
 
 const ledgers: Array<{ close: () => void }> = [];
 const roots: string[] = [];

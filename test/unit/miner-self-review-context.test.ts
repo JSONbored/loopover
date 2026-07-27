@@ -10,7 +10,7 @@ import {
   extractLinkedIssueNumbers,
   fetchSelfReviewContext,
   parseLiveGateThresholdFields,
-} from "../../packages/loopover-miner/lib/self-review-context.js";
+} from "../../packages/loopover-miner/lib/self-review-context";
 
 function jsonResponse(body: unknown, status = 200) {
   return {

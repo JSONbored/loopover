@@ -2,14 +2,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { closeDefaultGovernorState, openGovernorState } from "../../packages/loopover-miner/lib/governor-state.js";
+import { closeDefaultGovernorState, openGovernorState } from "../../packages/loopover-miner/lib/governor-state";
 import {
   GOVERNOR_CAP_USAGE_RATIO,
   GOVERNOR_RATE_LIMIT_REMAINING_RATIO,
   renderGovernorMetrics,
   runGovernorMetrics,
-} from "../../packages/loopover-miner/lib/governor-metrics-cli.js";
-import { runGovernorCli } from "../../packages/loopover-miner/lib/governor-ledger-cli.js";
+} from "../../packages/loopover-miner/lib/governor-metrics-cli";
+import { runGovernorCli } from "../../packages/loopover-miner/lib/governor-ledger-cli";
 
 const roots: string[] = [];
 const states: Array<{ close(): void }> = [];

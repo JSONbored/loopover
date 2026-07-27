@@ -11,7 +11,7 @@ import {
   parseRoadmapItems,
   type GithubApi,
   type RoadmapItemRef,
-} from "../../scripts/check-roadmap-issue-drift.js";
+} from "../../scripts/check-roadmap-issue-drift";
 
 // (#8390) Pure drift rule + parser coverage for the roadmap issue-drift check. Live GitHub is injected;
 // these tests never hit the network.

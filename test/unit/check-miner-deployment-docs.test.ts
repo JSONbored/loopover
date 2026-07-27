@@ -3,7 +3,7 @@ import {
   buildLiveMinerDeploymentReality,
   main,
   runMinerDeploymentDocsAudit,
-} from "../../scripts/check-miner-deployment-docs.js";
+} from "../../scripts/check-miner-deployment-docs";
 
 describe("check-miner-deployment-docs (#6158)", () => {
   it("passes against the live miner DEPLOYMENT.md and source tree", () => {

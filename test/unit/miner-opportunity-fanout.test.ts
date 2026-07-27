@@ -10,7 +10,7 @@ import {
   fetchCandidateIssuesWithSummary,
   searchCandidateIssues,
   searchCandidateIssuesWithSummary,
-} from "../../packages/loopover-miner/lib/opportunity-fanout.js";
+} from "../../packages/loopover-miner/lib/opportunity-fanout";
 
 const API = "https://api.test";
 

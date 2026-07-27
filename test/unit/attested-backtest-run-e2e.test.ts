@@ -5,8 +5,8 @@ import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { buildBacktestCorpusManifest } from "../../scripts/backtest-corpus-export-core.js";
-import type { BacktestCase } from "../../packages/loopover-engine/src/index.js";
+import { buildBacktestCorpusManifest } from "../../scripts/backtest-corpus-export-core";
+import type { BacktestCase } from "../../packages/loopover-engine/src/index";
 
 // End-to-end for the attested-run CLI (#9211), executed as a REAL subprocess against the sample attester --
 // which is the whole point of the seam: this exercises the complete path (corpus verify -> bind -> collect ->

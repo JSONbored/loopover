@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { diffBrandingBaseline, scanBrandingHits } from "../../scripts/check-branding-drift.js";
+import { diffBrandingBaseline, scanBrandingHits } from "../../scripts/check-branding-drift";
 
 describe("scanBrandingHits", () => {
   it("parses git grep -c output into a { file: count } map", () => {

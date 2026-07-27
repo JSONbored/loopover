@@ -3,32 +3,32 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { openClaimLedger, closeDefaultClaimLedger } from "../../packages/loopover-miner/lib/claim-ledger.js";
-import { initEventLedger, closeDefaultEventLedger } from "../../packages/loopover-miner/lib/event-ledger.js";
-import { initGovernorLedger, closeDefaultGovernorLedger } from "../../packages/loopover-miner/lib/governor-ledger.js";
-import { initPredictionLedger, closeDefaultPredictionLedger } from "../../packages/loopover-miner/lib/prediction-ledger.js";
+import { openClaimLedger, closeDefaultClaimLedger } from "../../packages/loopover-miner/lib/claim-ledger";
+import { initEventLedger, closeDefaultEventLedger } from "../../packages/loopover-miner/lib/event-ledger";
+import { initGovernorLedger, closeDefaultGovernorLedger } from "../../packages/loopover-miner/lib/governor-ledger";
+import { initPredictionLedger, closeDefaultPredictionLedger } from "../../packages/loopover-miner/lib/prediction-ledger";
 import {
   initPortfolioQueueStore,
   closeDefaultPortfolioQueueStore,
-} from "../../packages/loopover-miner/lib/portfolio-queue.js";
-import { initRunStateStore, closeDefaultRunStateStore } from "../../packages/loopover-miner/lib/run-state.js";
-import { initAttemptLog, closeDefaultAttemptLog } from "../../packages/loopover-miner/lib/attempt-log.js";
+} from "../../packages/loopover-miner/lib/portfolio-queue";
+import { initRunStateStore, closeDefaultRunStateStore } from "../../packages/loopover-miner/lib/run-state";
+import { initAttemptLog, closeDefaultAttemptLog } from "../../packages/loopover-miner/lib/attempt-log";
 import {
   initContributionProfileCache,
   closeDefaultContributionProfileCache,
-} from "../../packages/loopover-miner/lib/contribution-profile-cache.js";
-import { initPolicyVerdictCacheStore } from "../../packages/loopover-miner/lib/policy-verdict-cache.js";
-import { openGovernorState } from "../../packages/loopover-miner/lib/governor-state.js";
-import { initRankedCandidatesStore } from "../../packages/loopover-miner/lib/ranked-candidates.js";
-import { openReplaySnapshotStore } from "../../packages/loopover-miner/lib/replay-snapshot.js";
-import { initDenyHookSynthesisStore } from "../../packages/loopover-miner/lib/deny-hook-synthesis.js";
-import { openWorktreeAllocator } from "../../packages/loopover-miner/lib/worktree-allocator.js";
-import { emptyContributionProfile } from "../../packages/loopover-miner/lib/contribution-profile.js";
+} from "../../packages/loopover-miner/lib/contribution-profile-cache";
+import { initPolicyVerdictCacheStore } from "../../packages/loopover-miner/lib/policy-verdict-cache";
+import { openGovernorState } from "../../packages/loopover-miner/lib/governor-state";
+import { initRankedCandidatesStore } from "../../packages/loopover-miner/lib/ranked-candidates";
+import { openReplaySnapshotStore } from "../../packages/loopover-miner/lib/replay-snapshot";
+import { initDenyHookSynthesisStore } from "../../packages/loopover-miner/lib/deny-hook-synthesis";
+import { openWorktreeAllocator } from "../../packages/loopover-miner/lib/worktree-allocator";
+import { emptyContributionProfile } from "../../packages/loopover-miner/lib/contribution-profile";
 import {
   ATTEMPT_LOG_NOT_PURGEABLE_NOTE,
   parsePurgeArgs,
   runPurge,
-} from "../../packages/loopover-miner/lib/purge-cli.js";
+} from "../../packages/loopover-miner/lib/purge-cli";
 
 const roots: string[] = [];
 const closeables: Array<{ close(): void }> = [];

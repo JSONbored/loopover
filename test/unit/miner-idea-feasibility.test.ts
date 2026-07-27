@@ -7,8 +7,8 @@ vi.mock("@loopover/engine", async () => {
 import {
   assessIdeaFeasibility,
   deriveIdeaIssueStatus,
-} from "../../packages/loopover-miner/lib/idea-feasibility.js";
-import type { ResolvedIdeaSignals } from "../../packages/loopover-miner/lib/idea-feasibility.js";
+} from "../../packages/loopover-miner/lib/idea-feasibility";
+import type { ResolvedIdeaSignals } from "../../packages/loopover-miner/lib/idea-feasibility";
 import type { FeasibilityGateResult } from "@loopover/engine";
 
 function cleanSignals(overrides: Partial<ResolvedIdeaSignals> = {}): ResolvedIdeaSignals {

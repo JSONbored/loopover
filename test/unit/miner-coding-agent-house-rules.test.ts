@@ -4,7 +4,7 @@ vi.mock("@loopover/engine", async () => {
   return import("../../packages/loopover-engine/src/index");
 });
 
-import { buildHouseRulesAgentSdkHooks, runHouseRulesEnforcedCodingAgentAttempt } from "../../packages/loopover-miner/lib/coding-agent-house-rules.js";
+import { buildHouseRulesAgentSdkHooks, runHouseRulesEnforcedCodingAgentAttempt } from "../../packages/loopover-miner/lib/coding-agent-house-rules";
 // Typed from source, not the "@loopover/engine" package specifier: that resolves via the
 // workspace package's dist/ (git-ignored, only built by CI's later "Build engine package" step -- #ci-engine-
 // build-order), which runs AFTER Typecheck, so a real (non-vi.mock) `import type` from the package specifier

@@ -35,7 +35,7 @@ vi.mock("posthog-node", () => ({
 }));
 
 const { recordMcpToolCall, recordStdioToolTelemetry, wrapStdioToolHandler } = await import(
-  "../../packages/loopover-mcp/lib/telemetry.js"
+  "../../packages/loopover-mcp/lib/telemetry"
 );
 
 type LocalToolCallEvent = { tool: string; callerType?: "local"; ok: boolean; durationMs: number };

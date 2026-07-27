@@ -25,12 +25,12 @@ import {
   runCrossRepoFullExecution,
   scanPositiveLoopoverAssumptions,
   summarizeCrossRepoEvaluation,
-} from "../../packages/loopover-miner/lib/cross-repo-evaluation.js";
+} from "../../packages/loopover-miner/lib/cross-repo-evaluation";
 import type {
   CrossRepoExecutionCommandResult,
   CrossRepoExecutionDriver,
-} from "../../packages/loopover-miner/lib/cross-repo-evaluation.js";
-import type { RepoStackResult } from "../../packages/loopover-miner/lib/stack-detection.js";
+} from "../../packages/loopover-miner/lib/cross-repo-evaluation";
+import type { RepoStackResult } from "../../packages/loopover-miner/lib/stack-detection";
 import {
   loadCrossRepoEvaluationManifest,
   parseCrossRepoEvaluationArgs,

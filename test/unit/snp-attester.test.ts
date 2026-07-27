@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { DEFAULT_ATTESTATION_AGENT_URL, createSnpAttester } from "../../scripts/snp-attester.js";
+import { DEFAULT_ATTESTATION_AGENT_URL, createSnpAttester } from "../../scripts/snp-attester";
 
 const REQUEST = { reportData: "b".repeat(128), runtimeClass: "loopover-backtest-runner" };
 const MEASUREMENT = "a".repeat(64);

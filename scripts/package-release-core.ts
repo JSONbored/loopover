@@ -4,7 +4,7 @@
 // dependency the way MCP wraps app-side Worker logic), and all three already have release-please
 // maintaining their CHANGELOG.md natively (release-please-config.json's "packages" list) -- so this
 // core only needs due-detection + issue-tracking, no bespoke changelog renderer.
-import { bumpVersion, compareSemver, escapeIssueMarkdownText, inferReleaseTypeFromSubjects, parseConventionalSubject, shortSha } from "./release-semver-utils.js";
+import { bumpVersion, compareSemver, escapeIssueMarkdownText, inferReleaseTypeFromSubjects, parseConventionalSubject, shortSha } from "./release-semver-utils";
 
 export type PackageReleaseCommit = {
   sha?: string;

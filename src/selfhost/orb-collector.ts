@@ -19,7 +19,7 @@
 // reason category + cycle time, with repo/PR identifiers HMAC'd by a key the collector never holds (so it
 // can never de-anonymize).
 import { createHash, createHmac } from "node:crypto";
-import { generateAnonSecret, hmacAnonymize } from "../../packages/loopover-engine/src/telemetry/anonymize.js";
+import { generateAnonSecret, hmacAnonymize } from "../../packages/loopover-engine/src/telemetry/anonymize";
 import { AI_REVIEW_REUSE_EVENT_TYPES } from "../services/public-reuse-rate-trend";
 import { incr } from "./metrics";
 

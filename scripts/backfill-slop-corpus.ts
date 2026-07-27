@@ -11,9 +11,9 @@
 import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import type { BacktestCase } from "@loopover/engine";
-import { openPgDatabase, resolvePgConnection, type PgCliSession } from "./pg-cli.js";
-import { buildBackfillInsertStatements } from "./backfill-calibration-corpus-core.js";
-import { renderSlopReplayReport, replaySlopCorpus, type SlopReplaySourceCase } from "./backfill-slop-corpus-core.js";
+import { openPgDatabase, resolvePgConnection, type PgCliSession } from "./pg-cli";
+import { buildBackfillInsertStatements } from "./backfill-calibration-corpus-core";
+import { renderSlopReplayReport, replaySlopCorpus, type SlopReplaySourceCase } from "./backfill-slop-corpus-core";
 
 type Args = { corpus: string | undefined; db: string; remote: boolean; apply: boolean; pgPresent: boolean; pgValue: string | undefined };
 

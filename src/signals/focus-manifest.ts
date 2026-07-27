@@ -99,7 +99,7 @@ export {
   type VisualPreviewConfig,
   type VisualRoutesConfig,
   type VisualTheme,
-} from "../../packages/loopover-engine/src/focus-manifest.js";
+} from "../../packages/loopover-engine/src/focus-manifest";
 
 import type { PrTypeLabelSet, RepositorySettings } from "../types";
 import { mergeContributorBlacklists } from "../settings/contributor-blacklist";
@@ -132,7 +132,7 @@ import {
   type ReviewProfile,
   type SelfHostAiModelConfig,
   type VisualConfig,
-} from "../../packages/loopover-engine/src/focus-manifest.js";
+} from "../../packages/loopover-engine/src/focus-manifest";
 import type { ReesAnalyzerName } from "../review/enrichment-analyzer-names";
 
 export function resolveReviewPathInstructions(pathInstructions: ReviewPathInstruction[], changedPaths: string[]): string {

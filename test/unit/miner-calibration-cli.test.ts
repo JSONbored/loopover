@@ -13,25 +13,25 @@ vi.mock("../../packages/loopover-miner/lib/calibration-run.js", async () => {
 const CALIBRATION_CLI_MODULE = "../../packages/loopover-miner/lib/calibration-cli.ts";
 const CALIBRATION_RUN_MODULE = "../../packages/loopover-miner/lib/calibration-run.ts";
 const calibrationRun = await import(CALIBRATION_RUN_MODULE);
-const { runCalibrationCli, toAmsRealizedOutcomes } = (await import(CALIBRATION_CLI_MODULE)) as typeof import("../../packages/loopover-miner/lib/calibration-cli.js");
+const { runCalibrationCli, toAmsRealizedOutcomes } = (await import(CALIBRATION_CLI_MODULE)) as typeof import("../../packages/loopover-miner/lib/calibration-cli");
 const { MINER_CALIBRATION_SNAPSHOT_EVENT } = calibrationRun;
 
-import { initEventLedger, resolveEventLedgerDbPath } from "../../packages/loopover-miner/lib/event-ledger.js";
-import type { ContributionProfile } from "../../packages/loopover-miner/lib/contribution-profile.js";
+import { initEventLedger, resolveEventLedgerDbPath } from "../../packages/loopover-miner/lib/event-ledger";
+import type { ContributionProfile } from "../../packages/loopover-miner/lib/contribution-profile";
 import {
   initContributionProfileCache,
   resolveContributionProfileCacheDbPath,
-} from "../../packages/loopover-miner/lib/contribution-profile-cache.js";
-import { ELIGIBILITY_EXCLUSION_REASONS } from "../../packages/loopover-miner/lib/contribution-profile-filter.js";
+} from "../../packages/loopover-miner/lib/contribution-profile-cache";
+import { ELIGIBILITY_EXCLUSION_REASONS } from "../../packages/loopover-miner/lib/contribution-profile-filter";
 import {
   SIGNAL_HUMAN_OVERRIDE_EVENT,
   SIGNAL_RULE_FIRED_EVENT,
-} from "../../packages/loopover-miner/lib/signal-tracking-store.js";
+} from "../../packages/loopover-miner/lib/signal-tracking-store";
 import {
   initPredictionLedger,
   resolvePredictionLedgerDbPath,
-} from "../../packages/loopover-miner/lib/prediction-ledger.js";
-import * as predictionLedger from "../../packages/loopover-miner/lib/prediction-ledger.js";
+} from "../../packages/loopover-miner/lib/prediction-ledger";
+import * as predictionLedger from "../../packages/loopover-miner/lib/prediction-ledger";
 
 const tempDirs: string[] = [];
 afterEach(() => {
@@ -210,14 +210,14 @@ describe("loopover-miner calibration CLI (#4849)", () => {
 
 // ── #8184/#8185/#8186/#8187: the calibration subcommands + report sections ─────────────────────────────────
 
-import { resolveAmsPolicyConfigPath } from "../../packages/loopover-miner/lib/ams-policy.js";
+import { resolveAmsPolicyConfigPath } from "../../packages/loopover-miner/lib/ams-policy";
 
 const AMS_CALIBRATION_MODULE = "../../packages/loopover-miner/lib/ams-calibration.ts";
 const {
   MINER_AMS_ELIGIBILITY_BACKTEST_EVENT,
   MINER_AMS_THRESHOLD_BACKTEST_EVENT,
   readMinRankOverride,
-} = (await import(AMS_CALIBRATION_MODULE)) as typeof import("../../packages/loopover-miner/lib/ams-calibration.js");
+} = (await import(AMS_CALIBRATION_MODULE)) as typeof import("../../packages/loopover-miner/lib/ams-calibration");
 
 function seedTakenHistory(env: Record<string, string | undefined>): void {
   const ledger = initEventLedger(resolveEventLedgerDbPath(env));

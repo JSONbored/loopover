@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { evaluateLocalRateLimit } from "../../packages/loopover-engine/src/governor/rate-limit.js";
+import { evaluateLocalRateLimit } from "../../packages/loopover-engine/src/governor/rate-limit";
 
 // #5829: rate-limit.ts had no dedicated test — it was only exercised indirectly, never with `nowMs` moving BACKWARD
 // relative to a bucket's `windowStartMs`. These pin `retryAfterMs` to at most one window regardless of clock jumps.

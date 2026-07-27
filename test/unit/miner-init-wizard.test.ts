@@ -11,7 +11,7 @@ import {
   renderWizardEnvFile,
   resolveWizardEnvFilePath,
   runInteractiveInit,
-} from "../../packages/loopover-miner/lib/init-wizard.js";
+} from "../../packages/loopover-miner/lib/init-wizard";
 import { runCliResult } from "./support/miner-cli-harness";
 
 const roots: string[] = [];

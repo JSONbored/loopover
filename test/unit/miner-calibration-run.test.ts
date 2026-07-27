@@ -17,8 +17,8 @@ const {
   runHistoricalReplayCalibrationCycle,
   scoreHistoricalReplayComposite,
   snapshotPayloadFromResult,
-} = (await import(CALIBRATION_RUN_MODULE)) as typeof import("../../packages/loopover-miner/lib/calibration-run.js");
-import type { AppendEventInput, LedgerEntry } from "../../packages/loopover-miner/lib/event-ledger.js";
+} = (await import(CALIBRATION_RUN_MODULE)) as typeof import("../../packages/loopover-miner/lib/calibration-run");
+import type { AppendEventInput, LedgerEntry } from "../../packages/loopover-miner/lib/event-ledger";
 
 // A minimal injected event ledger (the DI shape record/read accept) — pure unit tests, no SQLite file. `_events` is
 // exposed so a test can inject crafted rows for the reader's defensive skip branches. Typed against the real

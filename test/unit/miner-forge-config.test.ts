@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_FORGE_CONFIG,
   resolveForgeConfig,
-} from "../../packages/loopover-miner/lib/forge-config.js";
+} from "../../packages/loopover-miner/lib/forge-config";
 
 describe("resolveForgeConfig (#4784)", () => {
   it("returns loopover's github.com defaults when no overrides are supplied", () => {

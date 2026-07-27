@@ -7,37 +7,37 @@ vi.mock("@loopover/engine", async () => {
   return import("../../packages/loopover-engine/src/index");
 });
 
-import { closeDefaultClaimLedger, openClaimLedger } from "../../packages/loopover-miner/lib/claim-ledger.js";
-import { closeDefaultEventLedger, initEventLedger } from "../../packages/loopover-miner/lib/event-ledger.js";
-import { closeDefaultAttemptLog, initAttemptLog } from "../../packages/loopover-miner/lib/attempt-log.js";
-import type { AttemptLog } from "../../packages/loopover-miner/lib/attempt-log.js";
-import { closeDefaultGovernorLedger, initGovernorLedger } from "../../packages/loopover-miner/lib/governor-ledger.js";
-import { closeDefaultWorktreeAllocator, openWorktreeAllocator } from "../../packages/loopover-miner/lib/worktree-allocator.js";
-import { closeDefaultPortfolioQueueStore } from "../../packages/loopover-miner/lib/portfolio-queue.js";
-import { closeDefaultGovernorState } from "../../packages/loopover-miner/lib/governor-state.js";
-import { buildAttemptDeps, parseAttemptArgs, runAttempt, resolveAttemptHouseRulesConfig } from "../../packages/loopover-miner/lib/attempt-cli.js";
-import type { RunAttemptOptions } from "../../packages/loopover-miner/lib/attempt-cli.js";
-import type { RuleFiredEvent, SignalStore } from "../../packages/loopover-engine/src/calibration/signal-tracking.js";
-import * as minerSentryModule from "../../packages/loopover-miner/lib/sentry.js";
-import * as liveIssueSnapshotModule from "../../packages/loopover-miner/lib/live-issue-snapshot.js";
-import * as githubTokenResolutionModule from "../../packages/loopover-miner/lib/github-token-resolution.js";
-import * as worktreeAllocatorModule from "../../packages/loopover-miner/lib/worktree-allocator.js";
-import * as claimLedgerModule from "../../packages/loopover-miner/lib/claim-ledger.js";
-import * as eventLedgerModule from "../../packages/loopover-miner/lib/event-ledger.js";
-import * as attemptLogModule from "../../packages/loopover-miner/lib/attempt-log.js";
-import * as governorLedgerModule from "../../packages/loopover-miner/lib/governor-ledger.js";
-import * as rejectionSignalModule from "../../packages/loopover-miner/lib/rejection-signal.js";
-import * as attemptWorktreeModule from "../../packages/loopover-miner/lib/attempt-worktree.js";
-import * as selfReviewContextModule from "../../packages/loopover-miner/lib/self-review-context.js";
-import * as codingTaskSpecModule from "../../packages/loopover-miner/lib/coding-task-spec.js";
-import * as amsPolicyModule from "../../packages/loopover-miner/lib/ams-policy.js";
-import * as attemptRunnerModule from "../../packages/loopover-miner/lib/attempt-runner.js";
-import type { PrepareAttemptWorktreeResult } from "../../packages/loopover-miner/lib/attempt-worktree.js";
+import { closeDefaultClaimLedger, openClaimLedger } from "../../packages/loopover-miner/lib/claim-ledger";
+import { closeDefaultEventLedger, initEventLedger } from "../../packages/loopover-miner/lib/event-ledger";
+import { closeDefaultAttemptLog, initAttemptLog } from "../../packages/loopover-miner/lib/attempt-log";
+import type { AttemptLog } from "../../packages/loopover-miner/lib/attempt-log";
+import { closeDefaultGovernorLedger, initGovernorLedger } from "../../packages/loopover-miner/lib/governor-ledger";
+import { closeDefaultWorktreeAllocator, openWorktreeAllocator } from "../../packages/loopover-miner/lib/worktree-allocator";
+import { closeDefaultPortfolioQueueStore } from "../../packages/loopover-miner/lib/portfolio-queue";
+import { closeDefaultGovernorState } from "../../packages/loopover-miner/lib/governor-state";
+import { buildAttemptDeps, parseAttemptArgs, runAttempt, resolveAttemptHouseRulesConfig } from "../../packages/loopover-miner/lib/attempt-cli";
+import type { RunAttemptOptions } from "../../packages/loopover-miner/lib/attempt-cli";
+import type { RuleFiredEvent, SignalStore } from "../../packages/loopover-engine/src/calibration/signal-tracking";
+import * as minerSentryModule from "../../packages/loopover-miner/lib/sentry";
+import * as liveIssueSnapshotModule from "../../packages/loopover-miner/lib/live-issue-snapshot";
+import * as githubTokenResolutionModule from "../../packages/loopover-miner/lib/github-token-resolution";
+import * as worktreeAllocatorModule from "../../packages/loopover-miner/lib/worktree-allocator";
+import * as claimLedgerModule from "../../packages/loopover-miner/lib/claim-ledger";
+import * as eventLedgerModule from "../../packages/loopover-miner/lib/event-ledger";
+import * as attemptLogModule from "../../packages/loopover-miner/lib/attempt-log";
+import * as governorLedgerModule from "../../packages/loopover-miner/lib/governor-ledger";
+import * as rejectionSignalModule from "../../packages/loopover-miner/lib/rejection-signal";
+import * as attemptWorktreeModule from "../../packages/loopover-miner/lib/attempt-worktree";
+import * as selfReviewContextModule from "../../packages/loopover-miner/lib/self-review-context";
+import * as codingTaskSpecModule from "../../packages/loopover-miner/lib/coding-task-spec";
+import * as amsPolicyModule from "../../packages/loopover-miner/lib/ams-policy";
+import * as attemptRunnerModule from "../../packages/loopover-miner/lib/attempt-runner";
+import type { PrepareAttemptWorktreeResult } from "../../packages/loopover-miner/lib/attempt-worktree";
 import {
   REJECTION_REASON_AI_USAGE_POLICY_BAN,
   REJECTION_REASON_OWN_SUBMISSION_REJECTED,
   type RejectionSignaledReason,
-} from "../../packages/loopover-miner/lib/rejection-signal.js";
+} from "../../packages/loopover-miner/lib/rejection-signal";
 
 // Built from parts so the miner-bot changed-file secret scanner never sees a literal token shape.
 const fakeGithubToken = ["ghp", "_test_token"].join("");
@@ -724,7 +724,7 @@ describe("runAttempt (#5132)", () => {
     });
 
     // A real write against the isolated store proves the real default (not a DI stub) actually ran.
-    const { listRecentOwnSubmissions } = await import("../../packages/loopover-miner/lib/governor-state.js");
+    const { listRecentOwnSubmissions } = await import("../../packages/loopover-miner/lib/governor-state");
     const submissions = listRecentOwnSubmissions({ repoFullName: "acme/widgets" });
     expect(submissions).toEqual([
       expect.objectContaining({ repoFullName: "acme/widgets", fingerprint: "src/a.ts", pullRequestNumber: 9, issueNumber: 7 }),

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { FORBIDDEN_CONTENT } from "./forbidden-content.js";
+import { FORBIDDEN_CONTENT } from "./forbidden-content";
 
 const ALLOWED = [
   /^dist\/bin\/loopover-miner\.(js|d\.ts)$/,

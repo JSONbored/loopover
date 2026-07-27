@@ -11,11 +11,11 @@ import {
   CHAT_ACTION_DISPATCH_FLAG,
   dispatchChatAction,
   isChatActionDispatchEnabled,
-} from "../../packages/loopover-miner/lib/chat-action-dispatch.js";
+} from "../../packages/loopover-miner/lib/chat-action-dispatch";
 import {
   createChatActionRegistry,
   governorGatedHandler,
-} from "../../packages/loopover-miner/lib/chat-action-registry.js";
+} from "../../packages/loopover-miner/lib/chat-action-registry";
 
 const enabledEnv = { [CHAT_ACTION_DISPATCH_FLAG]: CHAT_ACTION_DISPATCH_ENABLE_VALUE };
 const allowGate = () => ({ decision: { stage: "allow" } });

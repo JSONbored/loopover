@@ -4,9 +4,9 @@ import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it } from "vitest";
-import { createMinerMcpServer } from "../../packages/loopover-miner/bin/loopover-miner-mcp.js";
-import { initEventLedger } from "../../packages/loopover-miner/lib/event-ledger.js";
-import { initPredictionLedger } from "../../packages/loopover-miner/lib/prediction-ledger.js";
+import { createMinerMcpServer } from "../../packages/loopover-miner/bin/loopover-miner-mcp";
+import { initEventLedger } from "../../packages/loopover-miner/lib/event-ledger";
+import { initPredictionLedger } from "../../packages/loopover-miner/lib/prediction-ledger";
 
 // loopover_miner_get_calibration_report (#5821): read-only wrapper joining the prediction ledger with pr_outcome
 // events via calibration-cli.js's existing toPredictionRecords/toOutcomeRecords mappers and calibration.js's

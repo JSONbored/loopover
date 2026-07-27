@@ -39,7 +39,7 @@ describe("local scorer adapter", () => {
   });
 
   it("returns structured success output from a working scorer command", async () => {
-    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch");
     const result = runExternalScorePreview(metadata, fixtureCommand("scorer-success.mjs"));
     expect(result).toMatchObject({
       ok: true,
@@ -51,7 +51,7 @@ describe("local scorer adapter", () => {
   });
 
   it("reports missing scorer command with setup guidance", async () => {
-    const { runExternalScorePreview, setupGuidanceForLocalScorer } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const { runExternalScorePreview, setupGuidanceForLocalScorer } = await import("../../packages/loopover-mcp/lib/local-branch");
     const result = runExternalScorePreview(metadata, undefined);
     expect(result).toMatchObject({ ok: false, code: "missing_scorer_command", fallbackMode: "metadata_only" });
     const guidance = setupGuidanceForLocalScorer(result).join(" ");
@@ -60,7 +60,7 @@ describe("local scorer adapter", () => {
   });
 
   it("handles scorer timeouts without crashing analysis", async () => {
-    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch");
     previousTimeout = process.env.GITTENSOR_SCORE_PREVIEW_TIMEOUT_MS;
     process.env.GITTENSOR_SCORE_PREVIEW_TIMEOUT_MS = "200";
     const result = runExternalScorePreview(metadata, fixtureCommand("scorer-timeout.mjs"));
@@ -70,7 +70,7 @@ describe("local scorer adapter", () => {
   });
 
   it("handles malformed scorer JSON and non-zero exits", async () => {
-    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch");
     const malformed = runExternalScorePreview(metadata, fixtureCommand("scorer-malformed.mjs"));
     expect(malformed).toMatchObject({ ok: false, code: "malformed_json", fallbackMode: "metadata_only" });
 
@@ -80,7 +80,7 @@ describe("local scorer adapter", () => {
   });
 
   it("falls back to metadata-only scorer output and keeps source upload disabled", async () => {
-    const { buildBranchAnalysisPayload, collectLocalBranchMetadata } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const { buildBranchAnalysisPayload, collectLocalBranchMetadata } = await import("../../packages/loopover-mcp/lib/local-branch");
     const payload = buildBranchAnalysisPayload({
       cwd: process.cwd(),
       repoFullName: "JSONbored/loopover",
@@ -99,7 +99,7 @@ describe("local scorer adapter", () => {
   });
 
   it("runs the packaged reference scorer against metadata only", async () => {
-    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch");
     const result = runExternalScorePreview(metadata, packagedScorerCommand("metadata"));
     expect(result.ok).toBe(true);
     expect(result.payload).toMatchObject({
@@ -109,31 +109,31 @@ describe("local scorer adapter", () => {
   });
 
   it("treats a non-object (but valid JSON) scorer stdout as malformed", async () => {
-    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch");
     const result = runExternalScorePreview(metadata, fixtureCommand("scorer-non-object-json.mjs"));
     expect(result).toMatchObject({ ok: false, code: "malformed_json", reason: "External scorer stdout must be a JSON object." });
   });
 
   it("treats a valid JSON object missing both score fields as malformed", async () => {
-    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch");
     const result = runExternalScorePreview(metadata, fixtureCommand("scorer-missing-scores.mjs"));
     expect(result).toMatchObject({ ok: false, code: "malformed_json", reason: "External scorer JSON must include sourceTokenScore or totalTokenScore." });
   });
 
   it("classifies a non-zero exit as non_zero_exit (not malformed_json) when its stdout is valid, scored JSON", async () => {
-    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch");
     const result = runExternalScorePreview(metadata, fixtureCommand("scorer-scored-json-then-fail.mjs"));
     expect(result).toMatchObject({ ok: false, code: "non_zero_exit", exitCode: 1 });
   });
 
   it("classifies a non-zero exit with valid-but-scoreless JSON stdout as malformed_json", async () => {
-    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch");
     const result = runExternalScorePreview(metadata, fixtureCommand("scorer-scoreless-json-then-fail.mjs"));
     expect(result).toMatchObject({ ok: false, code: "malformed_json" });
   });
 
   it("classifies a non-zero exit with stderr output, truncating a long snippet in the guidance", async () => {
-    const { runExternalScorePreview, setupGuidanceForLocalScorer } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const { runExternalScorePreview, setupGuidanceForLocalScorer } = await import("../../packages/loopover-mcp/lib/local-branch");
     const result = runExternalScorePreview(metadata, fixtureCommand("scorer-stderr-then-fail.mjs"));
     expect(result).toMatchObject({ ok: false, code: "non_zero_exit", exitCode: 2 });
     expect(result.stderr).toBeTruthy();
@@ -144,12 +144,12 @@ describe("local scorer adapter", () => {
   });
 
   it("setupGuidanceForLocalScorer returns no guidance for a successful status", async () => {
-    const { setupGuidanceForLocalScorer } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const { setupGuidanceForLocalScorer } = await import("../../packages/loopover-mcp/lib/local-branch");
     expect(setupGuidanceForLocalScorer({ ok: true })).toEqual([]);
   });
 
   it("buildBranchAnalysisPayload uses the real external_command scorer output when the scorer succeeds", async () => {
-    const { buildBranchAnalysisPayload } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const { buildBranchAnalysisPayload } = await import("../../packages/loopover-mcp/lib/local-branch");
     const payload = buildBranchAnalysisPayload({
       cwd: process.cwd(),
       repoFullName: "JSONbored/loopover",
@@ -162,7 +162,7 @@ describe("local scorer adapter", () => {
   });
 
   it("threads metadata.cwd into the scorer input's repoRoot when repoRoot itself is omitted", async () => {
-    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch");
     // Neither field affects the return value directly -- this just proves the call doesn't throw and
     // still succeeds when metadata carries `cwd` instead of the usual explicit `repoRoot`.
     const result = runExternalScorePreview({ repoFullName: "acme/widgets", cwd: process.cwd() }, fixtureCommand("scorer-success.mjs"));
@@ -170,7 +170,7 @@ describe("local scorer adapter", () => {
   });
 
   it("redactScorerCommand coerces a nullish command and handles a quote-only command with no parseable parts", async () => {
-    const { redactScorerCommand } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const { redactScorerCommand } = await import("../../packages/loopover-mcp/lib/local-branch");
     expect(redactScorerCommand(undefined)).toBe("");
     expect(redactScorerCommand(null)).toBe("");
     // A lone unterminated quote matches neither of splitCommand's regex alternatives, so parts is empty
@@ -179,13 +179,13 @@ describe("local scorer adapter", () => {
   });
 
   it("sanitizeLocalScorerStatus passes a nullish or non-object status through untouched", async () => {
-    const { sanitizeLocalScorerStatus } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const { sanitizeLocalScorerStatus } = await import("../../packages/loopover-mcp/lib/local-branch");
     expect(sanitizeLocalScorerStatus(null)).toBeNull();
     expect(sanitizeLocalScorerStatus(undefined)).toBeUndefined();
   });
 
   it("redacts local paths from scorer diagnostics and setup guidance", async () => {
-    const { probeLocalScorer, redactLocalPath, redactScorerCommand, sanitizeLocalScorerStatus, setupGuidanceForLocalScorer } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const { probeLocalScorer, redactLocalPath, redactScorerCommand, sanitizeLocalScorerStatus, setupGuidanceForLocalScorer } = await import("../../packages/loopover-mcp/lib/local-branch");
 
     previousGittensorRoot = process.env.GITTENSOR_ROOT;
     previousCommand = process.env.GITTENSOR_SCORE_PREVIEW_CMD;
@@ -213,7 +213,7 @@ describe("local scorer adapter", () => {
   });
 
   it("resolveScorePreviewCommand returns undefined when neither an explicit command nor the env var is set", async () => {
-    const { resolveScorePreviewCommand } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const { resolveScorePreviewCommand } = await import("../../packages/loopover-mcp/lib/local-branch");
     previousCommand = process.env.GITTENSOR_SCORE_PREVIEW_CMD;
     delete process.env.GITTENSOR_SCORE_PREVIEW_CMD;
     expect(resolveScorePreviewCommand()).toBeUndefined();
@@ -221,25 +221,25 @@ describe("local scorer adapter", () => {
   });
 
   it("treats a whitespace-only scorer command as empty, distinct from a missing one", async () => {
-    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch");
     const result = runExternalScorePreview(metadata, "   ");
     expect(result).toMatchObject({ ok: false, code: "empty_scorer_command" });
   });
 
   it("redactScorerCommand falls back to a generic label for a command with no recognizable script extension", async () => {
-    const { redactScorerCommand } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const { redactScorerCommand } = await import("../../packages/loopover-mcp/lib/local-branch");
     expect(redactScorerCommand("some-native-scorer-binary --flag")).toBe("<configured-scorer-command>");
     expect(redactScorerCommand("")).toBe("");
   });
 
   it("classifies a scorer that writes junk to stdout before exiting non-zero as malformed_json (not non_zero_exit)", async () => {
-    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch");
     const result = runExternalScorePreview(metadata, fixtureCommand("scorer-stdout-then-fail.mjs"));
     expect(result).toMatchObject({ ok: false, code: "malformed_json", fallbackMode: "metadata_only" });
   });
 
   it("classifies unserializable scorer metadata (circular reference) via the message-based JSON check", async () => {
-    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch");
     const circular: Record<string, unknown> = { repoFullName: "acme/widgets" };
     circular.self = circular;
     // JSON.stringify(circular) throws before execFileSync ever runs, so this exercises the thrown
@@ -249,13 +249,13 @@ describe("local scorer adapter", () => {
   });
 
   it("classifies stderr from a process killed by a non-SIGTERM signal as malformed_json", async () => {
-    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch");
     const result = runExternalScorePreview(metadata, fixtureCommand("scorer-stderr-then-sigkill.mjs"));
     expect(result).toMatchObject({ ok: false, code: "malformed_json" });
   });
 
   it("treats stderr that parses to a non-object JSON value (a number) as not scorer-shaped", async () => {
-    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch");
     // "null\n" is valid JSON (JSON.parse succeeds to `null`), so this exercises looksLikeScorerJson's
     // own `!payload` falsy-value guard specifically, distinct from a JSON.parse throw or a non-object.
     const result = runExternalScorePreview(metadata, fixtureCommand("scorer-json-number-stderr-then-sigkill.mjs"));
@@ -263,7 +263,7 @@ describe("local scorer adapter", () => {
   });
 
   it("treats stderr that is a valid JSON array (not an object) as not scorer-shaped", async () => {
-    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch");
     // looksLikeScorerJson's own "!payload || typeof !== object || Array.isArray(payload)" guard must
     // reject an array too, not just a non-object/null -- this exercises the Array.isArray sub-check.
     const result = runExternalScorePreview(metadata, fixtureCommand("scorer-json-array-stderr-then-sigkill.mjs"));
@@ -271,7 +271,7 @@ describe("local scorer adapter", () => {
   });
 
   it("falls back to the 15s default when GITTENSOR_SCORE_PREVIEW_TIMEOUT_MS is not a positive number", async () => {
-    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch");
     previousTimeout = process.env.GITTENSOR_SCORE_PREVIEW_TIMEOUT_MS;
     process.env.GITTENSOR_SCORE_PREVIEW_TIMEOUT_MS = "not-a-number";
     const result = runExternalScorePreview(metadata, fixtureCommand("scorer-success.mjs"));
@@ -279,7 +279,7 @@ describe("local scorer adapter", () => {
   });
 
   it("classifies a scorer command that fails to spawn at all (command not found) as scorer_failed", async () => {
-    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch");
     const result = runExternalScorePreview(metadata, "this-command-does-not-exist-loopover-7329");
     // No stdout/stderr/numeric exit code -- a spawn (ENOENT) failure falls through every classification
     // in classifyScorerExecFailure to its final scorer_failed fallback.
@@ -288,7 +288,7 @@ describe("local scorer adapter", () => {
   });
 
   it("surfaces setup guidance tailored to every non-missing-command failure code", async () => {
-    const { runExternalScorePreview, setupGuidanceForLocalScorer } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const { runExternalScorePreview, setupGuidanceForLocalScorer } = await import("../../packages/loopover-mcp/lib/local-branch");
 
     const empty = setupGuidanceForLocalScorer(runExternalScorePreview(metadata, "   ")).join(" ");
     expect(empty).toMatch(/is set but empty/);
@@ -311,7 +311,7 @@ describe("local scorer adapter", () => {
   });
 
   it("infers a failure code from a reason string when the status carries no explicit code", async () => {
-    const { setupGuidanceForLocalScorer } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const { setupGuidanceForLocalScorer } = await import("../../packages/loopover-mcp/lib/local-branch");
     // No `code` field on any of these -- setupGuidanceForLocalScorer's `code ?? inferScorerCode(reason)`
     // fallback only runs inferScorerCode when code itself is absent, exercising each of its if-branches.
     expect(setupGuidanceForLocalScorer({ ok: false, reason: "missing_scorer_command: unset" }).join(" ")).toMatch(/GITTENSOR_SCORE_PREVIEW_CMD/);

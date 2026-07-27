@@ -4,7 +4,7 @@ vi.mock("@loopover/engine", async () => {
   return import("../../packages/loopover-engine/src/index");
 });
 
-import { buildAttemptGovernorContext, buildAttemptLoopInput } from "../../packages/loopover-miner/lib/attempt-input-builder.js";
+import { buildAttemptGovernorContext, buildAttemptLoopInput } from "../../packages/loopover-miner/lib/attempt-input-builder";
 import { DEFAULT_AMS_POLICY_SPEC, evaluateGovernorChokepoint, parseFocusManifest } from "../../packages/loopover-engine/src/index";
 
 function codingTaskSpec(overrides: Record<string, unknown> = {}) {

@@ -6,7 +6,7 @@
 // `--pg <conn>` wins, a bare `--pg` falls back to DATABASE_URL, and without `--pg` the D1/wrangler
 // path stays the default — DATABASE_URL alone never silently switches drivers.
 import pg from "pg";
-import { createPgAdapter } from "../src/selfhost/pg-adapter.js";
+import { createPgAdapter } from "../src/selfhost/pg-adapter";
 
 /** PURE driver selection: the pg connection string to use, or null for the default D1/wrangler path.
  *  Throws (fail-loud, like every IO error in these CLIs) when `--pg` was given but no connection string

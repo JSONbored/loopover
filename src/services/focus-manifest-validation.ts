@@ -8,4 +8,4 @@ export {
   buildFocusManifestValidation,
   type FocusManifestValidationResult,
   type FocusManifestValidationStatus,
-} from "../../packages/loopover-engine/src/focus-manifest-validation.js";
+} from "../../packages/loopover-engine/src/focus-manifest-validation";

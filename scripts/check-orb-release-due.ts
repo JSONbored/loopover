@@ -4,7 +4,7 @@
 // hidden inside this script. See scripts/orb-release-core.ts for the underlying logic and rationale.
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
-import { buildOrbReleaseReport, latestOrbTag, latestStableOrbTag, type OrbReleaseCommit } from "./orb-release-core.js";
+import { buildOrbReleaseReport, latestOrbTag, latestStableOrbTag, type OrbReleaseCommit } from "./orb-release-core";
 
 const MANIFEST_PATH = "orb-manifest.json";
 

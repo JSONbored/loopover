@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   closeDefaultWorktreeAllocator,
   openWorktreeAllocator,
-} from "../../packages/loopover-miner/lib/worktree-allocator.js";
+} from "../../packages/loopover-miner/lib/worktree-allocator";
 
 const acquireChildScript = join(
   dirname(fileURLToPath(import.meta.url)),

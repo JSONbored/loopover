@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   QUEUE_ITEMS,
   QUEUE_OLDEST_IN_PROGRESS_LEASE_AGE_SECONDS,
-} from "../../packages/loopover-miner/lib/portfolio-queue-cli.js";
+} from "../../packages/loopover-miner/lib/portfolio-queue-cli";
 
 // Fixture for the LoopOverMinerPortfolioQueueItemStuck / LoopOverMinerPortfolioQueueBacklogHigh alerts
 // (#5186). This is the config-side equivalent of a `promtool test rules` harness (the repo ships no promtool

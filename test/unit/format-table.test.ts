@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 // The helper ships in the MCP package's lib/ (the bin auto-runs on import, so it cannot be imported);
 // mirror the local-branch.test.ts pattern of dynamically importing the packaged .js module.
 async function loadFormatTable() {
-  return (await import("../../packages/loopover-mcp/lib/format-table.js")).formatTable;
+  return (await import("../../packages/loopover-mcp/lib/format-table")).formatTable;
 }
 
 describe("formatTable", () => {

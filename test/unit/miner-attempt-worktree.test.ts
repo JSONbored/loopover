@@ -8,7 +8,7 @@ vi.mock("@loopover/engine", async () => {
   return import("../../packages/loopover-engine/src/index");
 });
 
-import { cleanupAttemptWorktree, createRealWorktreeExec, prepareAttemptWorktree } from "../../packages/loopover-miner/lib/attempt-worktree.js";
+import { cleanupAttemptWorktree, createRealWorktreeExec, prepareAttemptWorktree } from "../../packages/loopover-miner/lib/attempt-worktree";
 
 const roots: string[] = [];
 

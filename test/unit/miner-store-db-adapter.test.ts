@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { openLocalStoreAdapter } from "../../packages/loopover-miner/lib/local-store.js";
-import { createD1Adapter, nodeSqliteDriver } from "../../packages/loopover-miner/lib/store-db-adapter.js";
+import { openLocalStoreAdapter } from "../../packages/loopover-miner/lib/local-store";
+import { createD1Adapter, nodeSqliteDriver } from "../../packages/loopover-miner/lib/store-db-adapter";
 
 const roots: string[] = [];
 

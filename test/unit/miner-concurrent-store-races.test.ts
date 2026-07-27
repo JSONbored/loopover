@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { openClaimLedger } from "../../packages/loopover-miner/lib/claim-ledger.js";
-import { openGovernorState } from "../../packages/loopover-miner/lib/governor-state.js";
-import { initPortfolioQueueStore } from "../../packages/loopover-miner/lib/portfolio-queue.js";
+import { openClaimLedger } from "../../packages/loopover-miner/lib/claim-ledger";
+import { openGovernorState } from "../../packages/loopover-miner/lib/governor-state";
+import { initPortfolioQueueStore } from "../../packages/loopover-miner/lib/portfolio-queue";
 
 // Real cross-process concurrency coverage for the claim-ledger, portfolio-queue, and governor reputation-history
 // stores (#4867, #8855). Only the worktree-allocator had a dedicated multi-process collision test before this;

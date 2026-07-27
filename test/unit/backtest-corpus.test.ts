@@ -5,9 +5,9 @@ import { describe, expect, it } from "vitest";
 // gives packages/loopover-engine/src/calibration/backtest-corpus.ts its codecov/patch coverage. The companion
 // packages/loopover-engine/test/backtest-corpus.test.ts is the issue-required node:test that gates the engine
 // workspace's own `npm run test`. Vite resolves the `.js` specifier to the sibling `.ts` on disk.
-import { buildBacktestCorpus } from "../../packages/loopover-engine/src/calibration/backtest-corpus.js";
-import type { BacktestCase } from "../../packages/loopover-engine/src/calibration/backtest-corpus.js";
-import type { HumanOverrideEvent, RuleFiredEvent } from "../../packages/loopover-engine/src/calibration/signal-tracking.js";
+import { buildBacktestCorpus } from "../../packages/loopover-engine/src/calibration/backtest-corpus";
+import type { BacktestCase } from "../../packages/loopover-engine/src/calibration/backtest-corpus";
+import type { HumanOverrideEvent, RuleFiredEvent } from "../../packages/loopover-engine/src/calibration/signal-tracking";
 
 const RULE = "missing_linked_issue";
 

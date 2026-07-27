@@ -5,8 +5,8 @@ import { describe, expect, it } from "vitest";
 // codecov/patch coverage (the "engine blind-spot rule"). The companion
 // packages/loopover-engine/test/repo-corpus-slice.test.ts is the node:test that gates the engine workspace's
 // own `npm run test`. Vite resolves the `.js` specifier to the sibling `.ts` on disk.
-import { computeRepoCorpusDensity, sliceCorpusByRepo } from "../../packages/loopover-engine/src/calibration/repo-corpus-slice.js";
-import type { BacktestCase } from "../../packages/loopover-engine/src/calibration/backtest-corpus.js";
+import { computeRepoCorpusDensity, sliceCorpusByRepo } from "../../packages/loopover-engine/src/calibration/repo-corpus-slice";
+import type { BacktestCase } from "../../packages/loopover-engine/src/calibration/backtest-corpus";
 
 function bcase(targetKey: string, label: BacktestCase["label"] = "confirmed"): BacktestCase {
   return {

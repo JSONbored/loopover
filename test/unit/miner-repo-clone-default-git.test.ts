@@ -20,7 +20,7 @@ afterEach(() => {
 });
 
 async function loadEnsureRepoCloned() {
-  const mod = await import("../../packages/loopover-miner/lib/repo-clone.js");
+  const mod = await import("../../packages/loopover-miner/lib/repo-clone");
   return mod.ensureRepoCloned;
 }
 

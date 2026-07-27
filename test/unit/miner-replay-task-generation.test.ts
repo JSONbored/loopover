@@ -9,7 +9,7 @@ import {
   lintFrozenContext,
   scrubForwardReferences,
   selectFreezePoint,
-} from "../../packages/loopover-miner/lib/replay-task-generation.js";
+} from "../../packages/loopover-miner/lib/replay-task-generation";
 
 // Issues 1..100 and one commit SHA existed at T; issues 250/300 are revealed post-T ground truth.
 const CONTEXT = {

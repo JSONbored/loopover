@@ -9,7 +9,7 @@ import {
   initEventLedger,
   readEvents,
   resolveEventLedgerDbPath,
-} from "../../packages/loopover-miner/lib/event-ledger.js";
+} from "../../packages/loopover-miner/lib/event-ledger";
 
 const roots: string[] = [];
 const ledgers: Array<{ close(): void }> = [];

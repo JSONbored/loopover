@@ -10,8 +10,8 @@ vi.mock("@loopover/engine", async () => {
   return import("../../packages/loopover-engine/src/index");
 });
 
-import { fetchCandidateIssuesWithSummary } from "../../packages/loopover-miner/lib/opportunity-fanout.js";
-import { initPolicyVerdictCacheStore } from "../../packages/loopover-miner/lib/policy-verdict-cache.js";
+import { fetchCandidateIssuesWithSummary } from "../../packages/loopover-miner/lib/opportunity-fanout";
+import { initPolicyVerdictCacheStore } from "../../packages/loopover-miner/lib/policy-verdict-cache";
 
 const API = "https://api.test";
 const AI_USAGE_URL = `${API}/repos/acme/widgets/contents/AI-USAGE.md`;

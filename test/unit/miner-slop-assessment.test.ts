@@ -4,7 +4,7 @@ vi.mock("@loopover/engine", async () => {
   return import("../../packages/loopover-engine/src/index");
 });
 
-import { runSlopAssessment } from "../../packages/loopover-miner/lib/slop-assessment.js";
+import { runSlopAssessment } from "../../packages/loopover-miner/lib/slop-assessment";
 import { buildSlopAssessment } from "../../packages/loopover-engine/src/index";
 
 describe("runSlopAssessment (#5133)", () => {

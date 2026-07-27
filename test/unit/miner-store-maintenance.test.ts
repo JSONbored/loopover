@@ -16,7 +16,7 @@ import {
   pruneLedgerByRetention,
   purgeStoreByRepo,
   resolveLedgerRetentionPolicy,
-} from "../../packages/loopover-miner/lib/store-maintenance.js";
+} from "../../packages/loopover-miner/lib/store-maintenance";
 
 const tempDirs: string[] = [];
 afterEach(() => {

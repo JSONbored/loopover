@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@loopover/engine", async () => {
-  return import("../../packages/loopover-engine/src/miner/attempt-log.js");
+  return import("../../packages/loopover-engine/src/miner/attempt-log");
 });
 
 import {
@@ -15,7 +15,7 @@ import {
   initAttemptLog,
   readAttemptLogEvents,
   resolveAttemptLogDbPath,
-} from "../../packages/loopover-miner/lib/attempt-log.js";
+} from "../../packages/loopover-miner/lib/attempt-log";
 
 const roots: string[] = [];
 const logs: Array<{ close(): void }> = [];

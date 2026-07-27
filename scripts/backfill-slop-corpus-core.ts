@@ -14,7 +14,7 @@
 // codes plus the provenance tag so the eventual flip-to-live decision can weigh exactly that.
 
 import { buildSlopAssessment, SLOP_WEIGHTS, slopBandFor, type SlopChangedFile } from "../packages/loopover-engine/src/signals/slop";
-import type { SynthesizedAuditRow } from "./backfill-calibration-corpus-core.js";
+import type { SynthesizedAuditRow } from "./backfill-calibration-corpus-core";
 
 export const SLOP_BACKFILL_RULE_ID = "slop_gate_score";
 export const SLOP_BACKFILL_PROVENANCE = "slop_replay_backfill_v1";

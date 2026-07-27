@@ -11,7 +11,7 @@ import {
   requestOnce,
   runConcurrencyLevel,
   runLoadTest,
-} from "../../scripts/load-test-worker.js";
+} from "../../scripts/load-test-worker";
 
 describe("worker load-test script (#4913)", () => {
   afterEach(() => {

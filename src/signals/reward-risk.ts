@@ -17,7 +17,7 @@ import {
   buildPullRequestReviewability as engineBuildPullRequestReviewability,
   buildRepoRewardRisk as engineBuildRepoRewardRisk,
   type RewardRiskEngineDeps,
-} from "../../packages/loopover-engine/src/reward-risk.js";
+} from "../../packages/loopover-engine/src/reward-risk";
 import {
   buildCollisionReport,
   buildContributorIntakeHealth,
@@ -36,11 +36,11 @@ export type {
   RewardRiskAction,
   RewardRiskActionKind,
   RewardRiskActionSeverity,
-} from "../../packages/loopover-engine/src/reward-risk.js";
+} from "../../packages/loopover-engine/src/reward-risk";
 export {
   rewardRiskCompetitionInternals,
   rewardRiskFreshnessInternals,
-} from "../../packages/loopover-engine/src/reward-risk.js";
+} from "../../packages/loopover-engine/src/reward-risk";
 
 // The real `src`-side builders, bound once and injected into the engine implementations. Their argument
 // records are wider than (assignable to) the engine's subset mirrors and their return types are covariantly

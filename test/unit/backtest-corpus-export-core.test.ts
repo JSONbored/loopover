@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BacktestCase } from "@loopover/engine";
-import { buildBacktestCorpusManifest, checksumCases } from "../../scripts/backtest-corpus-export-core.js";
+import { buildBacktestCorpusManifest, checksumCases } from "../../scripts/backtest-corpus-export-core";
 
 function sampleCase(overrides: Partial<BacktestCase> = {}): BacktestCase {
   return {

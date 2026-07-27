@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { buildHouseRulesPreToolUseHook } from "../../packages/loopover-miner/lib/pretooluse-hook.js";
-import { initGovernorLedger } from "../../packages/loopover-miner/lib/governor-ledger.js";
+import { buildHouseRulesPreToolUseHook } from "../../packages/loopover-miner/lib/pretooluse-hook";
+import { initGovernorLedger } from "../../packages/loopover-miner/lib/governor-ledger";
 
 // The live Agent SDK PreToolUse interception point (#2343). deny-hooks.js's own rule logic (matcher, glob,
 // path-tokenizing, force-push detection) is already exhaustively tested in miner-deny-hooks.test.ts — these

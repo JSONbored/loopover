@@ -3,8 +3,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { FORBIDDEN_CONTENT } from "./forbidden-content.js";
-import { MCP_PACKAGE_ALLOWED_FILE_PATTERNS } from "./mcp-package-allowlist.js";
+import { FORBIDDEN_CONTENT } from "./forbidden-content";
+import { MCP_PACKAGE_ALLOWED_FILE_PATTERNS } from "./mcp-package-allowlist";
 
 const FORBIDDEN_PATH = /(^|\/)(\.dev\.vars|\.env|\.npmrc|.*\.pem|.*private.*key.*|.*secret.*)$/i;
 const STALE_PACKAGE_TEXT = /(private beta|zeronode\.workers\.dev|preview URL)/i;

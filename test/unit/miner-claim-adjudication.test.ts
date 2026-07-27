@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { adjudicateSoftClaim, toClaimMember } from "../../packages/loopover-miner/lib/claim-adjudication.js";
+import { adjudicateSoftClaim, toClaimMember } from "../../packages/loopover-miner/lib/claim-adjudication";
 
 describe("miner soft-claim adjudication (#4291)", () => {
   it("toClaimMember maps claimedAt → linkedIssueClaimedAt (the field names deliberately differ)", () => {

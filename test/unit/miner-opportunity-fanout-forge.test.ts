@@ -8,7 +8,7 @@ vi.mock("@loopover/engine", async () => {
 import {
   fetchCandidateIssues,
   searchCandidateIssuesWithSummary,
-} from "../../packages/loopover-miner/lib/opportunity-fanout.js";
+} from "../../packages/loopover-miner/lib/opportunity-fanout";
 
 type Call = { url: string; headers: Record<string, string> };
 

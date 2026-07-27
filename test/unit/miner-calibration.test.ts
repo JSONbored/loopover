@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type {
   ObservedOutcomeRecord,
   PredictedVerdictRecord,
-} from "../../packages/loopover-miner/lib/calibration.js";
+} from "../../packages/loopover-miner/lib/calibration";
 
 // Same .ts-via-variable import as miner-metrics-cli.test.ts (#8315) — CI grades patch on the .ts paths.
 const CALIBRATION_MODULE = "../../packages/loopover-miner/lib/calibration.ts";
@@ -11,7 +11,7 @@ const {
   buildOutcomeDecisionMap,
   isCalibrationReport,
   resolvePredictionCorrectness,
-} = (await import(CALIBRATION_MODULE)) as typeof import("../../packages/loopover-miner/lib/calibration.js");
+} = (await import(CALIBRATION_MODULE)) as typeof import("../../packages/loopover-miner/lib/calibration");
 
 const TS = "2026-07-12T00:00:00.000Z";
 const pred = (project: string, targetId: string, predictedDecision: string): PredictedVerdictRecord => ({

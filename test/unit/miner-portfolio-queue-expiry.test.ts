@@ -2,14 +2,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { initPortfolioQueueStore } from "../../packages/loopover-miner/lib/portfolio-queue.js";
-import type { QueueLeaseEntry } from "../../packages/loopover-miner/lib/portfolio-queue.js";
+import { initPortfolioQueueStore } from "../../packages/loopover-miner/lib/portfolio-queue";
+import type { QueueLeaseEntry } from "../../packages/loopover-miner/lib/portfolio-queue";
 import {
   DEFAULT_MAX_LEASE_MS,
   findStuckItems,
   sweepStuckItems,
-} from "../../packages/loopover-miner/lib/portfolio-queue-expiry.js";
-import { initPortfolioQueueManager } from "../../packages/loopover-miner/lib/portfolio-queue-manager.js";
+} from "../../packages/loopover-miner/lib/portfolio-queue-expiry";
+import { initPortfolioQueueManager } from "../../packages/loopover-miner/lib/portfolio-queue-manager";
 
 const roots: string[] = [];
 const stores: Array<{ close(): void }> = [];

@@ -1,6 +1,6 @@
 import YAML from "yaml";
-import { normalizeNewlines } from "./mcp-release-core.js";
-import { MCP_PACKAGE_ALLOWED_FILE_PATTERNS } from "./mcp-package-allowlist.js";
+import { normalizeNewlines } from "./mcp-release-core";
+import { MCP_PACKAGE_ALLOWED_FILE_PATTERNS } from "./mcp-package-allowlist";
 
 /**
  * Pure, deterministic checks for the MCP release-candidate dry-run.

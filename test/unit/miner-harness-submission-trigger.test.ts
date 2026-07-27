@@ -12,8 +12,8 @@ import {
   countConsecutiveGateBlocks,
   prepareOpenPrSubmission,
   HARNESS_SUBMISSION_TRIGGER_DECISION_EVENT,
-} from "../../packages/loopover-miner/lib/harness-submission-trigger.js";
-import { initEventLedger } from "../../packages/loopover-miner/lib/event-ledger.js";
+} from "../../packages/loopover-miner/lib/harness-submission-trigger";
+import { initEventLedger } from "../../packages/loopover-miner/lib/event-ledger";
 
 const roots: string[] = [];
 const closers: Array<{ close(): void }> = [];

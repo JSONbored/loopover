@@ -11,8 +11,8 @@ import {
   DEFAULT_RELIABILITY_BUCKET_EDGES,
   RELIABILITY_BUCKET_SAMPLE_FLOOR,
   type ReliabilityCurve,
-} from "../../packages/loopover-engine/src/calibration/reliability-curve.js";
-import type { BacktestCase } from "../../packages/loopover-engine/src/calibration/backtest-corpus.js";
+} from "../../packages/loopover-engine/src/calibration/reliability-curve";
+import type { BacktestCase } from "../../packages/loopover-engine/src/calibration/backtest-corpus";
 
 function caseWith(label: BacktestCase["label"], confidence?: unknown): BacktestCase {
   const backtestCase: BacktestCase = {

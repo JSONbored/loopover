@@ -14,8 +14,8 @@ import {
   initGovernorLedger,
   readGovernorEvents,
   resolveGovernorLedgerDbPath,
-} from "../../packages/loopover-miner/lib/governor-ledger.js";
-import { readSchemaVersion } from "../../packages/loopover-miner/lib/schema-version.js";
+} from "../../packages/loopover-miner/lib/governor-ledger";
+import { readSchemaVersion } from "../../packages/loopover-miner/lib/schema-version";
 
 const roots: string[] = [];
 const ledgers: Array<{ close(): void }> = [];

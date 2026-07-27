@@ -14,7 +14,7 @@ import {
   markDone,
   markFailed,
   resolvePortfolioQueueDbPath,
-} from "../../packages/loopover-miner/lib/portfolio-queue.js";
+} from "../../packages/loopover-miner/lib/portfolio-queue";
 
 vi.mock("@loopover/engine", async () => {
   return import("../../packages/loopover-engine/src/index");

@@ -23,7 +23,7 @@ import {
   flushMinerPostHog,
   initMinerPostHog,
   resetMinerPostHogForTesting,
-} from "../../packages/loopover-miner/lib/posthog.js";
+} from "../../packages/loopover-miner/lib/posthog";
 
 beforeEach(() => {
   vi.clearAllMocks();

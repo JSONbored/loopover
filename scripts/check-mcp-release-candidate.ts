@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync, type SpawnSyncOptions } from "node:child_process";
-import { buildReleaseCandidateReport, checkTag, checkTarball, checkTokenlessPublish, expectedReleaseTag, redactSensitive, type CheckResult } from "./mcp-release-candidate-core.js";
+import { buildReleaseCandidateReport, checkTag, checkTarball, checkTokenlessPublish, expectedReleaseTag, redactSensitive, type CheckResult } from "./mcp-release-candidate-core";
 
 const PACKAGE_DIR = "packages/loopover-mcp";
 const WORKSPACE = "@loopover/mcp";

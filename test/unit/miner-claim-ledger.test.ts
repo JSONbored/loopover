@@ -15,7 +15,7 @@ import {
   recordClaim,
   releaseClaim,
   resolveClaimLedgerDbPath,
-} from "../../packages/loopover-miner/lib/claim-ledger.js";
+} from "../../packages/loopover-miner/lib/claim-ledger";
 
 const roots: string[] = [];
 const ledgers: Array<{ close(): void }> = [];

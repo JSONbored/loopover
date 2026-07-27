@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   closeDefaultClaimLedger,
   openClaimLedger,
-} from "../../packages/loopover-miner/lib/claim-ledger.js";
+} from "../../packages/loopover-miner/lib/claim-ledger";
 import type { ClaimEntry } from "../../packages/loopover-miner/lib/claim-ledger.d.ts";
 import {
   parseClaimClaimArgs,
@@ -16,7 +16,7 @@ import {
   runClaimCli,
   runClaimList,
   runClaimRelease,
-} from "../../packages/loopover-miner/lib/claim-ledger-cli.js";
+} from "../../packages/loopover-miner/lib/claim-ledger-cli";
 
 const roots: string[] = [];
 const ledgers: Array<{ close(): void }> = [];

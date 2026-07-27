@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { ensureRepoCloned, resolveRepoCloneBaseDir, resolveRepoCloneDir } from "../../packages/loopover-miner/lib/repo-clone.js";
+import { ensureRepoCloned, resolveRepoCloneBaseDir, resolveRepoCloneDir } from "../../packages/loopover-miner/lib/repo-clone";
 
 const roots: string[] = [];
 

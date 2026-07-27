@@ -2,17 +2,17 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { toOutcomeRecords } from "../../packages/loopover-miner/lib/calibration-cli.js";
-import { initEventLedger } from "../../packages/loopover-miner/lib/event-ledger.js";
-import type { LedgerEntry } from "../../packages/loopover-miner/lib/event-ledger.js";
-import { initPredictionLedger } from "../../packages/loopover-miner/lib/prediction-ledger.js";
+import { toOutcomeRecords } from "../../packages/loopover-miner/lib/calibration-cli";
+import { initEventLedger } from "../../packages/loopover-miner/lib/event-ledger";
+import type { LedgerEntry } from "../../packages/loopover-miner/lib/event-ledger";
+import { initPredictionLedger } from "../../packages/loopover-miner/lib/prediction-ledger";
 import type { PredictionLedger } from "../../packages/loopover-miner/lib/prediction-ledger.d.ts";
 
 // Import the .ts SOURCE (not the build-time .js) via a non-literal specifier. After `build:miner`, a plain
 // `.js` import loads the compiled artifact and leaves coverage.include's `.ts` entry at 0% under CI's
 // `--changed=origin/main --coverage.all=false` run (#8315, same pattern as miner-replay-snapshot.test.ts).
 const METRICS_CLI_MODULE = "../../packages/loopover-miner/lib/metrics-cli.ts";
-const { collectPredictionMetricRows, runMetrics } = (await import(METRICS_CLI_MODULE)) as typeof import("../../packages/loopover-miner/lib/metrics-cli.js");
+const { collectPredictionMetricRows, runMetrics } = (await import(METRICS_CLI_MODULE)) as typeof import("../../packages/loopover-miner/lib/metrics-cli");
 
 const REPO = "acme/widgets";
 

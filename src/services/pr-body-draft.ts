@@ -7,4 +7,4 @@ export {
   type PrBodyDraftSection,
   type PrBodyDraftSource,
   type PublicPrBodyDraft,
-} from "../../packages/loopover-engine/src/pr-body-draft.js";
+} from "../../packages/loopover-engine/src/pr-body-draft";

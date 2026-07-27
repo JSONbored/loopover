@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_DENY_RULES,
   evaluateDenyHooks,
-} from "../../packages/loopover-miner/lib/deny-hooks.js";
+} from "../../packages/loopover-miner/lib/deny-hooks";
 
 // PreToolUse-style deny-hook primitives (#2295). Pure decision function — no live interception. Each built-in
 // rule is checked on BOTH sides (fires on a crafted matching call, does NOT fire on a benign one), plus the

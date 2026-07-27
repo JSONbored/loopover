@@ -1,8 +1,8 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { navigationMenuTriggerStyle } from "./navigation-menu";
-import { Select, SelectTrigger, SelectValue } from "./select";
+import { navigationMenuTriggerStyle } from "./navigation-menu.js";
+import { Select, SelectTrigger, SelectValue } from "./select.js";
 
 // Regression for #8304: SelectTrigger, the Dialog/Sheet close buttons, and NavigationMenuTrigger must
 // apply their focus ring/highlight via `focus-visible:` (keyboard/programmatic focus only), matching

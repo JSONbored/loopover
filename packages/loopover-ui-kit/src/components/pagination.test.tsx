@@ -5,7 +5,7 @@ import {
   PaginationLink,
   PaginationNext,
   PaginationPrevious,
-} from "./pagination";
+} from "./pagination.js";
 
 // Regression for #8307: PaginationLink (and PaginationPrevious/PaginationNext built on it) render an <a>,
 // which has no native disabled attribute — a consumer-supplied aria-disabled must produce a real

@@ -24,7 +24,7 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { getTableColumns, getTableName, is } from "drizzle-orm";
 import { SQLiteTable } from "drizzle-orm/sqlite-core";
-import * as schema from "../src/db/schema.js";
+import * as schema from "../src/db/schema";
 
 const MIGRATIONS_DIR = process.env.CHECK_SCHEMA_DRIFT_DIR || "migrations";
 

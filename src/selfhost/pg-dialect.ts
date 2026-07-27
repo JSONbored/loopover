@@ -64,7 +64,7 @@ export function toNumberedPlaceholders(sql: string): string {
 
 /** Translate the SQLite scalar functions the codebase uses to Postgres equivalents. */
 export function translateFunctions(sql: string): string {
-  return (
+  return translateInstr(
     sql
       // ISO-now (the DEFAULT on TEXT timestamp columns + nowIso parity)
       .replace(/strftime\(\s*'%Y-%m-%dT%H:%M:%fZ'\s*,\s*'now'\s*\)/gi, `to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`)
@@ -95,8 +95,70 @@ export function translateFunctions(sql: string): string {
       // fail-safe read paths (e.g. computeContributorGateEval-style try/catch) silently swallow to an empty
       // result rather than surfacing. Used to parse a `repo#123`-shaped target_id/target_key in several
       // review/public-stats query builders (e.g. public-stats.ts, contributor-gate-history-backfill.ts).
-      .replace(/instr\(\s*([^,]+?)\s*,\s*([^)]+?)\s*\)/gi, `strpos($1, $2)`)
+      //
+      // #9084: done with a paren-balanced scan rather than a regex. The previous `instr\(\s*([^,]+?)...` rule
+      // stopped its haystack at the first comma, so a NESTED call -- `instr(substr(a, instr(a, '#') + 1), '#')`,
+      // the natural way to ask about a second separator -- left the outer `instr(` untranslated, producing SQL
+      // that fails on Postgres with the exact "function instr does not exist" this rule exists to prevent, and
+      // the failure lands in a fail-safe read path that swallows it to an empty result. Nothing in the codebase
+      // nests instr today; this makes sure the first thing that does is not silently broken on the self-host.
   );
+}
+
+/**
+ * Rewrite every `instr(haystack, needle)` to `strpos(haystack, needle)`, including nested occurrences.
+ *
+ * Scans for the top-level comma with a depth counter, skipping over single-quoted literals so a comma or paren
+ * inside a string can never be mistaken for structure. Innermost calls translate first (the recursion runs on
+ * the extracted arguments), so nesting depth is unbounded. A malformed call with no balanced close paren or no
+ * top-level comma is left exactly as written -- this is a mechanical translator, not a validator, and mangling
+ * SQL it does not understand would be worse than passing it through.
+ */
+export function translateInstr(sql: string): string {
+  const lower = sql.toLowerCase();
+  let out = "";
+  let cursor = 0;
+  for (;;) {
+    const start = lower.indexOf("instr(", cursor);
+    // Only a call boundary counts -- `myinstr(` and `x.instr(` are somebody else's identifier.
+    if (start === -1) {
+      out += sql.slice(cursor);
+      return out;
+    }
+    const prev = start > 0 ? sql[start - 1]! : "";
+    if (/[A-Za-z0-9_$.]/.test(prev)) {
+      out += sql.slice(cursor, start + "instr(".length);
+      cursor = start + "instr(".length;
+      continue;
+    }
+    const open = start + "instr(".length;
+    let depth = 1;
+    let quoted = false;
+    let comma = -1;
+    let index = open;
+    for (; index < sql.length; index += 1) {
+      const char = sql[index]!;
+      if (quoted) {
+        if (char === "'") quoted = false;
+        continue;
+      }
+      if (char === "'") quoted = true;
+      else if (char === "(") depth += 1;
+      else if (char === ")") {
+        depth -= 1;
+        if (depth === 0) break;
+      } else if (char === "," && depth === 1 && comma === -1) comma = index;
+    }
+    if (depth !== 0 || comma === -1) {
+      out += sql.slice(cursor, open);
+      cursor = open;
+      continue;
+    }
+    const haystack = translateInstr(sql.slice(open, comma).trim());
+    const needle = translateInstr(sql.slice(comma + 1, index).trim());
+    out += `${sql.slice(cursor, start)}strpos(${haystack}, ${needle})`;
+    cursor = index + 1;
+  }
 }
 
 /** Quote a bare camelCase `AS` alias so Postgres preserves its case. Unquoted identifiers are case-folded to

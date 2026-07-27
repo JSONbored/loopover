@@ -63,6 +63,30 @@ export function reviewVectorAdapter(vectorize: Vectorize): VectorAdapter {
 //    returns real `usage` (provider/model/tokens) for embeddings, so this is recorded for free via
 //    `coerceAiUsage`; Workers AI's binding has no such `usage` field, so the call is still recorded (feature +
 //    the model actually requested), just without token/cost detail. ──
+/**
+ * #9060 — a real, non-zero cost estimate for an embedding call.
+ *
+ * Every embedding was booked at `estimatedNeurons: 0`, which made RAG and impact-map spend invisible to the
+ * daily budget governor. That is not merely under-reporting: it is why the ceiling could never converge. The
+ * governor's counter never moved for embedding work, so a review loop re-running the prologue every two
+ * minutes accumulated real provider spend while the budget it was supposed to be bounded by stayed flat.
+ *
+ * Deliberately a coarse heuristic, matching how `estimateNeurons` already treats chat calls: the unit is a
+ * Workers-AI holdover applied provider-agnostically, so precision here would be false precision. What matters
+ * is that repeated embedding work moves the counter at all, so the ceiling can actually bind.
+ */
+export function estimateEmbeddingNeurons(options: unknown): number {
+  const text = (options as { text?: unknown } | null | undefined)?.text;
+  const chars = Array.isArray(text)
+    ? text.reduce<number>((sum, entry) => sum + (typeof entry === "string" ? entry.length : 0), 0)
+    : typeof text === "string"
+      ? text.length
+      : 0;
+  // ~4 chars per token, and a floor of 1 so a call is never free -- a batch of empty strings is still a
+  // round trip, and "free" is exactly the accounting that let this spend hide.
+  return Math.max(1, Math.ceil(chars / 4 / 100));
+}
+
 export function reviewInferenceAdapter(env: Env, ai: Ai): InferenceAdapter {
   const runner = ai as unknown as { run(m: string, o: Record<string, unknown>): Promise<unknown> };
   return {
@@ -77,7 +101,7 @@ export function reviewInferenceAdapter(env: Env, ai: Ai): InferenceAdapter {
           provider: usage?.provider,
           effort: usage?.effort,
           status: "ok",
-          estimatedNeurons: 0,
+          estimatedNeurons: estimateEmbeddingNeurons(options),
           inputTokens: usage?.inputTokens,
           outputTokens: usage?.outputTokens,
           totalTokens: usage?.totalTokens,
@@ -90,7 +114,8 @@ export function reviewInferenceAdapter(env: Env, ai: Ai): InferenceAdapter {
           route: "review.embeddings",
           model,
           status: "error",
-          estimatedNeurons: 0,
+          // A failed embedding still cost a round trip; booking it at zero is how a retry loop stays invisible.
+          estimatedNeurons: estimateEmbeddingNeurons(options),
           detail: error instanceof Error ? error.message : "embedding_failed",
         });
         throw error;
@@ -114,7 +139,21 @@ export function createReviewAdapters(env: Env): RagInfra {
   if (env.VECTORIZE) infra.vector = reviewVectorAdapter(env.VECTORIZE);
   // Embeddings use the DEDICATED embed provider (env.AI_EMBED) when configured — keeping the review chat chain
   // frontier-only — and fall back to env.AI otherwise (byte-identical to before).
+  // #9061: falling back to env.AI routes embeddings onto the FRONTIER review chain. createChainAi rejects
+  // embeds for CLI providers, but an openai-compatible or anthropic link serves them at frontier pricing --
+  // booked, until #9060, at zero. The fallback is kept (removing it would silently disable RAG for every
+  // existing deployment that relies on it) but it is now loud: an operator running RAG without a dedicated
+  // embed provider should know they are paying frontier rates for embeddings.
   const embedAi = env.AI_EMBED ?? env.AI;
+  if (!env.AI_EMBED && env.AI) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        event: "review_embeddings_using_review_chain",
+        message: "AI_EMBED is not configured; embeddings route onto the review chain and may bill at frontier rates",
+      }),
+    );
+  }
   if (embedAi) infra.inference = reviewInferenceAdapter(env, embedAi);
   return infra;
 }

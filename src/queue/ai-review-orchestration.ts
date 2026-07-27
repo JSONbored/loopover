@@ -42,6 +42,8 @@ import {
   runLoopOverAiReview,
   type ImprovementMagnitude,
   type InlineFinding,
+  isAiDailyBudgetExhausted,
+  isRepoDailyAiLimitReached,
 } from "../services/ai-review";
 import { shouldRenderFindingCategories, shouldRequestInlineFindings } from "../review/inline-comments";
 import { buildReviewGroundingText, isGroundingEnabled } from "../review/grounding-wire";
@@ -170,6 +172,63 @@ export function aiReviewLockContendedResult(
     findings,
     cacheable: false,
     persistable: false,
+  };
+}
+
+/**
+ * #9060 — the shape a pass returns when the AI review ATTEMPT failed, so the failure itself gets a cooldown.
+ *
+ * Both failure exits used to return `undefined`, and the caller only writes a cache row for a defined result.
+ * So a pass that threw inside the try (a DB hiccup, a GitHub 5xx during grounding, an enrichment timeout) or
+ * came back non-ok wrote NOTHING — and the next tick, two minutes later, missed the cache and re-executed the
+ * entire prologue: list files, fetch up to 96k characters of file content for grounding, RAG embeddings,
+ * impact-map embeddings, culture profile, the external enrichment POST, then the model call. Forever. That is
+ * the exact shape and cadence of the 259-calls-in-24h incident; the #regate-churn fix bounded re-spend for
+ * DISPUTED verdicts and never covered failures.
+ *
+ * `cacheable: false, persistable: true` is the whole point, and the pair means something specific here. Not
+ * cacheable: this is not a verdict and must never be served as one, so the PR is re-reviewed properly on the
+ * next attempt. Persistable: the row still gets WRITTEN, so the non-cacheable retry cooldown applies and the
+ * expensive prologue runs once per cooldown window instead of once per tick. That is the exact opposite of
+ * {@link aiReviewLockContendedResult}, which is `persistable: false` because a concurrent pass is about to
+ * write the real result within seconds — here nothing else is coming, which is precisely why the cooldown must.
+ *
+ * The finding is the same inconclusive hold every other unresolvable-review path produces, so a repo requiring
+ * blocking AI review holds for a human rather than passing on deterministic checks alone.
+ */
+/** Review statuses that mean AI review was never going to produce anything here — the operator switched it off,
+ *  or no provider is bound. A configuration state, not a failed attempt (#9060): these keep returning
+ *  `undefined` so nothing is recorded and no PR is held for a review that was never expected to run. */
+const AI_NOT_CONFIGURED_STATUSES: ReadonlySet<string> = new Set(["disabled", "unavailable"]);
+
+export function aiReviewAttemptFailedResult(
+  advisory: Pick<Awaited<ReturnType<typeof buildPullRequestAdvisory>>, "findings">,
+  reason: string,
+  // NonNullable: this helper never returns undefined, and saying so lets callers read the fields without a
+  // narrowing dance. The declared union on runAiReviewForAdvisory itself is what carries the absent case.
+): NonNullable<Awaited<ReturnType<typeof runAiReviewForAdvisory>>> {
+  const findings: AdvisoryFinding[] = [
+    {
+      code: "ai_review_inconclusive",
+      severity: "warning",
+      title: "AI review could not complete for this PR head",
+      detail: `The AI review attempt did not produce a result (${reason}). The gate is held for a human rather than passed automatically.`,
+      action: "The review is retried automatically after a short cooldown; a maintainer can review manually in the meantime.",
+    },
+  ];
+  advisory.findings.push(...findings);
+  return {
+    // Empty on purpose. There IS no public review text -- the attempt did not produce one -- and the downstream
+    // "required AI review produced no public summary" audit keys on exactly that emptiness. Putting a
+    // human-readable apology here would read as a real assessment to that check and silently suppress the
+    // audit + Sentry signal an operator needs. The hold reaches the contributor through the finding below.
+    notes: "",
+    reviewerCount: 0,
+    inlineFindings: [],
+    findings,
+    // Not a verdict -- never served as one. But WRITTEN, so the retry cooldown bounds the prologue re-spend.
+    cacheable: false,
+    persistable: true,
   };
 }
 
@@ -497,6 +556,28 @@ export async function runAiReviewForAdvisory(
       })))
   )
     return undefined;
+  // #9060 / #9061: the spend ceilings, checked before any spend -- before listing files, before grounding fetches up to
+  // 96k characters of file content from GitHub, before RAG and impact-map embeddings, before the culture
+  // profile, before the external enrichment POST. The full budget gate inside runLoopOverAiReview needs this
+  // call's estimated cost, which needs the assembled prompt, so it necessarily sits AFTER all of that: on an
+  // exhausted budget every tick paid for the whole prologue and then declined to make the one call the prologue
+  // existed to support. And because embeddings are booked at zero estimated neurons, that spend never moved the
+  // counter either, so the ceiling could not converge and the loop never self-limited.
+  //
+  // Placed AFTER the "is AI review even supposed to run here" short-circuits above (paused, mode off,
+  // unreviewable author, reputation skip) and BEFORE the lock claim and the prologue: a repo that was never
+  // going to spend anything must not pay two ledger reads to find that out, and must keep returning `undefined`
+  // rather than a held-for-review finding.
+  //
+  // Neither pre-check needs the prompt, so both can run here. Returning the cooldown-bearing failure result
+  // (rather than undefined) means the exhausted state is itself recorded, so the next tick is a cache hit
+  // instead of another full prologue.
+  if (await isAiDailyBudgetExhausted(env)) {
+    return aiReviewAttemptFailedResult(args.advisory, "the daily AI budget is exhausted");
+  }
+  if (await isRepoDailyAiLimitReached(env, args.repoFullName)) {
+    return aiReviewAttemptFailedResult(args.advisory, "this repository reached its daily AI-call limit");
+  }
   // Per-(repo, PR, head SHA, mode) advisory lock (#confirmed-bug, mirrors #2129/#2368's claimPrActuationLock):
   // a webhook pass and an agent-regate-pr sweep pass can independently reach this point for the SAME PR at the
   // SAME head, both miss the cache (neither has written yet), and both fire a real, wasteful LLM call that can
@@ -734,7 +815,13 @@ export async function runAiReviewForAdvisory(
       // the caller resolved the feature on for this repo. Absent/false ⇒ byte-identical prompt.
       improvementSignal: args.improvementSignal === true,
     });
-    if (result.status !== "ok") return undefined;
+    // #9060: a cooldown-bearing failure row, not `undefined` -- see aiReviewAttemptFailedResult. But only for a
+    // genuine FAILURE. `disabled` and `unavailable` mean AI review was never going to produce anything here
+    // (the operator switched it off, or no provider is bound), which is a configuration state, not a failed
+    // attempt: it must keep returning `undefined` so nothing is recorded and no PR is held for a review that
+    // was never expected to run. `quota_exceeded` is the one that matters -- that is the runaway loop's exit.
+    if (AI_NOT_CONFIGURED_STATUSES.has(result.status)) return undefined;
+    if (result.status !== "ok") return aiReviewAttemptFailedResult(args.advisory, `status=${result.status}`);
     // #8229 stage 0: persist each reviewer's stance for the provider track records — best-effort like every
     // calibration write (a vote-store failure must never affect the review), one audit event per reviewer,
     // attribution already swap-proof from the runner (votes attach at leg production time).
@@ -947,7 +1034,9 @@ export async function runAiReviewForAdvisory(
       pr: args.pr.number,
       head_sha: args.advisory.headSha,
     }, "ai_review_failed");
-    return undefined;
+    // #9060: same cooldown as the non-ok exit above. A crash inside the try is exactly the case that used to
+    // re-run the whole expensive prologue every two minutes with nothing recording that it had already failed.
+    return aiReviewAttemptFailedResult(args.advisory, "the review attempt threw");
   } finally {
     // #regate-dup-prep: only release a lock THIS call actually claimed. A caller-supplied
     // preAcquiredAiReviewLock must keep covering the caller's own post-return work (e.g. persisting the fresh

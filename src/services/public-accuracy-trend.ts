@@ -121,6 +121,7 @@ async function loadReversalDayRows(env: Env, projects: string[], sinceIso: strin
           FROM audit_events
          WHERE event_type IN ('agent.action.close', 'agent.action.merge')
            AND outcome = 'completed' AND instr(target_key, '#') > 0
+                  AND length(target_key) - length(replace(target_key, '#', '')) = 1
            AND COALESCE(json_extract(metadata_json, '$.mode'), 'live') <> 'dry_run'
            AND created_at >= ?
       ) orig

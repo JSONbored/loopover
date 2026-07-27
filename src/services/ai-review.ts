@@ -22,6 +22,7 @@
 import {
   countByokAiEventsForRepoSince,
   recordAiUsageEvent,
+  countAiEventsForRepoSince,
   sumAiEstimatedNeuronsSince,
 } from "../db/repositories";
 import { isPublicScoreTermSafeForRepo, sanitizePublicComment } from "../queue-intelligence";
@@ -1591,6 +1592,50 @@ const AI_PROVIDER_TIMEOUT_MS = 20_000;
 
 /** Default per-repository/day cap for maintainer-paid BYOK calls (shared across all BYOK AI features). */
 export const DEFAULT_BYOK_DAILY_REPO_LIMIT = 25;
+
+/** #9061: the per-repo daily AI-call ceiling on the NON-BYOK path. A per-repo limit existed only for BYOK, so
+ *  on the self-host — where reviews run on the free/default chain — one runaway repo could consume the whole
+ *  instance-wide allowance before anything stopped it. Generous enough that ordinary traffic never reaches it
+ *  (a busy repo does not review 200 distinct PR heads in a day) and low enough to cap a genuine loop. */
+export const DEFAULT_DAILY_REPO_AI_CALL_LIMIT = 200;
+
+/**
+ * #9060 — whether the daily AI budget is ALREADY spent, decided without pricing this particular call.
+ *
+ * The full budget gate needs `estimatedNeurons`, which needs the assembled prompt, which is why it sits after
+ * grounding, RAG, the impact map, the culture profile and the external enrichment POST have all already run.
+ * On an exhausted budget that ordering meant every tick paid for the entire prologue and then refused to make
+ * the one call the prologue existed to support — and since embeddings are booked at zero estimated neurons,
+ * none of that spend moved the counter either, so the ceiling could never converge and the loop never
+ * self-limited.
+ *
+ * This is the cheap question the orchestrator can ask FIRST: one aggregate read, no prompt required.
+ */
+export async function isAiDailyBudgetExhausted(env: Env): Promise<boolean> {
+  const raw = Number(env.AI_DAILY_NEURON_BUDGET);
+  const budget = clampNumber(env.AI_DAILY_NEURON_BUDGET && Number.isFinite(raw) ? raw : 10_000_000, 0, 10_000_000);
+  // A budget of exactly 0 is the operator deliberately disabling free AI spend; treat it as exhausted so the
+  // prologue is skipped too, rather than paying for context that can never be used.
+  if (budget === 0) return true;
+  const used = await sumAiEstimatedNeuronsSince(env, utcDayStartIso()).catch(
+    /* v8 ignore next -- an unreadable usage ledger must not BLOCK reviews; the full gate re-checks downstream. */
+    () => 0,
+  );
+  return used >= budget;
+}
+
+/** #9061: whether this repo has already used its per-repo daily AI-call allowance. Mirrors the BYOK ceiling's
+ *  shape, but counts every attempt rather than only `byok:%` ones — the free/default chain is the path the
+ *  self-host actually runs on, and it had no per-repo ceiling at all. */
+export async function isRepoDailyAiLimitReached(env: Env, repoFullName: string): Promise<boolean> {
+  const limit = clampNumber(Number(env.AI_DAILY_REPO_CALL_LIMIT || DEFAULT_DAILY_REPO_AI_CALL_LIMIT), 0, 100_000);
+  if (limit === 0) return false;
+  const used = await countAiEventsForRepoSince(env, repoFullName, utcDayStartIso()).catch(
+    /* v8 ignore next -- same fail-open reasoning as the global pre-check above. */
+    () => 0,
+  );
+  return used >= limit;
+}
 
 /** Why a BYOK call produced no usable output — surfaced in the audit event for observability (never a key). */
 export type ProviderFailure = "timeout" | "http_error" | "exception";

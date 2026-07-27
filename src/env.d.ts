@@ -93,6 +93,10 @@ declare global {
     AI_DAILY_NEURON_BUDGET?: string;
     /** Per-repository/day cap for maintainer-paid BYOK AI review provider calls. */
     AI_BYOK_DAILY_REPO_LIMIT?: string;
+    /** #9061: per-repository/day cap on AI calls for the FREE/default chain — the path the self-host actually
+     *  runs on, which had no per-repo ceiling at all, so one runaway repo could drain the whole instance-wide
+     *  allowance. Unset ⇒ DEFAULT_DAILY_REPO_AI_CALL_LIMIT; "0" disables the per-repo ceiling. */
+    AI_DAILY_REPO_CALL_LIMIT?: string;
     AI_MAX_OUTPUT_TOKENS?: string;
     /** Optional Cloudflare AI Gateway id for legacy env.AI-compatible adapters. Self-host review execution should
      *  prefer provider-specific AI_* configuration instead. */

@@ -438,6 +438,10 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/selfhost/otel.ts",
   },
   {
+    name: "OTEL_TRACES_ENABLE_POSTHOG_FALLBACK",
+    firstReference: "src/selfhost/otel.ts",
+  },
+  {
     name: "OTEL_TRACES_EXPORTER",
     firstReference: "src/selfhost/otel.ts",
   },
@@ -754,6 +758,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | `src/selfhost/otel.ts` |",
   "| `OTEL_SERVICE_ENVIRONMENT` | `src/selfhost/otel.ts` |",
   "| `OTEL_SERVICE_NAME` | `src/selfhost/otel.ts` |",
+  "| `OTEL_TRACES_ENABLE_POSTHOG_FALLBACK` | `src/selfhost/otel.ts` |",
   "| `OTEL_TRACES_EXPORTER` | `src/selfhost/otel.ts` |",
   "| `OTEL_TRACES_SAMPLER` | `src/selfhost/otel.ts` |",
   "| `OTEL_TRACES_SAMPLER_ARG` | `src/selfhost/otel.ts` |",

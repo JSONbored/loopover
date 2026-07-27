@@ -1494,7 +1494,7 @@ function buildQualityGateWarning(policy: GateCheckPolicy): AdvisoryFinding | nul
 export const DEFAULT_SLOP_BLOCK_THRESHOLD = 60;
 
 function buildSlopGateBlocker(policy: GateCheckPolicy): AdvisoryFinding | null {
-  if (gateMode(policy.slopGateMode) !== "block") return null;
+  if (gateMode(policy.slopGateMode ?? "advisory") !== "block") return null;
   const risk = normalizeScore(policy.slopRisk);
   if (risk === null) return null;
   const minScore = normalizeScore(policy.slopGateMinScore) ?? DEFAULT_SLOP_BLOCK_THRESHOLD;
@@ -1508,14 +1508,39 @@ function buildSlopGateBlocker(policy: GateCheckPolicy): AdvisoryFinding | null {
   };
 }
 
+// #9167: fail CLOSED on a value that isn't one of the three real modes, matching the rest of this
+// codebase's fail-closed defaults -- every legitimate caller already supplies its own `?? "advisory"`
+// default before reaching here (see every `gateMode(policy.xGateMode ?? "advisory")` call site above), so
+// this branch is only ever reached for a truly malformed value (e.g. a caller that bypassed
+// GateRuleMode's compile-time union via an untyped/JSON-decoded config). Previously coerced to
+// "advisory" -- a fail-OPEN default in a codebase whose other defaults are carefully fail-closed. This is
+// currently defense-in-depth only: `normalizeOptionalGateMode` (focus-manifest.ts) already rejects a
+// typo'd mode to `null` before it reaches a real policy, and the API path is a zod enum -- but the safety
+// of this function should not depend on every future caller remembering to normalize first.
 function gateMode(value: GateRuleMode | null | undefined): GateRuleMode {
-  return value === "off" || value === "block" ? value : "advisory";
+  if (value === "off" || value === "block" || value === "advisory") return value;
+  return "block";
 }
 
 // #551: the master merge-readiness composite. When mergeReadinessGateMode is set (advisory/block) it
-// OVERRIDES the enforceable sub-gates to its mode so they roll into one pass/fail; when off, the policy is
-// returned unchanged and each sub-gate keeps its own mode. Readiness/quality is intentionally excluded:
-// readiness is always advisory/informational, even if an older config still says `readiness: block`.
+// OVERRIDES the three enforceable sub-gates (linked-issue, duplicate, slop) to its mode, so a maintainer
+// who never touched them individually can flip one switch instead of three; when off, the policy is
+// returned unchanged. Readiness/quality is intentionally excluded: readiness is always advisory/
+// informational, even if an older config still says `readiness: block`.
+//
+// #9167 considered making this only FILL IN a sub-gate mode left unset (so an explicit `block` could never
+// be silently demoted by a looser composite) instead of always overriding. That is unreachable in
+// practice: by the time a sub-gate mode reaches this function it has already passed through
+// `RepositorySettings` (src/types.ts's `linkedIssueGateMode`/etc. are non-optional `GateRuleMode`, DB-
+// defaulted to a concrete value -- src/db/repositories.ts) and `gateCheckPolicy()` (a straight passthrough,
+// src/queue/gate-checks.ts), so it is NEVER actually `undefined` here -- "explicitly authored" vs. "resolved
+// to the shipped default" is indistinguishable at this layer, and a `?? composite` fill-in can never fire.
+// That distinction genuinely exists only one layer up, on the raw, pre-default-resolution manifest (a
+// literal absent YAML key) -- which is exactly where config-lint.ts's mergeReadinessCompositeWarnings
+// operates, flagging the demotion case there instead. So the fix actually taken is: keep the override
+// (restoring the original, fully-reachable, well-tested behavior below), and rely on that config-lint
+// warning for visibility -- the operator who reads their manifest back and sees `linkedIssueGateMode:
+// "block"` now gets a loud warning that `gate.mergeReadiness` will demote it, instead of a silent surprise.
 function applyMergeReadinessGate(policy: GateCheckPolicy): GateCheckPolicy {
   const composite = gateMode(policy.mergeReadinessGateMode ?? "off");
   if (composite === "off") return policy;

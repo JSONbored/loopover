@@ -1,5 +1,5 @@
 import { parse as parseYaml } from "yaml";
-import { MAX_FOCUS_MANIFEST_BYTES, parseFocusManifestContent } from "./focus-manifest.js";
+import { MAX_FOCUS_MANIFEST_BYTES, parseFocusManifestContent, type FocusManifestGateConfig } from "./focus-manifest.js";
 
 const TOP_LEVEL_FIELDS = [
   "source",
@@ -50,6 +50,7 @@ export function lintManifestText(text: string | null | undefined): SelfHostConfi
       .map(redactManifestWarning)
       .filter((warning) => recognizedFields.length === 0 || warning !== NO_RECOGNIZED_FOCUS_FIELDS_WARNING),
     ...unknownTopLevelWarnings(text),
+    ...mergeReadinessCompositeWarnings(manifest.gate),
   ];
   if (warnings.length === 0 && recognizedFields.length === 0) {
     warnings.push("Manifest did not define any recognized focus fields.");
@@ -78,6 +79,33 @@ function recognizedFieldsFor(text: string | null | undefined): string[] {
 const RETIRED_FIELD_MIGRATION_WARNINGS: Record<string, string> = {
   blockedPaths: "blockedPaths is retired; use settings.hardGuardrailGlobs for path holds.",
 };
+
+// #9167: gate.mergeReadiness is a composite that only FILLS IN a sub-gate mode the operator left UNSET
+// (src/rules/advisory.ts's applyMergeReadinessGate, and its engine twin) -- it never overrides an
+// explicitly-authored gate.linkedIssue / gate.duplicates / gate.slop.mode. Setting BOTH the composite and
+// one of its sub-gates is legal and common (e.g. an operator who wants slop advisory-only but everything
+// else covered by the composite), but the resolved mode for that sub-gate is then the AUTHORED one, not
+// the composite's -- surfacing that explicitly here is the "effective config is never silently different
+// from the authored config" guarantee #9167 asks for, at the one layer (parsed manifest text) where
+// "left unset" is still knowable; by the time a sub-gate mode reaches a persisted RepositorySettings row
+// it has already collapsed into a concrete default, so this distinction can only be made here.
+const MERGE_READINESS_SUB_GATES: ReadonlyArray<{ field: "linkedIssue" | "duplicates" | "slopMode"; label: string }> = [
+  { field: "linkedIssue", label: "gate.linkedIssue" },
+  { field: "duplicates", label: "gate.duplicates" },
+  { field: "slopMode", label: "gate.slop.mode" },
+];
+
+function mergeReadinessCompositeWarnings(gate: FocusManifestGateConfig): string[] {
+  if (gate.mergeReadiness === null) return [];
+  const explicit = MERGE_READINESS_SUB_GATES.filter(({ field }) => gate[field] !== null).map(({ label }) => label);
+  if (explicit.length === 0) return [];
+  return [
+    `gate.mergeReadiness ("${gate.mergeReadiness}") is set alongside an explicitly-authored mode for ` +
+      `${explicit.join(", ")}. The composite only fills in a sub-gate mode left unset -- it never overrides ` +
+      `an explicitly-configured one, so ${explicit.length === 1 ? "that field stays" : "those fields stay"} ` +
+      `exactly as authored regardless of gate.mergeReadiness.`,
+  ];
+}
 
 export function unknownTopLevelWarnings(text: string | null | undefined): string[] {
   const parsed = parseManifestTopLevelObject(text);

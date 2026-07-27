@@ -173,6 +173,32 @@ describe("self-host OpenTelemetry", () => {
     expect(child.parentSpanContext.spanId).toBe(parent.spanContext().spanId);
   });
 
+  it("scrubs a token-shaped exception message in both the exception event and the span status (#9162)", async () => {
+    await initOpenTelemetry(env({
+      OTEL_TRACES_EXPORTER: "otlp",
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector",
+    }));
+    const leakedToken = `ghs_${"a".repeat(24)}`;
+    await expect(
+      withOtelSpan("selfhost.leaky.job", undefined, async () => {
+        throw new Error(`upstream call to https://internal.example/callback?token=${leakedToken} failed`);
+      }),
+    ).rejects.toThrow(leakedToken);
+    await flushOpenTelemetry();
+    const span = otelMocks.exportedSpans.find((entry) => entry.name === "selfhost.leaky.job");
+    const exceptionEvent = span.events.find((event: { name: string }) => event.name === "exception");
+    expect(exceptionEvent.attributes["exception.message"]).not.toContain(leakedToken);
+    expect(exceptionEvent.attributes["exception.message"]).toContain("[redacted]");
+    expect(exceptionEvent.attributes["exception.type"]).toBe("Error");
+    // Not recordException's default stacktrace key going untouched -- the stack is routed through the same
+    // scrub, so it never contains the raw token either (it repeats the message as its first line).
+    expect(exceptionEvent.attributes["exception.stacktrace"]).not.toContain(leakedToken);
+    // The span STATUS message is a second, separate export path for the same raw exception message --
+    // must not reintroduce the leak the event attributes above just closed.
+    expect(span.status.message).not.toContain(leakedToken);
+    expect(span.status.message).toContain("[redacted]");
+  });
+
   it("injects traceparent context and resumes later spans from it", async () => {
     await initOpenTelemetry(env({
       OTEL_TRACES_EXPORTER: "otlp",
@@ -352,18 +378,21 @@ describe("self-host OpenTelemetry", () => {
     expect(otelMocks.exportedSpans.map((span) => span.name)).toContain("ratio-defaults-on");
   });
 
-  it("defaults the OTLP trace endpoint and auth header to PostHog when POSTHOG_API_KEY is set and no explicit OTEL endpoint is configured", async () => {
-    expect(resolveOtelTraceEndpoint(env({ POSTHOG_API_KEY: "phc_test" }))).toBe("https://us.i.posthog.com/i/v1/traces");
-    expect(resolveOtelTraceEndpoint(env({ POSTHOG_API_KEY: "phc_test", POSTHOG_HOST: "https://eu.i.posthog.com/" }))).toBe(
-      "https://eu.i.posthog.com/i/v1/traces",
+  it("defaults the OTLP trace endpoint and auth header to PostHog only once OTEL_TRACES_ENABLE_POSTHOG_FALLBACK=1 is explicitly set (#9162)", async () => {
+    const postHogFallbackFlag = { OTEL_TRACES_ENABLE_POSTHOG_FALLBACK: "1" };
+    expect(resolveOtelTraceEndpoint(env({ POSTHOG_API_KEY: "phc_test", ...postHogFallbackFlag }))).toBe(
+      "https://us.i.posthog.com/i/v1/traces",
     );
+    expect(
+      resolveOtelTraceEndpoint(env({ POSTHOG_API_KEY: "phc_test", POSTHOG_HOST: "https://eu.i.posthog.com/", ...postHogFallbackFlag })),
+    ).toBe("https://eu.i.posthog.com/i/v1/traces");
     // An explicit operator-configured endpoint always wins over the PostHog fallback.
     expect(
-      resolveOtelTraceEndpoint(env({ POSTHOG_API_KEY: "phc_test", OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318" })),
+      resolveOtelTraceEndpoint(env({ POSTHOG_API_KEY: "phc_test", OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318", ...postHogFallbackFlag })),
     ).toBe("http://collector:4318/v1/traces");
 
     expect(
-      await initOpenTelemetry(env({ OTEL_TRACES_EXPORTER: "otlp", POSTHOG_API_KEY: "phc_test" })),
+      await initOpenTelemetry(env({ OTEL_TRACES_EXPORTER: "otlp", POSTHOG_API_KEY: "phc_test", ...postHogFallbackFlag })),
     ).toBe(true);
     await withOtelSpan("selfhost.queue.job", {}, () => undefined);
     await flushOpenTelemetry();
@@ -382,6 +411,7 @@ describe("self-host OpenTelemetry", () => {
         OTEL_TRACES_EXPORTER: "otlp",
         OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318",
         POSTHOG_API_KEY: "phc_test",
+        ...postHogFallbackFlag,
       })),
     ).toBe(true);
     expect(otelMocks.exporterInstances[0]?.options).toEqual({ url: "http://collector:4318/v1/traces" });
@@ -393,9 +423,25 @@ describe("self-host OpenTelemetry", () => {
   });
 
   it("never enables tracing just because POSTHOG_API_KEY is set, without OTEL_TRACES_EXPORTER=otlp", async () => {
-    expect(openTelemetryTraceExportEnabled(env({ POSTHOG_API_KEY: "phc_test" }))).toBe(false);
-    expect(await initOpenTelemetry(env({ POSTHOG_API_KEY: "phc_test" }))).toBe(false);
+    expect(openTelemetryTraceExportEnabled(env({ POSTHOG_API_KEY: "phc_test", OTEL_TRACES_ENABLE_POSTHOG_FALLBACK: "1" }))).toBe(false);
+    expect(await initOpenTelemetry(env({ POSTHOG_API_KEY: "phc_test", OTEL_TRACES_ENABLE_POSTHOG_FALLBACK: "1" }))).toBe(false);
     expect(otelMocks.OTLPTraceExporter).not.toHaveBeenCalled();
+  });
+
+  it("never derives a trace destination from POSTHOG_API_KEY alone (#9162): the fallback stays fail-closed without the explicit opt-in", async () => {
+    // Same env that used to auto-select PostHog as the trace destination before #9162 -- without the new
+    // OTEL_TRACES_ENABLE_POSTHOG_FALLBACK=1 opt-in, the operator setting POSTHOG_API_KEY for product
+    // analytics/error capture must never silently also pick a trace export destination.
+    expect(resolveOtelTraceEndpoint(env({ POSTHOG_API_KEY: "phc_test" }))).toBeUndefined();
+    expect(openTelemetryTraceExportEnabled(env({ OTEL_TRACES_EXPORTER: "otlp", POSTHOG_API_KEY: "phc_test" }))).toBe(false);
+    expect(await initOpenTelemetry(env({ OTEL_TRACES_EXPORTER: "otlp", POSTHOG_API_KEY: "phc_test" }))).toBe(false);
+    expect(otelMocks.OTLPTraceExporter).not.toHaveBeenCalled();
+
+    // A non-"1" value (loose-truthy strings some operators might reasonably try) also stays fail-closed --
+    // this is a strict "1"-only opt-in, matching health.ts's LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER convention.
+    expect(
+      resolveOtelTraceEndpoint(env({ POSTHOG_API_KEY: "phc_test", OTEL_TRACES_ENABLE_POSTHOG_FALLBACK: "true" })),
+    ).toBeUndefined();
   });
 
   it("adds hashed tenant and decision attributes to review pipeline spans", async () => {

@@ -346,6 +346,32 @@ review:
     expect(JSON.stringify(result)).not.toContain("secret-profile");
   });
 
+  it("flags gate.mergeReadiness set alongside explicitly-authored sub-gate modes (#9167)", () => {
+    const result = lintManifestText("gate:\n  mergeReadiness: advisory\n  linkedIssue: block\n  duplicates: block\n");
+
+    expect(result.warnings).toEqual([
+      'gate.mergeReadiness ("advisory") is set alongside an explicitly-authored mode for gate.linkedIssue, gate.duplicates. The composite only fills in a sub-gate mode left unset -- it never overrides an explicitly-configured one, so those fields stay exactly as authored regardless of gate.mergeReadiness.',
+    ]);
+  });
+
+  it("uses singular wording for exactly one conflicting sub-gate (#9167)", () => {
+    const result = lintManifestText("gate:\n  mergeReadiness: block\n  slop:\n    mode: advisory\n");
+
+    expect(result.warnings).toEqual([
+      'gate.mergeReadiness ("block") is set alongside an explicitly-authored mode for gate.slop.mode. The composite only fills in a sub-gate mode left unset -- it never overrides an explicitly-configured one, so that field stays exactly as authored regardless of gate.mergeReadiness.',
+    ]);
+  });
+
+  it("does not flag gate.mergeReadiness when every sub-gate is left unset (#9167)", () => {
+    const result = lintManifestText("gate:\n  mergeReadiness: block\n");
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("does not flag explicit sub-gate modes when gate.mergeReadiness is unset (#9167)", () => {
+    const result = lintManifestText("gate:\n  linkedIssue: block\n  duplicates: advisory\n");
+    expect(result.warnings).toEqual([]);
+  });
+
   it("degrades oversize content without reparsing keys", () => {
     const asciiOversize = lintManifestText("a".repeat(MAX_FOCUS_MANIFEST_BYTES + 1));
     expect(asciiOversize.ok).toBe(false);

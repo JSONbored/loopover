@@ -753,7 +753,7 @@ function buildQualityGateWarning(policy: GateCheckPolicy): AdvisoryFinding | nul
 }
 
 function buildSlopGateBlocker(policy: GateCheckPolicy): AdvisoryFinding | null {
-  if (gateMode(policy.slopGateMode) !== "block") return null;
+  if (gateMode(policy.slopGateMode ?? "advisory") !== "block") return null;
   const risk = normalizeScore(policy.slopRisk);
   if (risk === null) return null;
   const minScore = normalizeScore(policy.slopGateMinScore) ?? DEFAULT_SLOP_BLOCK_THRESHOLD;
@@ -767,10 +767,21 @@ function buildSlopGateBlocker(policy: GateCheckPolicy): AdvisoryFinding | null {
   };
 }
 
+// #9167: fail CLOSED on a value that isn't one of the three real modes (mirrors the host twin,
+// src/rules/advisory.ts) -- every legitimate caller already supplies its own `?? "advisory"` default
+// before reaching here, so this branch is only ever reached for a truly malformed value. Previously
+// coerced to "advisory" (fail-open); defense-in-depth only today (normalizeOptionalGateMode already
+// rejects a typo'd mode upstream), but the safety of this function should not depend on caller discipline.
 function gateMode(value: GateRuleMode | null | undefined): GateRuleMode {
-  return value === "off" || value === "block" ? value : "advisory";
+  if (value === "off" || value === "block" || value === "advisory") return value;
+  return "block";
 }
 
+// #9167: kept as an unconditional override -- mirrors the host twin's fix; see that file's comment for
+// the full rationale (a "fill in only if unset" variant was considered but is unreachable: every sub-gate
+// mode is already a concrete, DB-defaulted GateRuleMode by the time it reaches GateCheckPolicy, never
+// actually undefined, so config-lint.ts's mergeReadinessCompositeWarnings -- which operates on the raw,
+// pre-default manifest, where "unset" is real -- is the actual fix for silent demotion, not this function).
 function applyMergeReadinessGate(policy: GateCheckPolicy): GateCheckPolicy {
   const composite = gateMode(policy.mergeReadinessGateMode ?? "off");
   if (composite === "off") return policy;

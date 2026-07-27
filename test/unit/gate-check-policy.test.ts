@@ -538,6 +538,16 @@ describe("slop gate (#530/#532)", () => {
     expect(evaluateGateCheck(cleanAdvisory(), { slopGateMode: "off", slopRisk: 90, confirmedContributor: true }).conclusion).toBe("success");
   });
 
+  // #9167 regression: gateMode()'s internal fallback for a non-off/block/advisory value (including a
+  // caller passing plain `undefined`) changed from "advisory" to "block" as part of making it fail
+  // CLOSED against a truly malformed value. buildSlopGateBlocker must still supply its own `?? "advisory"`
+  // at the call site (matching every sibling gateMode(policy.xGateMode ?? "advisory") call in this file) so
+  // a repo that never configured gate.slop.mode at all keeps the documented default ("slop never blocks
+  // unless opted in") instead of silently inheriting the new fail-closed floor.
+  it("never blocks on slop when slopGateMode is left entirely unset, even at a high slop score (#9167)", () => {
+    expect(evaluateGateCheck(cleanAdvisory(), { slopRisk: 90, slopGateMinScore: 60, confirmedContributor: true }).conclusion).toBe("success");
+  });
+
   it("blocks when slop: block and slopRisk is at/above the threshold", () => {
     const blocked = evaluateGateCheck(cleanAdvisory(), { slopGateMode: "block", slopGateMinScore: 60, slopRisk: 70, confirmedContributor: true });
     expect(blocked.conclusion).toBe("failure");

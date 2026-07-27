@@ -822,6 +822,62 @@ describe("advisory rules", () => {
     expect(evaluateGateCheck(advisory, { mergeReadinessGateMode: "block", qualityGateMinScore: 90, readinessScore: 10 }).conclusion).toBe("success");
   });
 
+  describe("#9167: merge-readiness composite fill-unset-only semantics + fail-closed gate modes", () => {
+    // Deliberately NOT duplicate_pr_risk (#9129's duplicate-only HOLD reuses that exact code as its trigger,
+    // so a blocker set consisting solely of it always resolves "neutral", never "failure" -- missing_linked_issue
+    // has no such special-cased hold and cleanly exercises the plain failure path these tests need).
+    const missingLinkedIssueAdvisory = {
+      ...buildPullRequestAdvisory(repo, null),
+      findings: [{ code: "missing_linked_issue", title: "No linked issue detected", severity: "warning" as const, detail: "No linked issue." }],
+    };
+
+    // #9167 considered making the composite only FILL IN a sub-gate mode left unset, so an explicit
+    // "block" could never be silently demoted by a looser composite. That's unreachable in practice: every
+    // sub-gate mode is already a concrete, DB-defaulted value (RepositorySettings's linkedIssueGateMode/etc.
+    // are non-optional) by the time it reaches GateCheckPolicy, so "explicitly authored" vs. "resolved to
+    // the shipped default" can't be told apart here -- the composite keeps its original override behavior,
+    // and the demotion is now made VISIBLE via config-lint.ts's mergeReadinessCompositeWarnings instead
+    // (which operates on the raw, pre-default manifest, where "unset" is a real, meaningful state).
+    it("demotes an explicitly-configured block sub-gate to the composite's looser mode (the demotion is now surfaced via a config-lint warning, not prevented here)", () => {
+      const gate = evaluateGateCheck(missingLinkedIssueAdvisory, { mergeReadinessGateMode: "advisory", linkedIssueGateMode: "block" });
+      expect(gate.conclusion).toBe("success");
+      expect(gate.blockers).toEqual([]);
+    });
+
+    it("fills in a sub-gate mode the operator left unset", () => {
+      const gate = evaluateGateCheck(missingLinkedIssueAdvisory, { mergeReadinessGateMode: "block" });
+      expect(gate.conclusion).toBe("failure");
+      expect(gate.blockers.map((finding) => finding.code)).toContain("missing_linked_issue");
+    });
+
+    it("escalates an explicit looser sub-gate mode (advisory) when the composite is stricter", () => {
+      const gate = evaluateGateCheck(missingLinkedIssueAdvisory, { mergeReadinessGateMode: "block", linkedIssueGateMode: "advisory" });
+      expect(gate.conclusion).toBe("failure");
+      expect(gate.blockers.map((finding) => finding.code)).toContain("missing_linked_issue");
+    });
+
+    it("a merge-readiness composite of off leaves sub-gates exactly as configured (no-op)", () => {
+      const gate = evaluateGateCheck(missingLinkedIssueAdvisory, { mergeReadinessGateMode: "off", linkedIssueGateMode: "block" });
+      expect(gate.conclusion).toBe("failure");
+    });
+
+    it("an unrecognized configured gate mode fails CLOSED (blocks) instead of defaulting to advisory", () => {
+      // Simulates a malformed value bypassing GateRuleMode's compile-time union (e.g. an untyped config
+      // path) -- gateMode() used to coerce this to "advisory" (fail-open); it must now fail closed.
+      const gate = evaluateGateCheck(missingLinkedIssueAdvisory, {
+        linkedIssueGateMode: "blocc" as unknown as "block",
+      });
+      expect(gate.conclusion).toBe("failure");
+      expect(gate.blockers.map((finding) => finding.code)).toContain("missing_linked_issue");
+    });
+
+    it("the three real gate modes (off/advisory/block) still resolve unchanged through gateMode()", () => {
+      expect(evaluateGateCheck(missingLinkedIssueAdvisory, { linkedIssueGateMode: "off" }).conclusion).toBe("success");
+      expect(evaluateGateCheck(missingLinkedIssueAdvisory, { linkedIssueGateMode: "advisory" }).conclusion).toBe("success");
+      expect(evaluateGateCheck(missingLinkedIssueAdvisory, { linkedIssueGateMode: "block" }).conclusion).toBe("failure");
+    });
+  });
+
   it("summarizes multiple configured hard blockers without swallowing advisory warnings", () => {
     const gate = evaluateGateCheck(
       {

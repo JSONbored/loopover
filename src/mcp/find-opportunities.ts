@@ -15,6 +15,7 @@ import {
 import { rankCandidateIssuesWithSummary } from "../../packages/loopover-miner/lib/opportunity-ranker";
 import { createInstallationToken } from "../github/app";
 import { getRepository } from "../db/repositories";
+import { sanitizeUntrustedMcpText } from "./untrusted-text";
 
 export type FindOpportunitiesTarget = { owner: string; repo: string };
 
@@ -166,7 +167,10 @@ function toRankedEntry(
     owner: issue.owner,
     repo: issue.repo,
     issueNumber: issue.issueNumber,
-    title: issue.title,
+    // `issue.title` is attacker-authored upstream text (#9163): a GitHub issue title copied verbatim
+    // from the API. Never return it raw -- it is untrusted DATA for whatever model reads this result,
+    // never an instruction, so it is routed through the shared MCP untrusted-text scrub.
+    title: sanitizeUntrustedMcpText(issue.title),
     rankScore: publicRankScore(issue.rankScore),
     laneFit: clamp01(issue.laneFit),
     freshness: clamp01(issue.freshness),

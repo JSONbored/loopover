@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Attributes, Context, Tracer } from "@opentelemetry/api";
 import type { SpanProcessor } from "@opentelemetry/sdk-trace-base";
+import { SECRET_KEY, scrubString } from "./redaction-scrub";
 
 type OtelApi = typeof import("@opentelemetry/api");
 type OtelSdk = typeof import("@opentelemetry/sdk-trace-node");
@@ -19,8 +20,6 @@ let tracer: Tracer | undefined;
 let active = false;
 
 const contextStore = new AsyncLocalStorage<Context>();
-const SECRET_KEY =
-  /(token|secret|key|password|passwd|authorization|auth|dsn|cookie|bearer|credential|private)/i;
 const MAX_ATTRIBUTE_LENGTH = 160;
 const TRACEPARENT_RE = /^00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$/i;
 
@@ -36,16 +35,29 @@ function traceExporterEnabled(env: NodeJS.ProcessEnv): boolean {
 
 const DEFAULT_POSTHOG_OTEL_HOST = "https://us.i.posthog.com";
 
+/** Strict "1"-only opt-in gate for the PostHog-derived trace fallback (#9162), matching
+ *  codexAuthReadinessProbe's LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER convention (health.ts) rather than a
+ *  loose-truthy check. POSTHOG_API_KEY alone selects PostHog for product-analytics error capture
+ *  (posthog.ts); deriving a TRACE EXPORT DESTINATION from that same key as well sends full exception
+ *  messages and stack traces to a third-party host the operator never explicitly named as a trace target
+ *  -- that must be a deliberate choice, never an automatic side effect of setting an unrelated key. */
+function postHogOtelFallbackAllowed(env: NodeJS.ProcessEnv): boolean {
+  return env.OTEL_TRACES_ENABLE_POSTHOG_FALLBACK === "1";
+}
+
 /** PostHog's distributed-tracing product (beta: https://posthog.com/docs/distributed-tracing) is a plain
  *  OTLP/HTTP receiver -- PostHog's own docs describe pointing an existing OTel exporter at it as the whole
  *  integration, not a proprietary SDK. Used only as a FALLBACK target/auth pair when the operator hasn't
  *  explicitly configured their own OTEL_EXPORTER_OTLP_(TRACES_)ENDPOINT (e.g. their own collector) -- an
- *  explicit endpoint always wins. Reuses the SAME POSTHOG_API_KEY/POSTHOG_HOST self-host's own error
- *  tracking (posthog.ts) already reads off process.env (read directly here, not imported, to avoid a
+ *  explicit endpoint always wins, AND the operator must additionally opt in via
+ *  {@link postHogOtelFallbackAllowed} (#9162) -- POSTHOG_API_KEY alone is never enough to silently pick a
+ *  trace destination. Reuses the SAME POSTHOG_API_KEY/POSTHOG_HOST self-host's own error tracking
+ *  (posthog.ts) already reads off process.env (read directly here, not imported, to avoid a
  *  posthog.ts<->otel.ts import cycle -- posthog.ts already imports currentOtelTraceIds from this file).
  *  Per PostHog's docs, this must be the PROJECT token (phc_...), the same one POSTHOG_API_KEY already holds
  *  for error capture -- never a personal API key. */
 function resolvePostHogOtelTraceTarget(env: NodeJS.ProcessEnv): { endpoint: string; headers: Record<string, string> } | undefined {
+  if (!postHogOtelFallbackAllowed(env)) return undefined;
   const apiKey = nonBlank(env.POSTHOG_API_KEY);
   if (!apiKey) return undefined;
   const host = (nonBlank(env.POSTHOG_HOST) ?? DEFAULT_POSTHOG_OTEL_HOST).replace(/\/+$/, "");
@@ -102,13 +114,20 @@ function samplerFromEnv(env: NodeJS.ProcessEnv, sdk: OtelSdk) {
   return new sdk.ParentBasedSampler({ root: new sdk.AlwaysOnSampler() });
 }
 
+/** The one chokepoint every span attribute/event on the self-host OTel egress passes through (#9162) --
+ *  filters secret-SHAPED keys (unchanged), then scrubs the surviving string VALUES through the same
+ *  {@link scrubString} every other sink (PostHog, AI-error redaction, public comments) already uses,
+ *  so a token/JWT/query-secret/local-path sitting in a value under a benign key (`"url"`, `"detail"`,
+ *  `"final"`) can no longer pass verbatim before it is length-capped. */
 export function otelSafeAttributes(input: Record<string, unknown> | undefined): Attributes {
   const out: Attributes = {};
   if (!input) return out;
   for (const [key, value] of Object.entries(input)) {
     if (SECRET_KEY.test(key) || value === null || value === undefined) continue;
-    if (typeof value === "string") out[key] = value.length > MAX_ATTRIBUTE_LENGTH ? `${value.slice(0, MAX_ATTRIBUTE_LENGTH - 3)}...` : value;
-    else if (typeof value === "number" && Number.isFinite(value)) out[key] = value;
+    if (typeof value === "string") {
+      const scrubbed = scrubString(value);
+      out[key] = scrubbed.length > MAX_ATTRIBUTE_LENGTH ? `${scrubbed.slice(0, MAX_ATTRIBUTE_LENGTH - 3)}...` : scrubbed;
+    } else if (typeof value === "number" && Number.isFinite(value)) out[key] = value;
     else if (typeof value === "boolean") out[key] = value;
   }
   return out;
@@ -255,8 +274,22 @@ function exceptionFor(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
 
+/** The span STATUS message (distinct from the "exception" span EVENT below) also carries the raw
+ *  exception message and is exported alongside every other span field -- scrub it through the same
+ *  {@link scrubString} chokepoint before capping length, so this path can't reintroduce the leak
+ *  {@link otelSafeAttributes} and {@link exceptionEventAttributes} already close. */
 function statusMessage(error: unknown): string {
-  return exceptionFor(error).message.slice(0, MAX_ATTRIBUTE_LENGTH);
+  return scrubString(exceptionFor(error).message).slice(0, MAX_ATTRIBUTE_LENGTH);
+}
+
+/** Build the "exception" span-event attributes for a caught error, standard OTel semantic-convention
+ *  keys (`exception.type`/`exception.message`/`exception.stacktrace`). Fed through
+ *  {@link otelSafeAttributes} by the caller -- never exported raw. */
+function exceptionEventAttributes(error: unknown): Record<string, unknown> {
+  const err = exceptionFor(error);
+  const attrs: Record<string, unknown> = { "exception.type": err.name, "exception.message": err.message };
+  if (err.stack) attrs["exception.stacktrace"] = err.stack;
+  return attrs;
 }
 
 function parseTraceParent(traceParent: string | undefined): { traceId: string; spanId: string; traceFlags: number } | undefined {
@@ -328,7 +361,11 @@ export async function withOtelSpan<T>(
       span.setStatus({ code: Otel!.SpanStatusCode.OK });
       return result;
     } catch (error) {
-      span.recordException(exceptionFor(error));
+      // Not span.recordException(err) (#9162): that OTel API writes exception.message/exception.stacktrace
+      // straight onto the span event, bypassing otelSafeAttributes entirely -- a full unscrubbed stack trace
+      // would ship to whatever host the exporter targets. Build the same "exception" event by hand, routed
+      // through the shared scrubber, so it gets the identical scrub + length cap as every other attribute.
+      span.addEvent("exception", otelSafeAttributes(exceptionEventAttributes(error)));
       span.setStatus({ code: Otel!.SpanStatusCode.ERROR, message: statusMessage(error) });
       throw error;
     } finally {

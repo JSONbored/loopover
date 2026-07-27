@@ -10,6 +10,7 @@
   ],
   "assignees": ["JSONbored"],
   "branchPrefix": "renovate/",
+  "dependencyDashboardApproval": true,
   "dependencyDashboardTitle": "Dependency Dashboard",
   "enabledManagers": ["npm", "github-actions"],
   "minimumReleaseAge": "3 days",
@@ -22,7 +23,6 @@
       "semanticCommitScope": "deps"
     },
     {
-      "dependencyDashboardApproval": true,
       "matchManagers": ["npm"],
       "matchUpdateTypes": ["major"],
       "semanticCommitScope": "deps"

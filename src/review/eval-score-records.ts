@@ -117,7 +117,9 @@ export async function buildEvalScoreRecordsFromRulePrecision(precision: PublicRu
   return records;
 }
 
-export type EvalScoreRecordFilter = { subject?: string; since?: string };
+// `| undefined` is explicit (not just `?:`) because the root tsconfig sets exactOptionalPropertyTypes and
+// the route handler passes `c.req.query(...)`'s `string | undefined` results straight through.
+export type EvalScoreRecordFilter = { subject?: string | undefined; since?: string | undefined };
 
 /** Filter already-built records by subject id and/or a minimum `issuedAt` -- pure, used identically by the
  *  route handler and by tests, so the two can never apply different filtering logic. An invalid `since`

@@ -539,6 +539,34 @@ export const NotificationsMarkedSchema = z
   })
   .openapi("NotificationsMarked");
 
+// #9306: mirrors watchIssuesOutputSchema's `watching` shape (src/mcp/server.ts) for the REST surface.
+export const WatchSubscriptionSchema = z
+  .object({
+    repoFullName: z.string(),
+    labels: z.array(z.string()),
+  })
+  .openapi("WatchSubscription");
+
+export const WatchSubscriptionListSchema = z
+  .object({
+    watching: z.array(WatchSubscriptionSchema),
+  })
+  .openapi("WatchSubscriptionList");
+
+export const WatchSubscriptionChangeSchema = z
+  .object({
+    watching: z.array(WatchSubscriptionSchema),
+    changed: z.string(),
+  })
+  .openapi("WatchSubscriptionChange");
+
+export const WatchSubscriptionRequestSchema = z
+  .object({
+    repoFullName: z.string().min(3).max(200),
+    labels: z.array(z.string().min(1).max(100)).max(50).optional(),
+  })
+  .openapi("WatchSubscriptionRequest");
+
 export const ContributorOpportunitySchema = z
   .object({
     repoFullName: z.string(),

@@ -25,6 +25,9 @@ describe("OpenAPI contract", () => {
     expect(spec.paths["/v1/contributors/{login}/decision-pack"]).toBeDefined();
     expect(spec.paths["/v1/contributors/{login}/open-pr-monitor"]).toBeDefined();
     expect(spec.paths["/v1/contributors/{login}/pr-outcomes"]).toBeDefined();
+    expect(spec.paths["/v1/contributors/{login}/watches"]?.get).toBeDefined();
+    expect(spec.paths["/v1/contributors/{login}/watches"]?.post).toBeDefined();
+    expect(spec.paths["/v1/contributors/{login}/watches"]?.delete).toBeDefined();
     expect(spec.paths["/v1/contributors/{login}/repos/{owner}/{repo}/decision"]).toBeDefined();
     expect(spec.paths["/v1/preflight/pr"]).toBeDefined();
     expect(spec.paths["/v1/preflight/review-risk"]).toBeDefined();
@@ -101,6 +104,12 @@ describe("OpenAPI contract", () => {
     expect(spec.components?.schemas?.PullRequestMaintainerPacket).toBeDefined();
     expect(spec.components?.schemas?.PullRequestReviewability).toBeDefined();
     expect(spec.components?.schemas?.LocalBranchAnalysis).toBeDefined();
+    expect(spec.components?.schemas?.WatchSubscriptionList).toBeDefined();
+    expect(spec.components?.schemas?.WatchSubscriptionChange).toBeDefined();
+    expect(spec.components?.schemas?.WatchSubscriptionRequest).toBeDefined();
+    expect(JSON.stringify(spec.components?.schemas?.WatchSubscriptionList)).toContain("watching");
+    expect(JSON.stringify(spec.components?.schemas?.WatchSubscriptionChange)).toContain("changed");
+    expect(JSON.stringify(spec.components?.schemas?.WatchSubscriptionRequest)).toContain("repoFullName");
     expect(spec.components?.schemas?.RepoSettingsPreview).toBeDefined();
     expect(spec.components?.schemas?.InstallationRepair).toBeDefined();
     expect(spec.components?.schemas?.CommandPreviewResponse).toBeDefined();
@@ -161,5 +170,27 @@ describe("OpenAPI contract", () => {
         }
       }
     }
+  });
+
+  // #9306: /v1/contributors/{login}/watches (GET/POST/DELETE) mirrors loopover_watch_issues (watchIssuesOutputSchema
+  // in src/mcp/server.ts) but had no OpenAPI documentation. Pin all three verbs plus their response schema refs.
+  it("documents all three verbs of /v1/contributors/{login}/watches with matching response schemas", () => {
+    const spec = buildOpenApiSpec();
+    const refName = (schema: unknown) => (schema as { $ref?: string }).$ref?.split("/").pop();
+    const watches = spec.paths["/v1/contributors/{login}/watches"] as {
+      get?: { responses: Record<string, { content?: Record<string, { schema: unknown }> }> };
+      post?: { responses: Record<string, { content?: Record<string, { schema: unknown }> }>; requestBody?: { content: Record<string, { schema: unknown }> } };
+      delete?: { responses: Record<string, { content?: Record<string, { schema: unknown }> }>; requestBody?: { content: Record<string, { schema: unknown }> } };
+    };
+
+    expect(refName(watches.get?.responses["200"]?.content?.["application/json"]?.schema)).toBe("WatchSubscriptionList");
+    expect(refName(watches.post?.responses["200"]?.content?.["application/json"]?.schema)).toBe("WatchSubscriptionChange");
+    expect(refName(watches.post?.requestBody?.content["application/json"]?.schema)).toBe("WatchSubscriptionRequest");
+    expect(watches.post?.responses["400"]).toBeDefined();
+    expect(watches.post?.responses["403"]).toBeDefined();
+    expect(refName(watches.delete?.responses["200"]?.content?.["application/json"]?.schema)).toBe("WatchSubscriptionChange");
+    expect(refName(watches.delete?.requestBody?.content["application/json"]?.schema)).toBe("WatchSubscriptionRequest");
+    expect(watches.delete?.responses["400"]).toBeDefined();
+    expect(watches.delete?.responses["403"]).toBeDefined();
   });
 });

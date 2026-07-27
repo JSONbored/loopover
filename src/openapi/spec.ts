@@ -87,6 +87,9 @@ import {
   UpstreamDriftReportSchema,
   UpstreamRulesetSnapshotSchema,
   UpstreamStatusSchema,
+  WatchSubscriptionChangeSchema,
+  WatchSubscriptionListSchema,
+  WatchSubscriptionRequestSchema,
   WorkboardItemSchema,
 } from "./schemas";
 
@@ -839,6 +842,52 @@ export function buildOpenApiSpec() {
         content: { "application/json": { schema: NotificationsMarkedSchema } },
       },
       400: { description: "Invalid mark-read body" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/contributors/{login}/watches",
+    summary: "List contributor issue-watch subscriptions",
+    request: { params: z.object({ login: z.string() }) },
+    responses: {
+      200: {
+        description: "The contributor's own issue-watch subscriptions (self-scoped), mirroring loopover_watch_issues action=list.",
+        content: { "application/json": { schema: WatchSubscriptionListSchema } },
+      },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/contributors/{login}/watches",
+    summary: "Watch a repo for new grabbable issues",
+    request: {
+      params: z.object({ login: z.string() }),
+      body: { content: { "application/json": { schema: WatchSubscriptionRequestSchema } } },
+    },
+    responses: {
+      200: {
+        description: "Subscribes the contributor to repoFullName (optional label filter) and returns the updated watch list, mirroring loopover_watch_issues action=watch.",
+        content: { "application/json": { schema: WatchSubscriptionChangeSchema } },
+      },
+      400: { description: "Invalid watch request body" },
+      403: { description: "Forbidden when the repo cannot be watched by this login" },
+    },
+  });
+  registry.registerPath({
+    method: "delete",
+    path: "/v1/contributors/{login}/watches",
+    summary: "Unwatch a repo",
+    request: {
+      params: z.object({ login: z.string() }),
+      body: { content: { "application/json": { schema: WatchSubscriptionRequestSchema } } },
+    },
+    responses: {
+      200: {
+        description: "Removes the contributor's subscription to repoFullName and returns the updated watch list, mirroring loopover_watch_issues action=unwatch.",
+        content: { "application/json": { schema: WatchSubscriptionChangeSchema } },
+      },
+      400: { description: "Invalid watch request body" },
+      403: { description: "Forbidden when the repo cannot be watched by this login" },
     },
   });
   registry.registerPath({

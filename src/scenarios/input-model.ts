@@ -318,7 +318,7 @@ function assertPublicScenarioSnapshotSafe(snapshot: PublicScenarioInputSnapshot)
   if (FORBIDDEN_PUBLIC_LANGUAGE.test(serialized)) {
     throw new Error("Public scenario serialization still contains forbidden language.");
   }
-  /* v8 ignore end */
+  /* v8 ignore stop */
 }
 
 function validateBucketKinds(

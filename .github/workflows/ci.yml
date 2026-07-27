@@ -712,7 +712,7 @@ jobs:
       - name: Engine package tests
         if: ${{ github.event_name == 'push' || needs.changes.outputs.engine == 'true' }}
         run: npm run test --workspace @loopover/engine
-      # engine-coverage.mjs re-runs the suite (dist-test/**/*.test.js, left in place by the step above)
+      # engine-coverage.ts re-runs the suite (dist-test/**/*.test.js, left in place by the step above)
       # under c8, remapped through packages/loopover-engine/tsconfig.json's "sourceMap": true back to
       # packages/loopover-engine/src/**.ts paths -- the same "node:test suite invisible to vitest" shape
       # and c8 recipe as rees:coverage/control-plane:coverage above. The authoritative pass/fail for the

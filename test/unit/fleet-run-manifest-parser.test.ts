@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_FLEET_RUN_MANIFEST,
+  DEFAULT_FLEET_RUN_MANIFEST_REPO_MAX_CONCURRENT_WORKTREES,
   parseFleetRunManifest,
   parseFleetRunManifestContent,
 } from "../../packages/loopover-engine/src/index";
@@ -59,6 +60,30 @@ describe("FleetRunManifest parser (#4299)", () => {
     expect(w).toMatch(/invalid "owner\/repo" name/);
     expect(w).toMatch(/non-string, non-mapping/);
     expect(w).toMatch(/"maxConcurrentWorktrees" must be a positive whole number/);
+  });
+
+  it("derives both bare-string and object-form per-repo defaults from the dedicated per-repo constant, decoupled from the fleet-wide total default", () => {
+    // The per-repo default is its own source of truth, deliberately distinct from the fleet-wide total default.
+    // Both equal 1 today, so this pins the value once and lets the assertions below reference the constant rather
+    // than a bare `1` — a future change to the fleet-wide total default cannot silently move the per-repo default.
+    expect(DEFAULT_FLEET_RUN_MANIFEST_REPO_MAX_CONCURRENT_WORKTREES).toBe(1);
+
+    // The frozen DEFAULT_FLEET_RUN_MANIFEST.totalConcurrentWorktrees can't be mutated in place, so drive a
+    // non-default fleet-wide total through the manifest input instead: a bare-string entry (no budget of its own)
+    // and an object-form entry (budget omitted) must BOTH still fall back to the dedicated per-repo constant, not
+    // the manifest's fleet-wide total.
+    const parsed = parseFleetRunManifest({
+      repos: ["owner/a", { repoFullName: "owner/b" }],
+      totalConcurrentWorktrees: 7,
+    });
+    expect(parsed.present).toBe(true);
+    expect(parsed.manifest.totalConcurrentWorktrees).toBe(7);
+    expect(parsed.manifest.repos).toEqual([
+      { repoFullName: "owner/a", maxConcurrentWorktrees: DEFAULT_FLEET_RUN_MANIFEST_REPO_MAX_CONCURRENT_WORKTREES },
+      { repoFullName: "owner/b", maxConcurrentWorktrees: DEFAULT_FLEET_RUN_MANIFEST_REPO_MAX_CONCURRENT_WORKTREES },
+    ]);
+    // The per-repo default did not inherit the non-default fleet-wide total.
+    expect(parsed.manifest.repos.every((r) => r.maxConcurrentWorktrees !== parsed.manifest.totalConcurrentWorktrees)).toBe(true);
   });
 
   it("falls a non-list repos field and a sub-1 total budget back to defaults with warnings", () => {

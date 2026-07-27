@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { StreamingText } from "./components/streaming-text";
-import type { ChunkSource } from "./lib/use-streaming-text";
+import { StreamingText } from "./streaming-text";
+import type { ChunkSource } from "../hooks/use-streaming-text";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -39,7 +39,8 @@ function deferredSource() {
   }
   return {
     source: (() => gen()) as ChunkSource,
-    push: async (chunk: string) => act(async () => (queued.push(chunk), wake())),
+    push: async (chunk: string) =>
+      act(async () => (queued.push(chunk), wake())),
     finish: async () => act(async () => ((finished = true), wake())),
   };
 }
@@ -50,7 +51,9 @@ describe("StreamingText (#6516)", () => {
   it("renders an idle paragraph with no text when given no source", () => {
     mockReducedMotion(false);
     const { container } = render(<StreamingText source={null} />);
-    expect(container.querySelector("p")?.getAttribute("data-status")).toBe("idle");
+    expect(container.querySelector("p")?.getAttribute("data-status")).toBe(
+      "idle",
+    );
     expect(container.textContent).toBe("");
   });
 
@@ -75,7 +78,11 @@ describe("StreamingText (#6516)", () => {
     expect(caret()).toBeNull(); // reduced motion → no animated caret even mid-stream
 
     await src.finish();
-    await waitFor(() => expect(document.querySelector("p")?.getAttribute("data-status")).toBe("done"));
+    await waitFor(() =>
+      expect(document.querySelector("p")?.getAttribute("data-status")).toBe(
+        "done",
+      ),
+    );
     expect(document.querySelector("p")?.textContent).toContain("no caret here");
   });
 });

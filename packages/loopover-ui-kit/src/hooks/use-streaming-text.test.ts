@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useStreamingText, type ChunkSource } from "./lib/use-streaming-text";
+import { useStreamingText, type ChunkSource } from "./use-streaming-text";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -32,7 +32,8 @@ function deferredSource() {
   }
   return {
     source: (() => gen()) as ChunkSource,
-    push: async (chunk: string) => act(async () => (queued.push(chunk), wake())),
+    push: async (chunk: string) =>
+      act(async () => (queued.push(chunk), wake())),
     fail: async (err: Error) => act(async () => ((failure = err), wake())),
     finish: async () => act(async () => ((finished = true), wake())),
   };
@@ -41,7 +42,11 @@ function deferredSource() {
 describe("useStreamingText (#6516)", () => {
   it("starts idle when given no source", () => {
     const { result } = renderHook(() => useStreamingText(null));
-    expect(result.current).toMatchObject({ text: "", status: "idle", error: null });
+    expect(result.current).toMatchObject({
+      text: "",
+      status: "idle",
+      error: null,
+    });
   });
 
   it("accumulates chunks incrementally across renders, then reaches done", async () => {
@@ -77,9 +82,12 @@ describe("useStreamingText (#6516)", () => {
 
   it("starting a new source stops the previous one; its late chunk never reaches state", async () => {
     const first = deferredSource();
-    const { result, rerender } = renderHook(({ s }: { s: ChunkSource }) => useStreamingText(s), {
-      initialProps: { s: first.source },
-    });
+    const { result, rerender } = renderHook(
+      ({ s }: { s: ChunkSource }) => useStreamingText(s),
+      {
+        initialProps: { s: first.source },
+      },
+    );
     await first.push("old");
     await waitFor(() => expect(result.current.text).toBe("old"));
 

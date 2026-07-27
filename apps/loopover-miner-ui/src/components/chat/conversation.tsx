@@ -3,10 +3,10 @@ import { useCallback, useRef, useState } from "react";
 import { Avatar, AvatarFallback } from "@loopover/ui-kit/components/avatar";
 
 import { ChatComposer } from "@/components/chat-composer";
-import { StreamingText } from "@/components/streaming-text";
+import { StreamingText } from "@loopover/ui-kit/components/streaming-text";
 import { MessageList } from "@/components/chat/message-list";
 import type { ChatMessage } from "@/components/chat/fixtures";
-import type { ChunkSource } from "@/lib/use-streaming-text";
+import type { ChunkSource } from "@loopover/ui-kit/hooks/use-streaming-text";
 import { streamChat, type ChatWireMessage } from "@/lib/chat-stream";
 import {
   handlePortfolioQueueChatCommand,

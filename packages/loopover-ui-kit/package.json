@@ -32,6 +32,10 @@
       "types": "./dist/hooks/use-mobile.d.ts",
       "default": "./dist/hooks/use-mobile.js"
     },
+    "./hooks/use-streaming-text": {
+      "types": "./dist/hooks/use-streaming-text.d.ts",
+      "default": "./dist/hooks/use-streaming-text.js"
+    },
     "./components/*": {
       "types": "./dist/components/*.d.ts",
       "default": "./dist/components/*.js"

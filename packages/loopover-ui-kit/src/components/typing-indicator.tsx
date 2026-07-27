@@ -12,7 +12,12 @@ export function TypingIndicator({
   if (!composing) return null;
   const label = `${authorName ?? "Assistant"} is typing…`;
   return (
-    <div role="status" aria-live="polite" aria-label={label} className="flex items-center gap-1.5 px-3 py-2">
+    <div
+      role="status"
+      aria-live="polite"
+      aria-label={label}
+      className="flex items-center gap-1.5 px-3 py-2"
+    >
       <span className="sr-only">{label}</span>
       <span
         aria-hidden="true"

@@ -366,6 +366,16 @@ export type GitHubWebhookPayload = {
         from?: string;
       };
     };
+    /** #9055: present on a `pull_request.edited` webhook when the CONTRIBUTOR retargeted the PR's base branch.
+     *  `from.ref` is the PREVIOUS base; the current one is `pull_request.base.ref` on this same payload. The
+     *  head SHA does not change on a retarget, so nothing else about this payload signals that everything
+     *  computed so far (diff, review, CI, guardrail path matching, migration-collision detection) was
+     *  computed against a base that no longer applies. */
+    base?: {
+      from?: {
+        ref?: string;
+      };
+    };
     /** #9056: `repository.transferred` carries the PREVIOUS owner here (the repo name itself is unchanged),
      *  so the old full name is `changes.owner.from.{organization,user}.login` + the current repo name. */
     owner?: {

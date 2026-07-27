@@ -410,6 +410,25 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect(fetchPullRequestFreshness).toHaveBeenCalledWith(env, expect.objectContaining({ expectedHeadSha: "reviewed-sha" }));
   });
 
+  // #9055: a contributor can retarget a PR's base with the head unchanged, so nothing else in the freshness
+  // check sees anything wrong. The executor's live pre-mutation check is the last chance to catch it, and it
+  // must be given something to check against.
+  it("threads the context's expectedBaseRef into the live freshness check before a merge (#9055)", async () => {
+    const env = createTestEnv({});
+    await executeAgentMaintenanceActions(env, ctx({ expectedBaseRef: "main" }), [merge]);
+    expect(fetchPullRequestFreshness).toHaveBeenCalledWith(env, expect.objectContaining({ expectedBaseRef: "main" }));
+  });
+
+  it("denies a merge when the live base has moved even though the head is current (#9055)", async () => {
+    const env = createTestEnv({});
+    vi.mocked(fetchPullRequestFreshness).mockResolvedValueOnce({ status: "stale", reason: "base_changed", expectedHeadSha: "sha7", liveHeadSha: "sha7", liveState: "open" });
+
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ expectedBaseRef: "main" }), [merge]);
+
+    expect(outcomes[0]).toMatchObject({ actionClass: "merge", outcome: "denied", detail: expect.stringContaining("base branch changed") });
+    expect(mergePullRequest).not.toHaveBeenCalled();
+  });
+
   it("LIVE approve pins the review to the action's reviewed head (expectedHeadSha) over the context head, falling back to an empty body (#2262)", async () => {
     const env = createTestEnv({});
     // A staged approve replayed on accept carries the REVIEWED head — same pin as merge already has — and this

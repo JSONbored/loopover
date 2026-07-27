@@ -272,4 +272,43 @@ describe("PR freshness guards", () => {
       unavailableDetail: expect.any(String),
     });
   });
+
+  // #9055: a contributor can retarget a PR's base with the head UNCHANGED — CI green against the old base,
+  // review computed against it, no new commit anywhere. Every other freshness check (head, state, draft)
+  // reports nothing wrong, because none of them look at the base. This is the one check that does.
+  describe("detects a base retarget the head/state checks cannot see (#9055)", () => {
+    it("is current when the live base matches what the caller expected", () => {
+      const result = classifyPullRequestFreshness({ state: "open", head: { sha: "sha1" }, base: { ref: "main" } }, "sha1", { expectedBaseRef: "main" });
+      expect(result).toEqual({ status: "current", liveHeadSha: "sha1", liveState: "open", liveLabels: [] });
+    });
+
+    it("goes stale when the live base has moved, even though the head has not", () => {
+      const result = classifyPullRequestFreshness({ state: "open", head: { sha: "sha1" }, base: { ref: "release/2.0" } }, "sha1", { expectedBaseRef: "main" });
+      expect(result).toMatchObject({ status: "stale", reason: "base_changed", liveHeadSha: "sha1" });
+      expect(pullRequestFreshnessDetail(result)).toContain("base branch changed");
+    });
+
+    it("does not check the base when the caller supplied no expectation — every existing caller is unaffected", () => {
+      const result = classifyPullRequestFreshness({ state: "open", head: { sha: "sha1" }, base: { ref: "release/2.0" } }, "sha1");
+      expect(result.status).toBe("current");
+    });
+
+    it("threads expectedBaseRef through the live fetch path", async () => {
+      const env = createTestEnv();
+      setInstallationTokenStore({
+        get: async () => ({ token: "tok", expiresAtMs: Date.now() + 10 * 60_000 }),
+        set: async () => {},
+      });
+      vi.stubGlobal("fetch", async () => Response.json({ state: "open", head: { sha: "sha1" }, base: { ref: "release/2.0" } }));
+
+      const result = await fetchPullRequestFreshness(env, {
+        installationId: 123,
+        repoFullName: "owner/repo",
+        pullNumber: 7,
+        expectedHeadSha: "sha1",
+        expectedBaseRef: "main",
+      });
+      expect(result).toMatchObject({ status: "stale", reason: "base_changed" });
+    });
+  });
 });

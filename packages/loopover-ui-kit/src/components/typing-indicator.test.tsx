@@ -1,7 +1,7 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { TypingIndicator } from "./typing-indicator";
+import { TypingIndicator } from "./typing-indicator.js";
 
 // Regression for #8303: the three animate-bounce dots must each pair their animation with
 // motion-reduce:animate-none so a user with the OS "reduce motion" preference set sees a static indicator

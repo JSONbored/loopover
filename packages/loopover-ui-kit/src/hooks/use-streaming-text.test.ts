@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useStreamingText, type ChunkSource } from "./use-streaming-text";
+import { useStreamingText, type ChunkSource } from "./use-streaming-text.js";
 
 afterEach(() => vi.restoreAllMocks());
 

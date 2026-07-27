@@ -862,6 +862,47 @@ export function demoteEvidenceAbsenceBlockers(review: ModelReview, bodyTruncated
   };
 }
 
+/** #8833: a WHOLE-PR "this change ships no tests" claim, in either direction ("no tests were added" /
+ *  "tests are missing" / "untested"). Whether a PR carries test-path evidence is decided by the engine's own
+ *  path classifier (signals/test-evidence.ts `isTestPath`) and already owned by the deterministic
+ *  `missing_test_evidence` finding — it is not a judgment call, so a model must never be the one to answer it.
+ *
+ *  Deliberately narrow, and narrower than it first looks: the negative lookahead drops any claim that NARROWS
+ *  to a specific target ("no tests for the nullish branch", "no test covers the error path"). That is a real,
+ *  still-legitimate judgment about coverage DEPTH — which the classifier cannot check and this demotion must
+ *  therefore leave standing — as opposed to a claim about test-file EXISTENCE, which the classifier owns
+ *  outright. */
+export const TEST_EVIDENCE_ABSENCE_PATTERN =
+  /\b(?:no|zero|none|missing|lacks?|lacking|without)\s*(?:any\s+|new\s+|added\s+|accompanying\s+|corresponding\s+|associated\s+)?(?:unit\s+|integration\s+|regression\s+|automated\s+)?tests?\b(?!\s+(?:for|covering|covers?|around|on|that|which|exercis\w+|in|of|against|verif\w+|assert\w+)\b)|\buntested\b|\bnot\s+tested\b|\btests?\s+(?:are|is|were|was)\s+(?:missing|absent|not\s+(?:included|provided|added))\b/i;
+
+/** #8833: demote a whole-PR test-absence blocker when the deterministic classifier CONTRADICTS it — i.e. this
+ *  PR demonstrably DOES change test paths. Mirrors demoteEvidenceAbsenceBlockers exactly: it fires only in the
+ *  arm where the model's claim is provably a FACT ERROR, never where the claim might still be true, so a
+ *  genuine "this PR ships no tests" blocker on a genuinely test-free PR is untouched and keeps its severity.
+ *  Demotes to a nit rather than dropping, so the observation survives for the human — it just can no longer
+ *  close a PR on a fact the engine already decided the other way. PURE. */
+export function demoteTestEvidenceAbsenceBlockers(review: ModelReview, prHasTestEvidence: boolean): { review: ModelReview; demoted: string[] } {
+  if (!prHasTestEvidence) return { review, demoted: [] };
+  const demoted = review.blockers.filter((blocker) => TEST_EVIDENCE_ABSENCE_PATTERN.test(blocker));
+  if (demoted.length === 0) return { review, demoted };
+  return {
+    review: {
+      ...review,
+      blockers: review.blockers.filter((blocker) => !TEST_EVIDENCE_ABSENCE_PATTERN.test(blocker)),
+      nits: [...review.nits, ...demoted.map((claim) => `${claim} (demoted: this PR changes test paths — whether test evidence exists is decided by the deterministic test-path classifier, not by review)`)],
+    },
+    demoted,
+  };
+}
+
+/** #8833: whether a PR carries ANY test-path evidence, from the SAME whole-PR semantics
+ *  buildTestEvidencePromptSection and slop.ts's buildMissingTestEvidenceFinding already use — one changed
+ *  test path is evidence for the PR. Exported so the demotion's arming condition and the prompt's own
+ *  test-evidence section can never disagree about the fact. PURE. */
+export function prHasTestPathEvidence(files: ReadonlyArray<{ path: string }> | null | undefined): boolean {
+  return (files ?? []).some((file) => Boolean(file.path) && isTestPath(file.path));
+}
+
 /** Parse a model's JSON review into a normalized {@link ModelReview}, or null when unparseable. */
 export function parseModelReview(text: string): ModelReview | null {
   const jsonText = extractLastJsonObject(text);
@@ -1351,6 +1392,8 @@ async function runWorkersOpinion(
   images?: readonly AiContentBlock[] | undefined,
   // #8961: true when the PR description exceeded the prompt window — arms the evidence-absence demotion.
   bodyTruncated = false,
+  // #8833: true when the PR changes at least one test path — arms the test-absence demotion.
+  prHasTestEvidence = false,
 ): Promise<ReviewerOpinionOutcome> {
   const ai = env.AI as unknown as AiRunner | undefined;
   if (!ai || typeof ai.run !== "function") return { review: null };
@@ -1458,12 +1501,17 @@ async function runWorkersOpinion(
         const demotion = parsedRaw ? demoteCiClaimBlockers(parsedRaw) : null;
         // #8961: same guarantee for evidence-absence claims against a truncated description.
         const evidenceDemotion = demotion ? demoteEvidenceAbsenceBlockers(demotion.review, bodyTruncated) : null;
-        const parsed = evidenceDemotion?.review ?? null;
+        // #8833: same guarantee for whole-PR test-absence claims the path classifier already contradicts.
+        const testEvidenceDemotion = evidenceDemotion ? demoteTestEvidenceAbsenceBlockers(evidenceDemotion.review, prHasTestEvidence) : null;
+        const parsed = testEvidenceDemotion?.review ?? null;
         if (demotion && demotion.demoted.length > 0) {
           console.warn(JSON.stringify({ level: "warn", event: "ai_review_ci_claim_demoted", model, count: demotion.demoted.length }));
         }
         if (evidenceDemotion && evidenceDemotion.demoted.length > 0) {
           console.warn(JSON.stringify({ level: "warn", event: "ai_review_evidence_absence_demoted", model, count: evidenceDemotion.demoted.length }));
+        }
+        if (testEvidenceDemotion && testEvidenceDemotion.demoted.length > 0) {
+          console.warn(JSON.stringify({ level: "warn", event: "ai_review_test_evidence_absence_demoted", model, count: testEvidenceDemotion.demoted.length }));
         }
         if (parsed && parsed.assessment.trim() !== "") {
           diagnostics.push({ model, attempt, status: "parsed", responseChars: text.length, hasJsonObject: Boolean(extractLastJsonObject(text)), ...usageFields });
@@ -1826,6 +1874,7 @@ async function runProviderReview(
   maxTokens: number,
   images?: readonly AiContentBlock[] | undefined,
   bodyTruncated = false, // #8961: arms the evidence-absence demotion, same contract as runWorkersOpinion
+  prHasTestEvidence = false, // #8833: arms the test-absence demotion, same contract as runWorkersOpinion
 ): Promise<ProviderReviewOutcome> {
   const { text, usage, failure } = await callAiProvider(
     providerKey,
@@ -1849,7 +1898,12 @@ async function runProviderReview(
   if (providerEvidenceDemotion && providerEvidenceDemotion.demoted.length > 0) {
     console.warn(JSON.stringify({ level: "warn", event: "ai_review_evidence_absence_demoted", provider: providerKey.provider, count: providerEvidenceDemotion.demoted.length }));
   }
-  const review = providerEvidenceDemotion?.review ?? null;
+  // #8833: same test-absence enforcement as the Workers path — no parse route escapes it.
+  const providerTestEvidenceDemotion = providerEvidenceDemotion ? demoteTestEvidenceAbsenceBlockers(providerEvidenceDemotion.review, prHasTestEvidence) : null;
+  if (providerTestEvidenceDemotion && providerTestEvidenceDemotion.demoted.length > 0) {
+    console.warn(JSON.stringify({ level: "warn", event: "ai_review_test_evidence_absence_demoted", provider: providerKey.provider, count: providerTestEvidenceDemotion.demoted.length }));
+  }
+  const review = providerTestEvidenceDemotion?.review ?? null;
   return {
     review,
     diagnostic: {
@@ -2607,6 +2661,9 @@ export async function runLoopOverAiReview(
   // #8961: pinned to the SAME body buildUserPrompt just sliced, so the demotion can never disagree with
   // the prompt about whether the description was cut.
   const bodyTruncated = (promptInput.body?.length ?? 0) > PR_BODY_PROMPT_LIMIT;
+  // #8833: read from the SAME changedFiles buildUserPrompt's test-evidence section is built from, so the
+  // demotion and the prompt can never disagree about whether this PR carries test-path evidence.
+  const prHasTestEvidence = prHasTestPathEvidence(promptInput.changedFiles);
   // Grounding-discipline SYSTEM suffix (convergence, flag-gated). When the caller supplied grounding, the
   // reviewers are told to verify claims against the attached CI/files; otherwise this is REVIEW_SYSTEM_PROMPT
   // unchanged (byte-identical). Computed from `promptInput` so it travels with the (possibly defanged) input.
@@ -2757,6 +2814,7 @@ export async function runLoopOverAiReview(
       maxTokens,
       undefined,
       bodyTruncated,
+      prHasTestEvidence,
     );
     advisoryReview = outcome.review;
     byokFailure = outcome.failure;
@@ -2775,6 +2833,7 @@ export async function runLoopOverAiReview(
       aiRunCorrelation,
       undefined,
       bodyTruncated,
+      prHasTestEvidence,
     );
     advisoryReview = outcome.review;
     if (outcome.fallbackNote) fallbackNotes.push(outcome.fallbackNote);
@@ -2805,6 +2864,7 @@ export async function runLoopOverAiReview(
               aiRunCorrelation,
               undefined,
               bodyTruncated,
+              prHasTestEvidence,
             )
           : Promise.resolve<ReviewerOpinionOutcome>({ review: advisoryReview }),
         runWorkersOpinion(
@@ -2819,6 +2879,7 @@ export async function runLoopOverAiReview(
           aiRunCorrelation,
           undefined,
           bodyTruncated,
+          prHasTestEvidence,
         ),
       ]);
       if (a.fallbackNote) fallbackNotes.push(a.fallbackNote);
@@ -2885,6 +2946,7 @@ export async function runLoopOverAiReview(
             aiRunCorrelation,
             undefined,
             bodyTruncated,
+            prHasTestEvidence,
           )
         : ({ review: advisoryReview } as ReviewerOpinionOutcome);
       if (a.fallbackNote) fallbackNotes.push(a.fallbackNote);

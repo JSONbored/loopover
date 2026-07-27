@@ -51,7 +51,11 @@ export async function recordLedgerAnchorAttempt(env: Env, attempt: LedgerAnchorA
   const payloadJson = JSON.stringify(attempt.payload);
   const backendRef = attempt.status === "ok" ? JSON.stringify(attempt.backendRef) : null;
   const proofR2Key = attempt.status === "ok" ? attempt.proofR2Key : null;
-  const error = attempt.status === "failed" ? errorMessage(attempt.error).slice(0, 500) : null;
+  // A backend's own error is `unknown`: it may already be a hand-built descriptive string (the common case --
+  // "Rekor responded 429: ...") or a genuine thrown Error (a network exception) -- errorMessage() alone only
+  // recognizes the latter, collapsing an already-good string to its generic fallback. Use the string as-is;
+  // only fall back to errorMessage()'s Error-extraction for anything else.
+  const error = attempt.status === "failed" ? (typeof attempt.error === "string" ? attempt.error : errorMessage(attempt.error)).slice(0, 500) : null;
 
   await env.DB.prepare(
     `INSERT INTO decision_ledger_anchors

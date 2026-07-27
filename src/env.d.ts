@@ -615,6 +615,12 @@ declare global {
      *  pre-#9267 posture, so an unprovisioned key degrades honestly instead of failing. See
      *  review/ledger-anchor.ts. */
     LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY?: string;
+    /** External ledger anchoring (#9272, epic #9267): the Rekor v2 shard base URL to submit anchors to.
+     *  Rekor shards ANNUALLY (log2025-1, log2026-1, ...) and the project's own guidance is explicit: never
+     *  hardcode a log URL. Defaults to the current shard as of when this was written if unset — an operator
+     *  updates this var at the next rotation rather than needing a code change. See
+     *  review/ledger-anchor-rekor.ts. */
+    LOOPOVER_LEDGER_ANCHOR_REKOR_SHARD_URL?: string;
     /** Convergence (port): public OAuth draft-submission flow ported from reviewbot. When truthy, the
      *  /v1/drafts endpoints accept a contributor draft -> GitHub OAuth -> fork PR against the content repo.
      *  Default OFF — unset/false makes every draft endpoint 404 and writes nothing (byte-identical worker). */

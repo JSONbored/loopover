@@ -1467,22 +1467,43 @@ function buildSlopGateBlocker(policy: GateCheckPolicy): AdvisoryFinding | null {
   };
 }
 
+// #9167: fail CLOSED on a value that isn't one of the three real modes, matching the rest of this
+// codebase's fail-closed defaults -- every legitimate caller already supplies its own `?? "advisory"`
+// default before reaching here (see every `gateMode(policy.xGateMode ?? "advisory")` call site above), so
+// this branch is only ever reached for a truly malformed value (e.g. a caller that bypassed
+// GateRuleMode's compile-time union via an untyped/JSON-decoded config). Previously coerced to
+// "advisory" -- a fail-OPEN default in a codebase whose other defaults are carefully fail-closed. This is
+// currently defense-in-depth only: `normalizeOptionalGateMode` (focus-manifest.ts) already rejects a
+// typo'd mode to `null` before it reaches a real policy, and the API path is a zod enum -- but the safety
+// of this function should not depend on every future caller remembering to normalize first.
 function gateMode(value: GateRuleMode | null | undefined): GateRuleMode {
-  return value === "off" || value === "block" ? value : "advisory";
+  if (value === "off" || value === "block" || value === "advisory") return value;
+  return "block";
 }
 
-// #551: the master merge-readiness composite. When mergeReadinessGateMode is set (advisory/block) it
-// OVERRIDES the enforceable sub-gates to its mode so they roll into one pass/fail; when off, the policy is
-// returned unchanged and each sub-gate keeps its own mode. Readiness/quality is intentionally excluded:
-// readiness is always advisory/informational, even if an older config still says `readiness: block`.
+// #551: the master merge-readiness composite. When mergeReadinessGateMode is set (advisory/block) it fills
+// in the enforceable sub-gates that the operator left UNSET, so a maintainer who never touched
+// linked-issue/duplicate/slop individually can flip one switch instead of three; when off, the policy is
+// returned unchanged. Readiness/quality is intentionally excluded: readiness is always advisory/
+// informational, even if an older config still says `readiness: block`.
+//
+// #9167: this used to unconditionally OVERRIDE all three sub-gates to the composite's mode, which meant
+// `mergeReadinessGateMode: "advisory"` silently DEMOTED an explicitly-configured `linkedIssueGateMode:
+// "block"` (etc.) down to advisory -- an operator who read their own manifest back would see
+// `linkedIssueGateMode: "block"` and reasonably conclude the gate was still enforced. Now the composite
+// only fills in a sub-gate mode that was left unset; an explicitly-authored mode (whether stricter or
+// looser than the composite) always wins. This is the least-surprising semantic: your own explicit
+// setting is never silently overridden by a convenience default for the gates you didn't configure.
+// config-lint.ts's mergeReadinessCompositeWarnings flags the case where an operator sets both, so the
+// authored-vs-effective distinction is never silently invisible even though it's no longer a demotion.
 function applyMergeReadinessGate(policy: GateCheckPolicy): GateCheckPolicy {
   const composite = gateMode(policy.mergeReadinessGateMode ?? "off");
   if (composite === "off") return policy;
   return {
     ...policy,
-    linkedIssueGateMode: composite,
-    duplicatePrGateMode: composite,
-    slopGateMode: composite,
+    linkedIssueGateMode: policy.linkedIssueGateMode ?? composite,
+    duplicatePrGateMode: policy.duplicatePrGateMode ?? composite,
+    slopGateMode: policy.slopGateMode ?? composite,
   };
 }
 

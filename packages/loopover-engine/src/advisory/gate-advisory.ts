@@ -767,18 +767,28 @@ function buildSlopGateBlocker(policy: GateCheckPolicy): AdvisoryFinding | null {
   };
 }
 
+// #9167: fail CLOSED on a value that isn't one of the three real modes (mirrors the host twin,
+// src/rules/advisory.ts) -- every legitimate caller already supplies its own `?? "advisory"` default
+// before reaching here, so this branch is only ever reached for a truly malformed value. Previously
+// coerced to "advisory" (fail-open); defense-in-depth only today (normalizeOptionalGateMode already
+// rejects a typo'd mode upstream), but the safety of this function should not depend on caller discipline.
 function gateMode(value: GateRuleMode | null | undefined): GateRuleMode {
-  return value === "off" || value === "block" ? value : "advisory";
+  if (value === "off" || value === "block" || value === "advisory") return value;
+  return "block";
 }
 
+// #9167: the merge-readiness composite now only FILLS IN a sub-gate mode left unset -- it no longer
+// overrides an explicitly-configured mode (mirrors the host twin's fix; see that file's comment for the
+// full rationale). `mergeReadinessGateMode: "advisory"` can no longer silently demote an explicit
+// `linkedIssueGateMode: "block"` down to advisory.
 function applyMergeReadinessGate(policy: GateCheckPolicy): GateCheckPolicy {
   const composite = gateMode(policy.mergeReadinessGateMode ?? "off");
   if (composite === "off") return policy;
   return {
     ...policy,
-    linkedIssueGateMode: composite,
-    duplicatePrGateMode: composite,
-    slopGateMode: composite,
+    linkedIssueGateMode: policy.linkedIssueGateMode ?? composite,
+    duplicatePrGateMode: policy.duplicatePrGateMode ?? composite,
+    slopGateMode: policy.slopGateMode ?? composite,
   };
 }
 

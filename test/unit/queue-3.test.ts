@@ -910,6 +910,29 @@ describe("queue processors", () => {
     expect(paused).toBeFalsy();
   });
 
+  it("pause (#9312): a redelivered @loopover pause (same deliveryId) short-circuits — the pause is recorded once, no second confirmation", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await seedPausePr(env);
+    let posts = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "admin" });
+      if (url.includes("/issues/77/comments") && (init?.method ?? "GET") === "POST") {
+        posts += 1;
+        return Response.json({ id: 5 }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    // GitHub redelivery: identical deliveryId + payload arrive twice (queue max_retries / dlq re-drive).
+    const job = plannerWebhook("@loopover pause flaky CI", "maintainer1", pauseIssue);
+    await processJob(env, job);
+    await processJob(env, job);
+    expect(posts).toBe(1); // the replay posts no second confirmation
+    const paused = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("github_app.autoreview_paused").first<{ n: number }>();
+    expect(paused?.n).toBe(1);
+  });
+
   const reviewIssue = { number: 78, title: "Draft feature for review command", state: "open", user: { login: "reporter" }, body: "b", pull_request: { url: "https://api.github.com/repos/JSONbored/gittensory/pulls/78" } };
   async function seedReviewPr(env: Env, options: { draft?: boolean } = {}): Promise<void> {
     await setupPlannerRepo(env);
@@ -966,6 +989,33 @@ describe("queue processors", () => {
     // path a scheduled sweep would take (#2163's hard constraint: never reimplements/flips the disposition).
     const settingsRow = await env.DB.prepare("select 1 from repository_settings where repo_full_name = ?").bind("JSONbored/gittensory").first();
     expect(settingsRow).toBeFalsy();
+  });
+
+  it("review (#9312): a redelivered @loopover review (same deliveryId) short-circuits — the re-review is dispatched exactly once", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await seedReviewPr(env);
+    let confirmationPosts = 0;
+    let liveResyncFetches = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/issues/78/comments") && method === "POST") {
+        const body = init?.body ? JSON.parse(init.body.toString()).body : "";
+        if (String(body).includes("Re-review triggered by")) confirmationPosts += 1;
+        return Response.json({ id: 78 }, { status: 201 });
+      }
+      // reReviewStoredPullRequest's own live-head resync GETs the PR fresh — only reached once the dispatch runs.
+      if (url.endsWith("/pulls/78") && method === "GET") liveResyncFetches += 1;
+      return reviewCommandFetchStub()(input, init);
+    });
+    // GitHub redelivery: the identical deliveryId + payload arrive a second time (queue max_retries / dlq re-drive).
+    const job = plannerWebhook("@loopover review", "maintainer1", reviewIssue);
+    await processJob(env, job);
+    await processJob(env, job);
+    expect(confirmationPosts).toBe(1); // the replay posts no second confirmation
+    expect(liveResyncFetches).toBe(1); // and dispatches no second reReviewStoredPullRequest (no repeat AI-review spend)
+    const completed = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("github_app.review_command_completed").first<{ n: number }>();
+    expect(completed?.n).toBe(1);
   });
 
   it("review: the 're-review' alias resolves to the same handler", async () => {
@@ -1137,6 +1187,30 @@ describe("queue processors", () => {
     // The core bug fix (#2165): hasAutoreviewPausedMarker now reads the MOST RECENT of {paused, resumed}, so
     // resume actually supersedes the earlier pause instead of silently no-opping forever.
     expect(await isCurrentlyPaused(env, "JSONbored/gittensory", 77)).toBe(false);
+  });
+
+  it("resume (#9312): a redelivered @loopover resume (same deliveryId) short-circuits — resumed is recorded once, no second confirmation", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await seedPausePr(env);
+    let posts = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "admin" });
+      if (url.includes("/issues/77/comments") && (init?.method ?? "GET") === "POST") {
+        posts += 1;
+        return Response.json({ id: 6 }, { status: 201 });
+      }
+      if (url.includes("/issues/77/comments")) return Response.json([]);
+      return new Response("not found", { status: 404 });
+    });
+    // GitHub redelivery: identical deliveryId + payload arrive twice (queue max_retries / dlq re-drive).
+    const job = plannerWebhook("@loopover resume", "maintainer1", pauseIssue);
+    await processJob(env, job);
+    await processJob(env, job);
+    expect(posts).toBe(1); // the replay posts no second confirmation
+    const resumed = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("github_app.autoreview_resumed").first<{ n: number }>();
+    expect(resumed?.n).toBe(1);
   });
 
   it("resume: a LATER pause after a resume still re-pauses correctly (ordering, not just existence)", async () => {

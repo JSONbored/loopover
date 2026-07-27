@@ -4108,6 +4108,34 @@ describe("queue processors", () => {
       expect(JSON.parse(explained?.metadata_json ?? "{}")).toMatchObject({ findingCode: "ai_review_split", explainedCount: 1 });
     });
 
+    it("#9312: a redelivered @loopover explain (same deliveryId) short-circuits — the explanation is posted exactly once", async () => {
+      const repoFullName = "JSONbored/explain-9312-redeliver";
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await seedExplainPr(env, repoFullName, 9312, "explain-9312-redeliver");
+      await putCachedAiReview(env, repoFullName, 9312, "explain-9312-redeliver", "advisory", {
+        notes: "The cached AI review found a public issue.",
+        reviewerCount: 2,
+        findings: [{ code: "ai_review_split", severity: "warning", title: "AI reviewers disagree", detail: "One reviewer flagged a likely defect that needs maintainer triage." }],
+      });
+      let posts = 0;
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
+        if (url.includes("/issues/9312/comments") && method === "GET") return Response.json([]);
+        if (url.includes("/issues/9312/comments") && method === "POST") { posts += 1; return Response.json({ id: 93120 }); }
+        return new Response("not found", { status: 404 });
+      });
+      // GitHub redelivery: the identical deliveryId + payload arrive twice (queue max_retries / dlq re-drive).
+      const job = explainWebhook(repoFullName, 9312, "@loopover explain ai_review_split", "maintainer");
+      await processJob(env, job);
+      await processJob(env, job);
+      expect(posts).toBe(1); // the replay re-posts no explanation comment
+      const explained = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("github_app.finding_explained").first<{ n: number }>();
+      expect(explained?.n).toBe(1);
+    });
+
     it("echoes a deterministic finding's rationale AND its suggested action", async () => {
       const repoFullName = "JSONbored/explain-2169-action";
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
@@ -4352,6 +4380,37 @@ describe("queue processors", () => {
       const audited = await env.DB.prepare("select outcome, metadata_json from audit_events where event_type = ?").bind("github_app.e2e_tests_generation").first<{ outcome: string; metadata_json: string }>();
       expect(audited?.outcome).toBe("completed");
       expect(JSON.parse(audited?.metadata_json ?? "{}")).toMatchObject({ status: "ok", byok: false });
+    });
+
+    it("#9312: a redelivered @loopover generate-tests (same deliveryId) short-circuits — the model runs and posts exactly once", async () => {
+      const repoFullName = "JSONbored/gen-tests-9312-redeliver";
+      let runs = 0;
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run: async () => { runs += 1; return { response: "```typescript\n" + VALID_TEST_SOURCE + "\n```" }; } } as unknown as Ai,
+        LOOPOVER_REVIEW_E2E_TESTS: "true",
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+      });
+      await seedGenerateTestsPr(env, repoFullName, 9312, "gen-tests-9312-redeliver");
+      let posts = 0;
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
+        if (url.includes("/issues/9312/comments") && method === "GET") return Response.json([]);
+        if (url.includes("/issues/9312/comments") && method === "POST") { posts += 1; return Response.json({ id: 93120 }); }
+        return new Response("not found", { status: 404 });
+      });
+      // GitHub redelivery: the identical deliveryId + payload arrive twice (queue max_retries / dlq re-drive).
+      const job = generateTestsWebhook(repoFullName, 9312, "maintainer", { association: "MEMBER" });
+      await processJob(env, job);
+      await processJob(env, job);
+      expect(runs).toBe(1); // the replay never re-invokes the model (no repeat generation spend)
+      expect(posts).toBe(1); // and re-posts no second generated-test comment
+      const audited = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("github_app.e2e_tests_generation").first<{ n: number }>();
+      expect(audited?.n).toBe(1);
     });
 
     // REGRESSION (#8685): generate-tests is a maintainer-only default, but a repo may widen it to

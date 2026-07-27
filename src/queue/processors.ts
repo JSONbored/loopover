@@ -13222,6 +13222,12 @@ async function maybeProcessReviewCommand(env: Env, deliveryId: string, payload: 
     return true;
   }
   const targetKey = `${req.repoFullName}#${req.pr.number}`;
+  // #9312: webhook-redelivery guard, mirroring maybeThrottleReviewNagPing's #8681 short-circuit. GitHub can
+  // redeliver the same issue_comment (the job queue's max_retries:3 plus the dlq re-drive reuse the identical
+  // deliveryId); without this, the replay re-dispatches reReviewStoredPullRequest (real AI-review spend). The
+  // original delivery already recorded its completed event under this deliveryId, so short-circuit the replay.
+  const redeliverySinceIso = new Date(Date.now() - COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS).toISOString();
+  if (await hasAuditEventForDelivery(env, req.actor, "github_app.review_command_completed", targetKey, deliveryId, redeliverySinceIso)) return true;
   const [pr, settings] = await Promise.all([getPullRequest(env, req.repoFullName, req.pr.number), resolveRepositorySettings(env, req.repoFullName)]);
   if (!pr) {
     await recordReviewCommandSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "cached_pr_missing");
@@ -13282,6 +13288,12 @@ async function maybeProcessPauseCommand(env: Env, deliveryId: string, payload: G
     return true;
   }
   const targetKey = `${req.repoFullName}#${req.pr.number}`;
+  // #9312: webhook-redelivery guard, mirroring maybeThrottleReviewNagPing's #8681 short-circuit. GitHub can
+  // redeliver the same issue_comment (the job queue's max_retries:3 plus the dlq re-drive reuse the identical
+  // deliveryId); without this, the replay re-records the pause and re-posts its confirmation. The original
+  // delivery already recorded its completed event under this deliveryId, so short-circuit the replay.
+  const redeliverySinceIso = new Date(Date.now() - COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS).toISOString();
+  if (await hasAuditEventForDelivery(env, req.actor, "github_app.autoreview_paused", targetKey, deliveryId, redeliverySinceIso)) return true;
   const [pr, settings] = await Promise.all([getPullRequest(env, req.repoFullName, req.pr.number), resolveRepositorySettings(env, req.repoFullName)]);
   if (!pr) {
     await recordAutoreviewPausedSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "cached_pr_missing");
@@ -13325,6 +13337,12 @@ async function maybeProcessResumeCommand(env: Env, deliveryId: string, payload: 
     return true;
   }
   const targetKey = `${req.repoFullName}#${req.pr.number}`;
+  // #9312: webhook-redelivery guard, mirroring maybeThrottleReviewNagPing's #8681 short-circuit. GitHub can
+  // redeliver the same issue_comment (the job queue's max_retries:3 plus the dlq re-drive reuse the identical
+  // deliveryId); without this, the replay re-records the resume and re-posts its confirmation. The original
+  // delivery already recorded its completed event under this deliveryId, so short-circuit the replay.
+  const redeliverySinceIso = new Date(Date.now() - COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS).toISOString();
+  if (await hasAuditEventForDelivery(env, req.actor, "github_app.autoreview_resumed", targetKey, deliveryId, redeliverySinceIso)) return true;
   const [pr, settings] = await Promise.all([getPullRequest(env, req.repoFullName, req.pr.number), resolveRepositorySettings(env, req.repoFullName)]);
   if (!pr) {
     await recordAutoreviewResumedSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "cached_pr_missing");
@@ -13392,6 +13410,12 @@ async function maybeProcessExplainCommand(env: Env, deliveryId: string, payload:
     return true;
   }
   const targetKey = `${req.repoFullName}#${req.pr.number}`;
+  // #9312: webhook-redelivery guard, mirroring maybeThrottleReviewNagPing's #8681 short-circuit. GitHub can
+  // redeliver the same issue_comment (the job queue's max_retries:3 plus the dlq re-drive reuse the identical
+  // deliveryId); without this, the replay re-posts the explanation comment. The original delivery already
+  // recorded its completed event under this deliveryId, so short-circuit the replay.
+  const redeliverySinceIso = new Date(Date.now() - COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS).toISOString();
+  if (await hasAuditEventForDelivery(env, req.actor, "github_app.finding_explained", targetKey, deliveryId, redeliverySinceIso)) return true;
   const [pr, settings] = await Promise.all([getPullRequest(env, req.repoFullName, req.pr.number), resolveRepositorySettings(env, req.repoFullName)]);
   if (!pr) {
     await recordFindingExplainedSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "cached_pr_missing");
@@ -13473,6 +13497,12 @@ async function maybeProcessGenerateTestsCommand(env: Env, deliveryId: string, pa
     return true;
   }
   const targetKey = `${req.repoFullName}#${req.pr.number}`;
+  // #9312: webhook-redelivery guard, mirroring maybeThrottleReviewNagPing's #8681 short-circuit. GitHub can
+  // redeliver the same issue_comment (the job queue's max_retries:3 plus the dlq re-drive reuse the identical
+  // deliveryId); without this, the replay regenerates and re-commits an E2E test. The original delivery already
+  // recorded its completed event under this deliveryId, so short-circuit the replay.
+  const redeliverySinceIso = new Date(Date.now() - COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS).toISOString();
+  if (await hasAuditEventForDelivery(env, req.actor, "github_app.e2e_tests_generation", targetKey, deliveryId, redeliverySinceIso)) return true;
   const [pr, settings] = await Promise.all([getPullRequest(env, req.repoFullName, req.pr.number), resolveRepositorySettings(env, req.repoFullName)]);
   if (!pr) {
     await recordGenerateTestsSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "cached_pr_missing");

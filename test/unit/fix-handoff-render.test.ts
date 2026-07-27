@@ -12,7 +12,7 @@ describe("buildFixHandoffBlock (#2175)", () => {
     const block = buildFixHandoffBlock(finding({ line: 12, severity: "blocker" }));
     expect(block).toMatchObject({ path: "src/a.ts", line: 12, severity: "blocker", instruction: "Null check missing before dereference." });
     expect(block.body).toContain("src/a.ts:12");
-    expect(block.body).toContain("**Fix handoff — Blocker at `src/a.ts:12`**");
+    expect(block.body).toContain("**Fix handoff — Blocker at ` src/a.ts:12 `**");
   });
 
   it("renders a nit label", () => {
@@ -76,6 +76,20 @@ describe("buildFixHandoffBlock (#2175)", () => {
     expect(block.instruction).toBe("Add a guard for the empty-array case.");
     expect(block.body).toContain("Add a guard for the empty-array case.");
   });
+
+  it("renders a backtick-containing path as one unbroken code span with a longer delimiter (#9289)", () => {
+    // A backtick in the path can't be neutralized by backslash-escaping inside a markdown code span, so the
+    // location is wrapped in a delimiter (here ``) longer than the longest backtick run in the value instead.
+    const block = buildFixHandoffBlock(finding({ path: "src/we`ird.ts", line: 5 }));
+    expect(block.body).toContain("**Fix handoff — Blocker at `` src/we`ird.ts:5 ``**");
+    expect(block.body).not.toContain("\\`"); // backticks are NOT backslash-escaped (markdown ignores that in spans)
+    expect(block.path).toBe("src/we`ird.ts");
+  });
+
+  it("preserves pipe/angle-bracket entity escaping alongside the widened delimiter (#9289)", () => {
+    const block = buildFixHandoffBlock(finding({ path: "src/a|b<c>.ts", line: 1 }));
+    expect(block.body).toContain("**Fix handoff — Blocker at ` src/a\\|b&lt;c&gt;.ts:1 `**");
+  });
 });
 
 describe("buildFixHandoffBlocks (#2175)", () => {
@@ -101,7 +115,7 @@ describe("buildFixHandoffAggregateBlock (#5102)", () => {
     const block = buildFixHandoffAggregateBlock([finding()]);
     expect(block?.findingCount).toBe(1);
     expect(block?.body).toContain("**Fix handoff — 1 finding across this PR**");
-    expect(block?.body).toContain("1. **Blocker at `src/a.ts:12`** — Null check missing before dereference.");
+    expect(block?.body).toContain("1. **Blocker at ` src/a.ts:12 `** — Null check missing before dereference.");
   });
 
   it("combines multiple findings into one numbered block with plural wording", () => {
@@ -111,14 +125,22 @@ describe("buildFixHandoffAggregateBlock (#5102)", () => {
     ]);
     expect(block?.findingCount).toBe(2);
     expect(block?.body).toContain("**Fix handoff — 2 findings across this PR**");
-    expect(block?.body).toContain("1. **Blocker at `a.ts:1`**");
-    expect(block?.body).toContain("2. **Nit at `b.ts:2`**");
+    expect(block?.body).toContain("1. **Blocker at ` a.ts:1 `**");
+    expect(block?.body).toContain("2. **Nit at ` b.ts:2 `**");
   });
 
   it("renders a path-only location when a finding has no commentable line", () => {
     const block = buildFixHandoffAggregateBlock([finding({ line: 0 })]);
     expect(block?.body).toContain("src/a.ts (no specific line)");
     expect(block?.body).not.toContain("src/a.ts:0");
+  });
+
+  it("renders a backtick-containing path in the aggregate item as one unbroken code span (#9289)", () => {
+    // A run of two backticks forces a three-backtick delimiter (longest run + 1), keeping the span unbroken
+    // where a fixed single backtick would be closed prematurely.
+    const block = buildFixHandoffAggregateBlock([finding({ path: "src/a``b.ts", line: 3 })]);
+    expect(block?.body).toContain("1. **Blocker at ``` src/a``b.ts:3 ```** — Null check missing before dereference.");
+    expect(block?.body).not.toContain("\\`");
   });
 
   it("includes a fenced suggestion block, indented under its list item, when present", () => {

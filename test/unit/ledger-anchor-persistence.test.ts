@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createTestEnv } from "../helpers/d1";
-import { loadPublicLedgerAnchors, recordLedgerAnchorAttempt, type LedgerAnchorAttemptInput } from "../../src/review/ledger-anchor-persistence";
+import { loadLastLedgerAnchorAttempt, loadPublicLedgerAnchors, recordLedgerAnchorAttempt, type LedgerAnchorAttemptInput } from "../../src/review/ledger-anchor-persistence";
 import { buildLedgerAnchorPayload } from "../../src/review/ledger-anchor";
 
 // #9271 (epic #9267). The load-bearing property here is that a FAILURE is recorded and served exactly like a
@@ -127,5 +127,27 @@ describe("recordLedgerAnchorAttempt / loadPublicLedgerAnchors (#9271)", () => {
     const { anchors, nextBefore } = await loadPublicLedgerAnchors(createTestEnv());
     expect(anchors).toEqual([]);
     expect(nextBefore).toBeNull();
+  });
+});
+
+describe("loadLastLedgerAnchorAttempt (#9274)", () => {
+  it("returns null when nothing has ever been recorded", async () => {
+    expect(await loadLastLedgerAnchorAttempt(createTestEnv())).toBeNull();
+  });
+
+  it("returns the most recent attempt's seq/rowHash, regardless of backend or status -- what the scheduler compares the live tip against", async () => {
+    const env = createTestEnv();
+    await recordLedgerAnchorAttempt(
+      env,
+      { payload: buildLedgerAnchorPayload({ seq: 1, rowHash: "a".repeat(64), totalCount: 1 }, "2026-07-27T12:00:00.000Z"), signature: "s", keyId: "k", backend: "rekor", status: "ok", backendRef: {}, proofR2Key: null },
+      "2026-07-27T12:00:00.000Z",
+    );
+    // A LATER, FAILED git attempt still becomes "the last attempt" -- this is deliberately not "last success".
+    await recordLedgerAnchorAttempt(
+      env,
+      { payload: buildLedgerAnchorPayload({ seq: 2, rowHash: "b".repeat(64), totalCount: 2 }, "2026-07-27T12:05:00.000Z"), signature: "s", keyId: "k", backend: "git", status: "failed", error: "boom" },
+      "2026-07-27T12:05:00.000Z",
+    );
+    expect(await loadLastLedgerAnchorAttempt(env)).toEqual({ seq: 2, rowHash: "b".repeat(64) });
   });
 });

@@ -1,0 +1,211 @@
+import { describe, expect, it, vi } from "vitest";
+import { createTestEnv } from "../helpers/d1";
+import { decideLedgerAnchorSchedule, LEDGER_ANCHOR_SEQ_THRESHOLD, resolveGitAnchorTarget, runScheduledLedgerAnchor } from "../../src/review/ledger-anchor-scheduler";
+import { buildDecisionRecord, contentDigest, persistDecisionRecord } from "../../src/review/decision-record";
+import { loadPublicLedgerAnchors } from "../../src/review/ledger-anchor-persistence";
+import { computeAnchorKeyId, type SignedLedgerAnchor } from "../../src/review/ledger-anchor";
+
+// #9274 (epic #9267). decideLedgerAnchorSchedule is the pure decision this whole job hinges on -- tested
+// exhaustively on its own before the orchestrator's IO/injection wiring.
+
+describe("decideLedgerAnchorSchedule (#9274)", () => {
+  const base = { isHourly: false, currentTip: { seq: 10, rowHash: "a".repeat(64) }, lastAnchor: null as { seq: number; rowHash: string } | null, seqThreshold: 256 };
+
+  it("never anchors an empty ledger, regardless of hourly or threshold", () => {
+    expect(decideLedgerAnchorSchedule({ ...base, isHourly: true, currentTip: { seq: 0, rowHash: "0".repeat(64) } })).toEqual({ shouldAnchor: false, reason: "empty_ledger" });
+  });
+
+  it("anchors on the hourly tick when the tip has never been anchored before", () => {
+    expect(decideLedgerAnchorSchedule({ ...base, isHourly: true, lastAnchor: null })).toEqual({ shouldAnchor: true, reason: "hourly" });
+  });
+
+  it("anchors on the hourly tick when the tip changed since the last anchor", () => {
+    expect(decideLedgerAnchorSchedule({ ...base, isHourly: true, lastAnchor: { seq: 5, rowHash: "b".repeat(64) } })).toEqual({ shouldAnchor: true, reason: "hourly" });
+  });
+
+  it("skips the hourly tick when the tip is UNCHANGED since the last anchor -- idempotent, free on quiet days", () => {
+    expect(decideLedgerAnchorSchedule({ ...base, isHourly: true, lastAnchor: { seq: 10, rowHash: "a".repeat(64) } })).toEqual({ shouldAnchor: false, reason: "unchanged" });
+  });
+
+  it("skips a non-hourly tick with an unchanged tip and no threshold breach", () => {
+    expect(decideLedgerAnchorSchedule({ ...base, isHourly: false, lastAnchor: { seq: 9, rowHash: "c".repeat(64) } })).toEqual({ shouldAnchor: false, reason: "unchanged" });
+  });
+
+  it("anchors immediately once the seq delta reaches the threshold, independent of the hourly clock", () => {
+    const result = decideLedgerAnchorSchedule({ ...base, isHourly: false, currentTip: { seq: 300, rowHash: "d".repeat(64) }, lastAnchor: { seq: 40, rowHash: "e".repeat(64) } });
+    expect(result).toEqual({ shouldAnchor: true, reason: "seq_threshold" });
+  });
+
+  it("treats a never-anchored ledger as starting from seq 0 for the threshold check -- a big first burst anchors immediately, not on the next hourly tick", () => {
+    const result = decideLedgerAnchorSchedule({ ...base, isHourly: false, currentTip: { seq: LEDGER_ANCHOR_SEQ_THRESHOLD, rowHash: "f".repeat(64) }, lastAnchor: null });
+    expect(result).toEqual({ shouldAnchor: true, reason: "seq_threshold" });
+  });
+
+  it("does not anchor one short of the threshold", () => {
+    const result = decideLedgerAnchorSchedule({ ...base, isHourly: false, currentTip: { seq: 40 + LEDGER_ANCHOR_SEQ_THRESHOLD - 1, rowHash: "g".repeat(64) }, lastAnchor: { seq: 40, rowHash: "h".repeat(64) } });
+    expect(result).toEqual({ shouldAnchor: false, reason: "unchanged" });
+  });
+
+  it("threshold takes priority even ON an hourly tick when both would otherwise fire", () => {
+    const result = decideLedgerAnchorSchedule({ ...base, isHourly: true, currentTip: { seq: 400, rowHash: "i".repeat(64) }, lastAnchor: { seq: 1, rowHash: "j".repeat(64) } });
+    expect(result).toEqual({ shouldAnchor: true, reason: "seq_threshold" });
+  });
+});
+
+describe("resolveGitAnchorTarget", () => {
+  it("returns null when owner or repo is unset -- git anchoring simply isn't configured", () => {
+    expect(resolveGitAnchorTarget({})).toBeNull();
+    expect(resolveGitAnchorTarget({ LOOPOVER_LEDGER_ANCHOR_GIT_OWNER: "acme" })).toBeNull();
+    expect(resolveGitAnchorTarget({ LOOPOVER_LEDGER_ANCHOR_GIT_REPO: "anchors" })).toBeNull();
+  });
+
+  it("defaults branch to main and path to anchors.jsonl", () => {
+    expect(resolveGitAnchorTarget({ LOOPOVER_LEDGER_ANCHOR_GIT_OWNER: "acme", LOOPOVER_LEDGER_ANCHOR_GIT_REPO: "anchors" })).toEqual({
+      owner: "acme",
+      repo: "anchors",
+      branch: "main",
+      path: "anchors.jsonl",
+    });
+  });
+
+  it("honors an explicit branch and path", () => {
+    expect(
+      resolveGitAnchorTarget({
+        LOOPOVER_LEDGER_ANCHOR_GIT_OWNER: "acme",
+        LOOPOVER_LEDGER_ANCHOR_GIT_REPO: "anchors",
+        LOOPOVER_LEDGER_ANCHOR_GIT_BRANCH: "anchors-branch",
+        LOOPOVER_LEDGER_ANCHOR_GIT_PATH: "custom.jsonl",
+      }),
+    ).toEqual({ owner: "acme", repo: "anchors", branch: "anchors-branch", path: "custom.jsonl" });
+  });
+});
+
+async function seedOneDecision(env: Env): Promise<void> {
+  const { record, recordDigest } = await buildDecisionRecord({
+    repoFullName: "acme/widgets",
+    pullNumber: 1,
+    headSha: "abc1",
+    baseSha: null,
+    action: "merge",
+    reasonCode: "gate_clean",
+    configDigest: await contentDigest({ gatePack: "oss-anti-slop" }),
+    gatePack: "oss-anti-slop",
+    ciState: null,
+    modelIds: null,
+    promptDigest: null,
+    aiConfidence: null,
+    salvageability: null,
+  });
+  await persistDecisionRecord(env, record, recordDigest);
+}
+
+async function keyedEnv(): Promise<{ env: Env; privateKeyPem: string; publicKeySpki: string; keyId: string }> {
+  const pair = (await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"])) as CryptoKeyPair;
+  const toBase64 = (bytes: Uint8Array) => {
+    let binary = "";
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    return btoa(binary);
+  };
+  const pkcs8 = toBase64(new Uint8Array((await crypto.subtle.exportKey("pkcs8", pair.privateKey)) as ArrayBuffer));
+  const publicKeySpki = toBase64(new Uint8Array((await crypto.subtle.exportKey("spki", pair.publicKey)) as ArrayBuffer));
+  const privateKeyPem = `-----BEGIN PRIVATE KEY-----\n${(pkcs8.match(/.{1,64}/g) ?? []).join("\n")}\n-----END PRIVATE KEY-----`;
+  const keyId = await computeAnchorKeyId(publicKeySpki);
+  const env = createTestEnv({
+    LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY: privateKeyPem,
+    LOOPOVER_LEDGER_ANCHOR_KEYS: JSON.stringify([{ keyId, publicKeySpki, notBefore: "2026-01-01T00:00:00.000Z", notAfter: null }]),
+  });
+  return { env, privateKeyPem, publicKeySpki, keyId };
+}
+
+describe("runScheduledLedgerAnchor (#9274)", () => {
+  it("does nothing on an empty ledger", async () => {
+    const { env } = await keyedEnv();
+    const submitRekor = vi.fn();
+    const decision = await runScheduledLedgerAnchor(env, { isHourly: true }, { submitRekor });
+    expect(decision).toEqual({ shouldAnchor: false, reason: "empty_ledger" });
+    expect(submitRekor).not.toHaveBeenCalled();
+  });
+
+  it("calls submitRekor on the hourly tick when the tip changed, and records nothing extra when unconfigured", async () => {
+    const env = createTestEnv(); // no signing key configured
+    await seedOneDecision(env);
+    const submitRekor = vi.fn();
+    const decision = await runScheduledLedgerAnchor(env, { isHourly: true }, { submitRekor });
+    expect(decision).toEqual({ shouldAnchor: true, reason: "hourly" });
+    expect(submitRekor).not.toHaveBeenCalled(); // no signing key -> skipped, honest degrade
+  });
+
+  it("signs the payload and calls submitRekor when a signing key IS configured", async () => {
+    const { env } = await keyedEnv();
+    await seedOneDecision(env);
+    const submitRekor = vi.fn().mockResolvedValue(undefined);
+    await runScheduledLedgerAnchor(env, { isHourly: true }, { submitRekor });
+    expect(submitRekor).toHaveBeenCalledTimes(1);
+    const [signed] = submitRekor.mock.calls[0] as [SignedLedgerAnchor, string];
+    expect(signed.payload.seq).toBe(1);
+    expect(signed.signature).not.toBe("");
+  });
+
+  it("attempts BOTH backends independently -- Rekor still runs even when submitGit rejects, and vice versa", async () => {
+    const { env } = await keyedEnv();
+    await seedOneDecision(env);
+    const submitRekor = vi.fn().mockRejectedValue(new Error("rekor down"));
+    const submitGit = vi.fn().mockResolvedValue(undefined);
+    await runScheduledLedgerAnchor(env, { isHourly: true }, { submitRekor, submitGit });
+    expect(submitRekor).toHaveBeenCalledTimes(1);
+    expect(submitGit).toHaveBeenCalledTimes(1); // git still ran despite Rekor's rejection
+  });
+
+  it("a rejecting submitGit (e.g. a token-mint failure) is recorded as a failed git attempt, not an unhandled rejection", async () => {
+    const { env } = await keyedEnv();
+    await seedOneDecision(env);
+    const submitRekor = vi.fn().mockResolvedValue(undefined);
+    const submitGit = vi.fn().mockRejectedValue(new Error("failed to mint installation token"));
+
+    await expect(runScheduledLedgerAnchor(env, { isHourly: true }, { submitRekor, submitGit })).resolves.toBeDefined();
+
+    const { anchors } = await loadPublicLedgerAnchors(env, { backend: "git" });
+    expect(anchors[0]).toMatchObject({ backend: "git", status: "failed", error: "failed to mint installation token" });
+  });
+
+  it("does not attempt git anchoring when submitGit is omitted (not configured)", async () => {
+    const { env } = await keyedEnv();
+    await seedOneDecision(env);
+    const submitRekor = vi.fn().mockResolvedValue(undefined);
+    await runScheduledLedgerAnchor(env, { isHourly: true }, { submitRekor });
+    const { anchors } = await loadPublicLedgerAnchors(env, { backend: "git" });
+    expect(anchors).toEqual([]);
+  });
+
+  it("skips entirely (no signing attempted) when the published key set has no unambiguous current key", async () => {
+    const env = createTestEnv({ LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY: "irrelevant", LOOPOVER_LEDGER_ANCHOR_KEYS: JSON.stringify([]) });
+    await seedOneDecision(env);
+    const submitRekor = vi.fn();
+    await runScheduledLedgerAnchor(env, { isHourly: true }, { submitRekor });
+    expect(submitRekor).not.toHaveBeenCalled();
+  });
+
+  it("skips entirely when a current key IS published but the private key is not configured (the other unconfigured arm)", async () => {
+    const { publicKeySpki, keyId } = await keyedEnv();
+    const env = createTestEnv({ LOOPOVER_LEDGER_ANCHOR_KEYS: JSON.stringify([{ keyId, publicKeySpki, notBefore: "2026-01-01T00:00:00.000Z", notAfter: null }]) });
+    await seedOneDecision(env);
+    const submitRekor = vi.fn();
+    await runScheduledLedgerAnchor(env, { isHourly: true }, { submitRekor });
+    expect(submitRekor).not.toHaveBeenCalled();
+  });
+
+  it("uses the REAL submitToRekor by default when no submitRekor is injected", async () => {
+    const { env } = await keyedEnv();
+    await seedOneDecision(env);
+    const fetchSpy = vi.fn().mockResolvedValue(new Response(JSON.stringify({ x: { logIndex: 1, uuid: "u", logId: { keyId: "k" } } }), { status: 201 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    try {
+      await runScheduledLedgerAnchor(env, { isHourly: true }); // no deps at all -- exercises the real default
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(fetchSpy).toHaveBeenCalledWith(expect.stringContaining("rekor.sigstore.dev"), expect.anything());
+    const { anchors } = await loadPublicLedgerAnchors(env, { backend: "rekor" });
+    expect(anchors[0]).toMatchObject({ status: "ok" });
+  });
+});

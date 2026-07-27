@@ -335,6 +335,20 @@ export async function ledgerRowHash(prevHash: string, fields: LedgerRowFields): 
  * by the verify endpoint's record/ledger reconciliation, a follow-up check, rather than by losing the
  * decision itself).
  */
+/** The chain's current tip -- {@link LEDGER_GENESIS_HASH}/seq 0/count 0 on an empty ledger. Deliberately
+ *  lighter than {@link verifyDecisionLedger} (which additionally walks and verifies a window): a caller that
+ *  only needs "what is the tip right now" (the scheduled anchoring job, #9274) shouldn't pay for a
+ *  self-consistency walk it isn't asking for. */
+export async function loadDecisionLedgerTip(env: Env): Promise<{ seq: number; rowHash: string; totalCount: number }> {
+  const [totalRow, tipRow] = await Promise.all([
+    env.DB.prepare("SELECT COUNT(*) AS n FROM decision_ledger").first<{ n: number }>(),
+    env.DB.prepare("SELECT seq, row_hash AS rowHash FROM decision_ledger ORDER BY seq DESC LIMIT 1").first<{ seq: number; rowHash: string }>(),
+  ]);
+  /* v8 ignore next -- defensive: a bare COUNT(*) always returns exactly one row, mirroring
+   * verifyDecisionLedger's identical note. */
+  return { seq: tipRow?.seq ?? 0, rowHash: tipRow?.rowHash ?? LEDGER_GENESIS_HASH, totalCount: totalRow?.n ?? 0 };
+}
+
 export async function appendDecisionLedger(env: Env, recordId: string, recordDigest: string, attempts = 3): Promise<void> {
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const tip = await env.DB.prepare("SELECT seq, row_hash AS rowHash FROM decision_ledger ORDER BY seq DESC LIMIT 1").first<{ seq: number; rowHash: string }>();
@@ -374,16 +388,6 @@ export type LedgerBreak =
   // the chain vouched for is simply gone (a direct-DB deletion, or some other operation none of the
   // gap/predecessor/hash checks above can see, since those only ever compare ledger rows against each other).
   | { kind: "missing_record"; atSeq: number; recordId: string };
-
-/** #9122: the exact shape a scheduled external-anchoring job (git-commit checkpoint, transparency log, or an
- *  on-chain commitment — the actual publishing mechanism is a genuinely open infra/protocol decision tracked
- *  on the issue, deliberately NOT built here) would publish for a given tip: enough for a third party to later
- *  prove "the ledger's tip really was this, at this time" against whatever anchor eventually receives it. Pure
- *  and synchronous — this module has no scheduler and calls this from nowhere yet; a future cron handler is
- *  the natural caller, using the tipSeq/tipHash verifyDecisionLedger already returns on every call. */
-export function buildLedgerAnchorPayload(tip: { seq: number; rowHash: string }, at: string = nowIso()): { seq: number; rowHash: string; at: string } {
-  return { seq: tip.seq, rowHash: tip.rowHash, at };
-}
 
 /**
  * Verify a window of the chain, resumable via `afterSeq` (0 = genesis). Reports the FIRST break with its

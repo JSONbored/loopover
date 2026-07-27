@@ -11,6 +11,7 @@ function emptyReport(): RecapReport {
     generatedAt: GEN,
     windowDays: 7,
     repos: [],
+    contributors: [],
     totals: {
       reviewed: 0,
       merged: 0,
@@ -36,6 +37,8 @@ describe("formatMaintainerRecap (#2240)", () => {
     // #8372: both builders read only totals/windowDays, so their sections are unconditional.
     expect(body).toContain("## Calibration");
     expect(body).toContain("## Gate outcomes");
+    // #9291: top-contributors section is unconditional once RecapReport carries contributors.
+    expect(body).toContain("## Top contributors");
     // #8214: without a sentinel projection the drift section is entirely absent — the digest stays
     // byte-identical to the pre-drift shape, not a dangling empty header.
     expect(body).not.toContain("## Config drift");
@@ -45,6 +48,7 @@ describe("formatMaintainerRecap (#2240)", () => {
     // windowed empty-state line, so the section is never empty and the generic fallback never fires.
     expect(body).toContain("No repo activity in the last 7 day(s).");
     expect(body).not.toContain("_No repositories in this window._");
+    expect(body).toContain("- No contributor activity in the last 7 day(s).");
     // Null rate ⇒ the "n/a" arm.
     expect(body).toContain("- Gate false positives: 0/0 (n/a)");
     expect(body).toContain("- Repos: 0");
@@ -83,6 +87,10 @@ describe("formatMaintainerRecap (#2240)", () => {
           reversals: 0,
         },
       ],
+      contributors: [
+        { login: "bob", merged: 9 },
+        { login: "alice", merged: 2 },
+      ],
       totals: {
         reviewed: 5,
         merged: 3,
@@ -108,6 +116,10 @@ describe("formatMaintainerRecap (#2240)", () => {
     // The gate/override/reversal counts this row used to carry are unchanged in ## Totals above, and are
     // broken out per-dimension by the ## Gate outcomes section this digest now composes.
     expect(body).toContain("acme/widgets: reviewed 5, merged 3, closed 2");
+    // #9291 REGRESSION: ranked merged-PR lines from buildTopContributorsRecapSection.
+    expect(body).toContain("## Top contributors");
+    expect(body).toContain("- bob: 9 merged");
+    expect(body).toContain("- alice: 2 merged");
     // Clean summary line survives verbatim (redaction no-op arm).
     expect(body).toContain("- Normal recap line about resolved reviews.");
     // Arm 1: local path scrubbed to the placeholder, raw path gone.

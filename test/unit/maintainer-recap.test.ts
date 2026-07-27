@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildMaintainerRecap, runMaintainerRecap, type MaintainerRecapRepoInput } from "../../src/services/maintainer-recap";
+import { buildMaintainerRecap, contributorTotalsToList, foldMergedPrContributorTotals, runMaintainerRecap, type MaintainerRecapRepoInput } from "../../src/services/maintainer-recap";
 import { buildDriftRecapSection } from "../../src/services/maintainer-recap-drift";
 import type { OutcomeCalibration } from "../../src/services/outcome-calibration";
 import type { RecapReport } from "../../src/types";
@@ -61,10 +61,26 @@ describe("buildMaintainerRecap (#2239)", () => {
     const report = buildMaintainerRecap({ generatedAt: GEN, repos: [] });
     expect(report.windowDays).toBe(7);
     expect(report.repos).toEqual([]);
+    expect(report.contributors).toEqual([]);
     expect(report.totals).toMatchObject({ reviewed: 0, merged: 0, closed: 0, blocked: 0, gateFalsePositives: 0, gateOverrides: 0, reversals: 0, gateFalsePositiveRate: null });
     // blocked === 0 ⇒ rate is null ⇒ the "not enough blocked PRs" summary arm.
     expect(report.summary[1]).toContain("not enough blocked PRs");
     expect(report.summary[0]).toContain("0 repo(s)");
+  });
+
+  it("passes through injected contributor tallies (#9291)", () => {
+    const report = buildMaintainerRecap({
+      generatedAt: GEN,
+      repos: [],
+      contributors: [
+        { login: "alice", merged: 2 },
+        { login: "bob", merged: 5 },
+      ],
+    });
+    expect(report.contributors).toEqual([
+      { login: "alice", merged: 2 },
+      { login: "bob", merged: 5 },
+    ]);
   });
 
   it("folds a single repo's counts and computes the gate false-positive rate", () => {
@@ -173,6 +189,29 @@ describe("buildMaintainerRecap cohort split (#4521)", () => {
   });
 });
 
+describe("foldMergedPrContributorTotals (#9291)", () => {
+  const sinceMs = Date.parse("2026-07-02T00:00:00.000Z");
+
+  it("tallies by login, skips out-of-window and missing mergedAt rows, and folds unknown authors", () => {
+    const totals = new Map<string, number>();
+    foldMergedPrContributorTotals(
+      totals,
+      [
+        { repoFullName: "owner/a", number: 1, title: "in", authorLogin: "alice", mergedAt: "2026-07-08T00:00:00.000Z", labels: [], linkedIssues: [], changedFiles: [], payload: {} },
+        { repoFullName: "owner/a", number: 2, title: "in2", authorLogin: "alice", mergedAt: "2026-07-03T00:00:00.000Z", labels: [], linkedIssues: [], changedFiles: [], payload: {} },
+        { repoFullName: "owner/a", number: 3, title: "old", authorLogin: "alice", mergedAt: "2026-06-01T00:00:00.000Z", labels: [], linkedIssues: [], changedFiles: [], payload: {} },
+        { repoFullName: "owner/a", number: 4, title: "no-date", authorLogin: "bob", mergedAt: null, labels: [], linkedIssues: [], changedFiles: [], payload: {} },
+        { repoFullName: "owner/b", number: 5, title: "unknown", authorLogin: null, mergedAt: "2026-07-09T00:00:00.000Z", labels: [], linkedIssues: [], changedFiles: [], payload: {} },
+      ],
+      sinceMs,
+    );
+    expect(contributorTotalsToList(totals).sort((a, b) => a.login.localeCompare(b.login))).toEqual([
+      { login: "alice", merged: 2 },
+      { login: "unknown", merged: 1 },
+    ]);
+  });
+});
+
 function envWithBothWebhooks(): Env {
   return createTestEnv({ DISCORD_WEBHOOK_URL: DISCORD_HOOK, SLACK_WEBHOOK_URL: SLACK_HOOK }) as Env;
 }
@@ -216,6 +255,7 @@ function leakyRecapReport(): RecapReport {
       gateFalsePositiveRate: null,
     },
     summary: ["Clean recap line.", "payout was 500 tao last window", "path /root/secrets/config.json here"],
+    contributors: [],
   };
 }
 
@@ -232,6 +272,9 @@ describe("runMaintainerRecap (#2252 end-to-end orchestration)", () => {
     expect(result.report.repos).toEqual([]);
     // #8372: the ## Per-repo body is buildPerRepoRecapSection's, which carries its own empty-state line.
     expect(result.formatted).toContain("No repo activity in the last 7 day(s).");
+    // #9291 REGRESSION: top-contributors section is always composed into the delivered digest.
+    expect(result.formatted).toContain("## Top contributors");
+    expect(result.formatted).toContain("- No contributor activity in the last 7 day(s).");
     expect(result.formatted).toContain("(n/a)");
   });
 

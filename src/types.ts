@@ -2925,6 +2925,10 @@ export type MaintainerRecapCohortCounts = {
   gateFalsePositiveRate: number | null;
 };
 
+/** One contributor's merged-PR count for a maintainer recap window (#9291). Public-safe by construction — login
+ *  plus a count only, no score/reward internals. */
+export type MaintainerRecapContributor = { login: string; merged: number };
+
 /** One repo's realized review-outcome roll-up inside a maintainer recap window (#2239, foundation for #1963).
  *  Counts are ground-truth PR outcomes + gate/recommendation calibration totals — never predictions. */
 export type MaintainerRecapRepo = {
@@ -2953,6 +2957,8 @@ export type RecapReport = {
   generatedAt: string;
   windowDays: number;
   repos: MaintainerRecapRepo[];
+  /** Per-login merged-PR tally for the scan window (#9291), summed across every scanned repo. */
+  contributors: MaintainerRecapContributor[];
   totals: {
     reviewed: number;
     merged: number;

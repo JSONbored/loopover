@@ -313,6 +313,7 @@ import { isRagEnabled } from "../review/rag-wire";
 import { loadPublicDecisionRecord, loadPublicLedgerRow, verifyDecisionLedger } from "../review/decision-record";
 import { buildEvalScoreRecordsFromRulePrecision, filterEvalScoreRecords } from "../review/eval-score-records";
 import { currentAnchorKey, parseAnchorPublicKeys } from "../review/ledger-anchor";
+import { loadPublicLedgerAnchors } from "../review/ledger-anchor-persistence";
 import { getPublicStats, isPublicStatsEnabled, resolvePublicStatsManifestOverride } from "../review/public-stats";
 import { loadPublicAccuracyTrend } from "../services/public-accuracy-trend";
 import { loadPublicRulePrecision } from "../review/public-rule-precision";
@@ -1317,6 +1318,27 @@ export function createApp() {
     const keys = parseAnchorPublicKeys(c.env.LOOPOVER_LEDGER_ANCHOR_KEYS);
     c.header("Cache-Control", "public, max-age=300, stale-while-revalidate=3600");
     return c.json({ keys, currentKeyId: currentAnchorKey(keys)?.keyId ?? null });
+  });
+
+  // #9271 (epic #9267): every anchoring attempt, success AND failure, paginated newest-first. This is what
+  // makes anchoring's own health a publicly checkable fact -- a failure is recorded and served exactly like a
+  // success (same shape, same listing), so "anchoring has been failing for a week" is something anyone can
+  // observe rather than only visible in the operator's own logs. Unauthenticated by design, same posture as
+  // every /v1/public/* sibling above.
+  app.get("/v1/public/decision-ledger/anchors", async (c) => {
+    // Built with spreads, not literal undefined-valued keys: exactOptionalPropertyTypes means an optional
+    // filter field must be OMITTED to mean "no filter", not present-with-value-undefined.
+    const backendParam = c.req.query("backend");
+    const backend = backendParam === "rekor" || backendParam === "git" || backendParam === "ots" ? backendParam : undefined;
+    const before = c.req.query("before");
+    const limit = Number(c.req.query("limit")) || undefined;
+    const result = await loadPublicLedgerAnchors(c.env, {
+      ...(backend !== undefined && { backend }),
+      ...(before !== undefined && { before }),
+      ...(limit !== undefined && { limit }),
+    });
+    c.header("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+    return c.json(result);
   });
 
   // #9123: the decision record itself was persisted (decision_records) but never published anywhere a
@@ -6809,6 +6831,8 @@ function requiresApiToken(path: string): boolean {
   // #9270: the published anchor-signing public keys, added in the SAME PR as its route so the two cannot
   // drift the way #9120's sibling did.
   if (path === "/v1/public/decision-ledger/anchor-key") return false;
+  // #9271: the public anchor-attempt listing, added in the SAME PR as its route.
+  if (path === "/v1/public/decision-ledger/anchors") return false;
   // #9123: the new public decision-record read route — same unauthenticated posture as its ledger-verify
   // sibling immediately above, added in the SAME PR so the two can never drift apart the way #9120 did. The
   // pull segment matches any non-slash text (not just digits): an invalid pull number is the ROUTE's 400 to

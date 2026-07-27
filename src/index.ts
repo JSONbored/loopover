@@ -317,8 +317,15 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
   if (isHourly && hour === 7 && selfHostedReviews && isRiskControlEnabled(env)) {
     jobs.push({ type: "risk-control-recalibrate", requestedBy: "schedule" });
   }
-  // Prune expired log/snapshot rows once a day (03:00 UTC) per the conservative RETENTION_POLICY.
-  if (isHourly && hour === 3) {
+  // Prune expired log/snapshot rows EVERY hour per RETENTION_POLICY. Was once a day (03:00 UTC), which
+  // combined with the old per-table delete cap to put retention permanently behind the hosted fleet's write
+  // rate — the D1 database then reached its 10GB ceiling and every write failed with
+  // `D1_ERROR: Exceeded maximum DB size`, taking inbound GitHub webhook delivery down fleet-wide (the
+  // /v1/orb/webhook handler 500s when it cannot record the delivery). Hourly keeps each run's deletions
+  // small and steady rather than one large daily burst, and 24x the drain rate turns a growing backlog into
+  // a converging one. Cheap when there is nothing to do: each rule is an indexed range delete that matches
+  // zero rows once the table is inside its window.
+  if (isHourly) {
     jobs.push({ type: "prune-retention", requestedBy: "schedule" });
   }
   // Repo-doc refresh sweep (#3003, part of #2993) -- once a day (09:00 UTC, distinct from prune-retention's

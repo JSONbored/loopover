@@ -31,6 +31,7 @@ import {
   subscriptionCliEnv,
   withAiGenerationCapture,
 } from "./selfhost/ai";
+import { shouldWarnPublicScoreTermsAllowlistUnset } from "./queue-intelligence";
 import {
   cookieValue,
   credentialsToEnv,
@@ -609,6 +610,22 @@ async function main(): Promise<void> {
         provider: process.env.AI_PROVIDER,
         message:
           "LOOPOVER_REVIEW_RAG is enabled but no configured provider can serve embeddings — AI_EMBED_BASE_URL is unset and every AI_PROVIDER member is a CLI-subscription provider (they never embed). The RAG index will stay empty. Set AI_EMBED_BASE_URL (e.g. http://ollama:11434/v1 with AI_EMBED_MODEL=bge-m3) or add an OpenAI-compatible provider to the chain.",
+      }),
+    );
+  }
+  // #public-score-terms-scoping: the bare-`score` exemption is inert until an operator populates the repo
+  // allowlist, and unset (the shipped default) every AI review narrative that merely uses the word
+  // "score"/"scoring" is silently replaced by the generic "did not include a separate narrative summary"
+  // placeholder -- the exact metagraphed#8038 behaviour the exemption was written to fix. Shout once at boot so
+  // a config-dependent fix can't sit inert and unnoticed the way that one did. Warn-only: an empty allowlist is
+  // the correct setting for a deployment whose repos really do carry private trust/reward data.
+  if (shouldWarnPublicScoreTermsAllowlistUnset(process.env)) {
+    console.error(
+      JSON.stringify({
+        level: "error",
+        event: "selfhost_public_score_terms_allowlist_unset",
+        message:
+          "LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS is unset, so the bare-\"score\" public-comment check is enforced for every repo. Any AI review whose narrative uses the ordinary word \"score\"/\"scoring\" will have its WHOLE summary dropped and replaced by the generic no-narrative placeholder. Set it to the repos whose own public schema legitimately uses score vocabulary (e.g. JSONbored/metagraphed). Explicit phrases (\"trust score\", \"reward\", wallet/hotkey/seed phrase, ...) stay blocked everywhere regardless.",
       }),
     );
   }

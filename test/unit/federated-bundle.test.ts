@@ -2,11 +2,12 @@ import { DatabaseSync } from "node:sqlite";
 import { createHmac } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { createD1Adapter, nodeSqliteDriver } from "../../src/selfhost/d1-adapter";
-import { getOrCreateAnonSecret, instanceId } from "../../src/selfhost/orb-collector";
+import { getOrCreateAnonSecret, getOrCreateInstanceIdentitySecret, instanceId } from "../../src/selfhost/orb-collector";
 import {
   FEDERATED_BUNDLE_SCHEMA_VERSION,
   buildFederatedBundle,
   canonicalizeFederatedBundleBody,
+  getOrCreateFederatedSigningSecret,
   isFederatedIntelligenceEnabled,
   signFederatedBundle,
   type FederatedSignalBundle,
@@ -153,13 +154,15 @@ describe("buildFederatedBundle() — opted in", () => {
     expect(b.cycleP50Ms).toBe(7_200_000); // 2h decision → outcome
     expect(b.cycleP95Ms).toBe(7_200_000);
 
-    // The opaque handle is the orb pipeline's, not a second identity.
-    expect(b.instanceId).toBe(instanceId(await getOrCreateAnonSecret(db)));
+    // The opaque handle is the orb pipeline's, not a second identity — but (#9147) derived from the DEDICATED
+    // identity secret, not the anon secret.
+    expect(b.instanceId).toBe(instanceId(await getOrCreateInstanceIdentitySecret(db)));
 
-    // Independently recompute the HMAC over the canonical body — the signature must verify.
+    // Independently recompute the HMAC over the canonical body — the signature must verify against the
+    // DEDICATED federated signing secret (#9147), never the anon secret.
     const { signature, ...body } = b;
-    const secret = await getOrCreateAnonSecret(db);
-    expect(signature).toBe(createHmac("sha256", secret).update(canonicalizeFederatedBundleBody(body)).digest("hex"));
+    const signingSecret = await getOrCreateFederatedSigningSecret(db);
+    expect(signature).toBe(createHmac("sha256", signingSecret).update(canonicalizeFederatedBundleBody(body)).digest("hex"));
     expect(signature).toMatch(/^[0-9a-f]{64}$/);
 
     // The export path itself never talks to anyone — transport is #6479.
@@ -309,6 +312,40 @@ describe("buildFederatedBundle() — fail-safe", () => {
     } as unknown as D1Database;
     const b = (await buildFederatedBundle(manifest(true), noRowsDb, { now: NOW })) as FederatedSignalBundle;
     expect(b.decided).toBe(0);
+  });
+});
+
+describe("#9147: federated signing key / anon secret separation", () => {
+  it("mints a federated signing secret that is never the same value as the anon secret", async () => {
+    const db = makeDb();
+    const anonSecret = await getOrCreateAnonSecret(db);
+    const signingSecret = await getOrCreateFederatedSigningSecret(db);
+    expect(signingSecret).not.toBe(anonSecret);
+    expect(signingSecret).toMatch(/^[0-9a-f]{64}$/);
+    // Stable across repeated reads, exactly like getOrCreateAnonSecret.
+    expect(await getOrCreateFederatedSigningSecret(db)).toBe(signingSecret);
+  });
+
+  it("keeps instanceId stable when the anon secret is rotated after the identity secret already exists", async () => {
+    const db = makeDb();
+    await resolved(db, 1);
+    const before = (await buildFederatedBundle(manifest(true), db, { now: NOW })) as FederatedSignalBundle;
+
+    // Simulate an operator rotating the anonymization secret (e.g. after a suspected leak) — this must never
+    // change the instance's federated identity, since that would break the receiver's per-instance dedup.
+    await db.prepare("UPDATE system_flags SET value = ? WHERE key = 'orb:anon_secret'").bind("f".repeat(64)).run();
+    expect(await getOrCreateAnonSecret(db)).toBe("f".repeat(64));
+
+    const after = (await buildFederatedBundle(manifest(true), db, { now: NOW })) as FederatedSignalBundle;
+    expect(after.instanceId).toBe(before.instanceId);
+  });
+
+  it("seeds the identity secret from the CURRENT anon secret on first use (no disruptive instanceId change on upgrade)", async () => {
+    const db = makeDb();
+    const anonSecret = await getOrCreateAnonSecret(db);
+    // No identity-secret row exists yet — getOrCreateInstanceIdentitySecret must seed from the anon secret so
+    // an instance upgrading from before #9147 keeps its existing instanceId.
+    expect(await getOrCreateInstanceIdentitySecret(db)).toBe(anonSecret);
   });
 });
 

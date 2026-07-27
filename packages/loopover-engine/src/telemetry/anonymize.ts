@@ -14,6 +14,12 @@ import { createHmac, randomBytes } from "node:crypto";
  * once per instance in its own store and reuses it on every export, so the same raw value always hashes the
  * same way. Never derived from, or shared with, any other credential (App private keys, webhook secrets) --
  * key separation means a leaked anonymization secret can't be used to forge or decrypt anything else.
+ *
+ * #9147: this now also holds for Orb's opt-in federated peer-benchmark export (src/orb/federated-bundle.ts).
+ * That feature signs its bundles with its OWN dedicated secret (getOrCreateFederatedSigningSecret) rather
+ * than this one, and derives its instance identity from a third, independent secret
+ * (getOrCreateInstanceIdentitySecret) -- so enrolling a federated peer, or rotating any one of the three
+ * secrets, can never affect this anonymization secret or the always-on export that uses it.
  */
 export function generateAnonSecret(): string {
   return randomBytes(32).toString("hex");

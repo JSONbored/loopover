@@ -1,5 +1,43 @@
 # Changelog
 
+## [3.15.2](https://github.com/JSONbored/loopover/compare/miner-v3.14.1...miner-v3.15.2) (2026-07-27)
+
+
+### Features
+
+* **miner:** run the target repo's own test/lint/build commands before opening a PR ([#8819](https://github.com/JSONbored/loopover/issues/8819)) ([e10abf2](https://github.com/JSONbored/loopover/commit/e10abf2f048b3c9c47ff40b4044acceea80efde1))
+* **miner:** wire deny-hook synthesis to a live consumer and give it an operator CLI ([#8806](https://github.com/JSONbored/loopover/issues/8806)) ([#8817](https://github.com/JSONbored/loopover/issues/8817)) ([33bacda](https://github.com/JSONbored/loopover/commit/33bacdab9dacc56a11dd26fabd1481fd9d99af36))
+* **orb:** salvageability axis — hold fixable, well-authored PRs instead of one-shot-closing ([#8986](https://github.com/JSONbored/loopover/issues/8986)) ([7fd84ff](https://github.com/JSONbored/loopover/commit/7fd84ffa37fc940d83c52eb265d5c4b8e6b8798a))
+* **selfhost:** PostHog AI observability across ORB and AMS ([#8623](https://github.com/JSONbored/loopover/issues/8623)) ([a9d9c0e](https://github.com/JSONbored/loopover/commit/a9d9c0e29e5a7ca480192ec21b5e1e72c7e33bb8))
+
+
+### Fixes
+
+* **engine:** treat an Infinity WIP cap as uncapped, not collapsed to 0 ([#8945](https://github.com/JSONbored/loopover/issues/8945)) ([6aaea39](https://github.com/JSONbored/loopover/commit/6aaea393908631dbd0639d6d182c35c209ce6d40))
+* **miner:** AmsPolicySpec parse warnings are computed but never surfaced to the operator ([#8978](https://github.com/JSONbored/loopover/issues/8978)) ([3369ebc](https://github.com/JSONbored/loopover/commit/3369ebc0d11ab28fd90e4668e5999b61ca8cc864)), closes [#8853](https://github.com/JSONbored/loopover/issues/8853)
+* **miner:** compare-and-set the orphan reclaim so a stale probe cannot free a live re-acquired slot ([#8992](https://github.com/JSONbored/loopover/issues/8992)) ([8444812](https://github.com/JSONbored/loopover/commit/8444812e52f909aca383ee8785d891bc3364aeab))
+* **miner:** delete the orphaned portfolio chat-action duplicate ([#8662](https://github.com/JSONbored/loopover/issues/8662)) ([1cc2146](https://github.com/JSONbored/loopover/commit/1cc2146da4cc4232935c6274da5f85716d10b6fa))
+* **miner:** drop stale ProcessEnv casts on resolveReplaySnapshotDbPath ([#8768](https://github.com/JSONbored/loopover/issues/8768)) ([7b2104d](https://github.com/JSONbored/loopover/commit/7b2104df7caf64f30954c8d39e043c57cd8b53f4)), closes [#8642](https://github.com/JSONbored/loopover/issues/8642)
+* **miner:** fail acquire() on an attempt_id/repo mismatch ([#8964](https://github.com/JSONbored/loopover/issues/8964)) ([266b07d](https://github.com/JSONbored/loopover/commit/266b07d1a408d4af656ae16fabce2c6e6aabfb69))
+* **miner:** fall back to global config.apiUrl in loopoverApiUrl ([#8937](https://github.com/JSONbored/loopover/issues/8937)) ([4dfe15d](https://github.com/JSONbored/loopover/commit/4dfe15d12e2b433e75cc75a909422bd21d708776))
+* **miner:** governor reputation-history read-modify-write is unguarded, unlike sibling scalar-state writes ([#8988](https://github.com/JSONbored/loopover/issues/8988)) ([62e6d25](https://github.com/JSONbored/loopover/commit/62e6d2541a9f6f38ed9ed952788db3b928b81e26)), closes [#8855](https://github.com/JSONbored/loopover/issues/8855)
+* **miner:** governor-chokepoint-persisted's load-evaluate-save cycle isn't atomic ([#8993](https://github.com/JSONbored/loopover/issues/8993)) ([49a27c2](https://github.com/JSONbored/loopover/commit/49a27c2fb217ef75de329cafe8ab13ef3a11740e)), closes [#8856](https://github.com/JSONbored/loopover/issues/8856)
+* **miner:** include laptop-state in doctor integrity and migrate store lists ([#8749](https://github.com/JSONbored/loopover/issues/8749)) ([713145f](https://github.com/JSONbored/loopover/commit/713145f467105685d3fd07042cb1fa5bbf570913)), closes [#8641](https://github.com/JSONbored/loopover/issues/8641)
+* **miner:** printHelp() omits the working `deny-hooks` subcommand ([#8933](https://github.com/JSONbored/loopover/issues/8933)) ([1eeaae1](https://github.com/JSONbored/loopover/commit/1eeaae18c16d36e7e4805a887440006688f18377)), closes [#8851](https://github.com/JSONbored/loopover/issues/8851)
+* **miner:** reclaim orphaned worktree allocations on every acquire() ([#8918](https://github.com/JSONbored/loopover/issues/8918)) ([eab6ecf](https://github.com/JSONbored/loopover/commit/eab6ecf8e9eaa6d36f06f4c7bfbc78c64633a349))
+* **miner:** refuse a duplicate attempt when this miner already has an open PR for the exact issue ([#8808](https://github.com/JSONbored/loopover/issues/8808)) ([#8815](https://github.com/JSONbored/loopover/issues/8815)) ([d5ec15a](https://github.com/JSONbored/loopover/commit/d5ec15a4465c4e268682532e245a0cbb45f91ff5))
+* **miner:** reject a portfolio-queue identifier containing the '::' composite-id separator ([#8925](https://github.com/JSONbored/loopover/issues/8925)) ([32ee72e](https://github.com/JSONbored/loopover/commit/32ee72e560117300a242993403a92af4219f2df3))
+* **miner:** self-review-context never supplies recent-merged-PR history, contradicting its own "same fidelity" claim ([#8969](https://github.com/JSONbored/loopover/issues/8969)) ([987f7ce](https://github.com/JSONbored/loopover/commit/987f7ce7f5c5c0810e4d56c2e0279783fe021c55)), closes [#8852](https://github.com/JSONbored/loopover/issues/8852)
+* **miner:** wire AMS policy resolver to the documented discovery order ([#9106](https://github.com/JSONbored/loopover/issues/9106)) ([f2f32cc](https://github.com/JSONbored/loopover/commit/f2f32cc7634dfda63af5bb2e9a8baf792ff153a5)), closes [#8863](https://github.com/JSONbored/loopover/issues/8863)
+* **review:** auto-clear stale manual-review lock-contention hold; sync engine gate-decision twin ([#9107](https://github.com/JSONbored/loopover/issues/9107)) ([6aacf08](https://github.com/JSONbored/loopover/commit/6aacf087b6fe487b9dd3131f7957d54041baa933))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @loopover/engine bumped from ^3.14.1 to ^3.15.2
+
 ## [3.14.1](https://github.com/JSONbored/loopover/compare/miner-v3.14.0...miner-v3.14.1) (2026-07-25)
 
 

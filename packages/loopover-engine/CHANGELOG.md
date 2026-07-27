@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.15.2](https://github.com/JSONbored/loopover/compare/engine-v3.15.1...engine-v3.15.2) (2026-07-27)
+
+
+### Fixes
+
+* **orb:** bind identity to credentials instead of renameable logins or trusted request bodies ([#9121](https://github.com/JSONbored/loopover/issues/9121), [#9125](https://github.com/JSONbored/loopover/issues/9125), [#9126](https://github.com/JSONbored/loopover/issues/9126), [#9131](https://github.com/JSONbored/loopover/issues/9131)) ([#9177](https://github.com/JSONbored/loopover/issues/9177)) ([6860b26](https://github.com/JSONbored/loopover/commit/6860b26baf2f8aa082e71f06dca3dd7a717aee54))
+* **security:** close a guardrail bypass, a repo-scope auth gap, and fail-open telemetry ingest ([#9112](https://github.com/JSONbored/loopover/issues/9112)) ([6dc0e3c](https://github.com/JSONbored/loopover/commit/6dc0e3c578a97deb9ed5d28a87932a9ec32e3c4c))
+* **trust:** commit the decision record to what actually decided, record the holdout draw, and fix the attestation envelope's width and freshness ([#9178](https://github.com/JSONbored/loopover/issues/9178)) ([0eadcbd](https://github.com/JSONbored/loopover/commit/0eadcbd7854fc683137f15cc3b475685336373c4))
+
 ## [3.14.1](https://github.com/JSONbored/loopover/compare/engine-v3.14.0...engine-v3.14.1) (2026-07-25)
 
 

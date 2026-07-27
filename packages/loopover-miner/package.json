@@ -1,6 +1,6 @@
 {
   "name": "@loopover/miner",
-  "version": "3.14.1",
+  "version": "3.15.2",
   "license": "AGPL-3.0-only",
   "type": "module",
   "description": "Foundation CLI for the local LoopOver miner runtime.",
@@ -47,7 +47,7 @@
     "build:verify": "node scripts/check-syntax.mjs"
   },
   "dependencies": {
-    "@loopover/engine": "^3.14.1",
+    "@loopover/engine": "^3.15.2",
     "@modelcontextprotocol/sdk": "1.29.0",
     "@sentry/node": "^10.63.0",
     "zod": "^4.4.3"

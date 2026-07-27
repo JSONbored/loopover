@@ -485,3 +485,32 @@ export async function verifyDecisionLedger(
   }
   return { ok: true, checked, nextAfterSeq, tipSeq, tipHash, totalCount };
 }
+
+/** One ledger row, exactly as chained -- the shape `GET /v1/public/decision-ledger/row/:seq` returns. */
+export type PublicLedgerRow = { seq: number; recordId: string; recordDigest: string; prevHash: string; rowHash: string; createdAt: string };
+
+/**
+ * Load a single ledger row by seq (#9269). This is what BINDS an external anchor back to the live chain: an
+ * anchor published elsewhere commits to a `(seq, rowHash)` pair, but on its own that only proves some hash
+ * existed somewhere at some time -- not that it is still THIS chain's hash at that seq. With this route, a
+ * third party fetches the live row, recomputes `sha256(prevHash || canonicalJson({seq, recordId,
+ * recordDigest, createdAt}))` via {@link ledgerRowHash}, and compares. An operator who deleted the chain and
+ * re-chained from genesis produces a DIFFERENT rowHash at every anchored seq, so every published anchor then
+ * fails that comparison independently and publicly -- which is precisely the "wholesale re-chaining" gap
+ * `migrations/0180_decision_ledger.sql` names as its own honest limit.
+ *
+ * Public-safe by the same argument the verify route already makes: every field here is a hash, a sequence
+ * number, a timestamp, or the record id -- all of which that route (and the published decision record) expose
+ * already. Never returns record CONTENTS. `null` for an unknown seq so the caller can 404 rather than answer
+ * 200 with nulls, keeping "never appended" distinguishable from "appended with empty fields".
+ */
+export async function loadPublicLedgerRow(env: Env, seq: number): Promise<PublicLedgerRow | null> {
+  const row = await env.DB.prepare(
+    "SELECT seq, record_id AS recordId, record_digest AS recordDigest, prev_hash AS prevHash, row_hash AS rowHash, created_at AS createdAt FROM decision_ledger WHERE seq = ?",
+  )
+    .bind(seq)
+    .first<PublicLedgerRow>();
+  // `== null` deliberately, matching verifyDecisionLedger above: D1 drivers disagree on .first() returning
+  // null vs undefined for no-row.
+  return row == null ? null : row;
+}

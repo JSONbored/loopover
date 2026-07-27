@@ -310,7 +310,7 @@ import { getContributorTrustProfile } from "../review/contributor-trust-profile"
 import { backfillContributorGateHistory } from "../review/contributor-gate-history-backfill";
 import { isFairnessAnalyticsEnabled, resolveFairnessAnalyticsManifestOverride } from "../review/contributor-trust-profile-wire";
 import { isRagEnabled } from "../review/rag-wire";
-import { loadPublicDecisionRecord, verifyDecisionLedger } from "../review/decision-record";
+import { loadPublicDecisionRecord, loadPublicLedgerRow, verifyDecisionLedger } from "../review/decision-record";
 import { buildEvalScoreRecordsFromRulePrecision, filterEvalScoreRecords } from "../review/eval-score-records";
 import { getPublicStats, isPublicStatsEnabled, resolvePublicStatsManifestOverride } from "../review/public-stats";
 import { loadPublicAccuracyTrend } from "../services/public-accuracy-trend";
@@ -1283,6 +1283,24 @@ export function createApp() {
     const limit = Number(c.req.query("limit")) || 500;
     const result = await verifyDecisionLedger(c.env, afterSeq, limit);
     return c.json(result, result.ok ? 200 : 409);
+  });
+
+  // #9269 (epic #9267): fetch ONE chain row by seq. The verify route above walks the chain's internal
+  // self-consistency; this one is what lets an EXTERNAL anchor be checked against the live chain. An anchor
+  // published to a transparency log or a public git repo commits to a (seq, rowHash) pair -- without this
+  // route that only proves some hash existed somewhere, not that it is still this chain's hash at that seq.
+  // A verifier fetches the row, recomputes sha256(prevHash || canonicalJson({seq, recordId, recordDigest,
+  // createdAt})), and compares against what was anchored. Unauthenticated, same posture and same public-safety
+  // argument as its two siblings above (hashes, a seq, a timestamp, and the already-public record id --
+  // never record contents); excluded from requiresApiToken below in this same PR, so it cannot repeat #9120's
+  // "doc comment claimed unauthenticated but the exemption list disagreed" drift.
+  app.get("/v1/public/decision-ledger/row/:seq", async (c) => {
+    const seq = Number(c.req.param("seq"));
+    if (!Number.isInteger(seq) || seq <= 0) return c.json({ error: "invalid_seq" }, 400);
+    const row = await loadPublicLedgerRow(c.env, seq);
+    if (!row) return c.json({ error: "not_found" }, 404);
+    c.header("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+    return c.json(row);
   });
 
   // #9123: the decision record itself was persisted (decision_records) but never published anywhere a
@@ -6769,6 +6787,9 @@ function requiresApiToken(path: string): boolean {
   // #9266: the eval-scores transport is unauthenticated by the same design as every /v1/public/* sibling
   // above -- committed to a corpus checksum, independently re-derivable, nothing gated behind a token.
   if (path === "/v1/public/eval-scores") return false;
+  // #9269: the single-row read, added in the SAME PR as its route so the two can never drift the way #9120's
+  // sibling did. Regex (not a literal) because of the :seq path parameter.
+  if (/^\/v1\/public\/decision-ledger\/row\/[^/]+$/.test(path)) return false;
   // #9123: the new public decision-record read route — same unauthenticated posture as its ledger-verify
   // sibling immediately above, added in the SAME PR so the two can never drift apart the way #9120 did. The
   // pull segment matches any non-slash text (not just digits): an invalid pull number is the ROUTE's 400 to

@@ -1007,6 +1007,17 @@ export function buildOpenApiSpec() {
   });
   registry.registerPath({
     method: "get",
+    path: "/v1/public/decision-ledger/row/{seq}",
+    summary: "Fetch one decision-ledger row by seq, so an external anchor can be bound back to the live chain",
+    request: { params: z.object({ seq: z.string() }) },
+    responses: {
+      200: { description: "The chain row: seq, recordId, recordDigest, prevHash, rowHash, createdAt. Recompute sha256(prevHash || canonicalJson({seq, recordId, recordDigest, createdAt})) and compare against an anchored rowHash." },
+      400: { description: "seq is not a positive integer" },
+      404: { description: "No ledger row at that seq (never appended -- distinct from a row with empty fields)" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
     path: "/v1/public/decision-records/{owner}/{repo}/{pull}",
     summary: "Fetch the latest published decision record for a PR, verbatim, plus its content digest",
     request: { params: z.object({ owner: z.string(), repo: z.string(), pull: z.string() }) },

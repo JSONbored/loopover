@@ -946,3 +946,33 @@ export function renderReviewingPlaceholder(ctx: { brand?: string } = {}): string
 export function shouldPostReviewingPlaceholder(args: { reviewWillRun: boolean; mode: string; willComment: boolean }): boolean {
   return args.reviewWillRun && args.mode === "live" && args.willComment;
 }
+
+// ── CI-wait placeholder ──────────────────────────────────────────────────────────────────────────
+//
+// #9042 — posted the FIRST time a PR defers waiting on CI, before readiness is even reached (i.e. before
+// the reviewing-in-progress placeholder above ever gets a chance to run, since that one only fires once
+// prReadyForReview has already returned true). Without this, a PR waiting on CI got NO surface at all --
+// measured live: median 8.3min / p90 21.9min / max 50.9min with zero visible trace, which trained a
+// maintainer to merge by hand rather than wait for a bot that looked like it was ignoring the PR (#8944:
+// a maintainer merged during exactly this silent window, and CI then failed). Shares the SAME
+// PR_PANEL_COMMENT_MARKER as the reviewing placeholder and the final verdict comment, so
+// createOrUpdatePrIntelligenceComment's upsert-by-marker naturally REPLACES this placeholder the moment
+// either of those posts -- "updated, not duplicated" falls out of the existing upsert primitive for free,
+// the same way the reviewing placeholder above already relies on it.
+const WAITING_SQUARE = "🟨";
+
+/** Render the transient "waiting on CI" placeholder body. Caller must prepend PR_PANEL_COMMENT_MARKER
+ *  before posting, exactly like {@link renderReviewingPlaceholder}. `reason` is a short, already-public-safe
+ *  phrase (no raw external text) naming what ORB is waiting on -- e.g. "CI checks to finish" or "a required
+ *  CI check that has not started yet". Pure. */
+export function renderWaitingForCiPlaceholder(ctx: { reason: string; brand?: string }): string {
+  const brand = escapePublicHtmlAngles(ctx.brand ?? "LoopOver");
+  const reason = escapePublicHtmlAngles(ctx.reason);
+  const inner = [
+    WAITING_SQUARE.repeat(12),
+    `### ⏳ ${brand} is waiting…`,
+    `${brand} has seen this pull request and is waiting on ${reason} before reviewing it. This comment will update once the review runs.`,
+    `<sub>${STATUS_META.ready.square} Safe / merged · ${STATUS_META.advisory.square} Advisory · ${STATUS_META.held.square} Held for review · ${STATUS_META.blocked.square} Blocked / closed · ${WAITING_SQUARE} Waiting</sub>`,
+  ].join("\n\n");
+  return asAlert("IMPORTANT", inner);
+}

@@ -2404,7 +2404,18 @@ describe("queue processors", () => {
     }
   });
 
-  it("keeps deferring a missing-required-context PR after the short surfacing cap (#selfhost-ci-deferral-staleness)", async () => {
+  // POLICY REVERSAL (#9011). This test previously asserted the OPPOSITE: that a clean-base PR keeps deferring
+  // past the 2-minute missing-required-context cap, forever, with "Missing required contexts must still not
+  // publish a passing gate before expected CI reports" as its stated reasoning. That reasoning was itself the
+  // bug -- finalizing here does NOT publish a passing gate. A missing required context keeps `ciState` at
+  // "pending" (backfill.ts's anyMissingRequiredContext also sets anyPending), and agent-actions.ts's
+  // `reviewGood = gatePassing && ciPassed` requires ciState === "passed", so finalizing can never produce a
+  // would-approve/would-merge disposition -- it only converts an INFINITE SILENCE into a visible, correctly
+  // non-mergeable hold. Measured live: this exact "unconditionally forever" shape fired 1,800 times across 342
+  // distinct PRs in 48h, making a genuinely stuck PR (a path-filtered workflow, a renamed/deleted required
+  // check, an uninstalled third-party required App -- none of which will EVER make the context appear)
+  // indistinguishable from one healthily waiting on real CI.
+  it("REGRESSION (#9011): a clean-base PR with missing required context finalizes past the short cap instead of deferring forever", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { pull_requests: "write", checks: "write" }, events: [] } });
     await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
@@ -2413,8 +2424,7 @@ describe("queue processors", () => {
     await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Missing required context, past short cap", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, base: { ref: "main" }, labels: [], body: "Closes #1" });
     vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
     // 3 minutes elapsed: past the 2-minute missing-required-context surfacing cap, but nowhere near the old
-    // 30-minute stale-CI cap. Missing required contexts must still not publish a passing gate before expected CI
-    // reports, because the review check may itself be branch-protection-required.
+    // 30-minute stale-CI cap -- proves the short, class-specific cap governs the finalize timing here.
     await env.SELFHOST_TRANSIENT_CACHE?.set(
       "ci-pending-first-seen:owner/agent-repo#7:a7",
       String(Date.now() - 3 * 60 * 1000),
@@ -2449,15 +2459,20 @@ describe("queue processors", () => {
     try {
       await processJob(env, { type: "agent-regate-pr", deliveryId: "missing-context-past-short-cap", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
 
-      expect(gateChecks).toBe(0);
-      const deferred = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?")
-        .bind("github_app.review_deferred_ci_pending")
-        .first<{ n: number }>();
+      // A hold is published (a real gate check-run), not silence, and not a passing/merging verdict.
+      expect(gateChecks).toBeGreaterThan(0);
       const finalized = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?")
         .bind("github_app.review_finalized_ci_stuck")
         .first<{ n: number }>();
-      expect(deferred?.n).toBe(1);
-      expect(finalized?.n).toBe(0);
+      expect(finalized?.n).toBe(1);
+      // The finalize audit carries the distinguishable reason (#9000/#9003's ask), separable from an ordinary
+      // "CI still running" finalize.
+      const missingContextFinalize = await env.DB.prepare(
+        "select count(*) as n from audit_events where event_type = ? and detail like ?",
+      )
+        .bind("github_app.review_finalized_ci_stuck", "A required CI context never appeared%")
+        .first<{ n: number }>();
+      expect(missingContextFinalize?.n).toBe(1);
     } finally {
       liveCiSpy.mockRestore();
       requiredContextsSpy.mockRestore();
@@ -5823,6 +5838,56 @@ describe("queue processors", () => {
       expect(publicCommentBody).toContain("Null pointer on empty input");
     });
 
+    it("REGRESSION (#9000): a paused PR with no reusable prior review names the gap instead of silently doing nothing", async () => {
+      // Same silent-branch class as the frozen-reuse-unavailable regression above, for the paused-cadence path:
+      // the ONE prior published review that pushed this PR past its pause threshold has no public assessment
+      // (e.g. an inconclusive/malformed row), so there is nothing to reuse -- before #9000 this left aiReviewWillRun
+      // false with zero audit trail.
+      let aiCalls = 0;
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) }; } } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "100000",
+      });
+      await seedRegateChurnRepo(env, { publicSurface: "comment_only" });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { commentMode: "all_prs", publicSurface: "comment_only", checkRunMode: "off", reviewCheckMode: "required", aiReviewMode: "block" }, review: { auto_review: { auto_pause_after_reviewed_commits: 1 } } });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 83, title: "Paused, nothing reusable", state: "open", draft: false, user: { login: "contributor" }, head: { sha: "a83-v2" }, labels: [], body: "Closes #1" } as never);
+      await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 83, status: "complete", reviewsSyncedAt: new Date().toISOString() });
+      // The one published review that reaches the threshold has NO notes at all -- hasPublicReviewAssessment fails.
+      await putCachedAiReview(env, "JSONbored/gittensory", 83, "a83-v1", "block", { notes: "", reviewerCount: 1 });
+      await markAiReviewPublished(env, "JSONbored/gittensory", 83, "a83-v1");
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+        if (url.includes("/pulls/83/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+        if (url.endsWith("/pulls/83")) return Response.json({ number: 83, title: "Paused, nothing reusable", state: "open", draft: false, user: { login: "contributor" }, head: { sha: "a83-v2" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+        if (url.includes("/commits/a83-v2/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+        if (url.includes("/commits/a83-v2/status")) return Response.json({ state: "success", statuses: [] });
+        if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+        if (url.includes("/issues/83/comments")) return method === "GET" ? Response.json([]) : Response.json({ id: 83 }, { status: 201 });
+        if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+        return Response.json({});
+      });
+
+      await expect(
+        processJob(env, { type: "agent-regate-pr", deliveryId: "paused-nothing-reusable", repoFullName: "JSONbored/gittensory", prNumber: 83, installationId: 123 }),
+      ).resolves.toBeUndefined();
+
+      expect(aiCalls).toBe(0);
+      const pausedReuseCount = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
+        .bind("github_app.ai_review_paused_reuse", "JSONbored/gittensory#83")
+        .first<{ n: number }>();
+      expect(pausedReuseCount?.n).toBe(0); // nothing to reuse, so the ordinary reuse event never fires
+      const gapAudit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? and target_key = ?")
+        .bind("github_app.ai_review_paused_reuse_unavailable", "JSONbored/gittensory#83")
+        .first<{ outcome: string; detail: string }>();
+      expect(gapAudit?.outcome).toBe("completed");
+      expect(gapAudit?.detail).toContain("no prior published AI review");
+    });
+
     it("#9: the public surface is not republished when already current at the head (check-run-only repo, req 6)", async () => {
       const env = createTestEnv({
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
@@ -7436,6 +7501,52 @@ describe("queue processors", () => {
       expect(bypassAudit?.outcome).toBe("completed"); // the retrigger genuinely bypassed the freeze, not just a coincidental reuse
     });
 
+    it("REGRESSION (#9000): a PR frozen for manual review with NO reusable prior review names the gap instead of silently doing nothing", async () => {
+      // Before #9000, this branch of the freeze logic (frozenReview null, or one with no public assessment) had
+      // NO audit event at all -- aiReviewWillRun was false, nothing was reused, and the audit trail contained
+      // zero explanation. This is the exact class of silence #9000 (evidence: #8972) closes.
+      let aiCalls = 0;
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ assessment: "Fresh (should not happen while frozen).", blockers: [], nits: [], suggestions: [] }) }; } } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "100000",
+      });
+      await seedRegateChurnRepo(env, { publicSurface: "comment_only" });
+      // Held for manual review from a PRIOR pass, but -- unlike the sibling test above -- NO review was ever
+      // published for this PR, so there is genuinely nothing to reuse.
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 82, title: "Held, never reviewed", state: "open", user: { login: "contributor" }, head: { sha: "a82-v1" }, labels: [{ name: "manual-review" }], body: "Closes #1" });
+      await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 82, status: "complete", reviewsSyncedAt: new Date().toISOString() });
+
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+        if (url.includes("/pulls/82/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+        if (url.endsWith("/pulls/82")) return Response.json({ number: 82, title: "Held, never reviewed", state: "open", user: { login: "contributor" }, head: { sha: "a82-v1" }, labels: [{ name: "manual-review" }], body: "Closes #1", mergeable_state: "clean" });
+        if (url.includes("/commits/a82-v1/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+        if (url.includes("/commits/a82-v1/status")) return Response.json({ state: "success", statuses: [] });
+        if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+        if (url.includes("/issues/82/comments")) return method === "GET" ? Response.json([]) : Response.json({ id: 1 }, { status: 201 });
+        if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+        return Response.json({});
+      });
+
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "held-never-reviewed", repoFullName: "JSONbored/gittensory", prNumber: 82, installationId: 123 });
+
+      expect(aiCalls).toBe(0); // still frozen -- never spends a fresh call
+      const freezeReuseCount = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
+        .bind("github_app.ai_review_frozen_reuse", "JSONbored/gittensory#82")
+        .first<{ n: number }>();
+      expect(freezeReuseCount?.n).toBe(0); // nothing to reuse, so the ordinary reuse event never fires
+      const gapAudit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? and target_key = ?")
+        .bind("github_app.ai_review_frozen_reuse_unavailable", "JSONbored/gittensory#82")
+        .first<{ outcome: string; detail: string }>();
+      expect(gapAudit?.outcome).toBe("completed");
+      expect(gapAudit?.detail).toContain("no prior published AI review");
+    });
+
     it("REGRESSION (#3725, reproduces #3702): the PR-panel rerun checkbox forces a fresh AI review instead of silently replaying a cached one", async () => {
       // #3702 showed "Code review: No blockers | No AI review summary" (reviewerCount 0) and re-checking the
       // panel's rerun checkbox repeatedly did not fix it -- the retrigger ran but never set `forceAiReview`, so
@@ -7503,6 +7614,77 @@ describe("queue processors", () => {
         .bind("github_app.ai_review_force_bypass", "JSONbored/gittensory#90")
         .first<{ outcome: string }>();
       expect(bypassAudit?.outcome).toBe("completed");
+    });
+
+    it("REGRESSION (#9000, root cause of the #8972 incident): a forced retrigger blocked by the public-review hard gate names the exact reason instead of silently doing nothing", async () => {
+      // #8972 evidence: a forced (`forceAiReview: true`) panel retrigger ran, completed, republished the same
+      // stale placeholder, and left NONE of the events a forced pass should emit (no force_bypass, no cache
+      // miss/hit, no auto_review_skipped, no frozen-reuse) -- something gated aiReviewWillRun off with zero
+      // record. shouldStartAiReviewForAdvisory folds in shouldRequirePublicAiReviewForAdvisory's hard gate, which
+      // does NOT bypass on forceAiReview (only the reputation skip does) and, before #9000, had no audit trail
+      // on ANY of its branches. Here the AI_SUMMARIES_ENABLED kill-switch is off, reproducing that exact class of
+      // silent gate failure on an explicit forced retrigger.
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run: async () => ({ response: JSON.stringify({ assessment: "Should never run.", blockers: [], nits: [], suggestions: [] }) }) } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "false",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "100000",
+      });
+      await seedRegateChurnRepo(env);
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 84, title: "Forced retrigger, AI summaries off", state: "open", user: { login: "contributor" }, head: { sha: "a84" }, labels: [], body: "Closes #1" });
+      await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 84, status: "complete", reviewsSyncedAt: new Date().toISOString() });
+
+      const checkedPanel = [
+        "<!-- gittensory-pr-panel:v1 -->",
+        "",
+        "- [x] <!-- gittensory-rerun-review:v1 --> Re-run LoopOver review",
+      ].join("\n");
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+        if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "maintain" });
+        if (url.includes("/pulls/84/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+        if (url.endsWith("/pulls/84")) return Response.json({ number: 84, title: "Forced retrigger, AI summaries off", state: "open", user: { login: "contributor" }, head: { sha: "a84" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+        if (url.includes("/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+        if (url.includes("/status")) return Response.json({ state: "success", statuses: [] });
+        if (url.includes("/issues/84/comments") && method === "GET") return Response.json([{ id: 778, body: checkedPanel, user: { login: "loopover-orb[bot]", type: "Bot" } }]);
+        if (url.includes("/issues/comments/778") && method === "PATCH") return Response.json({ id: 778 });
+        if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+        if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+        return Response.json({});
+      });
+
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "panel-retrigger-blocked-by-hard-gate",
+        eventName: "issue_comment",
+        payload: {
+          action: "edited",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          issue: { number: 84, title: "Forced retrigger, AI summaries off", state: "open", user: { login: "contributor" }, pull_request: {} },
+          comment: { id: 778, body: checkedPanel, user: { login: "loopover-orb[bot]", type: "Bot" } },
+          sender: { login: "maintainer", type: "User" },
+        },
+      });
+
+      // The retrigger itself was accepted and processed (receipt) ...
+      const retriggerAudit = await env.DB.prepare("select outcome from audit_events where event_type = ? and target_key = ?")
+        .bind("github_app.pr_panel_retriggered", "JSONbored/gittensory#84")
+        .first<{ outcome: string }>();
+      expect(retriggerAudit?.outcome).toBe("completed");
+      // ... but the hard gate silently blocked the AI review itself -- previously zero audit trail explaining why.
+      const gapAudit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? and target_key = ?")
+        .bind("github_app.ai_review_public_gate_skipped", "JSONbored/gittensory#84")
+        .first<{ outcome: string; detail: string }>();
+      expect(gapAudit?.outcome).toBe("completed");
+      expect(gapAudit?.detail).toContain("ai_summaries_disabled");
+      const gapMetadata = await env.DB.prepare("select metadata_json from audit_events where event_type = ? and target_key = ?")
+        .bind("github_app.ai_review_public_gate_skipped", "JSONbored/gittensory#84")
+        .first<{ metadata_json: string }>();
+      expect(JSON.parse(gapMetadata?.metadata_json ?? "{}")).toMatchObject({ reason: "ai_summaries_disabled", forced: true });
     });
 
     it("#9008: a forced re-run steals an orphaned AI-review lock instead of silently landing on the contended placeholder", async () => {
@@ -7647,6 +7829,52 @@ describe("queue processors", () => {
           .first<{ outcome: string; detail: string }>();
         expect(reuseAudit?.outcome).toBe("completed");
         expect(reuseAudit?.detail).toContain("one-shot review cadence");
+      });
+
+      it("REGRESSION (#9000): one-shot already spent its review but has nothing reusable -- names the gap instead of silently doing nothing", async () => {
+        // Same silent-branch class as the frozen/paused unavailable regressions above: the prior published
+        // review this PR already spent its one shot on has no public assessment, so there is nothing to reuse.
+        // Before #9000 this left aiReviewWillRun false with zero audit trail.
+        let aiCalls = 0;
+        const env = createTestEnv({
+          GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+          AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ assessment: "Fresh (should not happen under one-shot).", blockers: [], nits: [], suggestions: [] }) }; } } as unknown as Ai,
+          AI_SUMMARIES_ENABLED: "true",
+          AI_PUBLIC_COMMENTS_ENABLED: "true",
+          AI_DAILY_NEURON_BUDGET: "100000",
+        });
+        await seedRegateChurnRepo(env, { publicSurface: "comment_only" });
+        await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 93, title: "One-shot, nothing reusable", state: "open", user: { login: "contributor" }, head: { sha: "a93-v1" }, labels: [], body: "Closes #1" });
+        await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 93, status: "complete", reviewsSyncedAt: new Date().toISOString() });
+        await putCachedAiReview(env, "JSONbored/gittensory", 93, "a93-v1", "block", { notes: "", reviewerCount: 1 });
+        await markAiReviewPublished(env, "JSONbored/gittensory", 93, "a93-v1");
+
+        vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = input.toString();
+          const method = init?.method ?? "GET";
+          if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+          if (url.includes("/pulls/93/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 2, deletions: 0, changes: 2, patch: "@@\n+export const ok = true;\n+export const also = 1;" }]);
+          if (url.endsWith("/pulls/93")) return Response.json({ number: 93, title: "One-shot, nothing reusable", state: "open", user: { login: "contributor" }, head: { sha: "a93-v2" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+          if (url.includes("/commits/a93-v2/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+          if (url.includes("/commits/a93-v2/status")) return Response.json({ state: "success", statuses: [] });
+          if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+          if (url.includes("/issues/93/comments")) return method === "GET" ? Response.json([]) : Response.json({ id: 1 }, { status: 201 });
+          if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+          return Response.json({});
+        });
+
+        await processJob(env, { type: "agent-regate-pr", deliveryId: "one-shot-nothing-reusable", repoFullName: "JSONbored/gittensory", prNumber: 93, installationId: 123 });
+
+        expect(aiCalls).toBe(0);
+        const reuseCount = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
+          .bind("github_app.ai_review_one_shot_reuse", "JSONbored/gittensory#93")
+          .first<{ n: number }>();
+        expect(reuseCount?.n).toBe(0); // nothing to reuse, so the ordinary reuse event never fires
+        const gapAudit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? and target_key = ?")
+          .bind("github_app.ai_review_one_shot_reuse_unavailable", "JSONbored/gittensory#93")
+          .first<{ outcome: string; detail: string }>();
+        expect(gapAudit?.outcome).toBe("completed");
+        expect(gapAudit?.detail).toContain("no public assessment to reuse");
       });
 
       it("default (one_shot): a PR with no prior review yet still gets its first pass -- one-shot never blocks the FIRST review", async () => {

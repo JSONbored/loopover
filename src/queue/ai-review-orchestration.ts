@@ -302,6 +302,45 @@ export function resolveAiReviewableAuthor(
   return confirmedContributor || packAllowsAnyAuthorBlockingReview || Boolean(settings.aiReviewAllAuthors);
 }
 
+/** #9000: named reasons for `shouldRequirePublicAiReviewForAdvisory`'s hard gate, in the same priority order the
+ *  boolean check tests them in. Before this, every one of these conditions silently returned `false` with zero
+ *  audit trail anywhere in the codebase — including on an explicit maintainer-forced retrigger (the PR-panel
+ *  checkbox), which does NOT bypass this hard gate (see `shouldStartAiReviewForAdvisory`'s own doc comment).
+ *  That made it possible for a forced re-run to spend nothing, publish nothing new, and leave no explanation at
+ *  all for why — confirmed live on #8972. The catch-all audit call site in processors.ts uses this to name the
+ *  exact reason whenever `aiReviewWillRun` ends up false for a cause none of the OTHER (already-audited) paths
+ *  — author blacklist, manual-review freeze, auto-review skip, one-shot reuse, reputation skip — cover. */
+export type PublicAiReviewGateSkipReason =
+  | "skip_ai_review_requested"
+  | "ai_review_mode_off"
+  | "author_not_reviewable"
+  | "no_head_sha"
+  | "ai_summaries_disabled"
+  | "ai_public_comments_disabled"
+  | "no_ai_binding";
+
+export function resolvePublicAiReviewGateSkipReason(
+  env: Env,
+  args: {
+    settings: RepositorySettings;
+    advisory: Pick<Awaited<ReturnType<typeof buildPullRequestAdvisory>>, "headSha">;
+    repoFullName: string;
+    author: string | null;
+    confirmedContributor: boolean;
+    skipAiReview?: boolean | undefined;
+  },
+): PublicAiReviewGateSkipReason | null {
+  const reviewableAuthor = resolveAiReviewableAuthor(args.settings, args.confirmedContributor);
+  if (args.skipAiReview) return "skip_ai_review_requested";
+  if (args.settings.aiReviewMode === "off") return "ai_review_mode_off";
+  if (!reviewableAuthor) return "author_not_reviewable";
+  if (!args.advisory.headSha) return "no_head_sha";
+  if (!isEnabled(env.AI_SUMMARIES_ENABLED)) return "ai_summaries_disabled";
+  if (!isEnabled(env.AI_PUBLIC_COMMENTS_ENABLED)) return "ai_public_comments_disabled";
+  if (!env.AI) return "no_ai_binding";
+  return null;
+}
+
 export function shouldRequirePublicAiReviewForAdvisory(
   env: Env,
   args: {
@@ -313,18 +352,7 @@ export function shouldRequirePublicAiReviewForAdvisory(
     skipAiReview?: boolean | undefined;
   },
 ): boolean {
-  const reviewableAuthor = resolveAiReviewableAuthor(args.settings, args.confirmedContributor);
-  if (
-    args.skipAiReview ||
-    args.settings.aiReviewMode === "off" ||
-    !reviewableAuthor ||
-    !args.advisory.headSha ||
-    !isEnabled(env.AI_SUMMARIES_ENABLED) ||
-    !isEnabled(env.AI_PUBLIC_COMMENTS_ENABLED) ||
-    !env.AI
-  )
-    return false;
-  return true;
+  return resolvePublicAiReviewGateSkipReason(env, args) === null;
 }
 
 /** Reuse a cached review manifest when present; otherwise load fail-safely for the AI review pass. (#1954) */

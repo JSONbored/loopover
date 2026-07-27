@@ -450,6 +450,7 @@ import {
   aiReviewLockContendedResult,
   claimAiReviewLock,
   releaseAiReviewLock,
+  resolvePublicAiReviewGateSkipReason,
   resolveReviewEnrichmentGithubToken,
   resolveReviewManifestForAiReview,
   runAiReviewForAdvisory,
@@ -494,6 +495,7 @@ import { incr, observe, REVIEW_LATENCY_BUCKETS } from "../selfhost/metrics";
 import { withAdvisoryAiEnv } from "../selfhost/ai";
 import {
   renderReviewingPlaceholder,
+  renderWaitingForCiPlaceholder,
   shouldPostReviewingPlaceholder,
   type CheckFailureDetail,
   type MergeReadiness,
@@ -4148,14 +4150,41 @@ async function prReadyForReview(
       ci.hasVisiblePending ||
       !(await ciPendingDeferStuck(env, repoFullName, pr.number, pr.headSha, deferCapMs))
     ) {
+      // #9011/#9000: distinguishable reason on the SAME defer event -- "waiting normally" and "a required
+      // context has been missing this whole time" used to be indistinguishable in the ledger, which is exactly
+      // what made a genuinely stuck PR unfindable among the 1,800 healthy-wait occurrences in 48h.
       await recordAuditEvent(env, {
         eventType: "github_app.review_deferred_ci_pending",
         actor: "loopover",
         targetKey: `${repoFullName}#${pr.number}`,
         outcome: "queued",
-        detail: "CI still running — review deferred until all checks finish",
-        metadata: { deliveryId, repoFullName },
+        detail: ci.hasMissingRequiredContext
+          ? "A required CI context is still missing — review deferred instead of publishing a passing gate before expected CI reports"
+          : "CI still running — review deferred until all checks finish",
+        metadata: { deliveryId, repoFullName, stuckReason: ci.hasMissingRequiredContext ? "missing_required_context" : "ci_running" },
       }).catch(() => undefined);
+      // #9042: publish an IMMEDIATE "waiting" surface instead of the total silence a deferred readiness check
+      // otherwise produces -- measured live at a median 8.3min / p90 21.9min wait with zero visible trace,
+      // which is exactly what trained a maintainer to merge #8944 by hand while ORB was still silently
+      // waiting (its CI then failed). Shares PR_PANEL_COMMENT_MARKER with the reviewing placeholder and the
+      // eventual real verdict, so the upsert naturally REPLACES this the moment either of those posts --
+      // "updated, not duplicated" comes for free from the same primitive the reviewing placeholder already
+      // relies on. Best-effort and deliberately coarse-gated (commentMode/pause/dry-run only, not the full
+      // willComment resolution `maybePublishPrPublicSurface` computes downstream): this is an additive "we
+      // see you" surface, not a disposition-bearing one, so it does not need that resolution's full weight,
+      // and a failure here must never turn a deferred readiness check into a thrown error.
+      if (settings.commentMode !== "off" && !settings.agentPaused && !settings.agentDryRun) {
+        const waitingReason = ci.hasMissingRequiredContext
+          ? "a required CI check that has not started yet"
+          : "CI checks to finish";
+        await createOrUpdatePrIntelligenceComment(
+          env,
+          installationId,
+          repoFullName,
+          pr.number,
+          `${PR_PANEL_COMMENT_MARKER}\n\n${renderWaitingForCiPlaceholder({ reason: waitingReason })}`,
+        ).catch(() => undefined);
+      }
       return false;
     }
     // #3947 made this defer UNCONDITIONAL and INDEFINITE ("no finalize escape") specifically to stop a
@@ -4169,21 +4198,28 @@ async function prReadyForReview(
     // can only make things worse: no amount of deferring makes an expected required context appear on a
     // PR that needs a rebase. Excluding this case lets a dirty-base PR fall through to the same
     // finalize-past-cap path below instead of deferring forever (#7537-class stuck PRs, #7556). Every
-    // OTHER missing-required-context PR keeps deferring unconditionally, exactly as #3947 intended: a
-    // clean-base PR really might still be waiting on a required check whose eventual result matters.
+    // #9011: a clean-base missing-required-context PR no longer defers past its own cap either -- it used
+    // to (see the paragraph above, which described the OLD "OTHER missing-required-context PR keeps deferring
+    // unconditionally" behavior #3947 originally intended), and that "unconditionally" was the bug: with no
+    // finalize escape at all, a required context that structurally can never appear (a path-filtered workflow,
+    // a renamed/deleted required check, an uninstalled third-party required App) left the PR with NO public
+    // surface, NO review, NO disposition, and NO alert -- forever. Measured live: 1,800 occurrences across 342
+    // distinct PRs in 48h, indistinguishable from a PR healthily waiting on real CI.
+    //
+    // Finalizing here is safe under #3947's own concern (never publish a premature "passed" gate): a missing
+    // required context keeps `ciState` at "pending" (backfill.ts's anyMissingRequiredContext also sets
+    // anyPending), and agent-actions.ts's `reviewGood = gatePassing && ciPassed` requires ciState === "passed"
+    // -- so this can NEVER produce a would-approve/would-merge disposition. It converts an infinite SILENCE
+    // into a visible, correctly-non-mergeable HOLD, which is what #3947 always wanted to avoid publishing
+    // around, not what it wanted to prevent.
+    //
+    // Falls through to the SAME finalize-past-cap block the generic stuck-CI case already uses below (SHA-scoped
+    // guard, once-per-SHA error-level page) -- both are "past the staleness cap, stop deferring" and share the
+    // exact same safety argument; `stuckReason` below is the one thing that needs to differ, so #9000/#9003's
+    // ask for a distinguishable reason on the defer/finalize audit trail (ci_running vs missing_required_context)
+    // is satisfied without duplicating the whole guard.
     const isLiveBaseConflict = (liveMergeState ?? pr.mergeableState) === "dirty";
-    if (ci.hasMissingRequiredContext && !isLiveBaseConflict) {
-      await recordAuditEvent(env, {
-        eventType: "github_app.review_deferred_ci_pending",
-        actor: "loopover",
-        targetKey: `${repoFullName}#${pr.number}`,
-        outcome: "queued",
-        detail:
-          "Required CI context is still missing — review deferred instead of publishing a passing gate before expected CI reports",
-        metadata: { deliveryId, repoFullName },
-      }).catch(() => undefined);
-      return false;
-    }
+    const stuckReason = ci.hasMissingRequiredContext && !isLiveBaseConflict ? "missing_required_context" : "ci_running";
     // #orb-ci-stuck-repeat: finalizing here runs a full paid AI review -- but a permanently-stuck CI context
     // (a fork check that will never report, an orphaned required context) never resolves, so every later
     // evaluation of the SAME head SHA hits this exact branch again and would re-spend another review for a
@@ -4207,8 +4243,11 @@ async function prReadyForReview(
         actor: "loopover",
         targetKey: `${repoFullName}#${pr.number}`,
         outcome: "queued",
-        detail: "CI still stuck pending, but already finalized once for this head SHA — deferring again instead of re-spending a review",
-        metadata: { deliveryId, repoFullName, headSha: pr.headSha },
+        detail:
+          stuckReason === "missing_required_context"
+            ? "A required CI context is still missing, but already finalized once for this head SHA — deferring again instead of re-spending a review"
+            : "CI still stuck pending, but already finalized once for this head SHA — deferring again instead of re-spending a review",
+        metadata: { deliveryId, repoFullName, headSha: pr.headSha, stuckReason },
       }).catch(() => undefined);
       // level:"error" is deliberate, not a code failure: this line only fires once the guard above already
       // stopped the wasteful re-review, so its OWN existence is the operator-visible signal (via the structured
@@ -4232,6 +4271,7 @@ async function prReadyForReview(
             pullNumber: pr.number,
             headSha: pr.headSha,
             deliveryId,
+            stuckReason,
           }),
         );
       }
@@ -4243,8 +4283,10 @@ async function prReadyForReview(
       targetKey: `${repoFullName}#${pr.number}`,
       outcome: "completed",
       detail:
-        "CI stuck pending past the staleness cap — finalizing so the PR is surfaced, not silently deferred forever",
-      metadata: { deliveryId, repoFullName },
+        stuckReason === "missing_required_context"
+          ? "A required CI context never appeared past the staleness cap — finalizing so the PR is surfaced (held, not merged) instead of silently deferred forever"
+          : "CI stuck pending past the staleness cap — finalizing so the PR is surfaced, not silently deferred forever",
+      metadata: { deliveryId, repoFullName, stuckReason },
     }).catch(() => undefined);
     await recordAuditEvent(env, {
       eventType: CI_STUCK_FINALIZE_GUARD_EVENT_TYPE,
@@ -4252,7 +4294,7 @@ async function prReadyForReview(
       targetKey: guardTargetKey,
       outcome: "completed",
       detail: "recorded so a repeat evaluation of the SAME head SHA does not pay for another review",
-      metadata: { repoFullName, prNumber: pr.number, headSha: pr.headSha },
+      metadata: { repoFullName, prNumber: pr.number, headSha: pr.headSha, stuckReason },
     }).catch(() => undefined);
     // fall through → return true → the gate finalizes + the PR is disposed/held, never silently stuck.
   }
@@ -10383,6 +10425,18 @@ async function maybePublishPrPublicSurface(
            * identical `advisory.headSha ?? null` fallbacks elsewhere in this function. */
           metadata: { deliveryId: webhook.deliveryId, repoFullName, headSha: advisory.headSha ?? null },
         }).catch(() => undefined);
+      } else {
+        // #9000: previously silent — a PR frozen for manual review with no prior published review (or one with
+        // no public assessment) to reuse left aiReviewWillRun false and NOTHING in the audit trail explaining
+        // why. Named so "why did nothing happen" is always answerable by grepping the audit log.
+        await recordAuditEvent(env, {
+          eventType: "github_app.ai_review_frozen_reuse_unavailable",
+          actor: author,
+          targetKey: `${repoFullName}#${pr.number}`,
+          outcome: "completed",
+          detail: "PR is held for manual review, and no prior published AI review with a public assessment exists to reuse — no review ran this pass",
+          metadata: { deliveryId: webhook.deliveryId, repoFullName, headSha: advisory.headSha ?? null },
+        }).catch(() => undefined);
       }
     } else if (autoReviewSkipReason === "review paused (commit threshold)") {
       // #selfhost-token-burn: countPublishedAiReviewHeads now counts the PR's OWN current head (see that
@@ -10405,24 +10459,84 @@ async function maybePublishPrPublicSurface(
           detail: "Auto-review is paused (commit threshold); reused the last published AI review instead of spending a fresh call",
           metadata: { deliveryId: webhook.deliveryId, repoFullName, headSha: advisory.headSha ?? null },
         }).catch(() => undefined);
+      } else {
+        // #9000: same silent gap as the frozen-reuse branch above, for the paused-cadence case.
+        await recordAuditEvent(env, {
+          eventType: "github_app.ai_review_paused_reuse_unavailable",
+          actor: author,
+          targetKey: `${repoFullName}#${pr.number}`,
+          outcome: "completed",
+          detail: "Auto-review is paused (commit threshold), and no prior published AI review with a public assessment exists to reuse — no review ran this pass",
+          metadata: { deliveryId: webhook.deliveryId, repoFullName, headSha: advisory.headSha ?? null },
+        }).catch(() => undefined);
       }
-    } else if (oneShotPriorReview && hasPublicReviewAssessment(oneShotPriorReview.notes)) {
-      advisory.findings.push(...oneShotPriorReview.findings);
-      aiReview = oneShotPriorReview;
-      aiReviewWasReused = true;
-      incr("loopover_ai_review_one_shot_reuse_total");
-      await recordAuditEvent(env, {
-        eventType: "github_app.ai_review_one_shot_reuse",
-        actor: author,
-        targetKey: `${repoFullName}#${pr.number}`,
-        outcome: "completed",
-        detail: "one-shot review cadence: reused the last published AI review instead of spending a fresh call",
-        /* v8 ignore next -- a truthy `oneShotPriorReview` means markAiReviewPublished previously stamped a row
-         * for a non-null head SHA, and an open PR does not lose its head SHA once set; the `?? null` is a
-         * type-level fallback for a practically-unreachable branch, mirroring the identical fallback on the
-         * frozen-reuse and paused-reuse audit events just above. */
-        metadata: { deliveryId: webhook.deliveryId, repoFullName, headSha: advisory.headSha ?? null },
-      }).catch(() => undefined);
+    } else if (oneShotPriorReview) {
+      if (hasPublicReviewAssessment(oneShotPriorReview.notes)) {
+        advisory.findings.push(...oneShotPriorReview.findings);
+        aiReview = oneShotPriorReview;
+        aiReviewWasReused = true;
+        incr("loopover_ai_review_one_shot_reuse_total");
+        await recordAuditEvent(env, {
+          eventType: "github_app.ai_review_one_shot_reuse",
+          actor: author,
+          targetKey: `${repoFullName}#${pr.number}`,
+          outcome: "completed",
+          detail: "one-shot review cadence: reused the last published AI review instead of spending a fresh call",
+          /* v8 ignore next -- a truthy `oneShotPriorReview` means markAiReviewPublished previously stamped a row
+           * for a non-null head SHA, and an open PR does not lose its head SHA once set; the `?? null` is a
+           * type-level fallback for a practically-unreachable branch, mirroring the identical fallback on the
+           * frozen-reuse and paused-reuse audit events just above. */
+          metadata: { deliveryId: webhook.deliveryId, repoFullName, headSha: advisory.headSha ?? null },
+        }).catch(() => undefined);
+      } else {
+        // #9000: same silent gap, for the one-shot-cadence case — the PR already spent its one real review, but
+        // that review has nothing reusable (e.g. a non-cacheable outage/inconclusive row slipping through), so
+        // this pass ends with no fresh review and, previously, no explanation at all.
+        await recordAuditEvent(env, {
+          eventType: "github_app.ai_review_one_shot_reuse_unavailable",
+          actor: author,
+          targetKey: `${repoFullName}#${pr.number}`,
+          outcome: "completed",
+          detail: "one-shot review cadence already spent its review, and the prior published review has no public assessment to reuse — no review ran this pass",
+          metadata: { deliveryId: webhook.deliveryId, repoFullName, headSha: advisory.headSha ?? null },
+        }).catch(() => undefined);
+      }
+    } else if (!aiReviewWillRun && !authorBlacklisted && !autoReviewSkipReason) {
+      // #9000 (root cause of the #8972 incident): `shouldStartAiReviewForAdvisory` folds in
+      // `shouldRequirePublicAiReviewForAdvisory`'s hard gate (aiReviewMode off, an ineligible author, no head SHA,
+      // an AI kill-switch off, no AI binding) — every one of those conditions previously returned false with
+      // ZERO audit trail, including on an explicit forced retrigger that does NOT bypass this gate (only the
+      // reputation anti-abuse skip below it is bypassable, and that skip already emits its own
+      // `maybeAddReputationSkipHold` audit event before this point is reached). Naming the reason here closes
+      // the remaining silent branch: a forced pass that ends with no fresh review always now has exactly one of
+      // a reuse event, a reuse-unavailable event, a reputation-skip hold, or this event in the audit trail.
+      const publicGateSkipReason = resolvePublicAiReviewGateSkipReason(env, {
+        settings,
+        advisory,
+        repoFullName,
+        author,
+        confirmedContributor,
+        skipAiReview: webhook.skipAiReview,
+      });
+      if (publicGateSkipReason) {
+        await recordAuditEvent(env, {
+          eventType: "github_app.ai_review_public_gate_skipped",
+          actor: author,
+          targetKey: `${repoFullName}#${pr.number}`,
+          outcome: "completed",
+          detail: `AI review did not run this pass: ${publicGateSkipReason}`,
+          metadata: {
+            deliveryId: webhook.deliveryId,
+            repoFullName,
+            headSha: advisory.headSha ?? null,
+            reason: publicGateSkipReason,
+            forced: webhook.forceAiReview === true,
+          },
+        }).catch(() => undefined);
+      }
+      // A null publicGateSkipReason here means the hard gate itself was satisfied and aiReviewWillRun was false
+      // purely because of the reputation anti-abuse skip inside shouldStartAiReviewForAdvisory — already
+      // audited above via maybeAddReputationSkipHold, so no duplicate event is needed.
     }
     // Review-evasion protection (#review-evasion-protection): durably record that a review pass is starting
     // for this EXACT head BEFORE any cost-bearing AI-review work begins (including the reviewing placeholder

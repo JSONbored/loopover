@@ -93,6 +93,10 @@ import {
   ReviewRiskExplanationSchema,
   RewardRiskActionSchema,
   ScorePreviewSchema,
+  ValidateLinkedIssueRequestSchema,
+  ValidateLinkedIssueResponseSchema,
+  CheckBeforeStartRequestSchema,
+  CheckBeforeStartResponseSchema,
   ScoringModelSnapshotSchema,
   SignalFidelitySchema,
   SkippedPrAuditExportSchema,
@@ -173,6 +177,10 @@ export function buildOpenApiSpec() {
   registry.register("LaneAdvice", LaneAdviceSchema);
   registry.register("ScoringModelSnapshot", ScoringModelSnapshotSchema);
   registry.register("ScorePreview", ScorePreviewSchema);
+  registry.register("ValidateLinkedIssueRequest", ValidateLinkedIssueRequestSchema);
+  registry.register("ValidateLinkedIssueResponse", ValidateLinkedIssueResponseSchema);
+  registry.register("CheckBeforeStartRequest", CheckBeforeStartRequestSchema);
+  registry.register("CheckBeforeStartResponse", CheckBeforeStartResponseSchema);
   registry.register("IssueQualityReport", IssueQualityReportSchema);
   registry.register("IssueQualityResponse", IssueQualityResponseSchema);
   registry.register("GateConfigEffectiveResponse", GateConfigEffectiveResponseSchema);
@@ -1048,6 +1056,36 @@ export function buildOpenApiSpec() {
     responses: {
       200: { description: "Private local branch analysis for MCP clients", content: { "application/json": { schema: LocalBranchAnalysisSchema } } },
       400: { description: "Invalid local branch analysis input" },
+      401: { description: "Unauthorized" },
+    },
+  });
+  // #9304: two pre-work-check POST routes. owner/repo are path params; the JSON body mirrors routes.ts's own
+  // validateLinkedIssueSchema / checkBeforeStartSchema; the 200 response mirrors each route's MCP outputSchema.
+  registry.registerPath({
+    method: "post",
+    path: "/v1/repos/{owner}/{repo}/validate-linked-issue",
+    summary: "Validate a planned change's linked issue before starting work",
+    request: {
+      params: z.object({ owner: z.string(), repo: z.string() }),
+      body: { content: { "application/json": { schema: ValidateLinkedIssueRequestSchema } } },
+    },
+    responses: {
+      200: { description: "Linked-issue validation report (found/multiplier status, blocking reason, reasons)", content: { "application/json": { schema: ValidateLinkedIssueResponseSchema } } },
+      400: { description: "Invalid validate-linked-issue request" },
+      401: { description: "Unauthorized" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/repos/{owner}/{repo}/check-before-start",
+    summary: "Pre-work duplicate/claim check before starting on an issue",
+    request: {
+      params: z.object({ owner: z.string(), repo: z.string() }),
+      body: { content: { "application/json": { schema: CheckBeforeStartRequestSchema } } },
+    },
+    responses: {
+      200: { description: "Pre-work check report (claim status, duplicate-cluster risk, recommendation, blockers)", content: { "application/json": { schema: CheckBeforeStartResponseSchema } } },
+      400: { description: "Invalid check-before-start request" },
       401: { description: "Unauthorized" },
     },
   });

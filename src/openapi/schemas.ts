@@ -1862,6 +1862,58 @@ export const ScorePreviewSchema = z
   })
   .openapi("ScorePreview");
 
+// #9304: request/response shapes for the two pre-work-check POST routes (validate-linked-issue,
+// check-before-start). Request fields mirror routes.ts's own body schemas (owner/repo come from the path,
+// not the body); response fields mirror the MCP tools' outputSchemas in src/mcp/server.ts.
+export const ValidateLinkedIssueRequestSchema = z
+  .object({
+    issueNumber: z.number().int().positive(),
+    plannedChange: z
+      .object({
+        title: z.string().optional(),
+        changedFiles: z.array(z.string()).optional(),
+        contributorLogin: z.string().optional(),
+      })
+      .optional(),
+  })
+  .openapi("ValidateLinkedIssueRequest");
+
+export const ValidateLinkedIssueResponseSchema = z
+  .object({
+    status: z.string().optional(),
+    repoFullName: z.string().optional(),
+    issueNumber: z.number().optional(),
+    found: z.boolean().optional(),
+    multiplierStatus: z.string().optional(),
+    multiplierWouldApply: z.boolean().optional(),
+    blockingReason: z.string().optional(),
+    reasons: z.unknown().optional(),
+    report: z.unknown().optional(),
+  })
+  .openapi("ValidateLinkedIssueResponse");
+
+export const CheckBeforeStartRequestSchema = z
+  .object({
+    issueNumber: z.number().int().positive().optional(),
+    title: z.string().optional(),
+    plannedPaths: z.array(z.string()).optional(),
+  })
+  .openapi("CheckBeforeStartRequest");
+
+export const CheckBeforeStartResponseSchema = z
+  .object({
+    status: z.string().optional(),
+    repoFullName: z.string().optional(),
+    found: z.boolean().optional(),
+    claimStatus: z.string().optional(),
+    duplicateClusterRisk: z.string().optional(),
+    recommendation: z.string().optional(),
+    reasons: z.unknown().optional(),
+    blockers: z.unknown().optional(),
+    report: z.unknown().optional(),
+  })
+  .openapi("CheckBeforeStartResponse");
+
 export const IssueQualityReportSchema = z
   .object({
     repoFullName: z.string(),

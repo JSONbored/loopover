@@ -167,6 +167,26 @@ describe("OpenAPI contract", () => {
     }
   });
 
+  // #9304: the two pre-work-check POST routes are live in routes.ts and each backed by an MCP tool. Assert both
+  // are documented POST paths with a request body + 200 response, and their request/response component schemas
+  // carry the discriminating fields of each route's MCP tool shape.
+  it("documents the validate-linked-issue and check-before-start pre-work-check routes (#9304)", () => {
+    const spec = buildOpenApiSpec();
+    for (const path of ["/v1/repos/{owner}/{repo}/validate-linked-issue", "/v1/repos/{owner}/{repo}/check-before-start"]) {
+      expect(spec.paths[path]?.post?.requestBody).toBeDefined();
+      expect(spec.paths[path]?.post?.responses?.[200]).toBeDefined();
+    }
+    const schemas = spec.components?.schemas ?? {};
+    for (const name of ["ValidateLinkedIssueRequest", "ValidateLinkedIssueResponse", "CheckBeforeStartRequest", "CheckBeforeStartResponse"]) {
+      expect(schemas[name]).toBeDefined();
+    }
+    const props = (n: string) => (schemas[n] as { properties?: Record<string, unknown> })?.properties ?? {};
+    expect(props("ValidateLinkedIssueRequest")).toHaveProperty("issueNumber");
+    expect(props("ValidateLinkedIssueResponse")).toHaveProperty("multiplierStatus");
+    expect(props("CheckBeforeStartRequest")).toHaveProperty("plannedPaths");
+    expect(props("CheckBeforeStartResponse")).toHaveProperty("claimStatus");
+  });
+
   // #9309: the five /v1/loop/* idea/task-graph composer routes are each backed by an MCP tool whose Zod
   // input/output shapes already live in src/mcp/server.ts. Assert every route is a documented POST path whose
   // request/response components stay field-for-field in parity with those tool shapes, so a future field added

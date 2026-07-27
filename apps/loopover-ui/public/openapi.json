@@ -15386,6 +15386,119 @@
             "nullable": true
           }
         }
+      },
+      "ValidateLinkedIssueRequest": {
+        "type": "object",
+        "properties": {
+          "issueNumber": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true
+          },
+          "plannedChange": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "changedFiles": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "contributorLogin": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "required": [
+          "issueNumber"
+        ]
+      },
+      "ValidateLinkedIssueResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "repoFullName": {
+            "type": "string"
+          },
+          "issueNumber": {
+            "type": "number"
+          },
+          "found": {
+            "type": "boolean"
+          },
+          "multiplierStatus": {
+            "type": "string"
+          },
+          "multiplierWouldApply": {
+            "type": "boolean"
+          },
+          "blockingReason": {
+            "type": "string"
+          },
+          "reasons": {
+            "nullable": true
+          },
+          "report": {
+            "nullable": true
+          }
+        }
+      },
+      "CheckBeforeStartRequest": {
+        "type": "object",
+        "properties": {
+          "issueNumber": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true
+          },
+          "title": {
+            "type": "string"
+          },
+          "plannedPaths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "CheckBeforeStartResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "repoFullName": {
+            "type": "string"
+          },
+          "found": {
+            "type": "boolean"
+          },
+          "claimStatus": {
+            "type": "string"
+          },
+          "duplicateClusterRisk": {
+            "type": "string"
+          },
+          "recommendation": {
+            "type": "string"
+          },
+          "reasons": {
+            "nullable": true
+          },
+          "blockers": {
+            "nullable": true
+          },
+          "report": {
+            "nullable": true
+          }
+        }
       }
     },
     "parameters": {},
@@ -20268,6 +20381,122 @@
           },
           "400": {
             "description": "Invalid scoring preview input or missing contributorLogin"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/validate-linked-issue": {
+      "post": {
+        "summary": "Validate a planned change's linked issue before starting work",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ValidateLinkedIssueRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Linked-issue validation report (found/multiplier status, blocking reason, reasons)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidateLinkedIssueResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid validate-linked-issue request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/check-before-start": {
+      "post": {
+        "summary": "Pre-work duplicate/claim check before starting on an issue",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckBeforeStartRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Pre-work check report (claim status, duplicate-cluster risk, recommendation, blockers)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckBeforeStartResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid check-before-start request"
+          },
+          "401": {
+            "description": "Unauthorized"
           }
         },
         "security": [

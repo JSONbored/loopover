@@ -10,13 +10,15 @@ _Formerly Gittensory._
   <a href="https://gittensor.io/miners/repository?name=JSONbored/loopover"><img alt="Gittensor impact" src="https://api.gittensor.io/repos/JSONbored%2Floopover/badge.svg" /></a>
 </p>
 
-LoopOver is a deterministic control plane for Gittensor OSS contribution work.
+LoopOver is a two-sided autonomy layer for Gittensor OSS contribution work: an autonomous maintainer review agent on one side, a miner stack (MCP copilot plus an autonomous miner runtime) on the other, and a statistical accountability layer underneath that scores every decision against its real outcome.
 
-It helps contributors plan cleaner work, helps maintainers review with less public noise, and keeps private scoring, wallet, hotkey, and reviewability context out of public GitHub output.
+- **Maintainer side (self-hosted):** works the PR queue end-to-end — AI review grounded in finished CI status, full post-change file content, and codebase RAG — then gates, approves, requests changes, merges, or closes on its own, governed by dry-run / pause / freeze / kill-switch controls.
+- **Miner side:** the [`@loopover/mcp`](https://www.npmjs.com/package/@loopover/mcp) copilot brings predicted gate verdicts, scoreability, duplicate detection, and cross-repo opportunity discovery into the contributor's own AI harness; the autonomous miner runtime (`@loopover/miner`) runs unattended across a fleet of repos, respecting each target repo's `.loopover-miner.yml` goal spec.
+- **Accountability:** merge/close decisions are outcome-confirmed (merged / reopened / reverted), published with coverage and confidence intervals on the live [fairness report](https://loopover.ai/fairness), and backed by a certified close-precision guarantee that self-tightens as data grows. The backtest corpus behind the published numbers is checksummed and [replayable by anyone](https://loopover.ai/docs/verify-this-review).
 
-It is also the single converged home of the native review system; the legacy separate reviewbot repo/runtime is not part of the active architecture described here.
+It keeps private scoring, wallet, hotkey, and reviewability context out of public GitHub output, and it is the single converged home of the native review system; the legacy separate reviewbot repo/runtime is not part of the active architecture described here.
 
-It is not a Gittensor explorer, public leaderboard, reward-farming bot, wallet dashboard, or autonomous PR agent.
+It is not a Gittensor explorer, public leaderboard, reward-farming bot, or wallet dashboard.
 
 ## Privacy Boundary
 

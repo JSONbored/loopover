@@ -1,4 +1,4 @@
-import { createInstallationToken } from "../github/app";
+import { createInstallationToken, withInstallationTokenRetry } from "../github/app";
 import { githubRateLimitAdmissionKeyForInstallation, makeInstallationOctokit } from "../github/client";
 import type { AgentActionMode } from "../settings/agent-execution";
 import { createIssueComment } from "../github/pr-actions";
@@ -78,22 +78,24 @@ export class GitHubMilestonesAdapter implements ProjectTrackerAdapter {
 
   async listOpenMilestones(ctx: ProjectTrackerContext): Promise<ProjectTrackerRef[]> {
     const { owner, repo } = parseRepoFullName(ctx.repoFullName);
-    const token = await createInstallationToken(ctx.env, ctx.installationId);
-    const octokit = makeInstallationOctokit(ctx.env, token, "live", githubRateLimitAdmissionKeyForInstallation(ctx.installationId));
-    const milestones: GitHubMilestone[] = [];
-    for (let page = 1; page <= GITHUB_LIST_PAGE_LIMIT; page += 1) {
-      const response = await octokit.request("GET /repos/{owner}/{repo}/milestones", {
-        owner,
-        repo,
-        state: "open",
-        per_page: 100,
-        page,
-      });
-      const batch = response.data as GitHubMilestone[];
-      milestones.push(...batch);
-      if (batch.length < 100) break;
-    }
-    return milestones.map((milestone) => ({ id: String(milestone.number), title: milestone.title }));
+    // #9316: same withInstallationTokenRetry self-heal every src/github write helper uses (#6191).
+    return withInstallationTokenRetry(ctx.env, ctx.installationId, async (token) => {
+      const octokit = makeInstallationOctokit(ctx.env, token, "live", githubRateLimitAdmissionKeyForInstallation(ctx.installationId));
+      const milestones: GitHubMilestone[] = [];
+      for (let page = 1; page <= GITHUB_LIST_PAGE_LIMIT; page += 1) {
+        const response = await octokit.request("GET /repos/{owner}/{repo}/milestones", {
+          owner,
+          repo,
+          state: "open",
+          per_page: 100,
+          page,
+        });
+        const batch = response.data as GitHubMilestone[];
+        milestones.push(...batch);
+        if (batch.length < 100) break;
+      }
+      return milestones.map((milestone) => ({ id: String(milestone.number), title: milestone.title }));
+    });
   }
 
   // Inert here -- see GitHubProjectsAdapter.
@@ -105,15 +107,17 @@ export class GitHubMilestonesAdapter implements ProjectTrackerAdapter {
     const milestoneNumber = parsePositiveIntegerId(milestoneId);
     if (milestoneNumber === null) return { attached: false };
     const { owner, repo } = parseRepoFullName(ctx.repoFullName);
-    const token = await createInstallationToken(ctx.env, ctx.installationId);
-    const octokit = makeInstallationOctokit(ctx.env, token, mode, githubRateLimitAdmissionKeyForInstallation(ctx.installationId));
-    await octokit.request("PATCH /repos/{owner}/{repo}/issues/{issue_number}", {
-      owner,
-      repo,
-      issue_number: pullNumber,
-      milestone: milestoneNumber,
+    // #9316: same withInstallationTokenRetry self-heal every src/github write helper uses (#6191).
+    return withInstallationTokenRetry(ctx.env, ctx.installationId, async (token) => {
+      const octokit = makeInstallationOctokit(ctx.env, token, mode, githubRateLimitAdmissionKeyForInstallation(ctx.installationId));
+      await octokit.request("PATCH /repos/{owner}/{repo}/issues/{issue_number}", {
+        owner,
+        repo,
+        issue_number: pullNumber,
+        milestone: milestoneNumber,
+      });
+      return { attached: true };
     });
-    return { attached: true };
   }
 }
 
@@ -199,13 +203,14 @@ export async function resolveProjectV2Fields(ctx: ProjectTrackerContext, project
 export class GitHubProjectsAdapter implements ProjectTrackerAdapter {
   async listOpenProjects(ctx: ProjectTrackerContext): Promise<ProjectTrackerRef[]> {
     const { owner } = parseRepoFullName(ctx.repoFullName);
-    const token = await createInstallationToken(ctx.env, ctx.installationId);
-    const octokit = makeInstallationOctokit(ctx.env, token, "live", githubRateLimitAdmissionKeyForInstallation(ctx.installationId));
-    const projects: ProjectV2Node[] = [];
-    let after: string | null = null;
-    for (let page = 1; page <= GITHUB_LIST_PAGE_LIMIT; page += 1) {
-      const response: ListOpenProjectsGraphQlResponse = await octokit.graphql(
-        `query($login: String!, $after: String) {
+    // #9316: same withInstallationTokenRetry self-heal every src/github write helper uses (#6191).
+    return withInstallationTokenRetry(ctx.env, ctx.installationId, async (token) => {
+      const octokit = makeInstallationOctokit(ctx.env, token, "live", githubRateLimitAdmissionKeyForInstallation(ctx.installationId));
+      const projects: ProjectV2Node[] = [];
+      let after: string | null = null;
+      for (let page = 1; page <= GITHUB_LIST_PAGE_LIMIT; page += 1) {
+        const response: ListOpenProjectsGraphQlResponse = await octokit.graphql(
+          `query($login: String!, $after: String) {
           repositoryOwner(login: $login) {
             __typename
             ... on Organization {
@@ -216,15 +221,16 @@ export class GitHubProjectsAdapter implements ProjectTrackerAdapter {
             }
           }
         }`,
-        { login: owner, after },
-      );
-      const projectsV2 = response.repositoryOwner?.projectsV2;
-      if (!projectsV2) break; // owner is a User (or has zero projects) -- see the module-level comment above.
-      projects.push(...projectsV2.nodes.filter((project) => !project.closed && project.public));
-      if (!projectsV2.pageInfo.hasNextPage) break;
-      after = projectsV2.pageInfo.endCursor;
-    }
-    return projects.map((project) => ({ id: project.id, title: project.title }));
+          { login: owner, after },
+        );
+        const projectsV2 = response.repositoryOwner?.projectsV2;
+        if (!projectsV2) break; // owner is a User (or has zero projects) -- see the module-level comment above.
+        projects.push(...projectsV2.nodes.filter((project) => !project.closed && project.public));
+        if (!projectsV2.pageInfo.hasNextPage) break;
+        after = projectsV2.pageInfo.endCursor;
+      }
+      return projects.map((project) => ({ id: project.id, title: project.title }));
+    });
   }
 
   // Inert here -- see GitHubMilestonesAdapter.
@@ -235,19 +241,21 @@ export class GitHubProjectsAdapter implements ProjectTrackerAdapter {
   async attachToProject(ctx: ProjectTrackerContext, pullNumber: number, projectId: string, mode: AgentActionMode = "live"): Promise<ProjectTrackerAttachResult> {
     if (typeof projectId !== "string" || projectId.trim().length === 0) return { attached: false };
     const { owner, repo } = parseRepoFullName(ctx.repoFullName);
-    const token = await createInstallationToken(ctx.env, ctx.installationId);
-    const octokit = makeInstallationOctokit(ctx.env, token, mode, githubRateLimitAdmissionKeyForInstallation(ctx.installationId));
-    const pr = await octokit.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", { owner, repo, pull_number: pullNumber });
-    const contentId = (pr.data as PullRequestNodeIdResponse).node_id;
-    const response = await octokit.graphql<AddProjectV2ItemGraphQlResponse>(
-      `mutation($projectId: ID!, $contentId: ID!) {
+    // #9316: same withInstallationTokenRetry self-heal every src/github write helper uses (#6191).
+    return withInstallationTokenRetry(ctx.env, ctx.installationId, async (token) => {
+      const octokit = makeInstallationOctokit(ctx.env, token, mode, githubRateLimitAdmissionKeyForInstallation(ctx.installationId));
+      const pr = await octokit.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", { owner, repo, pull_number: pullNumber });
+      const contentId = (pr.data as PullRequestNodeIdResponse).node_id;
+      const response = await octokit.graphql<AddProjectV2ItemGraphQlResponse>(
+        `mutation($projectId: ID!, $contentId: ID!) {
         addProjectV2ItemById(input: {projectId: $projectId, contentId: $contentId}) {
           item { id }
         }
       }`,
-      { projectId, contentId },
-    );
-    return { attached: response.addProjectV2ItemById?.item != null };
+        { projectId, contentId },
+      );
+      return { attached: response.addProjectV2ItemById?.item != null };
+    });
   }
 
   // Inert here -- see GitHubMilestonesAdapter.

@@ -12,6 +12,7 @@ import {
   resolveProjectV2Fields,
   type ProjectTrackerRef,
 } from "../../src/integrations/project-tracker-adapter";
+import { clearInstallationTokenCacheForTest } from "../../src/github/app";
 import { createTestEnv } from "../helpers/d1";
 
 function generateRsaPrivateKeyPem(): string {
@@ -76,6 +77,57 @@ describe("GitHubMilestonesAdapter (#3183)", () => {
     for (const padded of ["owner/ repo", "owner /repo"]) {
       await expect(adapter.listOpenMilestones({ env, installationId: 123, repoFullName: padded })).rejects.toThrow(/Invalid repository full name/);
     }
+  });
+
+  it("listOpenMilestones: evicts a stale installation token and retries once on 401 (#9316)", async () => {
+    clearInstallationTokenCacheForTest();
+    let tokenMints = 0;
+    let milestoneAttempts = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) {
+        tokenMints += 1;
+        return Response.json({ token: `token-${tokenMints}` });
+      }
+      if (url.includes("/milestones")) {
+        milestoneAttempts += 1;
+        if (milestoneAttempts === 1) return Response.json({ message: "Bad credentials" }, { status: 401 });
+        return Response.json([{ number: 14, title: "Self-host reliability roadmap" }]);
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    const adapter = new GitHubMilestonesAdapter();
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
+    await expect(adapter.listOpenMilestones({ env, installationId: 998877, repoFullName: "JSONbored/gittensory" })).resolves.toEqual([
+      { id: "14", title: "Self-host reliability roadmap" },
+    ]);
+    expect(milestoneAttempts).toBe(2);
+    expect(tokenMints).toBe(2);
+  });
+
+  it("attachToMilestone: evicts a stale installation token and retries once on 401 (#9316)", async () => {
+    clearInstallationTokenCacheForTest();
+    let tokenMints = 0;
+    let patchAttempts = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) {
+        tokenMints += 1;
+        return Response.json({ token: `token-${tokenMints}` });
+      }
+      if (url.includes("/issues/4") && method === "PATCH") {
+        patchAttempts += 1;
+        if (patchAttempts === 1) return Response.json({ message: "Bad credentials" }, { status: 401 });
+        return Response.json({ number: 4, milestone: { number: 14 } });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    const adapter = new GitHubMilestonesAdapter();
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
+    await expect(adapter.attachToMilestone({ env, installationId: 998877, repoFullName: "JSONbored/gittensory" }, 4, "14")).resolves.toEqual({ attached: true });
+    expect(patchAttempts).toBe(2);
+    expect(tokenMints).toBe(2);
   });
 
   it("listOpenMilestones fetches and maps open milestones from the REST API", async () => {
@@ -337,6 +389,72 @@ describe("GitHubProjectsAdapter (#3184)", () => {
     for (const padded of ["owner/ repo", "owner /repo"]) {
       await expect(adapter.listOpenProjects({ env, installationId: 123, repoFullName: padded })).rejects.toThrow(/Invalid repository full name/);
     }
+  });
+
+  it("listOpenProjects: evicts a stale installation token and retries once on 401 (#9316)", async () => {
+    clearInstallationTokenCacheForTest();
+    let tokenMints = 0;
+    let graphqlAttempts = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) {
+        tokenMints += 1;
+        return Response.json({ token: `token-${tokenMints}` });
+      }
+      if (url.endsWith("/graphql")) {
+        graphqlAttempts += 1;
+        if (graphqlAttempts === 1) return Response.json({ message: "Bad credentials" }, { status: 401 });
+        return Response.json({
+          data: {
+            repositoryOwner: {
+              __typename: "Organization",
+              projectsV2: {
+                nodes: [{ id: "PVT_1", title: "Self-host reliability", closed: false, public: true }],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            },
+          },
+        });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    const adapter = new GitHubProjectsAdapter();
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
+    await expect(adapter.listOpenProjects({ env, installationId: 998877, repoFullName: "some-org/gittensory" })).resolves.toEqual([
+      { id: "PVT_1", title: "Self-host reliability" },
+    ]);
+    expect(graphqlAttempts).toBe(2);
+    expect(tokenMints).toBe(2);
+  });
+
+  it("attachToProject: evicts a stale installation token and retries once on 401 (#9316)", async () => {
+    clearInstallationTokenCacheForTest();
+    let tokenMints = 0;
+    let pullGetAttempts = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) {
+        tokenMints += 1;
+        return Response.json({ token: `token-${tokenMints}` });
+      }
+      if (url.includes("/pulls/4") && method === "GET") {
+        pullGetAttempts += 1;
+        if (pullGetAttempts === 1) return Response.json({ message: "Bad credentials" }, { status: 401 });
+        return Response.json({ number: 4, node_id: "PR_kwABC" });
+      }
+      if (url.endsWith("/graphql")) {
+        return Response.json({ data: { addProjectV2ItemById: { item: { id: "PVTI_1" } } } });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    const adapter = new GitHubProjectsAdapter();
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
+    await expect(adapter.attachToProject({ env, installationId: 998877, repoFullName: "some-org/gittensory" }, 4, "PVT_1")).resolves.toEqual({
+      attached: true,
+    });
+    expect(pullGetAttempts).toBe(2);
+    expect(tokenMints).toBe(2);
   });
 });
 

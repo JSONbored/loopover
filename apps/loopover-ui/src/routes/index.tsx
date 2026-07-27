@@ -18,17 +18,17 @@ import { MCP_PACKAGE_NAME, getLatestMcpVersion, useMcpPackageMetadata } from "@/
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "LoopOver — The pull-request loop, run by agents." },
+      { title: "LoopOver — Close the loop on software delivery" },
       {
         name: "description",
         content:
-          "Agents for both sides of the pull request on any GitHub repo — autonomous reviews with a published, outcome-scored error rate, plus an MCP copilot and autonomous miner for contributors.",
+          "Agents write, review, and merge — and every outcome trains the next pass. Autonomous PR reviews with a certified, published error rate, plus an MCP copilot and autonomous miner for contributors. Any GitHub repo.",
       },
-      { property: "og:title", content: "LoopOver — The pull-request loop, run by agents." },
+      { property: "og:title", content: "LoopOver — Close the loop on software delivery" },
       {
         property: "og:description",
         content:
-          "Autonomous reviews for maintainers, an MCP copilot and autonomous miner for contributors — with a published error rate. Works on any GitHub repo.",
+          "Closed loop, open receipts: autonomous reviews for maintainers, autonomous contributions for miners, error rate published and replayable.",
       },
       { property: "og:url", content: "/" },
       { property: "og:type", content: "website" },
@@ -70,14 +70,14 @@ function Hero() {
             MCP v{latestMcpVersion} · open source · self-hosted
           </div>
           <h1 className="mt-5 text-token-3xl font-medium leading-token-tight tracking-tight text-foreground">
-            The pull-request loop, run by agents.
-            <span className="block text-muted-foreground">With a published error rate.</span>
+            Software delivery is a pipeline.
+            <span className="block text-muted-foreground">LoopOver makes it a loop.</span>
           </h1>
           <p className="mt-5 max-w-lg text-token-md leading-token-normal text-muted-foreground">
-            LoopOver works both sides of the PR on any GitHub repo: an autonomous review agent that
-            gates, merges, and closes with outcome-scored accuracy, and a contributor stack — MCP
-            copilot plus autonomous miner — that plans and ships real, reviewable work.
-            Gittensor-native mining intelligence built in.
+            Agents write, agents review, agents merge — and every outcome trains the next pass. An
+            autonomous maintainer works your PR queue end-to-end, a contributor stack plans and
+            ships real work, and the loop&apos;s error rate is published, certified, and replayable.
+            Any GitHub repo; Gittensor-native mining intelligence built in.
           </p>
           <div className="mt-7 flex flex-wrap items-center gap-2">
             <Link

@@ -3,6 +3,6 @@
   "private": true,
   "description": "Isolated, lockfile-pinned tsx install for the replay-runner image's runtime stage (#9214) -- kept out of the main lockfile so a change here never touches the whole monorepo's dependency graph.",
   "dependencies": {
-    "tsx": "4.22.5"
+    "tsx": "4.23.1"
   }
 }

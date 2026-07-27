@@ -987,15 +987,36 @@ export async function runAiReviewForAdvisory(
       }, "ai_review_inconclusive");
     }
     args.advisory.findings.push(...findings);
+    // #9432: `degraded` persists the per-attempt review diagnostics into `ai_review_cache.metadata_json`.
+    // Until now these existed ONLY as a PostHog capture property, which made the "why did this review produce
+    // no summary?" question unanswerable from the database or the container logs -- the 2026-07-27
+    // investigation had to stop there, because reaching PostHog needs an interactive OAuth the incident
+    // responder may not have. The diagnostics are the discriminator that matters: `missing_assessment` (the
+    // model genuinely returned no narrative) vs `unparseable_output`/`empty_output` (it returned something
+    // parseModelReview could not read, i.e. no balanced JSON object) vs `provider_error` are three different
+    // bugs with three different fixes, and `metadata_json.inconclusive` alone cannot tell them apart.
+    //
+    // Written on the DEGRADED paths only, never on the healthy one. Every byte here lands in a D1 row, and
+    // the 2026-07-26 outage was this database hitting its 10 GB ceiling -- so this buys diagnosability for
+    // the small minority of reviews that actually failed, rather than growing all of them. The compact
+    // `model#attempt:status[:error]` strings come from formatReviewDiagnosticsForCapture, whose `error` field
+    // is errorMessage() output and never raw provider text, so the public/private boundary is unchanged.
     const metadataFor = (
       notes: string | null | undefined,
       inlineFindings: InlineFinding[],
+      degraded?: boolean,
     ): Record<string, unknown> => ({
       rag: attributeReviewRagTelemetry(ragTelemetry, {
         notes,
         findings,
         inlineFindings,
       }),
+      ...(degraded
+        ? {
+            /* v8 ignore next -- current review runner always supplies diagnostics for completed AI attempts; the `?? []` is a type-level fallback for the optional field. */
+            reviewDiagnostics: formatReviewDiagnosticsForCapture(result.reviewDiagnostics ?? []),
+          }
+        : {}),
     });
     if (result.inconclusive && hasPublicReviewAssessment(result.advisoryNotes)) {
       return {
@@ -1003,7 +1024,7 @@ export async function runAiReviewForAdvisory(
         reviewerCount: result.reviewerCount,
         inlineFindings: [],
         findings,
-        metadata: metadataFor(result.advisoryNotes, []),
+        metadata: metadataFor(result.advisoryNotes, [], true),
         cacheable: false,
         valueAssessment: result.valueAssessment ?? undefined,
       };
@@ -1026,7 +1047,7 @@ export async function runAiReviewForAdvisory(
         reviewerCount: result.reviewerCount,
         inlineFindings: [],
         findings,
-        metadata: metadataFor(null, []),
+        metadata: metadataFor(null, [], true),
         cacheable: false,
       };
     }
@@ -1068,7 +1089,7 @@ export async function runAiReviewForAdvisory(
       reviewerCount: result.reviewerCount,
       inlineFindings: [],
       findings,
-      metadata: metadataFor(null, []),
+      metadata: metadataFor(null, [], true),
       cacheable: false,
     };
   } catch (error) {

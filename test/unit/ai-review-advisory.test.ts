@@ -814,6 +814,46 @@ describe("runAiReviewForAdvisory", () => {
     captureSpy.mockRestore();
   });
 
+  it("#9432: persists the review diagnostics into metadata when no public notes were produced", async () => {
+    // The whole point: `metadata_json.inconclusive` says a review degraded but not WHY, and the diagnostics
+    // used to reach PostHog only -- unreadable during an incident without an interactive OAuth. An empty
+    // provider response must now be recoverable from the row itself as `empty_output`, which is what
+    // distinguishes "the model returned nothing" from "the model returned a narrative we then dropped".
+    const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: "" })), {
+      mode: "live",
+      settings: { aiReviewMode: "advisory" } as RepositorySettings,
+      advisory: advisory(),
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+    });
+    const diagnostics = result?.metadata?.reviewDiagnostics as string[] | undefined;
+    expect(Array.isArray(diagnostics)).toBe(true);
+    expect(diagnostics?.length).toBeGreaterThan(0);
+    // Compact `model#attempt:status` form from formatReviewDiagnosticsForCapture -- the status is the payload.
+    expect(diagnostics?.every((entry) => /^[^#]+#\d+:/.test(entry))).toBe(true);
+    expect(diagnostics?.join("\n")).toContain("empty_output");
+  });
+
+  it("#9432: omits the review diagnostics from metadata on a healthy review", async () => {
+    // The other side of the `degraded` branch. Diagnostics are deliberately NOT written on the success path:
+    // every byte lands in a D1 row, and this database hit its 10 GB ceiling on 2026-07-26. Diagnosability is
+    // bought only for the reviews that actually failed.
+    const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: defectJson() })), {
+      mode: "live",
+      settings: { aiReviewMode: "advisory" } as RepositorySettings,
+      advisory: advisory(),
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+    });
+    expect(result?.notes).toBeTruthy();
+    expect(result?.metadata).toBeDefined();
+    expect(result?.metadata?.reviewDiagnostics).toBeUndefined();
+  });
+
   it("#8790: stops retrying a model after a byte-identical repeat of a failed attempt (deterministic at temperature 0)", async () => {
     const adv = advisory();
     let aiCalls = 0;

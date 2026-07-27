@@ -1,6 +1,6 @@
 import { cleanup } from "@testing-library/react";
 import { afterEach } from "vitest";
-import { patchJsdomLocalStorageForNode26 } from "../../test/helpers/vitest-jsdom-node26-localstorage";
+import { patchJsdomLocalStorageForNode26 } from "../../test/helpers/vitest-jsdom-node26-localstorage.js";
 
 // Unmount React trees between tests so jsdom state never leaks across cases (mirrors
 // apps/loopover-miner-ui/vitest.setup.ts's own cleanup).

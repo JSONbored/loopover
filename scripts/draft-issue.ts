@@ -22,7 +22,7 @@ import {
   parseDraftingMisses,
   type CorpusFile,
   type DraftingMiss,
-} from "../src/services/issue-drafting.js";
+} from "../src/services/issue-drafting";
 
 type Args = {
   prompt: string | undefined;

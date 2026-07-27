@@ -8,7 +8,7 @@ import {
 import { useEffect, useRef, type ReactNode } from "react";
 import { toast } from "sonner";
 
-import { cn } from "../utils";
+import { cn } from "../utils.js";
 
 export type ApiFailureKind = "timeout" | "network" | "http";
 

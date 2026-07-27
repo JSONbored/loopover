@@ -6,7 +6,7 @@ import {
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
-} from "./accordion";
+} from "./accordion.js";
 
 // Regression for #8303: the Radix content/transition components in @loopover/ui-kit must pair their
 // animate-* utilities with motion-reduce:animate-none, matching skeleton.tsx / state-views.tsx, so a user

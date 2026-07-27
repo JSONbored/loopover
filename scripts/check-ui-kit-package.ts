@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { FORBIDDEN_CONTENT } from "./forbidden-content.js";
+import { FORBIDDEN_CONTENT } from "./forbidden-content";
 
 // Same reasoning as check-engine-package.ts: dist/ mirrors src/components + src/hooks 1:1 (tsc's default
 // output shape, plus .d.ts.map declaration sourcemaps), and grows with every new component -- pattern-match

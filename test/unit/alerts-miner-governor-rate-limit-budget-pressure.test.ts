@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   GOVERNOR_CAP_USAGE_RATIO,
   GOVERNOR_RATE_LIMIT_REMAINING_RATIO,
-} from "../../packages/loopover-miner/lib/governor-metrics-cli.js";
+} from "../../packages/loopover-miner/lib/governor-metrics-cli";
 
 // Fixture for the LoopOverMinerGovernorRateLimitPressureHigh / LoopOverMinerGovernorCapUsageHigh alerts
 // (#5187). This is the config-side equivalent of a `promtool test rules` harness (the repo ships no promtool

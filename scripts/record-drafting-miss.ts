@@ -9,7 +9,7 @@
 //   tsx scripts/record-drafting-miss.ts --prompt "<the loose prompt used>" --missing "<the reusable lesson>" \
 //     [--category <gap-category>] [--file scripts/drafting-misses.json]
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { DEFAULT_DRAFTING_MISSES_FILE, parseDraftingMisses, type DraftingMiss } from "../src/services/issue-drafting.js";
+import { DEFAULT_DRAFTING_MISSES_FILE, parseDraftingMisses, type DraftingMiss } from "../src/services/issue-drafting";
 
 type Args = {
   prompt: string | undefined;

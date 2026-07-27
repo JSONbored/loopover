@@ -1,1 +1,1 @@
-export * from "../../packages/loopover-engine/src/predicted-gate.js";
+export * from "../../packages/loopover-engine/src/predicted-gate";

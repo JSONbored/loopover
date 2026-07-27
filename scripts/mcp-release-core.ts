@@ -7,7 +7,7 @@ import {
   parseConventionalSubject,
   shortSha,
   type ParsedConventionalSubject,
-} from "./release-semver-utils.js";
+} from "./release-semver-utils";
 
 export { parseConventionalSubject, compareSemver, bumpVersion };
 

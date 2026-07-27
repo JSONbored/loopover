@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { closeResolvedIssueIfPresent, isReleaseWatchIssue } from "../../scripts/check-package-release-due.js";
-import { buildPackageReleaseIssue, buildPackageReleaseReport, isPackageReleaseRelevantCommit, PACKAGE_RELEASE_CONFIGS, selectPackageReleaseCommits } from "../../scripts/package-release-core.js";
+import { closeResolvedIssueIfPresent, isReleaseWatchIssue } from "../../scripts/check-package-release-due";
+import { buildPackageReleaseIssue, buildPackageReleaseReport, isPackageReleaseRelevantCommit, PACKAGE_RELEASE_CONFIGS, selectPackageReleaseCommits } from "../../scripts/package-release-core";
 
 const engineConfig = PACKAGE_RELEASE_CONFIGS.engine;
 

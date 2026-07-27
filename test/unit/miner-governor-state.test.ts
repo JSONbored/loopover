@@ -11,7 +11,7 @@ import {
   openGovernorState,
   savePauseState,
   saveReputationHistory,
-} from "../../packages/loopover-miner/lib/governor-state.js";
+} from "../../packages/loopover-miner/lib/governor-state";
 
 const roots: string[] = [];
 const states: Array<{ close(): void }> = [];

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   MINER_PACKAGE_VERSION,
   resolveMinerVersion,
-} from "../../packages/loopover-miner/lib/version.js";
+} from "../../packages/loopover-miner/lib/version";
 
 describe("loopover-miner version resolution (#4310)", () => {
   it("defaults to the package.json semver when LOOPOVER_MINER_VERSION is unset", () => {

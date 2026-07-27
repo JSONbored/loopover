@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { BacktestCase } from "@loopover/engine";
 import { computeProviderTrackRecords } from "@loopover/engine";
-import { artifactKey, planReplay } from "../../scripts/counterfactual-replay-core.js";
-import { artifactsToProviderSignals, renderProviderTable } from "../../scripts/provider-replay-track-record.js";
+import { artifactKey, planReplay } from "../../scripts/counterfactual-replay-core";
+import { artifactsToProviderSignals, renderProviderTable } from "../../scripts/provider-replay-track-record";
 
 // #8278: the replay→signals adapter. computeProviderTrackRecords has its own engine suite; these tests pin
 // the verdict→vote mapping, the abstention/uncached accounting, and the overall-rollup table rendering.

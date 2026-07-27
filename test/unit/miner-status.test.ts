@@ -1,7 +1,7 @@
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { resolveEventLedgerDbPath } from "../../packages/loopover-miner/lib/event-ledger.js";
+import { resolveEventLedgerDbPath } from "../../packages/loopover-miner/lib/event-ledger";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildEngineVersionDisplay,
@@ -19,8 +19,8 @@ import {
   runDoctor,
   runDoctorChecks,
   runStatus,
-} from "../../packages/loopover-miner/lib/status.js";
-import { initLaptopState, resolveLaptopStateDbPath } from "../../packages/loopover-miner/lib/laptop-init.js";
+} from "../../packages/loopover-miner/lib/status";
+import { initLaptopState, resolveLaptopStateDbPath } from "../../packages/loopover-miner/lib/laptop-init";
 
 // Read live, never hardcode: a hardcoded snapshot of this range (e.g. "^3.0.0") goes stale the moment
 // packages/loopover-miner/package.json's @loopover/engine dependency is bumped by a real release, and
@@ -585,9 +585,9 @@ describe("checkAmsBacktestProposals (#8186)", () => {
     const { mkdtempSync, rmSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
-    const { initEventLedger, resolveEventLedgerDbPath } = await import("../../packages/loopover-miner/lib/event-ledger.js");
-    const { backtestMinRankCandidate, recordAmsThresholdBacktestRun } = await import("../../packages/loopover-miner/lib/ams-calibration.js");
-    const { checkAmsBacktestProposals } = await import("../../packages/loopover-miner/lib/status.js");
+    const { initEventLedger, resolveEventLedgerDbPath } = await import("../../packages/loopover-miner/lib/event-ledger");
+    const { backtestMinRankCandidate, recordAmsThresholdBacktestRun } = await import("../../packages/loopover-miner/lib/ams-calibration");
+    const { checkAmsBacktestProposals } = await import("../../packages/loopover-miner/lib/status");
 
     const dir = mkdtempSync(join(tmpdir(), "miner-status-ams-"));
     try {

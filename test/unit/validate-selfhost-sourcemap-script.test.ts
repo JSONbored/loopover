@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateSourcemap } from "../../scripts/validate-selfhost-sourcemap.js";
+import { validateSourcemap } from "../../scripts/validate-selfhost-sourcemap";
 
 const BUNDLE = "/tmp/dist/server.mjs";
 const MAP = "/tmp/dist/server.mjs.map";

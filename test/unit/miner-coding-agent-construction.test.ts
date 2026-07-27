@@ -18,8 +18,8 @@ import {
   createRealCliSubprocessSpawn,
   constructProductionCodingAgentDriver,
   withCodingAgentAiGenerationCapture,
-} from "../../packages/loopover-miner/lib/coding-agent-construction.js";
-import { initMinerPostHog, resetMinerPostHogForTesting } from "../../packages/loopover-miner/lib/posthog.js";
+} from "../../packages/loopover-miner/lib/coding-agent-construction";
+import { initMinerPostHog, resetMinerPostHogForTesting } from "../../packages/loopover-miner/lib/posthog";
 import type { AgentSdkQueryFn, CodingAgentDriver, CodingAgentDriverTask } from "../../packages/loopover-engine/src/index";
 
 beforeEach(() => {

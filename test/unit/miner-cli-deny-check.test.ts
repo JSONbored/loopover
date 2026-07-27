@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { parseDenyCheckArgs, runDenyCheck } from "../../packages/loopover-miner/lib/deny-check.js";
+import { parseDenyCheckArgs, runDenyCheck } from "../../packages/loopover-miner/lib/deny-check";
 
 describe("loopover-miner hooks check command", () => {
   it("parseDenyCheckArgs requires tool and JSON input", () => {

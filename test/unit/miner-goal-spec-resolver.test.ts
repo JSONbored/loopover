@@ -7,7 +7,7 @@ vi.mock("@loopover/engine", async () => {
   return import("../../packages/loopover-engine/src/index");
 });
 
-import { resolveMinerGoalSpec } from "../../packages/loopover-miner/lib/miner-goal-spec.js";
+import { resolveMinerGoalSpec } from "../../packages/loopover-miner/lib/miner-goal-spec";
 
 const roots: string[] = [];
 

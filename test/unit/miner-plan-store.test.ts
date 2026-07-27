@@ -11,9 +11,9 @@ import {
   openPlanStore,
   resolvePlanStoreDbPath,
   savePlan,
-} from "../../packages/loopover-miner/lib/plan-store.js";
-import type { PlanDag } from "../../packages/loopover-miner/lib/plan-store.js";
-import { readSchemaVersion } from "../../packages/loopover-miner/lib/schema-version.js";
+} from "../../packages/loopover-miner/lib/plan-store";
+import type { PlanDag } from "../../packages/loopover-miner/lib/plan-store";
+import { readSchemaVersion } from "../../packages/loopover-miner/lib/schema-version";
 
 const roots: string[] = [];
 const stores: Array<{ close(): void }> = [];

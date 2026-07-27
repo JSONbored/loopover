@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { checkManifestDrift } from "../../scripts/check-manifest-drift.js";
+import { checkManifestDrift } from "../../scripts/check-manifest-drift";
 import { LOOPOVER_REPO_FOCUS_MANIFEST_YAML } from "../../src/config/loopover-repo-focus-manifest";
 
 // The script imports src/config/loopover-repo-focus-manifest.ts (a .ts module), so -- like

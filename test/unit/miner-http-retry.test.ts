@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { defaultRetryBackoffMs, fetchWithRetry } from "../../packages/loopover-miner/lib/http-retry.js";
+import { defaultRetryBackoffMs, fetchWithRetry } from "../../packages/loopover-miner/lib/http-retry";
 
 const noSleep = () => Promise.resolve();
 

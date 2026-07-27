@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { normalizeLcovSfPaths } from "../../scripts/rees-coverage.js";
+import { normalizeLcovSfPaths } from "../../scripts/rees-coverage";
 
 describe("rees-coverage script", () => {
   describe("normalizeLcovSfPaths", () => {

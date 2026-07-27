@@ -18,7 +18,7 @@ vi.mock("embla-carousel-react", () => ({
   default: () => [() => {}, mockApi],
 }));
 
-import { Carousel, CarouselContent, CarouselItem } from "./carousel";
+import { Carousel, CarouselContent, CarouselItem } from "./carousel.js";
 
 function renderCarousel(orientation: "horizontal" | "vertical") {
   return render(

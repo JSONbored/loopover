@@ -2,13 +2,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runCli } from "../../packages/loopover-miner/lib/cli.js";
+import { runCli } from "../../packages/loopover-miner/lib/cli";
 import {
   parsePrOutcomesArgs,
   renderPrOutcomesText,
   runPrOutcomesCli,
-} from "../../packages/loopover-miner/lib/pr-outcomes-cli.js";
-import type { PrOutcomesFetch, PrOutcomesPayload } from "../../packages/loopover-miner/lib/pr-outcomes-cli.js";
+} from "../../packages/loopover-miner/lib/pr-outcomes-cli";
+import type { PrOutcomesFetch, PrOutcomesPayload } from "../../packages/loopover-miner/lib/pr-outcomes-cli";
 
 // #7658: the miner's own hosted post-merge outcomes over the CLI. Every HTTP interaction is driven through an
 // injected fetch (no live network), mirroring tenant-cli's injectable-client test conventions.

@@ -3,7 +3,7 @@ import {
   argsWantJson,
   describeCliError,
   reportCliFailure,
-} from "../../packages/loopover-miner/lib/cli-error.js";
+} from "../../packages/loopover-miner/lib/cli-error";
 
 describe("cli-error (#4836)", () => {
   afterEach(() => {

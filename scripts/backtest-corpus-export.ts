@@ -14,8 +14,8 @@
 import { writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { buildBacktestCorpus, type BacktestCase, type HumanOverrideEvent, type RuleFiredEvent } from "@loopover/engine";
-import { buildBacktestCorpusManifest } from "./backtest-corpus-export-core.js";
-import { openPgDatabase, pgDatabaseLabel, resolvePgConnection } from "./pg-cli.js";
+import { buildBacktestCorpusManifest } from "./backtest-corpus-export-core";
+import { openPgDatabase, pgDatabaseLabel, resolvePgConnection } from "./pg-cli";
 
 type D1Row = Record<string, unknown>;
 

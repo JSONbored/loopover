@@ -12,7 +12,7 @@ import {
   scanEnvVarTokens,
   scanRegisteredCommands,
   type DeploymentDocsReality,
-} from "../packages/loopover-miner/lib/deployment-docs-audit.js";
+} from "../packages/loopover-miner/lib/deployment-docs-audit";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 const MINER_DIR = resolve(REPO_ROOT, "packages/loopover-miner");

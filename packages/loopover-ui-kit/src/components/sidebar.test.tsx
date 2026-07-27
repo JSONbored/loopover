@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SidebarProvider, useSidebar } from "./sidebar";
+import { SidebarProvider, useSidebar } from "./sidebar.js";
 
 // jsdom implements no window.matchMedia; SidebarProvider pulls it in via useIsMobile. Stub it desktop-shaped
 // (matches:false), the standard shadcn use-mobile test setup.

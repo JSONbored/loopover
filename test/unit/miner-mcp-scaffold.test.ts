@@ -5,8 +5,8 @@ import {
   createMinerMcpServer,
   MINER_PING_STATUS,
   type MinerMcpServerOptions,
-} from "../../packages/loopover-miner/bin/loopover-miner-mcp.js";
-import { collectPortfolioDashboard } from "../../packages/loopover-miner/lib/portfolio-dashboard.js";
+} from "../../packages/loopover-miner/bin/loopover-miner-mcp";
+import { collectPortfolioDashboard } from "../../packages/loopover-miner/lib/portfolio-dashboard";
 
 // Tests for the loopover-miner MCP server: the #5153 ping scaffold and the #5155 read-only
 // portfolio-dashboard tool. Drives the real server over an in-memory transport (no child process); the

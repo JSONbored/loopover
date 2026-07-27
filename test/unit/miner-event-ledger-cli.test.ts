@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   closeDefaultEventLedger,
   initEventLedger,
-} from "../../packages/loopover-miner/lib/event-ledger.js";
+} from "../../packages/loopover-miner/lib/event-ledger";
 import {
   collectEventLedgerAuditFeed,
   filterLedgerEvents,
@@ -17,7 +17,7 @@ import {
   runLedgerCli,
   runLedgerList,
   runLedgerMetrics,
-} from "../../packages/loopover-miner/lib/event-ledger-cli.js";
+} from "../../packages/loopover-miner/lib/event-ledger-cli";
 import type { LedgerEntry } from "../../packages/loopover-miner/lib/event-ledger.d.ts";
 
 const roots: string[] = [];

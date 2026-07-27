@@ -7,16 +7,16 @@ vi.mock("@loopover/engine", async () => {
   return import("../../packages/loopover-engine/src/index");
 });
 
-import { runMinerAttempt } from "../../packages/loopover-miner/lib/attempt-runner.js";
-import { initEventLedger } from "../../packages/loopover-miner/lib/event-ledger.js";
-import * as minerSentryModule from "../../packages/loopover-miner/lib/sentry.js";
-import { initGovernorLedger } from "../../packages/loopover-miner/lib/governor-ledger.js";
+import { runMinerAttempt } from "../../packages/loopover-miner/lib/attempt-runner";
+import { initEventLedger } from "../../packages/loopover-miner/lib/event-ledger";
+import * as minerSentryModule from "../../packages/loopover-miner/lib/sentry";
+import { initGovernorLedger } from "../../packages/loopover-miner/lib/governor-ledger";
 import {
   closeDefaultGovernorState,
   listRecentOwnSubmissions,
   openGovernorState,
   recordOwnSubmission,
-} from "../../packages/loopover-miner/lib/governor-state.js";
+} from "../../packages/loopover-miner/lib/governor-state";
 import {
   fingerprintFromChangedFiles,
   parseFocusManifest,

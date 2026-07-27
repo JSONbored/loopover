@@ -11,7 +11,7 @@ import {
   isLogLevel,
   LOG_LEVELS,
   resolveLogLevel,
-} from "../../packages/loopover-miner/lib/logger.js";
+} from "../../packages/loopover-miner/lib/logger";
 
 // A pair of in-memory streams so a logger's output can be asserted without touching real stdio.
 function capture() {

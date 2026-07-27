@@ -11,7 +11,7 @@ import {
   listRunStates,
   resolveRunStateDbPath,
   setRunState,
-} from "../../packages/loopover-miner/lib/run-state.js";
+} from "../../packages/loopover-miner/lib/run-state";
 
 const roots: string[] = [];
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { classifyPrDisposition, pollPrDisposition } from "../../packages/loopover-miner/lib/pr-disposition-poller.js";
+import { classifyPrDisposition, pollPrDisposition } from "../../packages/loopover-miner/lib/pr-disposition-poller";
 
 const API = "https://api.github.com";
 

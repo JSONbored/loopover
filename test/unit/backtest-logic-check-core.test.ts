@@ -13,7 +13,7 @@ import {
   runLogicBacktest,
   sqlStringLiteral,
   type LogicDetectionFn,
-} from "../../scripts/backtest-logic-check-core.js";
+} from "../../scripts/backtest-logic-check-core";
 
 const RULE_ID = "linked_issue_scope_mismatch";
 

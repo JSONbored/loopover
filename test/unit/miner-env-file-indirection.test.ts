@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { loadMinerFileSecrets } from "../../packages/loopover-miner/lib/env-file-indirection.js";
+import { loadMinerFileSecrets } from "../../packages/loopover-miner/lib/env-file-indirection";
 import { bin } from "./support/miner-cli-harness";
 
 const roots: string[] = [];

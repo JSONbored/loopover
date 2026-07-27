@@ -11,7 +11,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { buildExportManifest, buildTableExport, EXCLUDED_TABLES, isSafeTableName, type D1Row, type TableExport } from "./export-d1-core.js";
+import { buildExportManifest, buildTableExport, EXCLUDED_TABLES, isSafeTableName, type D1Row, type TableExport } from "./export-d1-core";
 
 type Args = {
   db: string | undefined;

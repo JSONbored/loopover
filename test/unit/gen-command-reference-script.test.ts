@@ -10,7 +10,7 @@ import {
   extractCatalogEntries,
   renderCommandList,
   renderCommandReferenceModule,
-} from "../../scripts/gen-command-reference.js";
+} from "../../scripts/gen-command-reference";
 
 function fixtureRoot(commandsSource: string): string {
   const root = mkdtempSync(join(tmpdir(), "gt-command-reference-"));

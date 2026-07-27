@@ -6,7 +6,7 @@ import {
   expectedMcpVersions,
   loadMcpPackageJson,
   MINIMUM_SUPPORTED_MCP_VERSION,
-} from "../../scripts/smoke-production-versions.js";
+} from "../../scripts/smoke-production-versions";
 
 describe("smoke-production-versions (#6293)", () => {
   it("derives latest from the MCP package.json and keeps the supported floor fixed", () => {

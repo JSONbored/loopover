@@ -7,7 +7,7 @@
 // Unset (cloud, or self-host without REDEPLOY_COMPANION_TOKEN/_SOCKET_PATH configured) means the function
 // here stays null, and src/mcp/server.ts's admin tool -- gated separately on LOOPOVER_MCP_ADMIN_ENABLED --
 // reports a clear "not configured" result rather than throwing.
-import type { RedeployResult } from "../selfhost/redeploy-companion-client.js";
+import type { RedeployResult } from "../selfhost/redeploy-companion-client";
 
 export type RedeployTrigger = (image: string | undefined) => Promise<RedeployResult>;
 

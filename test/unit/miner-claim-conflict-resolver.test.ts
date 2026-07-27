@@ -4,7 +4,7 @@ vi.mock("@loopover/engine", async () => {
   return import("../../packages/loopover-engine/src/index");
 });
 
-import { assembleCompetingClaims, resolveClaimConflict } from "../../packages/loopover-miner/lib/claim-conflict-resolver.js";
+import { assembleCompetingClaims, resolveClaimConflict } from "../../packages/loopover-miner/lib/claim-conflict-resolver";
 
 function snapshot(referencingPrs: Array<{ number: number; state: "open" | "closed" | "merged"; authorLogin: string; createdAt: string | null }>) {
   return { state: "open" as const, referencingPrs };

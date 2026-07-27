@@ -4,12 +4,12 @@ import {
   runClaimCli,
   runClaimList,
   runClaimRelease,
-} from "../../packages/loopover-miner/lib/claim-ledger-cli.js";
-import { runLedgerList } from "../../packages/loopover-miner/lib/event-ledger-cli.js";
-import { runGovernorList } from "../../packages/loopover-miner/lib/governor-ledger-cli.js";
-import { runLoop } from "../../packages/loopover-miner/lib/loop-cli.js";
-import { runManagePoll } from "../../packages/loopover-miner/lib/manage-poll.js";
-import { runPlanList, runPlanShow } from "../../packages/loopover-miner/lib/plan-store-cli.js";
+} from "../../packages/loopover-miner/lib/claim-ledger-cli";
+import { runLedgerList } from "../../packages/loopover-miner/lib/event-ledger-cli";
+import { runGovernorList } from "../../packages/loopover-miner/lib/governor-ledger-cli";
+import { runLoop } from "../../packages/loopover-miner/lib/loop-cli";
+import { runManagePoll } from "../../packages/loopover-miner/lib/manage-poll";
+import { runPlanList, runPlanShow } from "../../packages/loopover-miner/lib/plan-store-cli";
 import {
   runQueueClaimBatch,
   runQueueDone,
@@ -17,7 +17,7 @@ import {
   runQueueNext,
   runQueueRelease,
   runQueueRequeue,
-} from "../../packages/loopover-miner/lib/portfolio-queue-cli.js";
+} from "../../packages/loopover-miner/lib/portfolio-queue-cli";
 
 const { getRunState, setRunState } = vi.hoisted(() => ({
   getRunState: vi.fn(),
@@ -31,7 +31,7 @@ vi.mock("../../packages/loopover-miner/lib/run-state.js", () => ({
 }));
 
 const { runStateCli, runStateGet, runStateSet } = await import(
-  "../../packages/loopover-miner/lib/run-state-cli.js"
+  "../../packages/loopover-miner/lib/run-state-cli"
 );
 
 afterEach(() => {

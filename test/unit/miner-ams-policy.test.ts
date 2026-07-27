@@ -8,7 +8,7 @@ vi.mock("@loopover/engine", async () => {
 });
 
 import { DEFAULT_AMS_POLICY_SPEC } from "../../packages/loopover-engine/src/index";
-import { resolveAmsPolicy, resolveAmsPolicyConfigPath, resolveAmsPolicyConfigDir, amsPolicyWarningJsonFields, renderAmsPolicyWarnings } from "../../packages/loopover-miner/lib/ams-policy.js";
+import { resolveAmsPolicy, resolveAmsPolicyConfigPath, resolveAmsPolicyConfigDir, amsPolicyWarningJsonFields, renderAmsPolicyWarnings } from "../../packages/loopover-miner/lib/ams-policy";
 
 const roots: string[] = [];
 

@@ -7,9 +7,9 @@ import {
   startRegistryFixture,
 } from "./support/miner-cli-harness";
 
-type MinerCli = typeof import("../../packages/loopover-miner/lib/cli.js");
+type MinerCli = typeof import("../../packages/loopover-miner/lib/cli");
 type MinerUpdateCheck =
-  typeof import("../../packages/loopover-miner/lib/update-check.js");
+  typeof import("../../packages/loopover-miner/lib/update-check");
 
 let printHelp: MinerCli["printHelp"];
 let printVersion: MinerCli["printVersion"];
@@ -24,9 +24,9 @@ let startUpdateCheck: MinerUpdateCheck["startUpdateCheck"];
 let awaitOpportunisticUpdateCheck: MinerUpdateCheck["awaitOpportunisticUpdateCheck"];
 
 beforeAll(async () => {
-  const cli = await import("../../packages/loopover-miner/lib/cli.js");
+  const cli = await import("../../packages/loopover-miner/lib/cli");
   const updateCheck =
-    await import("../../packages/loopover-miner/lib/update-check.js");
+    await import("../../packages/loopover-miner/lib/update-check");
   ({ printHelp, printVersion, runCli } = cli);
   ({
     compareSemver,
@@ -105,7 +105,7 @@ describe("loopover-miner CLI helpers", () => {
       { with: { type: "json" } }
     );
     const { resolveMinerVersion } = await import(
-      "../../packages/loopover-miner/lib/version.js"
+      "../../packages/loopover-miner/lib/version"
     );
     expect(resolveMinerVersion({})).toBe(packageJson.default.version);
   });

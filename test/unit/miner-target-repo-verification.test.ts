@@ -7,8 +7,8 @@ import {
   runTargetRepoVerification,
   VERIFICATION_OUTPUT_TAIL_CHARS,
   type TargetRepoVerificationSpawn,
-} from "../../packages/loopover-miner/lib/target-repo-verification.js";
-import type { RepoStackResult } from "../../packages/loopover-miner/lib/stack-detection.js";
+} from "../../packages/loopover-miner/lib/target-repo-verification";
+import type { RepoStackResult } from "../../packages/loopover-miner/lib/stack-detection";
 
 // #8807: the independent quality gate — the target repo's own commands, never the agent's self-attestation.
 function detectedStack(over: Partial<Record<"testCommand" | "lintCommand" | "buildCommand", string | null>> = {}): RepoStackResult {

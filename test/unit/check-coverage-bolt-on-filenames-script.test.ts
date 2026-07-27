@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { findCoverageBoltOnFilenames } from "../../scripts/check-coverage-bolt-on-filenames.js";
+import { findCoverageBoltOnFilenames } from "../../scripts/check-coverage-bolt-on-filenames";
 
 describe("check-coverage-bolt-on-filenames script", () => {
   it("flags a new *-coverage.test.ts file", () => {

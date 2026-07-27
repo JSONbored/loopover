@@ -2,14 +2,14 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { ContributionProfile } from "../../packages/loopover-miner/lib/contribution-profile.js";
-import { ELIGIBILITY_EXCLUSION_REASONS } from "../../packages/loopover-miner/lib/contribution-profile-filter.js";
-import { filterCandidatesByProfiles } from "../../packages/loopover-miner/lib/contribution-profile-filter.js";
-import { initEventLedger, resolveEventLedgerDbPath, type EventLedger } from "../../packages/loopover-miner/lib/event-ledger.js";
+import type { ContributionProfile } from "../../packages/loopover-miner/lib/contribution-profile";
+import { ELIGIBILITY_EXCLUSION_REASONS } from "../../packages/loopover-miner/lib/contribution-profile-filter";
+import { filterCandidatesByProfiles } from "../../packages/loopover-miner/lib/contribution-profile-filter";
+import { initEventLedger, resolveEventLedgerDbPath, type EventLedger } from "../../packages/loopover-miner/lib/event-ledger";
 import {
   SIGNAL_HUMAN_OVERRIDE_EVENT,
   SIGNAL_RULE_FIRED_EVENT,
-} from "../../packages/loopover-miner/lib/signal-tracking-store.js";
+} from "../../packages/loopover-miner/lib/signal-tracking-store";
 
 const AMS_CALIBRATION_MODULE = "../../packages/loopover-miner/lib/ams-calibration.ts";
 const AMS_ELIGIBILITY_MODULE = "../../packages/loopover-miner/lib/ams-eligibility-backtest.ts";
@@ -22,7 +22,7 @@ const {
   readAmsThresholdBacktestRuns,
   recordAmsEligibilityBacktestRun,
   recordAmsThresholdBacktestRun,
-} = (await import(AMS_CALIBRATION_MODULE)) as typeof import("../../packages/loopover-miner/lib/ams-calibration.js");
+} = (await import(AMS_CALIBRATION_MODULE)) as typeof import("../../packages/loopover-miner/lib/ams-calibration");
 const {
   AMS_ELIGIBILITY_RULE_ID,
   backtestEligibilityCandidate,
@@ -32,7 +32,7 @@ const {
   reconstructEligibilityFilterCandidate,
   repoFullNamesInEligibilityEvents,
   runAmsEligibilityBacktest,
-} = (await import(AMS_ELIGIBILITY_MODULE)) as typeof import("../../packages/loopover-miner/lib/ams-eligibility-backtest.js");
+} = (await import(AMS_ELIGIBILITY_MODULE)) as typeof import("../../packages/loopover-miner/lib/ams-eligibility-backtest");
 
 const tempDirs: string[] = [];
 const ledgers: EventLedger[] = [];

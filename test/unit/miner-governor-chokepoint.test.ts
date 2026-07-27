@@ -7,8 +7,8 @@ vi.mock("@loopover/engine", async () => {
   return import("../../packages/loopover-engine/src/index");
 });
 
-import { evaluateGovernorChokepointGate } from "../../packages/loopover-miner/lib/governor-chokepoint.js";
-import { initGovernorLedger } from "../../packages/loopover-miner/lib/governor-ledger.js";
+import { evaluateGovernorChokepointGate } from "../../packages/loopover-miner/lib/governor-chokepoint";
+import { initGovernorLedger } from "../../packages/loopover-miner/lib/governor-ledger";
 
 const roots: string[] = [];
 const ledgers: Array<{ close(): void }> = [];
@@ -380,7 +380,7 @@ describe("evaluateGovernorChokepointGate (#2340)", () => {
     const previousDbPath = process.env.LOOPOVER_MINER_GOVERNOR_LEDGER_DB;
     process.env.LOOPOVER_MINER_GOVERNOR_LEDGER_DB = dbPath;
     try {
-      const { closeDefaultGovernorLedger } = await import("../../packages/loopover-miner/lib/governor-ledger.js");
+      const { closeDefaultGovernorLedger } = await import("../../packages/loopover-miner/lib/governor-ledger");
       const result = evaluateGovernorChokepointGate(baseInput());
       expect(result.decision.stage).toBe("allow");
       closeDefaultGovernorLedger();

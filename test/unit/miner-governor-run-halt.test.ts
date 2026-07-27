@@ -7,13 +7,13 @@ vi.mock("@loopover/engine", async () => {
   return import("../../packages/loopover-engine/src/index");
 });
 
-import { evaluateRunLoopBoundaryGate } from "../../packages/loopover-miner/lib/governor-run-halt.js";
+import { evaluateRunLoopBoundaryGate } from "../../packages/loopover-miner/lib/governor-run-halt";
 import {
   closeDefaultGovernorLedger,
   initGovernorLedger,
-} from "../../packages/loopover-miner/lib/governor-ledger.js";
-import { initPortfolioQueueManager } from "../../packages/loopover-miner/lib/portfolio-queue-manager.js";
-import { initPortfolioQueueStore } from "../../packages/loopover-miner/lib/portfolio-queue.js";
+} from "../../packages/loopover-miner/lib/governor-ledger";
+import { initPortfolioQueueManager } from "../../packages/loopover-miner/lib/portfolio-queue-manager";
+import { initPortfolioQueueStore } from "../../packages/loopover-miner/lib/portfolio-queue";
 
 const roots: string[] = [];
 const ledgers: Array<{ close(): void }> = [];

@@ -2,12 +2,12 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { checkClaudeCliPresent, checkCodexCliPresent } from "../../packages/loopover-miner/lib/laptop-init.js";
+import { checkClaudeCliPresent, checkCodexCliPresent } from "../../packages/loopover-miner/lib/laptop-init";
 import {
   checkCodingAgentCredential,
   checkGitHubTokenPresent,
   runDoctorChecks,
-} from "../../packages/loopover-miner/lib/status.js";
+} from "../../packages/loopover-miner/lib/status";
 
 const roots: string[] = [];
 function tempRoot() {
@@ -518,7 +518,7 @@ describe("loopover-miner doctor — credential presence checks (#5170)", () => {
   });
 
   it("resolveCodexAuthPath resolves under CODEX_HOME when set, else under HOME/.codex", async () => {
-    const { resolveCodexAuthPath } = await import("../../packages/loopover-miner/lib/laptop-init.js");
+    const { resolveCodexAuthPath } = await import("../../packages/loopover-miner/lib/laptop-init");
     expect(resolveCodexAuthPath({ CODEX_HOME: "/custom/codex" })).toBe("/custom/codex/auth.json");
     expect(resolveCodexAuthPath({ HOME: "/home/alice" })).toBe("/home/alice/.codex/auth.json");
     expect(resolveCodexAuthPath({})).toContain(".codex/auth.json"); // neither set -- falls back to os.homedir()

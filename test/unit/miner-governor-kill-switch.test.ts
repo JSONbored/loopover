@@ -11,8 +11,8 @@ import {
   checkMinerKillSwitch,
   notifyMinerKillSwitchPagerDuty,
   recordMinerKillSwitchTransition,
-} from "../../packages/loopover-miner/lib/governor-kill-switch.js";
-import { initGovernorLedger } from "../../packages/loopover-miner/lib/governor-ledger.js";
+} from "../../packages/loopover-miner/lib/governor-kill-switch";
+import { initGovernorLedger } from "../../packages/loopover-miner/lib/governor-ledger";
 import type { MinerKillSwitchPagerDutyAlert } from "../../packages/loopover-engine/src/index";
 
 const VALID_ROUTING_KEY = "a".repeat(32);
@@ -143,7 +143,7 @@ describe("recordMinerKillSwitchTransition (#2341)", () => {
     const previousDbPath = process.env.LOOPOVER_MINER_GOVERNOR_LEDGER_DB;
     process.env.LOOPOVER_MINER_GOVERNOR_LEDGER_DB = dbPath;
     try {
-      const { closeDefaultGovernorLedger } = await import("../../packages/loopover-miner/lib/governor-ledger.js");
+      const { closeDefaultGovernorLedger } = await import("../../packages/loopover-miner/lib/governor-ledger");
       const tripped = recordMinerKillSwitchTransition({
         repoFullName: "acme/widgets",
         actionClass: "open_pr",

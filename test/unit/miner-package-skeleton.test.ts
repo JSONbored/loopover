@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { runCapture } from "./support/miner-cli-harness.js";
+import { runCapture } from "./support/miner-cli-harness";
 
 const minerRoot = join(process.cwd(), "packages/loopover-miner");
 const mcpRoot = join(process.cwd(), "packages/loopover-mcp");

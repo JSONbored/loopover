@@ -21,7 +21,7 @@ import {
   type ProviderReviewSignal,
   type ProviderTrackRecord,
 } from "@loopover/engine";
-import { artifactKey, parseVariantVerdict, planReplay, type CounterfactualReplayPlan } from "./counterfactual-replay-core.js";
+import { artifactKey, parseVariantVerdict, planReplay, type CounterfactualReplayPlan } from "./counterfactual-replay-core";
 
 /** PURE: map one variant's cached raw outputs onto provider signals over the shared plan. The provider id
  *  is the variant's modelSpec (the reviewer identity live votes carry); abstentions and uncached fixtures

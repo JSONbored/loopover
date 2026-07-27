@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { argsWantJson, describeCliError, reportCliFailure } from "../../packages/loopover-mcp/lib/cli-error.js";
+import { argsWantJson, describeCliError, reportCliFailure } from "../../packages/loopover-mcp/lib/cli-error";
 
 describe("mcp cli-error (#5928)", () => {
   afterEach(() => {

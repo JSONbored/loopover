@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cn, relativeTimeFromNow } from "./utils";
+import { cn, relativeTimeFromNow } from "./utils.js";
 
 describe("cn", () => {
   it("merges class names and lets a later Tailwind class win a conflict (tailwind-merge)", () => {

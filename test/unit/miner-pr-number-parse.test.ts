@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parsePrNumberFromExecResult } from "../../packages/loopover-miner/lib/pr-number-parse.js";
+import { parsePrNumberFromExecResult } from "../../packages/loopover-miner/lib/pr-number-parse";
 
 describe("parsePrNumberFromExecResult (#4848)", () => {
   it("extracts the real PR number from a real gh pr create stdout URL, scoped to the exact repo", () => {

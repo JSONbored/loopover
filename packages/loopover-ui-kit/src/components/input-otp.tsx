@@ -2,7 +2,7 @@ import * as React from "react";
 import { OTPInput, OTPInputContext } from "input-otp";
 import { Minus } from "lucide-react";
 
-import { cn } from "../utils";
+import { cn } from "../utils.js";
 
 const InputOTP = React.forwardRef<
   React.ElementRef<typeof OTPInput>,

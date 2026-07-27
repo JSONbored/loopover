@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { openPlanStore } from "../../packages/loopover-miner/lib/plan-store.js";
+import { openPlanStore } from "../../packages/loopover-miner/lib/plan-store";
 import type { PlanDag, PlanRecord } from "../../packages/loopover-miner/lib/plan-store.d.ts";
 import {
   parsePlanListArgs,
@@ -11,7 +11,7 @@ import {
   runPlanCli,
   runPlanList,
   runPlanShow,
-} from "../../packages/loopover-miner/lib/plan-store-cli.js";
+} from "../../packages/loopover-miner/lib/plan-store-cli";
 
 const roots: string[] = [];
 const stores: Array<{ close(): void }> = [];

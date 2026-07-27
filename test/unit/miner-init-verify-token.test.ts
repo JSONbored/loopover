@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runInit, verifyGithubToken } from "../../packages/loopover-miner/lib/laptop-init.js";
+import { runInit, verifyGithubToken } from "../../packages/loopover-miner/lib/laptop-init";
 
 const tempDirs = new Set<string>();
 

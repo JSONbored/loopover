@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_MAX_LEASE_MS,
   openWorktreeAllocator,
-} from "../../packages/loopover-miner/lib/worktree-allocator.js";
+} from "../../packages/loopover-miner/lib/worktree-allocator";
 
 // Cross-container orphan reclaim (#7085): fleet mode runs separate CONTAINERS over one shared store, each with
 // its own PID namespace, so `owner_pid` is a meaningless signal across containers. These tests seed active rows

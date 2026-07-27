@@ -2,9 +2,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { OrbExportOutcome, OrbExportRow } from "../../packages/loopover-miner/lib/orb-export.js";
-import { resolveLocalStoreDbPath } from "../../packages/loopover-miner/lib/local-store.js";
-import { cleanupResourceCount, resetProcessLifecycleForTesting } from "../../packages/loopover-miner/lib/process-lifecycle.js";
+import type { OrbExportOutcome, OrbExportRow } from "../../packages/loopover-miner/lib/orb-export";
+import { resolveLocalStoreDbPath } from "../../packages/loopover-miner/lib/local-store";
+import { cleanupResourceCount, resetProcessLifecycleForTesting } from "../../packages/loopover-miner/lib/process-lifecycle";
 
 // Import the .ts SOURCE (not the build-time .js) via a non-literal specifier. Once `build:miner` has produced
 // the artifact, a plain `.js` import loads that .js and leaves coverage.include's `.ts` entry at 0% — the
@@ -24,7 +24,7 @@ const {
   resolveAmsCollectorUrl,
   resolveOrbExportDbPath,
   sendAmsExportBatch,
-} = (await import(ORB_EXPORT_MODULE)) as typeof import("../../packages/loopover-miner/lib/orb-export.js");
+} = (await import(ORB_EXPORT_MODULE)) as typeof import("../../packages/loopover-miner/lib/orb-export");
 
 let dir: string;
 function storePath() {

@@ -8,14 +8,14 @@ import {
   CONTRIBUTION_PROFILE_CACHE_TTL_MS,
   CONTRIBUTION_PROFILE_STORE_TABLE,
   emptyContributionProfile,
-} from "../../packages/loopover-miner/lib/contribution-profile.js";
+} from "../../packages/loopover-miner/lib/contribution-profile";
 import {
   closeDefaultContributionProfileCache,
   getCachedContributionProfile,
   initContributionProfileCache,
   putCachedContributionProfile,
   resolveContributionProfileCacheDbPath,
-} from "../../packages/loopover-miner/lib/contribution-profile-cache.js";
+} from "../../packages/loopover-miner/lib/contribution-profile-cache";
 
 const roots: string[] = [];
 const stores: Array<{ close(): void }> = [];

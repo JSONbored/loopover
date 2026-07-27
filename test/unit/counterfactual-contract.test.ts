@@ -4,8 +4,8 @@ import {
   COUNTERFACTUAL_DEFAULT_NEURON_BUDGET,
   COUNTERFACTUAL_SAMPLE_SEED_PREFIX,
   isReplayableCase,
-} from "../../packages/loopover-engine/src/calibration/counterfactual-contract.js";
-import type { BacktestCase } from "../../packages/loopover-engine/src/calibration/backtest-corpus.js";
+} from "../../packages/loopover-engine/src/calibration/counterfactual-contract";
+import type { BacktestCase } from "../../packages/loopover-engine/src/calibration/backtest-corpus";
 
 // #8219: the contract module is deliberately types + constants + one shared narrowing helper. These tests
 // pin the constants the later sub-issues (#8220/#8221) cite and the replayability rule's every arm.

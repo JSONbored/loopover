@@ -19,7 +19,7 @@ vi.mock("../../packages/loopover-miner/lib/attempt-cli.js", () => ({ runAttempt 
 vi.mock("../../packages/loopover-miner/lib/ams-health-server.js", () => ({ startAmsHealthServer }));
 vi.mock("../../packages/loopover-miner/lib/tenant-credential-resolution.js", () => ({ resolveTenantSecret }));
 
-const { isHostedCycleCommand, runHostedEntry } = await import("../../packages/loopover-miner/lib/hosted-entry.js");
+const { isHostedCycleCommand, runHostedEntry } = await import("../../packages/loopover-miner/lib/hosted-entry");
 
 let stateDir: string;
 

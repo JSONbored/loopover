@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { checkNodeVersion } from "../../scripts/check-node-version.js";
+import { checkNodeVersion } from "../../scripts/check-node-version";
 
 describe("check-node-version script", () => {
   it("passes when the running Node satisfies the declared engines.node range", () => {

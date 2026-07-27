@@ -18,7 +18,7 @@ import {
   queryDiscoveryIndex,
   recordDiscoveryTelemetry,
   submitSoftClaim,
-} from "../../packages/loopover-miner/lib/discovery-index-client.js";
+} from "../../packages/loopover-miner/lib/discovery-index-client";
 
 const ENABLED_ENV = {
   [DISCOVERY_PLANE_FLAG]: "true",

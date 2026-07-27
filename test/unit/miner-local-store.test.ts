@@ -7,20 +7,20 @@ import {
   normalizeLocalStoreDbPath,
   openLocalStoreDb,
   resolveLocalStoreDbPath,
-} from "../../packages/loopover-miner/lib/local-store.js";
-import { closeDefaultClaimLedger, openClaimLedger, resolveClaimLedgerDbPath } from "../../packages/loopover-miner/lib/claim-ledger.js";
-import { closeDefaultEventLedger, initEventLedger, resolveEventLedgerDbPath } from "../../packages/loopover-miner/lib/event-ledger.js";
+} from "../../packages/loopover-miner/lib/local-store";
+import { closeDefaultClaimLedger, openClaimLedger, resolveClaimLedgerDbPath } from "../../packages/loopover-miner/lib/claim-ledger";
+import { closeDefaultEventLedger, initEventLedger, resolveEventLedgerDbPath } from "../../packages/loopover-miner/lib/event-ledger";
 import {
   closeDefaultPortfolioQueueStore,
   initPortfolioQueueStore,
   resolvePortfolioQueueDbPath,
-} from "../../packages/loopover-miner/lib/portfolio-queue.js";
-import { closeDefaultRunStateStore, initRunStateStore, resolveRunStateDbPath } from "../../packages/loopover-miner/lib/run-state.js";
+} from "../../packages/loopover-miner/lib/portfolio-queue";
+import { closeDefaultRunStateStore, initRunStateStore, resolveRunStateDbPath } from "../../packages/loopover-miner/lib/run-state";
 import {
   cleanupResourceCount,
   closeAllCleanupResources,
   resetProcessLifecycleForTesting,
-} from "../../packages/loopover-miner/lib/process-lifecycle.js";
+} from "../../packages/loopover-miner/lib/process-lifecycle";
 
 const roots: string[] = [];
 const dbs: Array<{ close(): void }> = [];

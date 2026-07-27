@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useIsMobile } from "./use-mobile";
+import { useIsMobile } from "./use-mobile.js";
 
 // jsdom implements neither window.matchMedia nor a settable innerWidth trigger, so stub matchMedia (capturing its
 // `change` listeners) and drive innerWidth directly — the standard shadcn use-mobile test setup.

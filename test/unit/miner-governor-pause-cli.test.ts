@@ -2,14 +2,14 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { closeDefaultGovernorState, openGovernorState } from "../../packages/loopover-miner/lib/governor-state.js";
+import { closeDefaultGovernorState, openGovernorState } from "../../packages/loopover-miner/lib/governor-state";
 import {
   parseGovernorPauseArgs,
   parseGovernorResumeArgs,
   runGovernorPause,
   runGovernorResume,
   runGovernorStatus,
-} from "../../packages/loopover-miner/lib/governor-pause-cli.js";
+} from "../../packages/loopover-miner/lib/governor-pause-cli";
 
 function writeSessionConfig(dir: string, loginToken = "session-token"): void {
   writeFileSync(

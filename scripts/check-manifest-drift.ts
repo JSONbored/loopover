@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
-import { LOOPOVER_REPO_FOCUS_MANIFEST_YAML } from "../src/config/loopover-repo-focus-manifest.js";
+import { LOOPOVER_REPO_FOCUS_MANIFEST_YAML } from "../src/config/loopover-repo-focus-manifest";
 
 const ROOT_MANIFEST_PATH = ".loopover.yml";
 

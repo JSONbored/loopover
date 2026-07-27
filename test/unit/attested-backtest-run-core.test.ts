@@ -6,8 +6,8 @@ import {
   buildAttestedRunAuditInsertSql,
   decideAttestedRunOutcome,
   type AttestedRunOutcome,
-} from "../../scripts/attested-backtest-run-core.js";
-import type { AttestationEnvelope } from "../../packages/loopover-engine/src/calibration/attestation-envelope.js";
+} from "../../scripts/attested-backtest-run-core";
+import type { AttestationEnvelope } from "../../packages/loopover-engine/src/calibration/attestation-envelope";
 
 const ENVELOPE: AttestationEnvelope = {
   schemaVersion: 1,

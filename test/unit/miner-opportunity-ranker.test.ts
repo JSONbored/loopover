@@ -7,7 +7,7 @@ vi.mock("@loopover/engine", async () => {
 import {
   rankCandidateIssues,
   rankCandidateIssuesWithSummary,
-} from "../../packages/loopover-miner/lib/opportunity-ranker.js";
+} from "../../packages/loopover-miner/lib/opportunity-ranker";
 import { DEFAULT_MINER_GOAL_SPEC } from "../../packages/loopover-engine/src/miner-goal-spec";
 
 const NOW = Date.parse("2026-07-03T12:00:00.000Z");

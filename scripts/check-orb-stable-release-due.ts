@@ -5,7 +5,7 @@
 // scripts/orb-release-core.ts's buildOrbStableReleaseReport for the underlying logic and rationale.
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
-import { buildOrbStableReleaseReport, latestStableOrbTag, type OrbReleaseCommit } from "./orb-release-core.js";
+import { buildOrbStableReleaseReport, latestStableOrbTag, type OrbReleaseCommit } from "./orb-release-core";
 
 function main() {
   const args = parseArgs(process.argv.slice(2));

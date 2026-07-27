@@ -20,7 +20,7 @@ import {
   synthesizeDenyRuleProposals,
   type DenyRuleProposal,
 } from "../../packages/loopover-engine/src/index";
-import { denyHookFixtures } from "../fixtures/deny-hooks/cases.js";
+import { denyHookFixtures } from "../fixtures/deny-hooks/cases";
 
 // A fixed injected clock so the synthesizer is deterministic given its inputs (the #5667 requirement).
 const NOW = 1_700_000_000_000;

@@ -9,7 +9,7 @@ vi.mock("@loopover/engine", async () => {
   return import("../../packages/loopover-engine/src/index");
 });
 
-import { fetchCandidateIssuesWithSummary } from "../../packages/loopover-miner/lib/opportunity-fanout.js";
+import { fetchCandidateIssuesWithSummary } from "../../packages/loopover-miner/lib/opportunity-fanout";
 
 const API = "https://api.test";
 

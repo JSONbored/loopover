@@ -4,13 +4,13 @@ import {
   isCalibrationRow,
   isObservedOutcomeRecord,
   isPredictedVerdictRecord,
-} from "../../packages/loopover-miner/lib/calibration.js";
+} from "../../packages/loopover-miner/lib/calibration";
 import type {
   CalibrationReport,
   CalibrationRow,
   ObservedOutcomeRecord,
   PredictedVerdictRecord,
-} from "../../packages/loopover-miner/lib/calibration.js";
+} from "../../packages/loopover-miner/lib/calibration";
 
 describe("loopover-miner calibration types scaffold (#2332)", () => {
   const predicted: PredictedVerdictRecord = {

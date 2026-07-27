@@ -9,7 +9,7 @@ import {
   buildAmsPrOutcomePayload,
   publishAmsNotificationEvents,
   scheduleAmsNotificationEvents,
-} from "../../packages/loopover-miner/lib/ams-notifications.js";
+} from "../../packages/loopover-miner/lib/ams-notifications";
 
 const roots: string[] = [];
 

@@ -7,7 +7,7 @@ vi.mock("@loopover/engine", async () => {
 import {
   parseIdeaFeasibilityArgs,
   runIdeaFeasibilityCli,
-} from "../../packages/loopover-miner/lib/idea-feasibility-cli.js";
+} from "../../packages/loopover-miner/lib/idea-feasibility-cli";
 import type { FeasibilityGateResult } from "@loopover/engine";
 import { runCapture } from "./support/miner-cli-harness";
 

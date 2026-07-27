@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { initPortfolioQueueStore } from "../../packages/loopover-miner/lib/portfolio-queue.js";
-import { sweepStuckItems } from "../../packages/loopover-miner/lib/portfolio-queue-expiry.js";
+import { initPortfolioQueueStore } from "../../packages/loopover-miner/lib/portfolio-queue";
+import { sweepStuckItems } from "../../packages/loopover-miner/lib/portfolio-queue-expiry";
 
 // Real crash-recovery coverage for portfolio-queue's stuck-item lease/reclaim mechanism (#4868). The
 // existing unit suite (test/unit/miner-portfolio-queue-expiry.test.ts) only exercises sweepStuckItems

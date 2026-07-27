@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { checkEnginesNvmrcSync } from "../../scripts/check-engines-nvmrc-sync.js";
+import { checkEnginesNvmrcSync } from "../../scripts/check-engines-nvmrc-sync";
 
 describe("check-engines-nvmrc-sync script", () => {
   /** Builds `{ readFile, listDir }` fakes from a flat `{ "group/name/package.json": jsonString }` map

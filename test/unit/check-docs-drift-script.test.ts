@@ -11,7 +11,7 @@ import {
   FOCUS_MANIFEST_ALIAS_MANIFEST,
   GATE_MODE_MANIFEST,
   SETTINGS_ALIAS_MANIFEST,
-} from "../../scripts/check-docs-drift.js";
+} from "../../scripts/check-docs-drift";
 
 describe("check-docs-drift script", () => {
   describe("extractLoopOverReviewFlags", () => {

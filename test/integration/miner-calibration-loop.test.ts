@@ -18,9 +18,9 @@ import {
   MINER_CALIBRATION_SNAPSHOT_EVENT,
   readCalibrationSnapshots,
   runHistoricalReplayCalibrationCycle,
-} from "../../packages/loopover-miner/lib/calibration-run.js";
-import { filterLedgerEvents, runLedgerList } from "../../packages/loopover-miner/lib/event-ledger-cli.js";
-import { initEventLedger } from "../../packages/loopover-miner/lib/event-ledger.js";
+} from "../../packages/loopover-miner/lib/calibration-run";
+import { filterLedgerEvents, runLedgerList } from "../../packages/loopover-miner/lib/event-ledger-cli";
+import { initEventLedger } from "../../packages/loopover-miner/lib/event-ledger";
 
 const roots: string[] = [];
 

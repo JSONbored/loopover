@@ -9,9 +9,9 @@ vi.mock("@loopover/engine", async () => {
   return import("../../packages/loopover-engine/src/index");
 });
 
-import { evaluateGovernorChokepointGatePersisted } from "../../packages/loopover-miner/lib/governor-chokepoint-persisted.js";
-import { closeDefaultGovernorLedger, initGovernorLedger, readGovernorEvents } from "../../packages/loopover-miner/lib/governor-ledger.js";
-import { openGovernorState } from "../../packages/loopover-miner/lib/governor-state.js";
+import { evaluateGovernorChokepointGatePersisted } from "../../packages/loopover-miner/lib/governor-chokepoint-persisted";
+import { closeDefaultGovernorLedger, initGovernorLedger, readGovernorEvents } from "../../packages/loopover-miner/lib/governor-ledger";
+import { openGovernorState } from "../../packages/loopover-miner/lib/governor-state";
 
 const chokepointChildScript = join(
   dirname(fileURLToPath(import.meta.url)),

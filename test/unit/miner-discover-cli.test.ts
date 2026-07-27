@@ -2,20 +2,20 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { closeDefaultEventLedger } from "../../packages/loopover-miner/lib/event-ledger.js";
-import { initPolicyDocCacheStore } from "../../packages/loopover-miner/lib/policy-doc-cache.js";
-import { initPolicyVerdictCacheStore } from "../../packages/loopover-miner/lib/policy-verdict-cache.js";
+import { closeDefaultEventLedger } from "../../packages/loopover-miner/lib/event-ledger";
+import { initPolicyDocCacheStore } from "../../packages/loopover-miner/lib/policy-doc-cache";
+import { initPolicyVerdictCacheStore } from "../../packages/loopover-miner/lib/policy-verdict-cache";
 import {
   closeDefaultPortfolioQueueStore,
   initPortfolioQueueStore,
-} from "../../packages/loopover-miner/lib/portfolio-queue.js";
-import { initRankedCandidatesStore } from "../../packages/loopover-miner/lib/ranked-candidates.js";
+} from "../../packages/loopover-miner/lib/portfolio-queue";
+import { initRankedCandidatesStore } from "../../packages/loopover-miner/lib/ranked-candidates";
 import {
   parseDiscoverArgs,
   renderDiscoverSummary,
   runDiscover,
   sanitizeDiscoverDisplayText,
-} from "../../packages/loopover-miner/lib/discover-cli.js";
+} from "../../packages/loopover-miner/lib/discover-cli";
 import { bin, runCapture } from "./support/miner-cli-harness";
 
 const NOW = Date.parse("2026-07-09T12:00:00.000Z");
@@ -1842,7 +1842,7 @@ describe("runDiscover onResult hook (#6522)", () => {
 
     it("the default resolver returns an empty map (no filtering, no network) when no token is set", async () => {
       const { resolveContributionProfilesForDiscover } =
-        await import("../../packages/loopover-miner/lib/discover-cli.js");
+        await import("../../packages/loopover-miner/lib/discover-cli");
       const fetchImpl = vi.fn();
       const profiles = await resolveContributionProfilesForDiscover(
         ["acme/widgets"],
@@ -1854,7 +1854,7 @@ describe("runDiscover onResult hook (#6522)", () => {
 
     it("the default resolver reads the cache and extracts on a miss when a token is present", async () => {
       const { resolveContributionProfilesForDiscover } =
-        await import("../../packages/loopover-miner/lib/discover-cli.js");
+        await import("../../packages/loopover-miner/lib/discover-cli");
       const cache = { get: vi.fn(() => null), put: vi.fn(), close: vi.fn() };
       const extract = vi.fn(async (repoFullName: string) => ({
         ...trustworthyProfile,
@@ -1881,7 +1881,7 @@ describe("runDiscover onResult hook (#6522)", () => {
 
     it("REGRESSION: extract omits apiBaseUrl when unset and includes it when set", async () => {
       const { resolveContributionProfilesForDiscover } =
-        await import("../../packages/loopover-miner/lib/discover-cli.js");
+        await import("../../packages/loopover-miner/lib/discover-cli");
       const cache = { get: vi.fn(() => null), put: vi.fn(), close: vi.fn() };
       const extract = vi.fn(async (repoFullName: string, _opts?: Record<string, unknown>) => ({
         ...trustworthyProfile,
@@ -1911,7 +1911,7 @@ describe("runDiscover onResult hook (#6522)", () => {
 
     it("the default resolver serves a fresh cached profile without re-extracting", async () => {
       const { resolveContributionProfilesForDiscover } =
-        await import("../../packages/loopover-miner/lib/discover-cli.js");
+        await import("../../packages/loopover-miner/lib/discover-cli");
       const cache = {
         get: vi.fn(() => ({
           profile: { ...trustworthyProfile },
@@ -2130,9 +2130,9 @@ describe("min-rank override consumption at discover's enqueue (#8187)", () => {
     const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
-    const { initEventLedger, resolveEventLedgerDbPath } = await import("../../packages/loopover-miner/lib/event-ledger.js");
-    const { resolveAmsPolicyConfigPath } = await import("../../packages/loopover-miner/lib/ams-policy.js");
-    const { MINER_AMS_MIN_RANK_APPLIED_EVENT } = await import("../../packages/loopover-miner/lib/ams-calibration.js");
+    const { initEventLedger, resolveEventLedgerDbPath } = await import("../../packages/loopover-miner/lib/event-ledger");
+    const { resolveAmsPolicyConfigPath } = await import("../../packages/loopover-miner/lib/ams-policy");
+    const { MINER_AMS_MIN_RANK_APPLIED_EVENT } = await import("../../packages/loopover-miner/lib/ams-calibration");
 
     const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
       issues: [fanOutIssue({ issueNumber: 1, title: "candidate" })],

@@ -13,8 +13,8 @@ vi.mock("@loopover/engine", async () => {
   return import("../../packages/loopover-engine/src/index");
 });
 
-import { fetchCandidateIssuesWithSummary } from "../../packages/loopover-miner/lib/opportunity-fanout.js";
-import { rankCandidateIssuesWithSummary } from "../../packages/loopover-miner/lib/opportunity-ranker.js";
+import { fetchCandidateIssuesWithSummary } from "../../packages/loopover-miner/lib/opportunity-fanout";
+import { rankCandidateIssuesWithSummary } from "../../packages/loopover-miner/lib/opportunity-ranker";
 
 const API = "https://api.test";
 const NOW = Date.parse("2026-07-03T12:00:00.000Z");

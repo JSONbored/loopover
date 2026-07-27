@@ -9,11 +9,11 @@ import { afterEach, describe, expect, it } from "vitest";
 // path and read path must still round-trip data end to end through the seam. run-state.js / policy-doc-cache.js
 // (already on the seam) proved the pattern; these assert it holds for the newly-migrated stores.
 
-import { emptyContributionProfile } from "../../packages/loopover-miner/lib/contribution-profile.js";
-import { initContributionProfileCache } from "../../packages/loopover-miner/lib/contribution-profile-cache.js";
-import { initPolicyVerdictCacheStore } from "../../packages/loopover-miner/lib/policy-verdict-cache.js";
-import { initPredictionLedger } from "../../packages/loopover-miner/lib/prediction-ledger.js";
-import { openReplaySnapshotStore } from "../../packages/loopover-miner/lib/replay-snapshot.js";
+import { emptyContributionProfile } from "../../packages/loopover-miner/lib/contribution-profile";
+import { initContributionProfileCache } from "../../packages/loopover-miner/lib/contribution-profile-cache";
+import { initPolicyVerdictCacheStore } from "../../packages/loopover-miner/lib/policy-verdict-cache";
+import { initPredictionLedger } from "../../packages/loopover-miner/lib/prediction-ledger";
+import { openReplaySnapshotStore } from "../../packages/loopover-miner/lib/replay-snapshot";
 
 const roots: string[] = [];
 const stores: Array<{ close(): void }> = [];

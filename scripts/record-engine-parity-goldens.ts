@@ -2,8 +2,8 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { buildPredictedGateVerdict } from "../src/rules/predicted-gate.ts";
-import { predictedGateFixtures } from "../test/fixtures/engine-parity/predicted-gate/index.ts";
+import { buildPredictedGateVerdict } from "../src/rules/predicted-gate";
+import { predictedGateFixtures } from "../test/fixtures/engine-parity/predicted-gate/index";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const goldenDir = join(repoRoot, "test/fixtures/engine-parity/predicted-gate/golden");

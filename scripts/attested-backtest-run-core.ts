@@ -8,7 +8,7 @@
 // it did not (#9211). Keeping it pure is what lets it be exhaustively tested without hardware.
 import type { AttestationEnvelope } from "@loopover/engine";
 
-import { sqlStringLiteral } from "./backtest-logic-check-core.js";
+import { sqlStringLiteral } from "./backtest-logic-check-core";
 
 export const ATTESTED_BACKTEST_EVENT_TYPE = "calibration.attested_backtest_run";
 

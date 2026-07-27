@@ -12,10 +12,10 @@
 //
 // --remote reads the deployed D1 (default is the local miniflare DB). NEVER pass a write command.
 import { spawnSync } from "node:child_process";
-import { openPgDatabase, resolvePgConnection } from "./pg-cli.js";
+import { openPgDatabase, resolvePgConnection } from "./pg-cli";
 import { computeRegressedVerdictTrackRecord, type BacktestComparison } from "@loopover/engine";
-import { LOGIC_BACKTEST_EVENT_TYPE } from "./backtest-logic-check-core.js";
-import { COUNTERFACTUAL_BACKTEST_EVENT_TYPE } from "./counterfactual-replay-core.js";
+import { LOGIC_BACKTEST_EVENT_TYPE } from "./backtest-logic-check-core";
+import { COUNTERFACTUAL_BACKTEST_EVENT_TYPE } from "./counterfactual-replay-core";
 
 // Mirrors THRESHOLD_BACKTEST_EVENT_TYPE in src/services/threshold-backtest-run.ts (#8138's writer) and must
 // be kept in sync with it by hand — that module is Worker-bound (D1 repositories import graph) and

@@ -2,8 +2,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_MAX_CLAIM_AGE_MS } from "../../packages/loopover-miner/lib/claim-ledger-expiry.js";
-import { closeDefaultClaimLedger, openClaimLedger } from "../../packages/loopover-miner/lib/claim-ledger.js";
+import { DEFAULT_MAX_CLAIM_AGE_MS } from "../../packages/loopover-miner/lib/claim-ledger-expiry";
+import { closeDefaultClaimLedger, openClaimLedger } from "../../packages/loopover-miner/lib/claim-ledger";
 
 // #6156: sweepExpiredClaims existed and worked, but nothing ever called it -- so a claim left behind by a
 // crashed/killed miner never expired. That matters because recordClaim's `WHERE status <> 'active'` guard makes

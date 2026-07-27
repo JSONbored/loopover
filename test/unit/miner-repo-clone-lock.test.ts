@@ -2,12 +2,12 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { hostname, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { acquireRepoCloneLock, ensureRepoCloned, isRepoCloneLockStale } from "../../packages/loopover-miner/lib/repo-clone.js";
+import { acquireRepoCloneLock, ensureRepoCloned, isRepoCloneLockStale } from "../../packages/loopover-miner/lib/repo-clone";
 import {
   cleanupResourceCount,
   closeAllCleanupResources,
   resetProcessLifecycleForTesting,
-} from "../../packages/loopover-miner/lib/process-lifecycle.js";
+} from "../../packages/loopover-miner/lib/process-lifecycle";
 
 const roots: string[] = [];
 

@@ -3,8 +3,8 @@ import {
   SIGNAL_HUMAN_OVERRIDE_EVENT,
   SIGNAL_RULE_FIRED_EVENT,
   createSignalTrackingStore,
-} from "../../packages/loopover-miner/lib/signal-tracking-store.js";
-import type { AppendEventInput, LedgerEntry } from "../../packages/loopover-miner/lib/event-ledger.js";
+} from "../../packages/loopover-miner/lib/signal-tracking-store";
+import type { AppendEventInput, LedgerEntry } from "../../packages/loopover-miner/lib/event-ledger";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 

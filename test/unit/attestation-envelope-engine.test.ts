@@ -9,7 +9,7 @@ import {
   buildAttestationReportData,
   validateAttestationEnvelope,
   type AttestationEnvelope,
-} from "../../packages/loopover-engine/src/calibration/attestation-envelope.js";
+} from "../../packages/loopover-engine/src/calibration/attestation-envelope";
 
 const MEASUREMENT = "a".repeat(64);
 // #9140: reportData is now 128 hex chars (64 bytes -- SEV-SNP/TDX's REPORT_DATA/REPORTDATA field width),

@@ -6,13 +6,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_DENY_RULES,
   evaluateDenyHooks,
-} from "../../packages/loopover-miner/lib/deny-hooks.js";
+} from "../../packages/loopover-miner/lib/deny-hooks";
 import type { DenyRuleProposal } from "../../packages/loopover-engine/src/miner/deny-hook-synthesis";
 // #7525: normalizeRepoFullName is defined in the engine and re-exported unchanged by the miner-lib module
 // above; import it from the engine source directly so the guard's src branches are the ones exercised.
 import { normalizeRepoFullName } from "../../packages/loopover-engine/src/miner/deny-hook-synthesis";
-import { resolveLocalStoreDbPath } from "../../packages/loopover-miner/lib/local-store.js";
-import { cleanupResourceCount, resetProcessLifecycleForTesting } from "../../packages/loopover-miner/lib/process-lifecycle.js";
+import { resolveLocalStoreDbPath } from "../../packages/loopover-miner/lib/local-store";
+import { cleanupResourceCount, resetProcessLifecycleForTesting } from "../../packages/loopover-miner/lib/process-lifecycle";
 
 // Import the .ts SOURCE (not the build-time .js) via a non-literal specifier. Once `build:miner` has produced
 // the artifact, a plain `.js` import loads that .js and leaves coverage.include's `.ts` entry at 0% — the
@@ -27,7 +27,7 @@ const {
   resolveEffectiveDenyRules,
   setProposalStatuses,
   synthesizeDenyRuleProposals,
-} = (await import(DENY_HOOK_SYNTHESIS_MODULE)) as typeof import("../../packages/loopover-miner/lib/deny-hook-synthesis.js");
+} = (await import(DENY_HOOK_SYNTHESIS_MODULE)) as typeof import("../../packages/loopover-miner/lib/deny-hook-synthesis");
 
 const tempDirs: string[] = [];
 const stores: Array<{ close(): void }> = [];

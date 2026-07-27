@@ -11,8 +11,8 @@ import {
   isRepoRelativePath,
   scanEnvVarTokens,
   scanRegisteredCommands,
-} from "../../packages/loopover-miner/lib/deployment-docs-audit.js";
-import type { DeploymentDocsReality } from "../../packages/loopover-miner/lib/deployment-docs-audit.js";
+} from "../../packages/loopover-miner/lib/deployment-docs-audit";
+import type { DeploymentDocsReality } from "../../packages/loopover-miner/lib/deployment-docs-audit";
 
 const REPO_ROOT = resolve(import.meta.dirname, "../..");
 const MINER_DIR = resolve(REPO_ROOT, "packages/loopover-miner");

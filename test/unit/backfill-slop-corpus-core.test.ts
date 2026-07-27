@@ -6,8 +6,8 @@ import {
   SLOP_BACKFILL_PROVENANCE,
   SLOP_BACKFILL_RULE_ID,
   type SlopReplaySourceCase,
-} from "../../scripts/backfill-slop-corpus-core.js";
-import { manifestToSourceCases } from "../../scripts/backfill-slop-corpus.js";
+} from "../../scripts/backfill-slop-corpus-core";
+import { manifestToSourceCases } from "../../scripts/backfill-slop-corpus";
 
 // #8277: the replay backfill's pure core. The scorer itself is the engine's own (its suite); these tests
 // pin the diff parse, the signal-subset replay discipline (undefined inputs SKIP), the synthesized event

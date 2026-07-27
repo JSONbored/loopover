@@ -56,7 +56,7 @@ function setFixture(current: FileMap, previous: FileMap) {
   });
 }
 
-const { readReleasePrepEntries, dependencyChange, readConstant } = await import("../../scripts/generate-mcp-changelog.js");
+const { readReleasePrepEntries, dependencyChange, readConstant } = await import("../../scripts/generate-mcp-changelog");
 
 describe("readConstant (#7460)", () => {
   it("extracts a matching exported string constant", () => {

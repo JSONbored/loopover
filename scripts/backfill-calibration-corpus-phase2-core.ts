@@ -9,9 +9,9 @@
 //     would have recorded (`metadata.diff`, bounded to RAW_CONTEXT_MAX_DIFF_CHARS), public repos only.
 //   • Conservative + idempotent: borderline successor matches record NOTHING; both patchers return null on
 //     an already-patched row, so re-runs are no-ops; every patched row carries a distinct provenance tag.
-import { evaluateSuccessorMatch, SUPERSEDED_LOOKBACK_MS, type SupersededHeuristics } from "../src/review/reversal-superseded.js";
-import { RAW_CONTEXT_MAX_DIFF_CHARS } from "../src/rules/advisory.js";
-import { BACKFILL_RULE_ID } from "./backfill-calibration-corpus-core.js";
+import { evaluateSuccessorMatch, SUPERSEDED_LOOKBACK_MS, type SupersededHeuristics } from "../src/review/reversal-superseded";
+import { RAW_CONTEXT_MAX_DIFF_CHARS } from "../src/rules/advisory";
+import { BACKFILL_RULE_ID } from "./backfill-calibration-corpus-core";
 
 /** Distinct provenance for pass A's retro labels — never confusable with phase 1's decision-level rows. */
 export const RETRO_SUCCESSOR_PROVENANCE = "github_successor_scan";

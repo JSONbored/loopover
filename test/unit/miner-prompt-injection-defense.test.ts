@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasPromptInjection, neutralizePromptInjection } from "../../packages/loopover-miner/lib/prompt-injection-defense.js";
+import { hasPromptInjection, neutralizePromptInjection } from "../../packages/loopover-miner/lib/prompt-injection-defense";
 
 // #4795: byte-faithful port of src/review/prompt-injection.ts's proven regex, now defending the coding
 // agent's own instructions against a target repo's untrusted issue text instead of the AI reviewer's

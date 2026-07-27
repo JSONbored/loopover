@@ -1,4 +1,4 @@
-import { expectedMcpVersions, loadMcpPackageJson } from "./smoke-production-versions.js";
+import { expectedMcpVersions, loadMcpPackageJson } from "./smoke-production-versions";
 
 const siteOrigin = normalizeOrigin(process.env.LOOPOVER_SITE_ORIGIN ?? "https://loopover.ai");
 const apiOrigin = normalizeOrigin(process.env.LOOPOVER_API_ORIGIN ?? "https://api.loopover.ai");

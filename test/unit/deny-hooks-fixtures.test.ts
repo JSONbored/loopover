@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { evaluateDenyHooks } from "../../packages/loopover-miner/lib/deny-hooks.js";
-import { denyHookFixtures } from "../fixtures/deny-hooks/cases.js";
+import { evaluateDenyHooks } from "../../packages/loopover-miner/lib/deny-hooks";
+import { denyHookFixtures } from "../fixtures/deny-hooks/cases";
 
 // Data-driven deny-hook corpus (#2296): every fixture in test/fixtures/deny-hooks/cases.ts is evaluated against
 // evaluateDenyHooks and must match its expected verdict exactly, so the rule matcher is proven to generalize across

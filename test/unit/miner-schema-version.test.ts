@@ -4,7 +4,7 @@ import {
   applySchemaMigrations,
   readSchemaVersion,
   BASELINE_SCHEMA_VERSION,
-} from "../../packages/loopover-miner/lib/schema-version.js";
+} from "../../packages/loopover-miner/lib/schema-version";
 
 type Migration = (db: DatabaseSync) => void;
 

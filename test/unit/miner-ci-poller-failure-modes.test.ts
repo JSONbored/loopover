@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { pollCheckRuns } from "../../packages/loopover-miner/lib/ci-poller.js";
+import { pollCheckRuns } from "../../packages/loopover-miner/lib/ci-poller";
 
 const API = "https://api.github.com";
 

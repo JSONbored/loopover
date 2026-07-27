@@ -2,7 +2,7 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { executeLocalWrite } from "../../packages/loopover-miner/lib/execute-local-write.js";
+import { executeLocalWrite } from "../../packages/loopover-miner/lib/execute-local-write";
 
 function spec(command: string, action = "open_pr") {
   return { action, description: "test spec", inputs: {}, command, boundary: "boundary text" };

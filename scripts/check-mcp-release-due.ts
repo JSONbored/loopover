@@ -1,7 +1,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { buildMcpReleaseIssue, buildMcpReleaseReport, latestSemverTag, MCP_RELEASE_DUE_MARKER, type McpReleaseCommit, type McpReleaseReport } from "./mcp-release-core.js";
+import { buildMcpReleaseIssue, buildMcpReleaseReport, latestSemverTag, MCP_RELEASE_DUE_MARKER, type McpReleaseCommit, type McpReleaseReport } from "./mcp-release-core";
 
 const packageJsonPath = "packages/loopover-mcp/package.json";
 // Per-request timeout so a hung api.github.com connection can't block the unattended mcp-release-watch job

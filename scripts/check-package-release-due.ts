@@ -1,8 +1,8 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { buildPackageReleaseIssue, buildPackageReleaseReport, PACKAGE_RELEASE_CONFIGS, type PackageReleaseCommit, type PackageReleaseConfig, type PackageReleaseReport } from "./package-release-core.js";
-import { latestSemverTagWithPrefix } from "./release-semver-utils.js";
+import { buildPackageReleaseIssue, buildPackageReleaseReport, PACKAGE_RELEASE_CONFIGS, type PackageReleaseCommit, type PackageReleaseConfig, type PackageReleaseReport } from "./package-release-core";
+import { latestSemverTagWithPrefix } from "./release-semver-utils";
 
 // Per-request timeout so a hung api.github.com connection can't block the unattended watch job
 // indefinitely, matching check-mcp-release-due.ts's identical guard.

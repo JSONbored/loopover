@@ -7,12 +7,12 @@
 import {
   DEFAULT_MINER_GOAL_SPEC,
   type MinerGoalSpec,
-} from "../../packages/loopover-engine/src/miner-goal-spec.js";
+} from "../../packages/loopover-engine/src/miner-goal-spec";
 import {
   fetchCandidateIssuesWithSummary,
   searchCandidateIssuesWithSummary,
-} from "../../packages/loopover-miner/lib/opportunity-fanout.js";
-import { rankCandidateIssuesWithSummary } from "../../packages/loopover-miner/lib/opportunity-ranker.js";
+} from "../../packages/loopover-miner/lib/opportunity-fanout";
+import { rankCandidateIssuesWithSummary } from "../../packages/loopover-miner/lib/opportunity-ranker";
 import { createInstallationToken } from "../github/app";
 import { getRepository } from "../db/repositories";
 

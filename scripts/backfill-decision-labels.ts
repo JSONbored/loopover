@@ -44,9 +44,9 @@
 // unknowable and a fabricated sha256 would corrupt the commitment semantics; the sentinel is also the
 // record's provenance marker. They are NOT appended to the decision ledger: the ledger attests decisions
 // as they were finalized live, and reconstructed history has no place in that chain.
-import { planDecisionLabelBackfill, type CandidateRow } from "./backfill-decision-labels-core.js";
-import { buildDecisionRecord, canonicalJson } from "../src/review/decision-record.js";
-import { DECISION_AUDIT_RUBRIC_VERSION } from "../src/review/decision-audit.js";
+import { planDecisionLabelBackfill, type CandidateRow } from "./backfill-decision-labels-core";
+import { buildDecisionRecord, canonicalJson } from "../src/review/decision-record";
+import { DECISION_AUDIT_RUBRIC_VERSION } from "../src/review/decision-audit";
 
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];

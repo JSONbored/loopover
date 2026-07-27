@@ -4,24 +4,24 @@ import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createMinerMcpServer } from "../../packages/loopover-miner/bin/loopover-miner-mcp.js";
+import { createMinerMcpServer } from "../../packages/loopover-miner/bin/loopover-miner-mcp";
 import {
   MANAGE_PR_UPDATE_EVENT,
   collectManageStatus,
   collectRunPortfolio,
-} from "../../packages/loopover-miner/lib/manage-status.js";
+} from "../../packages/loopover-miner/lib/manage-status";
 import {
   closeDefaultEventLedger,
   initEventLedger,
-} from "../../packages/loopover-miner/lib/event-ledger.js";
+} from "../../packages/loopover-miner/lib/event-ledger";
 import {
   closeDefaultPortfolioQueueStore,
   initPortfolioQueueStore,
-} from "../../packages/loopover-miner/lib/portfolio-queue.js";
+} from "../../packages/loopover-miner/lib/portfolio-queue";
 import {
   closeDefaultRunStateStore,
   initRunStateStore,
-} from "../../packages/loopover-miner/lib/run-state.js";
+} from "../../packages/loopover-miner/lib/run-state";
 
 type Content = { content: Array<{ type: string; text?: string }>; isError?: boolean };
 type Stores = {

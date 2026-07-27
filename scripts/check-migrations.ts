@@ -30,8 +30,8 @@
 //     merged independently from the same base and were both applied to production before the collision
 //     surfaced; bare ADD COLUMN statements, same grandfather reasoning as 0074/0090.
 import { readdirSync, readFileSync } from "node:fs";
-import { detectMigrationCollisions, extractMigrationNumber, KNOWN_MIGRATION_DUPLICATES, MIGRATION_FILENAME_PATTERN } from "../src/db/migration-collisions.js";
-import { detectColumnCollisions } from "../src/db/migration-column-extraction.js";
+import { detectMigrationCollisions, extractMigrationNumber, KNOWN_MIGRATION_DUPLICATES, MIGRATION_FILENAME_PATTERN } from "../src/db/migration-collisions";
+import { detectColumnCollisions } from "../src/db/migration-column-extraction";
 
 const DIR = process.env.CHECK_MIGRATIONS_DIR || "migrations";
 const NAME = MIGRATION_FILENAME_PATTERN;

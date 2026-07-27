@@ -23,14 +23,14 @@ import type {
   RepositoryRecord,
   RepositorySettings,
   ScoringModelSnapshotRecord,
-} from "../../../../src/types";
-import type { PublicContributorProfile } from "../../../../src/github/public";
-import { commandReferenceUrl, loopoverFooter, gittensorRepoEarnUrl, type LoopOverFooterEnv } from "../../../../src/github/footer";
-import type { FocusManifestReviewConfig, ReviewFieldKey } from "../../../../src/signals/focus-manifest";
-import type { GittensorContributorSnapshot } from "../../../../src/gittensor/api";
+} from "../../../../src/types.js";
+import type { PublicContributorProfile } from "../../../../src/github/public.js";
+import { commandReferenceUrl, loopoverFooter, gittensorRepoEarnUrl, type LoopOverFooterEnv } from "../../../../src/github/footer.js";
+import type { FocusManifestReviewConfig, ReviewFieldKey } from "../../../../src/signals/focus-manifest.js";
+import type { GittensorContributorSnapshot } from "../../../../src/gittensor/api.js";
 import { nowIso } from "../utils/json.js";
-import { extractLinkedIssueNumbers } from "../../../../src/db/repositories";
-import { sanitizePublicComment } from "../../../../src/queue-intelligence";
+import { extractLinkedIssueNumbers } from "../../../../src/db/repositories.js";
+import { sanitizePublicComment } from "../../../../src/queue-intelligence.js";
 import { labelMatchesPattern, projectLinkedIssueMultiplierForPlannedSolve, type LinkedIssueMultiplierStatus } from "../scoring/preview.js";
 import { isSuspiciousConfiguredLabel } from "../scoring/label-match.js";
 import { hasLocalTestEvidence, hasValidationNote, isTestPath } from "./test-evidence.js";
@@ -38,13 +38,13 @@ import { isCodeFile, isTestFile } from "./path-matchers.js";
 import { isFailingCheckSummary } from "./check-summary.js";
 import { isDuplicateClusterWinnerByClaim } from "./duplicate-winner.js";
 import { PREFLIGHT_LIMITS } from "./preflight-limits.js";
-import type { UnifiedCollapsible } from "../../../../src/review/unified-comment";
-import { splitAiReviewNits } from "../../../../src/review/ai-notes";
-import { LOOPOVER_GATE_CHECK_NAME, shouldPublishReviewCheck } from "../../../../src/review/check-names";
+import type { UnifiedCollapsible } from "../../../../src/review/unified-comment.js";
+import { splitAiReviewNits } from "../../../../src/review/ai-notes.js";
+import { LOOPOVER_GATE_CHECK_NAME, shouldPublishReviewCheck } from "../../../../src/review/check-names.js";
 import { isAgentConfigured } from "../settings/autonomy.js";
 import { diffFilePriority } from "../review/diff-file-priority.js";
-import type { ImprovementBand, StructuralImprovementAssessment } from "../../../../src/signals/improvement";
-import type { ImprovementMagnitude } from "../../../../src/services/ai-review";
+import type { ImprovementBand, StructuralImprovementAssessment } from "../../../../src/signals/improvement.js";
+import type { ImprovementMagnitude } from "../../../../src/services/ai-review.js";
 import type { SlopBand } from "./slop.js";
 
 export type ParticipationLane = "direct_pr" | "issue_discovery" | "split" | "inactive" | "unknown";

@@ -8,7 +8,7 @@ import {
   destroyTenant,
   isControlPlaneEnabled,
   listTenants,
-} from "../../packages/loopover-miner/lib/tenant-client.js";
+} from "../../packages/loopover-miner/lib/tenant-client";
 import {
   parseTenantCreateArgs,
   parseTenantListArgs,
@@ -17,7 +17,7 @@ import {
   runTenantCreate,
   runTenantDestroy,
   runTenantList,
-} from "../../packages/loopover-miner/lib/tenant-cli.js";
+} from "../../packages/loopover-miner/lib/tenant-cli";
 
 const ENABLED_ENV = {
   [CONTROL_PLANE_FLAG]: "true",

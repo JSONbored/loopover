@@ -6,7 +6,7 @@ import {
   collectSelfHostEnvVars,
   renderSelfHostEnvReferenceMarkdown,
   writeSelfHostEnvReference,
-} from "../../scripts/gen-selfhost-env-reference.js";
+} from "../../scripts/gen-selfhost-env-reference";
 
 function fixtureRoot(): string {
   const root = mkdtempSync(join(tmpdir(), "gt-env-reference-"));

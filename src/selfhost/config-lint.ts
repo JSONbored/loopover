@@ -8,4 +8,4 @@ export {
   lintManifestText,
   unknownTopLevelWarnings,
   type SelfHostConfigLintResult,
-} from "../../packages/loopover-engine/src/config-lint.js";
+} from "../../packages/loopover-engine/src/config-lint";

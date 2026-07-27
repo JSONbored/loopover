@@ -22,14 +22,14 @@ import { readFileSync } from "node:fs";
 
 import { assembleAttestationEnvelope, createSampleAttester, type Attester, type BacktestCase } from "@loopover/engine";
 
-import { checksumCases } from "./backtest-corpus-export-core.js";
+import { checksumCases } from "./backtest-corpus-export-core";
 import {
   attestedRunExitCode,
   buildAttestedRunAuditInsertSql,
   decideAttestedRunOutcome,
   type RuntimeAttestationClaim,
-} from "./attested-backtest-run-core.js";
-import { createSnpAttester } from "./snp-attester.js";
+} from "./attested-backtest-run-core";
+import { createSnpAttester } from "./snp-attester";
 
 type Args = {
   ruleId: string;

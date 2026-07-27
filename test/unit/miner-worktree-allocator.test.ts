@@ -12,12 +12,12 @@ import {
   releaseWorktree,
   resolveWorktreeAllocatorDbPath,
   resolveWorktreeBaseDir,
-} from "../../packages/loopover-miner/lib/worktree-allocator.js";
+} from "../../packages/loopover-miner/lib/worktree-allocator";
 import {
   cleanupResourceCount,
   closeAllCleanupResources,
   resetProcessLifecycleForTesting,
-} from "../../packages/loopover-miner/lib/process-lifecycle.js";
+} from "../../packages/loopover-miner/lib/process-lifecycle";
 
 const roots: string[] = [];
 const allocators: Array<{ close(): void }> = [];

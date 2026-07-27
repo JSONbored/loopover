@@ -4,7 +4,7 @@ import {
   containsPrivateLanguage,
   renderRejectionMessage,
   resolvePlaceholders,
-} from "../../packages/loopover-miner/lib/rejection-templates.js";
+} from "../../packages/loopover-miner/lib/rejection-templates";
 
 const CONTEXT = { repoFullName: "JSONbored/loopover", prNumber: 2751 } as const;
 

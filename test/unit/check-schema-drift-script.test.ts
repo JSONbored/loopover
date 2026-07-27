@@ -12,7 +12,7 @@ import {
   listActualTables,
   RAW_SQL_ONLY_TABLES,
   replayMigrations,
-} from "../../scripts/check-schema-drift.js";
+} from "../../scripts/check-schema-drift";
 import * as realSchema from "../../src/db/schema";
 
 // #2565: the script imports src/db/schema.ts (a .ts module), so -- like check-migrations.ts and

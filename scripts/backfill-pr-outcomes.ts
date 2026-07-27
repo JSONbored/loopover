@@ -10,7 +10,7 @@
 //
 // After applying, rewind orb_export_cursor so the corrected rows re-export to fleet calibration:
 //   UPDATE orb_export_cursor SET last_exported_at = '<before the oldest backfilled action>';
-import { planPrOutcomeBackfill, type TerminalActionRow } from "./backfill-pr-outcomes-core.js";
+import { planPrOutcomeBackfill, type TerminalActionRow } from "./backfill-pr-outcomes-core";
 
 type Row = Record<string, unknown>;
 type Db = {

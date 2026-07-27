@@ -15,7 +15,7 @@ const {
   runStateGet,
   runStateSet,
   runStateCli,
-} = await import("../../packages/loopover-miner/lib/run-state-cli.js");
+} = await import("../../packages/loopover-miner/lib/run-state-cli");
 
 afterEach(() => {
   vi.restoreAllMocks();

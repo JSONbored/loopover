@@ -8,7 +8,7 @@ import {
   sqlStringLiteral,
   synthesizeBackfillRows,
   type ReviewTargetDecisionRow,
-} from "../../scripts/backfill-calibration-corpus-core.js";
+} from "../../scripts/backfill-calibration-corpus-core";
 
 function decisionRow(overrides: Partial<ReviewTargetDecisionRow> = {}): ReviewTargetDecisionRow {
   return {

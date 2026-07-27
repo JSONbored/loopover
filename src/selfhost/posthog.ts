@@ -39,7 +39,7 @@ import {
 } from "./redaction-scrub";
 // #9142: the SAME HMAC primitive orb-collector.ts's exportOrbBatch uses to anonymize repo/PR identifiers
 // before they leave the box -- reused here so a repo/PR hashes identically across both telemetry paths.
-import { hmacAnonymize } from "../../packages/loopover-engine/src/telemetry/anonymize.js";
+import { hmacAnonymize } from "../../packages/loopover-engine/src/telemetry/anonymize";
 
 type PostHogNs = typeof import("posthog-node");
 type PostHogClient = InstanceType<PostHogNs["PostHog"]>;

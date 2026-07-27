@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { resolveAttemptDbForkConfig } from "../../packages/loopover-miner/lib/attempt-db-fork-config.js";
+import { resolveAttemptDbForkConfig } from "../../packages/loopover-miner/lib/attempt-db-fork-config";
 
 afterEach(() => {
   vi.unstubAllEnvs();

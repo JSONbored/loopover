@@ -10,7 +10,7 @@ import {
   CONTRIBUTION_SIGNAL_SOURCES,
   emptyContributionProfile,
   weakestConfidence,
-} from "../../packages/loopover-miner/lib/contribution-profile.js";
+} from "../../packages/loopover-miner/lib/contribution-profile";
 
 const docPath = join(
   process.cwd(),

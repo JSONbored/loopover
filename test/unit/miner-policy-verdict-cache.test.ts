@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   initPolicyVerdictCacheStore,
   resolvePolicyVerdictCacheDbPath,
-} from "../../packages/loopover-miner/lib/policy-verdict-cache.js";
+} from "../../packages/loopover-miner/lib/policy-verdict-cache";
 
 const roots: string[] = [];
 const stores: Array<{ close(): void }> = [];

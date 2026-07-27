@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { FORWARD_REF_PLACEHOLDER } from "../../packages/loopover-miner/lib/replay-task-generation.js";
-import type { ReplaySnapshot } from "../../packages/loopover-miner/lib/replay-task-bridge.js";
+import { FORWARD_REF_PLACEHOLDER } from "../../packages/loopover-miner/lib/replay-task-generation";
+import type { ReplaySnapshot } from "../../packages/loopover-miner/lib/replay-task-bridge";
 import {
   buildLeakageContextFromSnapshot,
   buildReplayCandidateFromSnapshot,
   collectFrozenContextTexts,
   generateLeakageSafeReplayTask,
   generateLeakageSafeScoringKey,
-} from "../../packages/loopover-miner/lib/replay-task-bridge.js";
+} from "../../packages/loopover-miner/lib/replay-task-bridge";
 
 // The bridge is deliberately defensive about malformed snapshot fields (null entries, non-string subjects/names,
 // non-array collections) a corrupted store row could carry; this coerces such intentionally-off-shape fixtures

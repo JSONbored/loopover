@@ -17,7 +17,7 @@ import {
   flushMinerSentry,
   initMinerSentry,
   resetMinerSentryForTesting,
-} from "../../packages/loopover-miner/lib/sentry.js";
+} from "../../packages/loopover-miner/lib/sentry";
 
 beforeEach(() => {
   vi.clearAllMocks();

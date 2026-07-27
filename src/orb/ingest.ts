@@ -3,6 +3,7 @@
 // No raw repo names, owner identifiers, commit SHAs, or PR content — only HMAC-anonymized hashes +
 // aggregate calibration metadata (verdict, outcome, reversal, bucketed reason, cycle time).
 import { hashToken } from "../auth/security";
+import { validateCalibrationPayload } from "../review/risk-control";
 
 const MAX_BATCH = 500;
 const MAX_INSTANCE_ID_CHARS = 64;
@@ -215,7 +216,8 @@ export async function handleOrbIngest(body: string, db: D1Database, presentedIns
   // shared fleet-wide bearer token (proof only of "some fleet member") may be enough to plant or delete one.
   // Per-arm rows are scoped to THIS instance (orb_risk_control_arms); public-stats aggregates across
   // registered instances at read time, so one compromised or miscalibrated peer can only ever touch its own
-  // row. Bounded: two known arms, value stored verbatim as JSON for public-stats to render.
+  // row. Bounded: two known arms, shape/range-validated (#9068, validateCalibrationPayload) before storage,
+  // then kept as JSON for public-stats to render.
   const riskControl = (payload as { risk_control?: unknown }).risk_control;
   if (riskControl !== undefined && riskControl !== null && typeof riskControl === "object" && !Array.isArray(riskControl)) {
     try {
@@ -239,7 +241,11 @@ export async function handleOrbIngest(body: string, db: D1Database, presentedIns
           if (value === undefined) continue;
           if (value === null) {
             await db.prepare(`DELETE FROM orb_risk_control_arms WHERE instance_id = ? AND arm = ?`).bind(instance_id, arm).run();
-          } else if (typeof value === "object" && !Array.isArray(value)) {
+          } else if (typeof value === "object" && !Array.isArray(value) && validateCalibrationPayload(value) !== null) {
+            // #9068: shape/range-validated (status === "calibrated", alpha/lambda/coverage in range, nAtLambda
+            // clears the zero-error floor for the payload's own alpha/delta) before it's allowed anywhere near
+            // storage or the public surface — a sender claiming an uncertifiable guarantee is silently dropped,
+            // the same best-effort posture as every other malformed row in this ingest.
             await db
               .prepare(
                 `INSERT INTO orb_risk_control_arms (instance_id, arm, payload_json, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)

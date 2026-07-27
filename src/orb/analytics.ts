@@ -34,6 +34,18 @@ const OUTLIER_BAND = 0.25; // |instance precision − fleet median| beyond this 
 const GAMING_VOLUME_MULTIPLIER = 2; // an instance's decided count more than this many times the fleet median
 const GAMING_PRECISION_BAND = OUTLIER_BAND; // mergePrecision this far ABOVE the fleet median (one-sided)
 const GAMING_REVERSAL_RATIO = 0.5; // reversalRate below this fraction of the fleet median
+// #9068: below this many eligible instances, "an instance's volume/precision this far above the fleet
+// median" is UNSATISFIABLE by construction (with 1 eligible instance it IS the median; with 2, either could
+// be "above" the other trivially) — the detector cannot distinguish "gaming" from "the sole/only comparable
+// data point" below this floor, so it does not run at all rather than publish a structurally-guaranteed zero
+// as if it were a clean bill of health.
+export const GAMING_MIN_ELIGIBLE = 3;
+// #9068: an instance's reversalRate is a fraction of ALL its decided signals, so a genuinely well-run fleet
+// commonly has a fleet-median reversalRate of exactly 0 — `reversalRate < 0 * GAMING_REVERSAL_RATIO` can never
+// be true, so the "low reversal" conjunct (and therefore the whole flag) was structurally unfireable whenever
+// the median was 0. This absolute floor gives "low reversal" a meaning even then: at/under 2% is suspiciously
+// clean in absolute terms regardless of what the fleet median happens to be.
+const GAMING_REVERSAL_ABSOLUTE_FLOOR = 0.02;
 
 /** Per-instance confusion-matrix cell as stored. */
 export interface Cell {
@@ -105,8 +117,22 @@ export interface FleetAnalytics {
     reversalRate: number | null;
     /** Share of AUTONOMOUS decisions the realized outcome confirmed — the honest "decision accuracy"
      *  (#8820). See InstanceMetrics.decisionAccuracy for why this, not 1 − reversalRate, is the number to
-     *  publish. */
+     *  publish.
+     *
+     *  #9068: this is the POOLED proportion (mergeConfirmed+closeConfirmed)/(mergeVerdicts+closeVerdicts)
+     *  over eligible instances, NOT the median of per-instance decisionAccuracy — a per-instance MEDIAN and a
+     *  POOLED proportion are different estimands that only coincide by coincidence with equal per-instance
+     *  volumes (true of today's single-instance fleet, not guaranteed once a second instance registers). This
+     *  is also exactly what accuracyCiPct is a Wilson interval OVER downstream (public-stats.ts), so the two
+     *  published figures are now guaranteed to describe the same population instead of merely usually
+     *  agreeing. See decisionAccuracyMedian below for the per-instance-robust diagnostic this replaces as the
+     *  published point estimate. */
     decisionAccuracy: number | null;
+    /** #9068: the per-instance MEDIAN of decisionAccuracy — robust to a single instance's volume swamping the
+     *  fleet figure, kept as a diagnostic now that `decisionAccuracy` above publishes the pooled proportion
+     *  instead. Not itself published on the public surface; available to internal consumers that want the
+     *  robust view. */
+    decisionAccuracyMedian: number | null;
     cycleP50Ms: number | null;
     cycleP95Ms: number | null;
     /** #8829: confusion counts POOLED over eligible instances. Medians are robust to a bad contributor but
@@ -118,6 +144,11 @@ export interface FleetAnalytics {
   instances: InstanceMetrics[];
   outliers: Array<{ instanceId: string; metric: string; value: number; fleetMedian: number }>;
   gamingPatternFlags: GamingPatternFlag[];
+  /** #9068: whether the anti-farming detector ran at all (eligible.length >= GAMING_MIN_ELIGIBLE). An empty
+   *  `gamingPatternFlags` is ambiguous between "the detector ran and found nothing" and "the detector cannot
+   *  run yet" — this disambiguates, so a public surface can publish null ("not enough instances to compare")
+   *  instead of a structurally-guaranteed zero presented as a positive safety signal. */
+  gamingDetectionEligible: boolean;
 }
 
 function median(xs: number[]): number | null {
@@ -241,7 +272,15 @@ export async function computeFleetAnalytics(env: Env, opts: { windowDays?: numbe
     const reg = await env.DB.prepare(`SELECT instance_id FROM orb_instances WHERE registered = 1`).all<{ instance_id: string }>();
     registered = new Set((reg.results ?? []).map((r) => r.instance_id));
   } catch {
-    return { windowDays, instanceCount: 0, fleet: { mergePrecision: null, closePrecision: null, fpRate: null, reversalRate: null, decisionAccuracy: null, cycleP50Ms: null, cycleP95Ms: null, pooled: emptyPooled() }, instances: [], outliers: [], gamingPatternFlags: [] };
+    return {
+      windowDays,
+      instanceCount: 0,
+      fleet: { mergePrecision: null, closePrecision: null, fpRate: null, reversalRate: null, decisionAccuracy: null, decisionAccuracyMedian: null, cycleP50Ms: null, cycleP95Ms: null, pooled: emptyPooled() },
+      instances: [],
+      outliers: [],
+      gamingPatternFlags: [],
+      gamingDetectionEligible: false,
+    };
   }
 
   // Group cells by instance, fold each.
@@ -271,17 +310,23 @@ export async function computeFleetAnalytics(env: Env, opts: { windowDays?: numbe
     }
   }
 
-  // #2350: gamingPatternFlags. Gated on fleetMergeP !== null (at least one eligible instance made a comparable
-  // merge verdict) — decided/reversalRate are never null per-instance, so once `eligible` is known non-empty
-  // (implied by fleetMergeP being resolvable), both medians below are guaranteed non-null too.
+  // #2350/#9068: gamingPatternFlags. Gated on fleetMergeP !== null (at least one eligible instance made a
+  // comparable merge verdict) AND eligible.length >= GAMING_MIN_ELIGIBLE — below that floor, "this far above
+  // the fleet median" is unsatisfiable by construction (an instance IS the median at n=1; either trivially
+  // "wins" at n=2), so the detector must not run at all rather than publish a guaranteed zero as a clean bill
+  // of health. decided/reversalRate are never null per-instance, so once `eligible` clears both gates, both
+  // medians below are guaranteed non-null too.
+  const gamingDetectionEligible = fleetMergeP !== null && eligible.length >= GAMING_MIN_ELIGIBLE;
   const gamingPatternFlags: FleetAnalytics["gamingPatternFlags"] = [];
-  if (fleetMergeP !== null) {
+  if (gamingDetectionEligible) {
     const fleetMedianDecided = median(eligible.map((i) => i.decided))!;
     const fleetReversalRate = median(eligible.map((i) => i.reversalRate))!;
     for (const i of eligible) {
       const highVolume = i.decided > fleetMedianDecided * GAMING_VOLUME_MULTIPLIER;
-      const highPrecision = i.mergePrecision !== null && i.mergePrecision - fleetMergeP > GAMING_PRECISION_BAND;
-      const lowReversal = i.reversalRate < fleetReversalRate * GAMING_REVERSAL_RATIO;
+      const highPrecision = i.mergePrecision !== null && i.mergePrecision - fleetMergeP! > GAMING_PRECISION_BAND;
+      // #9068: a fleet-median reversalRate of 0 is common (a healthy fleet), and a FRACTION of zero can never
+      // be undercut — fall back to an absolute floor in that case so "low reversal" can still mean something.
+      const lowReversal = fleetReversalRate > 0 ? i.reversalRate < fleetReversalRate * GAMING_REVERSAL_RATIO : i.reversalRate <= GAMING_REVERSAL_ABSOLUTE_FLOOR;
       if (highVolume && highPrecision && lowReversal) {
         gamingPatternFlags.push({
           instanceId: i.instanceId,
@@ -289,7 +334,7 @@ export async function computeFleetAnalytics(env: Env, opts: { windowDays?: numbe
           mergePrecision: i.mergePrecision!,
           reversalRate: i.reversalRate,
           fleetMedianDecided,
-          fleetMergePrecision: fleetMergeP,
+          fleetMergePrecision: fleetMergeP!,
           fleetReversalRate,
         });
       }
@@ -307,6 +352,10 @@ export async function computeFleetAnalytics(env: Env, opts: { windowDays?: numbe
   }
   const pooledVerdicts = pooled.mergeVerdicts + pooled.closeVerdicts;
   pooled.coverage = pooledVerdicts + pooled.holds > 0 ? pooledVerdicts / (pooledVerdicts + pooled.holds) : null;
+  // #9068: the published point estimate is the POOLED proportion (same population accuracyCiPct's Wilson
+  // interval is computed over downstream in public-stats.ts), not the per-instance median — see the
+  // decisionAccuracy field doc above for why the two are different estimands.
+  const pooledDecisionAccuracy = pooledVerdicts > 0 ? (pooled.mergeConfirmed + pooled.closeConfirmed) / pooledVerdicts : null;
 
   return {
     windowDays,
@@ -316,7 +365,8 @@ export async function computeFleetAnalytics(env: Env, opts: { windowDays?: numbe
       closePrecision: fleetCloseP,
       fpRate: median(nums((i) => i.fpRate)),
       reversalRate: median(nums((i) => i.reversalRate)),
-      decisionAccuracy: median(nums((i) => i.decisionAccuracy)),
+      decisionAccuracy: pooledDecisionAccuracy,
+      decisionAccuracyMedian: median(nums((i) => i.decisionAccuracy)),
       cycleP50Ms: percentile(cycle, 50),
       cycleP95Ms: percentile(cycle, 95),
       pooled,
@@ -324,6 +374,7 @@ export async function computeFleetAnalytics(env: Env, opts: { windowDays?: numbe
     instances,
     outliers,
     gamingPatternFlags,
+    gamingDetectionEligible,
   };
 }
 

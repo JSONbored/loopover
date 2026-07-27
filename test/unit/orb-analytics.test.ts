@@ -151,20 +151,40 @@ describe("computeFleetAnalytics()", () => {
     expect(inst.policyActions).toBe(0);
   });
 
-  it("decisionAccuracy is null for a holds-only instance (no decision to score) and drives the fleet median", async () => {
+  it("decisionAccuracy is null for a holds-only instance (no decision to score)", async () => {
     const env = createTestEnv();
     await signals(env, "holds-only", 6, { verdict: "hold", outcome: "merged" });
     const holdsOnly = (await computeFleetAnalytics(env)).instances[0]!;
     expect(holdsOnly.decisionAccuracy).toBeNull();
+  });
 
-    const env2 = createTestEnv();
-    await signals(env2, "a", 8, { verdict: "merge", outcome: "merged" });
-    await signals(env2, "a", 2, { verdict: "merge", outcome: "closed" }); // 0.8
-    await signals(env2, "b", 9, { verdict: "close", outcome: "closed" });
-    await signals(env2, "b", 1, { verdict: "close", outcome: "merged" }); // 0.9
-    await env2.DB.prepare(`INSERT INTO orb_instances (instance_id, registered) VALUES ('a', 1), ('b', 1)`).run();
-    const fleet = await computeFleetAnalytics(env2);
-    expect(fleet.fleet.decisionAccuracy).toBeCloseTo(0.85); // median of 0.8 and 0.9
+  it("#9068: fleet.decisionAccuracy is the POOLED proportion, not the per-instance median — the two coincide only at equal per-instance volumes", async () => {
+    const env = createTestEnv();
+    await signals(env, "a", 8, { verdict: "merge", outcome: "merged" });
+    await signals(env, "a", 2, { verdict: "merge", outcome: "closed" }); // instance accuracy 0.8, weight 10
+    await signals(env, "b", 9, { verdict: "close", outcome: "closed" });
+    await signals(env, "b", 1, { verdict: "close", outcome: "merged" }); // instance accuracy 0.9, weight 10
+    await register(env, "a", "b");
+    const fleet = await computeFleetAnalytics(env);
+    // Equal weights (10 verdicts each): pooled (8+9)/(10+10)=0.85 and median (0.8+0.9)/2=0.85 coincide here.
+    expect(fleet.fleet.decisionAccuracy).toBeCloseTo(0.85);
+    expect(fleet.fleet.decisionAccuracyMedian).toBeCloseTo(0.85);
+  });
+
+  it("#9068 REGRESSION: pooled decisionAccuracy diverges from the per-instance median once weights differ — publishing the median would misrepresent the pooled population", async () => {
+    const env = createTestEnv();
+    // Instance "a": 90 merge verdicts, 81 confirmed -> instance accuracy 0.9 (heavy weight).
+    await signals(env, "a", 81, { verdict: "merge", outcome: "merged" });
+    await signals(env, "a", 9, { verdict: "merge", outcome: "closed" });
+    // Instance "b": 10 close verdicts, 5 confirmed -> instance accuracy 0.5 (light weight).
+    await signals(env, "b", 5, { verdict: "close", outcome: "closed" });
+    await signals(env, "b", 5, { verdict: "close", outcome: "merged" });
+    await register(env, "a", "b");
+    const fleet = await computeFleetAnalytics(env);
+    // Median of [0.9, 0.5] = 0.7. Pooled (81+5)/(90+10) = 0.86 -- a real, material divergence.
+    expect(fleet.fleet.decisionAccuracyMedian).toBeCloseTo(0.7);
+    expect(fleet.fleet.decisionAccuracy).toBeCloseTo(0.86);
+    expect(fleet.fleet.decisionAccuracy).not.toBeCloseTo(fleet.fleet.decisionAccuracyMedian!, 1);
   });
 
   it("a superseded close (#8820) disconfirms closePrecision and counts toward reversalRate, exactly like a reopen", async () => {
@@ -414,12 +434,60 @@ describe("gamingPatternFlags — anti-farming detection (#2350)", () => {
     const env = createTestEnv();
     const result = await computeFleetAnalytics(env);
     expect(result.gamingPatternFlags).toEqual([]);
+    expect(result.gamingDetectionEligible).toBe(false);
   });
 
   it("fail-safe on a DB error -> empty gamingPatternFlags", async () => {
     const broken = { DB: { prepare: () => ({ bind: () => ({ all: () => Promise.reject(new Error("boom")) }) }) } } as unknown as Env;
     const result = await computeFleetAnalytics(broken);
     expect(result.gamingPatternFlags).toEqual([]);
+    expect(result.gamingDetectionEligible).toBe(false);
+  });
+
+  it("#9068 REGRESSION: with fewer than GAMING_MIN_ELIGIBLE (3) eligible instances, detection does not run at all — gamingDetectionEligible is false, not a vacuous true", async () => {
+    const env = createTestEnv();
+    // Exactly 2 eligible instances, an extreme farming-shaped pattern on one of them: with only 1 comparable
+    // peer, "this far above the fleet median" is unsatisfiable by construction (see the module doc comment),
+    // so the detector must not even run — a structural zero must never be mistaken for "checked, found none".
+    await normalInstance(env, "normal1");
+    await signals(env, "farmer", 30, { verdict: "merge", outcome: "merged", reversal: "none" });
+    await register(env, "normal1", "farmer");
+
+    const result = await computeFleetAnalytics(env);
+    expect(result.instanceCount).toBe(2);
+    expect(result.gamingDetectionEligible).toBe(false);
+    expect(result.gamingPatternFlags).toEqual([]);
+  });
+
+  it("#9068 REGRESSION: with GAMING_MIN_ELIGIBLE (3) eligible instances, detection runs and gamingDetectionEligible is true", async () => {
+    const env = createTestEnv();
+    await normalInstance(env, "a");
+    await normalInstance(env, "b");
+    await normalInstance(env, "c");
+    await register(env, "a", "b", "c");
+
+    const result = await computeFleetAnalytics(env);
+    expect(result.instanceCount).toBe(3);
+    expect(result.gamingDetectionEligible).toBe(true);
+  });
+
+  it("#9068 REGRESSION: flags a farming pattern even when the fleet's own reversal rate is uniformly zero — a fraction of zero can never fire", async () => {
+    const env = createTestEnv();
+    // 3 normal instances: 7 confirmed merges + 3 OUTRIGHT-WRONG merges (merge -> closed, no reversal marker)
+    // each -- mergePrecision 0.7, but reversalRate 0 (nothing here carries an explicit reversal flag).
+    for (const id of ["normal1", "normal2", "normal3"]) {
+      await signals(env, id, 7, { verdict: "merge", outcome: "merged", reversal: "none" });
+      await signals(env, id, 3, { verdict: "merge", outcome: "closed", reversal: "none" });
+    }
+    // Farmer: 30 decided (> 2x the fleet median of 10), precision 1.0 (> 0.7 + 0.25), reversalRate ALSO 0 --
+    // identical to the fleet's own median. Under the old fraction-of-median check this could never flag
+    // (0 < 0 * 0.5 is always false); the absolute floor makes "low reversal" meaningful even at a zero median.
+    await signals(env, "farmer", 30, { verdict: "merge", outcome: "merged", reversal: "none" });
+    await register(env, "normal1", "normal2", "normal3", "farmer");
+
+    const result = await computeFleetAnalytics(env);
+    expect(result.fleet.reversalRate).toBe(0); // confirms the fleet median really is zero here
+    expect(result.gamingPatternFlags.map((f) => f.instanceId)).toEqual(["farmer"]);
   });
 });
 

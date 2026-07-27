@@ -483,33 +483,41 @@ export async function getRepositoryCollaboratorPermission(
   const parsed = parseRepoFullNameStrict(repoFullName);
   if (!parsed || !login) return null;
   const { owner, repo: name } = parsed;
-  const token = await createInstallationToken(env, installationId);
-  const response = await timeoutFetch(
-    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/collaborators/${encodeURIComponent(login)}/permission`,
-    {
-      headers: githubHeaders({ token, json: true }),
-      githubRateLimitAdmission: true,
-      githubRateLimitAdmissionKey: githubRateLimitAdmissionKeyForInstallation(installationId),
-    },
-  );
-  if (response.status === 404) return null;
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(
-      `Failed to fetch GitHub collaborator permission (${response.status}): ${body.slice(0, 200)}`,
+  // Route through withInstallationTokenRetry so a stale cached installation token self-heals once
+  // (#9315) — same convention every sibling GitHub helper in this directory already uses (#6191 / #8892).
+  // Fail-closed callers (requireRepoWriteAccess / isPerTenantAdmin) must not deny a legitimate
+  // collaborator on a transient bad-credentials 401.
+  return await withInstallationTokenRetry(env, installationId, async (token) => {
+    const response = await timeoutFetch(
+      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/collaborators/${encodeURIComponent(login)}/permission`,
+      {
+        headers: githubHeaders({ token, json: true }),
+        githubRateLimitAdmission: true,
+        githubRateLimitAdmissionKey: githubRateLimitAdmissionKeyForInstallation(installationId),
+      },
     );
-  }
-  const payload = (await response.json()) as {
-    permission?: GitHubRepositoryCollaboratorPermission;
-    role_name?: string;
-  };
-  // #9152: `permission` is GitHub's coarse legacy field — only ever admin/write/read/none, so Maintain collapses
-  // into "write" and Triage into "read" — making `permission === "maintain"` dead at both call sites
-  // (isPerTenantAdmin, resolveRealRepoPermissionAssociation). `role_name` carries the actual granular tier
-  // (including "maintain"/"triage", or a custom org role) and is always present on this endpoint's real response;
-  // prefer it, falling back to `permission` only for a response that omits it (defensive — keeps the pre-#9152
-  // behavior for any caller/fixture that only ever set `permission`).
-  return payload.role_name ?? payload.permission ?? null;
+    if (response.status === 404) return null;
+    if (!response.ok) {
+      const body = await response.text();
+      // Attach `status` so withInstallationTokenRetry's isGitHubBadCredentialsError / permission-scope
+      // detectors can recognize a 401/403 even when the body text is empty or non-matching.
+      throw Object.assign(
+        new Error(`Failed to fetch GitHub collaborator permission (${response.status}): ${body.slice(0, 200)}`),
+        { status: response.status },
+      );
+    }
+    const payload = (await response.json()) as {
+      permission?: GitHubRepositoryCollaboratorPermission;
+      role_name?: string;
+    };
+    // #9152: `permission` is GitHub's coarse legacy field — only ever admin/write/read/none, so Maintain collapses
+    // into "write" and Triage into "read" — making `permission === "maintain"` dead at both call sites
+    // (isPerTenantAdmin, resolveRealRepoPermissionAssociation). `role_name` carries the actual granular tier
+    // (including "maintain"/"triage", or a custom org role) and is always present on this endpoint's real response;
+    // prefer it, falling back to `permission` only for a response that omits it (defensive — keeps the pre-#9152
+    // behavior for any caller/fixture that only ever set `permission`).
+    return payload.role_name ?? payload.permission ?? null;
+  });
 }
 
 /** Account-age throttle (#2561, anti-abuse): `GET /users/{login}` for `created_at`, so a repo can flag a
@@ -524,18 +532,28 @@ export async function getGithubUserCreatedAt(
 ): Promise<string | null> {
   if (!login) return null;
   try {
-    const token = await createInstallationToken(env, installationId);
-    const response = await timeoutFetch(
-      `https://api.github.com/users/${encodeURIComponent(login)}`,
-      {
-        headers: githubHeaders({ token, json: true }),
-        githubRateLimitAdmission: true,
-        githubRateLimitAdmissionKey: githubRateLimitAdmissionKeyForInstallation(installationId),
-      },
-    );
-    if (!response.ok) return null;
-    const payload = (await response.json()) as { created_at?: unknown };
-    return typeof payload.created_at === "string" ? payload.created_at : null;
+    // withInstallationTokenRetry (#9315): a stale-token 401 must re-mint once rather than fail-open to null
+    // and silently disable the account-age check. Non-token failures still fail open below.
+    return await withInstallationTokenRetry(env, installationId, async (token) => {
+      const response = await timeoutFetch(
+        `https://api.github.com/users/${encodeURIComponent(login)}`,
+        {
+          headers: githubHeaders({ token, json: true }),
+          githubRateLimitAdmission: true,
+          githubRateLimitAdmissionKey: githubRateLimitAdmissionKeyForInstallation(installationId),
+        },
+      );
+      if (response.status === 401 || response.status === 403) {
+        const body = await response.text();
+        throw Object.assign(
+          new Error(`Failed to fetch GitHub user created_at (${response.status}): ${body.slice(0, 200)}`),
+          { status: response.status },
+        );
+      }
+      if (!response.ok) return null;
+      const payload = (await response.json()) as { created_at?: unknown };
+      return typeof payload.created_at === "string" ? payload.created_at : null;
+    });
   } catch {
     return null;
   }

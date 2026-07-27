@@ -838,6 +838,32 @@ describe("GitHub check runs", () => {
     ).rejects.toThrow(/Failed to fetch GitHub collaborator permission/);
   });
 
+  it("#9315: getRepositoryCollaboratorPermission self-heals a stale cached installation token (401 -> re-mint -> permission)", async () => {
+    // Same bug class as #6191/#8892: this read fed a stale cached token straight into the collaborator
+    // permission fetch with no retry, so a transient 401 failed closed for requireRepoWriteAccess /
+    // isPerTenantAdmin. It now routes through withInstallationTokenRetry.
+    let rejected = false;
+    setInstallationTokenStore({
+      get: async () => ({ token: rejected ? "fresh-token" : "stale-token", expiresAtMs: Date.now() + 60 * 60_000 }),
+      set: async () => {},
+    });
+    const seenTokens: string[] = [];
+    vi.stubGlobal("fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const token = (new Headers(init?.headers).get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+      seenTokens.push(token);
+      if (token === "stale-token") {
+        rejected = true;
+        return new Response(JSON.stringify({ message: "Bad credentials" }), { status: 401 });
+      }
+      return Response.json({ permission: "write", role_name: "maintain" });
+    });
+
+    await expect(
+      getRepositoryCollaboratorPermission(createTestEnv(), 123, "JSONbored/gittensory", "maintainer"),
+    ).resolves.toBe("maintain");
+    expect(seenTokens).toEqual(["stale-token", "fresh-token"]);
+  });
+
   it("getGithubUserCreatedAt fetches the account creation date, and fails OPEN (null) on any error (#2561)", async () => {
     const privateKey = await generatePrivateKeyPem();
     await expect(getGithubUserCreatedAt(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "")).resolves.toBeNull();
@@ -868,6 +894,53 @@ describe("GitHub check runs", () => {
     ).resolves.toBeNull();
     await expect(
       getGithubUserCreatedAt(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "network-error"),
+    ).resolves.toBeNull();
+  });
+
+  it("#9315: getGithubUserCreatedAt self-heals a stale cached installation token (401 -> re-mint -> created_at)", async () => {
+    // Same bug class as #6191/#8892: a stale-token 401 previously fail-opened to null and silently disabled
+    // the account-age throttle. It now routes through withInstallationTokenRetry; non-token failures still
+    // fail open (covered by the existing #2561 test above).
+    let rejected = false;
+    setInstallationTokenStore({
+      get: async () => ({ token: rejected ? "fresh-token" : "stale-token", expiresAtMs: Date.now() + 60 * 60_000 }),
+      set: async () => {},
+    });
+    const seenTokens: string[] = [];
+    vi.stubGlobal("fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const token = (new Headers(init?.headers).get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+      seenTokens.push(token);
+      if (token === "stale-token") {
+        rejected = true;
+        return new Response(JSON.stringify({ message: "Bad credentials" }), { status: 401 });
+      }
+      return Response.json({ login: "newbie", created_at: "2026-06-01T00:00:00Z" });
+    });
+
+    await expect(getGithubUserCreatedAt(createTestEnv(), 123, "newbie")).resolves.toBe("2026-06-01T00:00:00Z");
+    expect(seenTokens).toEqual(["stale-token", "fresh-token"]);
+  });
+
+  it("#9315: getGithubUserCreatedAt still fail-opens when a 401 persists after the retry", async () => {
+    setInstallationTokenStore({
+      get: async () => ({ token: "always-stale", expiresAtMs: Date.now() + 60 * 60_000 }),
+      set: async () => {},
+    });
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ message: "Bad credentials" }), { status: 401 }));
+    await expect(getGithubUserCreatedAt(createTestEnv(), 123, "newbie")).resolves.toBeNull();
+  });
+
+  it("#9315: getGithubUserCreatedAt still fail-opens on a non-retryable 403", async () => {
+    // 403 without the installation permission-scope message is not self-healable — throw propagates out of
+    // withInstallationTokenRetry and the outer catch returns null (same fail-open contract as before).
+    const privateKey = await generatePrivateKeyPem();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      return new Response(JSON.stringify({ message: "forbidden" }), { status: 403 });
+    });
+    await expect(
+      getGithubUserCreatedAt(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "newbie"),
     ).resolves.toBeNull();
   });
 

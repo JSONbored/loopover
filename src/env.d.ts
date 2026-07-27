@@ -596,6 +596,25 @@ declare global {
      *  not depend on this var at all. Default "" (unset) → the own-ledger side reports zero (fails safe, same
      *  privacy stance as before) but the Orb aggregate still reports normally. See review/public-stats.ts. */
     LOOPOVER_PUBLIC_STATS_REPOS?: string;
+    /** External ledger anchoring (#9270, epic #9267): the PUBLIC half of the anchor-signing keypair(s), as a
+     *  JSON array of `{ keyId, publicKeySpki, notBefore, notAfter }` — served verbatim by the unauthenticated
+     *  `GET /v1/public/decision-ledger/anchor-key` so a third party can verify an anchor published to a
+     *  transparency log or public git repo. The full ROTATION HISTORY belongs here, not just the current key:
+     *  an anchor signed under a retired key must stay verifiable forever, so retired entries get a non-null
+     *  `notAfter` and are never removed. Exactly one entry may have `notAfter: null` (the key currently
+     *  signing); zero or several is an ambiguous rotation state and `currentAnchorKey` fails closed rather
+     *  than guessing. Public key material only — the private half is LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY and
+     *  must never appear here. Default unset → an empty published list, meaning "no anchors are claimed to be
+     *  verifiable yet", which a verifier can distinguish from a key that exists. See review/ledger-anchor.ts. */
+    LOOPOVER_LEDGER_ANCHOR_KEYS?: string;
+    /** External ledger anchoring (#9270, epic #9267): the PRIVATE half of the anchor-signing keypair — an
+     *  ECDSA P-256 key in PKCS8 PEM (the `\n`-escaped single-line form is accepted, since that is how a key
+     *  survives a secret store). A real SECRET: set via `wrangler secret put`, never committed, never served
+     *  by any route, and never logged. Only the scheduled anchoring job reads it (#9274). Unset simply means
+     *  anchoring does not run — the ledger stays tamper-evident rather than tamper-proof, which is the exact
+     *  pre-#9267 posture, so an unprovisioned key degrades honestly instead of failing. See
+     *  review/ledger-anchor.ts. */
+    LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY?: string;
     /** Convergence (port): public OAuth draft-submission flow ported from reviewbot. When truthy, the
      *  /v1/drafts endpoints accept a contributor draft -> GitHub OAuth -> fork PR against the content repo.
      *  Default OFF — unset/false makes every draft endpoint 404 and writes nothing (byte-identical worker). */

@@ -19,7 +19,9 @@ interface MockPgPool {
 
 /** A minimal fake Postgres that also acts as a regression guard: if untranslated SQLite SQL (the `rowid`
  *  pseudo-column) ever reaches it again, it throws the exact error a real Postgres raised in the live
- *  self-host incident (dead-lettered job `_selfhost_jobs.id = 61132`, `prune-retention`, 5 attempts). */
+ *  self-host incident (dead-lettered job `_selfhost_jobs.id = 61132`, `prune-retention`, 5 attempts).
+ *  #9083: production deletes by a real PK (`id` / `delivery_id`) when mapped; the mock must accept that
+ *  shape (and the rowid→ctid fallback for unmapped tables), not only the pre-#9083 `ctid`-only form. */
 function makeRetentionPgPool(remaining: Record<string, number> = {}): MockPgPool {
   const calls: string[] = [];
   const fn = vi.fn().mockImplementation(async (sql: unknown) => {

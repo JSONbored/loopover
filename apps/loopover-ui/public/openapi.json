@@ -434,6 +434,82 @@
               "merged"
             ]
           },
+          "rulePrecision": {
+            "type": "object",
+            "properties": {
+              "windowDays": {
+                "type": "number"
+              },
+              "rules": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "ruleId": {
+                      "type": "string"
+                    },
+                    "decided": {
+                      "type": "number"
+                    },
+                    "confirmed": {
+                      "type": "number"
+                    },
+                    "precision": {
+                      "type": "number",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "ruleId",
+                    "decided",
+                    "confirmed",
+                    "precision"
+                  ]
+                }
+              },
+              "reversals": {
+                "type": "object",
+                "properties": {
+                  "reopened": {
+                    "type": "number"
+                  },
+                  "reverted": {
+                    "type": "number"
+                  },
+                  "superseded": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "reopened",
+                  "reverted",
+                  "superseded"
+                ]
+              },
+              "latestBacktestRun": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "corpusChecksum": {
+                    "type": "string"
+                  },
+                  "at": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "corpusChecksum",
+                  "at"
+                ]
+              }
+            },
+            "required": [
+              "windowDays",
+              "rules",
+              "reversals",
+              "latestBacktestRun"
+            ]
+          },
           "byProject": {
             "type": "array",
             "items": {
@@ -464,6 +540,169 @@
                 "accuracyPct"
               ]
             }
+          },
+          "fleetAccuracy": {
+            "type": "object",
+            "properties": {
+              "accuracyPct": {
+                "type": "number",
+                "nullable": true
+              },
+              "accuracyCiPct": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "lo": {
+                    "type": "number"
+                  },
+                  "hi": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "lo",
+                  "hi"
+                ]
+              },
+              "mergePrecisionPct": {
+                "type": "number",
+                "nullable": true
+              },
+              "mergePrecisionCiPct": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "lo": {
+                    "type": "number"
+                  },
+                  "hi": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "lo",
+                  "hi"
+                ]
+              },
+              "closePrecisionPct": {
+                "type": "number",
+                "nullable": true
+              },
+              "closePrecisionCiPct": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "lo": {
+                    "type": "number"
+                  },
+                  "hi": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "lo",
+                  "hi"
+                ]
+              },
+              "coveragePct": {
+                "type": "number",
+                "nullable": true
+              },
+              "decidedCount": {
+                "type": "number"
+              },
+              "guaranteed": {
+                "type": "object",
+                "properties": {
+                  "close": {
+                    "type": "object",
+                    "nullable": true,
+                    "properties": {
+                      "alpha": {
+                        "type": "number"
+                      },
+                      "lambda": {
+                        "type": "number"
+                      },
+                      "aiJudgedCoveragePct": {
+                        "type": "number"
+                      },
+                      "n": {
+                        "type": "number"
+                      },
+                      "backfilledPct": {
+                        "type": "number",
+                        "nullable": true
+                      }
+                    },
+                    "required": [
+                      "alpha",
+                      "lambda",
+                      "aiJudgedCoveragePct",
+                      "n",
+                      "backfilledPct"
+                    ]
+                  },
+                  "merge": {
+                    "type": "object",
+                    "nullable": true,
+                    "properties": {
+                      "alpha": {
+                        "type": "number"
+                      },
+                      "lambda": {
+                        "type": "number"
+                      },
+                      "aiJudgedCoveragePct": {
+                        "type": "number"
+                      },
+                      "n": {
+                        "type": "number"
+                      },
+                      "backfilledPct": {
+                        "type": "number",
+                        "nullable": true
+                      }
+                    },
+                    "required": [
+                      "alpha",
+                      "lambda",
+                      "aiJudgedCoveragePct",
+                      "n",
+                      "backfilledPct"
+                    ]
+                  }
+                },
+                "required": [
+                  "close",
+                  "merge"
+                ]
+              },
+              "instanceCount": {
+                "type": "number"
+              },
+              "windowDays": {
+                "type": "number"
+              },
+              "gamingFlagsCaught": {
+                "type": "number",
+                "nullable": true
+              }
+            },
+            "required": [
+              "accuracyPct",
+              "accuracyCiPct",
+              "mergePrecisionPct",
+              "mergePrecisionCiPct",
+              "closePrecisionPct",
+              "closePrecisionCiPct",
+              "coveragePct",
+              "decidedCount",
+              "guaranteed",
+              "instanceCount",
+              "windowDays",
+              "gamingFlagsCaught"
+            ]
           },
           "accuracyTrend": {
             "type": "array",
@@ -552,245 +791,6 @@
                 "filteredPct"
               ]
             }
-          },
-          "fleetAccuracy": {
-            "type": "object",
-            "properties": {
-              "accuracyPct": {
-                "type": "number",
-                "nullable": true
-              },
-              "instanceCount": {
-                "type": "number"
-              },
-              "windowDays": {
-                "type": "number"
-              },
-              "gamingFlagsCaught": {
-                "type": "number",
-                "nullable": true
-              },
-              "accuracyCiPct": {
-                "type": "object",
-                "nullable": true,
-                "properties": {
-                  "lo": {
-                    "type": "number"
-                  },
-                  "hi": {
-                    "type": "number"
-                  }
-                },
-                "required": [
-                  "lo",
-                  "hi"
-                ]
-              },
-              "mergePrecisionPct": {
-                "type": "number",
-                "nullable": true
-              },
-              "mergePrecisionCiPct": {
-                "type": "object",
-                "nullable": true,
-                "properties": {
-                  "lo": {
-                    "type": "number"
-                  },
-                  "hi": {
-                    "type": "number"
-                  }
-                },
-                "required": [
-                  "lo",
-                  "hi"
-                ]
-              },
-              "closePrecisionPct": {
-                "type": "number",
-                "nullable": true
-              },
-              "closePrecisionCiPct": {
-                "type": "object",
-                "nullable": true,
-                "properties": {
-                  "lo": {
-                    "type": "number"
-                  },
-                  "hi": {
-                    "type": "number"
-                  }
-                },
-                "required": [
-                  "lo",
-                  "hi"
-                ]
-              },
-              "coveragePct": {
-                "type": "number",
-                "nullable": true
-              },
-              "decidedCount": {
-                "type": "number"
-              },
-              "guaranteed": {
-                "type": "object",
-                "properties": {
-                  "close": {
-                    "type": "object",
-                    "nullable": true,
-                    "properties": {
-                      "alpha": {
-                        "type": "number"
-                      },
-                      "lambda": {
-                        "type": "number"
-                      },
-                      "n": {
-                        "type": "number"
-                      },
-                      "aiJudgedCoveragePct": {
-                        "type": "number"
-                      },
-                      "backfilledPct": {
-                        "type": "number",
-                        "nullable": true
-                      }
-                    },
-                    "required": [
-                      "alpha",
-                      "lambda",
-                      "aiJudgedCoveragePct",
-                      "n",
-                      "backfilledPct"
-                    ]
-                  },
-                  "merge": {
-                    "type": "object",
-                    "nullable": true,
-                    "properties": {
-                      "alpha": {
-                        "type": "number"
-                      },
-                      "lambda": {
-                        "type": "number"
-                      },
-                      "n": {
-                        "type": "number"
-                      },
-                      "aiJudgedCoveragePct": {
-                        "type": "number"
-                      },
-                      "backfilledPct": {
-                        "type": "number",
-                        "nullable": true
-                      }
-                    },
-                    "required": [
-                      "alpha",
-                      "lambda",
-                      "aiJudgedCoveragePct",
-                      "n",
-                      "backfilledPct"
-                    ]
-                  }
-                },
-                "required": [
-                  "close",
-                  "merge"
-                ]
-              }
-            },
-            "required": [
-              "accuracyPct",
-              "accuracyCiPct",
-              "mergePrecisionPct",
-              "mergePrecisionCiPct",
-              "closePrecisionPct",
-              "closePrecisionCiPct",
-              "coveragePct",
-              "decidedCount",
-              "guaranteed",
-              "instanceCount",
-              "windowDays",
-              "gamingFlagsCaught"
-            ]
-          },
-          "rulePrecision": {
-            "type": "object",
-            "properties": {
-              "windowDays": {
-                "type": "number"
-              },
-              "rules": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "ruleId": {
-                      "type": "string"
-                    },
-                    "decided": {
-                      "type": "number"
-                    },
-                    "precision": {
-                      "type": "number",
-                      "nullable": true
-                    },
-                    "confirmed": {
-                      "type": "number"
-                    }
-                  },
-                  "required": [
-                    "ruleId",
-                    "decided",
-                    "confirmed",
-                    "precision"
-                  ]
-                }
-              },
-              "reversals": {
-                "type": "object",
-                "properties": {
-                  "reopened": {
-                    "type": "number"
-                  },
-                  "reverted": {
-                    "type": "number"
-                  },
-                  "superseded": {
-                    "type": "number"
-                  }
-                },
-                "required": [
-                  "reopened",
-                  "reverted",
-                  "superseded"
-                ]
-              },
-              "latestBacktestRun": {
-                "type": "object",
-                "nullable": true,
-                "properties": {
-                  "corpusChecksum": {
-                    "type": "string"
-                  },
-                  "at": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "corpusChecksum",
-                  "at"
-                ]
-              }
-            },
-            "required": [
-              "windowDays",
-              "rules",
-              "reversals",
-              "latestBacktestRun"
-            ]
           }
         },
         "required": [
@@ -4774,6 +4774,43 @@
               "localDiff"
             ]
           }
+        ]
+      },
+      "ReviewRiskExplanation": {
+        "type": "object",
+        "properties": {
+          "preflight": {
+            "$ref": "#/components/schemas/PreflightResult"
+          },
+          "roleContext": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RoleContext"
+              },
+              {
+                "nullable": true
+              }
+            ]
+          },
+          "recommendation": {
+            "type": "string",
+            "enum": [
+              "likely_duplicate",
+              "maintainer_lane",
+              "needs_author",
+              "review",
+              "watch"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "preflight",
+          "roleContext",
+          "recommendation",
+          "summary"
         ]
       },
       "LocalBranchAnalysis": {
@@ -9037,6 +9074,10 @@
             "type": "number",
             "nullable": true
           },
+          "closeAuditHoldoutPct": {
+            "type": "number",
+            "nullable": true
+          },
           "slopGateMode": {
             "type": "string",
             "enum": [
@@ -9137,6 +9178,12 @@
             "minimum": 0,
             "exclusiveMinimum": true
           },
+          "staleBaseAheadByThreshold": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 0,
+            "exclusiveMinimum": true
+          },
           "mergeReadinessGateMode": {
             "type": "string",
             "enum": [
@@ -9162,6 +9209,22 @@
             ]
           },
           "linkedIssueSatisfactionGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
+          },
+          "contentLaneDeliverableGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
+          },
+          "backtestRegressionGateMode": {
             "type": "string",
             "enum": [
               "off",
@@ -9208,6 +9271,10 @@
             "nullable": true
           },
           "aiReviewCloseConfidence": {
+            "type": "number",
+            "nullable": true
+          },
+          "aiReviewSalvageabilityMinScore": {
             "type": "number",
             "nullable": true
           },
@@ -9273,6 +9340,18 @@
             "additionalProperties": {
               "type": "string"
             }
+          },
+          "issuePlanEnabled": {
+            "type": "boolean"
+          },
+          "issuePlanExtraLabels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "issuePlanMilestoneReuse": {
+            "type": "boolean"
           },
           "linkedIssueLabelPropagation": {
             "type": "object",
@@ -9811,6 +9890,15 @@
           "moderationBannedLabel": {
             "type": "string"
           },
+          "fairnessAnalyticsMode": {
+            "type": "string",
+            "enum": [
+              "inherit",
+              "off",
+              "enabled"
+            ],
+            "description": "Per-repo participation in cross-repo contributor fairness/accuracy analytics -- 'off' excludes this repo's gate decisions and moderation history from every aggregation, independent of whether the internal fairness-analytics routes are enabled fleet-wide."
+          },
           "skipAutomationBotAuthors": {
             "type": "string",
             "enum": [
@@ -9820,6 +9908,22 @@
             ]
           },
           "duplicateWinnerMode": {
+            "type": "string",
+            "enum": [
+              "inherit",
+              "off",
+              "enabled"
+            ]
+          },
+          "openPrFileCollisionMode": {
+            "type": "string",
+            "enum": [
+              "inherit",
+              "off",
+              "enabled"
+            ]
+          },
+          "plannerMode": {
             "type": "string",
             "enum": [
               "inherit",
@@ -9841,6 +9945,22 @@
           },
           "reviewEvasionComment": {
             "type": "boolean"
+          },
+          "draftPrClosePolicy": {
+            "type": "string",
+            "enum": [
+              "off",
+              "close"
+            ],
+            "description": "Off by default (opt-in, unlike reviewEvasionProtection's default-close). \"close\" enforces on ANY draft PR, including the very first one, before a review pass has had a chance to run -- distinct from reviewEvasionProtection's family, which only enforces after a review already ran or on the 2nd+ draft conversion."
+          },
+          "synchronizeClosePolicy": {
+            "type": "string",
+            "enum": [
+              "off",
+              "close"
+            ],
+            "description": "Off by default (opt-in, config-as-code only -- no dashboard/DB column). \"close\" closes a contributor's own PR immediately when they push an additional commit (synchronize) before it's been merged or closed -- this repo's review is one-shot, so the first push is the only push. Never fires for a push that isn't from the PR's own author (e.g. the engine's own rebase-if-behind), nor for the repo owner/admin, a protected automation author, or anyone with write+ collaborator access."
           },
           "mergeTrainMode": {
             "type": "string",
@@ -9910,89 +10030,6 @@
           "updatedAt": {
             "type": "string",
             "nullable": true
-          },
-          "openPrFileCollisionMode": {
-            "type": "string",
-            "enum": [
-              "inherit",
-              "off",
-              "enabled"
-            ]
-          },
-          "plannerMode": {
-            "type": "string",
-            "enum": [
-              "inherit",
-              "off",
-              "enabled"
-            ]
-          },
-          "draftPrClosePolicy": {
-            "type": "string",
-            "enum": [
-              "off",
-              "close"
-            ],
-            "description": "Off by default (opt-in, unlike reviewEvasionProtection's default-close). \"close\" enforces on ANY draft PR, including the very first one, before a review pass has had a chance to run -- distinct from reviewEvasionProtection's family, which only enforces after a review already ran or on the 2nd+ draft conversion."
-          },
-          "fairnessAnalyticsMode": {
-            "type": "string",
-            "enum": [
-              "inherit",
-              "off",
-              "enabled"
-            ],
-            "description": "Per-repo participation in cross-repo contributor fairness/accuracy analytics -- 'off' excludes this repo's gate decisions and moderation history from every aggregation, independent of whether the internal fairness-analytics routes are enabled fleet-wide."
-          },
-          "issuePlanEnabled": {
-            "type": "boolean"
-          },
-          "issuePlanExtraLabels": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "issuePlanMilestoneReuse": {
-            "type": "boolean"
-          },
-          "staleBaseAheadByThreshold": {
-            "type": "integer",
-            "nullable": true,
-            "minimum": 0,
-            "exclusiveMinimum": true
-          },
-          "synchronizeClosePolicy": {
-            "type": "string",
-            "enum": [
-              "off",
-              "close"
-            ],
-            "description": "Off by default (opt-in, config-as-code only -- no dashboard/DB column). \"close\" closes a contributor's own PR immediately when they push an additional commit (synchronize) before it's been merged or closed -- this repo's review is one-shot, so the first push is the only push. Never fires for a push that isn't from the PR's own author (e.g. the engine's own rebase-if-behind), nor for the repo owner/admin, a protected automation author, or anyone with write+ collaborator access."
-          },
-          "contentLaneDeliverableGateMode": {
-            "type": "string",
-            "enum": [
-              "off",
-              "advisory",
-              "block"
-            ]
-          },
-          "backtestRegressionGateMode": {
-            "type": "string",
-            "enum": [
-              "off",
-              "advisory",
-              "block"
-            ]
-          },
-          "closeAuditHoldoutPct": {
-            "type": "number",
-            "nullable": true
-          },
-          "aiReviewSalvageabilityMinScore": {
-            "type": "number",
-            "nullable": true
           }
         },
         "required": [
@@ -10030,6 +10067,199 @@
           "requireLinkedIssue",
           "backfillEnabled",
           "commandAuthorization"
+        ]
+      },
+      "AutomationState": {
+        "type": "object",
+        "properties": {
+          "repoFullName": {
+            "type": "string"
+          },
+          "configured": {
+            "type": "boolean"
+          },
+          "autonomy": {
+            "type": "object",
+            "properties": {
+              "review": {
+                "type": "string",
+                "enum": [
+                  "observe",
+                  "auto_with_approval",
+                  "auto"
+                ]
+              },
+              "request_changes": {
+                "type": "string",
+                "enum": [
+                  "observe",
+                  "auto_with_approval",
+                  "auto"
+                ]
+              },
+              "approve": {
+                "type": "string",
+                "enum": [
+                  "observe",
+                  "auto_with_approval",
+                  "auto"
+                ]
+              },
+              "merge": {
+                "type": "string",
+                "enum": [
+                  "observe",
+                  "auto_with_approval",
+                  "auto"
+                ]
+              },
+              "close": {
+                "type": "string",
+                "enum": [
+                  "observe",
+                  "auto_with_approval",
+                  "auto"
+                ]
+              },
+              "label": {
+                "type": "string",
+                "enum": [
+                  "observe",
+                  "auto_with_approval",
+                  "auto"
+                ]
+              },
+              "review_state_label": {
+                "type": "string",
+                "enum": [
+                  "observe",
+                  "auto_with_approval",
+                  "auto"
+                ]
+              },
+              "update_branch": {
+                "type": "string",
+                "enum": [
+                  "observe",
+                  "auto_with_approval",
+                  "auto"
+                ]
+              },
+              "assign": {
+                "type": "string",
+                "enum": [
+                  "observe",
+                  "auto_with_approval",
+                  "auto"
+                ]
+              }
+            }
+          },
+          "autoMaintain": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "agentPaused": {
+            "type": "boolean"
+          },
+          "agentDryRun": {
+            "type": "boolean"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "paused",
+              "dry_run",
+              "live"
+            ]
+          },
+          "permissionReadiness": {
+            "type": "string",
+            "enum": [
+              "not_required",
+              "ready",
+              "reconsent_required"
+            ]
+          },
+          "actingActionClasses": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "review",
+                "request_changes",
+                "approve",
+                "merge",
+                "close",
+                "label",
+                "review_state_label",
+                "update_branch",
+                "assign"
+              ]
+            }
+          },
+          "pendingActionCount": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "repoFullName",
+          "configured",
+          "autonomy",
+          "agentPaused",
+          "agentDryRun",
+          "mode",
+          "permissionReadiness",
+          "actingActionClasses",
+          "pendingActionCount"
+        ]
+      },
+      "RepoDocRefreshResult": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "opened": {
+                "type": "boolean",
+                "enum": [
+                  true
+                ]
+              },
+              "reused": {
+                "type": "boolean"
+              },
+              "pullNumber": {
+                "type": "integer"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "opened",
+              "reused",
+              "pullNumber",
+              "url"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "opened": {
+                "type": "boolean",
+                "enum": [
+                  false
+                ]
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "opened",
+              "reason"
+            ]
+          }
         ]
       },
       "InstallationRepair": {
@@ -10573,6 +10803,10 @@
                 "type": "number",
                 "nullable": true
               },
+              "closeAuditHoldoutPct": {
+                "type": "number",
+                "nullable": true
+              },
               "slopGateMode": {
                 "type": "string",
                 "enum": [
@@ -10606,6 +10840,22 @@
                 ]
               },
               "linkedIssueSatisfactionGateMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
+              },
+              "contentLaneDeliverableGateMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
+              },
+              "backtestRegressionGateMode": {
                 "type": "string",
                 "enum": [
                   "off",
@@ -10717,26 +10967,6 @@
                   "defaultAllowed",
                   "commandOverrides"
                 ]
-              },
-              "contentLaneDeliverableGateMode": {
-                "type": "string",
-                "enum": [
-                  "off",
-                  "advisory",
-                  "block"
-                ]
-              },
-              "backtestRegressionGateMode": {
-                "type": "string",
-                "enum": [
-                  "off",
-                  "advisory",
-                  "block"
-                ]
-              },
-              "closeAuditHoldoutPct": {
-                "type": "number",
-                "nullable": true
               }
             },
             "required": [
@@ -11319,6 +11549,10 @@
             "minimum": 1,
             "maximum": 100
           },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          },
           "hasMore": {
             "type": "boolean"
           },
@@ -11385,10 +11619,6 @@
                 "remediation"
               ]
             }
-          },
-          "offset": {
-            "type": "integer",
-            "minimum": 0
           }
         },
         "required": [
@@ -13913,6 +14143,78 @@
           "report"
         ]
       },
+      "GateConfigEffectiveResponse": {
+        "type": "object",
+        "properties": {
+          "repoFullName": {
+            "type": "string"
+          },
+          "effective": {
+            "type": "object",
+            "properties": {
+              "confidenceFloor": {
+                "type": "number",
+                "nullable": true
+              },
+              "scopeCap": {
+                "type": "object",
+                "properties": {
+                  "files": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "lines": {
+                    "type": "integer",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "files",
+                  "lines"
+                ]
+              }
+            },
+            "required": [
+              "confidenceFloor",
+              "scopeCap"
+            ]
+          },
+          "shadowPending": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "repoFullName",
+          "effective",
+          "shadowPending"
+        ]
+      },
+      "LiveGateThresholdsResponse": {
+        "type": "object",
+        "properties": {
+          "repoFullName": {
+            "type": "string"
+          },
+          "confidence_floor": {
+            "type": "number",
+            "nullable": true
+          },
+          "scope_cap_files": {
+            "type": "integer",
+            "nullable": true
+          },
+          "scope_cap_lines": {
+            "type": "integer",
+            "nullable": true
+          }
+        },
+        "required": [
+          "repoFullName",
+          "confidence_floor",
+          "scope_cap_files",
+          "scope_cap_lines"
+        ]
+      },
       "ContributorScoringProfile": {
         "type": "object",
         "properties": {
@@ -14205,92 +14507,6 @@
           "summary"
         ]
       },
-      "PullRequestReviewability": {
-        "type": "object",
-        "properties": {
-          "repoFullName": {
-            "type": "string"
-          },
-          "pullNumber": {
-            "type": "number"
-          },
-          "generatedAt": {
-            "type": "string"
-          },
-          "score": {
-            "type": "number"
-          },
-          "action": {
-            "type": "string",
-            "enum": [
-              "review_now",
-              "needs_author",
-              "likely_duplicate",
-              "close_or_redirect",
-              "watch",
-              "maintainer_lane"
-            ]
-          },
-          "noiseSources": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "whyThisHelps": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "maintainerNextSteps": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "privateSummary": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "repoFullName",
-          "pullNumber",
-          "generatedAt",
-          "score",
-          "action",
-          "noiseSources",
-          "whyThisHelps",
-          "maintainerNextSteps",
-          "privateSummary"
-        ]
-      },
-      "LiveGateThresholdsResponse": {
-        "type": "object",
-        "properties": {
-          "repoFullName": {
-            "type": "string"
-          },
-          "confidence_floor": {
-            "type": "number",
-            "nullable": true
-          },
-          "scope_cap_files": {
-            "type": "integer",
-            "nullable": true
-          },
-          "scope_cap_lines": {
-            "type": "integer",
-            "nullable": true
-          }
-        },
-        "required": [
-          "repoFullName",
-          "confidence_floor",
-          "scope_cap_files",
-          "scope_cap_lines"
-        ]
-      },
       "AmsMinerCohortComparison": {
         "type": "object",
         "properties": {
@@ -14376,50 +14592,138 @@
           "humanCohort"
         ]
       },
-      "GateConfigEffectiveResponse": {
+      "PullRequestReviewability": {
         "type": "object",
         "properties": {
           "repoFullName": {
             "type": "string"
           },
-          "effective": {
-            "type": "object",
-            "properties": {
-              "confidenceFloor": {
-                "type": "number",
-                "nullable": true
-              },
-              "scopeCap": {
-                "type": "object",
-                "properties": {
-                  "files": {
-                    "type": "integer",
-                    "nullable": true
-                  },
-                  "lines": {
-                    "type": "integer",
-                    "nullable": true
-                  }
-                },
-                "required": [
-                  "files",
-                  "lines"
-                ]
-              }
-            },
-            "required": [
-              "confidenceFloor",
-              "scopeCap"
+          "pullNumber": {
+            "type": "number"
+          },
+          "generatedAt": {
+            "type": "string"
+          },
+          "score": {
+            "type": "number"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "review_now",
+              "needs_author",
+              "likely_duplicate",
+              "close_or_redirect",
+              "watch",
+              "maintainer_lane"
             ]
           },
-          "shadowPending": {
-            "type": "boolean"
+          "noiseSources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "whyThisHelps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "maintainerNextSteps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "privateSummary": {
+            "type": "string"
           }
         },
         "required": [
           "repoFullName",
-          "effective",
-          "shadowPending"
+          "pullNumber",
+          "generatedAt",
+          "score",
+          "action",
+          "noiseSources",
+          "whyThisHelps",
+          "maintainerNextSteps",
+          "privateSummary"
+        ]
+      },
+      "PullRequestAiReviewFindings": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "not_found",
+              "ai_review_off"
+            ]
+          },
+          "repoFullName": {
+            "type": "string"
+          },
+          "pullNumber": {
+            "type": "number"
+          },
+          "login": {
+            "type": "string"
+          },
+          "headSha": {
+            "type": "string",
+            "nullable": true
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "category": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "blocker",
+                    "nit"
+                  ]
+                },
+                "line": {
+                  "type": "number"
+                },
+                "body": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "category",
+                "path",
+                "severity",
+                "line",
+                "body"
+              ]
+            }
+          },
+          "categoryCounts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          }
+        },
+        "required": [
+          "status",
+          "repoFullName",
+          "pullNumber",
+          "login",
+          "findings",
+          "categoryCounts"
         ]
       },
       "FindingTaxonomyDocument": {
@@ -14482,199 +14786,6 @@
         "required": [
           "defaultProfile",
           "analyzers"
-        ]
-      },
-      "AutomationState": {
-        "type": "object",
-        "properties": {
-          "repoFullName": {
-            "type": "string"
-          },
-          "configured": {
-            "type": "boolean"
-          },
-          "autonomy": {
-            "type": "object",
-            "properties": {
-              "review": {
-                "type": "string",
-                "enum": [
-                  "observe",
-                  "auto_with_approval",
-                  "auto"
-                ]
-              },
-              "request_changes": {
-                "type": "string",
-                "enum": [
-                  "observe",
-                  "auto_with_approval",
-                  "auto"
-                ]
-              },
-              "approve": {
-                "type": "string",
-                "enum": [
-                  "observe",
-                  "auto_with_approval",
-                  "auto"
-                ]
-              },
-              "merge": {
-                "type": "string",
-                "enum": [
-                  "observe",
-                  "auto_with_approval",
-                  "auto"
-                ]
-              },
-              "close": {
-                "type": "string",
-                "enum": [
-                  "observe",
-                  "auto_with_approval",
-                  "auto"
-                ]
-              },
-              "label": {
-                "type": "string",
-                "enum": [
-                  "observe",
-                  "auto_with_approval",
-                  "auto"
-                ]
-              },
-              "review_state_label": {
-                "type": "string",
-                "enum": [
-                  "observe",
-                  "auto_with_approval",
-                  "auto"
-                ]
-              },
-              "update_branch": {
-                "type": "string",
-                "enum": [
-                  "observe",
-                  "auto_with_approval",
-                  "auto"
-                ]
-              },
-              "assign": {
-                "type": "string",
-                "enum": [
-                  "observe",
-                  "auto_with_approval",
-                  "auto"
-                ]
-              }
-            }
-          },
-          "autoMaintain": {
-            "type": "boolean",
-            "nullable": true
-          },
-          "agentPaused": {
-            "type": "boolean"
-          },
-          "agentDryRun": {
-            "type": "boolean"
-          },
-          "mode": {
-            "type": "string",
-            "enum": [
-              "paused",
-              "dry_run",
-              "live"
-            ]
-          },
-          "permissionReadiness": {
-            "type": "string",
-            "enum": [
-              "not_required",
-              "ready",
-              "reconsent_required"
-            ]
-          },
-          "actingActionClasses": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "enum": [
-                "review",
-                "request_changes",
-                "approve",
-                "merge",
-                "close",
-                "label",
-                "review_state_label",
-                "update_branch",
-                "assign"
-              ]
-            }
-          },
-          "pendingActionCount": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "repoFullName",
-          "configured",
-          "autonomy",
-          "agentPaused",
-          "agentDryRun",
-          "mode",
-          "permissionReadiness",
-          "actingActionClasses",
-          "pendingActionCount"
-        ]
-      },
-      "RepoDocRefreshResult": {
-        "oneOf": [
-          {
-            "type": "object",
-            "properties": {
-              "opened": {
-                "type": "boolean",
-                "enum": [
-                  true
-                ]
-              },
-              "reused": {
-                "type": "boolean"
-              },
-              "pullNumber": {
-                "type": "integer"
-              },
-              "url": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "opened",
-              "reused",
-              "pullNumber",
-              "url"
-            ]
-          },
-          {
-            "type": "object",
-            "properties": {
-              "opened": {
-                "type": "boolean",
-                "enum": [
-                  false
-                ]
-              },
-              "reason": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "opened",
-              "reason"
-            ]
-          }
         ]
       },
       "ContributorPrOutcomes": {
@@ -14819,117 +14930,6 @@
           "login",
           "marked"
         ]
-      },
-      "ReviewRiskExplanation": {
-        "type": "object",
-        "properties": {
-          "preflight": {
-            "$ref": "#/components/schemas/PreflightResult"
-          },
-          "roleContext": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/RoleContext"
-              },
-              {
-                "nullable": true
-              }
-            ]
-          },
-          "recommendation": {
-            "type": "string",
-            "enum": [
-              "likely_duplicate",
-              "maintainer_lane",
-              "needs_author",
-              "review",
-              "watch"
-            ]
-          },
-          "summary": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "preflight",
-          "roleContext",
-          "recommendation",
-          "summary"
-        ]
-      },
-      "PullRequestAiReviewFindings": {
-        "type": "object",
-        "properties": {
-          "status": {
-            "type": "string",
-            "enum": [
-              "ready",
-              "not_found",
-              "ai_review_off"
-            ]
-          },
-          "repoFullName": {
-            "type": "string"
-          },
-          "pullNumber": {
-            "type": "number"
-          },
-          "login": {
-            "type": "string"
-          },
-          "headSha": {
-            "type": "string",
-            "nullable": true
-          },
-          "findings": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "category": {
-                  "type": "string"
-                },
-                "path": {
-                  "type": "string"
-                },
-                "severity": {
-                  "type": "string",
-                  "enum": [
-                    "blocker",
-                    "nit"
-                  ]
-                },
-                "line": {
-                  "type": "number"
-                },
-                "body": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "category",
-                "path",
-                "severity",
-                "line",
-                "body"
-              ]
-            }
-          },
-          "categoryCounts": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "number"
-            }
-          }
-        },
-        "required": [
-          "status",
-          "repoFullName",
-          "pullNumber",
-          "login",
-          "findings",
-          "categoryCounts"
-        ]
       }
     },
     "parameters": {},
@@ -14950,6 +14950,7 @@
   "paths": {
     "/health": {
       "get": {
+        "summary": "Service liveness probe",
         "responses": {
           "200": {
             "description": "Service health",
@@ -14961,12 +14962,12 @@
               }
             }
           }
-        },
-        "summary": "Service liveness probe"
+        }
       }
     },
     "/v1/mcp/compatibility": {
       "get": {
+        "summary": "Public-safe API and MCP client compatibility metadata",
         "responses": {
           "200": {
             "description": "Public-safe API and MCP compatibility metadata",
@@ -14978,12 +14979,12 @@
               }
             }
           }
-        },
-        "summary": "Public-safe API and MCP client compatibility metadata"
+        }
       }
     },
     "/v1/public/stats": {
       "get": {
+        "summary": "Public homepage aggregate stats",
         "responses": {
           "200": {
             "description": "Public-safe homepage stats: lifetime PRs handled/merged/closed, gate + slop blocks, and reversal-grounded accuracy. Aggregate counts only.",
@@ -15001,12 +15002,12 @@
           "503": {
             "description": "Public stats are temporarily unavailable"
           }
-        },
-        "summary": "Public homepage aggregate stats"
+        }
       }
     },
     "/v1/public/github/repos/{owner}/{repo}/stats": {
       "get": {
+        "summary": "Public GitHub stars and forks for an allowlisted repository",
         "parameters": [
           {
             "schema": {
@@ -15042,12 +15043,12 @@
           "503": {
             "description": "GitHub repository stats are unavailable"
           }
-        },
-        "summary": "Public GitHub stars and forks for an allowlisted repository"
+        }
       }
     },
     "/v1/public/repos/{owner}/{repo}/quality": {
       "get": {
+        "summary": "Public repository quality summary for an opted-in repository",
         "parameters": [
           {
             "schema": {
@@ -15083,12 +15084,12 @@
           "503": {
             "description": "Public quality metrics are temporarily unavailable"
           }
-        },
-        "summary": "Public repository quality summary for an opted-in repository"
+        }
       }
     },
     "/v1/registry/snapshot": {
       "get": {
+        "summary": "Latest Gittensor registry snapshot",
         "responses": {
           "200": {
             "description": "Latest Gittensor registry snapshot",
@@ -15108,12 +15109,12 @@
           {
             "LoopOverSessionCookie": []
           }
-        ],
-        "summary": "Latest Gittensor registry snapshot"
+        ]
       }
     },
     "/v1/registry/changes": {
       "get": {
+        "summary": "Diff between the two latest registry snapshots",
         "responses": {
           "200": {
             "description": "Diff between latest registry snapshots",
@@ -15133,12 +15134,12 @@
           {
             "LoopOverSessionCookie": []
           }
-        ],
-        "summary": "Diff between the two latest registry snapshots"
+        ]
       }
     },
     "/v1/scoring/model": {
       "get": {
+        "summary": "Latest scoring model snapshot",
         "responses": {
           "200": {
             "description": "Latest private scoring model snapshot",
@@ -15158,12 +15159,62 @@
           {
             "LoopOverSessionCookie": []
           }
-        ],
-        "summary": "Latest scoring model snapshot"
+        ]
+      }
+    },
+    "/v1/finding-taxonomy": {
+      "get": {
+        "summary": "Canonical AI-review finding taxonomy",
+        "responses": {
+          "200": {
+            "description": "Finding categories and the severity ladder",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FindingTaxonomyDocument"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/enrichment-analyzers": {
+      "get": {
+        "summary": "REES enrichment analyzer taxonomy",
+        "responses": {
+          "200": {
+            "description": "Default profile and the registered enrichment analyzers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrichmentAnalyzersTaxonomyDocument"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
       }
     },
     "/v1/upstream/status": {
       "get": {
+        "summary": "Upstream Gittensor source and ruleset drift status",
         "responses": {
           "200": {
             "description": "Upstream Gittensor source/ruleset drift status",
@@ -15183,12 +15234,12 @@
           {
             "LoopOverSessionCookie": []
           }
-        ],
-        "summary": "Upstream Gittensor source and ruleset drift status"
+        ]
       }
     },
     "/v1/upstream/ruleset": {
       "get": {
+        "summary": "Latest normalized upstream Gittensor ruleset snapshot",
         "responses": {
           "200": {
             "description": "Latest normalized upstream Gittensor ruleset snapshot",
@@ -15211,12 +15262,12 @@
           {
             "LoopOverSessionCookie": []
           }
-        ],
-        "summary": "Latest normalized upstream Gittensor ruleset snapshot"
+        ]
       }
     },
     "/v1/upstream/drift": {
       "get": {
+        "summary": "Open and historical upstream drift reports",
         "responses": {
           "200": {
             "description": "Open and historical upstream drift reports",
@@ -15255,12 +15306,12 @@
           {
             "LoopOverSessionCookie": []
           }
-        ],
-        "summary": "Open and historical upstream drift reports"
+        ]
       }
     },
     "/v1/scoring/preview": {
       "post": {
+        "summary": "Generate a scoring preview artifact for a candidate contribution",
         "responses": {
           "200": {
             "description": "Private scoring preview artifact",
@@ -15283,12 +15334,12 @@
           {
             "LoopOverSessionCookie": []
           }
-        ],
-        "summary": "Generate a scoring preview artifact for a candidate contribution"
+        ]
       }
     },
     "/v1/sync/status": {
       "get": {
+        "summary": "Repository and installation sync status",
         "responses": {
           "200": {
             "description": "Repository and installation sync status",
@@ -15308,12 +15359,12 @@
           {
             "LoopOverSessionCookie": []
           }
-        ],
-        "summary": "Repository and installation sync status"
+        ]
       }
     },
     "/v1/readiness": {
       "get": {
+        "summary": "Operational readiness summary for the hosted API",
         "responses": {
           "200": {
             "description": "Operational readiness summary for hosted API, signal fidelity, and public-review preparation",
@@ -15333,12 +15384,12 @@
           {
             "LoopOverSessionCookie": []
           }
-        ],
-        "summary": "Operational readiness summary for the hosted API"
+        ]
       }
     },
     "/v1/installations": {
       "get": {
+        "summary": "List GitHub App installations and their health",
         "responses": {
           "200": {
             "description": "GitHub App installations and health",
@@ -15379,12 +15430,12 @@
           {
             "LoopOverSessionCookie": []
           }
-        ],
-        "summary": "List GitHub App installations and their health"
+        ]
       }
     },
     "/v1/installations/{id}/health": {
       "get": {
+        "summary": "GitHub App installation health detail",
         "parameters": [
           {
             "schema": {
@@ -15417,12 +15468,12 @@
           {
             "LoopOverSessionCookie": []
           }
-        ],
-        "summary": "GitHub App installation health detail"
+        ]
       }
     },
     "/v1/installations/{id}/repair": {
       "get": {
+        "summary": "GitHub App installation repair diagnostics",
         "parameters": [
           {
             "schema": {
@@ -15455,12 +15506,12 @@
           {
             "LoopOverSessionCookie": []
           }
-        ],
-        "summary": "GitHub App installation repair diagnostics"
+        ]
       }
     },
     "/v1/installations/{id}/repair/refresh": {
       "post": {
+        "summary": "Recompute GitHub App installation repair diagnostics",
         "parameters": [
           {
             "schema": {
@@ -15493,12 +15544,12 @@
           {
             "LoopOverSessionCookie": []
           }
-        ],
-        "summary": "Recompute GitHub App installation repair diagnostics"
+        ]
       }
     },
     "/v1/app/notification-model": {
       "get": {
+        "summary": "Opt-in notification model and PWA-readiness metadata",
         "responses": {
           "200": {
             "description": "Opt-in notification model and PWA-readiness metadata for control-panel routes",
@@ -15633,12 +15684,12 @@
           {
             "LoopOverSessionCookie": []
           }
-        ],
-        "summary": "Opt-in notification model and PWA-readiness metadata"
+        ]
       }
     },
     "/v1/repos": {
       "get": {
+        "summary": "List known repositories",
         "responses": {
           "200": {
             "description": "Known repositories",
@@ -15661,12 +15712,12 @@
           {
             "LoopOverSessionCookie": []
           }
-        ],
-        "summary": "List known repositories"
+        ]
       }
     },
     "/v1/repos/{owner}/{repo}": {
       "get": {
+        "summary": "Repository detail",
         "parameters": [
           {
             "schema": {
@@ -15707,12 +15758,12 @@
           {
             "LoopOverSessionCookie": []
           }
-        ],
-        "summary": "Repository detail"
+        ]
       }
     },
     "/v1/repos/{owner}/{repo}/intelligence": {
       "get": {
+        "summary": "Canonical repository intelligence bundle",
         "parameters": [
           {
             "schema": {
@@ -15750,12 +15801,12 @@
           {
             "LoopOverSessionCookie": []
           }
-        ],
-        "summary": "Canonical repository intelligence bundle"
+        ]
       }
     },
     "/v1/repos/{owner}/{repo}/issue-quality": {
       "get": {
+        "summary": "Repository issue quality report",
         "parameters": [
           {
             "schema": {
@@ -15796,12 +15847,110 @@
           {
             "LoopOverSessionCookie": []
           }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/gate-config/effective": {
+      "get": {
+        "summary": "Current effective self-tuned gate config for a repo (#6247)",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
         ],
-        "summary": "Repository issue quality report"
+        "responses": {
+          "200": {
+            "description": "Effective TunableOverride values (confidenceFloor / scopeCap.files / scopeCap.lines) with a shadowPending flag — never the raw override_audit history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GateConfigEffectiveResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid static protected API token"
+          },
+          "403": {
+            "description": "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/live-gate-thresholds": {
+      "get": {
+        "summary": "Live self-tuned gate thresholds for AMS probe (#6486)",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Field-limited live (or soaking-shadow) TunableOverride values — confidence_floor / scope_cap_files / scope_cap_lines only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveGateThresholdsResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo"
+          },
+          "404": {
+            "description": "No live or shadow gate override is active for this repo"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
       }
     },
     "/v1/repos/{owner}/{repo}/outcome-patterns": {
       "get": {
+        "summary": "Accepted and rejected pull request outcome patterns for a repository",
         "parameters": [
           {
             "schema": {
@@ -15842,12 +15991,12 @@
           {
             "LoopOverSessionCookie": []
           }
-        ],
-        "summary": "Accepted and rejected pull request outcome patterns for a repository"
+        ]
       }
     },
     "/v1/repos/{owner}/{repo}/registration-readiness": {
       "get": {
+        "summary": "Gittensor registration readiness signal for repository owners",
         "parameters": [
           {
             "schema": {
@@ -15885,12 +16034,12 @@
           {
             "LoopOverSessionCookie": []
           }
-        ],
-        "summary": "Gittensor registration readiness signal for repository owners"
+        ]
       }
     },
     "/v1/repos/{owner}/{repo}/gittensor-config-recommendation": {
       "get": {
+        "summary": "Recommended Gittensor configuration for a repository",
         "parameters": [
           {
             "schema": {
@@ -15928,12 +16077,12 @@
           {
             "LoopOverSessionCookie": []
           }
-        ],
-        "summary": "Recommended Gittensor configuration for a repository"
+        ]
       }
     },
     "/v1/repos/{owner}/{repo}/focus-manifest": {
       "get": {
+        "summary": "Repository focus manifest and compiled policy",
         "parameters": [
           {
             "schema": {
@@ -15977,10 +16126,10 @@
           {
             "LoopOverSessionCookie": []
           }
-        ],
-        "summary": "Repository focus manifest and compiled policy"
+        ]
       },
       "put": {
+        "summary": "Persist an API-backed focus manifest for a repository",
         "parameters": [
           {
             "schema": {
@@ -16027,12 +16176,12 @@
           {
             "LoopOverSessionCookie": []
           }
-        ],
-        "summary": "Persist an API-backed focus manifest for a repository"
+        ]
       }
     },
     "/v1/repos/{owner}/{repo}/focus-manifest/refresh": {
       "post": {
+        "summary": "Refresh the persisted focus manifest from the repository file",
         "parameters": [
           {
             "schema": {
@@ -16076,12 +16225,12 @@
           {
             "LoopOverSessionCookie": []
           }
-        ],
-        "summary": "Refresh the persisted focus manifest from the repository file"
+        ]
       }
     },
     "/v1/repos/{owner}/{repo}/agent/audit-feed": {
       "get": {
+        "summary": "Maintainer-scoped agent audit feed of executed actions and approval decisions",
         "parameters": [
           {
             "schema": {
@@ -16223,12 +16372,12 @@
           {
             "LoopOverSessionCookie": []
           }
-        ],
-        "summary": "Maintainer-scoped agent audit feed of executed actions and approval decisions"
+        ]
       }
     },
     "/v1/repos/{owner}/{repo}/pulls/{number}/incident-reports": {
       "post": {
+        "summary": "Record a post-merge incident report for a pull request",
         "parameters": [
           {
             "schema": {
@@ -16348,12 +16497,12 @@
           {
             "LoopOverSessionCookie": []
           }
-        ],
-        "summary": "Record a post-merge incident report for a pull request"
+        ]
       }
     },
     "/v1/app/incident-reports": {
       "post": {
+        "summary": "Record a post-merge incident report from the operator side",
         "requestBody": {
           "content": {
             "application/json": {
@@ -16459,12 +16608,12 @@
           {
             "LoopOverSessionCookie": []
           }
-        ],
-        "summary": "Record a post-merge incident report from the operator side"
+        ]
       }
     },
     "/v1/app/self-dogfood/registration-pack": {
       "get": {
+        "summary": "Self-dogfood registration pack for the LoopOver repository",
         "responses": {
           "200": {
             "description": "Private self-dogfood registration pack for the LoopOver repo",
@@ -16490,12 +16639,12 @@
           {
             "LoopOverSessionCookie": []
           }
-        ],
-        "summary": "Self-dogfood registration pack for the LoopOver repository"
+        ]
       }
     },
     "/v1/repos/{owner}/{repo}/self-dogfood-registration-pack": {
       "get": {
+        "summary": "Self-dogfood registration pack when the repository matches the configured target",
         "parameters": [
           {
             "schema": {
@@ -16539,12 +16688,12 @@
           {
             "LoopOverSessionCookie": []
           }
-        ],
-        "summary": "Self-dogfood registration pack when the repository matches the configured target"
+        ]
       }
     },
     "/v1/repos/{owner}/{repo}/onboarding-pack/preview": {
       "get": {
+        "summary": "Preview the onboarding pack for an accepted repository",
         "parameters": [
           {
             "schema": {
@@ -16591,12 +16740,12 @@
           {
             "LoopOverSessionCookie": []
           }
-        ],
-        "summary": "Preview the onboarding pack for an accepted repository"
+        ]
       }
     },
     "/v1/repos/{owner}/{repo}/contributor-issue-drafts/generate": {
       "post": {
+        "summary": "Generate maintainer-reviewed contributor issue drafts",
         "parameters": [
           {
             "schema": {
@@ -16643,12 +16792,64 @@
           {
             "LoopOverSessionCookie": []
           }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/issue-plan-drafts/generate": {
+      "post": {
+        "summary": "AI-plan repo issue drafts from a maintainer goal",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
         ],
-        "summary": "Generate maintainer-reviewed contributor issue drafts"
+        "responses": {
+          "200": {
+            "description": "AI-plan a small set of GitHub issue drafts from a maintainer-supplied planning goal (dry-run by default)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or explicit create without dryRun false"
+          },
+          "403": {
+            "description": "Insufficient role"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
       }
     },
     "/v1/repos/{owner}/{repo}/settings": {
       "get": {
+        "summary": "Repository automation settings",
         "parameters": [
           {
             "schema": {
@@ -16674,2313 +16875,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RepositorySettings"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Repository automation settings"
-      }
-    },
-    "/v1/repos/{owner}/{repo}/settings-preview": {
-      "post": {
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "owner",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "repo",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Maintainer dry-run preview of the public surface decision for a sample PR (no GitHub mutation)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RepoSettingsPreview"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid settings preview request"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Dry-run the public surface decision for a sample pull request"
-      }
-    },
-    "/v1/repos/{owner}/{repo}/pulls/{number}/maintainer-packet": {
-      "get": {
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "owner",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "repo",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "number",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "PR-specific maintainer review packet",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PullRequestMaintainerPacket"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Maintainer review packet for a pull request"
-      }
-    },
-    "/v1/repos/{owner}/{repo}/pulls/{number}/reviewability": {
-      "get": {
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "owner",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "repo",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "number",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Private PR reviewability score and maintainer action",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PullRequestReviewability"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Pull request reviewability score and maintainer action"
-      }
-    },
-    "/v1/contributors/{login}/profile": {
-      "get": {
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "login",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Contributor evidence profile",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ContributorProfile"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Contributor evidence profile"
-      }
-    },
-    "/v1/contributors/{login}/decision-pack": {
-      "get": {
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "login",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Canonical private contributor decision pack. May carry freshness 'stale' or 'rebuilding' when a background rebuild is in progress.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ContributorDecisionPack"
-                }
-              }
-            }
-          },
-          "202": {
-            "description": "Decision pack snapshot is missing; a background rebuild has been requested",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DecisionPackRefreshNeeded"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Canonical contributor decision pack"
-      }
-    },
-    "/v1/contributors/{login}/open-pr-monitor": {
-      "get": {
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "login",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Contributor open-PR monitor with classifications and public-safe next-step packets from cached metadata.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ContributorOpenPrMonitor"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Contributor open-PR monitor with classifications and next-step packets"
-      }
-    },
-    "/v1/contributors/{login}/repos/{owner}/{repo}/decision": {
-      "get": {
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "login",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "owner",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "repo",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Repo-specific contributor decision from decision pack. May carry freshness 'stale' or 'rebuilding'.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RepoDecisionResponse"
-                }
-              }
-            }
-          },
-          "202": {
-            "description": "Decision pack snapshot is missing; a background rebuild has been requested",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DecisionPackRefreshNeeded"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Repository-specific contributor decision"
-      }
-    },
-    "/v1/preflight/pr": {
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Submission preflight result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PreflightResult"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid preflight input"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Run submission preflight for a pull request"
-      }
-    },
-    "/v1/preflight/local-diff": {
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Local diff preflight result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LocalDiffPreflightResult"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid local diff preflight input"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Run preflight against a local diff"
-      }
-    },
-    "/v1/local/branch-analysis": {
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Private local branch analysis for MCP clients",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LocalBranchAnalysis"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid local branch analysis input"
-          },
-          "401": {
-            "description": "Unauthorized"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Analyze a local branch for MCP clients"
-      }
-    },
-    "/v1/agent/runs": {
-      "post": {
-        "responses": {
-          "202": {
-            "description": "Copilot-only agent run queued",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentRunBundle"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid agent run request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Queue an agent run"
-      },
-      "get": {
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "example": "jsonbored"
-            },
-            "required": true,
-            "description": "GitHub login that owns the agent runs.",
-            "name": "actorLogin",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "example": "50"
-            },
-            "required": false,
-            "description": "Maximum run bundles to return, clamped from 1 to 100.",
-            "name": "limit",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Recent agent run bundles for an authenticated actor",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "runs": {
-                      "type": "array",
-                      "items": {
-                        "$ref": "#/components/schemas/AgentRunBundle"
-                      }
-                    }
-                  },
-                  "required": [
-                    "runs"
-                  ]
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Missing actor login"
-          },
-          "401": {
-            "description": "Unauthorized"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "List persisted agent runs for an actor"
-      }
-    },
-    "/v1/agent/runs/{id}": {
-      "get": {
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Persisted agent run bundle",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentRunBundle"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Agent run not found"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Persisted agent run bundle"
-      }
-    },
-    "/v1/agent/plan-next-work": {
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Agent run completed with deterministic ranked actions",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentRunBundle"
-                }
-              }
-            }
-          },
-          "202": {
-            "description": "Agent run needs snapshot refresh",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentRunBundle"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid agent request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Rank the next work items for an agent run"
-      }
-    },
-    "/v1/agent/preflight-branch": {
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Agent run completed with deterministic ranked actions",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentRunBundle"
-                }
-              }
-            }
-          },
-          "202": {
-            "description": "Agent run needs snapshot refresh",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentRunBundle"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid agent request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Preflight an agent branch before submission"
-      }
-    },
-    "/v1/agent/prepare-pr-packet": {
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Agent run completed with deterministic ranked actions",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentRunBundle"
-                }
-              }
-            }
-          },
-          "202": {
-            "description": "Agent run needs snapshot refresh",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentRunBundle"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid agent request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Prepare a pull request packet for an agent run"
-      }
-    },
-    "/v1/agent/explain-blockers": {
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Agent run completed with deterministic ranked actions",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentRunBundle"
-                }
-              }
-            }
-          },
-          "202": {
-            "description": "Agent run needs snapshot refresh",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentRunBundle"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid agent request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Explain an agent run's current blockers"
-      }
-    },
-    "/v1/bounties": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "Known bounty records",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Bounty"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "List known bounty records"
-      }
-    },
-    "/v1/bounties/{id}/advisory": {
-      "get": {
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Bounty lifecycle advisory",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BountyAdvisory"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Bounty not found"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Bounty lifecycle advisory"
-      }
-    },
-    "/v1/bounties/{id}/lifecycle": {
-      "get": {
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Bounty lifecycle transition history",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BountyLifecycleEvents"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Bounty not found"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Bounty lifecycle transition history"
-      }
-    },
-    "/v1/github/webhook": {
-      "post": {
-        "responses": {
-          "202": {
-            "description": "Webhook queued"
-          },
-          "401": {
-            "description": "Invalid webhook signature"
-          }
-        },
-        "summary": "Receive a GitHub webhook delivery"
-      }
-    },
-    "/v1/orb/ingest": {
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Batch accepted; returns { accepted: number }"
-          },
-          "400": {
-            "description": "Malformed JSON or invalid payload shape"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Ingest a batch of Orb events"
-      }
-    },
-    "/v1/auth/github/start": {
-      "get": {
-        "responses": {
-          "302": {
-            "description": "Redirects to GitHub web OAuth"
-          },
-          "503": {
-            "description": "GitHub OAuth app secret is not configured"
-          }
-        },
-        "summary": "Start GitHub web OAuth"
-      }
-    },
-    "/v1/auth/github/callback": {
-      "get": {
-        "responses": {
-          "302": {
-            "description": "Completes GitHub web OAuth and redirects to the app"
-          }
-        },
-        "summary": "Complete GitHub web OAuth and redirect to the app"
-      }
-    },
-    "/v1/auth/github/device/start": {
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Auth request completed"
-          },
-          "201": {
-            "description": "Auth session created"
-          },
-          "400": {
-            "description": "Invalid auth request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "429": {
-            "description": "Rate limited"
-          }
-        },
-        "summary": "Start GitHub device-flow authentication"
-      }
-    },
-    "/v1/auth/github/device/poll": {
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Auth request completed"
-          },
-          "201": {
-            "description": "Auth session created"
-          },
-          "400": {
-            "description": "Invalid auth request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "429": {
-            "description": "Rate limited"
-          }
-        },
-        "summary": "Poll a pending GitHub device-flow authorization"
-      }
-    },
-    "/v1/auth/github/session": {
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Auth request completed"
-          },
-          "201": {
-            "description": "Auth session created"
-          },
-          "400": {
-            "description": "Invalid auth request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "429": {
-            "description": "Rate limited"
-          }
-        },
-        "summary": "Exchange a GitHub token for a LoopOver session"
-      }
-    },
-    "/v1/auth/logout": {
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Auth request completed"
-          },
-          "201": {
-            "description": "Auth session created"
-          },
-          "400": {
-            "description": "Invalid auth request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "429": {
-            "description": "Rate limited"
-          }
-        },
-        "summary": "End the current session"
-      }
-    },
-    "/v1/auth/session": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "Current auth session, or signed_out when no app session is present"
-          }
-        },
-        "summary": "Current authentication session"
-      }
-    },
-    "/v1/app/overview": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "Live app overview assembled from backend data",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Insufficient role"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Live app overview assembled from backend data"
-      }
-    },
-    "/v1/app/roles": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "Live app API response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "App roles granted to the current session"
-      }
-    },
-    "/v1/app/miner-dashboard": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "Live app API response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Miner dashboard data"
-      }
-    },
-    "/v1/app/maintainer-dashboard": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "Live app API response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Maintainer dashboard data"
-      }
-    },
-    "/v1/app/operator-dashboard": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "Live app API response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Operator dashboard data"
-      }
-    },
-    "/v1/app/commands": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "Live app API response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "@loopover command catalog"
-      }
-    },
-    "/v1/app/commands/usefulness": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "Live app API response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "@loopover command usefulness rollup"
-      }
-    },
-    "/v1/app/digest": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "Live app API response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Maintainer digest content"
-      }
-    },
-    "/v1/app/analytics/daily-rollups": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "Live app API response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Daily analytics rollups"
-      }
-    },
-    "/v1/app/analytics/mcp-compatibility": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "Live app API response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "MCP client compatibility analytics"
-      }
-    },
-    "/v1/app/selfhost/queue/dead/{id}/replay": {
-      "post": {
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "example": "812"
-            },
-            "required": true,
-            "description": "Dead-letter job id.",
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Job replayed",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid job id"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Insufficient app role (operator only)"
-          },
-          "404": {
-            "description": "Dead-letter job not found"
-          },
-          "501": {
-            "description": "This deployment's queue backend does not expose dead-letter admin"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Replay a dead-letter queue job"
-      }
-    },
-    "/v1/app/selfhost/queue/dead/{id}": {
-      "delete": {
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "example": "812"
-            },
-            "required": true,
-            "description": "Dead-letter job id.",
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Job deleted",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid job id"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Insufficient app role (operator only)"
-          },
-          "404": {
-            "description": "Dead-letter job not found"
-          },
-          "501": {
-            "description": "This deployment's queue backend does not expose dead-letter admin"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Delete a dead-letter queue job"
-      }
-    },
-    "/v1/app/selfhost/queue/dead": {
-      "delete": {
-        "responses": {
-          "200": {
-            "description": "Dead-letter jobs purged",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Insufficient app role (operator only)"
-          },
-          "501": {
-            "description": "This deployment's queue backend does not expose dead-letter admin"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Purge all dead-letter queue jobs"
-      },
-      "get": {
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "example": "25"
-            },
-            "required": false,
-            "description": "Maximum rows to return, clamped from 1 to 100.",
-            "name": "limit",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "example": "0"
-            },
-            "required": false,
-            "description": "Pagination offset, floored to 0.",
-            "name": "offset",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Paginated dead-letter jobs for the self-host queue backend",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid query"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Insufficient app role (operator only)"
-          },
-          "501": {
-            "description": "This deployment's queue backend does not expose dead-letter admin (e.g. Cloudflare)"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "List dead-letter queue jobs"
-      }
-    },
-    "/v1/app/analytics/weekly-value-report": {
-      "get": {
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "enum": [
-                "public",
-                "operator"
-              ],
-              "example": "public"
-            },
-            "required": false,
-            "description": "Report variant. Operator reports require the operator app role.",
-            "name": "variant",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "example": "7"
-            },
-            "required": false,
-            "description": "Report window in days, clamped from 1 to 31.",
-            "name": "days",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "enum": [
-                "json",
-                "markdown"
-              ],
-              "example": "markdown"
-            },
-            "required": false,
-            "description": "Response format. Omit or use json for the structured report; use markdown for copy-ready text.",
-            "name": "format",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Weekly value report as structured JSON or copy-ready Markdown",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              },
-              "text/markdown": {
-                "schema": {
-                  "type": "string",
-                  "example": "# Weekly LoopOver value report\n\n## Adoption metrics\n- Active users: 4\n"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Insufficient app role for requested report variant"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Weekly value report"
-      }
-    },
-    "/v1/app/skipped-pr-audit": {
-      "get": {
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "example": "50"
-            },
-            "required": false,
-            "description": "Maximum rows to return, clamped from 1 to 100.",
-            "name": "limit",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "example": "0"
-            },
-            "required": false,
-            "description": "Number of parsed skip events to skip before returning rows (non-negative).",
-            "name": "offset",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "example": "JSONbored/loopover"
-            },
-            "required": false,
-            "description": "Optional repository filter. Browser sessions must have control-panel access to this repo.",
-            "name": "repoFullName",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "example": "not_official_gittensor_miner",
-              "enum": [
-                "surface_off",
-                "missing_author",
-                "bot_author",
-                "ignored_author",
-                "maintainer_author",
-                "miner_detection_unavailable",
-                "not_official_gittensor_miner"
-              ]
-            },
-            "required": false,
-            "description": "Optional PR skip reason filter.",
-            "name": "reason",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "example": "2026-05-30T00:00:00.000Z"
-            },
-            "required": false,
-            "description": "Optional lower timestamp bound.",
-            "name": "since",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Private bounded audit export for skipped PR public-surface decisions",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SkippedPrAuditExport"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid query"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Insufficient app role or repository scope"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Audit of pull requests the review agent skipped"
-      }
-    },
-    "/v1/app/commands/preview": {
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Maintainer dry-run preview of a sanitized @loopover command response (no GitHub mutation)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CommandPreviewResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Insufficient app role"
-          },
-          "404": {
-            "description": "Command not found"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Dry-run a sanitized @loopover command response"
-      }
-    },
-    "/v1/app/commands/feedback": {
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Live app mutation or preview response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "201": {
-            "description": "Created",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Submit feedback on an @loopover command response"
-      }
-    },
-    "/v1/app/digest/subscriptions": {
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Live app mutation or preview response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "201": {
-            "description": "Created",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Manage maintainer digest subscriptions"
-      }
-    },
-    "/v1/internal/jobs/refresh-registry": {
-      "post": {
-        "responses": {
-          "202": {
-            "description": "Registry refresh queued"
-          },
-          "401": {
-            "description": "Invalid internal token"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Queue a registry refresh job"
-      }
-    },
-    "/v1/internal/jobs/backfill-registered-repos": {
-      "post": {
-        "responses": {
-          "202": {
-            "description": "Registered repo backfill queued"
-          },
-          "401": {
-            "description": "Invalid internal token"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Queue a registered-repository backfill job"
-      }
-    },
-    "/v1/internal/jobs/backfill-repo-segment": {
-      "post": {
-        "responses": {
-          "202": {
-            "description": "Repository segment backfill queued"
-          },
-          "400": {
-            "description": "Invalid segment request"
-          },
-          "401": {
-            "description": "Invalid internal token"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Queue a repository segment backfill job"
-      }
-    },
-    "/v1/internal/jobs/backfill-pr-details": {
-      "post": {
-        "responses": {
-          "202": {
-            "description": "Open PR detail backfill queued"
-          },
-          "400": {
-            "description": "Invalid PR detail backfill request"
-          },
-          "401": {
-            "description": "Invalid internal token"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Queue an open pull request detail backfill job"
-      }
-    },
-    "/v1/internal/jobs/generate-review-recap": {
-      "post": {
-        "responses": {
-          "202": {
-            "description": "Maintainer review recap digest queued (#1963)"
-          },
-          "400": {
-            "description": "Missing repoFullName"
-          },
-          "401": {
-            "description": "Invalid internal token"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Queue a maintainer review recap digest job"
-      }
-    },
-    "/v1/internal/jobs/refresh-scoring-model": {
-      "post": {
-        "responses": {
-          "202": {
-            "description": "Internal job queued"
-          },
-          "401": {
-            "description": "Invalid internal token"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Queue a scoring model refresh job"
-      }
-    },
-    "/v1/internal/jobs/refresh-upstream-drift": {
-      "post": {
-        "responses": {
-          "202": {
-            "description": "Internal job queued"
-          },
-          "401": {
-            "description": "Invalid internal token"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Queue an upstream drift refresh job"
-      }
-    },
-    "/v1/internal/jobs/file-upstream-drift-issues": {
-      "post": {
-        "responses": {
-          "202": {
-            "description": "Internal job queued"
-          },
-          "401": {
-            "description": "Invalid internal token"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Queue a job that files upstream drift issues"
-      }
-    },
-    "/v1/internal/jobs/build-contributor-evidence": {
-      "post": {
-        "responses": {
-          "202": {
-            "description": "Internal job queued"
-          },
-          "401": {
-            "description": "Invalid internal token"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Queue a contributor evidence build job"
-      }
-    },
-    "/v1/internal/jobs/build-contributor-decision-packs": {
-      "post": {
-        "responses": {
-          "202": {
-            "description": "Internal job queued"
-          },
-          "401": {
-            "description": "Invalid internal token"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Queue a contributor decision pack build job"
-      }
-    },
-    "/v1/internal/jobs/build-burden-forecasts": {
-      "post": {
-        "responses": {
-          "202": {
-            "description": "Internal job queued"
-          },
-          "401": {
-            "description": "Invalid internal token"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Queue a burden forecast build job"
-      }
-    },
-    "/v1/internal/jobs/generate-signal-snapshots": {
-      "post": {
-        "responses": {
-          "202": {
-            "description": "Internal job queued"
-          },
-          "401": {
-            "description": "Invalid internal token"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Queue a signal snapshot generation job"
-      }
-    },
-    "/v1/internal/jobs/generate-weekly-value-report": {
-      "post": {
-        "responses": {
-          "202": {
-            "description": "Internal job queued"
-          },
-          "401": {
-            "description": "Invalid internal token"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Queue a weekly value report job"
-      }
-    },
-    "/v1/internal/jobs/repair-data-fidelity": {
-      "post": {
-        "responses": {
-          "202": {
-            "description": "Internal job queued"
-          },
-          "401": {
-            "description": "Invalid internal token"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Queue a data fidelity repair job"
-      }
-    },
-    "/v1/internal/bounties/import": {
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Bounty snapshot imported"
-          },
-          "401": {
-            "description": "Invalid internal token"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "summary": "Import a bounty snapshot"
-      }
-    },
-    "/v1/auth/github/token": {
-      "post": {
-        "summary": "Fetch the current session's live GitHub token (for AMS git operations)",
-        "responses": {
-          "200": {
-            "description": "The session's GitHub token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "token": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "token"
-                  ]
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "A browser session is required"
-          },
-          "404": {
-            "description": "No GitHub token is available for this session"
-          },
-          "429": {
-            "description": "Rate limited"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ]
-      }
-    },
-    "/v1/repos/{owner}/{repo}/live-gate-thresholds": {
-      "get": {
-        "summary": "Live self-tuned gate thresholds for AMS probe (#6486)",
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "owner",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "repo",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Field-limited live (or soaking-shadow) TunableOverride values — confidence_floor / scope_cap_files / scope_cap_lines only",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LiveGateThresholdsResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo"
-          },
-          "404": {
-            "description": "No live or shadow gate override is active for this repo"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ]
-      }
-    },
-    "/v1/repos/{owner}/{repo}/gate-config/effective": {
-      "get": {
-        "summary": "Current effective self-tuned gate config for a repo (#6247)",
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "owner",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "repo",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Effective TunableOverride values (confidenceFloor / scopeCap.files / scopeCap.lines) with a shadowPending flag — never the raw override_audit history",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GateConfigEffectiveResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or invalid static protected API token"
-          },
-          "403": {
-            "description": "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ]
-      }
-    },
-    "/v1/finding-taxonomy": {
-      "get": {
-        "summary": "Canonical AI-review finding taxonomy",
-        "responses": {
-          "200": {
-            "description": "Finding categories and the severity ladder",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FindingTaxonomyDocument"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ]
-      }
-    },
-    "/v1/enrichment-analyzers": {
-      "get": {
-        "summary": "REES enrichment analyzer taxonomy",
-        "responses": {
-          "200": {
-            "description": "Default profile and the registered enrichment analyzers",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EnrichmentAnalyzersTaxonomyDocument"
                 }
               }
             }
@@ -19067,6 +16961,340 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RepoDocRefreshResult"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/settings-preview": {
+      "post": {
+        "summary": "Dry-run the public surface decision for a sample pull request",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Maintainer dry-run preview of the public surface decision for a sample PR (no GitHub mutation)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoSettingsPreview"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid settings preview request"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/pulls/{number}/maintainer-packet": {
+      "get": {
+        "summary": "Maintainer review packet for a pull request",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "number",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "PR-specific maintainer review packet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullRequestMaintainerPacket"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/pulls/{number}/reviewability": {
+      "get": {
+        "summary": "Pull request reviewability score and maintainer action",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "number",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Private PR reviewability score and maintainer action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullRequestReviewability"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/pulls/{number}/ai-review-findings": {
+      "get": {
+        "summary": "A PR author's own structured, published AI-review findings",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "number",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "jsonbored"
+            },
+            "required": true,
+            "description": "GitHub login of the pull request's author -- the caller must be this same login.",
+            "name": "login",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Structured, published AI-review findings for the caller's own pull request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullRequestAiReviewFindings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing login"
+          },
+          "403": {
+            "description": "The pull request belongs to a different contributor"
+          },
+          "404": {
+            "description": "Pull request not found"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/contributors/{login}/profile": {
+      "get": {
+        "summary": "Contributor evidence profile",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "login",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Contributor evidence profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributorProfile"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/contributors/{login}/decision-pack": {
+      "get": {
+        "summary": "Canonical contributor decision pack",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "login",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Canonical private contributor decision pack. May carry freshness 'stale' or 'rebuilding' when a background rebuild is in progress.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributorDecisionPack"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Decision pack snapshot is missing; a background rebuild has been requested",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionPackRefreshNeeded"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/contributors/{login}/open-pr-monitor": {
+      "get": {
+        "summary": "Contributor open-PR monitor with classifications and next-step packets",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "login",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Contributor open-PR monitor with classifications and public-safe next-step packets from cached metadata.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributorOpenPrMonitor"
                 }
               }
             }
@@ -19218,6 +17446,95 @@
         ]
       }
     },
+    "/v1/contributors/{login}/repos/{owner}/{repo}/decision": {
+      "get": {
+        "summary": "Repository-specific contributor decision",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "login",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Repo-specific contributor decision from decision pack. May carry freshness 'stale' or 'rebuilding'.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoDecisionResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Decision pack snapshot is missing; a background rebuild has been requested",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionPackRefreshNeeded"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/preflight/pr": {
+      "post": {
+        "summary": "Run submission preflight for a pull request",
+        "responses": {
+          "200": {
+            "description": "Submission preflight result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreflightResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid preflight input"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
     "/v1/preflight/review-risk": {
       "post": {
         "summary": "Explain review risk for a planned pull request",
@@ -19249,46 +17566,22 @@
         ]
       }
     },
-    "/v1/repos/{owner}/{repo}/issue-plan-drafts/generate": {
+    "/v1/preflight/local-diff": {
       "post": {
-        "summary": "AI-plan repo issue drafts from a maintainer goal",
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "owner",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "repo",
-            "in": "path"
-          }
-        ],
+        "summary": "Run preflight against a local diff",
         "responses": {
           "200": {
-            "description": "AI-plan a small set of GitHub issue drafts from a maintainer-supplied planning goal (dry-run by default)",
+            "description": "Local diff preflight result",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
+                  "$ref": "#/components/schemas/LocalDiffPreflightResult"
                 }
               }
             }
           },
           "400": {
-            "description": "Invalid request or explicit create without dryRun false"
-          },
-          "403": {
-            "description": "Insufficient role"
+            "description": "Invalid local diff preflight input"
           }
         },
         "security": [
@@ -19299,6 +17592,450 @@
             "LoopOverSessionCookie": []
           }
         ]
+      }
+    },
+    "/v1/local/branch-analysis": {
+      "post": {
+        "summary": "Analyze a local branch for MCP clients",
+        "responses": {
+          "200": {
+            "description": "Private local branch analysis for MCP clients",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalBranchAnalysis"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid local branch analysis input"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/agent/runs": {
+      "post": {
+        "summary": "Queue an agent run",
+        "responses": {
+          "202": {
+            "description": "Copilot-only agent run queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRunBundle"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid agent run request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      },
+      "get": {
+        "summary": "List persisted agent runs for an actor",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "jsonbored"
+            },
+            "required": true,
+            "description": "GitHub login that owns the agent runs.",
+            "name": "actorLogin",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "example": "50"
+            },
+            "required": false,
+            "description": "Maximum run bundles to return, clamped from 1 to 100.",
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Recent agent run bundles for an authenticated actor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "runs": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/AgentRunBundle"
+                      }
+                    }
+                  },
+                  "required": [
+                    "runs"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing actor login"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/agent/runs/{id}": {
+      "get": {
+        "summary": "Persisted agent run bundle",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Persisted agent run bundle",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRunBundle"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Agent run not found"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/agent/plan-next-work": {
+      "post": {
+        "summary": "Rank the next work items for an agent run",
+        "responses": {
+          "200": {
+            "description": "Agent run completed with deterministic ranked actions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRunBundle"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Agent run needs snapshot refresh",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRunBundle"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid agent request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/agent/preflight-branch": {
+      "post": {
+        "summary": "Preflight an agent branch before submission",
+        "responses": {
+          "200": {
+            "description": "Agent run completed with deterministic ranked actions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRunBundle"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Agent run needs snapshot refresh",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRunBundle"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid agent request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/agent/prepare-pr-packet": {
+      "post": {
+        "summary": "Prepare a pull request packet for an agent run",
+        "responses": {
+          "200": {
+            "description": "Agent run completed with deterministic ranked actions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRunBundle"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Agent run needs snapshot refresh",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRunBundle"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid agent request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/agent/explain-blockers": {
+      "post": {
+        "summary": "Explain an agent run's current blockers",
+        "responses": {
+          "200": {
+            "description": "Agent run completed with deterministic ranked actions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRunBundle"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Agent run needs snapshot refresh",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRunBundle"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid agent request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/bounties": {
+      "get": {
+        "summary": "List known bounty records",
+        "responses": {
+          "200": {
+            "description": "Known bounty records",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Bounty"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/bounties/{id}/advisory": {
+      "get": {
+        "summary": "Bounty lifecycle advisory",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bounty lifecycle advisory",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BountyAdvisory"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Bounty not found"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/bounties/{id}/lifecycle": {
+      "get": {
+        "summary": "Bounty lifecycle transition history",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bounty lifecycle transition history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BountyLifecycleEvents"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Bounty not found"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/github/webhook": {
+      "post": {
+        "summary": "Receive a GitHub webhook delivery",
+        "responses": {
+          "202": {
+            "description": "Webhook queued"
+          },
+          "401": {
+            "description": "Invalid webhook signature"
+          }
+        }
       }
     },
     "/v1/public/decision-ledger/verify": {
@@ -19310,95 +18047,6 @@
           },
           "409": {
             "description": "First break found: sequence_gap | predecessor_mismatch | row_hash_mismatch | short_tail (a record exists past the verified tip with no chain entry)"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ]
-      }
-    },
-    "/v1/public/decision-records/{owner}/{repo}/{pull}": {
-      "get": {
-        "summary": "Fetch the latest published decision record for a PR, verbatim, plus its content digest",
-        "responses": {
-          "200": {
-            "description": "The latest DecisionRecord for this PR + its recordDigest"
-          },
-          "400": {
-            "description": "Invalid pull number"
-          },
-          "404": {
-            "description": "No decision record persisted yet for this PR"
-          }
-        },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "owner",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "repo",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "pull",
-            "in": "path"
-          }
-        ]
-      }
-    },
-    "/v1/public/eval-scores": {
-      "get": {
-        "summary": "Fetch EvalScoreRecords (#9215) -- the objective-eval-provider transport, digest-committed and independently re-derivable",
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": false,
-            "name": "subject",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": false,
-            "name": "since",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "{ records: EvalScoreRecord[] }, optionally filtered by subject id and/or minimum issuedAt -- degrades to an empty array on an internal read error rather than a non-200 status, matching loadPublicRulePrecision's own fail-safe contract"
-          },
-          "404": {
-            "description": "Public stats disabled (same flag as /v1/public/stats)"
           }
         },
         "security": [
@@ -19445,9 +18093,76 @@
         ]
       }
     },
-    "/v1/repos/{owner}/{repo}/pulls/{number}/ai-review-findings": {
+    "/v1/public/decision-ledger/anchor-key": {
       "get": {
-        "summary": "A PR author's own structured, published AI-review findings",
+        "summary": "Published anchor-signing public keys with their full rotation history, for verifying an externally-published ledger anchor",
+        "responses": {
+          "200": {
+            "description": "{ keys: [{ keyId, publicKeySpki, notBefore, notAfter }], currentKeyId } — retired keys are retained so anchors signed under them stay verifiable; currentKeyId is null when unconfigured or the rotation state is ambiguous"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/public/decision-ledger/anchors": {
+      "get": {
+        "summary": "Every external anchoring attempt, success and failure, paginated newest-first — anchoring's own health as a public fact",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "rekor",
+                "git",
+                "ots"
+              ]
+            },
+            "required": false,
+            "name": "backend",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "before",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{ anchors: [{ id, seq, rowHash, keyId, backend, backendRef, status, error, createdAt }], nextBefore } — a failed attempt is returned identically to a successful one, never filtered out or reshaped"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/public/decision-records/{owner}/{repo}/{pull}": {
+      "get": {
+        "summary": "Fetch the latest published decision record for a PR, verbatim, plus its content digest",
         "parameters": [
           {
             "schema": {
@@ -19470,40 +18185,1392 @@
               "type": "string"
             },
             "required": true,
-            "name": "number",
+            "name": "pull",
             "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The latest DecisionRecord for this PR + its recordDigest"
+          },
+          "400": {
+            "description": "Invalid pull number"
+          },
+          "404": {
+            "description": "No decision record persisted yet for this PR"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/public/eval-scores": {
+      "get": {
+        "summary": "Fetch EvalScoreRecords (#9215) -- the objective-eval-provider transport, digest-committed and independently re-derivable",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "subject",
+            "in": "query"
           },
           {
             "schema": {
-              "type": "string",
-              "minLength": 1,
-              "example": "jsonbored"
+              "type": "string"
             },
-            "required": true,
-            "description": "GitHub login of the pull request's author -- the caller must be this same login.",
-            "name": "login",
+            "required": false,
+            "name": "since",
             "in": "query"
           }
         ],
         "responses": {
           "200": {
-            "description": "Structured, published AI-review findings for the caller's own pull request",
+            "description": "{ records: EvalScoreRecord[] }, optionally filtered by subject id and/or minimum issuedAt -- degrades to an empty array on an internal read error rather than a non-200 status, matching loadPublicRulePrecision's own fail-safe contract"
+          },
+          "404": {
+            "description": "Public stats disabled (same flag as /v1/public/stats)"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/orb/ingest": {
+      "post": {
+        "summary": "Ingest a batch of Orb events",
+        "responses": {
+          "200": {
+            "description": "Batch accepted; returns { accepted: number }"
+          },
+          "400": {
+            "description": "Malformed JSON or invalid payload shape"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/auth/github/start": {
+      "get": {
+        "summary": "Start GitHub web OAuth",
+        "responses": {
+          "302": {
+            "description": "Redirects to GitHub web OAuth"
+          },
+          "503": {
+            "description": "GitHub OAuth app secret is not configured"
+          }
+        }
+      }
+    },
+    "/v1/auth/github/callback": {
+      "get": {
+        "summary": "Complete GitHub web OAuth and redirect to the app",
+        "responses": {
+          "302": {
+            "description": "Completes GitHub web OAuth and redirects to the app"
+          }
+        }
+      }
+    },
+    "/v1/auth/github/device/start": {
+      "post": {
+        "summary": "Start GitHub device-flow authentication",
+        "responses": {
+          "200": {
+            "description": "Auth request completed"
+          },
+          "201": {
+            "description": "Auth session created"
+          },
+          "400": {
+            "description": "Invalid auth request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "429": {
+            "description": "Rate limited"
+          }
+        }
+      }
+    },
+    "/v1/auth/github/device/poll": {
+      "post": {
+        "summary": "Poll a pending GitHub device-flow authorization",
+        "responses": {
+          "200": {
+            "description": "Auth request completed"
+          },
+          "201": {
+            "description": "Auth session created"
+          },
+          "400": {
+            "description": "Invalid auth request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "429": {
+            "description": "Rate limited"
+          }
+        }
+      }
+    },
+    "/v1/auth/github/session": {
+      "post": {
+        "summary": "Exchange a GitHub token for a LoopOver session",
+        "responses": {
+          "200": {
+            "description": "Auth request completed"
+          },
+          "201": {
+            "description": "Auth session created"
+          },
+          "400": {
+            "description": "Invalid auth request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "429": {
+            "description": "Rate limited"
+          }
+        }
+      }
+    },
+    "/v1/auth/logout": {
+      "post": {
+        "summary": "End the current session",
+        "responses": {
+          "200": {
+            "description": "Auth request completed"
+          },
+          "201": {
+            "description": "Auth session created"
+          },
+          "400": {
+            "description": "Invalid auth request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "429": {
+            "description": "Rate limited"
+          }
+        }
+      }
+    },
+    "/v1/auth/session": {
+      "get": {
+        "summary": "Current authentication session",
+        "responses": {
+          "200": {
+            "description": "Current auth session, or signed_out when no app session is present"
+          }
+        }
+      }
+    },
+    "/v1/auth/github/token": {
+      "post": {
+        "summary": "Fetch the current session's live GitHub token (for AMS git operations)",
+        "responses": {
+          "200": {
+            "description": "The session's GitHub token",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PullRequestAiReviewFindings"
+                  "type": "object",
+                  "properties": {
+                    "token": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "token"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A browser session is required"
+          },
+          "404": {
+            "description": "No GitHub token is available for this session"
+          },
+          "429": {
+            "description": "Rate limited"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/app/overview": {
+      "get": {
+        "summary": "Live app overview assembled from backend data",
+        "responses": {
+          "200": {
+            "description": "Live app overview assembled from backend data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Insufficient role"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/app/roles": {
+      "get": {
+        "summary": "App roles granted to the current session",
+        "responses": {
+          "200": {
+            "description": "Live app API response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/app/miner-dashboard": {
+      "get": {
+        "summary": "Miner dashboard data",
+        "responses": {
+          "200": {
+            "description": "Live app API response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/app/maintainer-dashboard": {
+      "get": {
+        "summary": "Maintainer dashboard data",
+        "responses": {
+          "200": {
+            "description": "Live app API response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/app/operator-dashboard": {
+      "get": {
+        "summary": "Operator dashboard data",
+        "responses": {
+          "200": {
+            "description": "Live app API response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/app/commands": {
+      "get": {
+        "summary": "@loopover command catalog",
+        "responses": {
+          "200": {
+            "description": "Live app API response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/app/commands/usefulness": {
+      "get": {
+        "summary": "@loopover command usefulness rollup",
+        "responses": {
+          "200": {
+            "description": "Live app API response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/app/digest": {
+      "get": {
+        "summary": "Maintainer digest content",
+        "responses": {
+          "200": {
+            "description": "Live app API response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/app/analytics/daily-rollups": {
+      "get": {
+        "summary": "Daily analytics rollups",
+        "responses": {
+          "200": {
+            "description": "Live app API response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/app/analytics/mcp-compatibility": {
+      "get": {
+        "summary": "MCP client compatibility analytics",
+        "responses": {
+          "200": {
+            "description": "Live app API response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/app/selfhost/queue/dead/{id}/replay": {
+      "post": {
+        "summary": "Replay a dead-letter queue job",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "example": "812"
+            },
+            "required": true,
+            "description": "Dead-letter job id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job replayed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
                 }
               }
             }
           },
           "400": {
-            "description": "Missing login"
+            "description": "Invalid job id"
+          },
+          "401": {
+            "description": "Unauthorized"
           },
           "403": {
-            "description": "The pull request belongs to a different contributor"
+            "description": "Insufficient app role (operator only)"
           },
           "404": {
-            "description": "Pull request not found"
+            "description": "Dead-letter job not found"
+          },
+          "501": {
+            "description": "This deployment's queue backend does not expose dead-letter admin"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/app/selfhost/queue/dead/{id}": {
+      "delete": {
+        "summary": "Delete a dead-letter queue job",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "example": "812"
+            },
+            "required": true,
+            "description": "Dead-letter job id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid job id"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Insufficient app role (operator only)"
+          },
+          "404": {
+            "description": "Dead-letter job not found"
+          },
+          "501": {
+            "description": "This deployment's queue backend does not expose dead-letter admin"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/app/selfhost/queue/dead": {
+      "delete": {
+        "summary": "Purge all dead-letter queue jobs",
+        "responses": {
+          "200": {
+            "description": "Dead-letter jobs purged",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Insufficient app role (operator only)"
+          },
+          "501": {
+            "description": "This deployment's queue backend does not expose dead-letter admin"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      },
+      "get": {
+        "summary": "List dead-letter queue jobs",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "example": "25"
+            },
+            "required": false,
+            "description": "Maximum rows to return, clamped from 1 to 100.",
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "example": "0"
+            },
+            "required": false,
+            "description": "Pagination offset, floored to 0.",
+            "name": "offset",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated dead-letter jobs for the self-host queue backend",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Insufficient app role (operator only)"
+          },
+          "501": {
+            "description": "This deployment's queue backend does not expose dead-letter admin (e.g. Cloudflare)"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/app/analytics/weekly-value-report": {
+      "get": {
+        "summary": "Weekly value report",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "public",
+                "operator"
+              ],
+              "example": "public"
+            },
+            "required": false,
+            "description": "Report variant. Operator reports require the operator app role.",
+            "name": "variant",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "example": "7"
+            },
+            "required": false,
+            "description": "Report window in days, clamped from 1 to 31.",
+            "name": "days",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "json",
+                "markdown"
+              ],
+              "example": "markdown"
+            },
+            "required": false,
+            "description": "Response format. Omit or use json for the structured report; use markdown for copy-ready text.",
+            "name": "format",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Weekly value report as structured JSON or copy-ready Markdown",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              },
+              "text/markdown": {
+                "schema": {
+                  "type": "string",
+                  "example": "# Weekly LoopOver value report\n\n## Adoption metrics\n- Active users: 4\n"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Insufficient app role for requested report variant"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/app/skipped-pr-audit": {
+      "get": {
+        "summary": "Audit of pull requests the review agent skipped",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "example": "50"
+            },
+            "required": false,
+            "description": "Maximum rows to return, clamped from 1 to 100.",
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "example": "0"
+            },
+            "required": false,
+            "description": "Number of parsed skip events to skip before returning rows (non-negative).",
+            "name": "offset",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "example": "JSONbored/loopover"
+            },
+            "required": false,
+            "description": "Optional repository filter. Browser sessions must have control-panel access to this repo.",
+            "name": "repoFullName",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "surface_off",
+                "missing_author",
+                "bot_author",
+                "ignored_author",
+                "maintainer_author",
+                "miner_detection_unavailable",
+                "not_official_gittensor_miner"
+              ],
+              "example": "not_official_gittensor_miner"
+            },
+            "required": false,
+            "description": "Optional PR skip reason filter.",
+            "name": "reason",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "example": "2026-05-30T00:00:00.000Z"
+            },
+            "required": false,
+            "description": "Optional lower timestamp bound.",
+            "name": "since",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Private bounded audit export for skipped PR public-surface decisions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkippedPrAuditExport"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Insufficient app role or repository scope"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/app/commands/preview": {
+      "post": {
+        "summary": "Dry-run a sanitized @loopover command response",
+        "responses": {
+          "200": {
+            "description": "Maintainer dry-run preview of a sanitized @loopover command response (no GitHub mutation)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandPreviewResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Insufficient app role"
+          },
+          "404": {
+            "description": "Command not found"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/app/commands/feedback": {
+      "post": {
+        "summary": "Submit feedback on an @loopover command response",
+        "responses": {
+          "200": {
+            "description": "Live app mutation or preview response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/app/digest/subscriptions": {
+      "post": {
+        "summary": "Manage maintainer digest subscriptions",
+        "responses": {
+          "200": {
+            "description": "Live app mutation or preview response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/internal/jobs/refresh-registry": {
+      "post": {
+        "summary": "Queue a registry refresh job",
+        "responses": {
+          "202": {
+            "description": "Registry refresh queued"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/internal/jobs/backfill-registered-repos": {
+      "post": {
+        "summary": "Queue a registered-repository backfill job",
+        "responses": {
+          "202": {
+            "description": "Registered repo backfill queued"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/internal/jobs/backfill-repo-segment": {
+      "post": {
+        "summary": "Queue a repository segment backfill job",
+        "responses": {
+          "202": {
+            "description": "Repository segment backfill queued"
+          },
+          "400": {
+            "description": "Invalid segment request"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/internal/jobs/backfill-pr-details": {
+      "post": {
+        "summary": "Queue an open pull request detail backfill job",
+        "responses": {
+          "202": {
+            "description": "Open PR detail backfill queued"
+          },
+          "400": {
+            "description": "Invalid PR detail backfill request"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/internal/jobs/generate-review-recap": {
+      "post": {
+        "summary": "Queue a maintainer review recap digest job",
+        "responses": {
+          "202": {
+            "description": "Maintainer review recap digest queued (#1963)"
+          },
+          "400": {
+            "description": "Missing repoFullName"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/internal/jobs/refresh-scoring-model": {
+      "post": {
+        "summary": "Queue a scoring model refresh job",
+        "responses": {
+          "202": {
+            "description": "Internal job queued"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/internal/jobs/refresh-upstream-drift": {
+      "post": {
+        "summary": "Queue an upstream drift refresh job",
+        "responses": {
+          "202": {
+            "description": "Internal job queued"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/internal/jobs/file-upstream-drift-issues": {
+      "post": {
+        "summary": "Queue a job that files upstream drift issues",
+        "responses": {
+          "202": {
+            "description": "Internal job queued"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/internal/jobs/build-contributor-evidence": {
+      "post": {
+        "summary": "Queue a contributor evidence build job",
+        "responses": {
+          "202": {
+            "description": "Internal job queued"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/internal/jobs/build-contributor-decision-packs": {
+      "post": {
+        "summary": "Queue a contributor decision pack build job",
+        "responses": {
+          "202": {
+            "description": "Internal job queued"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/internal/jobs/build-burden-forecasts": {
+      "post": {
+        "summary": "Queue a burden forecast build job",
+        "responses": {
+          "202": {
+            "description": "Internal job queued"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/internal/jobs/generate-signal-snapshots": {
+      "post": {
+        "summary": "Queue a signal snapshot generation job",
+        "responses": {
+          "202": {
+            "description": "Internal job queued"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/internal/jobs/generate-weekly-value-report": {
+      "post": {
+        "summary": "Queue a weekly value report job",
+        "responses": {
+          "202": {
+            "description": "Internal job queued"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/internal/jobs/repair-data-fidelity": {
+      "post": {
+        "summary": "Queue a data fidelity repair job",
+        "responses": {
+          "202": {
+            "description": "Internal job queued"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/internal/bounties/import": {
+      "post": {
+        "summary": "Import a bounty snapshot",
+        "responses": {
+          "200": {
+            "description": "Bounty snapshot imported"
+          },
+          "401": {
+            "description": "Invalid internal token"
           }
         },
         "security": [

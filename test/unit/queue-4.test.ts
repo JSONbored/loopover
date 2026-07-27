@@ -6104,7 +6104,7 @@ describe("queue processors", () => {
     });
 
     expect(unifiedCommentBody).toContain("Fix handoff"); // the collapsible section is emitted
-    expect(unifiedCommentBody).toContain("Fix handoff — Blocker at `src/db.ts:2`"); // the per-finding block header + location anchor
+    expect(unifiedCommentBody).toContain("Fix handoff — Blocker at ` src/db.ts:2 `"); // the per-finding block header + location anchor
     expect(unifiedCommentBody).toContain("This query is vulnerable to SQL injection."); // the finding, handed off verbatim
     expect(unifiedCommentBody).toContain("Suggested change:"); // its suggestion carried through
   });

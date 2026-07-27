@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "cocoHelmChart": {
+    "repository": "oci://ghcr.io/confidential-containers/charts/confidential-containers",
+    "chart": "confidential-containers",
+    "version": "0.21.0",
+    "kataDeploySubchartVersion": "3.31.0",
+    "devRuntimeClass": "kata-qemu-coco-dev"
+  },
+  "trusteeKbs": {
+    "image": "ghcr.io/confidential-containers/key-broker-service",
+    "tag": "built-in-as-v0.21.0",
+    "digest": "sha256:16926d905621e94dadadb95fd0794dddae8ee30bdf71c71940c6c8fe25087119"
+  }
+}

@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kbs
+spec:
+  selector:
+    matchLabels:
+      app: kbs
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: kbs
+    spec:
+      containers:
+      - name: kbs
+        image: kbs-container-image
+        ports:
+        - containerPort: 8080
+        imagePullPolicy: Always
+        command:
+        - /usr/local/bin/kbs
+        - --config-file
+        - /etc/kbs/kbs-config.toml
+        volumeMounts:
+        - name: kbs-auth-public-key
+          mountPath: /kbs/
+        - name: kbs-config
+          mountPath: /etc/kbs/
+        - name: policy-volume
+          mountPath: /opt/confidential-containers/kbs/
+      volumes:
+      - name: kbs-auth-public-key
+        secret:
+          secretName: kbs-auth-public-key
+      - name: kbs-config
+        configMap:
+          name: kbs-config
+      - name: policy-volume
+        emptyDir: {}

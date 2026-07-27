@@ -1,0 +1,24 @@
+# Helm values override for the confidential-containers chart (see ../versions.json for the pinned
+# chart version) -- no-TEE dev mode only. The chart's own default values.yaml enables the real SNP/TDX/GPU
+# shims unconditionally; this override explicitly disables every one of them and enables only
+# `qemu-coco-dev`, the project's own no-hardware "sample and mocking implementations" shim (see
+# https://github.com/confidential-containers/confidential-containers/blob/main/guides/coco-dev.md). Applying
+# this same chart+version on real SNP metal (#8536) means dropping this override file, not changing anything
+# else -- that's the whole point of pinning the topology here first.
+kata-as-coco-runtime:
+  enabled: true
+  shims:
+    qemu-snp:
+      enabled: false
+    qemu-tdx:
+      enabled: false
+    qemu-coco-dev:
+      enabled: true
+    qemu-coco-dev-runtime-rs:
+      enabled: false
+    qemu-nvidia-gpu-snp:
+      enabled: false
+    qemu-nvidia-gpu-tdx:
+      enabled: false
+  defaultShim:
+    amd64: qemu-coco-dev

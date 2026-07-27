@@ -4316,14 +4316,24 @@ describe("queue processors", () => {
       prNumber: number,
       headSha: string,
       authorLogin = "contributor",
-      opts: { headRef?: string; e2eTestDelivery?: "comment" | "commit" } = {},
+      opts: { headRef?: string; e2eTestDelivery?: "comment" | "commit"; state?: "open" | "closed" } = {},
     ) {
       const slash = repoFullName.indexOf("/");
       const owner = repoFullName.slice(0, slash);
       const name = repoFullName.slice(slash + 1);
       await upsertRepositoryFromGitHub(env, { name, full_name: repoFullName, private: false, owner: { login: owner } }, 123);
       await upsertRepositorySettings(env, { repoFullName, autoLabelEnabled: false, requireLinkedIssue: false });
-      await upsertPullRequestFromGitHub(env, repoFullName, { number: prNumber, title: "Add retry to checkout", state: "open", user: { login: authorLogin }, author_association: "CONTRIBUTOR", head: { sha: headSha, ref: opts.headRef ?? "feature/checkout-retry" }, labels: [], body: "Retries the payment call once on a 5xx." });
+      await upsertPullRequestFromGitHub(env, repoFullName, {
+        number: prNumber,
+        title: "Add retry to checkout",
+        state: opts.state ?? "open",
+        ...(opts.state === "closed" ? { merged_at: "2026-07-26T00:00:00.000Z" } : {}),
+        user: { login: authorLogin },
+        author_association: "CONTRIBUTOR",
+        head: { sha: headSha, ref: opts.headRef ?? "feature/checkout-retry" },
+        labels: [],
+        body: "Retries the payment call once on a 5xx.",
+      });
       await upsertPullRequestFile(env, { repoFullName, pullNumber: prNumber, path: "src/checkout.ts", status: "modified", additions: 3, deletions: 0, changes: 3, payload: { patch: "+function retryPayment() {\n+  return true;\n+}" } });
       // A renamed-with-no-patch file (GitHub omits `patch` for pure renames) -- exercises the
       // payload?.patch-is-not-a-string branch in the files.map() that builds E2eTestGenChangedFile[].
@@ -4633,6 +4643,39 @@ describe("queue processors", () => {
 
       const skipped = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.e2e_tests_generation_skipped").first<{ detail: string }>();
       expect(skipped?.detail).toBe("cached_pr_missing");
+    });
+
+    // #9020 / #9311: mirrors the panel checkbox guard -- @loopover generate-tests on a closed/merged PR
+    // must short-circuit before authorization or AI generation.
+    it("skips immediately with pr_not_open when invoked on an already-merged PR, never calling AI", async () => {
+      const repoFullName = "JSONbored/gen-tests-9311-merged";
+      const run = vi.fn();
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run } as unknown as Ai,
+        LOOPOVER_REVIEW_E2E_TESTS: "true",
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+      });
+      await seedGenerateTestsPr(env, repoFullName, 9311, "gen-tests-9311-merged", "contributor", { state: "closed" });
+      let fetchCalls = 0;
+      vi.stubGlobal("fetch", async () => {
+        fetchCalls += 1;
+        return new Response("unexpected fetch", { status: 500 });
+      });
+
+      await processJob(env, generateTestsWebhook(repoFullName, 9311, "maintainer", { association: "MEMBER" }));
+
+      expect(fetchCalls).toBe(0);
+      expect(run).not.toHaveBeenCalled();
+      const skipped = await env.DB.prepare("select actor, target_key, detail from audit_events where event_type = ?")
+        .bind("github_app.e2e_tests_generation_skipped")
+        .first<{ actor: string | null; target_key: string; detail: string }>();
+      expect(skipped).toMatchObject({ actor: "maintainer", target_key: "JSONbored/gen-tests-9311-merged#9311", detail: "pr_not_open" });
+      const generated = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?")
+        .bind("github_app.e2e_tests_generation")
+        .first<{ n: number }>();
+      expect(generated?.n).toBe(0);
     });
 
     it("declines (returns false) for a non-command comment, claiming nothing", async () => {
@@ -5458,7 +5501,7 @@ describe("queue processors", () => {
       repoFullName: string,
       prNumber: number,
       headSha: string,
-      opts: { e2eTests?: boolean } = {},
+      opts: { e2eTests?: boolean; state?: "open" | "closed" } = {},
     ) {
       const slash = repoFullName.indexOf("/");
       const owner = repoFullName.slice(0, slash);
@@ -5473,7 +5516,8 @@ describe("queue processors", () => {
       await upsertPullRequestFromGitHub(env, repoFullName, {
         number: prNumber,
         title: "Add retry to checkout",
-        state: "open",
+        state: opts.state ?? "open",
+        ...(opts.state === "closed" ? { merged_at: "2026-07-26T00:00:00.000Z" } : {}),
         user: { login: "contributor" },
         author_association: "CONTRIBUTOR",
         head: { sha: headSha, ref: "feature/checkout-retry" },
@@ -5768,6 +5812,40 @@ describe("queue processors", () => {
         .bind("github_app.e2e_tests_generation_skipped")
         .first<{ detail: string }>();
       expect(skipped?.detail).toBe("cached_pr_missing");
+    });
+
+    // #9020 / #9311: the panel comment is deliberately preserved after merge/close and its generate-tests
+    // checkbox stays interactive on a closed/merged PR forever. Without the guard, a post-merge click would
+    // spend a real AI generation call (and in commit mode could push onto the merged branch).
+    it("skips immediately with pr_not_open when a maintainer checks the box on an already-merged PR, never calling AI", async () => {
+      const repoFullName = "JSONbored/checkbox-4589-merged";
+      const run = vi.fn();
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run } as unknown as Ai,
+        LOOPOVER_REVIEW_E2E_TESTS: "true",
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+      });
+      await seedCheckboxPr(env, repoFullName, 6015, "checkbox-4589-merged-sha", { state: "closed" });
+      let fetchCalls = 0;
+      vi.stubGlobal("fetch", async () => {
+        fetchCalls += 1;
+        return new Response("unexpected fetch", { status: 500 });
+      });
+
+      await processJob(env, checkboxWebhook(repoFullName, 6015, 913, { login: "maintainer" }));
+
+      expect(fetchCalls).toBe(0);
+      expect(run).not.toHaveBeenCalled();
+      const skipped = await env.DB.prepare("select actor, target_key, detail from audit_events where event_type = ?")
+        .bind("github_app.e2e_tests_generation_skipped")
+        .first<{ actor: string | null; target_key: string; detail: string }>();
+      expect(skipped).toMatchObject({ actor: "maintainer", target_key: "JSONbored/checkbox-4589-merged#6015", detail: "pr_not_open" });
+      const generated = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?")
+        .bind("github_app.e2e_tests_generation")
+        .first<{ n: number }>();
+      expect(generated?.n).toBe(0);
     });
 
     it("respects agentPaused — records a skip and never spends an LLM call, even though an authorized maintainer checked the box", async () => {

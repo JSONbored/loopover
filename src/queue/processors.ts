@@ -13508,6 +13508,12 @@ async function maybeProcessGenerateTestsCommand(env: Env, deliveryId: string, pa
     await recordGenerateTestsSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "cached_pr_missing");
     return true;
   }
+  // #9020 / #9311: mirrors maybeProcessPrPanelRetrigger's and maybeProcessPrPanelGenerateTests's identical guard --
+  // the text-command twin must not spend AI generation or attempt a commit on a closed/merged PR.
+  if (pr.state !== "open") {
+    await recordGenerateTestsSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "pr_not_open");
+    return true;
+  }
   const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "generate-tests" as LoopOverMentionCommandName, settings, pr, needsMinerDetection: true });
   if (!authorization.authorized) {
     await recordAuditEvent(env, { eventType: "github_app.e2e_tests_generation_denied", actor: req.actor, targetKey, outcome: "denied", detail: authorization.reason, metadata: { deliveryId, repoFullName: req.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "generate-tests") } });
@@ -14236,6 +14242,15 @@ async function maybeProcessPrPanelGenerateTests(
   ]);
   if (!pr) {
     await recordGenerateTestsSkip(env, deliveryId, repoFullName, targetKey, actor, "cached_pr_missing");
+    return true;
+  }
+  // #9020 / #9311: the panel comment is deliberately preserved after merge/close (#preserve-review-on-close) and its
+  // generate-tests checkbox stays interactive on GitHub forever, but every downstream step below assumes an OPEN PR --
+  // without this guard a post-merge click spends a real AI test-generation call (and in commit delivery mode can push
+  // onto an already-merged branch) before dying with no user-visible feedback. Mirrors
+  // maybeProcessPrPanelRetrigger's identical `pr.state !== "open"` guard (the sibling entry point).
+  if (pr.state !== "open") {
+    await recordGenerateTestsSkip(env, deliveryId, repoFullName, targetKey, actor, "pr_not_open");
     return true;
   }
 

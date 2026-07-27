@@ -4,8 +4,9 @@ import { z } from "zod";
 import { parsePositiveInt } from "../utils/json";
 import { analyzePRQueue, type AuthorRole, type ChecksStatus } from "../queue-intelligence";
 import { completeGitHubWebOAuth, createSessionFromGitHubToken, getLiveSessionGitHubToken, pollGitHubDeviceFlow, startGitHubDeviceFlow, startGitHubWebOAuth } from "../auth/github-oauth";
-import { enforceRateLimit, routeClassForPath } from "../auth/rate-limit";
+import { enforceRateLimit, enforceShotRenderGlobalCeiling, routeClassForPath } from "../auth/rate-limit";
 import { handleShot } from "../review/visual/shot";
+import { verifyShotRenderToken } from "../review/visual/shot-render-token";
 import { isScreenshotsEnabled } from "../review/visual-wire";
 import { buildFindingTaxonomyDocument } from "../review/finding-taxonomy";
 import { buildEnrichmentAnalyzersTaxonomyDocument } from "../review/enrichment-analyzers-taxonomy";
@@ -1377,12 +1378,35 @@ export function createApp() {
   // (*.workers.dev / *.pages.dev / PUBLIC_SITE_ORIGIN) AND the isSafeHttpUrl SSRF guard. Inert flag-OFF: with
   // LOOPOVER_REVIEW_SCREENSHOTS off nothing ever writes shots to R2, so ?key= 404s and ?url= still requires
   // an allowlisted public host. The route's own Cache-Control headers (per mode) are set inside handleShot;
-  // the rate-limit middleware classifies it as 'normal' (a sane public class) via routeClassForPath.
+  // the rate-limit middleware classifies it as 'expensive' (20 req/300s, the same class as every other
+  // headless-render/heavy-compute route) via routeClassForPath — it is the single most expensive
+  // unauthenticated operation this deployment exposes (a full headless-Chromium render per request), not a
+  // sane-default 'normal' route.
   // Flag-OFF = TRULY inert: when LOOPOVER_REVIEW_SCREENSHOTS is off nothing references this route (no comment
   // carries a /loopover/shot URL), so 404 it outright — that removes the on-demand `?url=` render surface
   // entirely until the feature is deliberately enabled, rather than relying on the host allowlist alone.
-  app.get("/loopover/shot", (c) => {
+  //
+  // TWO additional layers gate the render (`?url=`) mode specifically, on top of the per-identity rate limit
+  // above (#9044): (1) a signed, expiring token (shot-render-token.ts) that ORB itself mints when it embeds a
+  // `?url=` link in a review comment — a render only ever happens for a url ORB asked for, never an arbitrary
+  // caller-supplied one, checked BEFORE the render path so an invalid token never reaches handleShot's own
+  // host-allowlist/SSRF checks (which still apply underneath, defense-in-depth); and (2) a fixed-key GLOBAL
+  // render ceiling (enforceShotRenderGlobalCeiling), independent of caller identity, so rotating
+  // Cf-Connecting-Ip (the bypass this deployment's Node/tunnel topology made possible — see clientIp's own
+  // doc comment in auth/rate-limit.ts) can never manufacture more than the one shared bucket. Neither layer
+  // touches the `?key=`/placeholder modes, which never drive a render.
+  app.get("/loopover/shot", async (c) => {
     if (!isScreenshotsEnabled(c.env)) return c.notFound();
+    const params = new URL(c.req.url).searchParams;
+    const isRenderMode = !params.get("placeholder") && !params.get("key") && Boolean(params.get("url"));
+    if (isRenderMode) {
+      const target = params.get("url")!;
+      if (!(await verifyShotRenderToken(c.env, target, params))) {
+        return c.json({ error: "missing_or_invalid_shot_token" }, 403);
+      }
+      const limited = await enforceShotRenderGlobalCeiling(c);
+      if (limited) return limited;
+    }
     return handleShot(c.req.raw, c.env, {
       ...(c.env.PUBLIC_SITE_ORIGIN ? { productionUrl: c.env.PUBLIC_SITE_ORIGIN } : {}),
     });

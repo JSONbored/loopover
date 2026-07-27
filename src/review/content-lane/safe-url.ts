@@ -85,7 +85,11 @@ function ipv6IsPrivateOrLocal(host: string): boolean {
   return false;
 }
 
-function hostIsPrivateOrLocal(host: string): boolean {
+/** Exported (unlike this module's other internals) so a caller that has independently resolved a hostname to
+ *  a literal IP address (e.g. shot.ts's DNS-resolution pin, #9044) can run that resolved address through the
+ *  exact same disallowed-range checks a literal-IP URL already gets via isSafeHttpUrl -- without duplicating
+ *  the range tables here. Still pure: no I/O, just the same string-in/boolean-out check as always. */
+export function hostIsPrivateOrLocal(host: string): boolean {
   // Normalize once: lower-case, then strip the FQDN root dot(s) the parser keeps on named hosts
   // (`localhost.`) but not on IP literals — else `localhost.` / `foo.internal.` would read as public.
   const h = host.toLowerCase().replace(/\.+$/, "");

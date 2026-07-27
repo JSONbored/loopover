@@ -10,7 +10,7 @@ import { existsSync, readdirSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { serve } from "@hono/node-server";
+import { serve, type Http2Bindings, type HttpBindings } from "@hono/node-server";
 import packageJson from "../package.json";
 import worker from "./index";
 import { githubRestRateLimitRemainingSamples } from "./github/client";
@@ -998,7 +998,13 @@ async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 8787);
   const server = serve(
     {
-      fetch: async (request: Request) => {
+      fetch: async (request: Request, httpBindings: HttpBindings | Http2Bindings) => {
+        // #9044: the genuine TCP peer address of whoever connected directly to THIS process -- the second
+        // argument @hono/node-server's own FetchCallback type has always offered, previously ignored here.
+        // UNSPOOFABLE, unlike any header (Cf-Connecting-Ip / X-Forwarded-For are both caller-suppliable once
+        // a request reaches a plain Node socket). Threaded into a PER-REQUEST env below rather than mutating
+        // the shared `env` object, which every concurrent request reads.
+        const peerIp = httpBindings?.incoming?.socket?.remoteAddress;
         const path = new URL(request.url).pathname;
         if (path === "/health")
           return new Response(
@@ -1169,7 +1175,11 @@ async function main(): Promise<void> {
                   return finish(new Response(null, { status: 204 }));
                 }
               }
-              const response = await worker.fetch(request, env, ctx);
+              // Per-request env (never a mutation of the shared `env`, which every concurrent request reads):
+              // only differs from it by LOOPOVER_PEER_IP, threaded through so clientIp() (auth/rate-limit.ts)
+              // can make the loopback-trust decision described on the peer IP env field's own doc comment.
+              const requestEnv = peerIp ? ({ ...env, LOOPOVER_PEER_IP: peerIp } as Env) : env;
+              const response = await worker.fetch(request, requestEnv, ctx);
               if (deliveryId && response.ok) {
                 // Best-effort — never block the response on a cache write failure.
                 void rememberWebhookDelivery(webhookCache!, deliveryId).catch(

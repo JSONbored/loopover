@@ -56,11 +56,20 @@ describe("progressChanged — push on change, not on a fixed interval (#4800)", 
     expect(progressChanged(null, base)).toBe(true);
   });
 
-  it("pushes when phase, status, iteration, or the activity tail changes", () => {
+  it("pushes when phase, status, iteration, maxIterations, percentComplete, or the activity tail changes", () => {
     expect(progressChanged(base, buildProgressSnapshot(running({ phase: "reviewing", recentActivity: [{ step: "a" }] })))).toBe(true);
     expect(progressChanged(base, buildProgressSnapshot(running({ status: "converged", recentActivity: [{ step: "a" }] })))).toBe(true);
     expect(progressChanged(base, buildProgressSnapshot(running({ iteration: 3, recentActivity: [{ step: "a" }] })))).toBe(true);
+    expect(progressChanged(base, buildProgressSnapshot(running({ maxIterations: 10, recentActivity: [{ step: "a" }] })))).toBe(true);
     expect(progressChanged(base, buildProgressSnapshot(running({ recentActivity: [{ step: "a" }, { step: "b" }] })))).toBe(true);
+  });
+
+  it("REGRESSION (#9323): pushes when maxIterations changes even if iteration/phase/status/activity are unchanged", () => {
+    const before = buildProgressSnapshot(running({ iteration: 2, maxIterations: 5, recentActivity: [{ step: "a" }] }));
+    const after = buildProgressSnapshot(running({ iteration: 2, maxIterations: 10, recentActivity: [{ step: "a" }] }));
+    expect(before.percentComplete).toBe(40);
+    expect(after.percentComplete).toBe(20);
+    expect(progressChanged(before, after)).toBe(true);
   });
 
   it("does not push when nothing displayed has changed", () => {

@@ -78,13 +78,16 @@ function activityChanged(prev: readonly LoopProgressActivity[], next: readonly L
 
 /** True when `next` differs from `prev` in a way worth pushing to the customer — so the surface streams
  *  ON CHANGE instead of polling on a fixed interval (#4800's acceptance). A null `prev` (the first snapshot)
- *  always pushes. Compares the displayed axes: phase, status, iteration, and the activity tail's contents. */
+ *  always pushes. Compares the displayed axes: phase, status, iteration, maxIterations, percentComplete,
+ *  and the activity tail's contents. */
 export function progressChanged(prev: ProgressSnapshot | null, next: ProgressSnapshot): boolean {
   if (prev === null) return true;
   return (
     prev.phase !== next.phase ||
     prev.status !== next.status ||
     prev.iteration !== next.iteration ||
+    prev.maxIterations !== next.maxIterations ||
+    prev.percentComplete !== next.percentComplete ||
     activityChanged(prev.recentActivity, next.recentActivity)
   );
 }

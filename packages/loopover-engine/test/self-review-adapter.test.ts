@@ -23,8 +23,22 @@ function openIssue(number: number, title: string): IssueRecord {
   return { repoFullName: "acme/widgets", number, title, state: "open", labels: [], linkedPrs: [] };
 }
 
+/** The rival PR the duplicate-blocker fixtures need. `changedFiles` is load-bearing since #9129: a duplicate
+ *  overlap corroborated only by body text now raises the always-advisory `duplicate_pr_risk_unconfirmed`
+ *  code instead of the blocking `duplicate_pr_risk`, so a rival with no changed files would no longer block
+ *  the predicted gate. Naming BASE_DIFF_STATE's own file exercises the changed-file-overlap arm of
+ *  hasDuplicateOverlapCorroboration. */
 function openPr(number: number, title: string, linkedIssues: number[] = []): PullRequestRecord {
-  return { repoFullName: "acme/widgets", number, title, state: "open", authorLogin: "someone-else", linkedIssues, labels: [] };
+  return {
+    repoFullName: "acme/widgets",
+    number,
+    title,
+    state: "open",
+    authorLogin: "someone-else",
+    linkedIssues,
+    labels: [],
+    changedFiles: ["src/upload.ts"],
+  };
 }
 
 const BASE_DIFF_STATE: AttemptDiffState = {
@@ -136,9 +150,16 @@ test("runSelfReview: a genuinely blocked synthetic diff (duplicate PR) matches c
   const context = baseContext({ pullRequests: [openPr(42, "Retry uploads on 5xx responses", [7])] });
   const result = runSelfReview(BASE_DIFF_STATE, context, { runSlopAssessment: () => noopSlop });
 
-  assert.equal(result.predictedGateVerdict.conclusion, "failure");
+  // #9129: a duplicate_pr_risk finding HOLDS the gate (neutral) rather than failing it under any
+  // duplicatePrGateMode -- the close-authority fix for the offensive-close attack, pinned identically by the
+  // host's golden corpus entry `duplicate-block-mode-holds`. `passesPredictedGate` stays false either way:
+  // a hold is still not a pass, which is what keeps the miner loop from handing off on a duplicate.
+  assert.equal(result.predictedGateVerdict.conclusion, "neutral");
   assert.equal(result.passesPredictedGate, false);
-  assert.ok(result.predictedGateVerdict.blockers.some((b) => b.code === "duplicate_pr_risk"));
+  // Held, so the finding moves out of `blockers` and into `warnings` -- exactly once (#9129 regression: the
+  // hold path spread the escalated blocker into a warning set that already contained it).
+  assert.deepEqual(result.predictedGateVerdict.blockers, []);
+  assert.equal(result.predictedGateVerdict.warnings.filter((w) => w.code === "duplicate_pr_risk").length, 1);
 
   const direct = buildPredictedGateVerdict({
     input: buildSelfReviewPredictedGateInput(BASE_DIFF_STATE),

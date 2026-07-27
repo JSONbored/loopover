@@ -250,6 +250,22 @@ describe("AI fail-closed hold (#ai-fail-closed)", () => {
     expect(result.blockers).toEqual([]);
   });
 
+  it("REGRESSION (#9129): a duplicate-only HOLD lists each held blocker exactly once in warnings", () => {
+    // duplicate_pr_risk is authored `severity: "warning"`, so it is ALREADY in the warning set the hold path
+    // spreads; appending the escalated blocker unfiltered listed it twice on the panel. The failure path has
+    // always excluded blockers from that spread -- the hold path now does the same.
+    const advisory = missingIssueAdvisory();
+    advisory.findings.push({ code: "duplicate_pr_risk", title: "Possible duplicate PR", severity: "warning", detail: "Overlaps #9.", action: "Close the duplicate." });
+    const eff = resolveEffectiveSettings(settings({ linkedIssueGateMode: "advisory", duplicatePrGateMode: "block" }), parseFocusManifest(null));
+    const result = evaluateGateCheck(advisory, gateCheckPolicy(eff, null, true));
+
+    expect(result.conclusion).toBe("neutral"); // held for a human, never closed (#9129)
+    expect(result.blockers).toEqual([]);
+    expect(result.warnings.filter((finding) => finding.code === "duplicate_pr_risk")).toHaveLength(1);
+    // The non-blocker warning alongside it is still carried through exactly once, unaffected by the filter.
+    expect(result.warnings.filter((finding) => finding.code === "missing_linked_issue")).toHaveLength(1);
+  });
+
   it("REGRESSION (#9082): an incomplete secret scan HOLDS the gate (neutral), never one-shot-closes a PR ORB couldn't read", () => {
     const held: Advisory = {
       ...missingIssueAdvisory(),

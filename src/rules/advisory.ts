@@ -824,7 +824,11 @@ function evaluateGateCheckCore(advisoryResult: Advisory, policy: GateCheckPolicy
       title: `${LOOPOVER_GATE_CHECK_NAME} — held for manual review`,
       summary: blockers.map((finding) => sanitizeForCheckRun(finding.title)).join("; "),
       blockers: [],
-      warnings: [...gateWarnings, ...blockers],
+      // Held blockers move INTO warnings so the panel still shows them -- but `gateWarnings` is every
+      // warning-severity finding, and an escalated blocker (duplicate_pr_risk is authored `severity:
+      // "warning"`) is already in there, so appending it unfiltered listed it twice. Same
+      // `!blockers.includes(...)` exclusion the failure path below already applies, for the same reason.
+      warnings: [...gateWarnings.filter((finding) => !blockers.includes(finding)), ...blockers],
     };
   }
   // Name the exact blocker(s) + fix in the title so the contributor sees WHY at a glance.

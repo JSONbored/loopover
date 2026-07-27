@@ -116,4 +116,20 @@ export {
   type ProviderLike,
   type Verdict,
 } from "./registry-logic";
+export {
+  fetchSurfaceProbe,
+  makeSurfaceEntryVerifier,
+  probeToEvidence,
+  verifySurfaceEntry,
+  FUNCTIONAL_INCONCLUSIVE_REASON,
+  FUNCTIONAL_NOT_SERVED_REASON,
+  GROUNDING_INCONCLUSIVE_REASON,
+  GROUNDING_UNCONFIRMED_REASON,
+  MAX_PROBE_BODY_CHARS,
+  SURFACE_GROUNDING_MIN_STRONG,
+  type SurfaceCheckOutcome,
+  type SurfaceCheckResult,
+  type SurfaceEntryVerification,
+  type SurfaceProbe,
+} from "./surface-verification";
 export { runSurfaceReview, diffAppendedSurfaceEntries, type SurfaceReviewInput, type SurfaceReviewResult } from "./orchestrator";

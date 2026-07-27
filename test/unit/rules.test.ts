@@ -1638,6 +1638,37 @@ describe("advisory rules", () => {
     }
   });
 
+  it("flags Missing test evidence for .mts/.cts/.mjs/.cjs/.kts/.scala/.groovy via isCodePath + isCodeFile parity (#9322)", () => {
+    // Regression: isCodeFile recognizes these via SOURCE_FILE_EXTENSION, but isCodePath lagged — so
+    // annotatablePullRequestFiles dropped them before Missing test evidence annotations could land.
+    const advisory = buildPullRequestAdvisory(repo, {
+      repoFullName: repo.fullName, number: 26, title: "Add module/JVM sources without tests", state: "open",
+      authorLogin: "contributor", authorAssociation: "NONE", labels: [], linkedIssues: [],
+    });
+    const sourcePaths = [
+      "src/loader.mts",
+      "src/setup.cts",
+      "src/legacy.mjs",
+      "src/compat.cjs",
+      "build.kts",
+      "src/Main.scala",
+      "src/App.groovy",
+    ];
+    const files: PullRequestFileRecord[] = sourcePaths.map((path) => ({
+      repoFullName: repo.fullName, pullNumber: 26, path, additions: 10, deletions: 0, changes: 10, payload: {},
+    }));
+    const collisions: CollisionReport = {
+      repoFullName: repo.fullName, generatedAt: "2026-06-10T00:00:00.000Z",
+      summary: { clusterCount: 0, highRiskCount: 0, itemsReviewed: 0 }, clusters: [],
+    };
+
+    const { annotations } = buildCheckRunAnnotations(advisory, { files, collisions, pullNumber: 26 }, "standard");
+
+    for (const path of sourcePaths) {
+      expect(annotations.some((entry) => entry.title === "Missing test evidence" && entry.path === path)).toBe(true);
+    }
+  });
+
   it("buildCheckRunAnnotations uses notice level for medium-risk collisions and critical public finding text", () => {
     const advisory = {
       ...buildPullRequestAdvisory(repo, null),

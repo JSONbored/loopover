@@ -263,7 +263,17 @@ async function peekWebhookInstallationId(c: Context<{ Bindings: Env }>): Promise
 }
 
 async function validateBearerForRateLimit(c: Context<{ Bindings: Env }>, token: string): Promise<boolean> {
-  return Boolean((await authenticatePrivateToken(c.env, token)) ?? (await authenticateInternalToken(c.env, token)));
+  try {
+    return Boolean((await authenticatePrivateToken(c.env, token)) ?? (await authenticateInternalToken(c.env, token)));
+  } catch (error) {
+    // Fail OPEN (#5000, same reasoning as the DO-fetch catch in checkRateLimitBucket above): this call only
+    // classifies which rate-limit bucket a caller lands in (falling back to IP-keying below), it is never the
+    // actual authorization decision -- a D1 hiccup during the session-token lookup inside
+    // authenticatePrivateToken must not crash the whole request (no app.onError is registered), it should
+    // just be treated the same as an unrecognized token.
+    console.warn(JSON.stringify({ level: "warn", event: "rate_limit_identity_check_failed", message: error instanceof Error ? error.message : String(error) }));
+    return false;
+  }
 }
 
 const LOOPBACK_PEER_IPS = new Set(["127.0.0.1", "::1"]);

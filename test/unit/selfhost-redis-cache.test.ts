@@ -15,29 +15,39 @@ import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 /** Minimal in-memory stand-in for the ioredis methods the cache uses. Emulates real Redis SET NX
  *  semantics (refuse + return null when NX is requested and the key already exists) so a test
  *  using this fake actually exercises the atomicity claim() depends on, not just a plain overwrite. */
-function fakeRedis(): Redis & { _store: Map<string, string> } {
+function fakeRedis(): Redis & { _store: Map<string, string>; _ttls: Map<string, number> } {
   const _store = new Map<string, string>();
+  const _ttls = new Map<string, number>();
   return {
     _store,
+    _ttls,
     async get(k: string) {
       return _store.get(k) ?? null;
     },
-    async set(k: string, v: string, _ex: "EX", _ttl: number, nx?: "NX") {
+    async set(k: string, v: string, _ex: "EX", ttl: number, nx?: "NX") {
       if (nx === "NX" && _store.has(k)) return null;
       _store.set(k, v);
+      _ttls.set(k, ttl);
       return "OK";
     },
     async del(k: string) {
       _store.delete(k);
       return 1;
     },
-    // Emulates the Lua eval releaseIfValue runs: delete k only when its stored value equals the expected arg.
-    async eval(_script: string, _numkeys: number, k: string, expected: string) {
+    // Emulates the two compare-and-act Lua evals this module runs, distinguished by the command they call:
+    // releaseIfValue deletes on match; renewIfValue (#9467) resets the TTL on match. Both must be no-ops on a
+    // mismatch -- that is the whole ownership guarantee.
+    async eval(script: string, _numkeys: number, k: string, expected: string, ttl?: string) {
       if (_store.get(k) !== expected) return 0;
+      if (script.includes("expire")) {
+        _ttls.set(k, Number(ttl));
+        return 1;
+      }
       _store.delete(k);
+      _ttls.delete(k);
       return 1;
     },
-  } as unknown as Redis & { _store: Map<string, string> };
+  } as unknown as Redis & { _store: Map<string, string>; _ttls: Map<string, number> };
 }
 
 describe("createRedisCache (#1216 webhook dedup cache)", () => {
@@ -78,6 +88,40 @@ describe("createRedisCache (#1216 webhook dedup cache)", () => {
     const brokenRedis = { async set() { throw new Error("connection refused"); } } as unknown as Redis;
     const cache = createRedisCache(brokenRedis);
     await expect(cache.claim("lock", "1", 60)).rejects.toThrow("connection refused");
+  });
+
+  // #9467: renewal must be compare-and-extend for the same reason release is compare-and-delete -- a GET
+  // followed by a separate EXPIRE could extend a key a NEW claimant wrote in between, handing the stale
+  // holder's renewal to the live holder's lock.
+  it("renewIfValue extends the TTL only when the stored value matches the caller's own token (#9467)", async () => {
+    const redis = fakeRedis();
+    const cache = createRedisCache(redis);
+    await cache.claim!("lock", "holder-a", 600);
+    expect(redis._ttls.get("lock")).toBe(600);
+
+    // The owner renews: TTL is reset, ownership unchanged.
+    expect(await cache.renewIfValue!("lock", "holder-a", 900)).toBe(true);
+    expect(redis._ttls.get("lock")).toBe(900);
+    expect(redis._store.get("lock")).toBe("holder-a");
+
+    // A DIFFERENT holder's renewal must not touch it -- this is the double-actuation guard.
+    expect(await cache.renewIfValue!("lock", "holder-b", 5)).toBe(false);
+    expect(redis._ttls.get("lock")).toBe(900);
+  });
+
+  it("renewIfValue returns false for a key that no longer exists, so a stale holder learns it lost (#9467)", async () => {
+    const redis = fakeRedis();
+    const cache = createRedisCache(redis);
+    expect(await cache.renewIfValue!("never-claimed", "holder-a", 600)).toBe(false);
+  });
+
+  it("renewIfValue does not resurrect a released lock (#9467)", async () => {
+    const redis = fakeRedis();
+    const cache = createRedisCache(redis);
+    await cache.claim!("lock", "holder-a", 600);
+    await cache.releaseIfValue!("lock", "holder-a");
+    expect(await cache.renewIfValue!("lock", "holder-a", 600)).toBe(false);
+    expect(redis._store.has("lock")).toBe(false);
   });
 
   it("releaseIfValue deletes the key only when the stored value matches the caller's own token (#2129)", async () => {

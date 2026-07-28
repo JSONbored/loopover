@@ -72,6 +72,12 @@ declare global {
        *  deleting a different holder's live claim on the same key. Required on any adapter that implements
        *  `claim()` (validated at self-host boot). */
       releaseIfValue?(key: string, value: string): Promise<boolean>;
+      /** Atomic compare-and-extend: resets `key`'s TTL only when its current value equals `value`, returning
+       *  whether it was extended (#9467). The compare is what makes a renewal safe — a holder whose lock has
+       *  already expired and been re-claimed by someone else must NOT extend the new holder's key, and must be
+       *  able to learn that it lost ownership. Optional: an adapter without it simply gets no renewal, and the
+       *  lock behaves exactly as it did before (fixed TTL). */
+      renewIfValue?(key: string, value: string, ttlSeconds: number): Promise<boolean>;
     };
     PUBLIC_API_ORIGIN?: string;
     PUBLIC_SITE_ORIGIN?: string;

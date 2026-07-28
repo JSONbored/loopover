@@ -8,6 +8,7 @@ import {
   releaseContributorCapLock,
   releasePrActuationLock,
   releaseTransientLockIfOwner,
+  startLockHeartbeat,
 } from "../../src/queue/transient-locks";
 import { createTestEnv } from "../helpers/d1";
 
@@ -595,5 +596,248 @@ describe("releaseTransientLockIfOwner — no-op when there's no releaseIfValue p
     });
     delete env.SUBMISSION_LOCK;
     await expect(releaseTransientLockIfOwner(env, "key", "token")).resolves.toBeUndefined();
+  });
+});
+
+// #9467: the TTLs were sized when the actuation lock covered a short plan-and-execute section. #9013 moved the
+// claim BEFORE maybePublishPrPublicSurface, so the 600s lock now wraps the whole publish -> AI review ->
+// maintain unit -- and the AI review alone can exceed it (3 attempts x up to 600s, per model). When the TTL
+// lapsed mid-work the holder was never told, so a second worker claimed the same PR and both actuated it.
+describe("startLockHeartbeat (#9467)", () => {
+  /** Minimal transient-cache stand-in with a real compare-and-extend, so ownership is genuinely modelled. */
+  function heartbeatCache(initial: Record<string, string> = {}) {
+    const store = new Map<string, string>(Object.entries(initial));
+    const renewals: string[] = [];
+    return {
+      renewals,
+      store,
+      cache: {
+        async get(k: string) {
+          return store.get(k) ?? null;
+        },
+        async set(k: string, v: string) {
+          store.set(k, v);
+        },
+        async claim(k: string, v: string) {
+          if (store.has(k)) return false;
+          store.set(k, v);
+          return true;
+        },
+        async releaseIfValue(k: string, v: string) {
+          if (store.get(k) !== v) return false;
+          store.delete(k);
+          return true;
+        },
+        async renewIfValue(k: string, v: string) {
+          renewals.push(k);
+          return store.get(k) === v;
+        },
+      },
+    };
+  }
+
+  afterEach(() => vi.useRealTimers());
+
+  it("INVARIANT: a holder still working past its TTL keeps the lock — the whole point", async () => {
+    vi.useFakeTimers();
+    const { cache, renewals } = heartbeatCache({ "lock:k": "tok" });
+    const env = { SELFHOST_TRANSIENT_CACHE: cache } as unknown as Env;
+    const beat = startLockHeartbeat(env, "lock:k", "tok", 600, { intervalMsOverride: 1_000 });
+
+    // Simulate work running for well past the nominal TTL.
+    for (let i = 0; i < 5; i += 1) {
+      await vi.advanceTimersByTimeAsync(1_000);
+    }
+    beat.stop();
+    expect(renewals.length).toBeGreaterThanOrEqual(5); // renewed repeatedly rather than lapsing
+  });
+
+  it("INVARIANT: stopping halts renewal, so a completed job never extends a key it released", async () => {
+    vi.useFakeTimers();
+    const { cache, renewals } = heartbeatCache({ "lock:k": "tok" });
+    const env = { SELFHOST_TRANSIENT_CACHE: cache } as unknown as Env;
+    const beat = startLockHeartbeat(env, "lock:k", "tok", 600, { intervalMsOverride: 1_000 });
+    await vi.advanceTimersByTimeAsync(1_000);
+    const afterFirst = renewals.length;
+    beat.stop();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(renewals.length).toBe(afterFirst); // no further renewals after stop
+  });
+
+  it("REGRESSION: a holder that LOST the key is told, and stops renewing — it must not extend the new owner's lock", async () => {
+    vi.useFakeTimers();
+    const { cache, store } = heartbeatCache({ "lock:k": "tok" });
+    const env = { SELFHOST_TRANSIENT_CACHE: cache } as unknown as Env;
+    let lost = false;
+    startLockHeartbeat(env, "lock:k", "tok", 600, { intervalMsOverride: 1_000, onLost: () => void (lost = true) });
+
+    store.set("lock:k", "someone-elses-token"); // the TTL lapsed and another worker claimed it (or #9008 stole it)
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(lost).toBe(true);
+    expect(store.get("lock:k")).toBe("someone-elses-token"); // the new owner's claim is untouched
+  });
+
+  it("REGRESSION: a lost key stops the heartbeat permanently (no further renewals after onLost)", async () => {
+    vi.useFakeTimers();
+    const { cache, store, renewals } = heartbeatCache({ "lock:k": "tok" });
+    const env = { SELFHOST_TRANSIENT_CACHE: cache } as unknown as Env;
+    startLockHeartbeat(env, "lock:k", "tok", 600, { intervalMsOverride: 1_000 });
+    store.set("lock:k", "other");
+    await vi.advanceTimersByTimeAsync(1_000);
+    const afterLoss = renewals.length;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(renewals.length).toBe(afterLoss);
+  });
+
+  it("fails OPEN for a fail-open claim (null token) — nothing to renew, and no crash", async () => {
+    const { cache, renewals } = heartbeatCache();
+    const env = { SELFHOST_TRANSIENT_CACHE: cache } as unknown as Env;
+    const beat = startLockHeartbeat(env, "lock:k", null, 600);
+    beat.stop();
+    expect(renewals).toEqual([]);
+  });
+
+  it("fails OPEN on an adapter without compare-and-extend — a blind re-set would extend the WRONG holder", async () => {
+    const env = { SELFHOST_TRANSIENT_CACHE: { async get() { return null; }, async set() {} } } as unknown as Env;
+    const beat = startLockHeartbeat(env, "lock:k", "tok", 600);
+    expect(() => beat.stop()).not.toThrow();
+  });
+
+  it("fails OPEN with no cache bound at all", async () => {
+    const beat = startLockHeartbeat({} as unknown as Env, "lock:k", "tok", 600);
+    expect(() => beat.stop()).not.toThrow();
+  });
+
+  it("fails OPEN when renewal THROWS, and keeps trying on later ticks", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    const cache = {
+      async get() { return null; },
+      async set() {},
+      async renewIfValue() {
+        calls += 1;
+        throw new Error("redis unreachable");
+      },
+    };
+    const env = { SELFHOST_TRANSIENT_CACHE: cache } as unknown as Env;
+    let lost = false;
+    const beat = startLockHeartbeat(env, "lock:k", "tok", 600, { intervalMsOverride: 1_000, onLost: () => void (lost = true) });
+    await vi.advanceTimersByTimeAsync(3_000);
+    beat.stop();
+    expect(calls).toBeGreaterThanOrEqual(3); // retried rather than giving up
+    expect(lost).toBe(false); // a transient error is NOT "you lost the lock" -- that would abort real work
+  });
+
+  it("derives a sub-TTL interval by default, leaving room to recover from a failed renewal", () => {
+    vi.useFakeTimers();
+    const { cache, renewals } = heartbeatCache({ "lock:k": "tok" });
+    const env = { SELFHOST_TRANSIENT_CACHE: cache } as unknown as Env;
+    const beat = startLockHeartbeat(env, "lock:k", "tok", 600); // → 200s interval, i.e. 2 chances before lapse
+    vi.advanceTimersByTime(199_000);
+    expect(renewals.length).toBe(0);
+    beat.stop();
+  });
+
+  it("clamps a tiny TTL to a floor so it cannot spin the event loop", () => {
+    vi.useFakeTimers();
+    const { cache, renewals } = heartbeatCache({ "lock:k": "tok" });
+    const env = { SELFHOST_TRANSIENT_CACHE: cache } as unknown as Env;
+    const beat = startLockHeartbeat(env, "lock:k", "tok", 1); // 1s/3 → floored to 1000ms
+    vi.advanceTimersByTime(999);
+    expect(renewals.length).toBe(0);
+    beat.stop();
+  });
+});
+
+// #9467 end-to-end: the property that actually matters is not "renewIfValue was called" but "a competing pass
+// is still refused while the holder works". This drives claim -> heartbeat -> competing claim against a cache
+// that genuinely EXPIRES keys, so without the heartbeat the second claim would succeed and both passes would
+// actuate the same PR.
+describe("lock heartbeat end-to-end (#9467)", () => {
+  /** Transient cache with real TTL expiry, so a lapse is observable rather than simulated. */
+  function expiringCache() {
+    const store = new Map<string, { value: string; expiresAtMs: number }>();
+    const alive = (k: string) => {
+      const e = store.get(k);
+      if (!e) return null;
+      if (e.expiresAtMs <= Date.now()) {
+        store.delete(k);
+        return null;
+      }
+      return e;
+    };
+    return {
+      async get(k: string) {
+        return alive(k)?.value ?? null;
+      },
+      async set(k: string, v: string, ttl: number) {
+        store.set(k, { value: v, expiresAtMs: Date.now() + ttl * 1000 });
+      },
+      async claim(k: string, v: string, ttl: number) {
+        if (alive(k)) return false;
+        store.set(k, { value: v, expiresAtMs: Date.now() + ttl * 1000 });
+        return true;
+      },
+      async releaseIfValue(k: string, v: string) {
+        if (alive(k)?.value !== v) return false;
+        store.delete(k);
+        return true;
+      },
+      async renewIfValue(k: string, v: string, ttl: number) {
+        const e = alive(k);
+        if (e?.value !== v) return false;
+        e.expiresAtMs = Date.now() + ttl * 1000;
+        return true;
+      },
+    };
+  }
+
+  afterEach(() => vi.useRealTimers());
+
+  it("INVARIANT: a competing claim stays refused for the whole time the holder is still working", async () => {
+    vi.useFakeTimers();
+    const env = { SELFHOST_TRANSIENT_CACHE: expiringCache() } as unknown as Env;
+    const held = await claimTransientLock(env, "lock:pr", 3); // deliberately tiny TTL
+    expect(held.acquired).toBe(true);
+
+    const beat = startLockHeartbeat(env, "lock:pr", held.ownerToken, 3, { intervalMsOverride: 1_000 });
+    // Work for 5x the TTL.
+    for (let i = 0; i < 15; i += 1) {
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect((await claimTransientLock(env, "lock:pr", 3)).acquired).toBe(false);
+    }
+    beat.stop();
+  });
+
+  it("REGRESSION: WITHOUT a heartbeat the same lock lapses and a second pass claims it (the bug)", async () => {
+    vi.useFakeTimers();
+    const env = { SELFHOST_TRANSIENT_CACHE: expiringCache() } as unknown as Env;
+    expect((await claimTransientLock(env, "lock:pr", 3)).acquired).toBe(true);
+    await vi.advanceTimersByTimeAsync(4_000); // past the TTL, holder still "working"
+    // This is exactly the double-actuation window #9467 closes.
+    expect((await claimTransientLock(env, "lock:pr", 3)).acquired).toBe(true);
+  });
+
+  it("INVARIANT: once the holder stops, the lock lapses normally and the next pass can claim it", async () => {
+    vi.useFakeTimers();
+    const env = { SELFHOST_TRANSIENT_CACHE: expiringCache() } as unknown as Env;
+    const held = await claimTransientLock(env, "lock:pr", 3);
+    const beat = startLockHeartbeat(env, "lock:pr", held.ownerToken, 3, { intervalMsOverride: 1_000 });
+    await vi.advanceTimersByTimeAsync(2_000);
+    beat.stop();
+    await vi.advanceTimersByTimeAsync(4_000); // no longer renewed
+    expect((await claimTransientLock(env, "lock:pr", 3)).acquired).toBe(true);
+  });
+
+  it("INVARIANT: releasing while the heartbeat ran still frees the lock immediately", async () => {
+    vi.useFakeTimers();
+    const env = { SELFHOST_TRANSIENT_CACHE: expiringCache() } as unknown as Env;
+    const held = await claimTransientLock(env, "lock:pr", 60);
+    const beat = startLockHeartbeat(env, "lock:pr", held.ownerToken, 60, { intervalMsOverride: 1_000 });
+    await vi.advanceTimersByTimeAsync(2_000);
+    beat.stop();
+    await releaseTransientLockIfOwner(env, "lock:pr", held.ownerToken);
+    expect((await claimTransientLock(env, "lock:pr", 60)).acquired).toBe(true);
   });
 });

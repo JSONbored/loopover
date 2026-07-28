@@ -15,8 +15,8 @@
 // drizzle-orm's getTableColumns (keyed by each column's .name -- the actual DB column name, not the JS
 // property name). Diff the two column-name sets per table.
 //
-// Run via `tsx` (not plain `node`) for the same reason as check-migrations.ts and
-// check-openapi-settings-parity.ts: this script imports src/db/schema.ts (a .ts module) directly, and a bare
+// Run via `tsx` (not plain `node`) for the same reason as check-migrations.ts: this script imports
+// src/db/schema.ts (a .ts module) directly, and a bare
 // `node` invocation can't resolve a `.ts` import without an experimental flag CI's pinned Node isn't
 // guaranteed to support.
 import { readdirSync, readFileSync } from "node:fs";

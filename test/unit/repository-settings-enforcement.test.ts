@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { defaultRepositorySettings } from "../../src/db/repositories";
 import { gateCheckPolicy } from "../../src/queue/processors";
 import { evaluateGateCheck } from "../../src/rules/advisory";
 import { runAiReviewForAdvisory } from "../../src/queue/processors";
@@ -9,6 +10,9 @@ import type { Advisory, PullRequestRecord, RepositoryRecord, RepositorySettings 
 
 function settings(over: Partial<RepositorySettings> = {}): RepositorySettings {
   return {
+    // #9531: the built-in defaults fill the thirteen config-as-code fields this literal used to
+    // silently omit; every explicit value below still overrides them.
+    ...defaultRepositorySettings("fixture/fixture"),
     repoFullName: "owner/repo",
     commentMode: "detected_contributors_only",
     publicAudienceMode: "oss_maintainer",

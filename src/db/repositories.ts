@@ -712,11 +712,16 @@ export async function listRepositories(env: Env): Promise<RepositoryRecord[]> {
   return rows.map(toRepositoryRecord);
 }
 
-export async function getRepositorySettings(env: Env, fullName: string): Promise<RepositorySettings> {
-  const db = getDb(env.DB);
-  const [row] = await db.select().from(repositorySettings).where(eq(repositorySettings.repoFullName, fullName)).limit(1);
-  if (!row) {
-    return {
+/**
+ * The complete built-in default settings for a repo LoopOver has no row for (#9531).
+ *
+ * Extracted from getRepositorySettings' no-row branch so it has ONE home: the read path returns it,
+ * and the test fixtures that build full RepositorySettings literals spread it instead of each
+ * hand-maintaining a private copy of every config-as-code default -- which is how ten of them came
+ * to silently omit the same thirteen fields.
+ */
+export function defaultRepositorySettings(fullName: string): RepositorySettings {
+  return {
       repoFullName: fullName,
       commentMode: "detected_contributors_only",
       publicAudienceMode: "oss_maintainer",
@@ -805,7 +810,13 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       mergeTrainMode: "off",
       screenshotTableGate: { ...DEFAULT_SCREENSHOT_TABLE_GATE, whenLabels: [], whenPaths: [], requireViewports: [], requireThemes: [] },
     };
-  }
+}
+
+
+export async function getRepositorySettings(env: Env, fullName: string): Promise<RepositorySettings> {
+  const db = getDb(env.DB);
+  const [row] = await db.select().from(repositorySettings).where(eq(repositorySettings.repoFullName, fullName)).limit(1);
+  if (!row) return defaultRepositorySettings(fullName);
   return {
     repoFullName: row.repoFullName,
     // Config-as-code only (Batch A, loopover#6442): no DB column backs these 9 fields anymore -- the
@@ -1055,6 +1066,11 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     draftPrClosePolicy: "off" as const, // #6440/#draft-pr-close-policy: config-as-code only now -- any caller-supplied value is a silent no-op, configure via .loopover.yml settings.draftPrClosePolicy instead
     mergeTrainMode: "off" as const,
     screenshotTableGate: normalizeScreenshotTableGateConfig(settings.screenshotTableGate, []),
+    // #9531: both GET paths always return these two config-as-code-only fields, so RepositorySettings
+    // declares them required and this write-path echo must carry the same built-in defaults the read
+    // paths do -- omitting them made PUT's response a different shape from GET's for the same repo.
+    linkedIssueHardRules: { ...DEFAULT_LINKED_ISSUE_HARD_RULES, pointBearingLabels: [], maintainerOnlyLabels: [] },
+    synchronizeClosePolicy: "off" as const,
   } satisfies RepositorySettings;
   const db = getDb(env.DB);
   await db

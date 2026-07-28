@@ -9206,7 +9206,8 @@
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "nullable": true
           },
           "advisoryCheckRuns": {
             "type": "array",
@@ -9690,6 +9691,9 @@
                 },
                 "addedAt": {
                   "type": "string"
+                },
+                "githubId": {
+                  "type": "integer"
                 }
               },
               "required": [
@@ -9704,8 +9708,6 @@
                 "type": "string",
                 "enum": [
                   "observe",
-                  "suggest",
-                  "propose",
                   "auto_with_approval",
                   "auto"
                 ]
@@ -9714,8 +9716,6 @@
                 "type": "string",
                 "enum": [
                   "observe",
-                  "suggest",
-                  "propose",
                   "auto_with_approval",
                   "auto"
                 ]
@@ -9724,8 +9724,6 @@
                 "type": "string",
                 "enum": [
                   "observe",
-                  "suggest",
-                  "propose",
                   "auto_with_approval",
                   "auto"
                 ]
@@ -9734,8 +9732,6 @@
                 "type": "string",
                 "enum": [
                   "observe",
-                  "suggest",
-                  "propose",
                   "auto_with_approval",
                   "auto"
                 ]
@@ -9744,8 +9740,6 @@
                 "type": "string",
                 "enum": [
                   "observe",
-                  "suggest",
-                  "propose",
                   "auto_with_approval",
                   "auto"
                 ]
@@ -9754,8 +9748,6 @@
                 "type": "string",
                 "enum": [
                   "observe",
-                  "suggest",
-                  "propose",
                   "auto_with_approval",
                   "auto"
                 ]
@@ -9764,8 +9756,6 @@
                 "type": "string",
                 "enum": [
                   "observe",
-                  "suggest",
-                  "propose",
                   "auto_with_approval",
                   "auto"
                 ]
@@ -9774,8 +9764,6 @@
                 "type": "string",
                 "enum": [
                   "observe",
-                  "suggest",
-                  "propose",
                   "auto_with_approval",
                   "auto"
                 ]
@@ -9784,8 +9772,6 @@
                 "type": "string",
                 "enum": [
                   "observe",
-                  "suggest",
-                  "propose",
                   "auto_with_approval",
                   "auto"
                 ]
@@ -9954,7 +9940,8 @@
                 "contributor_cap",
                 "blacklist",
                 "review_nag",
-                "review_evasion"
+                "review_evasion",
+                "copycat"
               ]
             }
           },
@@ -10133,6 +10120,8 @@
           "closeOwnerAuthors",
           "autoLabelEnabled",
           "typeLabelsEnabled",
+          "linkedIssueLabelPropagation",
+          "linkedIssueHardRules",
           "gittensorLabel",
           "blacklistLabel",
           "createMissingLabel",
@@ -10140,7 +10129,15 @@
           "includeMaintainerAuthors",
           "requireLinkedIssue",
           "backfillEnabled",
-          "commandAuthorization"
+          "commandAuthorization",
+          "contributorBlacklist",
+          "autonomy",
+          "moderationGateMode",
+          "fairnessAnalyticsMode",
+          "reviewEvasionProtection",
+          "draftPrClosePolicy",
+          "synchronizeClosePolicy",
+          "screenshotTableGate"
         ]
       },
       "AutomationState": {
@@ -10991,8 +10988,7 @@
                 "type": "boolean"
               },
               "aiReviewConfirmedContributorsOnly": {
-                "type": "boolean",
-                "nullable": true
+                "type": "boolean"
               },
               "commandAuthorization": {
                 "type": "object",

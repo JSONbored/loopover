@@ -4,7 +4,8 @@ import { describe, expect, it } from "vitest";
 // Drift guard (#1943 gate review finding): the self-hosting troubleshooting runbooks reference exact
 // Prometheus metric names and alert names. If a metric is ever renamed/removed in src/, or an alert is
 // renamed/removed in prometheus/rules/alerts.yml, this test fails instead of the docs silently going stale
-// — mirrors the same source-of-truth-diff approach as scripts/check-openapi-settings-parity.ts (#2556).
+// — the same source-of-truth-diff approach the retired scripts/check-openapi-settings-parity.ts took for
+// the OpenAPI settings schemas (#2556) before #9531 replaced it with a compile-time assertion.
 
 const DOC_PATH = "apps/loopover-ui/content/docs/self-hosting-troubleshooting.mdx";
 const doc = readFileSync(DOC_PATH, "utf8");

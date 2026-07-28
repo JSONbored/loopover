@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { defaultRepositorySettings } from "../../src/db/repositories";
 import {
   buildCollisionReport,
   buildContributorProfile,
@@ -46,6 +47,7 @@ const pullRequests: PullRequestRecord[] = [
 ];
 
 const settings: RepositorySettings = {
+  ...defaultRepositorySettings("fixture/fixture"),
   repoFullName: repo.fullName,
   commentMode: "detected_contributors_only",
   publicAudienceMode: "gittensor_only",

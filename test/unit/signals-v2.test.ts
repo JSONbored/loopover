@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { defaultRepositorySettings } from "../../src/db/repositories";
 import {
   buildCollisionEdges,
   buildCollisionReport,
@@ -2098,6 +2099,7 @@ describe("v2 signal builders", () => {
       collisions: buildCollisionReport(repo.fullName, [], []),
       preflight: buildPreflightResult({ repoFullName: repo.fullName, title: "Docs", body: "No linked issue", changedFiles: ["README.md"], tests: ["manual"] }, repo, [], []),
       settings: {
+        ...defaultRepositorySettings("fixture/fixture"),
         repoFullName: repo.fullName,
         commentMode: "detected_contributors_only",
         publicAudienceMode: "oss_maintainer",

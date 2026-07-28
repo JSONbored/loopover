@@ -830,8 +830,12 @@ export const RepositorySettingsSchema = z
     claConsentPhrase: z.string().nullable().optional(),
     claCheckRunName: z.string().nullable().optional(),
     claCheckRunAppSlug: z.string().nullable().optional(),
-    expectedCiContexts: z.array(z.string()).optional(),
-    advisoryCheckRuns: z.array(z.object({ name: z.string(), appSlug: z.string() })).nullable().optional(),
+    // #9531: `expectedCiContexts` is declared `| null` on the type and read as a distinct value from absent
+    // (focus-manifest.ts's `!== null` gate), but the published schema omitted `.nullable()` -- so a client
+    // generated from the spec typed it as never-null, unlike its identically-shaped sibling below. Found by
+    // the compile-time parity assertion in test/unit/openapi-settings-schema-parity.test.ts.
+    expectedCiContexts: z.array(z.string()).readonly().nullable().optional(),
+    advisoryCheckRuns: z.array(z.object({ name: z.string(), appSlug: z.string() })).readonly().nullable().optional(),
     copycatGateMode: z.enum(["off", "warn", "label", "block"]).optional(),
     copycatGateMinScore: z.number().nullable().optional(),
     gateDryRun: z.boolean().optional(),
@@ -859,6 +863,7 @@ export const RepositorySettingsSchema = z
     aiReviewOnMerge: z.enum(["either", "both"]).nullable().optional(),
     aiReviewReviewers: z
       .array(z.object({ model: z.string(), fallback: z.string().nullable().optional() }))
+      .readonly()
       .nullable()
       .optional(),
     closeOwnerAuthors: z.boolean(),
@@ -885,8 +890,7 @@ export const RepositorySettingsSchema = z
             trustMaintainerAuthoredIssueForReward: z.boolean().optional(),
           }),
         ),
-      })
-      .optional(),
+      }),
     linkedIssueHardRules: z
       .object({
         ownerAssignedClose: z.enum(["block", "off"]),
@@ -898,8 +902,7 @@ export const RepositorySettingsSchema = z
         defaultLabelRepo: z.boolean(),
         verifyBeforeClose: z.boolean(),
         closeDelaySeconds: z.number().int().min(0).max(300),
-      })
-      .optional(),
+      }),
     unlinkedIssueGuardrail: z
       .object({
         mode: z.enum(["hold", "off"]),
@@ -946,19 +949,26 @@ export const RepositorySettingsSchema = z
       default: z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"])),
       commands: z.record(z.string(), z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"]))),
     }),
-    contributorBlacklist: z
-      .array(
-        z.object({
-          login: z.string(),
-          reason: z.string().optional(),
-          evidence: z.array(z.string()).optional(),
-          addedAt: z.string().optional(),
-        }),
-      )
-      .optional(),
-    autonomy: z
-      .record(z.enum(["review", "request_changes", "approve", "merge", "close", "label", "review_state_label", "update_branch", "assign"]), z.enum(["observe", "suggest", "propose", "auto_with_approval", "auto"]))
-      .optional(),
+    contributorBlacklist: z.array(
+      z.object({
+        login: z.string(),
+        // #9125's immutable-id field, returned by the API since it landed and absent from this
+        // schema until the parity assertion flagged it (#9531).
+        githubId: z.number().int().optional(),
+        reason: z.string().optional(),
+        evidence: z.array(z.string()).optional(),
+        addedAt: z.string().optional(),
+      }),
+    ),
+    // #9531: partialRecord, because AutonomyPolicy is Partial<Record<...>> -- a repo configures the
+    // classes it configures. And the LIVE level set: "suggest"/"propose" were removed server-side by
+    // #4620 and silently dropped on persist ever since, yet this schema kept advertising them -- the
+    // exact drift class #9517's enum notes warned about, republished here. The compile-time parity
+    // assertion in src/openapi/schema-type-parity.ts is what finally caught it.
+    autonomy: z.partialRecord(
+      z.enum(["review", "request_changes", "approve", "merge", "close", "label", "review_state_label", "update_branch", "assign"]),
+      z.enum(["observe", "auto_with_approval", "auto"]),
+    ),
     autoMaintain: z.object({ requireApprovals: z.number().int(), mergeMethod: z.enum(["merge", "squash", "rebase"]) }).optional(),
     agentPaused: z.boolean().optional(),
     agentDryRun: z.boolean().optional(),
@@ -987,16 +997,17 @@ export const RepositorySettingsSchema = z
     commandRateLimitWindowHours: z.number().int().positive().optional(),
     moderationGateMode: z
       .enum(["inherit", "off", "enabled"])
-      .optional()
       .describe(
         "Gates ONLY the shared cross-repo violation tally -- does NOT disable the four underlying anti-abuse mechanisms (contributor cap, blacklist, review-nag, review-evasion), each of which runs on its own independent setting.",
       ),
-    moderationRules: z.array(z.enum(["contributor_cap", "blacklist", "review_nag", "review_evasion"])).optional(),
+    // #9531: "copycat" is a real member of the type's union and a real value this route can return -- the
+    // published enum simply never gained it when the mechanism landed, so a client generated from the spec
+    // rejected a payload the API legitimately produces.
+    moderationRules: z.array(z.enum(["contributor_cap", "blacklist", "review_nag", "review_evasion", "copycat"])).optional(),
     moderationWarningLabel: z.string().optional(),
     moderationBannedLabel: z.string().optional(),
     fairnessAnalyticsMode: z
       .enum(["inherit", "off", "enabled"])
-      .optional()
       .describe(
         "Per-repo participation in cross-repo contributor fairness/accuracy analytics -- 'off' excludes this repo's gate decisions and moderation history from every aggregation, independent of whether the internal fairness-analytics routes are enabled fleet-wide.",
       ),
@@ -1006,7 +1017,6 @@ export const RepositorySettingsSchema = z
     plannerMode: z.enum(["inherit", "off", "enabled"]).optional(),
     reviewEvasionProtection: z
       .enum(["off", "close"])
-      .optional()
       .describe(
         "Effective default is \"close\" as of #4011 -- \"off\" is an explicit opt-out, not the default. \"off\" only suppresses the enforcement close; the ready<->draft cycling counter keeps incrementing regardless, so re-enabling can immediately treat a historical off-period cycle as \"repeated.\"",
       ),
@@ -1014,13 +1024,11 @@ export const RepositorySettingsSchema = z
     reviewEvasionComment: z.boolean().optional(),
     draftPrClosePolicy: z
       .enum(["off", "close"])
-      .optional()
       .describe(
         "Off by default (opt-in, unlike reviewEvasionProtection's default-close). \"close\" enforces on ANY draft PR, including the very first one, before a review pass has had a chance to run -- distinct from reviewEvasionProtection's family, which only enforces after a review already ran or on the 2nd+ draft conversion.",
       ),
     synchronizeClosePolicy: z
       .enum(["off", "close"])
-      .optional()
       .describe(
         "Off by default (opt-in, config-as-code only -- no dashboard/DB column). \"close\" closes a contributor's own PR immediately when they push an additional commit (synchronize) before it's been merged or closed -- this repo's review is one-shot, so the first push is the only push. Never fires for a push that isn't from the PR's own author (e.g. the engine's own rebase-if-behind), nor for the repo owner/admin, a protected automation author, or anyone with write+ collaborator access.",
       ),
@@ -1035,8 +1043,7 @@ export const RepositorySettingsSchema = z
         requireThemes: z.array(z.string()),
         message: z.string().optional(),
         skillFileUrl: z.string().optional(),
-      })
-      .optional(),
+      }),
     createdAt: z.string().nullable().optional(),
     updatedAt: z.string().nullable().optional(),
   })
@@ -1187,7 +1194,10 @@ export const RepoSettingsPreviewSchema = z
       aiReviewProvider: z.string().nullable(),
       aiReviewModel: z.string().nullable(),
       aiReviewAllAuthors: z.boolean(),
-      aiReviewConfirmedContributorsOnly: z.boolean().nullable(),
+      // #9531: buildRepoSettingsPreview resolves this with `?? false`, so the preview payload NEVER carries
+      // null here (unlike RepositorySettings' own nullable field of the same name, which this one is derived
+      // from) -- the schema advertised a value the route cannot return.
+      aiReviewConfirmedContributorsOnly: z.boolean(),
       commandAuthorization: z.object({
         defaultAllowed: z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"])),
         commandOverrides: z.array(

@@ -6,6 +6,7 @@ import { } from "../../src/review/review-memory-wire";
 import { } from "../../src/github/comments";
 import * as repositoriesModule from "../../src/db/repositories";
 import * as repositorySettingsModule from "../../src/settings/repository-settings";
+import type { RepositorySettings } from "../../src/types";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { } from "../../src/selfhost/queue-common";
 import {
@@ -2509,7 +2510,11 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
       const baseSettings = await repositorySettingsModule.resolveRepositorySettings(env, "JSONbored/gittensory");
-      vi.spyOn(repositorySettingsModule, "resolveRepositorySettings").mockResolvedValue({ ...baseSettings, reviewEvasionProtection: undefined });
+      // #9531: reviewEvasionProtection is required on RepositorySettings now (both DB read paths always
+      // populate it), so an UNSET setting is a missing key, not an explicit undefined -- which is what the
+      // "#4011 default is close" fallback in review-evasion.ts actually resolves.
+      const { reviewEvasionProtection: _unset, ...settingsWithoutProtection } = baseSettings;
+      vi.spyOn(repositorySettingsModule, "resolveRepositorySettings").mockResolvedValue(settingsWithoutProtection as RepositorySettings);
 
       await processJob(env, { type: "github-webhook", deliveryId: "self-close-protection-unset", eventName: "pull_request", payload: closedPayload("contributor") });
 
@@ -2964,7 +2969,11 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
       const baseSettings = await repositorySettingsModule.resolveRepositorySettings(env, "JSONbored/gittensory");
-      vi.spyOn(repositorySettingsModule, "resolveRepositorySettings").mockResolvedValue({ ...baseSettings, reviewEvasionProtection: undefined });
+      // #9531: reviewEvasionProtection is required on RepositorySettings now (both DB read paths always
+      // populate it), so an UNSET setting is a missing key, not an explicit undefined -- which is what the
+      // "#4011 default is close" fallback in review-evasion.ts actually resolves.
+      const { reviewEvasionProtection: _unset, ...settingsWithoutProtection } = baseSettings;
+      vi.spyOn(repositorySettingsModule, "resolveRepositorySettings").mockResolvedValue(settingsWithoutProtection as RepositorySettings);
 
       await processJob(env, { type: "github-webhook", deliveryId: "draft-evasion-protection-unset", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
 
@@ -3183,7 +3192,11 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       const baseSettings = await repositorySettingsModule.resolveRepositorySettings(env, "JSONbored/gittensory");
-      vi.spyOn(repositorySettingsModule, "resolveRepositorySettings").mockResolvedValue({ ...baseSettings, reviewEvasionProtection: undefined });
+      // #9531: reviewEvasionProtection is required on RepositorySettings now (both DB read paths always
+      // populate it), so an UNSET setting is a missing key, not an explicit undefined -- which is what the
+      // "#4011 default is close" fallback in review-evasion.ts actually resolves.
+      const { reviewEvasionProtection: _unset, ...settingsWithoutProtection } = baseSettings;
+      vi.spyOn(repositorySettingsModule, "resolveRepositorySettings").mockResolvedValue(settingsWithoutProtection as RepositorySettings);
 
       await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-unset-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
       expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false); // first conversion never closes

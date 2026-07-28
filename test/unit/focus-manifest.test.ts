@@ -6299,3 +6299,24 @@ describe("kill-switch flags are ratchets, not overridable settings (#9049)", () 
     expect(resolveEffectiveSettings({ agentDryRun: false } as RepositorySettings, manifestWith({})).agentDryRun).toBe(false);
   });
 });
+
+// #9531: `manifest.settings` is a `Partial<...>`, so an explicitly-`undefined` key is indistinguishable from
+// an absent one to the type system -- but NOT to the spread that layers the manifest over the DB row, which
+// happily overwrote a resolved value with `undefined`. "Not overridden" is what an absent value means at
+// every other layer of this resolver, so the spread now skips undefined-valued keys entirely.
+describe("an explicitly-undefined manifest setting does not punch a hole in the DB value (#9531)", () => {
+  const manifestWithSettings = (settings: FocusManifest["settings"]): FocusManifest => {
+    const parsed = parseFocusManifest({});
+    return { ...parsed, settings: { ...parsed.settings, ...settings } };
+  };
+
+  it("keeps the DB value when the manifest carries the key with an undefined value", () => {
+    const effective = resolveEffectiveSettings({ typeLabelsEnabled: true } as RepositorySettings, manifestWithSettings({ typeLabelsEnabled: undefined }));
+    expect(effective.typeLabelsEnabled).toBe(true);
+  });
+
+  it("still lets a DEFINED manifest value win, including a falsy one", () => {
+    expect(resolveEffectiveSettings({ typeLabelsEnabled: true } as RepositorySettings, manifestWithSettings({ typeLabelsEnabled: false })).typeLabelsEnabled).toBe(false);
+    expect(resolveEffectiveSettings({ typeLabelsEnabled: false } as RepositorySettings, manifestWithSettings({ typeLabelsEnabled: true })).typeLabelsEnabled).toBe(true);
+  });
+});

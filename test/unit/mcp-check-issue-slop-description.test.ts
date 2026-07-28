@@ -51,7 +51,12 @@ describe("bin loopover_check_issue_slop description (#8907)", () => {
       const tool = tools.find((entry) => entry.name === "loopover_check_issue_slop");
       expect(tool).toBeDefined();
       const description = tool?.description ?? "";
-      expect(description).toContain("band and findings");
+      // #9537: this description now comes from @loopover/contract, so both servers advertise the same
+      // words. The stdio-only phrasing "no API round-trip" could not survive that -- on the remote
+      // server a tools/call IS an API round-trip -- so the converged wording states the guarantee that
+      // is true on both: the computation is pure and reaches nothing. Same claim, one source.
+      expect(description).toContain("a band, and the findings behind it");
+      expect(description).toContain("Pure computation");
       expect(description).not.toContain("slopRisk");
       expect(description).not.toContain("the rubric");
     } finally {

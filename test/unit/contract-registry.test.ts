@@ -29,11 +29,11 @@ import {
 } from "@loopover/contract";
 import { LocalStatusStructuredInput } from "@loopover/contract/tools";
 import { GetRepoContextInput } from "@loopover/contract/tools";
-import { PREFLIGHT_LIMITS as ENGINE_PREFLIGHT_LIMITS } from "../../packages/loopover-engine/src/signals/preflight-limits.js";
+import { PREFLIGHT_LIMITS as ENGINE_PREFLIGHT_LIMITS } from "../../packages/loopover-engine/src/signals/preflight-limits";
 import { PUBLIC_SURFACE_SKIP_REASONS as SERVER_PUBLIC_SURFACE_SKIP_REASONS } from "../../src/signals/settings-preview";
-import { AUTONOMY_LEVELS as ENGINE_AUTONOMY_LEVELS, AGENT_ACTION_CLASSES as ENGINE_AGENT_ACTION_CLASSES } from "../../packages/loopover-engine/src/settings/autonomy.js";
+import { AUTONOMY_LEVELS as ENGINE_AUTONOMY_LEVELS, AGENT_ACTION_CLASSES as ENGINE_AGENT_ACTION_CLASSES } from "../../packages/loopover-engine/src/settings/autonomy";
 import { SCENARIO_MAX_REPO_FULL_NAME_CHARS, SCENARIO_MAX_BRANCH_REF_CHARS } from "../../src/scenarios/input-model";
-import { PLAN_STATUSES } from "../../packages/loopover-miner/lib/plan-store.js";
+import { PLAN_STATUSES } from "../../packages/loopover-miner/lib/plan-store";
 
 describe("contract tool registry", () => {
   it("registers at least one tool", () => {

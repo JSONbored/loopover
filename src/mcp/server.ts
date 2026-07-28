@@ -4032,37 +4032,46 @@ export class LoopoverMcp {
     };
   }
 
-  private async getPrAiReviewFindings(input: z.infer<z.ZodObject<typeof loginRepoPullShape>>): Promise<ToolPayload> {
-    this.requireContributorAccess(input.login);
+  private async getPrAiReviewFindings(input: z.infer<typeof GetPrAiReviewFindingsInput>): Promise<ToolPayload> {
+    // #9537: `number` is canonical and `pullNumber` the compatibility alias -- the two servers
+    // disagreed on the field name, and both are accepted so neither side's live callers break.
+    const pullNumber = input.number ?? input.pullNumber;
+    // Both fields are optional in the contract so the two servers can share one input; exactly one
+    // of each pair is genuinely required, and a missing one is a caller error with a clear message
+    // rather than a schema rejection naming a field the caller did not use.
+    if (pullNumber === undefined) throw new Error("A pull-request number is required: pass `number`.");
+    if (!input.login) throw new Error("A contributor login is required: pass `login`.");
+    const login = input.login;
+    this.requireContributorAccess(login);
     const repoFullName = `${input.owner}/${input.repo}`;
     await this.requireRepoAccess(repoFullName);
-    const pullRequest = await getPullRequest(this.env, repoFullName, input.pullNumber);
+    const pullRequest = await getPullRequest(this.env, repoFullName, pullNumber);
     if (!pullRequest) {
       return {
-        summary: `No pull request ${repoFullName}#${input.pullNumber}.`,
+        summary: `No pull request ${repoFullName}#${pullNumber}.`,
         data: {
           status: "not_found",
           repoFullName,
-          pullNumber: input.pullNumber,
-          login: input.login.toLowerCase(),
+          pullNumber: pullNumber,
+          login: login.toLowerCase(),
           findings: [],
           categoryCounts: {},
         },
       };
     }
-    assertContributorOwnsPullRequest(pullRequest.authorLogin, input.login);
+    assertContributorOwnsPullRequest(pullRequest.authorLogin, login);
     const payload = await loadPrAiReviewFindings(this.env, {
       repoFullName,
-      pullNumber: input.pullNumber,
-      login: input.login,
+      pullNumber: pullNumber,
+      login: login,
     });
     const findingCount = payload.status === "ready" ? payload.findings.length : 0;
     const summary =
       payload.status === "ready"
-        ? `${findingCount} AI-review finding(s) on ${repoFullName}#${input.pullNumber}.`
+        ? `${findingCount} AI-review finding(s) on ${repoFullName}#${pullNumber}.`
         : payload.status === "ai_review_off"
-          ? `AI review is off for ${repoFullName}; no findings to return for #${input.pullNumber}.`
-          : `No published AI review findings for ${repoFullName}#${input.pullNumber}.`;
+          ? `AI review is off for ${repoFullName}; no findings to return for #${pullNumber}.`
+          : `No published AI review findings for ${repoFullName}#${pullNumber}.`;
     return {
       summary,
       data: payload as unknown as Record<string, unknown>,

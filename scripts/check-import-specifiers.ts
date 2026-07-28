@@ -30,7 +30,20 @@ const EXCLUDED_SEGMENT = /(?:^|\/)(?:node_modules|dist|dist-test)(?:\/|$)/;
  *  injectable `readFile`), not real imports of its own -- scanning it as source would flag its fixtures as
  *  violations of themselves. Mirrors check-coverage-bolt-on-filenames.ts's own ALLOWED_FILENAMES pattern for
  *  the same class of self-referential false positive. */
-const ALLOWED_FILENAMES = new Set(["check-import-specifiers-script.test.ts"]);
+/** Same class of false positive, found in #9537: check-dead-source-files-script.test.ts feeds ITS
+ *  script import-statement TEXT as string fixtures, and a js-suffixed relative specifier is the
+ *  specific case that test exists to pin -- so its fixtures read as violations of this checker. */
+const ALLOWED_FILENAMES = new Set(["check-import-specifiers-script.test.ts", "check-dead-source-files-script.test.ts"]);
+
+/**
+ * Scripts executed by `node --experimental-strip-types` rather than a bundler or tsx (#9537).
+ *
+ * Node's type-stripping loader does no extension resolution at all: it needs the literal `.ts` on a
+ * relative import or the process fails at startup. So for these entrypoints a `.ts` specifier is not
+ * the TS5097 hazard this checker exists to catch -- it is the only form that runs. Listed explicitly
+ * because how a file is INVOKED is a fact about package.json, not something readable from its source.
+ */
+const TYPE_STRIPPED_ENTRYPOINTS = new Set(["scripts/actionlint.ts"]);
 /** A relative specifier in an import/export/dynamic-import, with its optional `.js`/`.ts`/`.d.ts` extension
  *  captured separately from the rest of the path -- anything else (`.json`, `.css`, no extension at all)
  *  matches the base-path group instead and is never flagged or rewritten. `.d.ts` must be tried before the
@@ -91,6 +104,7 @@ export function findImportSpecifierViolations(
           continue;
         }
         if (extension === ".ts") {
+          if (TYPE_STRIPPED_ENTRYPOINTS.has(file)) continue;
           violations.push({ file, specifier: full, reason: "`.ts` specifiers fail typecheck (TS5097)" });
         } else if (zone === "bundler" && extension === ".js") {
           violations.push({ file, specifier: full, reason: "this file's zone (src/scripts/test) resolves extensionless under Bundler" });

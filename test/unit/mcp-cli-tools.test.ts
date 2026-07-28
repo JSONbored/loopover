@@ -1,9 +1,10 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { getToolContract } from "@loopover/contract/tools";
 import { closeFixtureServer, run, startFixtureServer } from "./support/mcp-cli-harness";
 
 const bin = join(process.cwd(), "packages/loopover-mcp/dist/bin/loopover-mcp.js");
@@ -56,6 +57,56 @@ describe("loopover-mcp CLI — tools", () => {
       expect(tool.description).toBe(description);
     }
     expect([...byName.keys()].sort()).toEqual([...registered.map((tool) => tool.name)].sort());
+  });
+
+  // #9537: the registration helper can only type a handler if the call site says which contract
+  // input it takes, so this asserts the source itself -- every `registerStdioTool` handler declares
+  // `z.infer<typeof …>` and none is left as `any`. tsc enforces that the annotation MATCHES the
+  // registered schema; this enforces that an annotation exists at all, which tsc cannot (an `any`
+  // typechecks fine).
+  it("types every stdio tool handler from a contract schema, with no `any` left (#9537)", () => {
+    const source = readFileSync(join(process.cwd(), "packages/loopover-mcp/bin/loopover-mcp.ts"), "utf8");
+    const callSites = [...source.matchAll(/registerStdioTool\(\n  "([a-z_]+)",\n  (?:async )?\(([^\n]*?)\) =>/g)];
+    expect(callSites.length).toBeGreaterThan(100);
+    for (const [, name, params] of callSites) {
+      if (params!.trim() === "") continue;
+      expect(params, `${name} handler is not typed from a contract schema`).toMatch(/: z\.infer<typeof \w+>/);
+      expect(params, `${name} handler still takes \`any\``).not.toMatch(/:\s*any\b/);
+    }
+  });
+
+  // #9537: the stdio server no longer states a tool's description or schemas -- it registers from
+  // @loopover/contract. These three invariants are what that buys, and what would silently rot if a
+  // future tool went back to declaring its own: every registered tool is IN the registry, advertises
+  // an object-typed input schema, and advertises a real output schema. Before #9537, 97 of the 102
+  // had no output schema at all, so a drifting payload was undetectable.
+  it("registers every tool from the contract registry, with input and output schemas (#9537)", async () => {
+    configDir = mkdtempSync(join(tmpdir(), "loopover-cli-tools-contract-"));
+    const apiUrl = await startFixtureServer();
+    transport = new StdioClientTransport({
+      command: "node",
+      args: [bin, "--stdio"],
+      env: {
+        ...process.env,
+        LOOPOVER_CONFIG_DIR: configDir,
+        LOOPOVER_API_URL: apiUrl,
+        LOOPOVER_TOKEN: "session-token",
+        LOOPOVER_API_TIMEOUT_MS: "5000",
+      },
+    });
+    client = new Client({ name: "tools-contract-test", version: "0.0.1" });
+    await client.connect(transport);
+    const { tools: registered } = await client.listTools();
+    expect(registered.length).toBeGreaterThan(0);
+
+    for (const tool of registered) {
+      const contract = getToolContract(tool.name);
+      expect(contract, `${tool.name} is registered but has no @loopover/contract entry`).toBeTruthy();
+      expect(tool.description, `${tool.name} description drifted from the registry`).toBe(contract!.description);
+      expect(tool.inputSchema?.type, `${tool.name} input schema is not object-typed`).toBe("object");
+      expect(tool.outputSchema, `${tool.name} advertises no output schema`).toBeTruthy();
+      expect((tool.outputSchema as { type?: string }).type).toBe("object");
+    }
   });
 
   it("prints name + description rows for humans and documents --json in help", () => {

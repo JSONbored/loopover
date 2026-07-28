@@ -484,12 +484,46 @@ export const validateConfigTool = defineTool({
   output: ValidateConfigOutput,
 });
 
-export const LocalStatusInput = noInput;
+/**
+ * A THIRD divergence, found while migrating the stdio server (#9537) -- one the issue did not name,
+ * because it is not a payload that drifted but two different tools that collided on one name:
+ *
+ *  - the remote server answers "what does this MCP endpoint support" (reachability, the supported
+ *    endpoint, the tool surface it advertises);
+ *  - the stdio server answers "what is the state of THIS CLI on THIS machine" (api url, package
+ *    version, token/session presence, workspace roots, and the local git checkout).
+ *
+ * Neither can answer the other's question -- the remote has no checkout to inspect, and the CLI has
+ * no endpoint surface to report -- so unlike get_repo_context and get_pr_reviewability there is no
+ * payload to converge on. The real fix is a rename, which breaks every caller of whichever side
+ * loses the name, so it is filed rather than done in flight. The union below keeps both wires
+ * working, gives both a validated schema instead of none, and keeps the collision visible.
+ *
+ * `cwd`/`baseRef`/`repoFullName` on the input are the stdio side's; the remote server ignores them.
+ * Widening an input is always the safe direction.
+ */
+export const LocalStatusInput = z.object({
+  cwd: z.string().optional(),
+  baseRef: z.string().optional(),
+  repoFullName: z.string().min(3).optional(),
+});
 export const LocalStatusOutput = z.looseObject({
+  // Remote fields.
   apiAvailable: z.boolean().optional(),
-  sourceUploadDefault: z.boolean().optional(),
   supportedEndpoint: z.string().optional(),
   supportedTools: z.unknown().optional(),
+  // Shared.
+  sourceUploadDefault: z.boolean().optional(),
+  // stdio fields.
+  apiUrl: z.string().optional(),
+  package: z.looseObject({ name: z.string(), version: z.string() }).optional(),
+  hasToken: z.boolean().optional(),
+  profile: z.record(z.string(), z.unknown()).optional(),
+  authLogin: z.string().nullable().optional(),
+  sessionExpiresAt: z.string().nullable().optional(),
+  sourceUploadSupported: z.boolean().optional(),
+  workspaceRoots: z.unknown().optional(),
+  git: z.record(z.string(), z.unknown()).optional(),
 });
 export const localStatusTool = defineTool({
   name: "loopover_local_status",

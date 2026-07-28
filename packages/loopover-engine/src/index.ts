@@ -927,3 +927,17 @@ export { parsePullRequestTargetKey } from "./parse-pull-request-target-key.js";
 // loopover-mcp production local-branch collector so both enforce the same forbidden-source-upload-key /
 // oversized-content, metadata-only contract on the real collection path.
 export { assertScenarioLocalBranchInputSafe } from "./scenario-input-safety.js";
+
+// #783 multi-step plan DAG (#9537) -- the per-step state machine loopover_build_plan /
+// loopover_plan_status / loopover_record_step_result advance. Lives here because BOTH MCP servers
+// need it and the stdio one resolves this package from the registry; before #9537 it existed twice,
+// once in src/services/plan-dag.ts and once hand-copied and untyped into the stdio bin.
+export {
+  buildPlanDag,
+  validatePlanDag,
+  markStepRunning,
+  applyStepResult,
+  planProgress,
+  type PlanProgress,
+} from "./plan-dag.js";
+export { isDone as isPlanStepDone, nextReadySteps } from "./plan-step-readiness.js";

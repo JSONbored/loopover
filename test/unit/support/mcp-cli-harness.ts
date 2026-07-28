@@ -497,11 +497,11 @@ export async function startFixtureServer(
       const lane = body.goalSpec?.lane ?? "default";
       const minRank = body.goalSpec?.minRankScore ?? 0;
       const candidates = [
-        { owner: "JSONbored", repo: "loopover", issueNumber: 100, title: "Improve REES test retry", rankScore: 85, laneFit: lane, freshness: 0.9, dupRisk: 0.1, aiPolicyAllowed: true },
-        { owner: "JSONbored", repo: "loopover", issueNumber: 101, title: "Add label-audit coverage", rankScore: 72, laneFit: lane, freshness: 0.7, dupRisk: 0.2, aiPolicyAllowed: true },
-        { owner: "JSONbored", repo: "loopover", issueNumber: 102, title: "Fix flaky buildBrief test", rankScore: 68, laneFit: lane, freshness: 0.5, dupRisk: 0.3, aiPolicyAllowed: true },
-        { owner: "JSONbored", repo: "loopover", issueNumber: 103, title: "Normalize path matchers", rankScore: 55, laneFit: lane, freshness: 0.4, dupRisk: 0.1, aiPolicyAllowed: true },
-        { owner: "JSONbored", repo: "loopover", issueNumber: 104, title: "Document score breakdown", rankScore: 45, laneFit: lane, freshness: 0.3, dupRisk: 0.1, aiPolicyAllowed: true },
+        { owner: "JSONbored", repo: "loopover", issueNumber: 100, title: "Improve REES test retry", rankScore: 85, laneFit: 0.8, freshness: 0.9, dupRisk: 0.1, aiPolicyAllowed: true },
+        { owner: "JSONbored", repo: "loopover", issueNumber: 101, title: "Add label-audit coverage", rankScore: 72, laneFit: 0.8, freshness: 0.7, dupRisk: 0.2, aiPolicyAllowed: true },
+        { owner: "JSONbored", repo: "loopover", issueNumber: 102, title: "Fix flaky buildBrief test", rankScore: 68, laneFit: 0.8, freshness: 0.5, dupRisk: 0.3, aiPolicyAllowed: true },
+        { owner: "JSONbored", repo: "loopover", issueNumber: 103, title: "Normalize path matchers", rankScore: 55, laneFit: 0.8, freshness: 0.4, dupRisk: 0.1, aiPolicyAllowed: true },
+        { owner: "JSONbored", repo: "loopover", issueNumber: 104, title: "Document score breakdown", rankScore: 45, laneFit: 0.8, freshness: 0.3, dupRisk: 0.1, aiPolicyAllowed: true },
       ];
       const ranked = candidates.filter((c) => c.rankScore >= minRank).slice(0, limit);
       response.end(JSON.stringify({ ranked, totalCandidates: candidates.length, appliedLane: lane, appliedMinRankScore: minRank }));
@@ -531,7 +531,17 @@ export async function startFixtureServer(
     }
     // #784 maintainer controls (agent approval queue + kill-switch).
     if (request.url === "/v1/repos/owner/repo/agent/pending-actions" && request.method === "GET") {
-      const action = { id: "pa-1", actionClass: "merge", pullNumber: 7, reason: "clean", status: "pending" };
+      const action = {
+        id: "pa-1",
+        actionClass: "merge",
+        pullNumber: 7,
+        reason: "clean",
+        status: "pending",
+        autonomyLevel: "auto_with_approval",
+        decidedBy: null,
+        decidedAt: null,
+        createdAt: "2026-05-30T00:00:00.000Z",
+      };
       response.end(
         JSON.stringify({
           repoFullName: "owner/repo",
@@ -706,7 +716,7 @@ export async function startFixtureServer(
           repoFullName: "owner/repo",
           configured: true,
           autonomy: { merge: "auto", close: "auto_with_approval" },
-          autoMaintain: "auto",
+          autoMaintain: { requireApprovals: 1, mergeMethod: "squash" },
           agentPaused: false,
           agentDryRun: false,
           mode: "live",

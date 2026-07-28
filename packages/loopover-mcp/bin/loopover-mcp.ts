@@ -9,6 +9,8 @@ import { fileURLToPath } from "node:url";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { buildFeasibilityVerdict, buildPrTextLint, buildGateDispositions, buildPublicPrBodyDraft } from "@loopover/engine";
+// #9537: the plan-DAG state machine, formerly hand-copied into this file, untyped.
+import { applyStepResult, buildPlanDag, nextReadySteps, planProgress, validatePlanDag, type PlanDag } from "@loopover/engine";
 // #6149: the miner write-tools are PURE local-execution spec builders (loopover never performs the write);
 // registering them locally is just importing the same engine builders the remote server uses.
 import {
@@ -44,17 +46,98 @@ import { z } from "zod";
 // hand-mirrored from src/mcp/server.ts. Output schemas arrive with them, so these tools stop
 // returning unschematized structured content.
 import {
+  AgentGetRunInput,
+  AgentPlanInput,
+  AgentStartRunInput,
+  ApplyLabelsInput,
+  BuildPlanInput,
+  BuildProgressSnapshotInput,
+  BuildResultsPayloadInput,
+  CheckBeforeStartInput,
+  CheckImprovementPotentialInput,
+  CheckIssueSlopInput,
+  CheckSlopRiskInput,
+  CheckTestEvidenceInput,
+  ClearSelftuneOverrideInput,
+  ClosePrInput,
+  CompareLocalVariantsInput,
+  ComparePrVariantsInput,
+  CreateBranchInput,
+  CurrentBranchInput,
+  DecidePendingActionInput,
+  DeleteBranchInput,
+  DraftPrBodyInput,
+  EvaluateEscalationInput,
+  ExplainGateDispositionInput,
+  ExplainRepoDecisionInput,
+  ExplainReviewRiskInput,
+  ExplainScoreBreakdownInput,
+  FeasibilityGateInput,
+  FileFollowUpIssueInput,
+  FileIssueInput,
+  FindOpportunitiesInput,
+  GenerateContributorIssueDraftsInput,
+  GenerateTestsInput,
+  GetActivationPreviewInput,
+  GetAgentAuditFeedInput,
+  GetAmsMinerCohortInput,
+  GetAutomationStateInput,
+  GetBountyAdvisoryInput,
+  GetBurdenForecastInput,
+  GetConfigRecommendationInput,
+  GetContributorProfileInput,
+  GetDecisionPackInput,
+  GetGateConfigEffectiveInput,
+  GetGatePrecisionInput,
+  GetIssueQualityInput,
+  GetLabelAuditInput,
+  GetLiveGateThresholdsInput,
+  GetMaintainerLaneInput,
+  GetMaintainerNoiseInput,
+  GetOutcomeCalibrationInput,
+  GetPrAiReviewFindingsInput,
+  GetPrMaintainerPacketInput,
   GetPrReviewabilityInput,
-  GetPrReviewabilityOutput,
+  GetRegistrationReadinessInput,
   GetRepoContextInput,
-  GetRepoContextOutput,
+  GetRepoFocusManifestInput,
+  GetRepoOnboardingPackInput,
+  GetRepoOutcomePatternsInput,
+  GetSelftuneOverrideAuditInput,
+  IntakeIdeaInput,
+  LintPrTextInput,
+  ListNotificationsInput,
+  ListPendingActionsInput,
+  LocalScoreInput,
+  LocalStatusInput,
   LocalStatusStructuredInput,
-  LocalStatusStructuredOutput,
+  MarkNotificationsReadInput,
+  MonitorOpenPrsInput,
+  OpenPrInput,
+  PlanRepoIssuesInput,
+  PlanStatusInput,
+  PostEligibilityCommentInput,
+  PrOutcomeInput,
   PredictGateInput,
-  PredictGateOutput,
+  PreflightLocalDiffInput,
   PreflightPrInput,
-  PreflightPrOutput,
+  ProposeActionInput,
+  RecordStepResultInput,
+  RefreshRepoDocsInput,
+  RetrieveIssueContextInput,
+  RunLocalScorerInput,
+  SetActionAutonomyInput,
+  SetAgentPausedInput,
+  SimulateOpenPrPressureInput,
+  SkippedPrAuditInput,
+  SuggestBoundaryTestsInput,
+  ValidateConfigInput,
+  ValidateLinkedIssueInput,
+  WatchIssuesInput,
+  getToolContract,
+  ListPendingActionsStdioInput,
 } from "@loopover/contract/tools";
+import type { ToolContract } from "@loopover/contract";
 import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadata, probeLocalScorer, referenceScorePreviewExample, resolveScorePreviewCommand, resolveWorkspaceCwd, sanitizeLocalScorerStatus, setupGuidanceForLocalScorer, isTestFile } from "../lib/local-branch.js";
 import { formatTable } from "../lib/format-table.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "../lib/cli-error.js";
@@ -184,105 +267,15 @@ const MAINTAIN_AUTONOMY_LEVELS = ["observe", "auto_with_approval", "auto"];
 // route + MCP tool accept, while set-level keeps its own autonomy-configurable subset above.
 const PROPOSE_ACTION_CLASSES = ["review", "request_changes", "approve", "merge", "close", "label", "review_state_label"];
 
-// #6150 — plan-DAG step tracking for loopover_build_plan/loopover_plan_status/loopover_record_step_result.
-// Hand-duplicated from src/services/plan-dag.ts (packages/loopover-engine/src/services/plan-dag.ts is NOT
-// where it lives -- this module was never extracted to @loopover/engine, so there is nothing to import from
-// the published package's export map), same rationale as MAINTAIN_ACTION_CLASSES/AUTONOMY_LEVELS above: this
-// file resolves @loopover/engine through the published package, whose export map does not surface it.
-// PURE + stateless (no DB, no repo/network access) -- the harness performs each step's real work and calls
-// loopover_record_step_result to report it back; this only advances the in-memory state machine the caller
-// passes in and gets back on every call.
-const DEFAULT_PLAN_MAX_ATTEMPTS = 1;
+// #783 plan DAG -- one implementation, in @loopover/engine (#9537). This file carried a
+// hand-copied, untyped duplicate of buildPlanDag/validatePlanDag/nextReadySteps/the step state
+// machine because the engine's export map did not surface them; it does now, so the copy is gone.
 
-function buildPlanDag(steps: any) {
-  return {
-    steps: steps.map((step: any) => ({
-      id: step.id,
-      title: step.title,
-      ...(step.actionClass !== undefined ? { actionClass: step.actionClass } : {}),
-      dependsOn: [...new Set((step.dependsOn ?? []).filter((dep: any) => dep !== step.id))],
-      status: "pending",
-      attempts: 0,
-      maxAttempts: Math.min(10, Math.max(1, Math.trunc(step.maxAttempts ?? DEFAULT_PLAN_MAX_ATTEMPTS))),
-    })),
-  };
-}
-
-function validatePlanDag(plan: any) {
-  const errors = [];
-  const ids = plan.steps.map((step: any) => step.id);
-  const idSet = new Set(ids);
-  if (idSet.size !== ids.length) errors.push("duplicate step ids");
-  for (const step of plan.steps) {
-    for (const dep of step.dependsOn) {
-      if (!idSet.has(dep)) errors.push(`step ${step.id} depends on unknown step ${dep}`);
-    }
-  }
-  const color = new Map();
-  const byId = new Map<any, any>(plan.steps.map((step: any) => [step.id, step]));
-  const hasCycle = (id: any) => {
-    color.set(id, 1);
-    for (const dep of byId.get(id)?.dependsOn ?? []) {
-      const depColor = color.get(dep) ?? 0;
-      if (depColor === 1) return true;
-      if (depColor === 0 && byId.has(dep) && hasCycle(dep)) return true;
-    }
-    color.set(id, 2);
-    return false;
-  };
-  for (const step of plan.steps) {
-    if ((color.get(step.id) ?? 0) === 0 && hasCycle(step.id)) {
-      errors.push("plan has a dependency cycle");
-      break;
-    }
-  }
-  return { valid: errors.length === 0, errors };
-}
-
-const isPlanStepDone = (status: any) => status === "completed" || status === "skipped";
-
-function nextReadySteps(plan: any) {
-  const statusById = new Map(plan.steps.map((step: any) => [step.id, step.status]));
-  return plan.steps.filter((step: any) => step.status === "pending" && step.dependsOn.every((dep: any) => isPlanStepDone(statusById.get(dep) ?? "pending")));
-}
-
-function mapPlanStep(plan: any, stepId: any, update: any) {
-  return { steps: plan.steps.map((step: any) => (step.id === stepId ? update(step) : step)) };
-}
-
-function applyStepResult(plan: any, stepId: any, result: any) {
-  return mapPlanStep(plan, stepId, (step: any) => {
-    if (isPlanStepDone(step.status) || step.status === "failed") return step;
-    if (result.outcome === "completed") return { ...step, status: "completed", lastError: null };
-    if (result.outcome === "skipped") return { ...step, status: "skipped", lastError: null };
-    const attempts = step.attempts + 1;
-    const exhausted = attempts >= step.maxAttempts;
-    return { ...step, attempts, status: exhausted ? "failed" : "pending", lastError: result.error ?? "step failed" };
-  });
-}
-
-function planProgress(plan: any) {
-  const count = (status: any) => plan.steps.filter((step: any) => step.status === status).length;
-  const completed = count("completed");
-  const skipped = count("skipped");
-  const failed = count("failed");
-  const running = count("running");
-  const pending = count("pending");
-  const total = plan.steps.length;
-  let status;
-  if (total > 0 && completed + skipped === total) status = "completed";
-  else if (failed > 0) status = "failed";
-  else if (running > 0) status = "running";
-  else if (pending > 0 && nextReadySteps(plan).length === 0) status = "blocked";
-  else status = "pending";
-  return { total, completed, failed, running, pending, skipped, status };
-}
-
-function planView(plan: any) {
+function planView(plan: PlanDag) {
   return {
     plan,
     progress: planProgress(plan),
-    readySteps: nextReadySteps(plan).map((step: any) => ({ id: step.id, title: step.title })),
+    readySteps: nextReadySteps(plan).map((step) => ({ id: step.id, title: step.title })),
     validation: validatePlanDag(plan),
   };
 }
@@ -383,195 +376,42 @@ const activeProfile = config.profiles?.[activeProfileName] ?? {};
 const configuredApiUrl = typeof activeProfile.apiUrl === "string" ? activeProfile.apiUrl.replace(/\/+$/, "") : typeof config.apiUrl === "string" ? config.apiUrl.replace(/\/+$/, "") : undefined;
 const apiUrl = (process.env.LOOPOVER_API_URL ?? (configuredApiUrl && !legacyDefaultApiUrls.has(configuredApiUrl) ? configuredApiUrl : defaultApiUrl)).replace(/\/+$/, "");
 
-const ownerRepoShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-};
 
 // #7756: stdio mirror of the remote loopover_get_repo_onboarding_pack shape (src/mcp/server.ts) + the
 // `maintain onboarding-pack` CLI. owner/repo are required like the sibling get-repo tools; `refresh` is
 // optional and, when true, forwards ?refresh=true (the server treats only the exact string "true" as a
 // refresh) so the preview is regenerated rather than served from cache.
-const repoOnboardingPackShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  refresh: z.boolean().optional(),
-};
 
 // #7753: mirrors the remote loopover_propose_action input (src/mcp/server.ts's proposeActionShape) so the local
 // stdio tool validates identically. actionClass reuses PROPOSE_ACTION_CLASSES (same enum the route +
 // `maintain propose` accept); the optional fields carry per-action-class detail and are stripped when absent.
-const proposeActionShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  pullNumber: z.number().int().positive(),
-  actionClass: z.enum(PROPOSE_ACTION_CLASSES),
-  reason: z.string().max(500).optional(),
-  label: z.string().min(1).max(100).optional(),
-  reviewBody: z.string().max(60000).optional(),
-  mergeMethod: z.enum(["merge", "squash", "rebase"]).optional(),
-  closeComment: z.string().max(60000).optional(),
-};
 
-const skippedPrAuditShape = {
-  repoFullName: z.string().trim().min(1).max(200).optional(),
-  reason: z.string().trim().min(1).max(64).optional(),
-  since: z.string().trim().min(1).max(64).optional(),
-  limit: z.number().int().positive().optional(),
-};
 
 // #7757: stdio mirror of the remote loopover_get_agent_audit_feed shape (src/mcp/server.ts) -- owner/repo plus
 // the same optional since / limit (1..200) query filters the maintain audit-feed CLI and the route accept.
-const auditFeedShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  since: z.string().min(1).optional(),
-  limit: z.number().int().positive().max(200).optional(),
-};
 
-const ownerRepoPullShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  number: z.number().int().positive(),
-};
 
 // #6736: the remote loopover_get_bounty_advisory tool's input shape (src/mcp/server.ts's bountyShape) --
 // a single cached-bounty id, GET /v1/bounties/:id/advisory.
-const bountyAdvisoryShape = {
-  id: z.string().min(1),
-};
 
 // #6619: same PR coordinates plus the OPTIONAL author login. Omitted, it resolves from the local session /
 // LOOPOVER_LOGIN / GITHUB_LOGIN, so an already-logged-in contributor never has to retype their own login.
-const prAiReviewFindingsShape = {
-  ...ownerRepoPullShape,
-  login: z.string().min(1).optional(),
-};
 
 // #6149 write-tool input shapes -- mirror src/mcp/server.ts's remote shapes (same bounds) so the local
 // server validates identically. The builders (buildOpenPrSpec, ...) are the same @loopover/engine functions.
-const WRITE_TOOL_REPO_FULL_NAME_MAX = 200;
-const WRITE_TOOL_BRANCH_REF_MAX = 200;
-const WRITE_TOOL_TITLE_MAX = 400;
-const WRITE_TOOL_BODY_MAX = 60000;
-const WRITE_TOOL_BRANCH_MAX = 255;
 // Mirrors @loopover/engine/signals/test-evidence's TEST_FRAMEWORKS (the detectTestConvention framework set),
 // so a caller cannot request a test-gen spec for a framework the detector could never produce -- same guard the
 // remote server's testGenShape uses.
-const TEST_FRAMEWORKS = ["vitest", "jest", "pytest", "go-test", "rspec", "cargo-test"];
-const writeToolRepoFullName = z.string().min(3).max(WRITE_TOOL_REPO_FULL_NAME_MAX);
-const openPrShape = {
-  repoFullName: writeToolRepoFullName,
-  base: z.string().min(1).max(WRITE_TOOL_BRANCH_REF_MAX),
-  head: z.string().min(1).max(WRITE_TOOL_BRANCH_REF_MAX),
-  title: z.string().min(1).max(WRITE_TOOL_TITLE_MAX),
-  body: z.string().max(WRITE_TOOL_BODY_MAX),
-  draft: z.boolean().optional(),
-};
-const fileIssueShape = {
-  repoFullName: writeToolRepoFullName,
-  title: z.string().min(1).max(WRITE_TOOL_TITLE_MAX),
-  body: z.string().max(WRITE_TOOL_BODY_MAX),
-  labels: z.array(z.string().min(1).max(100)).max(20).optional(),
-};
-const applyLabelsShape = {
-  repoFullName: writeToolRepoFullName,
-  number: z.number().int().positive(),
-  labels: z.array(z.string().min(1).max(100)).min(1).max(20),
-};
-const closePrShape = {
-  repoFullName: writeToolRepoFullName,
-  number: z.number().int().positive(),
-  comment: z.string().max(WRITE_TOOL_BODY_MAX).optional(),
-};
-const postEligibilityCommentShape = {
-  repoFullName: writeToolRepoFullName,
-  number: z.number().int().positive(),
-  body: z.string().min(1).max(WRITE_TOOL_BODY_MAX),
-};
-const createBranchShape = {
-  branch: z.string().min(1).max(WRITE_TOOL_BRANCH_MAX),
-  base: z.string().min(1).max(WRITE_TOOL_BRANCH_MAX).optional(),
-};
-const deleteBranchShape = {
-  branch: z.string().min(1).max(WRITE_TOOL_BRANCH_MAX),
-  remote: z.boolean().optional(),
-};
-const testGenShape = {
-  repoFullName: writeToolRepoFullName,
-  targetFiles: z.array(z.string().min(1).max(500)).min(1).max(50),
-  framework: z.enum(TEST_FRAMEWORKS),
-  testDir: z.string().min(1).max(255).optional(),
-  criteria: z.array(z.string().min(1).max(300)).max(20).optional(),
-};
-const followUpIssueShape = {
-  repoFullName: writeToolRepoFullName,
-  path: z.string().min(1).max(500),
-  line: z.number().int().positive().optional(),
-  finding: z.string().min(1).max(WRITE_TOOL_BODY_MAX),
-  label: z.string().min(1).max(100).optional(),
-};
 
-const loginShape = {
-  login: z.string().min(1),
-};
 
 // #7762: stdio mirror of the remote loopover_mark_notifications_read shape (src/mcp/server.ts). login is
 // optional here, resolved from `login` / the active session / LOOPOVER_LOGIN like the notifications-read CLI;
 // ids is optional -- omit to mark every delivered notification read.
-const markNotificationsReadShape = {
-  login: z.string().min(1).optional(),
-  ids: z.array(z.string().min(1)).optional(),
-};
 
 // #7763: stdio mirror of the remote loopover_watch_issues shape (src/mcp/server.ts). login is optional here,
 // resolved from `login` / the active session / LOOPOVER_LOGIN like the `watch` CLI; action defaults to `list`,
 // and watch/unwatch need repoFullName. labels filter which issues a watch surfaces.
-const watchIssuesShape = {
-  login: z.string().min(1).optional(),
-  action: z.enum(["watch", "unwatch", "list"]).default("list"),
-  repoFullName: z.string().min(3).max(200).optional(),
-  labels: z.array(z.string().min(1).max(100)).max(50).optional(),
-};
 
-const loginRepoShape = {
-  login: z.string().min(1),
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-};
-
-const validateLinkedIssueShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  issueNumber: z.number().int().positive(),
-  plannedChange: z
-    .object({
-      title: z.string().min(1).optional(),
-      changedFiles: z.array(z.string()).optional(),
-      contributorLogin: z.string().min(1).optional(),
-    })
-    .optional(),
-};
-
-const checkBeforeStartShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  issueNumber: z.number().int().positive().optional(),
-  title: z.string().min(1).optional(),
-  plannedPaths: z.array(z.string()).optional(),
-};
-
-const feasibilityGateShape = {
-  claimStatus: z.enum(["unclaimed", "claimed", "solved", "unknown"]),
-  duplicateClusterRisk: z.enum(["none", "low", "medium", "high"]),
-  issueStatus: z.enum(["ready", "needs_proof", "hold", "do_not_use", "duplicate", "invalid", "missing"]),
-  found: z.boolean().optional(),
-  // Optional: when both are supplied AND a local loopover-miner install's claim ledger is present (#5157), claimStatus is
-  // read from that ledger instead of trusting this caller-supplied value. Omitting either falls back to
-  // today's caller-supplied-string behavior unchanged.
-  repoFullName: z.string().min(1).optional(),
-  issueNumber: z.number().int().positive().optional(),
-};
 
 /**
  * Read-only lookup of the caller's own claim status from a local loopover-miner install's claim ledger
@@ -642,389 +482,42 @@ async function resolveLedgerClaimStatus(repoFullName: any, issueNumber: any) {
   }
 }
 
-const findOpportunitiesShape = {
-  targets: z
-    .array(
-      z.object({
-        owner: z.string().min(1),
-        repo: z.string().min(1),
-      }),
-    )
-    .optional(),
-  searchQuery: z.string().min(1).max(500).optional(),
-  goalSpec: z
-    .object({
-      lane: z.string().min(1).optional(),
-      minRankScore: z.number().min(0).max(100).optional(),
-      languages: z.array(z.string()).optional(),
-    })
-    .optional(),
-  limit: z.number().int().min(1).max(50).optional(),
-};
-
-const issueRagShape = {
-  owner: z.string(),
-  repo: z.string(),
-  title: z.string(),
-  body: z.string().optional(),
-  labels: z.array(z.string()).optional(),
-  topK: z.number().int().min(1).max(12).optional(),
-};
-
-const lintPrTextShape = {
-  commitMessages: z.array(z.string()).max(50).optional(),
-  prBody: z.string().optional(),
-  linkedIssue: z.number().int().positive().optional(),
-};
-
-const validateConfigShape = {
-  content: z.string().max(256 * 1024),
-  source: z.enum(["repo_file", "api_record", "none"]).optional(),
-};
 
 // #6754: mirrors evaluateEscalationShape in src/mcp/server.ts exactly, so the local tool, the remote tool, and
 // the REST route all accept an identical payload.
-const evaluateEscalationShape = {
-  runStatus: z.enum(["running", "converged", "abandoned", "error"]),
-  healthStatus: z.enum(["healthy", "degraded", "critical"]).optional(),
-  customerFlagged: z.boolean().optional(),
-  killRequested: z.boolean().optional(),
-};
 
 // #6755: mirrors intakeIdeaShape in src/mcp/server.ts exactly, so the local tool, the remote tool, and the REST
 // route all accept an identical payload. Deliberately loose -- validateIdeaSubmission owns the real checks.
-const intakeIdeaShape = {
-  id: z.string().optional(),
-  title: z.string().optional(),
-  body: z.string().optional(),
-  targetRepo: z.string().optional(),
-  constraints: z.array(z.string()).max(50).optional(),
-  acceptanceHints: z.array(z.string()).max(50).optional(),
-  priority: z.string().optional(),
-  decomposition: z
-    .array(z.object({ key: z.string(), title: z.string(), body: z.string(), dependsOn: z.array(z.string()).max(50).optional() }))
-    .max(50)
-    .optional(),
-};
 
 // #6752: mirrors buildResultsPayloadShape in src/mcp/server.ts exactly, so the local tool, the remote tool, and
 // the REST route all accept an identical payload.
-const resultsPayloadShape = {
-  repoFullName: z.string().min(1),
-  prNumber: z.number().int().nullable().optional(),
-  title: z.string(),
-  changedFiles: z
-    .array(z.object({ path: z.string(), additions: z.number().int().optional(), deletions: z.number().int().optional() }))
-    .max(5000)
-    .optional(),
-  status: z.enum(["open", "merged", "closed"]).optional(),
-};
 
 // #6753: mirrors buildProgressSnapshotShape in src/mcp/server.ts exactly, so the local tool, the remote tool, and
 // the REST route all accept an identical payload.
-const buildProgressSnapshotShape = {
-  iteration: z.number().int(),
-  maxIterations: z.number().int().nullable().optional(),
-  phase: z.enum(["queued", "claiming", "coding", "reviewing", "submitting", "done"]),
-  status: z.enum(["running", "converged", "abandoned", "error"]),
-  recentActivity: z
-    .array(z.object({ step: z.string(), detail: z.string().optional(), at: z.string().optional() }))
-    .max(1000)
-    .optional(),
-};
 
 // #6749: mirrors checkTestEvidenceShape in src/mcp/server.ts VERBATIM (same bounds, same optionality).
-const checkTestEvidenceShape = {
-  changedPaths: z.array(z.string().min(1).max(400)).max(2000),
-  testFiles: z.array(z.string().min(1).max(400)).max(2000).optional(),
-  tests: z.array(z.string().max(400)).max(2000).optional(),
-};
 
 // #6750: mirrors suggestBoundaryTestsShape in src/mcp/server.ts VERBATIM.
-const suggestBoundaryTestsShape = {
-  changedFiles: z.array(z.object({ path: z.string().min(1).max(400) }).strict()).max(500),
-  boundaryTouches: z
-    .array(z.object({ path: z.string().min(1).max(400), kind: z.enum(["array_index_bounds", "null_or_undefined_branch", "empty_collection_check"]) }).strict())
-    .max(20)
-    .optional(),
-  tests: z.array(z.string().max(400)).max(2000).optional(),
-  testFiles: z.array(z.string().max(400)).max(2000).optional(),
-};
 
 // #6751: mirrors simulateOpenPrPressureShape in src/mcp/server.ts VERBATIM. The bin cannot import from src/
 // (package boundary), so this copy is the one place parity is by convention rather than construction — the
 // route parses with the tool's own exported shape, and mcp-cli-open-pr-pressure-tool.test.ts pins that a
 // payload this shape accepts is one the route accepts too.
-const simulateOpenPrPressureCount = z.number().int().min(0).max(1000000);
-const simulateOpenPrPressureShape = {
-  repoFullName: z.string().min(3).max(200),
-  generatedAt: z.string().min(1).max(100),
-  queueHealth: z
-    .object({
-      repoFullName: z.string().min(3).max(200),
-      generatedAt: z.string().min(1).max(100),
-      burdenScore: z.number().finite(),
-      level: z.enum(["low", "medium", "high", "critical"]),
-      summary: z.string().max(1000),
-      signals: z
-        .object({
-          openIssues: simulateOpenPrPressureCount,
-          openPullRequests: simulateOpenPrPressureCount,
-          unlinkedPullRequests: simulateOpenPrPressureCount,
-          stalePullRequests: simulateOpenPrPressureCount,
-          draftPullRequests: simulateOpenPrPressureCount,
-          maintainerAuthoredPullRequests: simulateOpenPrPressureCount,
-          collisionClusters: simulateOpenPrPressureCount,
-          ageBuckets: z
-            .object({ under7Days: simulateOpenPrPressureCount, days7To30: simulateOpenPrPressureCount, over30Days: simulateOpenPrPressureCount })
-            .passthrough(),
-          likelyReviewablePullRequests: simulateOpenPrPressureCount,
-          cachedOpenPullRequests: simulateOpenPrPressureCount.optional(),
-          likelyReviewablePullRequestsSource: z.enum(["cache", "sampled_cache", "authoritative"]).optional(),
-        })
-        .passthrough(),
-      findings: z.array(z.unknown()).max(100),
-    })
-    .passthrough()
-    .nullable(),
-  roleContext: z.object({ maintainerLane: z.boolean() }).passthrough(),
-  contributorOpenPrCount: simulateOpenPrPressureCount.optional(),
-};
 
-const checkSlopRiskShape = {
-  changedFiles: z
-    .array(z.object({ path: z.string().min(1).max(400), additions: z.number().int().min(0).optional(), deletions: z.number().int().min(0).optional() }))
-    .max(2000)
-    .optional(),
-  description: z.string().max(20000).optional(),
-  tests: z.array(z.string().max(400)).max(2000).optional(),
-  testFiles: z.array(z.string().max(400)).max(2000).optional(),
-};
 
 // #7759: mirrors checkImprovementPotentialShape in src/mcp/server.ts — same optional local-metadata fields the
 // CLI / REST route already accept. Stdio proxies POST /v1/lint/improvement-potential (builders stay app-side).
-const checkImprovementPotentialShape = {
-  changedFiles: z
-    .array(z.object({ path: z.string().min(1).max(400), additions: z.number().int().min(0).optional(), deletions: z.number().int().min(0).optional() }))
-    .max(2000)
-    .optional(),
-  tests: z.array(z.string().max(400)).max(2000).optional(),
-  testFiles: z.array(z.string().max(400)).max(2000).optional(),
-  patchCoverageDeltaPercent: z.number().optional(),
-  complexityDeltas: z
-    .array(
-      z.object({
-        file: z.string().min(1).max(400),
-        line: z.number().int().min(1),
-        name: z.string().min(1).max(400),
-        before: z.number().int().min(0),
-        after: z.number().int().min(0),
-        delta: z.number().int(),
-      }),
-    )
-    .max(2000)
-    .optional(),
-  duplicationDeltas: z
-    .array(
-      z.object({
-        file: z.string().min(1).max(400),
-        line: z.number().int().min(1),
-        duplicateOfLine: z.number().int().min(1),
-        lines: z.number().int().min(1),
-      }),
-    )
-    .max(2000)
-    .optional(),
-};
 
-const checkIssueSlopShape = {
-  title: z.string().max(500).optional(),
-  body: z.string().max(40000).optional(),
-};
 
 // #6150 — loopover_run_local_scorer's input, mirroring the remote server's changedFileSchema/validationEntrySchema.
-const localScorerChangedFileShape = z
-  .object({
-    path: z.string().min(1).max(400),
-    previousPath: z.string().min(1).max(400).optional(),
-    additions: z.number().int().min(0).optional(),
-    deletions: z.number().int().min(0).optional(),
-    status: z.enum(["added", "modified", "deleted", "renamed", "copied", "unknown"]).optional(),
-    binary: z.boolean().optional(),
-  })
-  .strict();
-const localScorerValidationShape = z
-  .object({
-    command: z.string().min(1).max(400),
-    status: z.enum(["passed", "failed", "not_run", "skipped", "focused", "unknown"]),
-    summary: z.string().max(2000).optional(),
-    durationMs: z.number().int().min(0).optional(),
-    exitCode: z.number().int().min(0).optional(),
-  })
-  .strict();
-const runLocalScorerShape = {
-  changedFiles: z.array(localScorerChangedFileShape).min(1).max(500),
-  validation: z.array(localScorerValidationShape).max(50).optional(),
-};
 
 // #6150 — loopover_build_plan/loopover_plan_status/loopover_record_step_result's input, mirroring the remote
 // server's rawPlanStepSchema/planStepSchema/planDagSchema (@loopover/contract).
-const rawPlanStepShape = z
-  .object({
-    id: z.string().min(1).max(100),
-    title: z.string().min(1).max(300),
-    actionClass: z.string().min(1).max(60).optional(),
-    dependsOn: z.array(z.string().min(1).max(100)).max(50).optional(),
-    maxAttempts: z.number().int().min(1).max(10).optional(),
-  })
-  .strict();
-const planStepShape = z
-  .object({
-    id: z.string().min(1).max(100),
-    title: z.string().min(1).max(300),
-    actionClass: z.string().min(1).max(60).optional(),
-    dependsOn: z.array(z.string().min(1).max(100)).max(50),
-    status: z.enum(["pending", "running", "completed", "failed", "skipped"]),
-    attempts: z.number().int().min(0),
-    maxAttempts: z.number().int().min(1).max(10),
-    lastError: z.string().max(2000).nullable().optional(),
-  })
-  .strict();
-const planDagShape = z.object({ steps: z.array(planStepShape).max(100) }).strict();
-const buildPlanShape = { steps: z.array(rawPlanStepShape).min(1).max(100) };
-const planStatusShape = { plan: planDagShape };
-const recordStepResultShape = {
-  plan: planDagShape,
-  stepId: z.string().min(1).max(100),
-  outcome: z.enum(["completed", "failed", "skipped"]),
-  error: z.string().max(2000).optional(),
-};
 
 // #6150 — loopover_predict_gate's input, mirroring the remote server's predictGateShape. Metadata-only (no
 // git/workspace context needed): predicts the gate outcome for a PLANNED PR before any local code exists, the
 // same use case loopover_preflight_pr already serves for lane/duplicate/linked-issue checks.
-const predictGateShape = {
-  login: z.string().min(1),
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  title: z.string().min(1),
-  body: z.string().max(40000).optional(),
-  labels: z.array(z.string()).max(50).optional(),
-  linkedIssues: z.array(z.number().int().positive()).max(50).optional(),
-  changedPaths: z.array(z.string().min(1).max(400)).max(500).optional(),
-};
 
-const preflightShape = {
-  repoFullName: z.string().min(3),
-  contributorLogin: z.string().min(1).optional(),
-  title: z.string().min(1),
-  body: z.string().optional(),
-  labels: z.array(z.string()).optional(),
-  changedFiles: z.array(z.string()).optional(),
-  linkedIssues: z.array(z.number().int().positive()).optional(),
-  tests: z.array(z.string()).optional(),
-  authorAssociation: z.string().optional(),
-};
-
-const localDiffShape = {
-  repoFullName: z.string().min(3),
-  cwd: z.string().optional(),
-  baseRef: z.string().default("HEAD"),
-  contributorLogin: z.string().min(1).optional(),
-  title: z.string().optional(),
-  body: z.string().optional(),
-  labels: z.array(z.string()).optional(),
-  linkedIssues: z.array(z.number().int().positive()).optional(),
-  tests: z.array(z.string()).optional(),
-  authorAssociation: z.string().optional(),
-  commitMessage: z.string().optional(),
-};
-
-const branchEligibilityShape = {
-  status: z.enum(["eligible", "ineligible", "unknown"]),
-  source: z.enum(["github_metadata", "local_metadata", "registry", "user_supplied"]).optional(),
-  reason: z.string().optional(),
-  checkedAt: z.string().optional(),
-  stale: z.boolean().optional(),
-};
-
-const localScoreShape = {
-  ...localDiffShape,
-  targetKey: z.string().optional(),
-  sourceTokenScore: z.number().min(0).optional(),
-  totalTokenScore: z.number().min(0).optional(),
-  sourceLines: z.number().min(0).optional(),
-  linkedIssueMode: z.enum(["none", "standard", "maintainer"]).default("none"),
-  openPrCount: z.number().int().min(0).optional(),
-  credibility: z.number().min(0).max(1).optional(),
-  changesRequestedCount: z.number().int().min(0).optional(),
-  pendingMergedPrCount: z.number().int().min(0).optional(),
-  pendingClosedPrCount: z.number().int().min(0).optional(),
-  approvedPrCount: z.number().int().min(0).optional(),
-  expectedOpenPrCountAfterMerge: z.number().int().min(0).optional(),
-  projectedCredibility: z.number().min(0).max(1).optional(),
-  scenarioNotes: z.array(z.string()).optional(),
-  branchEligibility: z.object(branchEligibilityShape).strict().optional(),
-  scorePreviewCommand: z.string().optional(),
-};
-
-const variantsShape = {
-  variants: z.array(z.object(localScoreShape)).min(1).max(10),
-};
-
-const currentBranchShape = {
-  login: z.string().min(1),
-  cwd: z.string().optional(),
-  repoFullName: z.string().min(3).optional(),
-  baseRef: z.string().optional(),
-  headRef: z.string().optional(),
-  branchName: z.string().optional(),
-  title: z.string().optional(),
-  body: z.string().optional(),
-  labels: z.array(z.string()).optional(),
-  linkedIssues: z.array(z.number().int().positive()).optional(),
-  pendingMergedPrCount: z.number().int().min(0).optional(),
-  pendingClosedPrCount: z.number().int().min(0).optional(),
-  approvedPrCount: z.number().int().min(0).optional(),
-  expectedOpenPrCountAfterMerge: z.number().int().min(0).optional(),
-  projectedCredibility: z.number().min(0).max(1).optional(),
-  scenarioNotes: z.array(z.string()).optional(),
-  branchEligibility: z.object(branchEligibilityShape).strict().optional(),
-  validation: z
-    .array(
-      z.object({
-        command: z.string().min(1),
-        status: z.enum(["passed", "failed", "not_run", "skipped", "focused", "unknown"]),
-        summary: z.string().optional(),
-        durationMs: z.number().int().min(0).optional(),
-        exitCode: z.number().int().min(0).optional(),
-      }),
-    )
-    .optional(),
-  scorePreviewCommand: z.string().optional(),
-};
-
-const currentBranchVariantsShape = {
-  variants: z.array(z.object(currentBranchShape)).min(1).max(10),
-};
-
-const agentPlanShape = {
-  login: z.string().min(1),
-  objective: z.string().optional(),
-  repoFullName: z.string().min(3).optional(),
-};
-
-const agentRunShape = {
-  objective: z.string().min(1),
-  actorLogin: z.string().min(1),
-  targetRepoFullName: z.string().min(3).optional(),
-  targetPullNumber: z.number().int().positive().optional(),
-  targetIssueNumber: z.number().int().positive().optional(),
-};
-
-const agentRunIdShape = {
-  runId: z.string().min(1),
-};
 
 // #6152 maintain-surface tools. Each shape mirrors its already-shipped remote counterpart in src/mcp/server.ts
 // (listPendingActionsShape, decidePendingActionShape, setAgentPausedShape, setActionAutonomyShape,
@@ -1039,649 +532,153 @@ const agentRunIdShape = {
 // list, and be told it succeeded -- so it is left out of the schema and the description names the queue as the
 // pending one. An agent picks its arguments from the published schema, so a filter that isn't there is one it
 // won't ask for; a key sent anyway is dropped by the MCP layer before this handler and never reaches the URL.
-const listPendingActionsShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-};
 
-const decidePendingActionShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  id: z.string().min(1),
-  decision: z.enum(["accept", "reject"]),
-};
-
-const setAgentPausedShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  paused: z.boolean(),
-};
 
 // Reuses the CLI's own constants, so `maintain set-level`'s validation and this tool's schema can never disagree
 // about what the server accepts.
-const setActionAutonomyShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  action: z.enum(MAINTAIN_ACTION_CLASSES),
-  level: z.enum(MAINTAIN_AUTONOMY_LEVELS),
-};
 
-const outcomeCalibrationShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  windowDays: z.number().int().positive().optional(),
-};
-
-const gatePrecisionShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  windowDays: z.number().int().positive().optional(),
-};
 
 // #7798: owner/repo plus the optional row cap the audit route's ?limit query accepts.
-const selftuneOverrideAuditShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  limit: z.number().int().positive().optional(),
-};
 
 // #9300: write-side sibling of selftuneOverrideAuditShape — mirrors src/mcp/server.ts's
 // clearSelftuneOverrideShape (`confirm` must be the literal true; omitted/false is schema-rejected).
-const clearSelftuneOverrideShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  confirm: z.literal(true),
-};
 
 // #7764: mirrors the remote loopover_plan_repo_issues tool's input (src/mcp/server.ts's planRepoIssuesShape),
 // minus the create-only `milestone` which this proxy (and the `maintain plan-issues` CLI) does not expose --
 // forwarded to POST /v1/repos/:owner/:repo/issue-plan-drafts/generate. `goal` is the required maintainer
 // planning goal; dryRun/create carry the route's create-safety (create alone is rejected there). `limit` is
 // capped at 10, matching the route, because every draft costs real LLM spend.
-const planRepoIssuesShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  goal: z.string().min(1).max(2000),
-  dryRun: z.boolean().optional().default(true),
-  create: z.boolean().optional().default(false),
-  limit: z.number().int().min(1).max(10).optional().default(5),
-};
 
 // #7755: mirrors the remote loopover_generate_contributor_issue_drafts input (src/mcp/server.ts's
 // generateContributorIssueDraftsShape) -- dryRun/create carry the route's create-safety (create alone is
 // rejected there); `limit` is capped at 20, matching the route.
-const generateContributorIssueDraftsShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  dryRun: z.boolean().optional().default(true),
-  create: z.boolean().optional().default(false),
-  limit: z.number().int().min(1).max(20).optional().default(5),
-};
 
-// Single source of truth for stdio tool name + one-line description (#2233).
-// Registration and `loopover-mcp tools` both read this list.
-const STDIO_TOOL_DESCRIPTORS = [
-  {
-    name: "loopover_get_repo_context",
-    category: "maintainer",
-    description: "Return the LoopOver repo-context bundle for a repo — registration state, recommended contribution lane, queue health, duplicate-PR collisions, and config quality — from the private LoopOver API. Takes owner and repo.",
-  },
-  {
-    name: "loopover_get_pr_reviewability",
-    category: "review",
-    description: "Return the reviewability report for an open PR: how ready it is to review/merge, the blocking or advisory signals against it, and its lane/duplicate/linked-issue context. Metadata-only, no GitHub writes.",
-  },
-  {
-    name: "loopover_get_pr_maintainer_packet",
-    category: "review",
-    description:
-      "Return the full maintainer packet for an open PR: triage context assembled from cached repo/PR/issue/review/check metadata, wrapped with data-quality. Metadata-only; takes owner, repo, and pull number.",
-  },
-  {
-    name: "loopover_get_pr_ai_review_findings",
-    category: "review",
-    description:
-      "Return a submitted pull request's real AI-review inline findings as structured JSON (category, path, severity, line, body) — the same categorization the PR comment uses. Post-submission only; self-scoped to your own PRs. Metadata-only, no GitHub writes.",
-  },
-  {
-    name: "loopover_get_maintainer_noise",
-    category: "maintainer",
-    description: "Return the maintainer queue-noise triage report for a repo: a noise score/level, the specific noise sources to clear first, and recommended maintainer actions. Maintainer-authenticated; advisory only.",
-  },
-  {
-    name: "loopover_get_agent_audit_feed",
-    category: "agent",
-    description:
-      "Return a repo's agent audit feed: executed actions (agent.action.*) and approval-queue decisions (accepted/rejected), newest first. Read-only and public-safe (action posture only). Maintainer access required.",
-  },
-  {
-    name: "loopover_refresh_repo_docs",
-    category: "maintainer",
-    description:
-      "Force an immediate repo-doc refresh (AGENTS.md/CLAUDE.md, and a skill file when warranted) for one repo, without waiting for the scheduled interval. Only ever opens a pull request -- never a direct commit -- and only when repoDocGeneration is enabled for this repo and the generated content actually changed. Maintainer access required.",
-  },
-  {
-    name: "loopover_get_ams_miner_cohort",
-    category: "maintainer",
-    description:
-      "Return the AMS-vs-human contributor-mix cohort comparison for a repo: submitter counts, PR volume, acceptance rate, review-cycle, and time-to-merge metrics for AMS-tracked vs human submitters. Maintainer-authenticated; advisory only.",
-  },
-  {
-    name: "loopover_get_repo_focus_manifest",
-    category: "maintainer",
-    description:
-      "Return a repo's own persisted focus manifest (.loopover.yml policy) plus its compiled policy. Read-only; maintainer/owner/operator authenticated. Distinct from loopover_validate_config (ad-hoc string validation).",
-  },
-  {
-    name: "loopover_get_repo_onboarding_pack",
-    category: "maintainer",
-    description:
-      "Preview-only onboarding pack for a repository owner (contribution lanes, label policy, and public-safe guidance). Not published to GitHub. Pass `refresh` to regenerate the preview instead of serving the cached one.",
-  },
-  {
-    name: "loopover_get_activation_preview",
-    category: "maintainer",
-    description: "Return the repo's maintainer activation preview: a deterministic run of the advisory engine over recent PRs (evaluated/with-findings counts, distinct finding codes, per-PR samples, current review-check mode, and the single recommended next action). Maintainer-authenticated; advisory only.",
-  },
-  {
-    name: "loopover_get_live_gate_thresholds",
-    category: "maintainer",
-    description:
-      "Return the currently-authoritative live gate thresholds for a repo (confidence floor and scope caps) as a field-limited snake_case AMS probe. Live override wins; soaking shadow fills in only when live is absent. Metadata-only; takes owner and repo.",
-  },
-  {
-    name: "loopover_get_gate_config_effective",
-    category: "maintainer",
-    description:
-      "Return a repo's current effective self-tuned gate thresholds (confidenceFloor, scopeCap) plus whether a shadow override is soaking. Metadata-only; takes owner and repo.",
-  },
-  {
-    name: "loopover_preflight_pr",
-    category: "discovery",
-    description: "Preflight planned PR metadata against lane, duplicate, linked issue, test, and queue signals.",
-  },
-  {
-    name: "loopover_explain_review_risk",
-    category: "review",
-    description: "Explain review risk for a planned PR using preflight, lane, duplicate, and role context.",
-  },
-  {
-    name: "loopover_validate_linked_issue",
-    category: "discovery",
-    description: "Report whether linking an issue will actually earn the standard linked-issue scoring multiplier for a planned PR — open, valid, single-owner, solvable by this PR — with the blocking reason if not. The raw multiplier value stays private.",
-  },
-  {
-    name: "loopover_check_before_start",
-    category: "discovery",
-    description: "Before writing any code, check whether an issue is already claimed or solved, whether a duplicate cluster is forming, and whether it is a valid target. Returns a go/raise/avoid recommendation with public-safe reasons from cached metadata.",
-  },
-  {
-    name: "loopover_find_opportunities",
-    category: "discovery",
-    description: "Cross-repo discovery: find high-fit contribution opportunities across registered Gittensor repos. Returns a ranked, public-safe list filtered by your MinerGoalSpec (lane, min rank score, languages). Metadata-only, no GitHub writes.",
-  },
-  {
-    name: "loopover_retrieve_issue_context",
-    category: "discovery",
-    description: "Repo-scoped issue-centric RAG retrieval for the miner analyze phase. Returns related file paths and retrieval scores from issue title/body/labels — metadata only, never source text.",
-  },
-  {
-    name: "loopover_lint_pr_text",
-    category: "review",
-    description: "Lint a commit message + PR body against the gittensor traceability/no-issue-rationale and Conventional Commit rubric before submitting. Returns a deterministic verdict (strong/adequate/weak) plus specific public-safe fixes. Computed in-process; no source upload and no API round-trip.",
-  },
-  {
-    name: "loopover_validate_config",
-    category: "utility",
-    description: "Parse and validate a .loopover.yml manifest string using the same focus-manifest parser as the server. Returns normalized config fields, parse warnings, and an ok/warn/error status. Computed in-process; no source upload and no API round-trip. Metadata-only, no GitHub writes.",
-  },
-  {
-    name: "loopover_check_slop_risk",
-    category: "review",
-    description: "Assess the deterministic slop risk of a planned change from local diff metadata (paths + line counts) + the PR description — an agent-native, source-free quality self-check. Returns slopRisk (0-100), band, findings, and the rubric. Computed in-process; no repo data and no API round-trip.",
-  },
-  {
-    name: "loopover_check_improvement_potential",
-    category: "review",
-    description:
-      "Assess the deterministic structural-improvement potential of a planned change from local diff metadata plus optional complexity/duplication/patch-coverage deltas — mirrors loopover_check_slop_risk on the positive axis. Same as `loopover-mcp improvement-potential` / POST /v1/lint/improvement-potential.",
-  },
-  {
-    name: "loopover_simulate_open_pr_pressure",
-    category: "discovery",
-    description:
-      "Rank what-if scenarios for easing a repo's open-PR pressure from already-computed queue-health metadata — deterministic, public-safe, and read-only. Needs no repo access and performs no GitHub writes.",
-  },
-  {
-    name: "loopover_suggest_boundary_tests",
-    category: "review",
-    description:
-      "Boundary-safe test-generation suggestion: evaluate locally precomputed boundary-touch metadata (path + pattern kind only; no patch/source text) with no test evidence in the diff, and return a LOCAL-execution action spec (criteria/hints only — never generated test code) for your OWN agent to scaffold tests with. Advisory-only; never blocks, never writes.",
-  },
-  {
-    name: "loopover_check_test_evidence",
-    category: "review",
-    description:
-      "Classify whether a planned change's changed files carry enough test evidence, from path metadata alone (no source uploaded) — an agent-native coverage-gap self-check before opening a PR. Returns a coverage band (strong/adequate/weak/absent) plus actionable guidance. Computed in-process; no API round-trip.",
-  },
-  {
-    name: "loopover_evaluate_escalation",
-    category: "agent",
-    description:
-      "Decide whether a rented loop needs a human, and what action to take, from an already-computed run outcome, health tier, and operator/customer signals — the deterministic support/escalation-path logic. Source-free; returns shouldEscalate + action (none/notify/human_review/stop) + severity + reasons. It decides; the caller wires the action. Computed in-process; no API round-trip.",
-  },
-  {
-    name: "loopover_build_results_payload",
-    category: "agent",
-    description:
-      "Package a completed loop iteration into the customer-facing result (#4801): a PR link, a plain-language summary, and a bounded diff preview, from already-computed iteration metadata. Deterministic and source-free — it formats the result, it does not fetch, open, or deliver anything. Computed in-process; no API round-trip.",
-  },
-  {
-    name: "loopover_build_progress_snapshot",
-    category: "agent",
-    description:
-      "Build a near-real-time progress snapshot for a running rented loop (#4800): phase, status, iteration/percent-complete, and a bounded recent-activity tail, from already-computed loop state. Deterministic and source-free; a customer surface pushes it on change rather than polling on a fixed interval. Computed in-process; no API round-trip.",
-  },
-  {
-    name: "loopover_intake_idea",
-    category: "agent",
-    description:
-      "Turn a freeform renter idea into a strict, claimable task-graph (spec #4779) and score it against the same feasibility gate the loop runs on. Deterministic and source-free: validates the submission, assembles constituent issues (an optional caller-supplied decomposition, else a single-issue baseline), and returns the graph plus its go/raise/avoid verdict. A malformed or empty submission returns an actionable error list, not a silent failure. Computed in-process; no API round-trip.",
-  },
-  {
-    name: "loopover_plan_idea_claims",
-    category: "agent",
-    description:
-      "Route a freeform idea through the intake bridge into a claim/code/submit-loop plan (#4799): validates the submission, builds the scored task-graph, and returns which constituent issues the loop can claim now vs. defer vs. skip — dependency-ordered so a prerequisite is always claimed before its dependents. Deterministic and source-free; it decides what to claim, it does not claim or run anything. Computed in-process; no API round-trip.",
-  },
-  {
-    name: "loopover_check_issue_slop",
-    category: "review",
-    description: "Assess the deterministic slop risk of an issue from its title + body alone (no repo data) — flags clearly low-effort issues (empty body, an unfilled template) for triage. Returns band and findings. Advisory-only: issues never block.",
-  },
-  // #6150 — the miner-auto-dev profile's plan-DAG + local-scorer + gate-prediction tools, previously listed in
-  // recommendedTools below but never actually registered.
-  {
-    name: "loopover_run_local_scorer",
-    category: "branch",
-    description: "Compute deterministic source/test/non-code token scores from local changed-file metadata + validation results — no repo/contributor access, reveals nothing beyond a computation on the caller's own diff stats. Pass the result as the localScorer field of loopover_preview_local_pr_score or the analyze tools to score this branch in external_command mode. Computed in-process; no API round-trip.",
-  },
-  {
-    name: "loopover_build_plan",
-    category: "agent",
-    description: "Build a normalized step DAG (dependencies, retry limits) from a raw list of steps and validate it for cycles/unknown dependencies. Returns the plan, its progress, the currently-ready steps, and validation. Computed in-process; no API round-trip.",
-  },
-  {
-    name: "loopover_plan_status",
-    category: "agent",
-    description: "Return a plan's current progress, the next ready steps, and validation status. Takes the plan object returned by loopover_build_plan or a prior loopover_record_step_result call. Computed in-process; no API round-trip.",
-  },
-  {
-    name: "loopover_record_step_result",
-    category: "agent",
-    description: "Record the outcome (completed/failed/skipped) of a plan step the harness just ran and return the updated plan. A failed step retries (back to pending) until its maxAttempts is exhausted. Computed in-process; no API round-trip.",
-  },
-  {
-    name: "loopover_predict_gate",
-    category: "review",
-    description: "Predict the LoopOver gate outcome for a planned PR before any local code exists — the same advisory + gate evaluation the maintainer pipeline runs, using only the repo's public .loopover.yml policy. Takes login, owner, repo, title, and optional body/labels/linkedIssues/changedPaths. Metadata-only, no source upload.",
-  },
-  {
-    name: "loopover_explain_gate_disposition",
-    category: "review",
-    description:
-      "Explain WHY the LoopOver gate would pass or block a planned PR: the itemized per-rule dispositions (which specific gate rules block vs advise, and why) behind loopover_predict_gate's verdict. Read-only reasoning surface from the repo's PUBLIC .loopover.yml only — no merge/close decision. Self-scoped to the authenticated login.",
-  },
-  {
-    name: "loopover_preflight_local_diff",
-    category: "branch",
-    description: "Inspect local git diff metadata and run LoopOver preflight without uploading source contents.",
-  },
-  {
-    name: "loopover_get_registry_changes",
-    category: "utility",
-    description: "Return the latest cached report of changes to the Gittensor repo registry — repositories added, removed, or re-registered upstream. Read-only; takes no parameters.",
-  },
-  {
-    name: "loopover_get_registry_snapshot",
-    category: "utility",
-    description:
-      "Return the latest cached Gittensor registry snapshot (the raw current snapshot — repositories, emission shares, and warnings — not a diff). Read-only; takes no parameters. Public/unauthenticated, same as GET /v1/registry/snapshot.",
-  },
-  {
-    name: "loopover_get_upstream_drift",
-    category: "utility",
-    description: "Return the latest cached Gittensor upstream ruleset drift status (stale/drift warnings) for MCP planning.",
-  },
-  {
-    name: "loopover_get_upstream_ruleset",
-    category: "utility",
-    description:
-      "Return the latest cached upstream Gittensor ruleset snapshot (the raw current ruleset — active model, registry counts, and payload — not the drift report). Read-only; takes no parameters. Public/unauthenticated, same as GET /v1/upstream/ruleset.",
-  },
-  {
-    name: "loopover_get_bounty_advisory",
-    category: "discovery",
-    description:
-      "Return the lifecycle, funding, and consensus-risk context for a cached Gittensor bounty by id, from the public LoopOver API.",
-  },
-  {
-    name: "loopover_get_label_audit",
-    category: "maintainer",
-    description:
-      "Return the repo's label-policy audit (configured-vs-live labels, missing configured labels, suspicious status/source-style labels, and trusted-label-pipeline readiness) from the private LoopOver API.",
-  },
-  {
-    name: "loopover_get_maintainer_lane",
-    category: "maintainer",
-    description:
-      "Return the repo's maintainer-lane triage report (the lane recommendation alongside the configured maintainer cut, queue health, config quality, and contributor-intake health) from the private LoopOver API. Advisory only.",
-  },
-  {
-    name: "loopover_get_burden_forecast",
-    category: "maintainer",
-    description:
-      "Return the repo's cached maintainer burden forecast (projected review load, queue-growth risk, and stale-PR signals) with a freshness marker, from the private LoopOver API.",
-  },
-  {
-    name: "loopover_get_repo_outcome_patterns",
-    category: "maintainer",
-    description:
-      "Return cached or freshly-computed per-repo accepted/rejected PR outcome patterns: what maintainers actually merge or close, separated from maintainer-lane activity, with a freshness marker and explicit evidence-completeness.",
-  },
-  {
-    name: "loopover_preview_local_pr_score",
-    category: "branch",
-    description: "Inspect local diff metadata and request a private LoopOver scoring preview. No source contents are uploaded.",
-  },
-  {
-    name: "loopover_explain_score_breakdown",
-    category: "review",
-    description: "Explain a private score preview multiplier-by-multiplier with plain-English levers and the highest-impact improvement.",
-  },
-  {
-    name: "loopover_get_eligibility_plan",
-    category: "discovery",
-    description: "Derive a structured eligibility plan from local score-preview metadata: whether the branch/PR is eligible now, public-safe blockers, and cleanup paths. Advisory dry-run only — no GitHub writes.",
-  },
-  {
-    name: "loopover_get_decision_pack",
-    category: "discovery",
-    description: "Return the private decision pack for a contributor: the ranked repos and issues to work on next, with per-repo go/raise/avoid guidance. Takes login (the contributor's GitHub username).",
-  },
-  {
-    name: "loopover_explain_repo_decision",
-    category: "discovery",
-    description: "Return the go/raise/avoid decision for one specific contributor-and-repo pair, drawn from that contributor's decision pack — narrower than loopover_get_decision_pack, which returns the whole pack. Takes login (GitHub username), owner, and repo.",
-  },
-  {
-    name: "loopover_monitor_open_prs",
-    category: "discovery",
-    description:
-      "Inspect a contributor's open PRs on registered repos, classify queue state, and return public-safe next-step packets from cached metadata.",
-  },
-  {
-    name: "loopover_get_contributor_profile",
-    category: "discovery",
-    description:
-      "Return the evidence-backed LoopOver contributor profile for a GitHub login: registered repos, merged-PR history, and where the contributor is strongest. Takes login (the contributor's GitHub username). Same as `loopover-mcp contributor-profile`.",
-  },
-  {
-    name: "loopover_list_notifications",
-    category: "utility",
-    description:
-      "Return a contributor's own LoopOver notifications (e.g. changes requested on their PRs) and unread badge count. Self-scoped: only the authenticated login's notifications.",
-  },
-  {
-    name: "loopover_pr_outcome",
-    category: "review",
-    description:
-      "Return a contributor's own post-merge outcome records — for each merged PR, a public-safe attribution of what it did for their standing on the repo. Self-scoped: only the authenticated login's outcomes.",
-  },
-  {
-    name: "loopover_mark_notifications_read",
-    category: "utility",
-    description:
-      "Mark a contributor's own delivered notifications as read (clears the badge). Self-scoped; pass `ids` to clear specific notifications or omit to clear all.",
-  },
-  {
-    name: "loopover_watch_issues",
-    category: "utility",
-    description:
-      "Watch repos for NEW grabbable, high-multiplier issues (maintainer-created, not WIP). action=watch subscribes a repo (optional label filter), unwatch removes it, list (default) returns your watches. When a matching issue opens you're notified via loopover_list_notifications. Self-scoped to the authenticated login.",
-  },
-  {
-    name: "loopover_compare_pr_variants",
-    category: "branch",
-    description: "Compare private LoopOver scoring previews across local/metadata variants.",
-  },
-  {
-    name: "loopover_local_status",
-    category: "utility",
-    description: "Return local LoopOver MCP status, inferred git repo metadata, and privacy defaults.",
-  },
-  {
-    name: "loopover_preflight_current_branch",
-    category: "branch",
-    description: "Analyze the current git branch and return PR readiness. Sends metadata only.",
-  },
-  {
-    name: "loopover_review_pr_before_push",
-    category: "branch",
-    description: "Run a single composed pre-PR review of the current branch: preflight (lane/duplicate/linked-issue/test/queue fit), slop-risk, and PR-text lint, merged into one report with an overall pass/warn/fail status. Thin composition of the existing checks — does not reimplement any of them. Sends metadata only, no source upload.",
-  },
-  {
-    name: "loopover_preview_current_branch_score",
-    category: "branch",
-    description: "Analyze the current git branch and return private scoreability context. Sends metadata only.",
-  },
-  {
-    name: "loopover_rank_local_next_actions",
-    category: "branch",
-    description: "Analyze the current git branch and rank local next actions by private reward/risk and review friction.",
-  },
-  {
-    name: "loopover_explain_local_blockers",
-    category: "branch",
-    description: "Analyze the current git branch and explain private scoreability, lane, and review blockers.",
-  },
-  {
-    name: "loopover_remediation_plan",
-    category: "branch",
-    description: "Analyze the current git branch and return an ordered public-safe remediation checklist with rerun conditions.",
-  },
-  {
-    name: "loopover_prepare_pr_packet",
-    category: "branch",
-    description: "Analyze the current git branch and return a public-safe PR packet. Sends metadata only.",
-  },
-  {
-    name: "loopover_draft_pr_body",
-    category: "branch",
-    description:
-      "Draft a public-safe, copy/paste PR body from local branch metadata (changed files, tests run, linked issue, duplicate/WIP caution, branch freshness, next steps). Private scoreability/reward/trust context is excluded; source contents are not uploaded. Optional format=markdown returns the rendered body as the primary payload.",
-  },
-  {
-    name: "loopover_compare_local_variants",
-    category: "branch",
-    description: "Compare current-branch metadata variants without uploading source contents.",
-  },
-  {
-    name: "loopover_agent_plan_next_work",
-    category: "agent",
-    description: "Run the deterministic LoopOver planner for a contributor and return the single recommended next unit of work (repo, issue, and action). Planning only — does not queue or start a run. Takes login (GitHub username); optional objective and repoFullName narrow the result.",
-  },
-  {
-    name: "loopover_agent_start_run",
-    category: "agent",
-    description: "Queue a new LoopOver automated-agent run for a contributor. Copilot mode only: it proposes and records work but takes no GitHub actions on its own. Takes objective (what to accomplish) and actorLogin (the contributor's GitHub username); returns the new run's id and status.",
-  },
-  {
-    name: "loopover_agent_get_run",
-    category: "agent",
-    description: "Fetch a previously queued LoopOver agent run by its id, including current status and planned actions. Takes runId (the id returned by loopover_agent_start_run).",
-  },
-  {
-    name: "loopover_agent_explain_next_action",
-    category: "agent",
-    description: "Explain the next deterministic action and blocker context for a GitHub login.",
-  },
-  {
-    name: "loopover_agent_prepare_pr_packet",
-    category: "branch",
-    description: "Prepare a public-safe PR packet from current branch metadata. Sends metadata only.",
-  },
-  {
-    name: "loopover_local_status_structured",
-    category: "utility",
-    description: "Return local LoopOver MCP status with a validated structured output schema.",
-  },
-  {
-    name: "loopover_feasibility_gate",
-    category: "discovery",
-    description: "Pure local go/raise/avoid feasibility verdict from claim status, duplicate-cluster risk, and issue quality/lifecycle status — the same discriminants the analyze-phase feasibility gate branches on. When repoFullName/issueNumber are supplied and a local loopover-miner install's claim ledger is present, claimStatus is read from that ledger instead of the caller-supplied value; otherwise falls back to the caller-supplied claimStatus unchanged. Advisory-only — never blocks, cancels, or overrides a claim or attempt; real claim-conflict resolution authority stays with the maintainer-only path. No API round-trip.",
-  },
-  {
-    name: "loopover_get_issue_quality",
-    category: "maintainer",
-    description: "Return the cached or freshly-computed issue-quality report for a repo, ranking which open issues are actionable, need proof, are stale/duplicate-prone, or already solved.",
-  },
-  {
-    name: "loopover_get_registration_readiness",
-    category: "maintainer",
-    description: "Preview-only registration-readiness report for a repository: what's missing/present before/after registering with LoopOver (direct-PR and issue-discovery lane readiness, label policy, maintainer-cut readiness, queue health, docs, and the GitHub App install state). Advisory only, not a registration action.",
-  },
-  {
-    name: "loopover_get_config_recommendation",
-    category: "maintainer",
-    description: "Return recommended .loopover.yml additions for a repository, derived from the repo's live, currently-active configured behavior (the raw dashboard/API-configured settings, not a yml-merged view — so the recommendation never compares itself against an override that already exists). Advisory only, not a write action.",
-  },
-  {
-    name: "loopover_get_skipped_pr_audit",
-    category: "maintainer",
-    description: "Return the skipped-PR audit trail: pull requests LoopOver's automated reviewer intentionally stayed quiet on, each with a reason code and a remediation hint. Optionally filter by repoFullName, reason, or since. Maintainer-authenticated; read-only measurement, not a moderation or override action.",
-  },
-  // #6152 — the maintain CLI's REST surface, exposed as tools so an agent can drive it without shelling out.
-  // Categories mirror the remote server's MCP_TOOL_CATEGORIES entries for the same names, so a caller sees one
-  // consistent grouping across both surfaces.
-  {
-    name: "loopover_list_pending_actions",
-    category: "agent",
-    description: "List the agent actions currently staged and awaiting a decision in a repo's approval queue, so a maintainer can review what is pending. Returns the pending queue only — the same list as `loopover-mcp maintain queue`. Maintainer access required.",
-  },
-  {
-    name: "loopover_propose_action",
-    category: "agent",
-    description:
-      "Stage a PR action (label / request_changes / approve / merge / close) into the repo's approval queue for a maintainer to accept or reject. Maintainer access required; the action is NOT executed until approved.",
-  },
-  {
-    name: "loopover_decide_pending_action",
-    category: "agent",
-    description: "Accept (execute) or reject a staged approval-queue action by id. Accept runs it through the live executor gates; reject cancels it. Scoped to this repo, same as `loopover-mcp maintain approve|reject <id>`. Maintainer access required.",
-  },
-  {
-    name: "loopover_set_agent_paused",
-    category: "agent",
-    description: "Pause or resume ALL agent actions on a repo (the kill-switch toggle), same as `loopover-mcp maintain pause|resume`. Maintainer access required.",
-  },
-  {
-    name: "loopover_set_action_autonomy",
-    category: "agent",
-    description: "Set the autonomy level for one action class via a read-merge-write, so the other classes are left untouched. Same as `loopover-mcp maintain set-level <action> <level>`. Maintainer access required.",
-  },
-  {
-    name: "loopover_get_outcome_calibration",
-    category: "maintainer",
-    description: "Return slop-band and recommendation outcome calibration for a repo: whether higher-slop bands merge less often and how agent recommendations are panning out. Optionally bounded by windowDays. Maintainer-authenticated; measurement only.",
-  },
-  {
-    name: "loopover_get_gate_precision",
-    category: "maintainer",
-    description: "Return per-gate-type false-positive precision for a repo's recorded gate blocks — blocked / blocked-then-merged counts and false-positive rates with low-sample guards. Optionally bounded by windowDays. Maintainer-authenticated; measurement only.",
-  },
-  {
-    name: "loopover_get_selftune_override_audit",
-    category: "maintainer",
-    description:
-      "Return the self-tune override audit trail for a repo — why the self-tune loop promoted, shadowed, or cleared a live gate override, newest first. Optionally capped by limit. Maintainer-authenticated; read-only measurement.",
-  },
-  {
-    name: "loopover_clear_selftune_override",
-    category: "maintainer",
-    description:
-      "Clear a repo's LIVE self-tune gate override (the operator's \"reset to config base\" control), mirroring DELETE /v1/repos/:owner/:repo/selftune/overrides. Requires confirm:true; the automatic self-tune promote path is untouched. Maintainer access required.",
-  },
-  {
-    name: "loopover_get_automation_state",
-    category: "agent",
-    description:
-      "Return a repo's DERIVED agent automation state — the effective mode, permissionReadiness, acting action classes, and pending-action count computed over the raw settings row — same as `loopover-mcp maintain automation-state` and the read-side counterpart to the pause/resume/set-level write tools. Maintainer-authenticated; read-only.",
-  },
-  {
-    name: "loopover_plan_repo_issues",
-    category: "maintainer",
-    description:
-      "AI-plan a small set of concrete GitHub issue drafts for a repo from a maintainer-supplied free-form goal, same as `loopover-mcp maintain plan-issues --goal ...`. Dry-run BY DEFAULT: only previews the drafted title/body/labels unless the caller passes BOTH create:true and dryRun:false, so it can never silently open issues. Maintainer access required.",
-  },
-  {
-    name: "loopover_generate_contributor_issue_drafts",
-    category: "maintainer",
-    description:
-      "Generate contributor-facing issue drafts for one repo from its lane/config/queue signals. Dry-run BY DEFAULT: it only PREVIEWS drafts unless the caller passes BOTH create:true and dryRun:false, so it can never silently open issues; the write path additionally requires repo write access and is suppressed while the agent is globally paused/frozen. Maintainer access required.",
-  },
-  {
-    name: "loopover_open_pr",
-    category: "agent",
-    description:
-      "Build a LOCAL-execution spec to open a pull request from your branch (run it with your own gh creds; loopover never performs the write).",
-  },
-  {
-    name: "loopover_file_issue",
-    category: "agent",
-    description: "Build a LOCAL-execution spec to file an issue (run it with your own gh creds; loopover never performs the write).",
-  },
-  {
-    name: "loopover_apply_labels",
-    category: "agent",
-    description:
-      "Build a LOCAL-execution spec to add labels to an issue or PR (run it with your own gh creds; loopover never performs the write).",
-  },
-  {
-    name: "loopover_post_eligibility_comment",
-    category: "agent",
-    description:
-      "Build a LOCAL-execution spec to post an eligibility/context comment on an issue or PR (run it with your own gh creds; loopover never performs the write).",
-  },
-  {
-    name: "loopover_create_branch",
-    category: "agent",
-    description: "Build a LOCAL-execution spec to create a branch (run it locally; loopover never performs the write).",
-  },
-  {
-    name: "loopover_delete_branch",
-    category: "agent",
-    description: "Build a LOCAL-execution spec to delete a branch (run it locally; loopover never performs the write).",
-  },
-  {
-    name: "loopover_generate_tests",
-    category: "agent",
-    description:
-      "Build a LOCAL-execution spec describing WHAT boundary-safe test cases should exist for the given target files, using the repo's detected framework/convention. LoopOver supplies the criteria; your OWN agent scaffolds and runs the actual test files locally -- no source code is uploaded and loopover never performs the write.",
-  },
-  {
-    name: "loopover_file_follow_up_issue",
-    category: "agent",
-    description:
-      "Build a LOCAL-execution spec to file a follow-up issue for a review finding a maintainer wants TRACKED rather than blocked on this PR. Composes a bounded, public-safe title/body from the finding (run it with your own gh creds; loopover never performs the write).",
-  },
-  {
-    name: "loopover_close_pr",
-    category: "agent",
-    description:
-      "Build a LOCAL-execution spec to close a pull request, optionally with a comment (run it with your own gh creds; loopover never performs the write).",
-  },
-];
+/**
+ * Which tools this server serves (#9537).
+ *
+ * The list of NAMES is the only thing left here: it is this server's own decision about which of
+ * the registry's tools it can answer, the same decision the remote server makes with its own
+ * `register()` calls. Everything else about a tool -- title, description, category, annotations,
+ * and both schemas -- comes from @loopover/contract. Until #9537 this file carried a third
+ * hand-maintained copy of name/category/description for all 102, alongside ~85 hand-mirrored input
+ * shapes.
+ *
+ * A name here with no contract entry throws at registration, and a registration whose name is
+ * missing from this list fails the parity test -- so the two cannot drift apart silently.
+ */
+export const STDIO_TOOL_NAMES = [
+  "loopover_get_repo_context",
+  "loopover_get_pr_reviewability",
+  "loopover_get_pr_maintainer_packet",
+  "loopover_get_pr_ai_review_findings",
+  "loopover_get_maintainer_noise",
+  "loopover_get_agent_audit_feed",
+  "loopover_refresh_repo_docs",
+  "loopover_get_ams_miner_cohort",
+  "loopover_get_repo_focus_manifest",
+  "loopover_get_repo_onboarding_pack",
+  "loopover_get_activation_preview",
+  "loopover_get_live_gate_thresholds",
+  "loopover_get_gate_config_effective",
+  "loopover_get_issue_quality",
+  "loopover_get_registration_readiness",
+  "loopover_get_config_recommendation",
+  "loopover_get_skipped_pr_audit",
+  "loopover_preflight_pr",
+  "loopover_explain_review_risk",
+  "loopover_validate_linked_issue",
+  "loopover_check_before_start",
+  "loopover_find_opportunities",
+  "loopover_retrieve_issue_context",
+  "loopover_lint_pr_text",
+  "loopover_validate_config",
+  "loopover_check_slop_risk",
+  "loopover_check_improvement_potential",
+  "loopover_simulate_open_pr_pressure",
+  "loopover_suggest_boundary_tests",
+  "loopover_check_test_evidence",
+  "loopover_evaluate_escalation",
+  "loopover_build_results_payload",
+  "loopover_build_progress_snapshot",
+  "loopover_intake_idea",
+  "loopover_plan_idea_claims",
+  "loopover_check_issue_slop",
+  "loopover_run_local_scorer",
+  "loopover_build_plan",
+  "loopover_plan_status",
+  "loopover_record_step_result",
+  "loopover_predict_gate",
+  "loopover_explain_gate_disposition",
+  "loopover_preflight_local_diff",
+  "loopover_get_registry_changes",
+  "loopover_get_registry_snapshot",
+  "loopover_get_bounty_advisory",
+  "loopover_get_upstream_drift",
+  "loopover_get_upstream_ruleset",
+  "loopover_get_label_audit",
+  "loopover_get_maintainer_lane",
+  "loopover_get_burden_forecast",
+  "loopover_get_repo_outcome_patterns",
+  "loopover_preview_local_pr_score",
+  "loopover_explain_score_breakdown",
+  "loopover_get_eligibility_plan",
+  "loopover_get_decision_pack",
+  "loopover_explain_repo_decision",
+  "loopover_monitor_open_prs",
+  "loopover_get_contributor_profile",
+  "loopover_pr_outcome",
+  "loopover_list_notifications",
+  "loopover_mark_notifications_read",
+  "loopover_watch_issues",
+  "loopover_compare_pr_variants",
+  "loopover_local_status",
+  "loopover_preflight_current_branch",
+  "loopover_review_pr_before_push",
+  "loopover_preview_current_branch_score",
+  "loopover_rank_local_next_actions",
+  "loopover_explain_local_blockers",
+  "loopover_remediation_plan",
+  "loopover_prepare_pr_packet",
+  "loopover_draft_pr_body",
+  "loopover_compare_local_variants",
+  "loopover_agent_plan_next_work",
+  "loopover_agent_start_run",
+  "loopover_agent_get_run",
+  "loopover_agent_explain_next_action",
+  "loopover_agent_prepare_pr_packet",
+  "loopover_local_status_structured",
+  "loopover_feasibility_gate",
+  "loopover_list_pending_actions",
+  "loopover_propose_action",
+  "loopover_decide_pending_action",
+  "loopover_set_agent_paused",
+  "loopover_set_action_autonomy",
+  "loopover_get_outcome_calibration",
+  "loopover_get_gate_precision",
+  "loopover_get_selftune_override_audit",
+  "loopover_clear_selftune_override",
+  "loopover_get_automation_state",
+  "loopover_plan_repo_issues",
+  "loopover_generate_contributor_issue_drafts",
+  "loopover_open_pr",
+  "loopover_file_issue",
+  "loopover_apply_labels",
+  "loopover_post_eligibility_comment",
+  "loopover_create_branch",
+  "loopover_delete_branch",
+  "loopover_generate_tests",
+  "loopover_file_follow_up_issue",
+  "loopover_close_pr",
+] as const;
+
+/** Name/category/description for the `tools` and `tools search` CLI commands, projected from the
+ *  registry rather than restated. */
+const STDIO_TOOL_DESCRIPTORS = STDIO_TOOL_NAMES.map((name) => {
+  const contract = getToolContract(name);
+  /* v8 ignore next -- unreachable while the parity test holds; the throw is the guard that keeps it so. */
+  if (!contract) throw new Error(`No @loopover/contract entry for stdio tool: ${name}`);
+  return { name, category: contract.category, description: contract.description };
+});
 
 // #6301 — coarse tool categories for grouping `loopover-mcp tools` output. Ordered
 // contributor-facing surfaces first, operator ones last; the `label` is the human-readable header.
@@ -1694,12 +691,6 @@ const STDIO_TOOL_CATEGORIES = [
   { id: "maintainer", label: "Maintainer & repo owner" },
   { id: "utility", label: "Registry, config & status" },
 ];
-
-function stdioToolDescription(name: any) {
-  const tool = STDIO_TOOL_DESCRIPTORS.find((entry) => entry.name === name);
-  if (!tool) throw new Error(`Unknown stdio tool descriptor: ${name}`);
-  return tool.description;
-}
 
 /* v8 ignore next 5 -- draining stdout/stderr before exit only matters for the real launched process writing to
    an OS pipe (large output can exceed the pipe's buffer, and a POSIX pipe write is asynchronous); the
@@ -1753,19 +744,38 @@ export const server = new McpServer({
 // Reads telemetryState() HERE on purpose: registerStdioTool's second parameter is the TOOL's config and
 // shadows the module-level `config`, so a read inside a nested function would silently see the wrong object.
 /* v8 ignore start -- thin registration glue; wrapStdioToolHandler covered by unit tests (#8690) */
-function registerStdioTool(name: any, config: any, handler: any) {
-  server.registerTool(name, config, wrapStdioToolHandler(name, () => telemetryState().enabled, handler));
+function registerStdioTool<TInput>(
+  name: string,
+  handler: (input: TInput, extra?: unknown) => unknown,
+  // Narrowing escape hatch, used exactly once: a server may serve LESS than the contract when its
+  // own route cannot honour a field, and must then say so rather than advertise a no-op. Never used
+  // to widen -- a wider input belongs in the contract where both servers see it.
+  overrides?: { input?: ToolContract["input"] },
+): void {
+  const contract = getToolContract(name);
+  if (!contract) throw new Error(`No @loopover/contract entry for stdio tool: ${name}`);
+  server.registerTool(
+    name,
+    {
+      title: contract.title,
+      description: contract.description,
+      // The SCHEMA OBJECTS, not their `.shape`. The SDK accepts either, but a raw shape is
+      // re-wrapped in a plain `z.object`, which silently discards the catchall -- so every output
+      // modelled as a `looseObject` would be advertised and enforced as `additionalProperties:
+      // false`, and any field the payload carries beyond the modelled set becomes a -32602 the
+      // caller cannot do anything about. Passing the object preserves what the contract declared.
+      inputSchema: overrides?.input ?? contract.input,
+      outputSchema: contract.output,
+      ...(contract.annotations ? { annotations: contract.annotations } : {}),
+    },
+    wrapStdioToolHandler(name, () => telemetryState().enabled, handler as (...args: unknown[]) => Promise<unknown>),
+  );
 }
 /* v8 ignore stop */
 
 registerStdioTool(
   "loopover_get_repo_context",
-  {
-    description: stdioToolDescription("loopover_get_repo_context"),
-    inputSchema: GetRepoContextInput.shape,
-    outputSchema: GetRepoContextOutput.shape,
-  },
-  async ({ owner, repo }: any) => {
+  async ({ owner, repo }: z.infer<typeof GetRepoContextInput>) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver repo intelligence.", await apiGet(`${prefix}/intelligence`));
   },
@@ -1773,12 +783,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_get_pr_reviewability",
-  {
-    description: stdioToolDescription("loopover_get_pr_reviewability"),
-    inputSchema: GetPrReviewabilityInput.shape,
-    outputSchema: GetPrReviewabilityOutput.shape,
-  },
-  async ({ owner, repo, number }: any) => {
+  async ({ owner, repo, number }: z.infer<typeof GetPrReviewabilityInput>) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver PR reviewability.", await apiGet(`${prefix}/pulls/${number}/reviewability`));
   },
@@ -1786,11 +791,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_get_pr_maintainer_packet",
-  {
-    description: stdioToolDescription("loopover_get_pr_maintainer_packet"),
-    inputSchema: ownerRepoPullShape,
-  },
-  async ({ owner, repo, number }: any) => {
+  async ({ owner, repo, number }: z.infer<typeof GetPrMaintainerPacketInput>) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver PR maintainer packet.", await apiGet(`${prefix}/pulls/${number}/maintainer-packet`));
   },
@@ -1801,11 +802,7 @@ registerStdioTool(
 // author login and proxies. Self-scoped: the route's requireContributorAccess rejects another login's PR.
 registerStdioTool(
   "loopover_get_pr_ai_review_findings",
-  {
-    description: stdioToolDescription("loopover_get_pr_ai_review_findings"),
-    inputSchema: prAiReviewFindingsShape,
-  },
-  async ({ owner, repo, number, login }: any) => {
+  async ({ owner, repo, number, login }: z.infer<typeof GetPrAiReviewFindingsInput>) => {
     const authorLogin = login ?? activeProfile.session?.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
     if (!authorLogin) throw new Error("No GitHub login: pass `login`, log in with `loopover-mcp login`, or set LOOPOVER_LOGIN.");
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
@@ -1818,11 +815,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_get_maintainer_noise",
-  {
-    description: stdioToolDescription("loopover_get_maintainer_noise"),
-    inputSchema: ownerRepoShape,
-  },
-  async ({ owner, repo }: any) => {
+  async ({ owner, repo }: z.infer<typeof GetMaintainerNoiseInput>) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver maintainer noise report.", await apiGet(`${prefix}/maintainer-noise`));
   },
@@ -1833,11 +826,7 @@ registerStdioTool(
 // validates and applies defaults). Same ownerRepoShape+apiGet pattern as maintainer_noise.
 registerStdioTool(
   "loopover_get_agent_audit_feed",
-  {
-    description: stdioToolDescription("loopover_get_agent_audit_feed"),
-    inputSchema: auditFeedShape,
-  },
-  async ({ owner, repo, since, limit }: any) => {
+  async ({ owner, repo, since, limit }: z.infer<typeof GetAgentAuditFeedInput>) => {
     const query = new URLSearchParams();
     if (since !== undefined) query.set("since", String(since));
     if (limit !== undefined) query.set("limit", String(limit));
@@ -1851,11 +840,7 @@ registerStdioTool(
 // merges/commits, so there is no create-safety flag to forward). Same ownerRepoShape pattern as maintainer_noise.
 registerStdioTool(
   "loopover_refresh_repo_docs",
-  {
-    description: stdioToolDescription("loopover_refresh_repo_docs"),
-    inputSchema: ownerRepoShape,
-  },
-  async ({ owner, repo }: any) => {
+  async ({ owner, repo }: z.infer<typeof RefreshRepoDocsInput>) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult(`LoopOver repo-doc refresh for ${owner}/${repo}.`, await apiPost(`${prefix}/repo-docs/refresh`, {}));
   },
@@ -1863,11 +848,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_get_ams_miner_cohort",
-  {
-    description: stdioToolDescription("loopover_get_ams_miner_cohort"),
-    inputSchema: ownerRepoShape,
-  },
-  async ({ owner, repo }: any) => {
+  async ({ owner, repo }: z.infer<typeof GetAmsMinerCohortInput>) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver AMS miner cohort.", await apiGet(`${prefix}/ams-miner-cohort`));
   },
@@ -1878,11 +859,7 @@ registerStdioTool(
 // as maintainer_noise). No human CLI verb.
 registerStdioTool(
   "loopover_get_repo_focus_manifest",
-  {
-    description: stdioToolDescription("loopover_get_repo_focus_manifest"),
-    inputSchema: ownerRepoShape,
-  },
-  async ({ owner, repo }: any) => {
+  async ({ owner, repo }: z.infer<typeof GetRepoFocusManifestInput>) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver focus manifest.", await apiGet(`${prefix}/focus-manifest`));
   },
@@ -1894,11 +871,7 @@ registerStdioTool(
 // as the CLI does (omit the query otherwise so the server serves the cached preview).
 registerStdioTool(
   "loopover_get_repo_onboarding_pack",
-  {
-    description: stdioToolDescription("loopover_get_repo_onboarding_pack"),
-    inputSchema: repoOnboardingPackShape,
-  },
-  async ({ owner, repo, refresh }: any) => {
+  async ({ owner, repo, refresh }: z.infer<typeof GetRepoOnboardingPackInput>) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     const query = refresh === true ? "?refresh=true" : "";
     return toolResult(
@@ -1913,11 +886,7 @@ registerStdioTool(
 // as maintainer_noise).
 registerStdioTool(
   "loopover_get_activation_preview",
-  {
-    description: stdioToolDescription("loopover_get_activation_preview"),
-    inputSchema: ownerRepoShape,
-  },
-  async ({ owner, repo }: any) => {
+  async ({ owner, repo }: z.infer<typeof GetActivationPreviewInput>) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver activation preview.", await apiGet(`${prefix}/activation-preview`));
   },
@@ -1925,11 +894,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_get_live_gate_thresholds",
-  {
-    description: stdioToolDescription("loopover_get_live_gate_thresholds"),
-    inputSchema: ownerRepoShape,
-  },
-  async ({ owner, repo }: any) => {
+  async ({ owner, repo }: z.infer<typeof GetLiveGateThresholdsInput>) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver live gate thresholds.", await apiGet(`${prefix}/live-gate-thresholds`));
   },
@@ -1937,11 +902,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_get_gate_config_effective",
-  {
-    description: stdioToolDescription("loopover_get_gate_config_effective"),
-    inputSchema: ownerRepoShape,
-  },
-  async ({ owner, repo }: any) => {
+  async ({ owner, repo }: z.infer<typeof GetGateConfigEffectiveInput>) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver effective gate config.", await apiGet(`${prefix}/gate-config/effective`));
   },
@@ -1949,11 +910,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_get_issue_quality",
-  {
-    description: stdioToolDescription("loopover_get_issue_quality"),
-    inputSchema: ownerRepoShape,
-  },
-  async ({ owner, repo }: any) => {
+  async ({ owner, repo }: z.infer<typeof GetIssueQualityInput>) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver issue-quality report.", await apiGet(`${prefix}/issue-quality`));
   },
@@ -1961,11 +918,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_get_registration_readiness",
-  {
-    description: stdioToolDescription("loopover_get_registration_readiness"),
-    inputSchema: ownerRepoShape,
-  },
-  async ({ owner, repo }: any) => {
+  async ({ owner, repo }: z.infer<typeof GetRegistrationReadinessInput>) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver registration-readiness report.", await apiGet(`${prefix}/registration-readiness`));
   },
@@ -1973,11 +926,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_get_config_recommendation",
-  {
-    description: stdioToolDescription("loopover_get_config_recommendation"),
-    inputSchema: ownerRepoShape,
-  },
-  async ({ owner, repo }: any) => {
+  async ({ owner, repo }: z.infer<typeof GetConfigRecommendationInput>) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver config recommendation.", await apiGet(`${prefix}/gittensor-config-recommendation`));
   },
@@ -1985,11 +934,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_get_skipped_pr_audit",
-  {
-    description: stdioToolDescription("loopover_get_skipped_pr_audit"),
-    inputSchema: skippedPrAuditShape,
-  },
-  async ({ repoFullName, reason, since, limit }: any) => {
+  async ({ repoFullName, reason, since, limit }: z.infer<typeof SkippedPrAuditInput>) => {
     const query = new URLSearchParams();
     if (repoFullName) query.set("repoFullName", repoFullName);
     if (reason) query.set("reason", reason);
@@ -2002,22 +947,13 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_preflight_pr",
-  {
-    description: stdioToolDescription("loopover_preflight_pr"),
-    inputSchema: PreflightPrInput.shape,
-    outputSchema: PreflightPrOutput.shape,
-  },
-  async (input: any) => toolResult("LoopOver PR preflight.", await apiPost("/v1/preflight/pr", input)),
+  async (input: z.infer<typeof PreflightPrInput>) => toolResult("LoopOver PR preflight.", await apiPost("/v1/preflight/pr", input)),
 );
 
 // #6980: CLI stdio mirror of loopover_explain_review_risk — proxies POST /v1/preflight/review-risk.
 registerStdioTool(
   "loopover_explain_review_risk",
-  {
-    description: stdioToolDescription("loopover_explain_review_risk"),
-    inputSchema: preflightShape,
-  },
-  async (input: any) => {
+  async (input: z.infer<typeof ExplainReviewRiskInput>) => {
     const payload = await apiPost("/v1/preflight/review-risk", input);
     return toolResult(payload.summary ?? `LoopOver review-risk explanation for ${input.repoFullName}.`, payload);
   },
@@ -2025,11 +961,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_validate_linked_issue",
-  {
-    description: stdioToolDescription("loopover_validate_linked_issue"),
-    inputSchema: validateLinkedIssueShape,
-  },
-  async ({ owner, repo, issueNumber, plannedChange }: any) => {
+  async ({ owner, repo, issueNumber, plannedChange }: z.infer<typeof ValidateLinkedIssueInput>) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     const body = { issueNumber, ...(plannedChange ? { plannedChange } : {}) };
     return toolResult("LoopOver linked-issue validation.", await apiPost(`${prefix}/validate-linked-issue`, body));
@@ -2038,11 +970,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_check_before_start",
-  {
-    description: stdioToolDescription("loopover_check_before_start"),
-    inputSchema: checkBeforeStartShape,
-  },
-  async ({ owner, repo, issueNumber, title, plannedPaths }: any) => {
+  async ({ owner, repo, issueNumber, title, plannedPaths }: z.infer<typeof CheckBeforeStartInput>) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     const body = {
       ...(issueNumber != null ? { issueNumber } : {}),
@@ -2055,11 +983,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_find_opportunities",
-  {
-    description: stdioToolDescription("loopover_find_opportunities"),
-    inputSchema: findOpportunitiesShape,
-  },
-  async ({ targets, searchQuery, goalSpec, limit }: any) => {
+  async ({ targets, searchQuery, goalSpec, limit }: z.infer<typeof FindOpportunitiesInput>) => {
     const body = {
       ...(targets && targets.length > 0 ? { targets } : {}),
       ...(searchQuery ? { searchQuery } : {}),
@@ -2072,11 +996,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_retrieve_issue_context",
-  {
-    description: stdioToolDescription("loopover_retrieve_issue_context"),
-    inputSchema: issueRagShape,
-  },
-  async ({ owner, repo, title, body, labels, topK }: any) => {
+  async ({ owner, repo, title, body, labels, topK }: z.infer<typeof RetrieveIssueContextInput>) => {
     const payload = {
       owner,
       repo,
@@ -2093,21 +1013,13 @@ registerStdioTool(
 // call (src/mcp/server.ts) with no API round-trip, so PR-text lint works fully offline.
 registerStdioTool(
   "loopover_lint_pr_text",
-  {
-    description: stdioToolDescription("loopover_lint_pr_text"),
-    inputSchema: lintPrTextShape,
-  },
-  (input: any) => toolResult("LoopOver PR-text lint.", buildPrTextLint(input)),
+  (input: z.infer<typeof LintPrTextInput>) => toolResult("LoopOver PR-text lint.", buildPrTextLint(input)),
 );
 
 // #6269: computed in-process via the extracted engine builder -- no API round-trip, works fully offline.
 registerStdioTool(
   "loopover_validate_config",
-  {
-    description: stdioToolDescription("loopover_validate_config"),
-    inputSchema: validateConfigShape,
-  },
-  (input: any) => toolResult("LoopOver manifest validation.", buildFocusManifestValidation(input)),
+  (input: z.infer<typeof ValidateConfigInput>) => toolResult("LoopOver manifest validation.", buildFocusManifestValidation(input)),
 );
 
 // Computed in-process from @loopover/engine (#6267) — matches the remote server's own buildSlopAssessment
@@ -2115,11 +1027,7 @@ registerStdioTool(
 // round-trip, so slop-risk self-checks work fully offline.
 registerStdioTool(
   "loopover_check_slop_risk",
-  {
-    description: stdioToolDescription("loopover_check_slop_risk"),
-    inputSchema: checkSlopRiskShape,
-  },
-  (input: any) => toolResult("LoopOver slop-risk self-check.", { ...buildSlopAssessment(input), rubric: SLOP_RUBRIC_MARKDOWN }),
+  (input: z.infer<typeof CheckSlopRiskInput>) => toolResult("LoopOver slop-risk self-check.", { ...buildSlopAssessment(input), rubric: SLOP_RUBRIC_MARKDOWN }),
 );
 
 // #7759: CLI already proxies POST /v1/lint/improvement-potential (#6748); register the matching stdio tool.
@@ -2127,11 +1035,7 @@ registerStdioTool(
 // @loopover/engine. Forward the validated input object as the POST body — no local branching.
 registerStdioTool(
   "loopover_check_improvement_potential",
-  {
-    description: stdioToolDescription("loopover_check_improvement_potential"),
-    inputSchema: checkImprovementPotentialShape,
-  },
-  async (input: any) => toolResult("LoopOver improvement-potential self-check.", await apiPost("/v1/lint/improvement-potential", input)),
+  async (input: z.infer<typeof CheckImprovementPotentialInput>) => toolResult("LoopOver improvement-potential self-check.", await apiPost("/v1/lint/improvement-potential", input)),
 );
 
 // #6751: CLI mirror of the remote server's loopover_simulate_open_pr_pressure. Proxies rather than computing
@@ -2140,11 +1044,7 @@ registerStdioTool(
 // the single source of truth for the ranking.
 registerStdioTool(
   "loopover_simulate_open_pr_pressure",
-  {
-    description: stdioToolDescription("loopover_simulate_open_pr_pressure"),
-    inputSchema: simulateOpenPrPressureShape,
-  },
-  async (input: any) => toolResult("LoopOver open-PR pressure simulation.", await apiPost("/v1/lint/open-pr-pressure", input)),
+  async (input: z.infer<typeof SimulateOpenPrPressureInput>) => toolResult("LoopOver open-PR pressure simulation.", await apiPost("/v1/lint/open-pr-pressure", input)),
 );
 
 // #6750: CLI mirror of the remote server's loopover_suggest_boundary_tests. Unlike its check_slop_risk sibling
@@ -2153,11 +1053,7 @@ registerStdioTool(
 // POST /v1/lint/boundary-tests stays the single source of truth for the filtering + finding/spec logic.
 registerStdioTool(
   "loopover_suggest_boundary_tests",
-  {
-    description: stdioToolDescription("loopover_suggest_boundary_tests"),
-    inputSchema: suggestBoundaryTestsShape,
-  },
-  async (input: any) => toolResult("LoopOver boundary-test suggestion.", await apiPost("/v1/lint/boundary-tests", input)),
+  async (input: z.infer<typeof SuggestBoundaryTestsInput>) => toolResult("LoopOver boundary-test suggestion.", await apiPost("/v1/lint/boundary-tests", input)),
 );
 
 // Computed in-process from @loopover/engine (#6749) — the same buildTestEvidenceReport the remote server
@@ -2165,11 +1061,7 @@ registerStdioTool(
 // byte-identical verdict and coverage self-checks work fully offline.
 registerStdioTool(
   "loopover_check_test_evidence",
-  {
-    description: stdioToolDescription("loopover_check_test_evidence"),
-    inputSchema: checkTestEvidenceShape,
-  },
-  (input: any) => toolResult("LoopOver test-evidence check.", buildTestEvidenceReport(input)),
+  (input: z.infer<typeof CheckTestEvidenceInput>) => toolResult("LoopOver test-evidence check.", buildTestEvidenceReport(input)),
 );
 
 // Computed in-process from @loopover/engine (#6754) — the same pure evaluateEscalation the remote server
@@ -2177,11 +1069,7 @@ registerStdioTool(
 // byte-identical decision for identical input, and escalation checks work fully offline.
 registerStdioTool(
   "loopover_evaluate_escalation",
-  {
-    description: stdioToolDescription("loopover_evaluate_escalation"),
-    inputSchema: evaluateEscalationShape,
-  },
-  (input: any) => toolResult("LoopOver escalation decision.", evaluateEscalation(input)),
+  (input: z.infer<typeof EvaluateEscalationInput>) => toolResult("LoopOver escalation decision.", evaluateEscalation(input)),
 );
 
 // Computed in-process from @loopover/engine (#6752) — the same pure buildResultsPayload the remote server
@@ -2189,11 +1077,7 @@ registerStdioTool(
 // identical payload for identical input, and results composition works fully offline.
 registerStdioTool(
   "loopover_build_results_payload",
-  {
-    description: stdioToolDescription("loopover_build_results_payload"),
-    inputSchema: resultsPayloadShape,
-  },
-  (input: any) => toolResult("LoopOver loop results payload.", buildResultsPayload(input)),
+  (input: z.infer<typeof BuildResultsPayloadInput>) => toolResult("LoopOver loop results payload.", buildResultsPayload(input)),
 );
 
 // Computed in-process from @loopover/engine (#6753) — the same pure buildProgressSnapshot the remote server
@@ -2201,11 +1085,7 @@ registerStdioTool(
 // identical snapshot for identical input, and progress composition works fully offline.
 registerStdioTool(
   "loopover_build_progress_snapshot",
-  {
-    description: stdioToolDescription("loopover_build_progress_snapshot"),
-    inputSchema: buildProgressSnapshotShape,
-  },
-  (input: any) => toolResult("LoopOver loop progress snapshot.", buildProgressSnapshot(input)),
+  (input: z.infer<typeof BuildProgressSnapshotInput>) => toolResult("LoopOver loop progress snapshot.", buildProgressSnapshot(input)),
 );
 
 // Computed in-process from @loopover/engine (#6755) — the same pure validateIdeaSubmission/buildTaskGraph the
@@ -2213,11 +1093,7 @@ registerStdioTool(
 // handler exactly so all three surfaces return an identical payload for identical input, fully offline.
 registerStdioTool(
   "loopover_intake_idea",
-  {
-    description: stdioToolDescription("loopover_intake_idea"),
-    inputSchema: intakeIdeaShape,
-  },
-  (input: any) => {
+  (input: z.infer<typeof IntakeIdeaInput>) => {
     const validated = validateIdeaSubmission(input);
     if (!validated.ok) return toolResult(`Invalid idea submission: ${validated.errors.join(", ")}.`, { ok: false, errors: validated.errors });
     const taskGraph = buildTaskGraph(validated.idea, input.decomposition);
@@ -2235,11 +1111,7 @@ registerStdioTool(
 // input, fully offline.
 registerStdioTool(
   "loopover_plan_idea_claims",
-  {
-    description: stdioToolDescription("loopover_plan_idea_claims"),
-    inputSchema: intakeIdeaShape,
-  },
-  (input: any) => {
+  (input: z.infer<typeof IntakeIdeaInput>) => {
     const validated = validateIdeaSubmission(input);
     if (!validated.ok) return toolResult(`Invalid idea submission: ${validated.errors.join(", ")}.`, { ok: false, errors: validated.errors });
     const graph = buildTaskGraph(validated.idea, input.decomposition);
@@ -2253,11 +1125,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_check_issue_slop",
-  {
-    description: stdioToolDescription("loopover_check_issue_slop"),
-    inputSchema: checkIssueSlopShape,
-  },
-  async (input: any) => toolResult("LoopOver issue-slop self-check.", await apiPost("/v1/lint/issue-slop", input)),
+  async (input: z.infer<typeof CheckIssueSlopInput>) => toolResult("LoopOver issue-slop self-check.", await apiPost("/v1/lint/issue-slop", input)),
 );
 
 // Computed in-process from @loopover/engine (#6150) — matches the remote server's own
@@ -2265,40 +1133,24 @@ registerStdioTool(
 // offline.
 registerStdioTool(
   "loopover_run_local_scorer",
-  {
-    description: stdioToolDescription("loopover_run_local_scorer"),
-    inputSchema: runLocalScorerShape,
-  },
-  (input: any) => toolResult("LoopOver local token scores.", computeLocalScorerTokens(input)),
+  (input: z.infer<typeof RunLocalScorerInput>) => toolResult("LoopOver local token scores.", computeLocalScorerTokens(input)),
 );
 
 // Computed in-process (#6150) — matches the remote server's own buildPlanDag call (src/mcp/server.ts)
 // with no API round-trip; the plan-DAG logic itself is hand-duplicated above (see its own comment).
 registerStdioTool(
   "loopover_build_plan",
-  {
-    description: stdioToolDescription("loopover_build_plan"),
-    inputSchema: buildPlanShape,
-  },
-  (input: any) => toolResult("LoopOver plan built.", planView(buildPlanDag(input.steps))),
+  (input: z.infer<typeof BuildPlanInput>) => toolResult("LoopOver plan built.", planView(buildPlanDag(input.steps))),
 );
 
 registerStdioTool(
   "loopover_plan_status",
-  {
-    description: stdioToolDescription("loopover_plan_status"),
-    inputSchema: planStatusShape,
-  },
-  (input: any) => toolResult("LoopOver plan status.", planView(input.plan)),
+  (input: z.infer<typeof PlanStatusInput>) => toolResult("LoopOver plan status.", planView(input.plan)),
 );
 
 registerStdioTool(
   "loopover_record_step_result",
-  {
-    description: stdioToolDescription("loopover_record_step_result"),
-    inputSchema: recordStepResultShape,
-  },
-  (input: any) =>
+  (input: z.infer<typeof RecordStepResultInput>) =>
     toolResult(
       "LoopOver plan step result recorded.",
       planView(applyStepResult(input.plan, input.stepId, { outcome: input.outcome, ...(input.error !== undefined ? { error: input.error } : {}) })),
@@ -2310,12 +1162,7 @@ registerStdioTool(
 // uses) and returns it as a top-level field; no local git/workspace context is needed for this shape.
 registerStdioTool(
   "loopover_predict_gate",
-  {
-    description: stdioToolDescription("loopover_predict_gate"),
-    inputSchema: PredictGateInput.shape,
-    outputSchema: PredictGateOutput.shape,
-  },
-  async (input: any) => {
+  async (input: z.infer<typeof PredictGateInput>) => {
     const body = {
       login: input.login,
       repoFullName: `${input.owner}/${input.repo}`,
@@ -2334,11 +1181,7 @@ registerStdioTool(
 // then the shared pure buildGateDispositions reshaper (now exported from @loopover/engine) runs locally.
 registerStdioTool(
   "loopover_explain_gate_disposition",
-  {
-    description: stdioToolDescription("loopover_explain_gate_disposition"),
-    inputSchema: predictGateShape,
-  },
-  async (input: any) => {
+  async (input: z.infer<typeof ExplainGateDispositionInput>) => {
     const body = {
       login: input.login,
       repoFullName: `${input.owner}/${input.repo}`,
@@ -2361,13 +1204,11 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_preflight_local_diff",
-  {
-    description: stdioToolDescription("loopover_preflight_local_diff"),
-    inputSchema: localDiffShape,
-  },
-  async (input: any) => {
+  async (input: z.infer<typeof PreflightLocalDiffInput>) => {
     const workspaceInput = await withClientWorkspaceRoots(input);
-    const diff = collectLocalDiff(workspaceInput.cwd, input.baseRef, workspaceInput.workspaceRoots);
+    // `baseRef` is optional in the shared contract input (the remote server has no checkout to read),
+    // so the local collector gets the same default the stdio-only shape used to bake in.
+    const diff = collectLocalDiff(workspaceInput.cwd, input.baseRef ?? "HEAD", workspaceInput.workspaceRoots);
     const body = {
       repoFullName: input.repoFullName,
       contributorLogin: input.contributorLogin,
@@ -2388,19 +1229,11 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_get_registry_changes",
-  {
-    description: stdioToolDescription("loopover_get_registry_changes"),
-    inputSchema: {},
-  },
   async () => toolResult("LoopOver registry changes.", await apiGet("/v1/registry/changes")),
 );
 
 registerStdioTool(
   "loopover_get_registry_snapshot",
-  {
-    description: stdioToolDescription("loopover_get_registry_snapshot"),
-    inputSchema: {},
-  },
   async () => toolResult("LoopOver registry snapshot.", await apiGet("/v1/registry/snapshot")),
 );
 
@@ -2408,38 +1241,22 @@ registerStdioTool(
 // GET /v1/bounties/:id/advisory the remote tool wraps -- no owner/repo, just the cached-bounty id.
 registerStdioTool(
   "loopover_get_bounty_advisory",
-  {
-    description: stdioToolDescription("loopover_get_bounty_advisory"),
-    inputSchema: bountyAdvisoryShape,
-  },
-  async ({ id }: any) => toolResult("LoopOver bounty advisory.", await apiGet(`/v1/bounties/${encodeURIComponent(id)}/advisory`)),
+  async ({ id }: z.infer<typeof GetBountyAdvisoryInput>) => toolResult("LoopOver bounty advisory.", await apiGet(`/v1/bounties/${encodeURIComponent(id)}/advisory`)),
 );
 
 registerStdioTool(
   "loopover_get_upstream_drift",
-  {
-    description: stdioToolDescription("loopover_get_upstream_drift"),
-    inputSchema: {},
-  },
   async () => toolResult("LoopOver upstream drift status.", await apiGet("/v1/upstream/drift")),
 );
 
 registerStdioTool(
   "loopover_get_upstream_ruleset",
-  {
-    description: stdioToolDescription("loopover_get_upstream_ruleset"),
-    inputSchema: {},
-  },
   async () => toolResult("LoopOver upstream ruleset snapshot.", await apiGet("/v1/upstream/ruleset")),
 );
 
 registerStdioTool(
   "loopover_get_label_audit",
-  {
-    description: stdioToolDescription("loopover_get_label_audit"),
-    inputSchema: ownerRepoShape,
-  },
-  async ({ owner, repo }: any) => {
+  async ({ owner, repo }: z.infer<typeof GetLabelAuditInput>) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     const intelligence = await apiGet(`${prefix}/intelligence`);
     return toolResult("LoopOver label audit.", {
@@ -2455,11 +1272,7 @@ registerStdioTool(
 // extraction over that identical route rather than a new fetch shape.
 registerStdioTool(
   "loopover_get_maintainer_lane",
-  {
-    description: stdioToolDescription("loopover_get_maintainer_lane"),
-    inputSchema: ownerRepoShape,
-  },
-  async ({ owner, repo }: any) => {
+  async ({ owner, repo }: z.infer<typeof GetMaintainerLaneInput>) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     const intelligence = await apiGet(`${prefix}/intelligence`);
     return toolResult("LoopOver maintainer lane.", {
@@ -2472,11 +1285,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_get_burden_forecast",
-  {
-    description: stdioToolDescription("loopover_get_burden_forecast"),
-    inputSchema: ownerRepoShape,
-  },
-  async ({ owner, repo }: any) => {
+  async ({ owner, repo }: z.infer<typeof GetBurdenForecastInput>) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     const intelligence = await apiGet(`${prefix}/intelligence`);
     return toolResult("LoopOver burden forecast.", {
@@ -2492,11 +1301,7 @@ registerStdioTool(
 // /v1/repos/:owner/:repo/outcome-patterns route (same ownerRepoShape + apiGet pattern as maintainer_noise).
 registerStdioTool(
   "loopover_get_repo_outcome_patterns",
-  {
-    description: stdioToolDescription("loopover_get_repo_outcome_patterns"),
-    inputSchema: ownerRepoShape,
-  },
-  async ({ owner, repo }: any) => {
+  async ({ owner, repo }: z.infer<typeof GetRepoOutcomePatternsInput>) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver repo outcome patterns.", await apiGet(`${prefix}/outcome-patterns`));
   },
@@ -2504,11 +1309,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_preview_local_pr_score",
-  {
-    description: stdioToolDescription("loopover_preview_local_pr_score"),
-    inputSchema: localScoreShape,
-  },
-  async (input: any) => toolResult("LoopOver private local PR scoring preview.", await previewLocalScore(await withClientWorkspaceRoots(input))),
+  async (input: z.infer<typeof LocalScoreInput>) => toolResult("LoopOver private local PR scoring preview.", await previewLocalScore(await withClientWorkspaceRoots(input))),
 );
 
 // Shared by loopover_explain_score_breakdown and loopover_get_eligibility_plan (#6621): both resolve the same
@@ -2553,11 +1354,7 @@ function buildLocalScoreRequestBody(workspaceInput: any, contributorLogin: any) 
 
 registerStdioTool(
   "loopover_explain_score_breakdown",
-  {
-    description: stdioToolDescription("loopover_explain_score_breakdown"),
-    inputSchema: localScoreShape,
-  },
-  async (input: any) => {
+  async (input: z.infer<typeof ExplainScoreBreakdownInput>) => {
     const workspaceInput = await withClientWorkspaceRoots(input);
     const contributorLogin = workspaceInput.contributorLogin ?? activeProfile.session?.login;
     if (!contributorLogin) throw new Error("contributorLogin is required for score breakdown.");
@@ -2568,11 +1365,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_get_eligibility_plan",
-  {
-    description: stdioToolDescription("loopover_get_eligibility_plan"),
-    inputSchema: localScoreShape,
-  },
-  async (input: any) => {
+  async (input: z.infer<typeof LocalScoreInput>) => {
     const workspaceInput = await withClientWorkspaceRoots(input);
     const contributorLogin = workspaceInput.contributorLogin ?? activeProfile.session?.login;
     if (!contributorLogin) throw new Error("contributorLogin is required for the eligibility plan.");
@@ -2583,11 +1376,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_get_decision_pack",
-  {
-    description: stdioToolDescription("loopover_get_decision_pack"),
-    inputSchema: loginShape,
-  },
-  async ({ login }: any) => {
+  async ({ login }: z.infer<typeof GetDecisionPackInput>) => {
     const payload = await getDecisionPackWithCache(login);
     return toolResult(decisionPackToolSummary(login, payload), payload);
   },
@@ -2595,11 +1384,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_explain_repo_decision",
-  {
-    description: stdioToolDescription("loopover_explain_repo_decision"),
-    inputSchema: loginRepoShape,
-  },
-  async ({ login, owner, repo }: any) => {
+  async ({ login, owner, repo }: z.infer<typeof ExplainRepoDecisionInput>) => {
     const payload = await getRepoDecisionWithCache(login, owner, repo);
     return toolResult(repoDecisionToolSummary(login, `${owner}/${repo}`, payload), payload);
   },
@@ -2607,11 +1392,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_monitor_open_prs",
-  {
-    description: stdioToolDescription("loopover_monitor_open_prs"),
-    inputSchema: loginShape,
-  },
-  async ({ login }: any) => {
+  async ({ login }: z.infer<typeof MonitorOpenPrsInput>) => {
     const payload = await getOpenPrMonitor(login);
     return toolResult(openPrMonitorToolSummary(login, payload), payload);
   },
@@ -2624,11 +1405,7 @@ registerStdioTool(
 // surfaces never drift; the full API payload rides along as structuredContent.
 registerStdioTool(
   "loopover_get_contributor_profile",
-  {
-    description: stdioToolDescription("loopover_get_contributor_profile"),
-    inputSchema: loginShape,
-  },
-  async ({ login }: any) => {
+  async ({ login }: z.infer<typeof GetContributorProfileInput>) => {
     const payload = await getContributorProfile(login);
     return toolResult(`LoopOver contributor profile for ${login}.`, payload);
   },
@@ -2636,14 +1413,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_pr_outcome",
-  {
-    description: stdioToolDescription("loopover_pr_outcome"),
-    inputSchema: {
-      login: z.string().min(1),
-      limit: z.number().int().positive().max(100).optional(),
-    },
-  },
-  async ({ login, limit }: any) => {
+  async ({ login, limit }: z.infer<typeof PrOutcomeInput>) => {
     const payload = await getPrOutcomes(login, limit);
     return toolResult(prOutcomesToolSummary(login, payload), payload);
   },
@@ -2654,11 +1424,7 @@ registerStdioTool(
 // Handler is intentionally branch-free (no ?? / ?. / ternaries) so codecov/patch stays at 100%.
 registerStdioTool(
   "loopover_list_notifications",
-  {
-    description: stdioToolDescription("loopover_list_notifications"),
-    inputSchema: loginShape,
-  },
-  async ({ login }: any) => {
+  async ({ login }: z.infer<typeof ListNotificationsInput>) => {
     const payload = await getNotifications(login);
     return toolResult(`LoopOver notifications for ${login}.`, payload);
   },
@@ -2669,11 +1435,7 @@ registerStdioTool(
 // resolves the same way (arg / active session / LOOPOVER_LOGIN), ids is optional (omit to mark all read).
 registerStdioTool(
   "loopover_mark_notifications_read",
-  {
-    description: stdioToolDescription("loopover_mark_notifications_read"),
-    inputSchema: markNotificationsReadShape,
-  },
-  async ({ login, ids }: any) => {
+  async ({ login, ids }: z.infer<typeof MarkNotificationsReadInput>) => {
     const contributorLogin = login ?? activeProfile.session?.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
     if (!contributorLogin) throw new Error("No GitHub login: pass `login`, log in with `loopover-mcp login`, or set LOOPOVER_LOGIN.");
     return toolResult(`Marked LoopOver notifications read for ${contributorLogin}.`, await postMarkNotificationsRead(contributorLogin, ids));
@@ -2685,11 +1447,7 @@ registerStdioTool(
 // same way (arg / active session / LOOPOVER_LOGIN), action defaults to list, watch/unwatch need repoFullName.
 registerStdioTool(
   "loopover_watch_issues",
-  {
-    description: stdioToolDescription("loopover_watch_issues"),
-    inputSchema: watchIssuesShape,
-  },
-  async ({ login, action, repoFullName, labels }: any) => {
+  async ({ login, action, repoFullName, labels }: z.infer<typeof WatchIssuesInput>) => {
     const contributorLogin = login ?? activeProfile.session?.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
     if (!contributorLogin) throw new Error("No GitHub login: pass `login`, log in with `loopover-mcp login`, or set LOOPOVER_LOGIN.");
     if ((action === "watch" || action === "unwatch") && !repoFullName) throw new Error(`action "${action}" requires repoFullName.`);
@@ -2699,11 +1457,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_compare_pr_variants",
-  {
-    description: stdioToolDescription("loopover_compare_pr_variants"),
-    inputSchema: variantsShape,
-  },
-  async ({ variants }: any) => {
+  async ({ variants }: z.infer<typeof ComparePrVariantsInput>) => {
     const roots = await clientWorkspaceRoots();
     const previews = [];
     for (const variant of variants) previews.push(await previewLocalScore(withWorkspaceRoots({ ...variant, targetKey: variant.targetKey ?? `variant:${previews.length + 1}` }, roots)));
@@ -2714,15 +1468,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_local_status",
-  {
-    description: stdioToolDescription("loopover_local_status"),
-    inputSchema: {
-      cwd: z.string().optional(),
-      baseRef: z.string().optional(),
-      repoFullName: z.string().min(3).optional(),
-    },
-  },
-  async (input: any) => {
+  async (input: z.infer<typeof LocalStatusInput>) => {
     let git = null;
     const workspaceInput = await withClientWorkspaceRoots(input);
     try {
@@ -2750,11 +1496,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_preflight_current_branch",
-  {
-    description: stdioToolDescription("loopover_preflight_current_branch"),
-    inputSchema: currentBranchShape,
-  },
-  async (input: any) => {
+  async (input: z.infer<typeof CurrentBranchInput>) => {
     const result = await analyzeCurrentBranch(await withClientWorkspaceRoots(input));
     return toolResult("LoopOver current-branch preflight.", {
       local: result.local,
@@ -2767,20 +1509,12 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_review_pr_before_push",
-  {
-    description: stdioToolDescription("loopover_review_pr_before_push"),
-    inputSchema: currentBranchShape,
-  },
-  async (input: any) => toolResult("LoopOver pre-PR review.", await reviewLocalPr(await withClientWorkspaceRoots(input))),
+  async (input: z.infer<typeof CurrentBranchInput>) => toolResult("LoopOver pre-PR review.", await reviewLocalPr(await withClientWorkspaceRoots(input))),
 );
 
 registerStdioTool(
   "loopover_preview_current_branch_score",
-  {
-    description: stdioToolDescription("loopover_preview_current_branch_score"),
-    inputSchema: currentBranchShape,
-  },
-  async (input: any) => {
+  async (input: z.infer<typeof CurrentBranchInput>) => {
     const result = await analyzeCurrentBranch(await withClientWorkspaceRoots(input));
     return toolResult("LoopOver current-branch private score preview.", {
       local: result.local,
@@ -2794,11 +1528,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_rank_local_next_actions",
-  {
-    description: stdioToolDescription("loopover_rank_local_next_actions"),
-    inputSchema: currentBranchShape,
-  },
-  async (input: any) => {
+  async (input: z.infer<typeof CurrentBranchInput>) => {
     const result = await analyzeCurrentBranch(await withClientWorkspaceRoots(input));
     return toolResult("LoopOver local next-action ranking.", { local: result.local, nextActions: result.analysis.nextActions, rewardRisk: result.analysis.rewardRisk, recommendedRerunCondition: result.analysis.recommendedRerunCondition });
   },
@@ -2806,11 +1536,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_explain_local_blockers",
-  {
-    description: stdioToolDescription("loopover_explain_local_blockers"),
-    inputSchema: currentBranchShape,
-  },
-  async (input: any) => {
+  async (input: z.infer<typeof CurrentBranchInput>) => {
     const result = await analyzeCurrentBranch(await withClientWorkspaceRoots(input));
     return toolResult("LoopOver local blocker explanation.", {
       local: result.local,
@@ -2826,11 +1552,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_remediation_plan",
-  {
-    description: stdioToolDescription("loopover_remediation_plan"),
-    inputSchema: currentBranchShape,
-  },
-  async (input: any) => {
+  async (input: z.infer<typeof CurrentBranchInput>) => {
     const workspaceInput = await withClientWorkspaceRoots(input);
     const payload = buildBranchAnalysisPayload({ ...workspaceInput, cwd: resolveWorkspaceCwd(workspaceInput).cwd });
     const { localScorerStatus: _localScorerStatus, ...body } = payload;
@@ -2840,11 +1562,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_prepare_pr_packet",
-  {
-    description: stdioToolDescription("loopover_prepare_pr_packet"),
-    inputSchema: currentBranchShape,
-  },
-  async (input: any) => {
+  async (input: z.infer<typeof CurrentBranchInput>) => {
     const result = await analyzeCurrentBranch(await withClientWorkspaceRoots(input));
     return toolResult("LoopOver public-safe PR packet.", { local: result.local, prPacket: result.analysis.prPacket });
   },
@@ -2852,18 +1570,10 @@ registerStdioTool(
 
 // #6741: CLI stdio mirror of loopover_draft_pr_body — same analyzeCurrentBranch fetch as prepare_pr_packet,
 // then the shared pure buildPublicPrBodyDraft (now exported from @loopover/engine) runs locally.
-const draftPrBodyShape = {
-  ...currentBranchShape,
-  format: z.enum(["json", "markdown"]).optional(),
-};
 
 registerStdioTool(
   "loopover_draft_pr_body",
-  {
-    description: stdioToolDescription("loopover_draft_pr_body"),
-    inputSchema: draftPrBodyShape,
-  },
-  async (input: any) => {
+  async (input: z.infer<typeof DraftPrBodyInput>) => {
     const { format, ...branchInput } = input;
     const result = await analyzeCurrentBranch(await withClientWorkspaceRoots(branchInput));
     const draft = buildPublicPrBodyDraft(result.analysis);
@@ -2884,11 +1594,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_compare_local_variants",
-  {
-    description: stdioToolDescription("loopover_compare_local_variants"),
-    inputSchema: currentBranchVariantsShape,
-  },
-  async ({ variants }: any) => {
+  async ({ variants }: z.infer<typeof CompareLocalVariantsInput>) => {
     const roots = await clientWorkspaceRoots();
     const analyses = [];
     for (const variant of variants) analyses.push(await analyzeCurrentBranch(withWorkspaceRoots(variant, roots)));
@@ -2911,20 +1617,12 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_agent_plan_next_work",
-  {
-    description: stdioToolDescription("loopover_agent_plan_next_work"),
-    inputSchema: agentPlanShape,
-  },
-  async (input: any) => toolResult(`LoopOver base-agent plan for ${input.login}.`, await apiPost("/v1/agent/plan-next-work", input)),
+  async (input: z.infer<typeof AgentPlanInput>) => toolResult(`LoopOver base-agent plan for ${input.login}.`, await apiPost("/v1/agent/plan-next-work", input)),
 );
 
 registerStdioTool(
   "loopover_agent_start_run",
-  {
-    description: stdioToolDescription("loopover_agent_start_run"),
-    inputSchema: agentRunShape,
-  },
-  async (input: any) =>
+  async (input: z.infer<typeof AgentStartRunInput>) =>
     toolResult(
       `Queued LoopOver base-agent run for ${input.actorLogin}.`,
       await apiPost("/v1/agent/runs", {
@@ -2942,20 +1640,12 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_agent_get_run",
-  {
-    description: stdioToolDescription("loopover_agent_get_run"),
-    inputSchema: agentRunIdShape,
-  },
-  async ({ runId }: any) => toolResult(`LoopOver base-agent run ${runId}.`, await apiGet(`/v1/agent/runs/${encodeURIComponent(runId)}`)),
+  async ({ runId }: z.infer<typeof AgentGetRunInput>) => toolResult(`LoopOver base-agent run ${runId}.`, await apiGet(`/v1/agent/runs/${encodeURIComponent(runId)}`)),
 );
 
 registerStdioTool(
   "loopover_agent_explain_next_action",
-  {
-    description: stdioToolDescription("loopover_agent_explain_next_action"),
-    inputSchema: agentPlanShape,
-  },
-  async (input: any) => {
+  async (input: z.infer<typeof AgentPlanInput>) => {
     const result = await apiPost("/v1/agent/explain-blockers", input);
     return toolResult(`LoopOver base-agent next-action explanation for ${input.login}.`, {
       ...result,
@@ -2966,11 +1656,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_agent_prepare_pr_packet",
-  {
-    description: stdioToolDescription("loopover_agent_prepare_pr_packet"),
-    inputSchema: currentBranchShape,
-  },
-  async (input: any) => toolResult("LoopOver base-agent public-safe PR packet.", await agentPreparePrPacket(await withClientWorkspaceRoots(input))),
+  async (input: z.infer<typeof CurrentBranchInput>) => toolResult("LoopOver base-agent public-safe PR packet.", await agentPreparePrPacket(await withClientWorkspaceRoots(input))),
 );
 
 // Only this tool declares an outputSchema today; every other tool returns text + unschematized
@@ -2979,12 +1665,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_local_status_structured",
-  {
-    description: stdioToolDescription("loopover_local_status_structured"),
-    inputSchema: LocalStatusStructuredInput.shape,
-    outputSchema: LocalStatusStructuredOutput.shape,
-  },
-  async (input: any) => {
+  async (input: z.infer<typeof LocalStatusStructuredInput>) => {
     let git = null;
     const workspaceInput = await withClientWorkspaceRoots(input);
     try {
@@ -3009,11 +1690,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_feasibility_gate",
-  {
-    description: stdioToolDescription("loopover_feasibility_gate"),
-    inputSchema: feasibilityGateShape,
-  },
-  async ({ claimStatus, duplicateClusterRisk, issueStatus, found, repoFullName, issueNumber }: any) => {
+  async ({ claimStatus, duplicateClusterRisk, issueStatus, found, repoFullName, issueNumber }: z.infer<typeof FeasibilityGateInput>) => {
     const ledgerClaimStatus = await resolveLedgerClaimStatus(repoFullName, issueNumber);
     return toolResult(
       "LoopOver feasibility gate.",
@@ -3036,14 +1713,11 @@ function toolRepoBase(owner: any, repo: any) {
 
 registerStdioTool(
   "loopover_list_pending_actions",
-  {
-    description: stdioToolDescription("loopover_list_pending_actions"),
-    inputSchema: listPendingActionsShape,
-  },
-  async ({ owner, repo }: any) => {
+  async ({ owner, repo }: z.infer<typeof ListPendingActionsInput>) => {
     const payload = await apiGet(`${toolRepoBase(owner, repo)}/agent/pending-actions`);
     return toolResult(`Agent approval queue for ${owner}/${repo}: ${(payload.pendingActions ?? []).length} pending.`, payload);
   },
+  { input: ListPendingActionsStdioInput },
 );
 
 // #7753: stdio mirror of the remote loopover_propose_action + the `maintain propose` CLI. POSTs to the same
@@ -3051,11 +1725,7 @@ registerStdioTool(
 // fields are omitted. Stages the action into the approval queue -- the route never executes it until approved.
 registerStdioTool(
   "loopover_propose_action",
-  {
-    description: stdioToolDescription("loopover_propose_action"),
-    inputSchema: proposeActionShape,
-  },
-  async ({ owner, repo, pullNumber, actionClass, reason, label, reviewBody, mergeMethod, closeComment }: any) => {
+  async ({ owner, repo, pullNumber, actionClass, reason, label, reviewBody, mergeMethod, closeComment }: z.infer<typeof ProposeActionInput>) => {
     const payload = await apiPost(
       `${toolRepoBase(owner, repo)}/agent/pending-actions`,
       stripUndefined({ pullNumber, actionClass, reason, label, reviewBody, mergeMethod, closeComment }),
@@ -3066,11 +1736,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_decide_pending_action",
-  {
-    description: stdioToolDescription("loopover_decide_pending_action"),
-    inputSchema: decidePendingActionShape,
-  },
-  async ({ owner, repo, id, decision }: any) => {
+  async ({ owner, repo, id, decision }: z.infer<typeof DecidePendingActionInput>) => {
     const payload = await apiPost(`${toolRepoBase(owner, repo)}/agent/pending-actions/${encodeURIComponent(id)}/${decision}`, {});
     return toolResult(`${decision === "accept" ? "Accepted" : "Rejected"} ${id}: ${payload.status ?? "ok"}.`, payload);
   },
@@ -3078,11 +1744,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_set_agent_paused",
-  {
-    description: stdioToolDescription("loopover_set_agent_paused"),
-    inputSchema: setAgentPausedShape,
-  },
-  async ({ owner, repo, paused }: any) => {
+  async ({ owner, repo, paused }: z.infer<typeof SetAgentPausedInput>) => {
     const payload = await apiFetch(`${toolRepoBase(owner, repo)}/settings`, { method: "PUT", body: JSON.stringify({ agentPaused: paused }) });
     return toolResult(`Agent actions ${paused ? "paused" : "resumed"} for ${owner}/${repo}.`, payload);
   },
@@ -3090,11 +1752,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_set_action_autonomy",
-  {
-    description: stdioToolDescription("loopover_set_action_autonomy"),
-    inputSchema: setActionAutonomyShape,
-  },
-  async ({ owner, repo, action, level }: any) => {
+  async ({ owner, repo, action, level }: z.infer<typeof SetActionAutonomyInput>) => {
     // Read-merge-write, exactly as `maintain set-level` does it: PUT /settings replaces the whole autonomy map,
     // so sending only this class would silently clear every other one.
     const base = toolRepoBase(owner, repo);
@@ -3107,11 +1765,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_get_outcome_calibration",
-  {
-    description: stdioToolDescription("loopover_get_outcome_calibration"),
-    inputSchema: outcomeCalibrationShape,
-  },
-  async ({ owner, repo, windowDays }: any) => {
+  async ({ owner, repo, windowDays }: z.infer<typeof GetOutcomeCalibrationInput>) => {
     // The schema already rejects a non-positive windowDays, so an omitted window is the only way to full history
     // -- matching the route's own behaviour when ?windowDays is absent.
     const query = windowDays ? `?windowDays=${encodeURIComponent(windowDays)}` : "";
@@ -3122,11 +1776,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_get_gate_precision",
-  {
-    description: stdioToolDescription("loopover_get_gate_precision"),
-    inputSchema: gatePrecisionShape,
-  },
-  async ({ owner, repo, windowDays }: any) => {
+  async ({ owner, repo, windowDays }: z.infer<typeof GetGatePrecisionInput>) => {
     // The schema already rejects a non-positive windowDays, so an omitted window is the only way to full history
     // -- matching the route's own behaviour when ?windowDays is absent.
     const query = windowDays ? `?windowDays=${encodeURIComponent(windowDays)}` : "";
@@ -3139,11 +1789,7 @@ registerStdioTool(
 // `maintain selftune-audit` CLI verb prints. The API enforces maintainer authorization.
 registerStdioTool(
   "loopover_get_selftune_override_audit",
-  {
-    description: stdioToolDescription("loopover_get_selftune_override_audit"),
-    inputSchema: selftuneOverrideAuditShape,
-  },
-  async ({ owner, repo, limit }: any) => {
+  async ({ owner, repo, limit }: z.infer<typeof GetSelftuneOverrideAuditInput>) => {
     // The schema already rejects a non-positive limit, so an omitted limit is the only way to the server's
     // default cap -- matching the route's own behaviour when ?limit is absent.
     const query = limit ? `?limit=${encodeURIComponent(limit)}` : "";
@@ -3156,11 +1802,7 @@ registerStdioTool(
 // with confirm:true (schema-enforced; never silently defaulted). Same apiDelete helper the unwatch action uses.
 registerStdioTool(
   "loopover_clear_selftune_override",
-  {
-    description: stdioToolDescription("loopover_clear_selftune_override"),
-    inputSchema: clearSelftuneOverrideShape,
-  },
-  async ({ owner, repo, confirm }: any) => {
+  async ({ owner, repo, confirm }: z.infer<typeof ClearSelftuneOverrideInput>) => {
     const payload = await apiDelete(`${toolRepoBase(owner, repo)}/selftune/overrides`, { confirm });
     return toolResult(`Cleared the live self-tune gate override for ${owner}/${repo}.`, payload);
   },
@@ -3172,11 +1814,7 @@ registerStdioTool(
 // DERIVED mode/permissionReadiness/acting-classes/pending view rides along as structuredContent.
 registerStdioTool(
   "loopover_get_automation_state",
-  {
-    description: stdioToolDescription("loopover_get_automation_state"),
-    inputSchema: ownerRepoShape,
-  },
-  async ({ owner, repo }: any) => {
+  async ({ owner, repo }: z.infer<typeof GetAutomationStateInput>) => {
     const payload = await apiGet(`${toolRepoBase(owner, repo)}/automation-state`);
     return toolResult(`Agent automation state for ${owner}/${repo}.`, payload);
   },
@@ -3184,11 +1822,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_plan_repo_issues",
-  {
-    description: stdioToolDescription("loopover_plan_repo_issues"),
-    inputSchema: planRepoIssuesShape,
-  },
-  async ({ owner, repo, goal, dryRun, create, limit }: any) => {
+  async ({ owner, repo, goal, dryRun, create, limit }: z.infer<typeof PlanRepoIssuesInput>) => {
     // #7764: proxies POST {repoBase}/issue-plan-drafts/generate (the REST mirror of this same tool id). The
     // route re-applies its own explicit_create_requires_dry_run_false guard, so forwarding the schema-defaulted
     // dryRun/create verbatim keeps the create-safety exact: `create` alone (dryRun still true) is rejected;
@@ -3208,11 +1842,7 @@ registerStdioTool(
 // rejected; only an explicit {create:true, dryRun:false} reaches the write path.
 registerStdioTool(
   "loopover_generate_contributor_issue_drafts",
-  {
-    description: stdioToolDescription("loopover_generate_contributor_issue_drafts"),
-    inputSchema: generateContributorIssueDraftsShape,
-  },
-  async ({ owner, repo, dryRun, create, limit }: any) => {
+  async ({ owner, repo, dryRun, create, limit }: z.infer<typeof GenerateContributorIssueDraftsInput>) => {
     const payload = await apiPost(`${toolRepoBase(owner, repo)}/contributor-issue-drafts/generate`, { dryRun, create, limit });
     return toolResult(`Contributor issue drafts for ${owner}/${repo}.`, payload);
   },
@@ -3227,83 +1857,47 @@ function localWriteSpecResult(spec: any) {
 
 registerStdioTool(
   "loopover_open_pr",
-  {
-    description: stdioToolDescription("loopover_open_pr"),
-    inputSchema: openPrShape,
-  },
-  (input: any) => localWriteSpecResult(buildOpenPrSpec(input)),
+  (input: z.infer<typeof OpenPrInput>) => localWriteSpecResult(buildOpenPrSpec(input)),
 );
 
 registerStdioTool(
   "loopover_file_issue",
-  {
-    description: stdioToolDescription("loopover_file_issue"),
-    inputSchema: fileIssueShape,
-  },
-  (input: any) => localWriteSpecResult(buildFileIssueSpec(input)),
+  (input: z.infer<typeof FileIssueInput>) => localWriteSpecResult(buildFileIssueSpec(input)),
 );
 
 registerStdioTool(
   "loopover_apply_labels",
-  {
-    description: stdioToolDescription("loopover_apply_labels"),
-    inputSchema: applyLabelsShape,
-  },
-  (input: any) => localWriteSpecResult(buildApplyLabelsSpec(input)),
+  (input: z.infer<typeof ApplyLabelsInput>) => localWriteSpecResult(buildApplyLabelsSpec(input)),
 );
 
 registerStdioTool(
   "loopover_post_eligibility_comment",
-  {
-    description: stdioToolDescription("loopover_post_eligibility_comment"),
-    inputSchema: postEligibilityCommentShape,
-  },
-  (input: any) => localWriteSpecResult(buildPostEligibilityCommentSpec(input)),
+  (input: z.infer<typeof PostEligibilityCommentInput>) => localWriteSpecResult(buildPostEligibilityCommentSpec(input)),
 );
 
 registerStdioTool(
   "loopover_create_branch",
-  {
-    description: stdioToolDescription("loopover_create_branch"),
-    inputSchema: createBranchShape,
-  },
-  (input: any) => localWriteSpecResult(buildCreateBranchSpec(input)),
+  (input: z.infer<typeof CreateBranchInput>) => localWriteSpecResult(buildCreateBranchSpec(input)),
 );
 
 registerStdioTool(
   "loopover_delete_branch",
-  {
-    description: stdioToolDescription("loopover_delete_branch"),
-    inputSchema: deleteBranchShape,
-  },
-  (input: any) => localWriteSpecResult(buildDeleteBranchSpec(input)),
+  (input: z.infer<typeof DeleteBranchInput>) => localWriteSpecResult(buildDeleteBranchSpec(input)),
 );
 
 registerStdioTool(
   "loopover_generate_tests",
-  {
-    description: stdioToolDescription("loopover_generate_tests"),
-    inputSchema: testGenShape,
-  },
-  (input: any) => localWriteSpecResult(buildTestGenSpec(input)),
+  (input: z.infer<typeof GenerateTestsInput>) => localWriteSpecResult(buildTestGenSpec(input)),
 );
 
 registerStdioTool(
   "loopover_file_follow_up_issue",
-  {
-    description: stdioToolDescription("loopover_file_follow_up_issue"),
-    inputSchema: followUpIssueShape,
-  },
-  (input: any) => localWriteSpecResult(buildFollowUpIssueSpec(input)),
+  (input: z.infer<typeof FileFollowUpIssueInput>) => localWriteSpecResult(buildFollowUpIssueSpec(input)),
 );
 
 registerStdioTool(
   "loopover_close_pr",
-  {
-    description: stdioToolDescription("loopover_close_pr"),
-    inputSchema: closePrShape,
-  },
-  (input: any) => localWriteSpecResult(buildClosePrSpec(input)),
+  (input: z.infer<typeof ClosePrInput>) => localWriteSpecResult(buildClosePrSpec(input)),
 );
 
 // ── Resources: decision-pack, doctor, compatibility, changelog (#292) ─────────

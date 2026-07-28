@@ -116,6 +116,27 @@ import {
   agentStartRunTool,
   agentGetRunTool,
 } from "./agent.js";
+import {
+  preflightCurrentBranchTool,
+  previewCurrentBranchScoreTool,
+  rankLocalNextActionsTool,
+  explainLocalBlockersTool,
+  remediationPlanTool,
+  preparePrPacketTool,
+  agentPreparePrPacketTool,
+  reviewPrBeforePushTool,
+  draftPrBodyTool,
+  compareLocalVariantsTool,
+  previewLocalPrScoreTool,
+  getEligibilityPlanTool,
+  comparePrVariantsTool,
+  feasibilityGateTool,
+  markNotificationsReadTool,
+  watchIssuesTool,
+  findOpportunitiesTool,
+  retrieveIssueContextTool,
+  simulateOpenPrPressureTool,
+} from "./local-branch.js";
 
 /**
  * #9517's pilot batch, the full AMS miner server (#9536, all 11 tools), and the remote server's
@@ -218,6 +239,25 @@ export const TOOL_CONTRACTS: readonly ToolContract[] = [
   agentExplainNextActionTool,
   agentStartRunTool,
   agentGetRunTool,
+  preflightCurrentBranchTool,
+  previewCurrentBranchScoreTool,
+  rankLocalNextActionsTool,
+  explainLocalBlockersTool,
+  remediationPlanTool,
+  preparePrPacketTool,
+  agentPreparePrPacketTool,
+  reviewPrBeforePushTool,
+  draftPrBodyTool,
+  compareLocalVariantsTool,
+  previewLocalPrScoreTool,
+  getEligibilityPlanTool,
+  comparePrVariantsTool,
+  feasibilityGateTool,
+  markNotificationsReadTool,
+  watchIssuesTool,
+  findOpportunitiesTool,
+  retrieveIssueContextTool,
+  simulateOpenPrPressureTool,
   minerPingTool,
   minerPortfolioDashboardTool,
   minerManageStatusTool,
@@ -259,4 +299,5 @@ export * from "./review.js";
 export * from "./branch.js";
 export * from "./discovery-utility.js";
 export * from "./agent.js";
+export * from "./local-branch.js";
 export * from "./miner.js";

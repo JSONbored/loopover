@@ -194,7 +194,9 @@ export const getMaintainerLaneTool = defineTool({
 
 // ── repo onboarding pack ────────────────────────────────────────────────────────────────────────
 
-export const GetRepoOnboardingPackInput = ownerRepoInput;
+/** `refresh` is the stdio server's, which forwards it as `?refresh=true` to bypass the cached
+ *  preview. The remote server ignores it; widening an input is the safe direction (#9537). */
+export const GetRepoOnboardingPackInput = ownerRepoInput.extend({ refresh: z.boolean().optional() });
 export const GetRepoOnboardingPackOutput = z.looseObject({
   repoFullName: z.string().optional(),
   accepted: z.boolean().optional(),
@@ -634,12 +636,16 @@ export const GenerateContributorIssueDraftsOutput = z.looseObject({
   generatedAt: z.string(),
   dryRun: z.boolean(),
   createRequested: z.boolean(),
-  proposed: z.number(),
-  skippedDuplicate: z.number(),
-  skippedDeclined: z.number(),
-  skippedUnsafe: z.number(),
-  created: z.number(),
-  skippedCreateFailed: z.number(),
+  // #9537: OPTIONAL, not required. The service short-circuits to a countless `disabled`/
+  // `unavailable` posture when AI is off, returning the envelope with no counters at all -- which
+  // is precisely why the CLI proxies carry `?? 0` fallbacks. Declaring them required described a
+  // response the service does not always produce.
+  proposed: z.number().optional(),
+  skippedDuplicate: z.number().optional(),
+  skippedDeclined: z.number().optional(),
+  skippedUnsafe: z.number().optional(),
+  created: z.number().optional(),
+  skippedCreateFailed: z.number().optional(),
 });
 export const generateContributorIssueDraftsTool = defineTool({
   name: "loopover_generate_contributor_issue_drafts",
@@ -673,12 +679,15 @@ export const PlanRepoIssuesOutput = z.looseObject({
   status: z.string(),
   dryRun: z.boolean(),
   createRequested: z.boolean(),
-  proposed: z.number(),
-  skippedDuplicate: z.number(),
-  skippedDeclined: z.number(),
-  skippedUnsafe: z.number(),
-  created: z.number(),
-  skippedCreateFailed: z.number(),
+  // #9537: OPTIONAL. The service short-circuits to a countless `disabled`/`unavailable` posture when
+  // AI is off, returning the envelope with no counters -- which is exactly why the CLI proxies carry
+  // `?? 0` fallbacks. Declaring them required described a response the service does not always send.
+  proposed: z.number().optional(),
+  skippedDuplicate: z.number().optional(),
+  skippedDeclined: z.number().optional(),
+  skippedUnsafe: z.number().optional(),
+  created: z.number().optional(),
+  skippedCreateFailed: z.number().optional(),
   // Unlike GenerateContributorIssueDraftsOutput, this INCLUDES each draft's title/body/labels: the
   // content is generated fresh from the caller's own goal for their own repo (no loopover-internal
   // signal to scrub), and the whole point of the dry-run-by-default posture is letting a maintainer

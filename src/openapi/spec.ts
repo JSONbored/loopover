@@ -1641,8 +1641,8 @@ export function buildOpenApiSpec() {
     path: "/v1/public/decision-ledger/verify",
     summary: "Verify a window of the hash-chained decision ledger (resumable via afterSeq)",
     responses: {
-      200: { description: "Window verified clean; nextAfterSeq is the resume cursor (null at the tip). Every response also carries tipSeq/tipHash/totalCount for third-party checkpointing." },
-      409: { description: "First break found: sequence_gap | predecessor_mismatch | row_hash_mismatch | short_tail (a record exists past the verified tip with no chain entry)" },
+      200: { description: "Window verified clean; nextAfterSeq is the resume cursor (null at the tip). Every response also carries tipSeq/tipHash/totalCount for third-party checkpointing, and prunedRecords — the count of rows whose record preimage was legitimately pruned by the published retention window (chain checks still hold for them; only the content re-check is impossible, and the committed digest stays published)." },
+      409: { description: "First break found: sequence_gap | predecessor_mismatch | row_hash_mismatch | missing_record | content_mismatch | short_tail (a record newer than the verified tip has no chain entry — the truncated-tail signature) | unchained_record (an INTERIOR record has no chain entry — the failed-append signature). Records younger than the 5-minute append grace window are not reported: the record insert and its chain append are two writes moments apart, and a verify landing between them is not evidence of tampering." },
     },
   });
   registry.registerPath({

@@ -130,3 +130,30 @@ describe("getOrbGlobalStats", () => {
     await expect(getOrbGlobalStats({ DB: nullRowDb } as unknown as Env)).resolves.toEqual({ merged: 0, closed: 0, total: 0 });
   });
 });
+
+// #9474: the rollup read's `rollup?.` arms -- a driver anomaly resolving NO row for the rollup aggregate must
+// degrade that term to zero, never null-poison the live totals it is added to.
+it("degrades the rollup term to zero when its query resolves without a row, keeping the live totals intact (#9474)", async () => {
+  const anomalyDb = {
+    prepare: (sql: string) => ({
+      bind: () => ({
+        first: () => Promise.resolve(sql.includes("orb_outcome_rollups") ? null : { merged: 2, closed: 1, total: 3 }),
+      }),
+    }),
+  } as unknown as Env["DB"];
+  await expect(getOrbGlobalStats({ DB: anomalyDb } as unknown as Env)).resolves.toEqual({ merged: 2, closed: 1, total: 3 });
+});
+
+// The mirror-image anomaly: the LIVE row resolves with all-NULL fields (a degenerate driver reply) while the
+// rollup carries real folded history -- the rollup must still be reported, with the null live terms at zero.
+it("degrades all-NULL live fields to zero while still reporting folded rollup history (#9474)", async () => {
+  const anomalyDb = {
+    prepare: (sql: string) => ({
+      bind: () => ({
+        first: () =>
+          Promise.resolve(sql.includes("orb_outcome_rollups") ? { merged: 1, closed: 2, total: 3 } : { merged: null, closed: null, total: null }),
+      }),
+    }),
+  } as unknown as Env["DB"];
+  await expect(getOrbGlobalStats({ DB: anomalyDb } as unknown as Env)).resolves.toEqual({ merged: 1, closed: 2, total: 3 });
+});

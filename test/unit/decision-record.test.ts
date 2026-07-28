@@ -384,7 +384,7 @@ describe("decision ledger (#8837)", () => {
   it("verifying a completely empty ledger returns ok:true with a zero tip, and skips the tail-truncation check (nothing to anchor against yet)", async () => {
     const env = createTestEnv();
     const verified = await verifyDecisionLedger(env);
-    expect(verified).toEqual({ ok: true, checked: 0, nextAfterSeq: null, tipSeq: 0, tipHash: LEDGER_GENESIS_HASH, totalCount: 0 });
+    expect(verified).toEqual({ ok: true, checked: 0, nextAfterSeq: null, tipSeq: 0, tipHash: LEDGER_GENESIS_HASH, totalCount: 0, prunedRecords: 0 });
   });
 
   it("TAIL TRUNCATION now breaks verify instead of passing clean (#9122): dropping the newest ledger rows leaves an orphaned decision_records tail", async () => {
@@ -530,5 +530,113 @@ describe("decision ledger (#8837)", () => {
     });
     await expect(appendDecisionLedger(env, "record:c", "3".repeat(64), 2)).rejects.toThrow();
     vi.restoreAllMocks();
+  });
+});
+
+// #9474 + #9489: the verifier's two relationships with ABSENCE. A record can be absent because the published
+// retention policy pruned it (legitimate, must NOT read as tampering) or because something deleted it out of
+// band (must). And a record can lack a chain row because the append is milliseconds in flight (legitimate) or
+// because the append failed / the tail was truncated (must be reported -- including INTERIOR orphans, which
+// the old tail-only comparison lost forever the moment any newer row chained).
+describe("verifier vs absence (#9474 pruned records, #9489 grace + interior orphans)", () => {
+  const persist = async (env: Env, pull: number, action = "close") => {
+    const { record, recordDigest } = await buildDecisionRecord(recordInput({ pullNumber: pull, action }));
+    await persistDecisionRecord(env, record, recordDigest);
+    return recordDigest;
+  };
+  /** Persist with the system clock frozen at `at` so the row's hash-chained created_at is genuinely old --
+   *  a post-hoc UPDATE of created_at would desync row_hash and turn every test below into row_hash_mismatch. */
+  const persistAt = async (env: Env, pull: number, at: Date) => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(at);
+      await persist(env, pull);
+    } finally {
+      vi.useRealTimers();
+    }
+  };
+  const daysAgo = (days: number) => new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  it("REGRESSION (#9474): a record pruned by the 180-day retention window verifies clean, counted in prunedRecords -- not reported as tampering", async () => {
+    const env = createTestEnv();
+    await persistAt(env, 1, daysAgo(200)); // older than the decision_records window: prunable
+    await persistAt(env, 2, daysAgo(10)); // young: its record must survive
+    // Simulate exactly what pruneExpiredRecords does: delete the RECORD, never the ledger row.
+    const first = await env.DB.prepare("SELECT record_id AS id FROM decision_ledger WHERE seq = 1").first<{ id: string }>();
+    await env.DB.prepare("DELETE FROM decision_records WHERE id = ?").bind(first!.id).run();
+
+    const verified = await verifyDecisionLedger(env);
+
+    expect(verified.ok).toBe(true);
+    expect(verified.break).toBeUndefined();
+    expect(verified.prunedRecords).toBe(1);
+    expect(verified.checked).toBe(2); // the chain checks still ran over BOTH rows
+  });
+
+  it("INVARIANT (#9474): a RECENT record deleted out of band is still missing_record -- the tolerance keys on the hash-chained ledger timestamp, so it cannot launder a fresh deletion", async () => {
+    const env = createTestEnv();
+    await persistAt(env, 1, daysAgo(10)); // far inside the retention window
+    const first = await env.DB.prepare("SELECT record_id AS id FROM decision_ledger WHERE seq = 1").first<{ id: string }>();
+    await env.DB.prepare("DELETE FROM decision_records WHERE id = ?").bind(first!.id).run();
+
+    const verified = await verifyDecisionLedger(env);
+
+    expect(verified.ok).toBe(false);
+    expect(verified.break).toEqual({ kind: "missing_record", atSeq: 1, recordId: first!.id });
+    expect(verified.prunedRecords).toBe(0);
+  });
+
+  it("REGRESSION (#9489): a verify landing between the record INSERT and its ledger append reports ok -- an in-flight write is not a tamper signal", async () => {
+    const env = createTestEnv();
+    await persistAt(env, 1, daysAgo(1)); // an established, chained tip to reconcile against
+    // The in-flight state: record row present (created JUST now, inside the grace window), no ledger row yet.
+    await env.DB.prepare("INSERT INTO decision_records (id, repo_full_name, pull_number, head_sha, action, reason_code, record_digest, record_json, created_at) SELECT 'in-flight', repo_full_name, 99, head_sha, action, reason_code, record_digest, record_json, ? FROM decision_records LIMIT 1")
+      .bind(new Date().toISOString())
+      .run();
+
+    const verified = await verifyDecisionLedger(env);
+
+    expect(verified.ok).toBe(true);
+    expect(verified.break).toBeUndefined();
+  });
+
+  it("INVARIANT (#9489): past the grace window the same unchained record IS reported -- the grace bounds the blind spot, it does not remove the check", async () => {
+    const env = createTestEnv();
+    await persistAt(env, 1, daysAgo(2));
+    // An orphan NEWER than the verified tail but well past the 5-minute grace: the truncated-tail signature.
+    await env.DB.prepare("INSERT INTO decision_records (id, repo_full_name, pull_number, head_sha, action, reason_code, record_digest, record_json, created_at) SELECT 'stale-orphan', repo_full_name, 99, head_sha, action, reason_code, record_digest, record_json, ? FROM decision_records LIMIT 1")
+      .bind(daysAgo(1).toISOString())
+      .run();
+
+    const verified = await verifyDecisionLedger(env);
+
+    expect(verified.ok).toBe(false);
+    expect(verified.break).toEqual({ kind: "short_tail", atSeq: 1 });
+  });
+
+  it("REGRESSION (#9489): an INTERIOR orphan -- a failed append with newer rows chained cleanly after it -- is unchained_record, no longer invisible forever", async () => {
+    const env = createTestEnv();
+    await persistAt(env, 1, daysAgo(3));
+    await persistAt(env, 3, daysAgo(1)); // the newer, cleanly chained row that used to hide the orphan
+    // The failed-append signature: a record BETWEEN them (created_at behind the verified tail) with no chain row.
+    await env.DB.prepare("INSERT INTO decision_records (id, repo_full_name, pull_number, head_sha, action, reason_code, record_digest, record_json, created_at) SELECT 'interior-orphan', repo_full_name, 99, head_sha, action, reason_code, record_digest, record_json, ? FROM decision_records LIMIT 1")
+      .bind(daysAgo(2).toISOString())
+      .run();
+
+    const verified = await verifyDecisionLedger(env);
+
+    expect(verified.ok).toBe(false);
+    expect(verified.break).toEqual({ kind: "unchained_record", atSeq: 2, recordId: "interior-orphan" });
+  });
+
+  it("INVARIANT: a fully healthy chain reports prunedRecords 0 and no break -- both new mechanisms are inert when nothing is absent", async () => {
+    const env = createTestEnv();
+    await persistAt(env, 1, daysAgo(2));
+    await persistAt(env, 2, daysAgo(1));
+
+    const verified = await verifyDecisionLedger(env);
+
+    expect(verified).toMatchObject({ ok: true, checked: 2, prunedRecords: 0 });
+    expect(verified.break).toBeUndefined();
   });
 });

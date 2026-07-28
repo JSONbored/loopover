@@ -52,9 +52,22 @@ function makeRetentionPgPool(remaining: Record<string, number> = {}): MockPgPool
 
     if (/^insert into "?audit_events"?/i.test(q)) return { rows: [], rowCount: 1 };
 
+    // #9474: the orb_pr_outcomes fold-then-delete pair. The fold INSERT..SELECT aggregates rows this mock
+    // never materializes (harmless: rowCount 0), and its unbatched DELETE drains the table's counter.
+    const orbDeleteMatch = /^DELETE FROM orb_pr_outcomes WHERE occurred_at < \$\d+$/i.exec(q);
+    if (orbDeleteMatch) {
+      const have = remaining["orb_pr_outcomes"] ?? 0;
+      remaining["orb_pr_outcomes"] = 0;
+      return { rows: [], rowCount: have };
+    }
+
     return { rows: [], rowCount: 0 };
   });
-  return { pool: { query: fn } as unknown as Pool, calls, remaining };
+  // #9474: orb_pr_outcomes' fold-before-delete goes through the adapter's batch(), which checks out a
+  // dedicated client (BEGIN/COMMIT). The client delegates to the same query fn, so the rowid guard and the
+  // per-table row accounting above see batch-issued statements exactly like plain ones.
+  const client = { query: fn, release: vi.fn() };
+  return { pool: { query: fn, connect: async () => client } as unknown as Pool, calls, remaining };
 }
 
 function makeEnv(remaining: Record<string, number> = {}): { env: Env; mock: MockPgPool } {

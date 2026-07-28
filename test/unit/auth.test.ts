@@ -373,11 +373,12 @@ describe("private-beta auth and rate limiting", () => {
     expect(observedKeys[0]).toMatch(/^strict:\/v1\/auth\/github\/token:ip:/);
   });
 
-  it("keys /v1/github/webhook and /v1/orb/webhook by the payload's installation.id, not IP (#4891) -- a shared hosted egress path can't collide two tenants' buckets", async () => {
+  it("keys /v1/github/webhook and /v1/orb/webhook by installation.id AND the connecting IP (#4891, #9469)", async () => {
     const observedKeys: string[] = [];
     const env = rateLimitTestEnv({}, observedKeys);
 
-    // Two DIFFERENT installations from the SAME connecting IP (a shared hosted egress) get independent buckets.
+    // #4891's requirement, unchanged: two DIFFERENT installations from the SAME connecting IP (a shared hosted
+    // egress) must get independent buckets, so one tenant's traffic can never exhaust another's.
     await expect(
       enforceRateLimit(fakeContext(env, "/v1/github/webhook", { "cf-connecting-ip": "203.0.113.9" }, { installation: { id: 111 } }), "strict"),
     ).resolves.toBeNull();
@@ -385,10 +386,15 @@ describe("private-beta auth and rate limiting", () => {
       enforceRateLimit(fakeContext(env, "/v1/github/webhook", { "cf-connecting-ip": "203.0.113.9" }, { installation: { id: 222 } }), "strict"),
     ).resolves.toBeNull();
     expect(observedKeys).toHaveLength(2);
-    expect(observedKeys[0]).toBe("strict:/v1/github/webhook:installation:111");
-    expect(observedKeys[1]).toBe("strict:/v1/github/webhook:installation:222");
+    expect(observedKeys[0]).not.toBe(observedKeys[1]);
+    expect(observedKeys[0]).toContain("installation:111");
+    expect(observedKeys[1]).toContain("installation:222");
 
-    // The SAME installation from two DIFFERENT IPs shares one bucket.
+    // #9469: the SAME installation from two DIFFERENT IPs must NOT share a bucket. installation.id is read from
+    // the body BEFORE signature verification, so it is attacker-controlled -- when it alone keyed the bucket,
+    // anyone could pin a victim installation's 10/60s window with unsigned requests and GitHub's real
+    // deliveries would 429 (and GitHub does not auto-redeliver). Folding in the connecting IP means an attacker
+    // and GitHub can never occupy the same bucket.
     observedKeys.length = 0;
     await expect(
       enforceRateLimit(fakeContext(env, "/v1/github/webhook", { "cf-connecting-ip": "203.0.113.9" }, { installation: { id: 333 } }), "strict"),
@@ -396,14 +402,17 @@ describe("private-beta auth and rate limiting", () => {
     await expect(
       enforceRateLimit(fakeContext(env, "/v1/github/webhook", { "cf-connecting-ip": "198.51.100.50" }, { installation: { id: 333 } }), "strict"),
     ).resolves.toBeNull();
-    expect(observedKeys[0]).toBe(observedKeys[1]);
+    expect(observedKeys[0]).not.toBe(observedKeys[1]);
+    // Both still carry the installation identity -- the tenant separation #4891 added is not lost.
+    expect(observedKeys[0]).toContain("installation:333");
+    expect(observedKeys[1]).toContain("installation:333");
 
-    // /v1/orb/webhook shares the same installation-keying logic.
+    // /v1/orb/webhook shares the same keying logic.
     observedKeys.length = 0;
     await expect(
       enforceRateLimit(fakeContext(env, "/v1/orb/webhook", { "cf-connecting-ip": "203.0.113.9" }, { installation: { id: 444 } }), "strict"),
     ).resolves.toBeNull();
-    expect(observedKeys[0]).toBe("strict:/v1/orb/webhook:installation:444");
+    expect(observedKeys[0]).toMatch(/^strict:\/v1\/orb\/webhook:installation:444:ip:/);
   });
 
   it("falls back to IP-keying /v1/github/webhook when installation.id can't be resolved (#4891)", async () => {

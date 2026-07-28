@@ -19,6 +19,7 @@ import {
   isGitHubBadCredentialsError,
   isGitHubRateLimitedError,
   isRateLimitedResponse,
+  exceedsInlineRetryBudget,
   rateLimitRetryMs,
   setGitHubResponseCache,
   setInstallationTokenStore,
@@ -2634,8 +2635,13 @@ describe("GitHub check runs", () => {
 
     // Unlike a bare fetch, this is now visible to shouldWaitForGitHubRateLimit's admission reads -- before #4506,
     // this call passed no rate-limit-admission option at all, so it never reached recordGitHubRateLimitObservation.
+    // #9494: recorded under `app-jwt`, NOT `installation:123`. This call authenticates with the App JWT, whose
+    // 5000/hr bucket is separate from the installation's -- filing its healthy remaining count under the
+    // installation key overwrote a genuinely exhausted installation's newest observation every 30 minutes
+    // (refresh-installation-health's cadence), re-admitting its parked jobs to burn retries against 403s.
+    // #4506's requirement (the call is VISIBLE to admission reads) is unchanged; only its attribution is fixed.
     expect(await listLatestGitHubRateLimitObservations(env)).toEqual(
-      expect.arrayContaining([expect.objectContaining({ path: "/app/installations/123", statusCode: 200, remaining: 4321, admissionKey: "installation:123" })]),
+      expect.arrayContaining([expect.objectContaining({ path: "/app/installations/123", statusCode: 200, remaining: 4321, admissionKey: "app-jwt" })]),
     );
   });
 
@@ -3023,9 +3029,29 @@ describe("GitHub rate-limit handling (#ratelimit-resilience)", () => {
       expect(rateLimitRetryMs(new Response("", { headers: { "retry-after": "9999" } }), 0)).toBe(8000);
       expect(rateLimitRetryMs(new Response("", { headers: { "retry-after": "0" } }), 0)).toBe(0);
     });
-    it("falls back to exponential backoff when Retry-After is absent or invalid", () => {
-      expect(rateLimitRetryMs(new Response("", {}), 2)).toBe(2000); // 500 * 2^2, no header
-      expect(rateLimitRetryMs(new Response("", { headers: { "retry-after": "soon" } }), 0)).toBe(500); // invalid → 500 * 2^0
+    it("falls back to jittered exponential backoff when Retry-After is absent or invalid (#9494)", () => {
+      // Jitter spreads the herd: up to QUEUE_CONCURRENCY workers can trip the same limit within milliseconds,
+      // and a fixed ladder had them all retry in lockstep. The base is unchanged; the added spread is [0, base/2).
+      const noHeader = rateLimitRetryMs(new Response("", {}), 2); // base 500 * 2^2
+      expect(noHeader).toBeGreaterThanOrEqual(2000);
+      expect(noHeader).toBeLessThan(3000);
+      const invalidHeader = rateLimitRetryMs(new Response("", { headers: { "retry-after": "soon" } }), 0); // base 500 * 2^0
+      expect(invalidHeader).toBeGreaterThanOrEqual(500);
+      expect(invalidHeader).toBeLessThan(750);
+    });
+
+    it("honors a Retry-After within the inline budget exactly, without jitter (#9494)", () => {
+      // A server-instructed wait is authoritative -- jitter applies only to our own invented backoff.
+      expect(rateLimitRetryMs(new Response("", { headers: { "retry-after": "3" } }), 0)).toBe(3000);
+    });
+
+    it("reports a Retry-After beyond the inline budget so the caller stops retrying inline (#9494)", () => {
+      // A secondary-limit Retry-After is typically 60s against an 8s inline cap. Retrying inside the window
+      // GitHub asked us to avoid can extend the block; the queue honors the full wait with jitter instead.
+      expect(exceedsInlineRetryBudget(new Response("", { headers: { "retry-after": "60" } }))).toBe(true);
+      expect(exceedsInlineRetryBudget(new Response("", { headers: { "retry-after": "3" } }))).toBe(false);
+      expect(exceedsInlineRetryBudget(new Response("", {}))).toBe(false);
+      expect(exceedsInlineRetryBudget(new Response("", { headers: { "retry-after": "soon" } }))).toBe(false);
     });
   });
 

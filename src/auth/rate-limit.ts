@@ -204,7 +204,7 @@ async function actorHint(c: Context<{ Bindings: Env }>): Promise<string> {
 async function rateLimitIdentity(c: Context<{ Bindings: Env }>): Promise<string> {
   const ipIdentity = `ip:${await hashToken(clientIp(c))}`;
 
-  const installationIdentity = await installationRateLimitIdentity(c);
+  const installationIdentity = await installationRateLimitIdentity(c, ipIdentity);
   if (installationIdentity) return installationIdentity;
 
   if (isPreAuthRateLimitPath(c.req.path)) return ipIdentity;
@@ -222,11 +222,23 @@ async function rateLimitIdentity(c: Context<{ Bindings: Env }>): Promise<string>
 const INSTALLATION_KEYED_WEBHOOK_PATHS = new Set(["/v1/github/webhook", "/v1/orb/webhook"]);
 const INSTALLATION_KEYED_ORB_BEARER_PATHS = new Set(["/v1/orb/token", "/v1/orb/relay/register", "/v1/orb/relay/pull"]);
 
-async function installationRateLimitIdentity(c: Context<{ Bindings: Env }>): Promise<string | null> {
+async function installationRateLimitIdentity(c: Context<{ Bindings: Env }>, ipIdentity: string): Promise<string | null> {
   const path = c.req.path;
   if (INSTALLATION_KEYED_WEBHOOK_PATHS.has(path)) {
     const installationId = await peekWebhookInstallationId(c);
-    return installationId === null ? null : `installation:${installationId}`;
+    // #9469: the installation id here is read from the body BEFORE signature verification, so it is
+    // ATTACKER-CONTROLLED. Keying on it alone let anyone pin a chosen installation's bucket by POSTing
+    // `{"installation":{"id":<victim>}}` 10 times a minute -- GitHub's genuine deliveries then 429, and
+    // GitHub does not auto-redeliver, so the engine went deaf for that installation at a cost of one
+    // unauthenticated request every six seconds. The prior threat note correctly observed that a spoofed id
+    // grants no ACCESS, but sharing the bucket IS the attack.
+    //
+    // Folding in the connecting IP means an attacker and GitHub can never occupy the same bucket, while
+    // #4891's requirement still holds: many brokered tenants behind ONE shared egress no longer collide,
+    // because the installation id still separates them. It also restores headroom that #4891 removed by
+    // accident -- GitHub delivers from many egress IPs, so a CI storm now spreads across per-IP buckets
+    // again instead of contending for a single 10/60s window.
+    return installationId === null ? null : `installation:${installationId}:${ipIdentity}`;
   }
   if (path === "/v1/orb/relay") {
     // Single-tenant per deployment: the bound enrollment secret (never the request body) IS this deployment's

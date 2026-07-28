@@ -1721,6 +1721,107 @@ describe("queue processors", () => {
       expect(replied?.n).toBe(0); // no reply was actually posted, so it must not be recorded as one
     });
 
+    it("#9563 REGRESSION: a redelivered @loopover chat spends the model once and posts one answer", async () => {
+      // The dispatcher answers ~20 commands INLINE (the whole Q&A catalog plus the maintainer digests) and had
+      // no redelivery guard of its own. maybeThrottleLoopOverCommand contains one, but returns early on
+      // `policy === "off"` -- and commandRateLimitPolicy DEFAULTS to "off", so on a default repo it never runs.
+      // `chat` posts through createIssueComment, so a replay is a visibly duplicated public answer on top of
+      // the duplicated model spend.
+      let aiRuns = 0;
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI_ADVISORY: { run: async () => { aiRuns += 1; return { response: "Answer." }; } } as unknown as Ai,
+      });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 323, title: "Redelivery target", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
+      const postedBodies: string[] = [];
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("raw.githubusercontent.com") && url.includes(".loopover.yml")) {
+          return new Response("settings:\n  advisoryAiRouting:\n    chatQa: true\n", { status: 200 });
+        }
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+        if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "maintain" });
+        if (url.includes("/issues/323/comments") && method === "GET") return Response.json([]);
+        if (url.includes("/issues/323/comments") && method === "POST") {
+          postedBodies.push(String(JSON.parse(String(init?.body ?? "{}")).body ?? ""));
+          return Response.json({ id: 1 }, { status: 201 });
+        }
+        return new Response("not found", { status: 404 });
+      });
+      const job = {
+        type: "github-webhook" as const,
+        deliveryId: "qa-reply-9563-redeliver",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          issue: { number: 323, title: "Redelivery target", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
+          comment: { id: 7003, body: "@loopover chat what changed?", html_url: "https://github.com/JSONbored/gittensory/pull/323#issuecomment-7003", user: { login: "maintainer", type: "User" }, author_association: "OWNER" },
+        },
+      };
+      await processJob(env, job);
+      expect(postedBodies).toHaveLength(1);
+      const runsAfterFirst = aiRuns;
+
+      await processJob(env, job);
+
+      // The comment is the load-bearing assertion: the whole answer pass (agent run, summary, model call)
+      // happens BEFORE the post, so a second pass could not have run without producing a second comment.
+      expect(postedBodies).toHaveLength(1); // no duplicate public answer
+      expect(aiRuns).toBe(runsAfterFirst); // ...and no further model spend on whichever route answered
+      const replied = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.agent_command_replied'").first<{ n: number }>();
+      expect(replied?.n).toBe(1);
+    });
+
+    it("#9563 REGRESSION: the guard also covers a DRY-RUN replay, which spends the model without ever writing the completed event", async () => {
+      // The subtle half. A dry-run/paused original still ran the agent and the AI summary -- it just recorded
+      // github_app.agent_command_reply_skipped instead of *_replied. Keying the guard on the completed event
+      // alone would therefore leave exactly the replays that already cost money unguarded, which is why it
+      // checks BOTH event types.
+      let aiRuns = 0;
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI_ADVISORY: { run: async () => { aiRuns += 1; return { response: "Answer to the question." }; } } as unknown as Ai,
+      });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", agentDryRun: true });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 324, title: "Dry-run redelivery", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("raw.githubusercontent.com") && url.includes(".loopover.yml")) {
+          return new Response("settings:\n  advisoryAiRouting:\n    chatQa: true\n", { status: 200 });
+        }
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+        if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "maintain" });
+        if (url.includes("/issues/324/comments") && method === "GET") return Response.json([]);
+        if (url.includes("/issues/324/comments") && method === "POST") return Response.json({ id: 1 }, { status: 201 });
+        return new Response("not found", { status: 404 });
+      });
+      const job = {
+        type: "github-webhook" as const,
+        deliveryId: "qa-dryrun-9563-redeliver",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          issue: { number: 324, title: "Dry-run redelivery", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
+          comment: { id: 7004, body: "@loopover chat what changed?", html_url: "https://github.com/JSONbored/gittensory/pull/324#issuecomment-7004", user: { login: "maintainer", type: "User" }, author_association: "OWNER" },
+        },
+      };
+      await processJob(env, job);
+      const runsAfterFirst = aiRuns;
+      await processJob(env, job);
+
+      expect(aiRuns).toBe(runsAfterFirst); // the replay spent nothing further
+      const skipped = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.agent_command_reply_skipped'").first<{ n: number }>();
+      expect(skipped?.n).toBe(1); // recorded once, not once per redelivery
+      const replied = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.agent_command_replied'").first<{ n: number }>();
+      expect(replied?.n).toBe(0); // still never posted, so still never recorded as a reply
+    });
+
     it("#4595: chat declines gracefully end-to-end (never posts model text) when chatQa is off, the default", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 308, title: "Rate limit target", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
@@ -3087,6 +3188,66 @@ describe("queue processors", () => {
     expect(overrideAdvisory ?? null).toBeNull();
   });
 
+  it("#9563 REGRESSION: a redelivered gate-override does not neutralize a NEWER commit the maintainer never overrode", async () => {
+    // The write side of gate-override is individually idempotent (the check-run is PATCHed in place, the
+    // confirmation is a marker comment), which is exactly why the missing guard was easy to miss. The real
+    // damage is target drift: resolveOverrideHeadSha re-fetches the LIVE head on purpose, so if a commit lands
+    // between the original delivery and the replay, the replay overrides a DIFFERENT commit -- breaking the
+    // handler's own "no permanent bypass, this commit only" invariant.
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autoLabelEnabled: false });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewCheckMode: "required", linkedIssueGateMode: "off", commentMode: "off", publicSurface: "off", checkRunMode: "off" } });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 91, title: "Override me", state: "open", user: { login: "contributor" },
+      author_association: "CONTRIBUTOR", head: { sha: "old-head-sha" }, labels: [], body: "Validation: npm test",
+    });
+    // The live head MOVES between the two deliveries — the scenario the guard exists for.
+    let liveHead = "old-head-sha";
+    const overriddenShas: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
+      if (url.includes("/pulls/91") && method === "GET") return Response.json({ number: 91, state: "open", head: { sha: liveHead } });
+      const checkRuns = /\/commits\/([^/]+)\/check-runs/.exec(url);
+      if (checkRuns && method === "GET") { overriddenShas.push(checkRuns[1] ?? ""); return Response.json({ total_count: 1, check_runs: [{ id: 556, name: "LoopOver Orb Review Agent" }] }); }
+      if (url.includes("/check-runs/556") && method === "PATCH") return Response.json({ id: 556 });
+      if (url.includes("/issues/91/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/91/comments") && method === "POST") return Response.json({ id: 9101 });
+      return new Response("not found", { status: 404 });
+    });
+
+    const job = {
+      type: "github-webhook" as const,
+      deliveryId: "gate-override-9563-redeliver",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 91, title: "Override me", state: "open", user: { login: "contributor" }, pull_request: {} },
+        comment: { id: 801, body: "@loopover gate-override known flaky", author_association: "NONE", user: { login: "maintainer", type: "User" } },
+        sender: { login: "maintainer", type: "User" },
+      },
+    };
+    await processJob(env, job);
+    // The override targeted the commit the maintainer actually commented on.
+    expect([...new Set(overriddenShas)]).toEqual(["old-head-sha"]);
+    const firstAudit = await env.DB.prepare("select metadata_json from audit_events where event_type = ?").bind("github_app.gate_overridden").first<{ metadata_json: string }>();
+    expect(JSON.parse(firstAudit?.metadata_json ?? "{}")).toMatchObject({ headSha: "old-head-sha" });
+
+    liveHead = "brand-new-sha-nobody-overrode"; // a push lands before the queue re-drives the same delivery
+    await processJob(env, job);
+
+    // The replay resolved no check-run on the new head — it short-circuited before resolveOverrideHeadSha.
+    expect([...new Set(overriddenShas)]).toEqual(["old-head-sha"]);
+    expect(overriddenShas).not.toContain("brand-new-sha-nobody-overrode");
+    const overridden = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("github_app.gate_overridden").first<{ n: number }>();
+    expect(overridden?.n).toBe(1);
+  });
+
   it("a real gate-override still completes even when the false-positive telemetry write fails (best-effort)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
@@ -3877,6 +4038,53 @@ describe("queue processors", () => {
         .bind("github_app.finding_resolved")
         .first<{ metadata_json: string }>();
       expect(JSON.parse(resolved?.metadata_json ?? "{}")).toMatchObject({ scope: "whole_pr", resolvedWarningCount: 2 });
+    });
+
+    it("#9312 REGRESSION: a redelivered @loopover resolve (same deliveryId) records its suppressions exactly ONCE", async () => {
+      // Resolve was the one command handler #9312 missed. Its five siblings sit 100-300 lines below it in a
+      // different formatting style, so it never read as a sixth site. The damage is not a cosmetic duplicate
+      // comment: recordReviewSuppression writes a PERMANENT review-memory row per finding, so a queue retry
+      // (max_retries:3, plus the dlq re-drive, both reusing the identical deliveryId) doubles them.
+      const repoFullName = "JSONbored/resolve-9312-redeliver";
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_MEMORY: "true" });
+      await seedResolvePr(env, repoFullName, 9312, "resolve-9312-redeliver");
+      await upsertRepoFocusManifest(env, repoFullName, { review: { memory: true }, settings: { reviewCheckMode: "required", linkedIssueGateMode: "advisory", aiReviewMode: "advisory", commentMode: "off", publicSurface: "off", checkRunMode: "off" } });
+      let posts = 0;
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
+        if (url.includes("/issues/9312/comments") && method === "GET") return Response.json([]);
+        if (url.includes("/issues/9312/comments") && method === "POST") { posts += 1; return Response.json({ id: 93121 }); }
+        if (url.includes("/check-runs") && method === "PATCH") return Response.json({ id: 1 });
+        return new Response("not found", { status: 404 });
+      });
+
+      // GitHub redelivery: the identical deliveryId + payload arrive twice.
+      const job = {
+        type: "github-webhook" as const,
+        deliveryId: "resolve-9312-redeliver",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "resolve-9312-redeliver", full_name: repoFullName, private: false, owner: { login: "JSONbored" } },
+          issue: { number: 9312, title: "Resolve me", state: "open", user: { login: "contributor" }, pull_request: {} },
+          comment: { id: 93120, body: "@loopover resolve missing_linked_issue", author_association: "NONE", user: { login: "maintainer", type: "User" } },
+          sender: { login: "maintainer", type: "User" },
+        },
+      };
+      await processJob(env, job);
+      const afterFirst = await listReviewSuppressions(env, repoFullName);
+      expect(afterFirst.length).toBeGreaterThan(0); // the original delivery genuinely did its work
+      await processJob(env, job);
+
+      // The replay adds NO second suppression row and posts no second confirmation.
+      expect(await listReviewSuppressions(env, repoFullName)).toHaveLength(afterFirst.length);
+      expect(posts).toBe(1);
+      const resolved = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("github_app.finding_resolved").first<{ n: number }>();
+      expect(resolved?.n).toBe(1);
     });
 
     it("ignores issue comments that are not @loopover resolve commands (#1964)", async () => {
@@ -5610,6 +5818,40 @@ describe("queue processors", () => {
       expect(audited?.outcome).toBe("completed");
       expect(audited?.actor).toBe("maintainer");
       expect(JSON.parse(audited?.metadata_json ?? "{}")).toMatchObject({ trigger: "checkbox" });
+    });
+
+    it("#9562 REGRESSION: a redelivered checkbox does not run a SECOND AI generation or post a second comment", async () => {
+      // The trigger reads the delivered PAYLOAD snapshot (isCheckedPrPanelGenerateTests over comment.body), so
+      // the panel rewriting its own checkbox is no protection at all -- a replay still carries the checked
+      // body. hasAuditEventForHeadSha does not cover it either: that guard is explicitly scoped to the
+      // auto-trigger ("the explicit command deliberately does NOT consult this guard"). The cost is a real
+      // duplicate AI generation plus a brand-new public comment, since delivery uses createIssueComment.
+      const repoFullName = "JSONbored/checkbox-9562-redeliver";
+      let aiRuns = 0;
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run: async () => { aiRuns += 1; return { response: "```typescript\n" + CHECKBOX_TEST_SOURCE + "\n```" }; } } as unknown as Ai,
+        LOOPOVER_REVIEW_E2E_TESTS: "true",
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+      });
+      await seedCheckboxPr(env, repoFullName, 6010, "checkbox-9562-sha");
+      const posted = { count: 0, body: "" };
+      stubCheckboxFetch(6010, "maintainer", "admin", posted);
+
+      // GitHub redelivery: the identical deliveryId + payload arrive twice (checkboxWebhook derives the
+      // deliveryId from prNumber + commentId, so both passes genuinely share one).
+      const job = checkboxWebhook(repoFullName, 6010, 910, { login: "maintainer" });
+      await processJob(env, job);
+      expect(aiRuns).toBe(1);
+      expect(posted.count).toBe(1);
+
+      await processJob(env, job);
+
+      expect(aiRuns).toBe(1); // no second paid generation
+      expect(posted.count).toBe(1); // no second public comment
+      const generated = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("github_app.e2e_tests_generation").first<{ n: number }>();
+      expect(generated?.n).toBe(1);
     });
 
     it("is a silent no-op when a non-maintainer checks the box — no comment posted, only a denial audit event", async () => {

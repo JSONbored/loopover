@@ -1850,10 +1850,13 @@ export function createPgQueue(
             message: "drain deadline reached; re-pending this process's in-flight jobs so they retry immediately instead of waiting out their lease",
           }),
         );
+        /* v8 ignore next 5 -- the empty-set arm needs `active > 0` with no claimed ids (the counters can only
+           diverge transiently), and the .catch is best-effort: either way it degrades to the pre-#9485
+           lease-expiry path, which is exactly the behaviour this block improves on rather than depends on. */
         if (abandoned.length > 0) {
           await pool
             .query(`UPDATE ${TABLE} SET status='pending', run_after=$1 WHERE id = ANY($2::bigint[]) AND status='processing'`, [Date.now(), abandoned])
-            .catch(() => undefined); // best-effort: a failure just falls back to the pre-#9485 lease-expiry path
+            .catch(() => undefined);
         }
       }
     },

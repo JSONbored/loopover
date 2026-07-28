@@ -1105,6 +1105,53 @@ describe("createPgQueue (durable #977)", () => {
   // #9465: parity with the sqlite backend. Lock contention is "not our turn yet", not a failure -- charging it
   // an attempt killed waiters after ~25s against a lock designed to be held for minutes, losing a reopen-reclose
   // enforcement outright in production.
+  // #9485: parity with the sqlite backend. An unbounded stop() blocked a redeploy on a multi-minute AI review
+  // until SIGKILL, and the killed job then sat unclaimed until its 30-minute lease expired.
+  it("REGRESSION (#9485): stop() bounds the drain and re-pends this process's abandoned rows", async () => {
+    process.env["QUEUE_SHUTDOWN_DRAIN_DEADLINE_MS"] = "50";
+    try {
+      const m = makePool();
+      m.enqueueJob("1", { type: "agent-regate-pr" });
+      let release!: () => void;
+      const blocked = new Promise<void>((resolve) => { release = resolve; });
+      const q = createPgQueue(m.pool, async () => { await blocked; });
+      await q.init();
+      void q.drain();
+      await new Promise((r) => setTimeout(r, 20)); // let the job be claimed
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+      await q.stop(); // must return rather than hang on the still-running job
+
+      expect(warn.mock.calls.map((c) => String(c[0])).join("\n")).toContain("selfhost_queue_shutdown_drain_deadline");
+      const calls = (m.fn as unknown as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => String(c[0]));
+      // The abandoned row is re-pended so the next process retries it immediately, rather than waiting out the lease.
+      expect(calls.some((sql) => sql.includes("status='pending'") && sql.includes("ANY($2::bigint[])"))).toBe(true);
+      release();
+    } finally {
+      delete process.env["QUEUE_SHUTDOWN_DRAIN_DEADLINE_MS"];
+    }
+  });
+
+  it("INVARIANT (#9485): a drain that completes in time re-pends nothing", async () => {
+    process.env["QUEUE_SHUTDOWN_DRAIN_DEADLINE_MS"] = "5000";
+    try {
+      const m = makePool();
+      m.enqueueJob("1", { type: "agent-regate-pr" });
+      const q = createPgQueue(m.pool, async () => undefined);
+      await q.init();
+      await q.drain();
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+      await q.stop();
+
+      expect(warn.mock.calls.map((c) => String(c[0])).join("\n")).not.toContain("shutdown_drain_deadline");
+      const calls = (m.fn as unknown as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => String(c[0]));
+      expect(calls.some((sql) => sql.includes("ANY($2::bigint[])"))).toBe(false);
+    } finally {
+      delete process.env["QUEUE_SHUTDOWN_DRAIN_DEADLINE_MS"];
+    }
+  });
+
   it("REGRESSION (#9465): lock contention re-pends WITHOUT consuming an attempt, and is tagged distinctly", async () => {
     const m = makePool();
     m.enqueueJob("1", { type: "agent-regate-pr" });

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { captureInteractionFrames, captureScrollFrames, captureShot, handleShot } from "../../src/review/visual/shot";
+import { counterValue, resetMetrics } from "../../src/selfhost/metrics";
 
 const mocks = vi.hoisted(() => ({
   finalUrl: "https://preview.pages.dev/page",
@@ -1089,4 +1090,19 @@ describe("visual screenshot R2 key serve + traversal guard", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("image/png");
   });
+});
+
+// #9487: a browserless outage was logged but never COUNTED, so it was invisible in Prometheus while it
+// degraded every screenshot to a dash cell -- and because the screenshot-table gate treats absent evidence as
+// a close signal, that outage could close legitimate visual PRs before anyone noticed.
+describe("visual capture result metric (#9487)", () => {
+  it("counts a render failure, so a browserless outage is alertable rather than silent", async () => {
+    resetMetrics();
+    mocks.screenshot.mockRejectedValueOnce(new Error("Protocol error: Target closed"));
+
+    await expect(captureShot(env(), "https://preview.pages.dev/page")).resolves.toEqual({ png: null, authWalled: false });
+
+    expect(counterValue("loopover_visual_capture_total", { result: "error" })).toBe(1);
+  });
+
 });

@@ -8,7 +8,7 @@ import { createD1Adapter, nodeSqliteDriver } from "../../src/selfhost/d1-adapter
 import { runSelfHostMigrations } from "../../src/selfhost/migrate";
 import { normalizePostgresValue } from "../../scripts/migrate-selfhost-sqlite-to-postgres";
 import type { Pool } from "pg";
-import { createPgAdapter, MIGRATION_ADVISORY_LOCK_KEY, withPgMigrationLock } from "../../src/selfhost/pg-adapter";
+import { createPgAdapter, MIGRATION_ADVISORY_LOCK_KEY, pgPoolForAdapter, withPgMigrationLock } from "../../src/selfhost/pg-adapter";
 
 const sha256 = (sql: string) => createHash("sha256").update(sql, "utf8").digest("hex");
 
@@ -234,6 +234,15 @@ describe("withPgMigrationLock (#9486)", () => {
 
     expect(queries.some((q) => q.includes("pg_advisory_unlock"))).toBe(true);
     expect(released).toBe(true);
+  });
+
+  it("registers the pool so a caller needing a DEDICATED connection can find it", () => {
+    // A session advisory lock is held by its connection, so it cannot be taken through the pooled adapter --
+    // hence the registry rather than a new statement on the D1 surface.
+    const pool = { connect: async () => ({ query: async () => ({ rows: [], rowCount: 0 }), release: () => undefined }) } as unknown as Pool;
+    const db = createPgAdapter(pool);
+    expect(pgPoolForAdapter(db)).toBe(pool);
+    expect(pgPoolForAdapter({} as unknown as D1Database)).toBeUndefined();
   });
 
   it("uses one stable key, so separate instances actually serialize against each other", () => {

@@ -98,6 +98,8 @@ export async function withPgMigrationLock<T>(db: D1Database, fn: () => Promise<T
     try {
       return await fn();
     } finally {
+      /* v8 ignore next -- best-effort: if the unlock query itself fails the session is already broken, and
+         releasing the client below drops the lock with it. */
       await client.query("SELECT pg_advisory_unlock($1)", [MIGRATION_ADVISORY_LOCK_KEY]).catch(() => undefined);
     }
   } finally {

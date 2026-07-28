@@ -92,17 +92,37 @@ export function buildUsageEventProperties(call: McpToolCallTelemetry): Record<st
 }
 
 /**
- * Tools whose arguments and results are NEVER included, even in the MCP-Analytics event.
+ * Whether a tool's arguments and results may ride the MCP-Analytics event.
  *
- * Derived from the contract rather than a hand-kept name list, which is the difference between a
- * rule and a habit: an operator tool added tomorrow is excluded the day it is registered. The
- * predicate is deliberately broad -- the admin surface reads and writes an instance's private
- * config, so both its inputs and its outputs are secrets by construction -- and a contract may also
- * opt in explicitly via `annotations.destructiveHint` on a maintainer-authenticated tool, which is
- * as close as the current annotation vocabulary gets to "this call carries operator data".
+ * DEFAULT: NO, for every tool. That default is not caution for its own sake -- it is the standing
+ * guarantee LoopOver's telemetry has always made and that
+ * test/unit/mcp-local-telemetry-chokepoint.test.ts has asserted since #6238: the call's actual
+ * content never leaves the machine. Most of these tools take the user's own content AS their input.
+ * `loopover_lint_pr_text` takes the PR body. `loopover_check_slop_risk` takes the commit messages.
+ * `loopover_intake_idea` takes a freeform brief. Including arguments "with redaction" would have
+ * shipped all three, since none of them is secret-SHAPED -- it is simply the user's writing.
+ *
+ * This was not the first design. #9525 initially inverted it: include payloads except for
+ * admin/operator tools. The chokepoint test rejected it within one run by finding a real commit
+ * message on the wire, which is exactly the kind of promise a test should be enforcing rather than
+ * a comment.
+ *
+ * The mechanism stays because the MCP-Analytics event family is defined to carry these fields, and
+ * a future tool whose input is genuinely server-derived metadata can opt in by name here. Nothing
+ * does today, and adding one should be an argued change with the tool named in the diff.
  */
-export function toolExcludesPayloads(contract: Pick<ToolContract, "category" | "auth">): boolean {
-  return contract.category === "admin" || contract.auth === "mcp-admin" || contract.auth === "operator";
+const TOOLS_WITH_PAYLOAD_TELEMETRY: ReadonlySet<string> = new Set();
+
+export function toolIncludesPayloads(contract: Pick<ToolContract, "name" | "category" | "auth">): boolean {
+  // The operator surfaces are excluded a second way, deliberately: were the allowlist above ever
+  // populated, an admin tool must still never qualify.
+  if (contract.category === "admin" || contract.auth === "mcp-admin" || contract.auth === "operator") return false;
+  return TOOLS_WITH_PAYLOAD_TELEMETRY.has(contract.name);
+}
+
+/** The inverse, kept because every call site reads better as "excluded". */
+export function toolExcludesPayloads(contract: Pick<ToolContract, "name" | "category" | "auth">): boolean {
+  return !toolIncludesPayloads(contract);
 }
 
 /** Property keys whose values are dropped wholesale, matched case-insensitively on the KEY. */

@@ -156,15 +156,19 @@ describe("MCP telemetry allowlist (#9525)", () => {
     }
   });
 
-  it("excludes payloads for every operator-facing tool in the registry", () => {
-    // Derived, not a hand list: an admin tool added tomorrow is excluded the day it is registered.
-    const excluded = TOOL_CONTRACTS.filter((contract) => toolExcludesPayloads(contract)).map((contract) => contract.name);
-    expect(excluded).toContain("loopover_admin_get_config");
-    expect(excluded).toContain("loopover_admin_write_config");
-    expect(excluded).not.toContain("loopover_get_repo_context");
+  it("excludes payloads for EVERY tool in the registry, not just the operator-facing ones", () => {
+    // The default is exclude, for all 125. Most of these tools take the user's own content as their
+    // input -- lint_pr_text takes the PR body, check_slop_risk takes the commit messages -- and none
+    // of that is secret-SHAPED, so a redaction pass would have shipped it verbatim. The
+    // subprocess-level chokepoint test found exactly that on the wire when the default was the
+    // other way round.
+    const included = TOOL_CONTRACTS.filter((contract) => !toolExcludesPayloads(contract)).map((contract) => contract.name);
+    expect(included, "a tool opted into payload telemetry -- that needs an argued reason, not a default").toEqual([]);
+    // And the operator surfaces are excluded a second, independent way, so populating the opt-in
+    // allowlist can never accidentally qualify one.
     for (const contract of TOOL_CONTRACTS) {
       if (contract.category === "admin" || contract.auth === "mcp-admin") {
-        expect(toolExcludesPayloads(contract), `${contract.name} must never send payloads`).toBe(true);
+        expect(toolExcludesPayloads({ ...contract, name: "pretend-this-is-allowlisted" }), `${contract.name} must never send payloads`).toBe(true);
       }
     }
   });

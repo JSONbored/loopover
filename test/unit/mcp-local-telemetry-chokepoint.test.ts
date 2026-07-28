@@ -105,7 +105,7 @@ describe("loopover-mcp local telemetry chokepoint (#6238)", () => {
     expect(received).toEqual([]);
   }, 45_000);
 
-  it("records exactly one allowlisted event per call once the user opts in", async () => {
+  it("records exactly the three allowlisted events per call once the user opts in", async () => {
     configDir = mkdtempSync(join(tmpdir(), "loopover-telemetry-on-"));
     const host = await startRecorder();
     // Opt in the way a user does -- through the real command, not by hand-writing the config file.
@@ -115,27 +115,62 @@ describe("loopover-mcp local telemetry chokepoint (#6238)", () => {
     await callLintPrText();
     await waitFor(() => received.length > 0);
 
-    expect(received).toHaveLength(1);
-    const event = received[0]!;
-    expect(event.event).toBe("mcp_tool_call");
-    expect(event.properties?.tool).toBe("loopover_lint_pr_text");
-    expect(event.properties?.caller_type).toBe("local");
-    expect(event.properties?.ok).toBe(true);
-    expect(typeof event.properties?.duration_ms).toBe("number");
+    // THREE events per call as of #9525, and the count is deliberate rather than incidental:
+    //   - `mcp_tool_call`, the legacy #6236 event. Still emitted because an operator's existing
+    //     dashboards read it and #9525's dashboard migration (its requirement 8) lives in the
+    //     PostHog project, not this repo. It goes once those dashboards read the new shapes; see
+    //     the follow-up issue linked from #9525.
+    //   - `usage_event`, the shared minimal event all three servers now emit.
+    //   - `$mcp_tool_call`, PostHog's own MCP-Analytics family.
+    // This is a transitional 3x on an opt-in CLI's event volume, which is the cost of not breaking
+    // dashboards mid-migration -- worth stating plainly rather than leaving as an unexplained count.
+    expect(received.map((entry) => entry.event).sort()).toEqual(["$mcp_tool_call", "mcp_tool_call", "usage_event"]);
 
-    // The allowlist is exhaustive for everything LoopOver puts on the event. What remains on the wire is the
-    // PostHog SDK's own `$`-prefixed library metadata ($lib, $lib_version, $is_server, $geoip_disable) -- vendor
-    // provenance, not anything about the user or their call. Asserted as two separate sets rather than one flat
-    // list, so a future field of OURS can never hide among the vendor's.
-    const properties = Object.keys(event.properties ?? {});
-    expect(properties.filter((key) => !key.startsWith("$")).sort()).toEqual(["caller_type", "duration_ms", "ok", "tool"]);
-    expect(properties.filter((key) => key.startsWith("$")).sort()).toEqual(["$geoip_disable", "$is_server", "$lib", "$lib_version"]);
-    expect(event.properties?.$geoip_disable).toBe(true);
-    // Anonymous by construction: one shared handle, never a per-user id.
-    expect(event.distinct_id).toBe("loopover-mcp");
-    // The call's actual content never leaves: not the PR body, not the commit message.
-    expect(JSON.stringify(event)).not.toContain("Wires telemetry");
-    expect(JSON.stringify(event)).not.toContain("feat(mcp): add telemetry chokepoint");
+    const legacy = received.find((entry) => entry.event === "mcp_tool_call")!;
+    expect(legacy.properties?.tool).toBe("loopover_lint_pr_text");
+    expect(legacy.properties?.caller_type).toBe("local");
+    expect(legacy.properties?.ok).toBe(true);
+    expect(typeof legacy.properties?.duration_ms).toBe("number");
+
+    const usage = received.find((entry) => entry.event === "usage_event")!;
+    expect(usage.properties?.tool).toBe("loopover_lint_pr_text");
+    expect(usage.properties?.surface).toBe("stdio");
+    expect(usage.properties?.category).toBe("review");
+    expect(usage.properties?.ok).toBe(true);
+
+    // The allowlist is exhaustive for everything LoopOver puts on an event, and it is applied to
+    // EVERY event rather than just the first -- adding two events without extending this check is
+    // exactly how a new field would have slipped onto the wire unexamined. What remains is the
+    // PostHog SDK's own `$`-prefixed library metadata ($lib, $lib_version, $is_server,
+    // $geoip_disable) -- vendor provenance, not anything about the user or their call. Asserted as
+    // two separate sets so a future field of OURS can never hide among the vendor's.
+    const allowedByEvent: Record<string, string[]> = {
+      mcp_tool_call: ["caller_type", "duration_ms", "ok", "tool"],
+      usage_event: ["category", "duration_ms", "ok", "surface", "tool"],
+      // No `arguments`/`result`: payloads are excluded for every tool by default (#9525). This test
+      // is what established that -- the first design included them, and this assertion found a real
+      // commit message on the wire.
+      $mcp_tool_call: ["category", "duration_ms", "ok", "payloads_excluded", "surface", "tool"],
+    };
+    for (const event of received) {
+      const properties = Object.keys(event.properties ?? {});
+      const ours = properties.filter((key) => !key.startsWith("$")).sort();
+      const allowed = allowedByEvent[event.event]!;
+      expect(ours.filter((key) => !allowed.includes(key)), `${event.event} carries a field outside the allowlist`).toEqual([]);
+      expect(properties.filter((key) => key.startsWith("$") && key !== "$mcp_tool_call").sort()).toEqual([
+        "$geoip_disable",
+        "$is_server",
+        "$lib",
+        "$lib_version",
+      ]);
+      expect(event.properties?.$geoip_disable).toBe(true);
+      // Anonymous by construction: one shared handle, never a per-user id.
+      expect(event.distinct_id).toBe("loopover-mcp");
+      // The call's actual content never leaves: not the PR body, not the commit message. Now
+      // checked on the payload-carrying event too, which is the one that could actually leak it.
+      expect(JSON.stringify(event)).not.toContain("Wires telemetry");
+      expect(JSON.stringify(event)).not.toContain("feat(mcp): add telemetry chokepoint");
+    }
   }, 45_000);
 
   it("records one event per invocation, not one per session", async () => {
@@ -146,9 +181,13 @@ describe("loopover-mcp local telemetry chokepoint (#6238)", () => {
 
     await callLintPrText();
     await callLintPrText();
-    await waitFor(() => received.length >= 2);
+    await waitFor(() => received.length >= 6);
 
-    expect(received).toHaveLength(2);
+    // Two invocations x the three events per call above. The invariant this test protects is that
+    // the count scales with CALLS, not that it is any particular number: a per-session or per-
+    // process emitter would produce three here, not six.
+    expect(received).toHaveLength(6);
+    expect(received.filter((event) => event.event === "usage_event")).toHaveLength(2);
     expect(received.every((event) => event.properties?.tool === "loopover_lint_pr_text")).toBe(true);
   }, 45_000);
 
@@ -181,9 +220,14 @@ describe("loopover-mcp local telemetry chokepoint (#6238)", () => {
     const result = await client.callTool({ name: "loopover_get_repo_context", arguments: { owner: "owner", repo: "repo" } });
     expect(result.isError).toBe(true);
 
-    await waitFor(() => received.length > 0);
-    expect(received).toHaveLength(1);
-    expect(received[0]!.properties?.tool).toBe("loopover_get_repo_context");
-    expect(received[0]!.properties?.ok).toBe(false);
+    await waitFor(() => received.length >= 3);
+    // The same three events as the success case, plus PostHog's `$exception` when the handler threw
+    // rather than answering (#9525). Every one of them reports ok=false, and the exception carries
+    // the grouping properties an operator can actually act on -- the tool and the closed error code
+    // -- and nothing about the call's content.
+    expect(received.every((event) => event.event === "$exception" || event.properties?.ok === false)).toBe(true);
+    expect(received.every((event) => event.event === "$exception" || event.properties?.tool === "loopover_get_repo_context")).toBe(true);
+    const usage = received.find((event) => event.event === "usage_event")!;
+    expect(usage.properties?.error_code).toBeTypeOf("string");
   }, 45_000);
 });

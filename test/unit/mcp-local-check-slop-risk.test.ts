@@ -43,7 +43,12 @@ describe("loopover_check_slop_risk stdio tool (#6267)", () => {
     const { tools } = await client.listTools();
     const tool = tools.find((t) => t.name === "loopover_check_slop_risk");
     expect(tool).toBeDefined();
-    expect(tool?.description).toContain("no API round-trip");
+    // #9537: this description now comes from @loopover/contract, so both servers advertise the same
+    // words. The stdio-only phrasing "no API round-trip" could not survive that -- on the remote
+    // server a tools/call IS an API round-trip -- so the converged wording states the guarantee that
+    // is true on both: the computation is pure and reaches nothing. Same claim, one source.
+    expect(tool?.description).toContain("Pure computation");
+    expect(tool?.description).toContain("no repo data, no secrets, no writes");
   });
 
   it("regression: flags a low-effort change with band/findings/rubric computed in-process, no network call", async () => {

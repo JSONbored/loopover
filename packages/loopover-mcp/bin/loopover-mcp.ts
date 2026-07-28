@@ -267,16 +267,26 @@ const CLI_COMMAND_SPEC = {
   "slop-risk": { subcommands: [], usage: ["slop-risk [--description <text>] [--description-file <path>] [--changed-file <path[:additions:deletions]>]... [--test <command>]... [--test-file <path>]... [--json]"] },
   "improvement-potential": { subcommands: [], usage: ["improvement-potential [--changed-file <path[:additions:deletions]>]... [--test <command>]... [--test-file <path>]... [--patch-coverage-delta <percent>] [--json]"] },
   "issue-slop": { subcommands: [], usage: ["issue-slop [--title <text>] [--body <text>] [--body-file <path>] [--json]"] },
-  profile: { subcommands: ["list", "create", "switch", "remove"], usage: ["profile list|create|switch|remove [name] [--json]"] },
-  cache: { subcommands: ["status", "clear", "list"], usage: ["cache status|list|clear [--json]"] },
+  profile: {
+    subcommands: ["list", "create", "switch", "remove"],
+    usage: ["profile list [--json | --format ndjson]", "profile create <name> [--json]", "profile switch <name> [--json]", "profile remove <name> [--json]"],
+    note: "Use --profile <name> or LOOPOVER_PROFILE to run login, logout, whoami, status, doctor, and MCP API calls with a named local session.",
+  },
+  cache: {
+    subcommands: ["status", "clear", "list"],
+    usage: ["cache status [--json]", "cache list [--json | --format ndjson]", "cache clear [--json]"],
+    note: "Decision-pack cache entries are local-only stale fallbacks for temporary API/network outages.\nSource upload remains disabled.",
+  },
   agent: {
     subcommands: ["start", "plan", "status", "explain", "packet"],
     usage: [
-      "agent plan --login <github-login> [--repo owner/repo] [--json]",
+      'agent start --login <github-login> --objective "..." [--repo owner/repo] [--pull <n>] [--issue <n>] [--json]',
+      "agent plan --login <github-login> [--repo owner/repo] [--objective \"...\"] [--json]",
       "agent status <run-id> [--json]",
       "agent explain <run-id> [--json]",
-      "agent packet --login <github-login> [--repo owner/repo] [--base origin/main] [--json]",
+      'agent packet --login <github-login> [--repo owner/repo] [--base origin/main] [--validation "passed|command|summary"] [--json]',
     ],
+    note: "The agent is copilot-only: it ranks, explains, and drafts public-safe packets. It does not edit code, open PRs, or post comments from the local MCP wrapper.\nSource upload remains disabled.",
   },
   maintain: {
     subcommands: ["status", "queue", "propose", "approve", "reject", "pause", "resume", "set-level", "precision", "selftune-audit", "outcome-calibration", "onboarding-pack", "audit-feed", "automation-state", "refresh-docs", "generate-issue-drafts", "plan-issues"],
@@ -284,10 +294,41 @@ const CLI_COMMAND_SPEC = {
       "maintain status|queue|approve|reject|pause|resume|set-level|precision|selftune-audit|outcome-calibration|onboarding-pack|audit-feed|automation-state|refresh-docs|generate-issue-drafts --repo owner/repo [--json] (see `loopover-mcp maintain --help`)",
     ],
   },
-} as const satisfies Record<string, { subcommands: readonly string[]; usage: readonly string[] }>;
+} as const satisfies Record<string, { subcommands: readonly string[]; usage: readonly string[]; note?: string }>;
 
 export type CliCommand = keyof typeof CLI_COMMAND_SPEC;
 export { CLI_COMMAND_SPEC };
+
+/**
+ * Every flag whose parsing is not "take the next argv token as a string" (#9521). parseOptions used
+ * to hand-list these as two bare Sets sitting next to each other, so adding a repeatable flag to a
+ * command meant remembering to also add it there -- a step nothing checked.
+ *
+ * `repeatable` accumulates into an array (`--commit a --commit b`); `boolean` parses its inline
+ * `--key=value` form to a REAL boolean (#8689) instead of the truthy string "false". Anything absent
+ * here is a plain single-value string flag.
+ */
+const CLI_FLAG_SPEC = {
+  label: "repeatable",
+  issue: "repeatable",
+  id: "repeatable",
+  commit: "repeatable",
+  changedFile: "repeatable",
+  test: "repeatable",
+  testFile: "repeatable",
+  validation: "repeatable",
+  validationCommand: "repeatable",
+  validationStatus: "repeatable",
+  validationSummary: "repeatable",
+  validationDuration: "repeatable",
+  scenarioNote: "repeatable",
+  json: "boolean",
+  exitCode: "boolean",
+} as const satisfies Record<string, "repeatable" | "boolean">;
+
+export { CLI_FLAG_SPEC };
+const REPEATABLE_FLAGS = new Set(Object.entries(CLI_FLAG_SPEC).filter(([, kind]) => kind === "repeatable").map(([flag]) => flag));
+const BOOLEAN_FLAGS = new Set(Object.entries(CLI_FLAG_SPEC).filter(([, kind]) => kind === "boolean").map(([flag]) => flag));
 const COMPLETION_SHELLS = ["bash", "zsh", "fish", "powershell"];
 const AGENT_PROFILE_IDS = ["miner-planner", "miner-auto-dev", "maintainer-triage", "repo-owner-intake"];
 // #784 maintain set-level — the autonomy dial's action classes + levels.
@@ -4036,50 +4077,31 @@ ${usageLines}
 `);
 }
 
-function printCacheHelp() {
-  process.stdout.write(`Usage:
-  loopover-mcp cache status [--json]
-  loopover-mcp cache list [--json | --format ndjson]
-  loopover-mcp cache clear [--json]
+/** The `<command> --help` body: its usage lines plus its trailing note, both straight from CLI_COMMAND_SPEC (#9521). */
+function printableUsage(command: CliCommand) {
+  const entry = CLI_COMMAND_SPEC[command];
+  const lines = entry.usage.map((line) => `  loopover-mcp ${line}`).join("\n");
+  const note = "note" in entry ? `\n${entry.note}\n` : "";
+  return `Usage:\n${lines}\n${note}`;
+}
 
-Decision-pack cache entries are local-only stale fallbacks for temporary API/network outages.
-Source upload remains disabled.
-`);
+function printCacheHelp() {
+  process.stdout.write(printableUsage("cache"));
 }
 
 function printAgentHelp() {
-  process.stdout.write(`Usage:
-  loopover-mcp agent start --login <github-login> --objective "..." [--repo owner/repo] [--pull <n>] [--issue <n>] [--json]
-  loopover-mcp agent plan --login <github-login> [--repo owner/repo] [--objective "..."] [--json]
-  loopover-mcp agent status <run-id> [--json]
-  loopover-mcp agent explain <run-id> [--json]
-  loopover-mcp agent packet --login <github-login> [--repo owner/repo] [--base origin/main] [--validation "passed|command|summary"] [--json]
-
-The agent is copilot-only: it ranks, explains, and drafts public-safe packets. It does not edit code, open PRs, or post comments from the local MCP wrapper.
-Source upload remains disabled.
-  `);
+  process.stdout.write(printableUsage("agent"));
 }
 
 function printProfileHelp() {
-  process.stdout.write(`Usage:
-  loopover-mcp profile list [--json | --format ndjson]
-  loopover-mcp profile create <name> [--json]
-  loopover-mcp profile switch <name> [--json]
-  loopover-mcp profile remove <name> [--json]
-
-Use --profile <name> or LOOPOVER_PROFILE to run login, logout, whoami, status, doctor, and MCP API calls with a named local session.
-`);
+  process.stdout.write(printableUsage("profile"));
 }
 
 function parseOptions(args: any) {
   const options: any = {};
-  const repeatable = new Set(["label", "issue", "id", "commit", "changedFile", "test", "testFile", "validation", "validationCommand", "validationStatus", "validationSummary", "validationDuration", "scenarioNote"]);
-  // Boolean flags that must parse their inline `--key=value` form to a REAL boolean (#8689): the
-  // generic inline-equals handler below stores the raw string, so `--json=false` became the truthy
-  // string "false" and ENABLED JSON output — the opposite of what the flag says. Parsing here keeps
-  // every consumer's check an explicit boolean comparison (the `--refresh`/`--help` `=== true`
-  // convention already established at every other boolean flag's consumer, e.g. line ~4033).
-  const booleanFlags = new Set(["json", "exitCode"]);
+  // Both sets come from CLI_FLAG_SPEC (#9521) -- see the kind meanings there.
+  const repeatable = REPEATABLE_FLAGS;
+  const booleanFlags = BOOLEAN_FLAGS;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--json") {

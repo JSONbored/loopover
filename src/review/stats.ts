@@ -21,6 +21,7 @@
 // ledger (same `github_app.pr_public_surface_published` rows + `reviewEffortMinutes` metadata public-stats.ts uses).
 // Bearer-gated here only — never folded into the public homepage counter.
 import { bandFromMinutes } from "./review-effort";
+import { LATEST_DECISION_RECORD_FILTER } from "./ops";
 
 // ── Inlined report types (ported shapes from reviewbot src/core/{eval,tuning}.ts) ────────────────
 
@@ -124,6 +125,49 @@ export const defaultStatsEvalDeps: StatsEvalDeps = {
 function storage(env: Env): D1Database {
   return env.DB;
 }
+
+const timingSafeEncoder = new TextEncoder();
+
+/** Constant-time string compare (reviewbot src/core/crypto.ts). */
+function timingSafeEqual(left: string, right: string): boolean {
+  const leftBytes = timingSafeEncoder.encode(left);
+  const rightBytes = timingSafeEncoder.encode(right);
+  const subtle = crypto.subtle as SubtleCrypto & {
+    timingSafeEqual?: (left: Uint8Array, right: Uint8Array) => boolean;
+  };
+  if (leftBytes.length === rightBytes.length && typeof subtle.timingSafeEqual === "function") {
+    return subtle.timingSafeEqual(leftBytes, rightBytes);
+  }
+  const maxLength = Math.max(leftBytes.length, rightBytes.length);
+  let diff = leftBytes.length === rightBytes.length ? 0 : 1;
+  for (let index = 0; index < maxLength; index += 1) {
+    diff |= (leftBytes[index] ?? 0) ^ (rightBytes[index] ?? 0);
+  }
+  return diff === 0;
+}
+
+/** Read a per-agent secret/var from the worker env by name (reviewbot src/core/util.ts). */
+function readSecret(env: Env, name: string): string {
+  const value = (env as unknown as Record<string, unknown>)[name];
+  return typeof value === "string" ? value : "";
+}
+
+// ── Stats config (byte-faithful from reviewbot src/core/stats.ts) ────────────────────────────────
+
+const STATS_TOKEN_SECRET = "LOOPOVER_REVIEW_STATS_TOKEN";
+
+const CORS_HEADERS: Record<string, string> = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-headers": "authorization,content-type",
+  "access-control-allow-methods": "GET,OPTIONS",
+};
+
+// Whitelisted bucket → SQLite strftime expression. NEVER interpolate the raw param into SQL.
+const BUCKET_SQL: Record<string, string> = {
+  day: "date(created_at)",
+  week: "strftime('%Y-W%W', created_at)",
+  month: "strftime('%Y-%m', created_at)",
+};
 
 export interface ReviewEffortAggregate {
   /** Rounded average complexity band across distinct reviewed PRs in the window; null when no samples. */
@@ -343,4 +387,163 @@ export function aggregateReviewEffort(perPrMinutes: number[]): ReviewEffortAggre
     avgBand: Math.round(bands.reduce((sum, band) => sum + band, 0) / bands.length),
     totalEstimatedMinutes: perPrMinutes.reduce((sum, minutes) => sum + minutes, 0),
   };
+}
+
+/**
+ * Aggregate the decision ledger for the dashboard. Pure-ish (reads D1 only); no GitHub I/O.
+ *
+ * #9136 kept this rather than deleting it with the rest of the review_targets readers. It is not
+ * wired to a route today -- only a comment in src/api/routes.ts references handleStats -- but it is
+ * an exported, bearer-gated feed, and silently retiring a capability is a different change from
+ * retiring an orphaned table. Its one review_targets read is repointed below, exactly like every
+ * other reader in this PR.
+ */
+export async function computeStats(
+  env: Env,
+  opts: { days: number; bucket: string; nowMs: number },
+  deps: StatsEvalDeps = defaultStatsEvalDeps,
+): Promise<StatsPayload> {
+  const days = Number.isFinite(opts.days) && opts.days > 0 ? Math.min(opts.days, 730) : 90;
+  // hasOwn (not `in`) so prototype keys like "constructor"/"toString" can't defeat the whitelist and
+  // interpolate a non-SQL value into the query.
+  const bucket = Object.hasOwn(BUCKET_SQL, opts.bucket) ? opts.bucket : "day";
+  // `bucket` is now always a present BUCKET_SQL key (day/week/month), so `BUCKET_SQL[bucket]` is never
+  // undefined; the `?? BUCKET_SQL.day` only satisfies noUncheckedIndexedAccess and is unreachable.
+  /* v8 ignore next */
+  const bucketExpr = BUCKET_SQL[bucket] ?? BUCKET_SQL.day!;
+  // decision_records is aliased `dr` in the decision query below, and `created_at` is ambiguous there
+  // because LATEST_DECISION_RECORD_FILTER's correlated subquery also names one.
+  const decisionBucketExpr = bucketExpr.replace(/created_at/g, "dr.created_at");
+  const fromIso = new Date(opts.nowMs - days * 86_400_000).toISOString().slice(0, 10); // YYYY-MM-DD
+
+  const [decisionRows, reversalRows, effortRows, cycleTime, findingAcceptance] = await Promise.all([
+    // #9136: repointed off the orphaned review_targets, the same way ops.ts's four reads were. Two
+    // shape changes fall out of the move and both are visible in the payload:
+    //
+    //  - decision_records has no `project` column -- it is written only by this app for its own repos --
+    //    so the series is keyed by repo_full_name. The dashboard pivots on whatever `project` holds, so
+    //    it keeps working; the label is now the repo rather than a project slug.
+    //  - `COALESCE(verdict, status)` becomes `action` -- merge | close | hold, the acted disposition.
+    //    review_targets' verdict/status pair has no analogue here, and `action` is what ops.ts reads
+    //    for the same purpose. (Not `decision`: decision_records has no such column, which the
+    //    real-D1 test in test/unit/stats.test.ts catches rather than the stubbed ones.)
+    //
+    // LATEST_DECISION_RECORD_FILTER for the same reason ops.ts needs it: a PR accumulates one row per
+    // head sha, and counting all of them would inflate every bucket by the number of times a PR was
+    // re-reviewed.
+    storage(env).prepare(
+      `SELECT ${decisionBucketExpr} AS bucket,
+              dr.repo_full_name AS project, dr.action AS verdict, COUNT(*) AS n
+       FROM decision_records dr
+       WHERE dr.created_at >= ? AND ${LATEST_DECISION_RECORD_FILTER}
+       GROUP BY bucket, project, verdict
+       ORDER BY bucket ASC`,
+    ).bind(fromIso).all<{ bucket: string; project: string; verdict: string; n: number }>(),
+    storage(env).prepare(
+      `SELECT ${bucketExpr} AS bucket, project, COUNT(*) AS n
+       FROM review_audit
+       WHERE event_type IN ('reversal_reverted', 'reversal_reopened') AND created_at >= ?
+       GROUP BY bucket, project
+       ORDER BY bucket ASC`,
+    ).bind(fromIso).all<{ bucket: string; project: string; n: number }>(),
+    // review-effort (#2155): same persisted `reviewEffortMinutes` public-stats averages, scoped to this window.
+    // Repeated publish events for one PR collapse to one sample (per-PR AVG) before the global fold.
+    // #9084: two dialect hazards this SQL used to walk straight into on the Postgres self-host, both silent.
+    //
+    // json_extract translates to `->>`, which yields TEXT, so the enclosing AVG resolved to `avg(text)` — a
+    // function Postgres does not have. The error was swallowed by the fail-safe read wrapper, so the published
+    // "review effort / minutes saved" number was permanently zero and nothing said so. CAST(... AS REAL) is
+    // valid in both dialects; NULLIF guards the empty string, which Postgres would otherwise reject outright.
+    //
+    // And target_key is not uniformly two-segment: regateRepairTargetKey mints `repo#pr#headSha`. On SQLite the
+    // INTEGER cast of `pr#sha` is lenient garbage; on Postgres it aborts the WHOLE query, so a single
+    // three-segment row among the filtered event types took the entire public-stats read to [] and the homepage
+    // counters silently to zero. Excluding those keys before the cast keeps one row from erasing every number.
+    // The separator count is written as length()-length(replace()) rather than a nested instr(): `length` and
+    // `replace` mean the same thing in both dialects and need no translation at all.
+    storage(env).prepare(
+      `SELECT minutes FROM (
+         SELECT repo, number, AVG(minutes) AS minutes
+           FROM (
+             SELECT LOWER(substr(target_key, 1, instr(target_key, '#') - 1)) AS repo,
+                    CAST(substr(target_key, instr(target_key, '#') + 1) AS INTEGER) AS number,
+                    CAST(NULLIF(json_extract(metadata_json, '$.reviewEffortMinutes'), '') AS REAL) AS minutes
+               FROM audit_events
+              WHERE event_type = 'github_app.pr_public_surface_published'
+                AND created_at >= ?
+                AND instr(target_key, '#') > 0
+                  AND length(target_key) - length(replace(target_key, '#', '')) = 1
+           )
+          WHERE minutes IS NOT NULL
+          GROUP BY repo, number
+       )`,
+    ).bind(fromIso).all<{ minutes: number }>()
+      .catch(() => ({ results: [] as Array<{ minutes: number }> })),
+    computeCycleTimeAggregate(env, { days, nowMs: opts.nowMs }),
+    computeFindingAcceptance(env, { days, nowMs: opts.nowMs }),
+  ]);
+
+  // Non-content gate decisions (incl. SHADOW would-actions) — recorded as `gate_decision` audit rows with
+  // the action in `decision`. Lets the dashboard show would-merge/close/hold counts before going live.
+  const gateRows = await storage(env).prepare(
+    `SELECT project, decision AS action, COUNT(*) AS n
+     FROM review_audit
+     WHERE event_type = 'gate_decision' AND decision IS NOT NULL AND created_at >= ?
+     GROUP BY project, action
+     ORDER BY n DESC`,
+  )
+    .bind(fromIso)
+    .all<{ project: string; action: string; n: number }>()
+    .catch(() => ({ results: [] as Array<{ project: string; action: string; n: number }> }));
+
+  const gateEval = await deps.computeGateEval(env, { days, nowMs: opts.nowMs });
+  const recommendations = deps.computeTuningRecommendations(gateEval);
+  const parity = await deps.computeGateParity(env, { days, nowMs: opts.nowMs });
+
+  const rows = decisionRows.results ?? [];
+  const reversals = reversalRows.results ?? [];
+  const reviewEffort = aggregateReviewEffort(
+    (effortRows.results ?? []).map((row) => row.minutes ?? 0).filter((minutes) => minutes > 0),
+  );
+  return {
+    generatedAt: new Date(opts.nowMs).toISOString(),
+    window: { fromIso, days, bucket },
+    projects: [...new Set(rows.map((r) => r.project))].sort(),
+    verdicts: [...new Set(rows.map((r) => r.verdict))].sort(),
+    rows,
+    reversals,
+    gateActions: gateRows.results ?? [],
+    reviewEffort,
+    gateEval,
+    recommendations,
+    gateParity: { ...parity, cutoverReady: parity.rows.map((r) => ({ project: r.project, ready: isParityCutoverReady(r) })) },
+    cycleTime,
+    findingAcceptance,
+  };
+}
+
+/** GET /stats/data?days=90&bucket=day — bearer-gated, CORS-open aggregate feed for the local dashboard. */
+export async function handleStats(request: Request, env: Env, deps: StatsEvalDeps = defaultStatsEvalDeps): Promise<Response> {
+  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS });
+
+  // Uniform 401 whether the token is UNSET or WRONG — a 404-for-unset vs 401-for-wrong split was a config
+  // oracle (it revealed whether the token is configured). An unset token means NO request can authenticate,
+  // so the `!expected` short-circuit also prevents a `Bearer ` (empty-token) match.
+  const expected = readSecret(env, STATS_TOKEN_SECRET);
+  const provided = request.headers.get("authorization") ?? "";
+  if (!expected || !timingSafeEqual(provided, `Bearer ${expected}`)) {
+    return new Response("unauthorized", { status: 401, headers: CORS_HEADERS });
+  }
+
+  const params = new URL(request.url).searchParams;
+  const payload = await computeStats(
+    env,
+    {
+      days: Number(params.get("days") ?? 90),
+      bucket: params.get("bucket") ?? "day",
+      nowMs: Date.now(),
+    },
+    deps,
+  );
+  return Response.json(payload, { headers: CORS_HEADERS });
 }

@@ -193,7 +193,7 @@ const DLQ_WINDOW = "-6 hours";
  *
  * Correlated on the alias `dr`, so every query using it must name its decision_records table `dr`.
  */
-const LATEST_DECISION_RECORD_FILTER = `dr.created_at = (
+export const LATEST_DECISION_RECORD_FILTER = `dr.created_at = (
        SELECT MAX(newer.created_at) FROM decision_records newer
        WHERE newer.repo_full_name = dr.repo_full_name AND newer.pull_number = dr.pull_number
      )`;

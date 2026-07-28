@@ -1,4 +1,4 @@
-import { describe, expect, it, } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTestEnv } from "../helpers/d1";
 import {
   aggregateCycleTimePercentiles,
@@ -6,18 +6,163 @@ import {
   aggregateReviewEffort,
   buildCycleTimeDistribution,
   computeFindingAcceptance,
+  computeStats,
   cycleTimeMs,
   EMPTY_CYCLE_TIME,
   EMPTY_FINDING_ACCEPTANCE,
+  handleStats,
   isParityCutoverReady,
   MIN_PARITY_SAMPLE,
   PARITY_AGREEMENT_FLOOR,
   percentileNearestRank,
   type GateParityRow,
+  type StatsEvalDeps,
 } from "../../src/review/stats";
 
 // Stub D1: route by table name — review_audit → reversals, else decision rows.
+function stubEnv(extra: Record<string, unknown> = {}): Env {
+  const decisions = [
+    { bucket: "2026-06-01", project: "awesome-claude", verdict: "merge", n: 5 },
+    { bucket: "2026-06-01", project: "awesome-claude", verdict: "close", n: 3 },
+    { bucket: "2026-06-01", project: "loopover", verdict: "comment", n: 2 },
+  ];
+  const reversals = [{ bucket: "2026-06-01", project: "awesome-claude", n: 1 }];
+  const gateActions = [
+    { project: "metagraphed", action: "merge", n: 7 },
+    { project: "metagraphed", action: "hold", n: 2 },
+  ];
+  const effortMinutes = [
+    { minutes: 4 },
+    { minutes: 96 },
+  ];
+  const cyclePairs = [
+    { decided_at: "2026-06-01T10:00:00Z", outcome_at: "2026-06-01T10:05:00Z" },
+    { decided_at: "2026-06-01T11:00:00Z", outcome_at: "2026-06-01T11:30:00Z" },
+  ];
+  // flagged-PR (hold|close) realized outcomes → 2 merged (addressed) + 1 closed (unaddressed).
+  const acceptanceRows = [{ truth: "merged" }, { truth: "merged" }, { truth: "closed" }];
+  let lastSql = "";
+  return {
+    ...extra,
+    DB: {
+      prepare: (s: string) => {
+        lastSql = s;
+        return {
+          bind: () => ({
+            all: async () => ({
+              // review-effort read → effortMinutes; cycle-time pairs → cyclePairs; gate action counts → gateActions;
+              // finding-acceptance read → acceptanceRows; other review_audit → reversals; everything else → decisions.
+              results: lastSql.includes("reviewEffortMinutes")
+                ? effortMinutes
+                : lastSql.includes("decided_at") && lastSql.includes("outcome_at")
+                  ? cyclePairs
+                  : lastSql.includes("decision AS action")
+                    ? gateActions
+                    : lastSql.includes("flagged")
+                      ? acceptanceRows
+                      : lastSql.includes("review_audit")
+                        ? reversals
+                        : decisions,
+            }),
+          }),
+        };
+      },
+    },
+  } as unknown as Env;
+}
+
 const NOW = Date.parse("2026-06-14T00:00:00Z");
+
+describe("computeStats — D1 aggregate for the dashboard", () => {
+  it("returns sorted projects/verdicts, rows, reversals, and the window", async () => {
+    const out = await computeStats(stubEnv(), { days: 90, bucket: "week", nowMs: NOW });
+    expect(out.projects).toEqual(["awesome-claude", "loopover"]);
+    expect(out.verdicts).toEqual(["close", "comment", "merge"]);
+    expect(out.rows).toHaveLength(3);
+    expect(out.reversals).toEqual([{ bucket: "2026-06-01", project: "awesome-claude", n: 1 }]);
+    expect(out.gateActions).toEqual([
+      { project: "metagraphed", action: "merge", n: 7 },
+      { project: "metagraphed", action: "hold", n: 2 },
+    ]);
+    expect(out.window).toEqual({ fromIso: "2026-03-16", days: 90, bucket: "week" });
+    expect(out.gateEval).toEqual({ rows: [], hasSignal: false });
+    expect(out.recommendations).toEqual([]);
+    expect(out.gateParity.cutoverReady).toEqual([]);
+    expect(out.reviewEffort).toEqual({ avgBand: 3, totalEstimatedMinutes: 100 });
+    expect(out.cycleTime.sampleSize).toBe(2);
+    expect(out.cycleTime.p50Ms).toBe(300_000);
+    expect(out.cycleTime.distribution.length).toBeGreaterThan(0);
+    expect(out.findingAcceptance).toEqual({ flagged: 3, addressed: 2, unaddressed: 1, acceptanceRate: 0.667 });
+  });
+
+  it("clamps an absurd window and falls back to a safe bucket", async () => {
+    const out = await computeStats(stubEnv(), { days: 99999, bucket: "decade", nowMs: NOW });
+    expect(out.window.days).toBe(730);
+    expect(out.window.bucket).toBe("day");
+  });
+
+  it("defaults to 90 days for a non-positive window", async () => {
+    const out = await computeStats(stubEnv(), { days: 0, bucket: "day", nowMs: NOW });
+    expect(out.window.days).toBe(90);
+  });
+
+  it("falls back to 'day' for a prototype-chain bucket key (whitelist can't be defeated by `constructor`)", async () => {
+    for (const evil of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
+      const out = await computeStats(stubEnv(), { days: 30, bucket: evil, nowMs: NOW });
+      expect(out.window.bucket).toBe("day");
+    }
+  });
+
+  it("threads injected eval/parity/tuning deps into the payload", async () => {
+    const out = await computeStats(
+      stubEnv(),
+      { days: 30, bucket: "day", nowMs: NOW },
+      {
+        computeGateEval: async () => ({ rows: [], hasSignal: true }),
+        computeTuningRecommendations: () => [{ project: "p", severity: "warn", message: "tighten" }],
+        computeGateParity: async () => ({
+          authoritative: "reviewbot",
+          shadow: "loopover",
+          hasSignal: true,
+          rows: [{ project: "p", pairedSamples: 40, bothMerge: 40, bothClose: 0, bothHold: 0, disagree: 0, agreementRate: 1, unsafeDisagreements: 0, byReasonCode: [] }],
+        }),
+      },
+    );
+    expect(out.gateEval.hasSignal).toBe(true);
+    expect(out.recommendations).toHaveLength(1);
+    expect(out.gateParity.cutoverReady).toEqual([{ project: "p", ready: true }]);
+  });
+});
+
+describe("handleStats — bearer-gated, CORS-open feed", () => {
+  const req = (headers: Record<string, string> = {}, method = "GET") =>
+    new Request("https://w.dev/stats/data?days=30&bucket=day", { method, headers });
+
+  it("204s a CORS preflight with no auth", async () => {
+    const res = await handleStats(req({}, "OPTIONS"), stubEnv({ LOOPOVER_REVIEW_STATS_TOKEN: "s3cret" }));
+    expect(res.status).toBe(204);
+    expect(res.headers.get("access-control-allow-origin")).toBe("*");
+  });
+
+  it("401s (NOT 404) when the token secret is unset — no config oracle, uniform with a wrong token", async () => {
+    expect((await handleStats(req({ authorization: "Bearer anything" }), stubEnv())).status).toBe(401);
+    expect((await handleStats(req(), stubEnv())).status).toBe(401); // no auth header, unset token → still 401
+  });
+
+  it("401s a missing/wrong token", async () => {
+    const env = stubEnv({ LOOPOVER_REVIEW_STATS_TOKEN: "s3cret" });
+    expect((await handleStats(req(), env)).status).toBe(401);
+    expect((await handleStats(req({ authorization: "Bearer nope" }), env)).status).toBe(401);
+  });
+
+  it("200s with JSON + CORS for the correct token", async () => {
+    const res = await handleStats(req({ authorization: "Bearer s3cret" }), stubEnv({ LOOPOVER_REVIEW_STATS_TOKEN: "s3cret" }));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("access-control-allow-origin")).toBe("*");
+    const body = (await res.json()) as { projects: string[] };
+    expect(body.projects).toContain("awesome-claude");
+  });
+});
 
 describe("aggregateReviewEffort — maintainer complexity fold (#2155)", () => {
   it("returns null avgBand and 0 total minutes for an empty sample", () => {
@@ -31,6 +176,203 @@ describe("aggregateReviewEffort — maintainer complexity fold (#2155)", () => {
 
   it("keeps boundary-rounded minutes in the higher possible avgBand (regression for #2155)", () => {
     expect(aggregateReviewEffort([5, 20, 60, 150])).toEqual({ avgBand: 4, totalEstimatedMinutes: 235 });
+  });
+});
+
+describe("computeStats — the decision series reads decision_records (#9136)", () => {
+  // Against a REAL D1, not the stub above. The stubbed cases route by SQL substring and would pass
+  // with any column name at all -- which is exactly how the first repoint of this query shipped
+  // `dr.decision`, a column decision_records does not have.
+  it("groups the acted disposition per repo, counting each PR's newest record only", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare(
+      `INSERT INTO decision_records (id, repo_full_name, pull_number, head_sha, action, reason_code, record_digest, record_json, created_at) VALUES
+        ('record:acme/api#1@sha1', 'acme/api', 1, 'sha1', 'hold',  'needs_tests', 'd1', '{}', '2026-06-01T00:00:00Z'),
+        ('record:acme/api#1@sha2', 'acme/api', 1, 'sha2', 'merge', 'clean',       'd2', '{}', '2026-06-02T00:00:00Z'),
+        ('record:acme/api#2@sha1', 'acme/api', 2, 'sha1', 'close', 'duplicate',   'd3', '{}', '2026-06-02T00:00:00Z'),
+        ('record:acme/web#3@sha1', 'acme/web', 3, 'sha1', 'merge', 'clean',       'd4', '{}', '2026-06-02T00:00:00Z')`,
+    ).run();
+
+    const out = await computeStats(env, { days: 90, bucket: "day", nowMs: Date.parse("2026-06-14T00:00:00Z") });
+
+    // PR #1 was re-reviewed: its `hold` on sha1 is superseded by `merge` on sha2 and must not be
+    // counted, or every bucket inflates by the number of times a PR was re-reviewed.
+    expect(out.rows).toEqual([
+      { bucket: "2026-06-02", project: "acme/api", verdict: "close", n: 1 },
+      { bucket: "2026-06-02", project: "acme/api", verdict: "merge", n: 1 },
+      { bucket: "2026-06-02", project: "acme/web", verdict: "merge", n: 1 },
+    ]);
+    // Keyed by repo now, not a project slug: decision_records has no `project` column.
+    expect(out.projects).toEqual(["acme/api", "acme/web"]);
+    expect(out.verdicts).toEqual(["close", "merge"]);
+  });
+});
+
+describe("computeStats — review-effort read is fail-safe", () => {
+  function effortThrowingEnv(): Env {
+    let lastSql = "";
+    return {
+      DB: {
+        prepare: (s: string) => {
+          lastSql = s;
+          return {
+            bind: () => ({
+              all: async () => {
+                if (lastSql.includes("reviewEffortMinutes")) throw new Error("effort read down");
+                return { results: [] };
+              },
+            }),
+          };
+        },
+      },
+    } as unknown as Env;
+  }
+
+  it("falls back to reviewEffort null/0 when the audit_events effort query rejects", async () => {
+    const out = await computeStats(effortThrowingEnv(), { days: 30, bucket: "day", nowMs: NOW });
+    expect(out.reviewEffort).toEqual({ avgBand: null, totalEstimatedMinutes: 0 });
+  });
+
+  it("averages real reviewEffortMinutes out of audit_events via json_extract (real D1)", async () => {
+    const env = createTestEnv();
+    const db = env.DB;
+    await db
+      .prepare(
+        `INSERT INTO audit_events (id, event_type, target_key, outcome, metadata_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        "published-a",
+        "github_app.pr_public_surface_published",
+        "JSONbored/loopover#10",
+        "completed",
+        JSON.stringify({ reviewEffortMinutes: 4 }),
+        "2026-06-10T00:00:00.000Z",
+        "published-b",
+        "github_app.pr_public_surface_published",
+        "JSONbored/loopover#11",
+        "completed",
+        JSON.stringify({ reviewEffortMinutes: 96 }),
+        "2026-06-11T00:00:00.000Z",
+      )
+      .run();
+
+    const out = await computeStats(env, { days: 90, bucket: "day", nowMs: NOW });
+    expect(out.reviewEffort).toEqual({ avgBand: 3, totalEstimatedMinutes: 100 });
+  });
+
+  it("skips nullish/zero minute rows when folding reviewEffort (the ?? 0 + > 0 filter branches)", async () => {
+    function mixedEffortEnv(): Env {
+      let lastSql = "";
+      return {
+        DB: {
+          prepare: (s: string) => {
+            lastSql = s;
+            return {
+              bind: () => ({
+                all: async () => ({
+                  results: lastSql.includes("reviewEffortMinutes")
+                    ? [{ minutes: null }, { minutes: 0 }, { minutes: 10 }]
+                    : [],
+                }),
+              }),
+            };
+          },
+        },
+      } as unknown as Env;
+    }
+
+    const out = await computeStats(mixedEffortEnv(), { days: 30, bucket: "day", nowMs: NOW });
+    expect(out.reviewEffort).toEqual({ avgBand: 2, totalEstimatedMinutes: 10 });
+  });
+});
+
+describe("computeStats — gate-decision read is fail-safe", () => {
+  // A stubEnv whose gate_decision query rejects: computeStats should still resolve with gateActions: [].
+  function gateThrowingEnv(): Env {
+    const decisions = [{ bucket: "2026-06-01", project: "awesome-claude", verdict: "merge", n: 5 }];
+    let lastSql = "";
+    return {
+      DB: {
+        prepare: (s: string) => {
+          lastSql = s;
+          return {
+            bind: () => ({
+              all: async () => {
+                if (lastSql.includes("decision AS action")) throw new Error("gate read down");
+                return { results: lastSql.includes("review_audit") ? [] : decisions };
+              },
+            }),
+          };
+        },
+      },
+    } as unknown as Env;
+  }
+
+  it("falls back to gateActions: [] when the gate_decision query rejects (the .catch)", async () => {
+    const out = await computeStats(gateThrowingEnv(), { days: 30, bucket: "day", nowMs: NOW });
+    expect(out.gateActions).toEqual([]);
+    expect(out.projects).toEqual(["awesome-claude"]); // the rest of the payload still computes
+  });
+});
+
+describe("handleStats — query-param default branches", () => {
+  it("defaults days→90 and bucket→day when those params are absent (the ?? fallbacks)", async () => {
+    let captured: { days: number; bucket: string } | undefined;
+    const deps: StatsEvalDeps = {
+      // capture is observed via the payload window below; deps stay no-op.
+      computeGateEval: async (_env, o) => {
+        captured = { days: o.days, bucket: "" };
+        return { rows: [], hasSignal: false };
+      },
+      computeTuningRecommendations: () => [],
+      computeGateParity: async () => ({ authoritative: "reviewbot", shadow: "loopover", hasSignal: false, rows: [] }),
+    };
+    // No days / bucket query params → days ?? 90, bucket ?? "day".
+    const r = new Request("https://w.dev/stats/data", { method: "GET", headers: { authorization: "Bearer s3cret" } });
+    const res = await handleStats(r, stubEnv({ LOOPOVER_REVIEW_STATS_TOKEN: "s3cret" }), deps);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { window: { days: number; bucket: string } };
+    expect(body.window.days).toBe(90);
+    expect(body.window.bucket).toBe("day");
+    expect(captured?.days).toBe(90);
+  });
+});
+
+describe("computeStats — NaN window + null D1 results (the ?? [] fallbacks)", () => {
+  // A stub whose .all() returns NO `results` key, exercising the `?? []` on decision/reversal/gate rows.
+  function nullResultsEnv(): Env {
+    return {
+      DB: {
+        prepare: () => ({
+          bind: () => ({
+            all: async () => ({}), // results undefined → the ?? [] fallbacks fire on all three reads
+          }),
+        }),
+      },
+    } as unknown as Env;
+  }
+
+  it("defaults to 90 days when opts.days is NaN (Number.isFinite false branch)", async () => {
+    const out = await computeStats(nullResultsEnv(), { days: Number.NaN, bucket: "day", nowMs: NOW });
+    expect(out.window.days).toBe(90);
+  });
+
+  it("defaults to 90 days when opts.days is Infinity (Number.isFinite false branch)", async () => {
+    const out = await computeStats(nullResultsEnv(), { days: Number.POSITIVE_INFINITY, bucket: "day", nowMs: NOW });
+    expect(out.window.days).toBe(90);
+  });
+
+  it("falls back to empty arrays when D1 returns no `results` field", async () => {
+    const out = await computeStats(nullResultsEnv(), { days: 30, bucket: "day", nowMs: NOW });
+    expect(out.rows).toEqual([]);
+    expect(out.reversals).toEqual([]);
+    expect(out.gateActions).toEqual([]);
+    expect(out.projects).toEqual([]);
+    expect(out.verdicts).toEqual([]);
+    expect(out.reviewEffort).toEqual({ avgBand: null, totalEstimatedMinutes: 0 });
+    expect(out.cycleTime).toEqual(EMPTY_CYCLE_TIME);
+    expect(out.findingAcceptance).toEqual(EMPTY_FINDING_ACCEPTANCE);
   });
 });
 
@@ -296,5 +638,58 @@ describe("isParityCutoverReady — every gate condition", () => {
 
   it("is NOT ready when agreementRate is below the floor", () => {
     expect(isParityCutoverReady({ ...base, agreementRate: PARITY_AGREEMENT_FLOOR - 0.001 })).toBe(false);
+  });
+});
+
+describe("timingSafeEqual + readSecret — branches reached through the handlers", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("uses the native crypto.subtle.timingSafeEqual when present (equal-length, function-typed branch)", async () => {
+    const subtle = crypto.subtle as unknown as Record<string, unknown>;
+    const had = "timingSafeEqual" in subtle;
+    const native = vi.fn((a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((x, i) => x === b[i]));
+    subtle.timingSafeEqual = native;
+    try {
+      // Correct token, equal lengths → the native path is taken and authorizes (200).
+      const res = await handleStats(
+        new Request("https://w.dev/stats/data?days=1&bucket=day", { method: "GET", headers: { authorization: "Bearer s3cret" } }),
+        stubEnv({ LOOPOVER_REVIEW_STATS_TOKEN: "s3cret" }),
+      );
+      expect(res.status).toBe(200);
+      expect(native).toHaveBeenCalled();
+    } finally {
+      if (!had) delete subtle.timingSafeEqual;
+    }
+  });
+
+  it("uses the manual constant-time loop for UNEQUAL-length tokens (the diff=1 + ?? 0 out-of-range branch)", async () => {
+    const subtle = crypto.subtle as unknown as Record<string, unknown>;
+    const had = "timingSafeEqual" in subtle;
+    // Force the non-native path so the manual loop (and its ?? 0 out-of-bounds reads) runs.
+    if (had) delete subtle.timingSafeEqual;
+    try {
+      // Provided "Bearer x" is far shorter than expected "Bearer <long>" → unequal length → diff seeded 1,
+      // the loop XORs out-of-range indices via `?? 0`, and the compare fails → 401.
+      const res = await handleStats(
+        new Request("https://w.dev/stats/data", { method: "GET", headers: { authorization: "Bearer x" } }),
+        stubEnv({ LOOPOVER_REVIEW_STATS_TOKEN: "averylongtokenvalue-far-longer-than-x" }),
+      );
+      expect(res.status).toBe(401);
+    } finally {
+      // afterEach restores; nothing to re-add since it was absent in this env.
+      void had;
+    }
+  });
+
+  it("treats a non-string token secret as unset (readSecret's `: \"\"` branch → 401)", async () => {
+    // LOOPOVER_REVIEW_STATS_TOKEN present but NOT a string → readSecret returns "" → !expected → 401.
+    const env = stubEnv({ LOOPOVER_REVIEW_STATS_TOKEN: 12345 });
+    const res = await handleStats(
+      new Request("https://w.dev/stats/data", { method: "GET", headers: { authorization: "Bearer 12345" } }),
+      env,
+    );
+    expect(res.status).toBe(401);
   });
 });

@@ -11,7 +11,9 @@ import { withReviewSpan } from "./tracing";
 import { withOtelSpan } from "./otel";
 import { capturePostHogError, withPostHogMonitor } from "./posthog";
 import {
+  ATTEMPT_FREE_RETRY_DEADLINE_MS,
   consumingRetryDelayMs,
+  isAttemptFreeRetry,
   deterministicJitterMs,
   FOREGROUND_QUEUE_PRIORITY_FLOOR,
   githubRateLimitAdmissionDelayMs,
@@ -1188,6 +1190,29 @@ export function createSqliteQueue(
       } catch (error) {
         const attempts = job.attempts + 1;
         const errMsg = errorMessageWithCause(error);
+        // #9465: parity with the pg backend -- lock contention re-pends WITHOUT consuming an attempt, so a
+        // waiter cannot die after ~25s against a lock legitimately held for minutes. Bounded by job age so a
+        // wedged lock still converges to a dead job.
+        if (isAttemptFreeRetry(error) && Date.now() - job.created_at < ATTEMPT_FREE_RETRY_DEADLINE_MS) {
+          const retryDelayMs = consumingRetryDelayMs(error, backoff(attempts));
+          driver.query(
+            `UPDATE ${TABLE} SET status='pending', run_after=?, last_error=?, deferred_by='lock_contended' WHERE id=?`,
+            [Date.now() + retryDelayMs, errMsg, job.id],
+          );
+          recordQueueMetric(driver, "loopover_jobs_lock_contended_deferred_total");
+          logAudit({
+            event: "job_lock_contended",
+            ts: Date.now(),
+            job_id: job.id,
+            payload_type: extractPayloadType(job.payload),
+            ...payloadContext,
+            latency_ms: Date.now() - claimedAt,
+            attempts: job.attempts,
+            retry_after_ms: retryDelayMs,
+            error: errMsg,
+          }, jobTraceParent);
+          return true;
+        }
         const rateLimitDelayMs = githubRateLimitRetryDelayMs(error);
         if (rateLimitDelayMs !== null) {
           const now = Date.now();

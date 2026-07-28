@@ -66,6 +66,7 @@ export const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["loopover_jobs_dead_total", { help: "Durable queue jobs moved to dead status.", type: "counter" }],
   ["loopover_jobs_rate_limited_total", { help: "Durable queue jobs rate-limited before processing.", type: "counter" }],
   ["loopover_jobs_rate_limit_deferred_total", { help: "Durable queue jobs deferred by a rate-limit window.", type: "counter" }],
+  ["loopover_jobs_lock_contended_deferred_total", { help: "Durable queue jobs re-pended without consuming an attempt because a per-PR lock was held by another pass (#9465).", type: "counter" }],
   ["loopover_jobs_coalesced_total", { help: "Durable queue jobs coalesced with an existing queued item.", type: "counter" }],
   ["loopover_jobs_recovered_total", { help: "Durable queue jobs recovered from stale in-flight state.", type: "counter" }],
   ["loopover_jobs_maintenance_admission_deferred_total", { help: "Maintenance jobs deferred by admission control.", type: "counter" }],

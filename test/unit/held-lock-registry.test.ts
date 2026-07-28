@@ -11,15 +11,15 @@ import { createTestEnv } from "../helpers/d1";
 describe("held-lock-registry (#8998)", () => {
   it("releases every registered lock and reports how many it attempted", async () => {
     const released: string[] = [];
-    registerHeldLock("lock:a", async () => void released.push("a"));
-    registerHeldLock("lock:b", async () => void released.push("b"));
+    registerHeldLock("lock:a", "tok-a", async () => void released.push("a"));
+    registerHeldLock("lock:b", "tok-b", async () => void released.push("b"));
 
     expect(await releaseAllHeldLocksAtShutdown()).toBe(2);
     expect(released.sort()).toEqual(["a", "b"]);
   });
 
   it("clears the registry as it goes, so a second shutdown call has nothing left to release", async () => {
-    registerHeldLock("lock:c", async () => undefined);
+    registerHeldLock("lock:c", "tok-c", async () => undefined);
     await releaseAllHeldLocksAtShutdown();
 
     expect(await releaseAllHeldLocksAtShutdown()).toBe(0);
@@ -27,8 +27,8 @@ describe("held-lock-registry (#8998)", () => {
 
   it("unregistering removes a lock before shutdown ever needs to touch it — the normal, non-crash path", async () => {
     const release = vi.fn(async () => undefined);
-    registerHeldLock("lock:d", release);
-    unregisterHeldLock("lock:d");
+    registerHeldLock("lock:d", "tok-d", release);
+    unregisterHeldLock("lock:d", "tok-d");
 
     expect(await releaseAllHeldLocksAtShutdown()).toBe(0);
     expect(release).not.toHaveBeenCalled();
@@ -36,10 +36,10 @@ describe("held-lock-registry (#8998)", () => {
 
   it("keeps releasing the rest when one release throws — one bad lock must not strand the others", async () => {
     const released: string[] = [];
-    registerHeldLock("lock:e", async () => {
+    registerHeldLock("lock:e", "tok-e", async () => {
       throw new Error("cache unreachable");
     });
-    registerHeldLock("lock:f", async () => void released.push("f"));
+    registerHeldLock("lock:f", "tok-f", async () => void released.push("f"));
 
     expect(await releaseAllHeldLocksAtShutdown()).toBe(2);
     expect(released).toEqual(["f"]);
@@ -48,8 +48,8 @@ describe("held-lock-registry (#8998)", () => {
   it("re-registering the same key replaces the prior release rather than accumulating both", async () => {
     const first = vi.fn(async () => undefined);
     const second = vi.fn(async () => undefined);
-    registerHeldLock("lock:g", first);
-    registerHeldLock("lock:g", second);
+    registerHeldLock("lock:g", "tok-g1", first);
+    registerHeldLock("lock:g", "tok-g2", second);
 
     expect(heldLockCountForTest()).toBe(1);
     await releaseAllHeldLocksAtShutdown();
@@ -59,6 +59,38 @@ describe("held-lock-registry (#8998)", () => {
 
   it("does nothing and reports zero when the registry is empty", async () => {
     expect(await releaseAllHeldLocksAtShutdown()).toBe(0);
+  });
+
+  // #9468 regression: keyed by lock key alone, an EARLIER holder's cleanup could delete a LATER holder's live
+  // entry. A maintainer's forced re-run steals a live lock in the same process (#9008), overwriting the entry
+  // with the stealer's release; when the original pass then finished, its store-side release correctly no-oped
+  // (wrong token) but its unregister still deleted the stealer's entry. A SIGTERM during the stealer's
+  // still-running review then skipped that key, stranding it for the full TTL after a hard kill -- exactly the
+  // #8998 shape this registry exists to prevent.
+  it("#9468 a stale holder's unregister does NOT evict the live holder that stole the key", async () => {
+    const stolenRelease = vi.fn(async () => undefined);
+    registerHeldLock("lock:stolen", "tok-original", async () => undefined);
+    registerHeldLock("lock:stolen", "tok-stealer", stolenRelease); // the steal (#9008)
+
+    unregisterHeldLock("lock:stolen", "tok-original"); // the original pass finishing afterwards
+
+    expect(heldLockCountForTest()).toBe(1);
+    await releaseAllHeldLocksAtShutdown();
+    expect(stolenRelease).toHaveBeenCalledTimes(1); // the live holder is still released at shutdown
+  });
+
+  it("#9468 unregistering with a non-matching token is a no-op, not a silent eviction", async () => {
+    const before = heldLockCountForTest();
+    registerHeldLock("lock:h", "tok-real", async () => undefined);
+    unregisterHeldLock("lock:h", "tok-someone-else");
+    expect(heldLockCountForTest()).toBe(before + 1);
+  });
+
+  it("#9468 unregistering with the matching token still removes it (the normal path is unchanged)", async () => {
+    const before = heldLockCountForTest();
+    registerHeldLock("lock:i", "tok-i", async () => undefined);
+    unregisterHeldLock("lock:i", "tok-i");
+    expect(heldLockCountForTest()).toBe(before);
   });
 });
 

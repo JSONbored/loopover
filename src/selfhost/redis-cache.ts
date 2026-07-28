@@ -119,6 +119,23 @@ export const ORPHANED_LOCK_KEY_PATTERNS: readonly string[] = [
  *  self-host boot before the queue starts processing. Never throws: a flush failure just means a lock (or
  *  several) rides out its own TTL as before -- exactly the pre-#9021 behavior -- rather than blocking startup.
  *  Returns the number of keys deleted, for a single boot-time log line. */
+/**
+ * #9468: is this deployment declared single-instance, making a boot-time lock flush safe?
+ *
+ * {@link flushOrphanedLocksAtBoot} deletes EVERY key matching {@link ORPHANED_LOCK_KEY_PATTERNS}, which is only
+ * sound when no sibling process can be holding one. Nothing previously enforced that -- the same Redis is
+ * explicitly shared across replicas for the token cache, and the pg queue backend exists to support more than
+ * one instance -- so a restarting replica would free a live sibling's ai-review/pr-actuation locks and let the
+ * next pass duplicate that review and its actuation, with no TTL expiry involved.
+ *
+ * Defaults to FALSE (no flush) rather than true: the failure mode of skipping is a genuinely orphaned lock
+ * riding out its TTL, which #9008's steal path already recovers on demand; the failure mode of flushing
+ * wrongly is a double close/merge. Operators of a genuinely single-instance deployment opt in.
+ */
+export function isSingleInstanceDeployment(env: Record<string, string | undefined>): boolean {
+  return /^(1|true|yes|on)$/i.test(env["LOOPOVER_SINGLE_INSTANCE"] ?? "");
+}
+
 export async function flushOrphanedLocksAtBoot(redis: Redis): Promise<number> {
   let deleted = 0;
   for (const pattern of ORPHANED_LOCK_KEY_PATTERNS) {

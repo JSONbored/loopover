@@ -14,6 +14,9 @@ export type AuditEventType =
   | "job_complete"
   | "job_dead"
   | "job_error"
+  // #9465: re-pended without consuming an attempt because a per-PR lock was held by another pass -- distinct
+  // from job_error so "waiting its turn" is never read as a failure in the audit trail or its dashboards.
+  | "job_lock_contended"
   | "job_rate_limited";
 
 export interface AuditEvent {

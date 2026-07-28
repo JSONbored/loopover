@@ -298,6 +298,14 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/selfhost/ai.ts",
   },
   {
+    name: "LOOPOVER_SHUTDOWN_LOCK_RELEASE_AFTER_MS",
+    firstReference: "src/server.ts",
+  },
+  {
+    name: "LOOPOVER_SINGLE_INSTANCE",
+    firstReference: "src/selfhost/redis-cache.ts",
+  },
+  {
     name: "LOOPOVER_VERSION",
     firstReference: "src/selfhost/otel.ts",
   },
@@ -727,6 +735,8 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `LOOPOVER_REPO_CONFIG_DIR` | `src/server.ts` |",
   "| `LOOPOVER_REVIEW_CONTINUOUS` | `src/queue/processors.ts` |",
   "| `LOOPOVER_REVIEW_RAG` | `src/selfhost/ai.ts` |",
+  "| `LOOPOVER_SHUTDOWN_LOCK_RELEASE_AFTER_MS` | `src/server.ts` |",
+  "| `LOOPOVER_SINGLE_INSTANCE` | `src/selfhost/redis-cache.ts` |",
   "| `LOOPOVER_VERSION` | `src/selfhost/otel.ts` |",
   "| `MAINTENANCE_ADMISSION_DEFER_MS` | `src/selfhost/maintenance-admission.ts` |",
   "| `MAINTENANCE_ADMISSION_DRAIN_AGE_MS` | `src/selfhost/maintenance-admission.ts` |",

@@ -731,19 +731,37 @@ async function main(): Promise<void> {
   const { Redis } = await import("ioredis");
   const redisClient = new Redis(redisUrl);
   const { createRedisRateLimiter } = await import("./selfhost/redis-ratelimit");
-  const { createRedisCache, assertSelfhostTransientCacheOwnershipRelease, flushOrphanedLocksAtBoot, isWebhookDeliveryDuplicate, rememberWebhookDelivery } = await import("./selfhost/redis-cache");
+  const { createRedisCache, assertSelfhostTransientCacheOwnershipRelease, flushOrphanedLocksAtBoot, isSingleInstanceDeployment, isWebhookDeliveryDuplicate, rememberWebhookDelivery } = await import("./selfhost/redis-cache");
   const rateLimiter = createRedisRateLimiter(redisClient);
   const webhookCache = createRedisCache(redisClient);
   assertSelfhostTransientCacheOwnershipRelease(webhookCache);
   // #9021: every Redis-backed lock (pr-actuation-lock, ai-review-lock, contributor-cap-wake/-lock) survives a
-  // container restart with its TTL intact. On this single-instance deployment any lock present at boot is
-  // provably orphaned -- the process that claimed it is gone -- so flush them before the queue starts
-  // processing rather than let each strand real work for up to its own TTL (30 min for ai-review-lock, #8998).
-  // Best-effort: a flush failure just falls back to the pre-#9021 behavior (each lock rides out its TTL).
-  const flushedOrphanedLocks = await flushOrphanedLocksAtBoot(redisClient);
-  if (flushedOrphanedLocks > 0) {
+  // container restart with its TTL intact. On a SINGLE-INSTANCE deployment any lock present at boot is provably
+  // orphaned -- the process that claimed it is gone -- so flushing them before the queue starts beats letting
+  // each strand real work for up to its own TTL (30 min for ai-review-lock, #8998).
+  //
+  // #9468: that reasoning holds ONLY for a single instance, and nothing used to enforce it. Redis here is
+  // explicitly shared across replicas (the token cache below says so in as many words), and the pg queue
+  // backend exists precisely to support more than one. With a sibling running, this flush DELETES ITS LIVE
+  // LOCKS: replica B restarting (OOM, crash-loop, scale-out, or a start-before-stop rolling deploy) frees
+  // replica A's in-flight ai-review-lock and pr-actuation-lock, and the next pass claims them fresh and
+  // duplicates the review and the actuation -- with no TTL expiry needed at all. A crash-looping replica
+  // becomes a periodic fleet-wide lock wipe. Opt in explicitly instead; TTL plus the #9008 steal path already
+  // recover a genuinely orphaned lock without this, just more slowly.
+  // `env` is not assigned yet this early in boot -- this whole block reads process.env directly (see REDIS_URL above).
+  if (isSingleInstanceDeployment(process.env)) {
+    const flushedOrphanedLocks = await flushOrphanedLocksAtBoot(redisClient);
+    if (flushedOrphanedLocks > 0) {
+      console.log(
+        JSON.stringify({ event: "selfhost_orphaned_locks_flushed", count: flushedOrphanedLocks }),
+      );
+    }
+  } else {
     console.log(
-      JSON.stringify({ event: "selfhost_orphaned_locks_flushed", count: flushedOrphanedLocks }),
+      JSON.stringify({
+        event: "selfhost_orphaned_lock_flush_skipped",
+        reason: "LOOPOVER_SINGLE_INSTANCE is not enabled; a shared-Redis flush would delete a sibling replica's live locks",
+      }),
     );
   }
   // Persist the installation-token cache in Redis so warm GitHub App tokens survive restarts/deploys and are
@@ -1416,16 +1434,38 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(JSON.stringify({ event: "selfhost_shutdown", signal }));
-    // #8998: release every transient lock THIS process currently holds FIRST, before anything that might take
-    // real time (the queue drain below, telemetry flush). A container orchestrator's SIGKILL grace period is
-    // often shorter than an in-flight AI-review call legitimately runs, so waiting for the graceful drain to
-    // release a lock via its own finally block is not always fast enough -- doing it proactively here means the
-    // lock is gone the instant SIGTERM/SIGINT arrives, regardless of whether the rest of shutdown gets to finish.
-    const releasedLocks = await releaseAllHeldLocksAtShutdown();
-    if (releasedLocks > 0) console.log(JSON.stringify({ event: "selfhost_shutdown_locks_released", count: releasedLocks }));
     clearInterval(cron);
     server.close();
-    await backend.shutdown();
+    // #8998 released every held lock HERE, before the drain -- so that a SIGKILL landing mid-drain could not
+    // strand an ai-review-lock for its full 1800s TTL. #9468: that ordering also frees the locks of jobs that
+    // are STILL RUNNING, because `backend.shutdown()` deliberately lets in-flight work finish (#9007). In the
+    // case where the drain does complete, a sibling replica -- or the new container in an overlapped deploy --
+    // could claim the freed lock at t0+e and duplicate the very actuation the lock exists to serialize. The
+    // token-checked release protects the new claim from corruption; it does not stop the double-run.
+    //
+    // So: drain FIRST and let each job release its own lock through its own finally block, which is both
+    // correct and precise. The proactive bulk release stays as a last resort for the short-grace case #8998
+    // was written for, but it now only fires when the drain has NOT finished in time -- i.e. when a hard kill
+    // is genuinely imminent and a stranded lock is the worse outcome. Opt in with
+    // LOOPOVER_SHUTDOWN_LOCK_RELEASE_AFTER_MS; unset means "wait for the drain", which is right wherever the
+    // orchestrator's grace period comfortably exceeds a review (this deployment's stop_grace_period is 300s).
+    const forceReleaseAfterMs = Number(process.env["LOOPOVER_SHUTDOWN_LOCK_RELEASE_AFTER_MS"] ?? "");
+    const drainPromise = backend.shutdown();
+    const drainedInTime =
+      Number.isFinite(forceReleaseAfterMs) && forceReleaseAfterMs > 0
+        ? await Promise.race([
+            drainPromise.then(() => true),
+            new Promise<boolean>((resolve) => setTimeout(() => resolve(false), forceReleaseAfterMs)),
+          ])
+        : await drainPromise.then(() => true);
+    // After a completed drain this finds an empty registry (every job unregistered its own lock on the way
+    // out), so the count is 0 and nothing is force-released -- the log line only appears in the cut-short case.
+    const releasedLocks = await releaseAllHeldLocksAtShutdown();
+    if (releasedLocks > 0) {
+      console.log(
+        JSON.stringify({ event: "selfhost_shutdown_locks_released", count: releasedLocks, drainedInTime }),
+      );
+    }
     /* v8 ignore next -- graceful process signal path is not imported in unit tests; shutdown helper is covered. */
     await shutdownOpenTelemetry();
     await shutdownPostHog();

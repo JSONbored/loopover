@@ -381,6 +381,11 @@ declare global {
      *  for a repo ONLY IF this flag is ON *AND* the repo is in LOOPOVER_REVIEW_REPOS (the per-repo cutover
      *  allowlist) — see review/visual-wire.ts screenshotsAllowed. Default OFF — unset/false captures nothing
      *  (no render, no audit write, no comment change) so the review path is byte-identical to today. */
+    /** #9468: declare this deployment single-instance, permitting the boot-time orphaned-lock flush. */
+    LOOPOVER_SINGLE_INSTANCE?: string;
+    /** #9468: force-release held locks if the shutdown drain has not finished within this many ms. Unset =
+     *  wait for the drain, which never frees a lock whose job is still running. */
+    LOOPOVER_SHUTDOWN_LOCK_RELEASE_AFTER_MS?: string;
     LOOPOVER_REVIEW_SCREENSHOTS?: string;
     /** Convergence (grounding): when truthy, the AI reviewer prompt is GROUNDED — the PR's finished CI status
      *  + the FULL post-change content of the changed files are appended so a non-frontier model verifies its

@@ -1,4 +1,4 @@
-// Mirrors review-enrichment/scripts/validate-sourcemaps.mjs (a comparably-sized standalone service with the
+// Mirrors review-enrichment/scripts/validate-sourcemaps.ts (a comparably-sized standalone service with the
 // identical Sentry source-map setup) -- verifies the build actually produced usable source maps before
 // they're relied on for upload/symbolication.
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";

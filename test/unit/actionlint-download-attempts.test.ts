@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveActionlintDownloadAttempts } from "../../scripts/lib/actionlint-download-attempts.ts";
+import { resolveActionlintDownloadAttempts } from "../../scripts/lib/actionlint-download-attempts";
 
 // #7773: an explicit ACTIONLINT_DOWNLOAD_ATTEMPTS="0" must be respected (floored to 1), not silently turned
 // into the default of 4 by a `parseInt(...) || 4` fallback (0 is falsy).

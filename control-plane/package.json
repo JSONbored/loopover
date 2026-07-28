@@ -17,7 +17,7 @@
     "cf:dev": "wrangler dev",
     "cf:deploy": "wrangler deploy",
     "cf:typecheck": "tsc -p tsconfig.worker.json --noEmit",
-    "cf:typegen": "node scripts/gen-cf-typegen.mjs"
+    "cf:typegen": "node --experimental-strip-types scripts/gen-cf-typegen.ts"
   },
   "dependencies": {
     "@cloudflare/containers": "^0.3.7",

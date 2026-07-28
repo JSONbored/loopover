@@ -3,7 +3,7 @@
 // resource with its own commits/deploys/finalize lifecycle; a release is purely a version string baked into
 // each uploaded symbol set's metadata as a byproduct of `posthog-cli sourcemap upload`. This script therefore
 // verifies a narrower, honestly-scoped claim: that at least one symbol set exists for our release, and none
-// of them recorded a failure_reason. Mirrors packages/discovery-index/scripts/validate-posthog-release.mjs.
+// of them recorded a failure_reason. Mirrors packages/discovery-index/scripts/validate-posthog-release.ts.
 import { pathToFileURL } from "node:url";
 
 const DEFAULT_POSTHOG_APP_HOST = "https://us.posthog.com";

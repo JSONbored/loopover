@@ -28,7 +28,7 @@ describe("self-host PostHog release wiring", () => {
     expect(releaseWorkflow).toContain('POSTHOG_CLI_PACKAGE: "@posthog/cli@0.9.1"');
     expect(releaseWorkflow).toContain('npx -y "$POSTHOG_CLI_PACKAGE"');
     expect(releaseWorkflow).not.toContain("@posthog/cli@latest");
-    expect(releaseWorkflow).toContain("node review-enrichment/scripts/validate-posthog-release.mjs");
+    expect(releaseWorkflow).toContain("node --experimental-strip-types review-enrichment/scripts/validate-posthog-release.ts");
     expect(releaseWorkflow).not.toContain("review-enrichment/scripts/validate-sentry-release.mjs");
     expect(releaseWorkflow).toContain('"orb-v*"');
     expect(releaseWorkflow).toContain('orb-v*) VERSION="${REF_NAME#orb-v}"');

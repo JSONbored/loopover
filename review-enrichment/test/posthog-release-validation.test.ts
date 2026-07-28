@@ -5,7 +5,7 @@ import {
   loadPostHogReleaseValidationConfig,
   PostHogReleaseValidationError,
   validatePostHogRelease,
-} from "../scripts/validate-posthog-release.mjs";
+} from "../scripts/validate-posthog-release.ts";
 
 function response(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {

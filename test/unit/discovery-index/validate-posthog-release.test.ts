@@ -1,4 +1,4 @@
-// Coverage for validate-posthog-release.mjs (#8289). Outside codecov.yml's measured discovery-index/src/**
+// Coverage for validate-posthog-release.ts (#8289). Outside codecov.yml's measured discovery-index/src/**
 // scope (scripts/** isn't gated), same as its untested validate-sentry-release.mjs sibling -- written anyway
 // since it carries real logic (config loading, API querying, failure aggregation) worth verifying directly.
 import { describe, expect, it, vi } from "vitest";
@@ -6,7 +6,7 @@ import {
   loadPostHogReleaseValidationConfig,
   PostHogReleaseValidationError,
   validatePostHogRelease,
-} from "../../../packages/discovery-index/scripts/validate-posthog-release.mjs";
+} from "../../../packages/discovery-index/scripts/validate-posthog-release";
 
 function jsonResponse(body: unknown, ok = true, status = 200, statusText = "OK") {
   return { ok, status, statusText, json: async () => body };

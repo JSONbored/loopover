@@ -9,13 +9,13 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "validate:sourcemaps": "node scripts/validate-sourcemaps.mjs",
+    "validate:sourcemaps": "node --experimental-strip-types scripts/validate-sourcemaps.ts",
     "start": "node dist/server.js",
     "dev": "node --experimental-strip-types --watch src/server.ts",
     "cf:dev": "wrangler dev",
     "cf:deploy": "wrangler deploy",
     "cf:typecheck": "tsc -p tsconfig.worker.json --noEmit",
-    "cf:typegen": "node scripts/gen-cf-typegen.mjs"
+    "cf:typegen": "node --experimental-strip-types scripts/gen-cf-typegen.ts"
   },
   "dependencies": {
     "@cloudflare/containers": "^0.3.7",

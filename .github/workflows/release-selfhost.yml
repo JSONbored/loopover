@@ -282,7 +282,7 @@ jobs:
           attempts=5
           delay_secs=10
           for attempt in $(seq 1 "$attempts"); do
-            if node review-enrichment/scripts/validate-posthog-release.mjs; then
+            if node --experimental-strip-types review-enrichment/scripts/validate-posthog-release.ts; then
               exit 0
             fi
             if [ "$attempt" -lt "$attempts" ]; then

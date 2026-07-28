@@ -88,7 +88,7 @@ function isPostHogCliCall(command: string): boolean {
 }
 
 function isPostHogValidateReleaseCall(args: string[]): boolean {
-  return args[0] === "scripts/validate-posthog-release.mjs";
+  return args.includes("scripts/validate-posthog-release.ts");
 }
 
 function spawnSuccess(): { status: number; stdout: string; stderr: string } {

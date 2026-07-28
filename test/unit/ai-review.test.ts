@@ -317,7 +317,7 @@ describe("runLoopOverAiReview gating", () => {
             content: [
               {
                 type: "text",
-                text: '{"assessment":"provider view","blockers":["The tests are failing on CI","No before/after screenshots provided for this visual change","This PR is too large and should be split into smaller PRs","The branch has merge conflicts with the base","Race in src/lock.ts"],"nits":[],"suggestions":[]}',
+                text: '{"assessment":"provider view","blockers":["The tests are failing on CI","No before/after screenshots provided for this visual change","This PR is too large and should be split into smaller PRs","The branch has merge conflicts with the base",{"claim":"Missing guard before items[0] in src/list.ts","kind":"missing_guard","evidence":"+  const first = items[0].id;"},"Race in src/lock.ts"],"nits":[],"suggestions":[]}',
               },
             ],
           }),
@@ -353,6 +353,9 @@ describe("runLoopOverAiReview gating", () => {
     // #8833: the size and stale-base bans hold on the provider path too.
     expect(warn.mock.calls.some(([line]) => String(line).includes("ai_review_size_claim_demoted"))).toBe(true);
     expect(warn.mock.calls.some(([line]) => String(line).includes("ai_review_stale_base_claim_demoted"))).toBe(true);
+    // #8833: absence-evidence verification holds on the provider path too — the quoted line is nowhere in
+    // this PR's prompt, so the object-form claim demotes instead of blocking.
+    expect(warn.mock.calls.some(([line]) => String(line).includes("ai_review_unverified_absence_demoted"))).toBe(true);
     warn.mockRestore();
   });
 
@@ -3538,6 +3541,27 @@ describe("pure helpers", () => {
     warn.mockRestore();
   });
 
+  it("#8833 REGRESSION (verifiable blockers): runWorkersOpinion checks absence evidence against the ACTUAL user prompt it sent", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const run = vi.fn(async () => ({
+      response: JSON.stringify({
+        assessment: "looks off",
+        blockers: [
+          { claim: "Missing import of parseId breaks the new call", kind: "missing_import", evidence: "+  const id = parseId(raw);" },
+          { claim: "Missing null guard before items[0]", kind: "missing_guard", evidence: "+  const first = items[0].id;" },
+        ],
+        nits: [], suggestions: [],
+      }),
+    }));
+    const env = createTestEnv({ AI: { run } as unknown as Ai });
+    // The user prompt CONTAINS the parseId line but NOT the items[0] line — one claim verifies, one cannot.
+    const parsed = await runWorkersOpinion(env, "@cf/x/model", "@cf/x/model", "sys", "diff:\n+  const id = parseId(raw);", 256);
+    expect(parsed.review?.blockers).toEqual(["Missing import of parseId breaks the new call"]);
+    expect(parsed.review?.nits.some((nit) => nit.startsWith("Verify: Missing null guard"))).toBe(true);
+    expect(warn.mock.calls.some(([line]) => String(line).includes("ai_review_unverified_absence_demoted"))).toBe(true);
+    warn.mockRestore();
+  });
+
   it("#8961: runWorkersOpinion demotes an evidence-absence blocker ONLY when the body was truncated", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const run = vi.fn(async () => ({
@@ -5454,6 +5478,91 @@ describe("#8833: enforced boundaries between model judgment and deterministic fa
     ];
     for (const negative of kept) expect(STALE_BASE_CLAIM_PATTERN.test(negative)).toBe(false);
     expect(demoteStaleBaseClaimBlockers(review(kept)).demoted).toEqual([]);
+  });
+
+  it("#8833 (verifiable blockers): parseModelReview accepts the object form — claims land in blockers, absence kinds in absenceClaims", async () => {
+    const { parseModelReview } = await import("../../src/services/ai-review");
+    const parsed = parseModelReview(JSON.stringify({
+      assessment: "Mixed forms.",
+      blockers: [
+        "Plain string logic defect in src/a.ts",
+        "   ", // whitespace-only string entry: dropped, exactly like toList
+        { claim: "Missing import of parseId breaks src/b.ts", kind: "missing_import", evidence: "+  const id = parseId(raw);" },
+        { claim: "Free-form object claim with unknown kind", kind: "novel_kind", evidence: "whatever" },
+        { claim: "Absence claim with non-string evidence", kind: "missing_guard", evidence: 42 },
+        { kind: "missing_guard", evidence: "no claim, dropped" },
+        42,
+      ],
+      nits: [], suggestions: [],
+    }));
+    expect(parsed?.blockers).toEqual([
+      "Plain string logic defect in src/a.ts",
+      "Missing import of parseId breaks src/b.ts",
+      "Free-form object claim with unknown kind",
+      "Absence claim with non-string evidence",
+    ]);
+    // Only the CLOSED absence-kind set collects evidence — a novel kind cannot smuggle a claim past
+    // verification — and non-string evidence normalizes to "" (which can never verify, so it demotes).
+    expect(parsed?.absenceClaims).toEqual([
+      { claim: "Missing import of parseId breaks src/b.ts", evidence: "+  const id = parseId(raw);" },
+      { claim: "Absence claim with non-string evidence", evidence: "" },
+    ]);
+  });
+
+  it("#8833 (verifiable blockers): the 6-blocker cap drops the overflow's absence claims too — no orphaned verification entries", async () => {
+    const { parseModelReview } = await import("../../src/services/ai-review");
+    const many = [1, 2, 3, 4, 5, 6].map((i) => `Defect number ${i}`);
+    const parsed = parseModelReview(JSON.stringify({
+      assessment: "Overflowing.",
+      blockers: [...many, { claim: "Missing guard, seventh entry", kind: "missing_guard", evidence: "+  return items[0].id;" }],
+      nits: [], suggestions: [],
+    }));
+    expect(parsed?.blockers).toHaveLength(6);
+    expect(parsed?.absenceClaims).toEqual([]);
+  });
+
+  it("#8833 REGRESSION (verifiable blockers): an absence claim whose quoted evidence is NOT in the prompt demotes to a verification nit", async () => {
+    const { demoteUnverifiedAbsenceBlockers } = await import("../../src/services/ai-review");
+    const prompt = "diff:\n+  const id = parseId(raw);\n+  return id;";
+    const base = {
+      assessment: "a", nits: [], suggestions: [], confidence: 0.97, inlineFindings: [],
+      blockers: ["Missing import of parseId breaks src/b.ts", "Hallucinated missing guard in src/c.ts", "Plain judgment blocker stays"],
+      absenceClaims: [
+        { claim: "Missing import of parseId breaks src/b.ts", evidence: "+  const id = parseId(raw);" }, // verifiable — the quote IS in the prompt
+        { claim: "Hallucinated missing guard in src/c.ts", evidence: "+  items.forEach((x) => sink(x.id));" }, // NOT in the prompt
+      ],
+    } as never;
+    const { review: out, demoted } = demoteUnverifiedAbsenceBlockers(base, prompt);
+    expect(demoted).toEqual(["Hallucinated missing guard in src/c.ts"]);
+    // The verified absence claim and the plain judgment blocker both keep blocker authority.
+    expect(out.blockers).toEqual(["Missing import of parseId breaks src/b.ts", "Plain judgment blocker stays"]);
+    expect(out.nits.some((nit: string) => nit.startsWith("Verify: Hallucinated missing guard"))).toBe(true);
+  });
+
+  it("#8833 (verifiable blockers): the leading diff marker is stripped before matching, and vacuous quotes never verify", async () => {
+    const { demoteUnverifiedAbsenceBlockers, ABSENCE_EVIDENCE_MIN_CHARS } = await import("../../src/services/ai-review");
+    const reviewWith = (evidence: string) => ({
+      assessment: "a", nits: [], suggestions: [], confidence: 1, inlineFindings: [],
+      blockers: ["Absence claim under test"],
+      absenceClaims: [{ claim: "Absence claim under test", evidence }],
+    }) as never;
+    // The prompt shows the line WITHOUT the +; a model that copied it WITH the marker still verifies.
+    const prompt = "  const id = parseId(raw);";
+    expect(demoteUnverifiedAbsenceBlockers(reviewWith("+  const id = parseId(raw);"), prompt).demoted).toEqual([]);
+    // Sub-minimum quotes (\") {\", \"x\") appear in virtually any diff — they must never verify vacuously.
+    expect(ABSENCE_EVIDENCE_MIN_CHARS).toBeGreaterThan(4);
+    expect(demoteUnverifiedAbsenceBlockers(reviewWith(") {"), `x) {x`).demoted).toEqual(["Absence claim under test"]);
+    expect(demoteUnverifiedAbsenceBlockers(reviewWith(""), prompt).demoted).toEqual(["Absence claim under test"]);
+    // No absence claims at all: same object back, zero-allocation, exactly like every sibling demotion.
+    const plain = { assessment: "a", nits: [], suggestions: [], confidence: 1, inlineFindings: [], blockers: ["b"] } as never;
+    expect(demoteUnverifiedAbsenceBlockers(plain, prompt).review).toBe(plain);
+  });
+
+  it("#8833 (verifiable blockers): the rubric demands the object form for absence claims and names the mechanical check", async () => {
+    const { REVIEW_SYSTEM_PROMPT } = await import("../../src/services/ai-review");
+    expect(REVIEW_SYSTEM_PROMPT).toContain("ABSENCE CLAIMS ARE VERIFIED MECHANICALLY");
+    expect(REVIEW_SYSTEM_PROMPT).toContain("missing_symbol | missing_import | missing_guard | missing_handling | missing_registration");
+    expect(REVIEW_SYSTEM_PROMPT).toContain("copied VERBATIM");
   });
 
   it("#8833: the rubric names the full deterministic-fact family — CI, size, staleness, conflicts — as never-blockers", async () => {

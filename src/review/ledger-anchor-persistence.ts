@@ -165,3 +165,28 @@ export async function loadLastLedgerAnchorAttempt(env: Env): Promise<{ seq: numb
   }>();
   return row == null ? null : row;
 }
+
+/**
+ * #9489: does the CURRENT tip still lack a successful anchor?
+ *
+ * {@link loadLastLedgerAnchorAttempt} deliberately returns the newest attempt regardless of status, so the
+ * scheduler advances to newer tips rather than hammering a stale checkpoint. But that made a failed attempt at
+ * a QUIET tip unrecoverable: Rekor 429s at seq N, the ledger goes quiet (a weekend), every hourly tick then
+ * sees `tipUnchanged` and returns "unchanged" -- so the tip carries NO valid external anchor indefinitely,
+ * which is precisely the unanchored window the feature exists to bound.
+ *
+ * It is also backend-blind: git succeeding at seq N masked rekor failing at the same seq, because the newest
+ * attempt row won regardless of which backend wrote it. Asking per-backend "is there an OK row for this exact
+ * rowHash" answers both.
+ */
+export async function anchorBackendsMissingForRowHash(env: Env, rowHash: string, backends: readonly string[]): Promise<string[]> {
+  if (backends.length === 0) return [];
+  const placeholders = backends.map((_, index) => `?${index + 2}`).join(", ");
+  const { results } = await env.DB.prepare(
+    `SELECT DISTINCT backend FROM decision_ledger_anchors WHERE row_hash = ?1 AND status = 'ok' AND backend IN (${placeholders})`,
+  )
+    .bind(rowHash, ...backends)
+    .all<{ backend: string }>();
+  const anchored = new Set(results.map((row) => row.backend));
+  return backends.filter((backend) => !anchored.has(backend));
+}

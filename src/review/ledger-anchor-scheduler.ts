@@ -5,7 +5,7 @@
 import { errorMessage, nowIso } from "../utils/json";
 import { buildLedgerAnchorPayload, currentAnchorKey, parseAnchorPublicKeys, signLedgerAnchorPayload, type SignedLedgerAnchor } from "./ledger-anchor";
 import { loadDecisionLedgerTip } from "./decision-record";
-import { loadLastLedgerAnchorAttempt, recordLedgerAnchorAttempt, type LedgerAnchorBackend } from "./ledger-anchor-persistence";
+import { anchorBackendsMissingForRowHash, loadLastLedgerAnchorAttempt, recordLedgerAnchorAttempt, type LedgerAnchorBackend } from "./ledger-anchor-persistence";
 import { submitToRekor } from "./ledger-anchor-rekor";
 import type { LedgerAnchorGitTarget } from "./ledger-anchor-git";
 
@@ -15,7 +15,7 @@ export const LEDGER_ANCHOR_SEQ_THRESHOLD = 256;
 
 export type LedgerAnchorScheduleDecision =
   | { shouldAnchor: false; reason: "empty_ledger" | "unchanged" }
-  | { shouldAnchor: true; reason: "hourly" | "seq_threshold" };
+  | { shouldAnchor: true; reason: "hourly" | "seq_threshold" | "retry_unanchored" };
 
 /**
  * Pure scheduling decision: given the live tip and the last attempt (regardless of that attempt's own
@@ -30,6 +30,9 @@ export function decideLedgerAnchorSchedule(input: {
   currentTip: { seq: number; rowHash: string };
   lastAnchor: { seq: number; rowHash: string } | null;
   seqThreshold: number;
+  /** #9489: backends with NO successful anchor for the current tip's rowHash. Non-empty means the tip is
+   *  unanchored on at least one backend even though nothing has moved, so an hourly tick should retry. */
+  unanchoredBackends?: readonly string[] | undefined;
 }): LedgerAnchorScheduleDecision {
   if (input.currentTip.seq === 0) return { shouldAnchor: false, reason: "empty_ledger" };
 
@@ -38,6 +41,13 @@ export function decideLedgerAnchorSchedule(input: {
 
   const tipUnchanged = input.lastAnchor !== null && input.lastAnchor.rowHash === input.currentTip.rowHash;
   if (input.isHourly && !tipUnchanged) return { shouldAnchor: true, reason: "hourly" };
+  // #9489: an unchanged tip is only "nothing to do" if it is actually ANCHORED. The previous check compared
+  // against the newest ATTEMPT regardless of status, so a failure at a quiet tip was never retried -- Rekor
+  // 429s at seq N, the ledger goes quiet, and every later tick reports "unchanged" while the tip carries no
+  // valid external anchor at all. Retrying on the hourly tick gives it a bounded, self-healing cadence.
+  if (input.isHourly && tipUnchanged && input.unanchoredBackends && input.unanchoredBackends.length > 0) {
+    return { shouldAnchor: true, reason: "retry_unanchored" };
+  }
 
   return { shouldAnchor: false, reason: "unchanged" };
 }
@@ -75,10 +85,25 @@ export type LedgerAnchorSchedulerDeps = {
  * a total anchoring failure cannot propagate anywhere. Returns the scheduling decision so a caller/test can
  * observe WHY nothing happened, without needing a second query.
  */
+/** #9489: the backends whose success actually matters for "is this tip anchored". `ots` is tracked-but-not-
+ *  built (#9267), so requiring it would make every tip permanently unanchored. */
+const ANCHOR_BACKENDS_REQUIRING_SUCCESS = ["rekor", "git"] as const;
+
 export async function runScheduledLedgerAnchor(env: Env, options: { isHourly: boolean; now?: string }, deps: LedgerAnchorSchedulerDeps = {}): Promise<LedgerAnchorScheduleDecision> {
   const now = options.now ?? nowIso();
   const [tip, lastAnchor] = await Promise.all([loadDecisionLedgerTip(env), loadLastLedgerAnchorAttempt(env)]);
-  const decision = decideLedgerAnchorSchedule({ isHourly: options.isHourly, currentTip: tip, lastAnchor, seqThreshold: LEDGER_ANCHOR_SEQ_THRESHOLD });
+  // #9489: which backends still have NO successful anchor for this exact tip. An unchanged tip is only
+  // "nothing to do" when it is genuinely anchored -- otherwise a failure at a quiet tip is never retried, and
+  // a success on one backend masks a failure on the other, since the newest-attempt row wins regardless of
+  // which backend wrote it.
+  const unanchoredBackends = await anchorBackendsMissingForRowHash(env, tip.rowHash, ANCHOR_BACKENDS_REQUIRING_SUCCESS).catch(() => []);
+  const decision = decideLedgerAnchorSchedule({
+    isHourly: options.isHourly,
+    currentTip: tip,
+    lastAnchor,
+    seqThreshold: LEDGER_ANCHOR_SEQ_THRESHOLD,
+    unanchoredBackends,
+  });
   if (!decision.shouldAnchor) return decision;
 
   const keys = parseAnchorPublicKeys(env.LOOPOVER_LEDGER_ANCHOR_KEYS);

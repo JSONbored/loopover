@@ -64,7 +64,19 @@ export async function submitToGitAnchor(env: Env, signed: SignedLedgerAnchor, oc
     let existingContent = "";
     try {
       const response = await octokit.request("GET /repos/{owner}/{repo}/contents/{path}", { owner, repo, path, ref: branch });
-      const data = response.data as { content?: string; sha?: string };
+      const data = response.data as { content?: string; sha?: string; size?: number; encoding?: string };
+      // #9489: for a file between 1 MB and 100 MB the Contents API returns `content: ""` with
+      // `encoding: "none"` -- and `typeof "" === "string"`, so the old code accepted it as the file's real
+      // contents and the PUT below REWROTE the whole log to a single line. At ~300 bytes per line and an
+      // hourly cadence that lands roughly 4-5 months out. Git history would still hold the truncated commits,
+      // but the file a skeptic is told to read shrinks -- indistinguishable from the tampering this module's
+      // own header teaches them to look for. Refuse rather than silently truncate: an operator rotating the
+      // file is a deliberate act, and an unanchored tip is loudly visible on the public attempt log (#9271).
+      if (data.encoding === "none" || (data.content === "" && (data.size ?? 0) > 0)) {
+        throw new Error(
+          `anchor log ${path} is too large for the Contents API (size=${data.size ?? "unknown"} bytes); rotate the file or switch to the Git Data API before anchoring can resume`,
+        );
+      }
       if (typeof data.content === "string") existingContent = decodeBase64(data.content);
       existingSha = data.sha;
     } catch (error) {

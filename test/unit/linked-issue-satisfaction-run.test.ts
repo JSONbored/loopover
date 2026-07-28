@@ -366,6 +366,36 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
   const processorFingerprint = () =>
     linkedIssueSatisfactionCacheInputFingerprint({ byok: false, provider: null, model: null, issueText, prTitle: pr.title, prBody: pr.body, diff: buildAiReviewDiff(files) });
   const advisoryMode = { linkedIssueSatisfactionGateMode: "advisory", aiReviewByok: false } as RepositorySettings;
+
+  // #9491: the #9399 sibling-drift class again. This advisory is one of three paid LLM calls in the same family,
+  // and the other two already stop spending past a per-PR reviewed-commit cap -- ai_slop via slop-detection's
+  // `commitThresholdReached`, ai_review via the focus manifest's auto_pause_after_reviewed_commits. This one had
+  // NO cap, so a long-lived PR kept paying for a fresh assessment on every push after its siblings had stopped.
+  describe("commit-threshold cap parity (#9491)", () => {
+    it("REGRESSION: stops spending once the per-PR commit threshold is reached", async () => {
+      const run = vi.fn();
+      const result = await runLinkedIssueSatisfactionForAdvisory(enabledEnv(run), {
+        mode: "live",
+        settings: advisoryMode,
+        advisory: advisory(),
+        repoFullName: "acme/widgets",
+        pr,
+        author: "alice",
+        files,
+        confirmedContributor: true,
+        installationId: 1,
+        commitThresholdReached: true,
+      });
+
+      expect(result).toBeNull();
+      expect(run).not.toHaveBeenCalled(); // the whole point: no LLM call is paid for
+    });
+
+    // The below-threshold path is covered by every other test in this suite, which all pass
+    // commitThresholdReached: false and assert the assessment runs -- so the cap does not disable the feature.
+
+  });
+
   const blockMode = { linkedIssueSatisfactionGateMode: "block", aiReviewByok: false } as RepositorySettings;
 
   function stubFetch(handler: (url: string) => Response | Promise<Response>): void {
@@ -384,7 +414,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
     stubIssueFetch();
     const run = vi.fn();
     const adv = advisory();
-    const result = await runLinkedIssueSatisfactionForAdvisory(enabledEnv(run), { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "mallory", files, confirmedContributor: false, installationId: 1 });
+    const result = await runLinkedIssueSatisfactionForAdvisory(enabledEnv(run), { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "mallory", files, confirmedContributor: false, installationId: 1, commitThresholdReached: false });
     expect(result).toBeNull();
     expect(run).not.toHaveBeenCalled();
     expect(adv.findings).toEqual([]);
@@ -394,7 +424,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
     stubIssueFetch();
     const run = vi.fn();
     const adv = advisory();
-    const result = await runLinkedIssueSatisfactionForAdvisory(enabledEnv(run), { mode: "paused", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+    const result = await runLinkedIssueSatisfactionForAdvisory(enabledEnv(run), { mode: "paused", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false });
     expect(result).toBeNull();
     expect(run).not.toHaveBeenCalled();
   });
@@ -404,7 +434,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
     const noSha = advisory();
     delete (noSha as Partial<Advisory>).headSha;
     const run = vi.fn();
-    const result = await runLinkedIssueSatisfactionForAdvisory(enabledEnv(run), { mode: "live", settings: advisoryMode, advisory: noSha, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+    const result = await runLinkedIssueSatisfactionForAdvisory(enabledEnv(run), { mode: "live", settings: advisoryMode, advisory: noSha, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false });
     expect(result).toBeNull();
     expect(run).not.toHaveBeenCalled();
   });
@@ -414,7 +444,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
     const env = enabledEnv(run);
     vi.stubGlobal("fetch", vi.fn());
     const adv = advisory();
-    const result = await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr: { ...pr, linkedIssues: [] }, author: "alice", files, confirmedContributor: true, installationId: 1 });
+    const result = await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr: { ...pr, linkedIssues: [] }, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false });
     expect(result).toBeNull();
     expect(run).not.toHaveBeenCalled();
   });
@@ -423,7 +453,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
     stubIssueFetch();
     const run = vi.fn(async () => ({ response: satisfactionJson({ status: "addressed" }) }));
     const adv = advisory();
-    const result = await runLinkedIssueSatisfactionForAdvisory(enabledEnv(run), { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+    const result = await runLinkedIssueSatisfactionForAdvisory(enabledEnv(run), { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false });
     expect(result).toMatchObject({ status: "addressed" });
   });
 
@@ -432,7 +462,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
     const run = vi.fn(async () => ({ response: satisfactionJson({ status: "addressed" }) }));
     const adv = advisory();
     const { body: _omit, ...prWithoutBody } = pr;
-    const result = await runLinkedIssueSatisfactionForAdvisory(enabledEnv(run), { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr: prWithoutBody, author: "alice", files, confirmedContributor: true, installationId: 1 });
+    const result = await runLinkedIssueSatisfactionForAdvisory(enabledEnv(run), { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr: prWithoutBody, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false });
     expect(result).toMatchObject({ status: "addressed" });
     expect(run).toHaveBeenCalledTimes(1);
   });
@@ -441,7 +471,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
     stubFetch((url) => (url.includes("/access_tokens") ? Response.json({ token: "t" }) : new Response("missing", { status: 404 })));
     const run = vi.fn();
     const adv = advisory();
-    const result = await runLinkedIssueSatisfactionForAdvisory(enabledEnv(run), { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+    const result = await runLinkedIssueSatisfactionForAdvisory(enabledEnv(run), { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false });
     expect(result).toBeNull();
     expect(run).not.toHaveBeenCalled();
   });
@@ -450,7 +480,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
     stubIssueFetch({ title: "", body: "" });
     const run = vi.fn();
     const adv = advisory();
-    const result = await runLinkedIssueSatisfactionForAdvisory(enabledEnv(run), { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+    const result = await runLinkedIssueSatisfactionForAdvisory(enabledEnv(run), { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false });
     expect(result).toBeNull();
     expect(run).not.toHaveBeenCalled();
   });
@@ -460,7 +490,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
     const env = { ...enabledEnv(async () => ({ response: satisfactionJson() })), DB: undefined } as unknown as Env;
     const adv = advisory();
     await expect(
-      runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 }),
+      runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false }),
     ).resolves.toBeNull();
     expect(adv.findings).toEqual([]);
   });
@@ -470,7 +500,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
       stubIssueFetch();
       const run = vi.fn(async () => ({ response: satisfactionJson({ status: "unaddressed", confidence: 0.9, rationale: "The linked issue asks for an SSE stream; this PR adds an unrelated REST endpoint." }) }));
       const adv = advisory();
-      const result = await runLinkedIssueSatisfactionForAdvisory(enabledEnv(run), { mode: "live", settings: blockMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+      const result = await runLinkedIssueSatisfactionForAdvisory(enabledEnv(run), { mode: "live", settings: blockMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false });
 
       expect(result).toMatchObject({ status: "unaddressed" });
       expect(adv.findings).toHaveLength(1);
@@ -485,7 +515,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
       stubIssueFetch();
       const run = vi.fn(async () => ({ response: satisfactionJson({ status: "unaddressed", confidence: 0.9 }) }));
       const adv = advisory();
-      const result = await runLinkedIssueSatisfactionForAdvisory(enabledEnv(run), { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+      const result = await runLinkedIssueSatisfactionForAdvisory(enabledEnv(run), { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false });
 
       expect(result).toMatchObject({ status: "unaddressed" });
       expect(adv.findings).toEqual([]); // advisory mode never restates the gap as a generic finding/Nit
@@ -499,7 +529,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
       stubIssueFetch();
       const run = vi.fn(async () => ({ response: satisfactionJson({ status: "unaddressed", confidence: 0.9 }) }));
       const env = enabledEnv(run);
-      await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: blockMode, advisory: advisory(), repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+      await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: blockMode, advisory: advisory(), repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false });
 
       const history = await createSignalStore(env).queryRuleHistory("linked_issue_scope_mismatch", 0);
       expect(history.fired).toHaveLength(1);
@@ -519,7 +549,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
       const env = enabledEnv(run);
       const longBody = "x".repeat(MAX_BODY_CHARS + 500);
       const longBodyPr = { ...pr, body: longBody };
-      await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: blockMode, advisory: advisory(), repoFullName: "acme/widgets", pr: longBodyPr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+      await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: blockMode, advisory: advisory(), repoFullName: "acme/widgets", pr: longBodyPr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false });
 
       const history = await createSignalStore(env).queryRuleHistory("linked_issue_scope_mismatch", 0);
       expect(history.fired).toHaveLength(1);
@@ -544,7 +574,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
       const modelJson = satisfactionJson({ status: "unaddressed", confidence: 0.9, rationale: "x".repeat(MAX_MODEL_RESPONSE_CHARS + 500) });
       const run = vi.fn(async () => ({ response: modelJson }));
       const env = enabledEnv(run);
-      await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: blockMode, advisory: advisory(), repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+      await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: blockMode, advisory: advisory(), repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false });
 
       const history = await createSignalStore(env).queryRuleHistory("linked_issue_scope_mismatch", 0);
       const metadata = history.fired[0]?.metadata as Record<string, string>;
@@ -557,7 +587,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
       const run = vi.fn(async () => ({ response: satisfactionJson({ status: "unaddressed", confidence: 0.9 }) }));
       const env = enabledEnv(run);
       const bodylessPr = { ...pr, body: null as unknown as string };
-      await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: blockMode, advisory: advisory(), repoFullName: "acme/widgets", pr: bodylessPr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+      await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: blockMode, advisory: advisory(), repoFullName: "acme/widgets", pr: bodylessPr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false });
 
       const history = await createSignalStore(env).queryRuleHistory("linked_issue_scope_mismatch", 0);
       expect((history.fired[0]?.metadata as Record<string, string>).prBody).toBe("");
@@ -567,7 +597,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
       stubIssueFetch();
       const run = vi.fn(async () => ({ response: satisfactionJson({ status: "unaddressed", confidence: 0.9 }) }));
       const env = enabledEnv(run);
-      await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: advisoryMode, advisory: advisory(), repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+      await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: advisoryMode, advisory: advisory(), repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false });
       expect((await createSignalStore(env).queryRuleHistory("linked_issue_scope_mismatch", 0)).fired).toEqual([]);
     });
 
@@ -576,7 +606,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
         stubIssueFetch();
         const run = vi.fn(async () => ({ response: satisfactionJson({ status }) }));
         const env = enabledEnv(run);
-        await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: blockMode, advisory: advisory(), repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+        await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: blockMode, advisory: advisory(), repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false });
         expect((await createSignalStore(env).queryRuleHistory("linked_issue_scope_mismatch", 0)).fired).toEqual([]);
       }
     });
@@ -592,7 +622,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
       });
       const run = vi.fn(async () => ({ response: satisfactionJson({ status: "unaddressed", confidence: 0.9 }) }));
       const adv = advisory();
-      const result = await runLinkedIssueSatisfactionForAdvisory(enabledEnv(run), { mode: "live", settings: blockMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+      const result = await runLinkedIssueSatisfactionForAdvisory(enabledEnv(run), { mode: "live", settings: blockMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false });
       expect(result).toMatchObject({ status: "unaddressed" }); // normal return value unaffected
       expect(adv.findings).toHaveLength(1); // the blocker still lands
     });
@@ -601,7 +631,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
       stubIssueFetch();
       const run = vi.fn(async () => ({ response: satisfactionJson({ status: "partial" }) }));
       const adv = advisory();
-      const result = await runLinkedIssueSatisfactionForAdvisory(enabledEnv(run), { mode: "live", settings: blockMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+      const result = await runLinkedIssueSatisfactionForAdvisory(enabledEnv(run), { mode: "live", settings: blockMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false });
       expect(result).toMatchObject({ status: "partial" });
       expect(adv.findings).toEqual([]);
       const gate = evaluateGateCheck(adv, { linkedIssueSatisfactionGateMode: "block" });
@@ -612,7 +642,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
       stubIssueFetch();
       const run = vi.fn(async () => ({ response: satisfactionJson({ status: "unaddressed", confidence: 0.1 }) }));
       const adv = advisory();
-      const result = await runLinkedIssueSatisfactionForAdvisory(enabledEnv(run), { mode: "live", settings: blockMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+      const result = await runLinkedIssueSatisfactionForAdvisory(enabledEnv(run), { mode: "live", settings: blockMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false });
       expect(result).toBeNull();
       expect(adv.findings).toEqual([]);
       const gate = evaluateGateCheck(adv, { linkedIssueSatisfactionGateMode: "block" });
@@ -638,7 +668,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
         return new Response("not found", { status: 404 });
       });
       const adv = advisory();
-      const result = await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: { linkedIssueSatisfactionGateMode: "advisory", aiReviewByok: true } as RepositorySettings, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+      const result = await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: { linkedIssueSatisfactionGateMode: "advisory", aiReviewByok: true } as RepositorySettings, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false });
       expect(result).toMatchObject({ status: "addressed" });
       expect(workersRun).not.toHaveBeenCalled();
     });
@@ -670,6 +700,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
         files,
         confirmedContributor: true,
         installationId: 1,
+        commitThresholdReached: false,
       });
       expect(result).toMatchObject({ status: "addressed" });
       expect(workersRun).not.toHaveBeenCalled();
@@ -704,6 +735,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
         files,
         confirmedContributor: true,
         installationId: 1,
+        commitThresholdReached: false,
       });
       expect(result).toMatchObject({ status: "partial" });
       expect(workersRun).toHaveBeenCalled();
@@ -723,7 +755,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
         estimatedNeurons: 12,
       });
       const adv = advisory();
-      const result = await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+      const result = await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false });
       expect(run).not.toHaveBeenCalled();
       expect(result).toEqual({ status: "addressed", rationale: "cached: looks done" });
     });
@@ -741,7 +773,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
       const repositoriesModule = await import("../../src/db/repositories");
       const auditSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockRejectedValueOnce(new Error("D1 audit write error"));
       const adv = advisory();
-      const result = await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+      const result = await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false });
       expect(run).not.toHaveBeenCalled(); // still a cache hit despite the audit-write failure
       expect(result).toEqual({ status: "addressed", rationale: "cached: looks done" });
       auditSpy.mockRestore();
@@ -759,7 +791,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
       });
       const adv = advisory();
       await expect(
-        runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 }),
+        runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false }),
       ).resolves.toMatchObject({ status: "addressed" }); // never throws, even with both the cache write AND its own audit write failing
       writeSpy.mockRestore();
       auditSpy.mockRestore();
@@ -770,7 +802,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
       const run = vi.fn(async () => ({ response: satisfactionJson({ status: "addressed" }) }));
       const env = enabledEnv(run);
       const adv = advisory();
-      await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+      await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false });
       expect(run).toHaveBeenCalledTimes(1);
 
       const fingerprint = await processorFingerprint();
@@ -778,7 +810,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
       expect(cached).toMatchObject({ status: "ok", result: { status: "addressed" } });
 
       const adv2 = advisory();
-      await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: advisoryMode, advisory: adv2, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+      await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: advisoryMode, advisory: adv2, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false });
       expect(run).toHaveBeenCalledTimes(1); // still 1 — second pass was a cache hit
     });
 
@@ -788,7 +820,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
       const env = enabledEnv(run);
       const adv = advisory();
       await expect(
-        runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: blockMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 }),
+        runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: blockMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false }),
       ).resolves.toMatchObject({ status: "addressed" });
 
       stubIssueFetch({ body: "We now need a GraphQL subscription instead of an SSE stream." });
@@ -796,7 +828,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
       const changedAdvisory = advisory();
       const changedPr = { ...pr, title: "Add SSE endpoint for the old issue", body: "Still only implements SSE." };
       await expect(
-        runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: blockMode, advisory: changedAdvisory, repoFullName: "acme/widgets", pr: changedPr, author: "alice", files, confirmedContributor: true, installationId: 1 }),
+        runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: blockMode, advisory: changedAdvisory, repoFullName: "acme/widgets", pr: changedPr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false }),
       ).resolves.toMatchObject({ status: "unaddressed" });
 
       expect(run).toHaveBeenCalledTimes(2);
@@ -814,7 +846,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
         estimatedNeurons: 5,
       });
       const adv = advisory();
-      const result = await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+      const result = await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false });
       // pr.linkedIssues is [1275] here, not 999 — must be a fresh call, not the stale row for issue #999.
       expect(run).toHaveBeenCalledTimes(1);
       expect(result).toMatchObject({ status: "addressed" });
@@ -825,12 +857,12 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
       const run = vi.fn(async () => ({ response: satisfactionJson({ status: "addressed" }) }));
       const budgetedEnv = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "1" });
       const adv = advisory();
-      await runLinkedIssueSatisfactionForAdvisory(budgetedEnv, { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+      await runLinkedIssueSatisfactionForAdvisory(budgetedEnv, { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false });
       expect(run).not.toHaveBeenCalled();
 
       const richEnv = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "100000" });
       const adv2 = advisory();
-      await runLinkedIssueSatisfactionForAdvisory(richEnv, { mode: "live", settings: advisoryMode, advisory: adv2, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+      await runLinkedIssueSatisfactionForAdvisory(richEnv, { mode: "live", settings: advisoryMode, advisory: adv2, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false });
       expect(run).toHaveBeenCalledTimes(1);
     });
 
@@ -841,7 +873,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
       const repositoriesModule = await import("../../src/db/repositories");
       const readSpy = vi.spyOn(repositoriesModule, "getCachedLinkedIssueSatisfaction").mockRejectedValueOnce(new Error("D1 read error"));
       const adv = advisory();
-      const result = await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+      const result = await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false });
       expect(run).toHaveBeenCalledTimes(1);
       expect(result).toMatchObject({ status: "addressed" });
       readSpy.mockRestore();
@@ -854,7 +886,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
       const repositoriesModule = await import("../../src/db/repositories");
       const writeSpy = vi.spyOn(repositoriesModule, "putCachedLinkedIssueSatisfaction").mockRejectedValueOnce(new Error("D1 write error"));
       const adv = advisory();
-      const result = await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+      const result = await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1, commitThresholdReached: false });
       expect(result).toMatchObject({ status: "addressed" });
       writeSpy.mockRestore();
 

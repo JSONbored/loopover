@@ -209,3 +209,51 @@ describe("runScheduledLedgerAnchor (#9274)", () => {
     expect(anchors[0]).toMatchObject({ status: "ok" });
   });
 });
+
+// #9489: loadLastLedgerAnchorAttempt deliberately returns the newest attempt REGARDLESS of status, so the
+// scheduler advances to newer tips rather than hammering a stale checkpoint. But that made a FAILURE at a
+// QUIET tip unrecoverable: Rekor 429s at seq N, the ledger goes quiet (a weekend), and every hourly tick then
+// sees tipUnchanged and returns "unchanged" -- so the tip carries NO valid external anchor indefinitely, which
+// is exactly the unanchored window this feature exists to bound. It was also backend-blind: git succeeding at
+// seq N masked rekor failing at the same seq, because the newest row won regardless of which backend wrote it.
+describe("retrying an unanchored tip (#9489)", () => {
+  const tip = { seq: 5, rowHash: "hash-5" };
+  const sameTipAnchor = { seq: 5, rowHash: "hash-5" };
+
+  it("REGRESSION: an hourly tick RETRIES an unchanged tip that no backend has successfully anchored", () => {
+    expect(
+      decideLedgerAnchorSchedule({ isHourly: true, currentTip: tip, lastAnchor: sameTipAnchor, seqThreshold: 100, unanchoredBackends: ["rekor"] }),
+    ).toEqual({ shouldAnchor: true, reason: "retry_unanchored" });
+  });
+
+  it("REGRESSION: a PARTIALLY anchored tip still retries, so one backend's success cannot mask another's failure", () => {
+    expect(
+      decideLedgerAnchorSchedule({ isHourly: true, currentTip: tip, lastAnchor: sameTipAnchor, seqThreshold: 100, unanchoredBackends: ["git"] }).shouldAnchor,
+    ).toBe(true);
+  });
+
+  it("INVARIANT: a fully anchored unchanged tip stays quiet -- no re-anchoring churn", () => {
+    expect(
+      decideLedgerAnchorSchedule({ isHourly: true, currentTip: tip, lastAnchor: sameTipAnchor, seqThreshold: 100, unanchoredBackends: [] }),
+    ).toEqual({ shouldAnchor: false, reason: "unchanged" });
+  });
+
+  it("INVARIANT: an unanchored tip does NOT force a non-hourly tick to anchor", () => {
+    // The retry rides the hourly cadence rather than firing on every tick, which is what bounds the backoff.
+    expect(
+      decideLedgerAnchorSchedule({ isHourly: false, currentTip: tip, lastAnchor: sameTipAnchor, seqThreshold: 100, unanchoredBackends: ["rekor"] }),
+    ).toEqual({ shouldAnchor: false, reason: "unchanged" });
+  });
+
+  it("INVARIANT: an empty ledger is still never anchored, whatever the backend state says", () => {
+    expect(
+      decideLedgerAnchorSchedule({ isHourly: true, currentTip: { seq: 0, rowHash: "genesis" }, lastAnchor: null, seqThreshold: 100, unanchoredBackends: ["rekor", "git"] }),
+    ).toEqual({ shouldAnchor: false, reason: "empty_ledger" });
+  });
+
+  it("INVARIANT: omitting unanchoredBackends preserves the pre-#9489 behaviour exactly", () => {
+    expect(
+      decideLedgerAnchorSchedule({ isHourly: true, currentTip: tip, lastAnchor: sameTipAnchor, seqThreshold: 100 }),
+    ).toEqual({ shouldAnchor: false, reason: "unchanged" });
+  });
+});

@@ -41,7 +41,7 @@
   ],
   "scripts": {
     "build": "npm run build:tsc && npm run build:verify",
-    "build:tsc": "tsc -p tsconfig.json && node --experimental-strip-types scripts/strip-bin-sourcemap.ts",
+    "build:tsc": "node -e \"require('node:fs').rmSync('.tsbuildinfo',{force:true})\" && tsc -p tsconfig.json && node --experimental-strip-types scripts/strip-bin-sourcemap.ts",
     "build:verify": "node --experimental-strip-types scripts/check-syntax.ts"
   },
   "dependencies": {

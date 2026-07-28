@@ -66,7 +66,7 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "node -e \"require('node:fs').rmSync('.tsbuildinfo',{force:true})\" && tsc -p tsconfig.json"
   },
   "dependencies": {
     "zod": "^4.4.3"

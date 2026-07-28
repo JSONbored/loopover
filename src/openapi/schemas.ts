@@ -149,12 +149,20 @@ export const PublicStatsSchema = z
       closePrecisionPct: z.number().nullable(),
       closePrecisionCiPct: z.object({ lo: z.number(), hi: z.number() }).nullable(),
       coveragePct: z.number().nullable(),
-      decidedCount: z.number(),
+      // #9168: nullable because the pooled COUNT is withheld at 1 < instanceCount < FLEET_FRAMING_MIN_INSTANCES
+      // — at exactly two instances it isolates the other participant's decision volume by subtraction, since
+      // this deployment's own volume is already public. Rates stay published at every n.
+      decidedCount: z.number().nullable(),
       guaranteed: z.object({
         close: z.object({ alpha: z.number(), lambda: z.number(), aiJudgedCoveragePct: z.number(), n: z.number(), backfilledPct: z.number().nullable() }).nullable(),
         merge: z.object({ alpha: z.number(), lambda: z.number(), aiJudgedCoveragePct: z.number(), n: z.number(), backfilledPct: z.number().nullable() }).nullable(),
       }),
       instanceCount: z.number(),
+      // #9168: whether these figures are a fleet aggregate or one operator's self-report. Below
+      // FLEET_FRAMING_MIN_INSTANCES a median is not robust to a single bad contributor and the anti-farming
+      // detector cannot fire, so "fleet" would overclaim — the numbers are real either way, the label is what
+      // stops a reader treating one party's self-report as corroboration of that party's own guarantee.
+      basis: z.enum(["fleet", "single_instance_self_report"]),
       windowDays: z.number(),
       gamingFlagsCaught: z.number().nullable(),
     }),

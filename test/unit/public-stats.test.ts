@@ -217,6 +217,10 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
       coveragePct: null,
       decidedCount: 0,
       instanceCount: 0,
+      // #9168: zero registered instances is not a fleet, so the block never claims to be one. Note this is
+      // NOT the k-anonymity case -- decidedCount stays 0 (a real, non-identifying figure) because at n<=1
+      // there is no second participant whose volume subtraction could isolate.
+      basis: "single_instance_self_report",
       windowDays: 90,
       gamingFlagsCaught: null, // #9068: fewer than GAMING_MIN_ELIGIBLE eligible instances -- detector didn't run
       guaranteed: { close: null, merge: null },
@@ -482,6 +486,75 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     expect(out.totals.merged).toBe(1);
     expect(out.totals.reversed).toBe(1);
     expect(out.totals.accuracyPct).toBe(0); // 1 - 1/1
+  });
+
+  // #9168: the block is published under "fleet" framing next to a risk-control guarantee calibrated by the
+  // same instance, which invites a reader to read one party's self-report as two independent sources. The
+  // numbers are real and stay published; `basis` is what stops the overclaim, and the pooled COUNT is
+  // withheld in the one window where it isolates another participant.
+  describe("fleetAccuracy basis and pooled-count k-anonymity (#9168)", () => {
+    /** N registered instances, each with `per` confirmed merge verdicts (well clear of MIN_DECIDED). */
+    async function fleetOf(env: Env, instanceIds: string[], per = 8): Promise<void> {
+      for (const id of instanceIds) {
+        await env.DB.prepare("INSERT INTO orb_instances (instance_id, registered) VALUES (?, 1)").bind(id).run();
+        for (let i = 0; i < per; i += 1) {
+          await env.DB
+            .prepare(
+              `INSERT INTO orb_signals (instance_id, repo_hash, pr_hash, gate_verdict, outcome, reversal_flag)
+               VALUES (?, ?, ?, 'merge', 'merged', 'none')`,
+            )
+            .bind(id, "repo-hash", `${id}-pr-${i}`)
+            .run();
+        }
+      }
+    }
+
+    it("REGRESSION: at one instance it is labelled a self-report, NOT a fleet — the shape live in production", async () => {
+      const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "" });
+      await fleetOf(env, ["inst-1"]);
+      const out = await getPublicStats(env, NOW);
+      expect(out.fleetAccuracy.instanceCount).toBe(1);
+      expect(out.fleetAccuracy.basis).toBe("single_instance_self_report");
+      // The count is NOT withheld at n=1: the pooled sum IS this deployment's own volume, which is already
+      // public via byProject, so there is no second party for subtraction to isolate.
+      expect(out.fleetAccuracy.decidedCount).toBe(8);
+      expect(out.fleetAccuracy.mergePrecisionPct).toBe(100);
+    });
+
+    it("REGRESSION: at exactly two instances the pooled COUNT is withheld — it isolates the other party by subtraction", async () => {
+      const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "" });
+      await fleetOf(env, ["inst-1", "inst-2"]);
+      const out = await getPublicStats(env, NOW);
+      expect(out.fleetAccuracy.instanceCount).toBe(2);
+      expect(out.fleetAccuracy.basis).toBe("single_instance_self_report");
+      // The whole point: our own volume is public, so `pooled - ours` would hand a reader the other
+      // instance's decision volume exactly — a hosted tenant's business metric, not ours to publish.
+      expect(out.fleetAccuracy.decidedCount).toBeNull();
+      // RATES stay published at every n: a proportion carries no volume.
+      expect(out.fleetAccuracy.mergePrecisionPct).toBe(100);
+      expect(out.fleetAccuracy.accuracyPct).toBe(100);
+    });
+
+    it("at three instances it is a genuine fleet: framing, pooled count, and the gaming detector all switch on together", async () => {
+      const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "" });
+      await fleetOf(env, ["inst-1", "inst-2", "inst-3"]);
+      const out = await getPublicStats(env, NOW);
+      expect(out.fleetAccuracy.instanceCount).toBe(3);
+      expect(out.fleetAccuracy.basis).toBe("fleet");
+      // Restored once the sum no longer isolates any single participant.
+      expect(out.fleetAccuracy.decidedCount).toBe(24);
+      // #9068's detector shares the same floor, so a "fleet" label always comes with a real (0, not null)
+      // gaming count -- a reader never sees fleet framing next to "the detector could not run".
+      expect(out.fleetAccuracy.gamingFlagsCaught).toBe(0);
+    });
+
+    it("INVARIANT: an empty fleet is a self-report with a 0 count, never a fleet claim", async () => {
+      const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "" });
+      const out = await getPublicStats(env, NOW);
+      expect(out.fleetAccuracy.instanceCount).toBe(0);
+      expect(out.fleetAccuracy.basis).toBe("single_instance_self_report");
+      expect(out.fleetAccuracy.decidedCount).toBe(0);
+    });
   });
 
   it("REGRESSION (#fairness-analytics): the headline accuracy prefers live fleet data once a registered instance clears the volume bar", async () => {

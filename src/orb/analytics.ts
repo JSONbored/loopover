@@ -40,6 +40,13 @@ const GAMING_REVERSAL_RATIO = 0.5; // reversalRate below this fraction of the fl
 // data point" below this floor, so it does not run at all rather than publish a structurally-guaranteed zero
 // as if it were a clean bill of health.
 export const GAMING_MIN_ELIGIBLE = 3;
+// #9168: the same floor, for the same reason, applied to the FRAMING rather than the detector. Below this
+// many eligible instances a "fleet" aggregate is not one: at n=1 the pooled counts ARE the sole operator's
+// own counts, and a median of one is that one value, so the robustness the median is chosen for does no work
+// (at n=2 a median is just the mean of two). Publishing those numbers under fleet framing invites a reader to
+// treat one party's self-report as independent corroboration of that same party's guarantee. The numbers stay
+// published — they are real — but `basis` says which of the two they are.
+export const FLEET_FRAMING_MIN_INSTANCES = GAMING_MIN_ELIGIBLE;
 // #9068: an instance's reversalRate is a fraction of ALL its decided signals, so a genuinely well-run fleet
 // commonly has a fleet-median reversalRate of exactly 0 — `reversalRate < 0 * GAMING_REVERSAL_RATIO` can never
 // be true, so the "low reversal" conjunct (and therefore the whole flag) was structurally unfireable whenever
@@ -149,6 +156,12 @@ export interface FleetAnalytics {
    *  run yet" — this disambiguates, so a public surface can publish null ("not enough instances to compare")
    *  instead of a structurally-guaranteed zero presented as a positive safety signal. */
   gamingDetectionEligible: boolean;
+  /** #9168: whether there are enough eligible instances for "fleet" to mean anything
+   *  (eligible.length >= FLEET_FRAMING_MIN_INSTANCES). Separate from the numbers themselves, which stay
+   *  published either way — this says whether they are a fleet aggregate or one operator's self-report, so a
+   *  public surface can label them honestly instead of letting fleet framing imply corroboration that a
+   *  single-instance sample cannot provide. */
+  fleetFramingEligible: boolean;
 }
 
 function median(xs: number[]): number | null {
@@ -280,6 +293,10 @@ export async function computeFleetAnalytics(env: Env, opts: { windowDays?: numbe
       outliers: [],
       gamingPatternFlags: [],
       gamingDetectionEligible: false,
+      // Fails closed with the rest of this fallback: if the fleet tables cannot be read, we certainly cannot
+      // claim a fleet aggregate. instanceCount is 0 here, so the public surface labels it a self-report and
+      // publishes the nulls it already had.
+      fleetFramingEligible: false,
     };
   }
 
@@ -292,8 +309,15 @@ export async function computeFleetAnalytics(env: Env, opts: { windowDays?: numbe
   }
   const instances = [...byInstance.entries()].map(([id, cs]) => foldInstance(id, cs)).sort((a, b) => a.instanceId.localeCompare(b.instanceId));
 
-  // Fleet = median across REGISTERED instances with enough volume (robust to a single bad contributor and
-  // to unregistered/untrusted senders — registration is the fleet's trust anchor).
+  // Fleet = median across REGISTERED instances with enough volume. Registration is the fleet's trust anchor
+  // (open ingest stores everyone's signals; a stranger cannot move calibration until a human opts them in).
+  //
+  // #9168, on the OTHER property this median is often credited with: robustness to a single bad contributor
+  // requires n >= 3, and this comment used to claim it unconditionally. At n=1 the median IS that instance's
+  // value; at n=2 it is the mean of the two, which a single bad contributor moves by half its error. The
+  // eligible count is therefore surfaced as `instanceCount` and gates both the gaming detector
+  // (GAMING_MIN_ELIGIBLE) and the published framing (FLEET_FRAMING_MIN_INSTANCES) rather than being left for
+  // a reader to infer.
   const eligible = instances.filter((i) => i.decided >= MIN_DECIDED && registered.has(i.instanceId));
   const eligibleIds = new Set(eligible.map((i) => i.instanceId));
   const cycle = cycleRows.filter((r) => eligibleIds.has(r.instance_id)).map((r) => r.ms);
@@ -375,6 +399,7 @@ export async function computeFleetAnalytics(env: Env, opts: { windowDays?: numbe
     outliers,
     gamingPatternFlags,
     gamingDetectionEligible,
+    fleetFramingEligible: eligible.length >= FLEET_FRAMING_MIN_INSTANCES,
   };
 }
 

@@ -6,6 +6,7 @@
 // -- it would otherwise make the two files circularly dependent on each other for one line of logic.
 
 import { getCachedAiSlopAdvisory, getDecryptedRepositoryAiKey, type listPullRequestFiles, putCachedAiSlopAdvisory, recordAuditEvent } from "../db/repositories";
+import { advisorySpendStopReason } from "./advisory-spend-gate";
 import { buildPullRequestAdvisory } from "../rules/advisory";
 import { buildAiReviewDiff } from "../review/review-diff";
 import { aiSlopCacheInputFingerprint } from "../review/ai-slop-cache-input";
@@ -62,15 +63,24 @@ export async function runAiSlopForAdvisory(
 ): Promise<void> {
   // Confirmed-contributor gate (matches runAiReviewForAdvisory): no AI spend — free OR BYOK — on a PR from
   // an unconfirmed author. The deterministic slop core still ran for everyone; only the AI layer is gated.
-  if (args.mode === "paused" || !args.confirmedContributor || !args.advisory.headSha) return;
-  if (args.commitThresholdReached) {
+  // Kept HERE rather than in advisorySpendStopReason: ai_review deliberately reviews some unconfirmed
+  // authors, so the author rule is per-feature by design (see that module's header).
+  if (!args.confirmedContributor) return;
+  // #9541: the universal stops (paused / no head / commit cap) now come from ONE place, so a fourth paid
+  // advisory cannot be written without them — which is exactly how #9491's missing cap happened.
+  const spendStop = advisorySpendStopReason({ mode: args.mode, headSha: args.advisory.headSha, commitThresholdReached: args.commitThresholdReached });
+  if (spendStop !== null && spendStop !== "commit_threshold_reached") return;
+  if (spendStop === "commit_threshold_reached") {
     await recordAuditEvent(env, {
       eventType: "github_app.ai_slop_auto_review_skipped",
       actor: args.author,
       targetKey: `${args.repoFullName}#${args.pr.number}`,
       outcome: "completed",
       detail: "slop advisory paused (commit threshold); this head has already been reviewed enough times",
-      metadata: { repoFullName: args.repoFullName, headSha: args.advisory.headSha },
+      /* v8 ignore next -- the `?? null` arm is unreachable by construction: advisorySpendStopReason checks
+         headSha BEFORE the commit cap, so reaching this branch proves headSha is a non-empty string. It exists
+         only because TypeScript cannot narrow through that call, and `undefined` is not a JsonValue. */
+      metadata: { repoFullName: args.repoFullName, headSha: args.advisory.headSha ?? null },
     }).catch(
       /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler */
       () => undefined,

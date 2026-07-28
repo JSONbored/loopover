@@ -86,6 +86,19 @@ describe("held-lock-registry (#8998)", () => {
     expect(heldLockCountForTest()).toBe(before + 1);
   });
 
+  it("#9468 a fail-open release (null token) never unregisters anyone — there was nothing to own", async () => {
+    // claimAiReviewLock only registers a REAL claim, so a null-token release has no entry of its own; the
+    // guard at the call site must not let it evict whatever IS registered for that key.
+    const env = createTestEnv();
+    const before = heldLockCountForTest();
+    const claim = await claimAiReviewLock(env, "acme/widgets", 11, "sha11", "block");
+    expect(heldLockCountForTest()).toBe(before + 1);
+    await releaseAiReviewLock(env, "acme/widgets", 11, "sha11", "block", null);
+    expect(heldLockCountForTest()).toBe(before + 1); // still registered — a null token releases nothing
+    await releaseAiReviewLock(env, "acme/widgets", 11, "sha11", "block", claim.ownerToken);
+    expect(heldLockCountForTest()).toBe(before);
+  });
+
   it("#9468 unregistering with the matching token still removes it (the normal path is unchanged)", async () => {
     const before = heldLockCountForTest();
     registerHeldLock("lock:i", "tok-i", async () => undefined);

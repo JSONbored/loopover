@@ -1667,6 +1667,26 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     captureSpy.mockRestore();
   });
 
+  // #9498: 48 of 82 update_branch failures in one 7-day production window were this class, across 14 PRs, with
+  // one PR retried NINE times against an outcome that can never succeed. It is PERMANENT for a diff shape:
+  // update_branch merges the base INTO the head, so any workflow change on the default branch since the PR
+  // forked makes the resulting merge a workflow write -- 4 of the 5 worst offenders touched no workflow file
+  // themselves. Classified like the other benign/terminal update_branch shapes: audited, never paged.
+  it("REGRESSION (#9498): a workflow-scope refusal on update_branch does not page Sentry", async () => {
+    const env = createTestEnv({});
+    vi.mocked(updatePullRequestBranch).mockRejectedValueOnce(
+      Object.assign(new Error("refusing to allow a GitHub App to create or update workflow `.github/workflows/ci.yml` without `workflows` permission"), { status: 422 }),
+    );
+    const captureSpy = vi.spyOn(posthogModule, "capturePostHogError");
+
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [updateBranch]);
+
+    expect(outcomes[0]).toMatchObject({ actionClass: "update_branch", outcome: "error" });
+    expect((await auditFor(env, "update_branch"))?.outcome).toBe("error"); // still recorded, so it is diagnosable
+    expect(captureSpy).not.toHaveBeenCalled(); // ...but never paged, because retrying cannot change it
+    captureSpy.mockRestore();
+  });
+
   it("a non-conflict update_branch failure still pages Sentry (#agent_action_execution_failed unchanged)", async () => {
     const env = createTestEnv({});
     vi.mocked(updatePullRequestBranch).mockRejectedValueOnce(new Error("network timeout"));

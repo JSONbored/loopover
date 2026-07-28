@@ -368,7 +368,14 @@ describe("queue processors", () => {
     };
   }
 
-  it("auto-maintain (stale-base threshold): a NOT-'behind' PR still forces update-branch via the compare-API fallback once ahead_by meets the configured threshold", async () => {
+  // #9497 REGRESSION: this used to assert the rebase fires HERE, during the readiness gate -- before the
+  // CI-pending wait, the gate verdict, the disposition plan and the merge-train check. That is the defect: the
+  // default branch only advances when a PR merges, so "N commits ahead" means "N unrelated PRs merged since
+  // your head", and every merge woke a cohort of siblings that each ran this check. Measured in production: 7
+  // PRs rebased in 12 seconds, 44s after an unrelated merge, with CI cancel-in-progress killing their running
+  // jobs. It now fires only at the merge boundary (see the #9497 tests in queue-3), so a plain review pass on
+  // a far-behind PR must leave the head alone.
+  it("#9497 does NOT force update-branch during the review pass, even far past the threshold", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await seedBehindRepo(env, { defaultBranch: "main", staleBaseAheadByThreshold: 5 });
     let updateBranchCalls = 0;
@@ -391,12 +398,12 @@ describe("queue processors", () => {
 
     await processJob(env, staleBaseWebhook());
 
-    expect(compareCalls).toBe(1);
-    expect(updateBranchCalls).toBe(1); // 10 >= the configured threshold of 5
-    const ub = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("agent.action.update_branch").first<{ outcome: string }>();
-    expect(ub?.outcome).toBe("completed");
-    const merge = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("agent.action.merge").first<{ n: number }>();
-    expect(merge?.n).toBe(0); // deferred for the rebase → no gate verdict published on the stale head
+    // No speculative rebase, and no compare call to pay for one: the review pass does not consider staleness
+    // at all any more. A PR 10 commits behind is reviewed on its own head and left alone.
+    expect(updateBranchCalls).toBe(0);
+    expect(compareCalls).toBe(0);
+    const ub = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("agent.action.update_branch").first<{ n: number }>();
+    expect(ub?.n).toBe(0);
   });
 
   it("auto-maintain (stale-base threshold): does not force update-branch when ahead_by is below the configured threshold", async () => {
@@ -425,8 +432,10 @@ describe("queue processors", () => {
 
     await processJob(env, staleBaseWebhook());
 
-    expect(compareCalls).toBe(1); // the threshold IS configured, so the fallback check still runs
-    expect(updateBranchCalls).toBe(0); // 3 < the configured threshold of 5 → no forced rebase
+    // #9497: the readiness gate no longer consults staleness at all, so neither the compare nor a rebase runs
+    // here regardless of how far behind the PR is. The threshold is evaluated at the merge boundary instead.
+    expect(compareCalls).toBe(0);
+    expect(updateBranchCalls).toBe(0);
   });
 
   it("auto-maintain (stale-base threshold): never attempts the compare-API fallback when no threshold is configured (zero added cost, byte-identical to before this feature existed)", async () => {
@@ -509,8 +518,11 @@ describe("queue processors", () => {
 
     await processJob(env, staleBaseWebhook());
 
-    expect(compareCalls).toBe(1); // the threshold check still ran and found the branch stale (10 >= 5)
-    expect(updateBranchCalls).toBe(0); // update_branch autonomy not granted → the executor denies the write; falls through
+    // #9497: the readiness gate no longer evaluates staleness at all, so there is nothing to deny here --
+    // neither the compare nor the write happens during a review pass. Autonomy still gates the write at the
+    // merge boundary, where the check now lives.
+    expect(compareCalls).toBe(0);
+    expect(updateBranchCalls).toBe(0);
   });
 
   it("recapture-preview (#1158): a clean PR re-review threads previewPollAttempt into the public-surface publish", async () => {

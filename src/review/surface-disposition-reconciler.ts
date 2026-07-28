@@ -48,10 +48,10 @@ export type SurfaceDispositionReconcileResult = { scanned: number; requeued: num
  */
 export async function reconcileSurfaceWithoutDisposition(env: Env, nowMs: number = Date.now()): Promise<SurfaceDispositionReconcileResult> {
   const since = new Date(nowMs - SURFACE_DISPOSITION_RECONCILE_LOOKBACK_MS).toISOString();
-  let rows: Array<{ repoFullName: string; number: number; installationId: number; headSha: string }> = [];
+  let rows: Array<{ repoFullName: string; number: number; installationId: number; headSha: string; createdAt: string }> = [];
   try {
     const result = await env.DB.prepare(
-      `SELECT pr.repo_full_name AS repoFullName, pr.number AS number, repo.installation_id AS installationId, pr.head_sha AS headSha
+      `SELECT pr.repo_full_name AS repoFullName, pr.number AS number, repo.installation_id AS installationId, pr.head_sha AS headSha, pr.created_at AS createdAt
          FROM pull_requests AS pr
          JOIN repositories AS repo ON repo.full_name = pr.repo_full_name
         WHERE pr.state = 'open'
@@ -68,7 +68,7 @@ export async function reconcileSurfaceWithoutDisposition(env: Env, nowMs: number
         LIMIT ?3`,
     )
       .bind(since, DISPOSITION_CONSIDERED_EVENT_TYPE, SURFACE_DISPOSITION_RECONCILE_LIMIT)
-      .all<{ repoFullName: string; number: number; installationId: number; headSha: string }>();
+      .all<{ repoFullName: string; number: number; installationId: number; headSha: string; createdAt: string }>();
     rows = result.results ?? [];
   } catch (error) {
     console.warn(JSON.stringify({ level: "warn", event: "surface_disposition_reconcile_scan_failed", message: errorMessage(error).slice(0, 160) }));
@@ -83,6 +83,10 @@ export async function reconcileSurfaceWithoutDisposition(env: Env, nowMs: number
       repoFullName: row.repoFullName,
       prNumber: row.number,
       installationId: row.installationId,
+      // #9499: without prCreatedAt the claim sort key falls back to a legacy base that sorts ahead of every
+      // real PR, so this repair scan silently preempted genuinely older contributor work. Unconditional --
+      // pull_requests.created_at is NOT NULL, so there is no absent case to guard.
+      prCreatedAt: row.createdAt,
     })
       .then(() => true)
       .catch(() => false);

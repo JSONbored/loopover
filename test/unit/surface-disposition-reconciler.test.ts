@@ -100,7 +100,12 @@ describe("reconcileSurfaceWithoutDisposition (#8997)", () => {
     await seedPr(env, 1, "sha1", { lastPublishedSurfaceSha: "sha1" });
 
     expect(await reconcileSurfaceWithoutDisposition(env)).toEqual({ scanned: 1, requeued: 1 });
-    expect(sent).toEqual([{ type: "agent-regate-pr", deliveryId: "surface-without-disposition:alice/repo#1#sha1", repoFullName: "alice/repo", prNumber: 1, installationId: 77 }]);
+    // #9499: prCreatedAt must ride along, or jobClaimSortKey falls back to a legacy base that sorts this
+    // repair job ahead of every genuinely older contributor PR.
+    expect(sent).toEqual([
+      expect.objectContaining({ type: "agent-regate-pr", deliveryId: "surface-without-disposition:alice/repo#1#sha1", repoFullName: "alice/repo", prNumber: 1, installationId: 77 }),
+    ]);
+    expect((sent[0] as { prCreatedAt?: string }).prCreatedAt).toBeTruthy();
   });
 
   it("does NOT re-enqueue once a disposition marker is on record for that exact head", async () => {

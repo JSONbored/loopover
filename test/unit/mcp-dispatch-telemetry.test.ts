@@ -116,6 +116,14 @@ describe("MCP telemetry redaction (#9525)", () => {
   it("returns undefined rather than throwing on a genuinely unserializable payload", () => {
     expect(capturePayload({ big: BigInt(1) })).toBeUndefined();
   });
+
+  it("returns undefined for a value JSON.stringify simply declines to represent", () => {
+    // Not an error, just nothing: stringify answers `undefined` for a bare function or symbol
+    // rather than throwing, so the nullish arm and the empty-string check are a separate path from
+    // the catch above.
+    expect(capturePayload(() => undefined)).toBeUndefined();
+    expect(capturePayload(Symbol("s"))).toBeUndefined();
+  });
 });
 
 describe("MCP telemetry error codes (#9525)", () => {

@@ -1,4 +1,15 @@
 import { PostHog } from "posthog-node";
+import {
+  buildMcpToolCallProperties,
+  buildUsageEventProperties,
+  getToolContract,
+  MCP_TOOL_CALL_EVENT,
+  MCP_USAGE_EVENT,
+  resolveErrorCode,
+  toolExcludesPayloads,
+  UNKNOWN_TOOL_CATEGORY,
+  type McpToolCallTelemetry,
+} from "@loopover/contract";
 
 // Local MCP telemetry wrapper (#6236, mirrors the remote wrapper from #6235). Same allowlisted event shape
 // and PostHog vendor as src/mcp/telemetry.ts, so the two servers report consistent data -- the only real
@@ -15,8 +26,10 @@ import { PostHog } from "posthog-node";
 /** PostHog US-cloud ingestion host -- the default when LOOPOVER_MCP_POSTHOG_HOST isn't set. */
 const DEFAULT_POSTHOG_HOST = "https://us.i.posthog.com";
 
-/** The PostHog event name every MCP tool call is recorded under (matches the remote wrapper, #6235). */
-const MCP_TOOL_CALL_EVENT = "mcp_tool_call";
+/** The PostHog event name the LEGACY per-call event is recorded under (#6235). Distinct from the
+ *  contract's `MCP_TOOL_CALL_EVENT` ($mcp_tool_call, PostHog's own MCP-Analytics family), which
+ *  #9525 adds alongside it; an operator's existing dashboards read this one. */
+const LEGACY_MCP_TOOL_CALL_EVENT = "mcp_tool_call";
 
 /** Anonymous, constant distinct id: this fleet telemetry carries NO per-actor identity by design (#6228),
  *  so every event shares one handle and there is no per-user person to build up. */
@@ -54,7 +67,7 @@ export async function recordMcpToolCall(options: RecordMcpToolCallOptions, event
     const client = new PostHog(apiKey, { host, flushAt: 1, flushInterval: 0 });
     client.capture({
       distinctId: MCP_TELEMETRY_DISTINCT_ID,
-      event: MCP_TOOL_CALL_EVENT,
+      event: LEGACY_MCP_TOOL_CALL_EVENT,
       // Exactly the #6228 allowlist -- nothing more.
       properties: {
         tool: event.tool,
@@ -109,13 +122,78 @@ export function wrapStdioToolHandler(
       const result = await handler(...args);
       // Mirror the remote's caller-visible outcome (`response.status < 400`): a handler that reports
       // failure by returning an error result is not a success, even though it never threw.
-      await recordStdioToolTelemetry(getTelemetryEnabled(), name, result?.isError !== true, Date.now() - startedAt);
+      const ok = result?.isError !== true;
+      await recordStdioToolTelemetry(getTelemetryEnabled(), name, ok, Date.now() - startedAt);
+      await recordStdioDispatchTelemetry(getTelemetryEnabled(), {
+        tool: name,
+        ok,
+        durationMs: Date.now() - startedAt,
+        args: args[0],
+        result: result?.structuredContent,
+      });
       return result;
     } catch (error) {
       await recordStdioToolTelemetry(getTelemetryEnabled(), name, false, Date.now() - startedAt);
+      await recordStdioDispatchTelemetry(getTelemetryEnabled(), {
+        tool: name,
+        ok: false,
+        durationMs: Date.now() - startedAt,
+        args: args[0],
+        error,
+      });
       throw error;
     }
   };
+}
+
+/**
+ * The #9525 dispatch events, emitted alongside the legacy `mcp_tool_call` one above.
+ *
+ * Runs beside rather than instead of it: `mcp_tool_call` has been this CLI's event since #6236 and
+ * an operator's existing dashboards read it, so removing it here would break them silently. The new
+ * pair carries the shared shape all three servers now agree on -- and, for tools the contract does
+ * not mark as carrying operator data, redacted and size-capped arguments and results.
+ *
+ * Same double gate as everything else in this file: nothing is emitted unless the user has run
+ * `loopover-mcp telemetry enable` AND LOOPOVER_MCP_POSTHOG_API_KEY is set. Never throws.
+ */
+export async function recordStdioDispatchTelemetry(
+  telemetryEnabled: boolean,
+  call: { tool: string; ok: boolean; durationMs: number; args?: unknown; result?: unknown; error?: unknown },
+): Promise<void> {
+  if (telemetryEnabled !== true) return;
+  const apiKey = trimmedOrUndefined(process.env.LOOPOVER_MCP_POSTHOG_API_KEY);
+  if (!apiKey) return;
+  try {
+    const contract = getToolContract(call.tool);
+    const telemetry: McpToolCallTelemetry = {
+      tool: call.tool,
+      category: contract?.category ?? UNKNOWN_TOOL_CATEGORY,
+      surface: "stdio",
+      ok: call.ok,
+      durationMs: call.durationMs,
+      ...(call.ok ? {} : { errorCode: resolveErrorCode(call.error) }),
+    };
+    const excluded = contract ? toolExcludesPayloads(contract) : true;
+    const host = trimmedOrUndefined(process.env.LOOPOVER_MCP_POSTHOG_HOST) ?? DEFAULT_POSTHOG_HOST;
+    const client = new PostHog(apiKey, { host, flushAt: 1, flushInterval: 0 });
+    client.capture({ distinctId: MCP_TELEMETRY_DISTINCT_ID, event: MCP_USAGE_EVENT, properties: buildUsageEventProperties(telemetry), disableGeoip: true });
+    client.capture({
+      distinctId: MCP_TELEMETRY_DISTINCT_ID,
+      event: MCP_TOOL_CALL_EVENT,
+      properties: buildMcpToolCallProperties(telemetry, { arguments: call.args, result: call.result, excluded }),
+      disableGeoip: true,
+    });
+    if (!call.ok && call.error !== undefined) {
+      client.captureException(call.error instanceof Error ? call.error : new Error(String(call.error)), MCP_TELEMETRY_DISTINCT_ID, {
+        mcp_tool: telemetry.tool,
+        error_code: telemetry.errorCode,
+      });
+    }
+    await client.flush();
+  } catch {
+    // Best-effort, exactly like recordMcpToolCall above: telemetry must never affect the CLI.
+  }
 }
 
 /** Trim a possibly-undefined env string, treating blank/whitespace as absent. */

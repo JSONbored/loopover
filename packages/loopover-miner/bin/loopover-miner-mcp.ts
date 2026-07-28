@@ -45,6 +45,7 @@ import {
   MinerCalibrationReportOutput,
 } from "@loopover/contract/tools";
 import { openClaimLedger } from "../lib/claim-ledger.js";
+import { recordMinerDispatchTelemetry } from "../lib/mcp-dispatch-telemetry.js";
 import { type AuditFeedMcpFilterInput, collectEventLedgerAuditFeed, normalizeAuditFeedMcpFilter } from "../lib/event-ledger-cli.js";
 import { initEventLedger, type EventLedger } from "../lib/event-ledger.js";
 import { collectManageStatus, collectRunPortfolio } from "../lib/manage-status.js";
@@ -112,12 +113,20 @@ function isTextOverride<T extends object>(value: MinerToolRun<T>): value is { st
  */
 async function withMinerToolErrorHandling<T extends object>(
   run: () => Promise<MinerToolRun<T>> | MinerToolRun<T>,
+  // #9525: the tool name, so this same wrapper doubles as the miner's dispatch-telemetry
+  // chokepoint. REQUIRED -- every registration passes it, and leaving it optional would have made
+  // "instrumented" a property of each call site rather than of the wrapper.
+  toolName: string,
 ): Promise<{ content: [{ type: "text"; text: string }]; structuredContent: Record<string, unknown>; isError?: true }> {
+  const startedAt = Date.now();
   try {
     const result = await run();
-    return isTextOverride(result) ? minerToolResult(result.structured, result.text) : minerToolResult(result);
+    const payload = isTextOverride(result) ? minerToolResult(result.structured, result.text) : minerToolResult(result);
+    recordMinerDispatchTelemetry({ tool: toolName, ok: true, durationMs: Date.now() - startedAt, result: payload.structuredContent });
+    return payload;
   } catch (error) {
     const data = { error: { code: toolErrorCode(error), message: error instanceof Error ? error.message : String(error) } };
+    recordMinerDispatchTelemetry({ tool: toolName, ok: false, durationMs: Date.now() - startedAt, error });
     return { ...minerToolResult(data), isError: true };
   }
 }
@@ -229,7 +238,7 @@ export function createMinerMcpServer(options: MinerMcpServerOptions = {}) {
         } finally {
           if (ownsQueue) portfolioQueue.close();
         }
-      }),
+      }, minerPortfolioDashboardTool.name),
   );
 
   server.registerTool(
@@ -265,7 +274,7 @@ export function createMinerMcpServer(options: MinerMcpServerOptions = {}) {
           if (ownsEventLedger) eventLedger.close();
           if (ownsRunStateStore) runStateStore.close();
         }
-      }),
+      }, minerManageStatusTool.name),
   );
 
   server.registerTool(
@@ -286,7 +295,7 @@ export function createMinerMcpServer(options: MinerMcpServerOptions = {}) {
         } finally {
           if (ownsLedger) ledger.close();
         }
-      }),
+      }, minerListClaimsTool.name),
   );
 
   server.registerTool(
@@ -307,7 +316,7 @@ export function createMinerMcpServer(options: MinerMcpServerOptions = {}) {
         } finally {
           if (ownsLedger) eventLedger.close();
         }
-      }),
+      }, minerAuditFeedTool.name),
   );
 
   server.registerTool(
@@ -326,7 +335,7 @@ export function createMinerMcpServer(options: MinerMcpServerOptions = {}) {
         } finally {
           if (ownsStore) store.close();
         }
-      }),
+      }, minerGetRunStateTool.name),
   );
 
   server.registerTool(
@@ -344,7 +353,7 @@ export function createMinerMcpServer(options: MinerMcpServerOptions = {}) {
         } finally {
           if (ownsStore) store.close();
         }
-      }),
+      }, minerListPlansTool.name),
   );
 
   server.registerTool(
@@ -360,7 +369,7 @@ export function createMinerMcpServer(options: MinerMcpServerOptions = {}) {
         } finally {
           if (ownsStore) store.close();
         }
-      }),
+      }, minerGetPlanTool.name),
   );
 
   server.registerTool(
@@ -382,7 +391,7 @@ export function createMinerMcpServer(options: MinerMcpServerOptions = {}) {
         } finally {
           if (ownsLedger) ledger.close();
         }
-      }),
+      }, minerGovernorDecisionsTool.name),
   );
 
   server.registerTool(
@@ -392,7 +401,7 @@ export function createMinerMcpServer(options: MinerMcpServerOptions = {}) {
       withMinerToolErrorHandling(() => ({
         status: (options.collectStatus ?? collectStatus)(),
         doctor: (options.runDoctorChecks ?? runDoctorChecks)(),
-      })),
+      }), minerStatusTool.name),
   );
 
   server.registerTool(
@@ -416,7 +425,7 @@ export function createMinerMcpServer(options: MinerMcpServerOptions = {}) {
           if (ownsPredictionLedger) predictionLedger?.close();
           if (ownsEventLedger) eventLedger?.close();
         }
-      }),
+      }, minerCalibrationReportTool.name),
   );
 
   return server;

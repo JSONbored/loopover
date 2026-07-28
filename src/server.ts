@@ -90,6 +90,7 @@ import {
   listConfigBackupsForScope,
 } from "./selfhost/private-config";
 import { setConfigAdminFunctions } from "./mcp/private-config-admin-registry";
+import { setMcpDispatchSpanRunner } from "./mcp/dispatch-span-registry";
 import { setRedeployTrigger, setSecretRotator } from "./mcp/redeploy-companion-registry";
 import { triggerRedeploy, rotateCompanionSecret } from "./selfhost/redeploy-companion-client";
 import { assertSelfHostPreflight } from "./selfhost/preflight";
@@ -370,8 +371,13 @@ async function main(): Promise<void> {
   // trace endpoint to PostHog when POSTHOG_API_KEY is set and no explicit OTEL_EXPORTER_OTLP_* override is
   // given (see resolveOtelTraceEndpoint in ./selfhost/otel). An operator still opts in via
   // OTEL_TRACES_EXPORTER=otlp -- this never turns tracing on just because POSTHOG_API_KEY happens to be set.
-  if (await initOpenTelemetry(process.env))
+  if (await initOpenTelemetry(process.env)) {
     console.log(JSON.stringify({ event: "selfhost_otel", traces: "otlp" }));
+    // #9525: hand the MCP dispatch chokepoint a real span runner. Only this entry does -- the cloud
+    // Worker has no collector to export to, so its slot stays null and every tool call runs
+    // unwrapped. Registry rather than a direct import so ./selfhost/otel never enters that bundle.
+    setMcpDispatchSpanRunner((name, attributes, fn) => withOtelSpan(name, attributes, fn));
+  }
   /* v8 ignore stop */
   const startedAt = Date.now();
   // This entrypoint IS the self-host runtime by definition (the cloud worker never imports server.ts), so the

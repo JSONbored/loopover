@@ -29,6 +29,6 @@
     "@cloudflare/workers-types": "^5.20260724.1",
     "@types/node": "^22.20.1",
     "typescript": "^5.9.3",
-    "wrangler": "^4.114.0"
+    "wrangler": "^4.115.0"
   }
 }

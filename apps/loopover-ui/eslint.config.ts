@@ -21,6 +21,15 @@ export default tseslint.config(
     },
     rules: {
       ...reactHooks.configs.recommended.rules,
+      // #8608: eslint-plugin-react-hooks 5 -> 7 (forced by the eslint 10 security chain, GHSA-mh99-v99m-4gvg)
+      // introduced these React-Compiler-era rules, which flag 24 pre-existing files. Fixing setState-in-effect
+      // patterns is real UI refactoring with behaviour risk -- not something to smuggle into a dependency
+      // bump -- so exactly the NEW rules are demoted to warn, keeping every rule that existed in v5 at error.
+      // Follow-up (promote back to error file-by-file): see the issue this comment cites.
+      "react-hooks/set-state-in-effect": "warn",
+      "react-hooks/purity": "warn",
+      "react-hooks/refs": "warn",
+      "react-hooks/static-components": "warn",
       "no-restricted-imports": [
         "error",
         {

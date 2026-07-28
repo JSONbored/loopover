@@ -155,8 +155,13 @@ import { wrapStdioToolHandler } from "../lib/telemetry.js";
 // same way any external consumer's "@loopover/mcp/..." import would, landing on the one real
 // package.json/CHANGELOG.md either way -- no relative-depth arithmetic, so a future directory move
 // can never silently break this again the way the pre-dist/-migration relative path did.
-function resolveOwnPackageFile(specifier: string): URL {
-  return new URL(import.meta.resolve(specifier));
+// Returns a path, not a URL: node:fs accepts both, but the two `URL` types in play (the DOM's and
+// node:url's) are structurally incompatible, so handing a `URL` to readFileSync only typechecks in a
+// program whose lib does not pull in the DOM one. #9520's validator imports this module from a test,
+// which does -- so the boundary is narrowed to a string here rather than left to depend on which
+// program the file happens to be compiled in.
+function resolveOwnPackageFile(specifier: string): string {
+  return fileURLToPath(import.meta.resolve(specifier));
 }
 
 // Read name/version from this package's own package.json (always present in any install --

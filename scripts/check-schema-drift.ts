@@ -54,6 +54,9 @@ export const RAW_SQL_ONLY_TABLES: Set<string> = new Set([
   "orb_export_cursor",
   "orb_github_installations",
   "orb_instances",
+  // #9474: durable running totals folded from orb_pr_outcomes (itself raw-SQL-only, below) by the
+  // retention prune, and summed back in by getOrbGlobalStats -- both via env.DB.prepare, no Drizzle use.
+  "orb_outcome_rollups",
   "orb_pr_outcomes",
   "orb_relay_failures",
   "orb_reuse_counters",

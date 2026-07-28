@@ -186,6 +186,7 @@ export * from "./calibration/attester.js";
 export * from "./calibration/benchmark-proposal.js";
 export * from "./calibration/benchmark-ground-truth.js";
 export * from "./calibration/benchmark-score.js";
+export * from "./calibration/benchmark-anti-overfit.js";
 export {
   GOVERNOR_LEDGER_EVENT_TYPES,
   normalizeGovernorLedgerEvent,

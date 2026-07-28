@@ -70,6 +70,45 @@ describe("MCP loopover_get_pr_ai_review_findings (#4519)", () => {
     expect(JSON.stringify(data)).not.toMatch(/wallet|hotkey|reward estimate|trust score/i);
   });
 
+  // #9537: the two servers disagreed on this tool's field name -- stdio has always taken `number`
+  // (like every other PR-scoped tool), the remote one `pullNumber`. Both are accepted so neither
+  // side's live callers break, and `number` is canonical. These three pin that, plus the two
+  // caller-error paths the shared optional-both schema makes possible.
+  it("accepts `number`, the canonical field name, as well as `pullNumber` (#9537)", async () => {
+    const env = createTestEnv();
+    await seedPublishedReview(env);
+    const result = await (await connect(env)).callTool({
+      name: "loopover_get_pr_ai_review_findings",
+      arguments: { login: "miner1", owner: "acme", repo: "widgets", number: 42 },
+    });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as { status: string; findings: unknown[] };
+    expect(data.status).toBe("ready");
+    expect(data.findings).toHaveLength(2);
+  });
+
+  it("refuses a call that supplies neither `number` nor `pullNumber` (#9537)", async () => {
+    const env = createTestEnv();
+    await seedPublishedReview(env);
+    const result = await (await connect(env)).callTool({
+      name: "loopover_get_pr_ai_review_findings",
+      arguments: { login: "miner1", owner: "acme", repo: "widgets" },
+    });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toMatch(/pull-request number is required/i);
+  });
+
+  it("refuses a call that supplies no login (#9537)", async () => {
+    const env = createTestEnv();
+    await seedPublishedReview(env);
+    const result = await (await connect(env)).callTool({
+      name: "loopover_get_pr_ai_review_findings",
+      arguments: { owner: "acme", repo: "widgets", number: 42 },
+    });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toMatch(/contributor login is required/i);
+  });
+
   it("returns not_found when no published AI review exists", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "widgets", full_name: "acme/widgets", private: false, owner: { login: "acme" } });

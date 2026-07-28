@@ -9,6 +9,8 @@ import { fileURLToPath } from "node:url";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { buildFeasibilityVerdict, buildPrTextLint, buildGateDispositions, buildPublicPrBodyDraft } from "@loopover/engine";
+// #9537: the plan-DAG state machine, formerly hand-copied into this file, untyped.
+import { applyStepResult, buildPlanDag, nextReadySteps, planProgress, validatePlanDag, type PlanDag } from "@loopover/engine";
 // #6149: the miner write-tools are PURE local-execution spec builders (loopover never performs the write);
 // registering them locally is just importing the same engine builders the remote server uses.
 import {
@@ -143,8 +145,8 @@ import {
   WatchIssuesInput,
   getToolContract,
   ListPendingActionsStdioInput,
-  type ToolContract,
 } from "@loopover/contract/tools";
+import type { ToolContract } from "@loopover/contract";
 import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadata, probeLocalScorer, referenceScorePreviewExample, resolveScorePreviewCommand, resolveWorkspaceCwd, sanitizeLocalScorerStatus, setupGuidanceForLocalScorer, isTestFile } from "../lib/local-branch.js";
 import { formatTable } from "../lib/format-table.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "../lib/cli-error.js";
@@ -274,105 +276,15 @@ const MAINTAIN_AUTONOMY_LEVELS = ["observe", "auto_with_approval", "auto"];
 // route + MCP tool accept, while set-level keeps its own autonomy-configurable subset above.
 const PROPOSE_ACTION_CLASSES = ["review", "request_changes", "approve", "merge", "close", "label", "review_state_label"];
 
-// #6150 — plan-DAG step tracking for loopover_build_plan/loopover_plan_status/loopover_record_step_result.
-// Hand-duplicated from src/services/plan-dag.ts (packages/loopover-engine/src/services/plan-dag.ts is NOT
-// where it lives -- this module was never extracted to @loopover/engine, so there is nothing to import from
-// the published package's export map), same rationale as MAINTAIN_ACTION_CLASSES/AUTONOMY_LEVELS above: this
-// file resolves @loopover/engine through the published package, whose export map does not surface it.
-// PURE + stateless (no DB, no repo/network access) -- the harness performs each step's real work and calls
-// loopover_record_step_result to report it back; this only advances the in-memory state machine the caller
-// passes in and gets back on every call.
-const DEFAULT_PLAN_MAX_ATTEMPTS = 1;
+// #783 plan DAG -- one implementation, in @loopover/engine (#9537). This file carried a
+// hand-copied, untyped duplicate of buildPlanDag/validatePlanDag/nextReadySteps/the step state
+// machine because the engine's export map did not surface them; it does now, so the copy is gone.
 
-function buildPlanDag(steps: any) {
-  return {
-    steps: steps.map((step: any) => ({
-      id: step.id,
-      title: step.title,
-      ...(step.actionClass !== undefined ? { actionClass: step.actionClass } : {}),
-      dependsOn: [...new Set((step.dependsOn ?? []).filter((dep: any) => dep !== step.id))],
-      status: "pending",
-      attempts: 0,
-      maxAttempts: Math.min(10, Math.max(1, Math.trunc(step.maxAttempts ?? DEFAULT_PLAN_MAX_ATTEMPTS))),
-    })),
-  };
-}
-
-function validatePlanDag(plan: any) {
-  const errors = [];
-  const ids = plan.steps.map((step: any) => step.id);
-  const idSet = new Set(ids);
-  if (idSet.size !== ids.length) errors.push("duplicate step ids");
-  for (const step of plan.steps) {
-    for (const dep of step.dependsOn) {
-      if (!idSet.has(dep)) errors.push(`step ${step.id} depends on unknown step ${dep}`);
-    }
-  }
-  const color = new Map();
-  const byId = new Map<any, any>(plan.steps.map((step: any) => [step.id, step]));
-  const hasCycle = (id: any) => {
-    color.set(id, 1);
-    for (const dep of byId.get(id)?.dependsOn ?? []) {
-      const depColor = color.get(dep) ?? 0;
-      if (depColor === 1) return true;
-      if (depColor === 0 && byId.has(dep) && hasCycle(dep)) return true;
-    }
-    color.set(id, 2);
-    return false;
-  };
-  for (const step of plan.steps) {
-    if ((color.get(step.id) ?? 0) === 0 && hasCycle(step.id)) {
-      errors.push("plan has a dependency cycle");
-      break;
-    }
-  }
-  return { valid: errors.length === 0, errors };
-}
-
-const isPlanStepDone = (status: any) => status === "completed" || status === "skipped";
-
-function nextReadySteps(plan: any) {
-  const statusById = new Map(plan.steps.map((step: any) => [step.id, step.status]));
-  return plan.steps.filter((step: any) => step.status === "pending" && step.dependsOn.every((dep: any) => isPlanStepDone(statusById.get(dep) ?? "pending")));
-}
-
-function mapPlanStep(plan: any, stepId: any, update: any) {
-  return { steps: plan.steps.map((step: any) => (step.id === stepId ? update(step) : step)) };
-}
-
-function applyStepResult(plan: any, stepId: any, result: any) {
-  return mapPlanStep(plan, stepId, (step: any) => {
-    if (isPlanStepDone(step.status) || step.status === "failed") return step;
-    if (result.outcome === "completed") return { ...step, status: "completed", lastError: null };
-    if (result.outcome === "skipped") return { ...step, status: "skipped", lastError: null };
-    const attempts = step.attempts + 1;
-    const exhausted = attempts >= step.maxAttempts;
-    return { ...step, attempts, status: exhausted ? "failed" : "pending", lastError: result.error ?? "step failed" };
-  });
-}
-
-function planProgress(plan: any) {
-  const count = (status: any) => plan.steps.filter((step: any) => step.status === status).length;
-  const completed = count("completed");
-  const skipped = count("skipped");
-  const failed = count("failed");
-  const running = count("running");
-  const pending = count("pending");
-  const total = plan.steps.length;
-  let status;
-  if (total > 0 && completed + skipped === total) status = "completed";
-  else if (failed > 0) status = "failed";
-  else if (running > 0) status = "running";
-  else if (pending > 0 && nextReadySteps(plan).length === 0) status = "blocked";
-  else status = "pending";
-  return { total, completed, failed, running, pending, skipped, status };
-}
-
-function planView(plan: any) {
+function planView(plan: PlanDag) {
   return {
     plan,
     progress: planProgress(plan),
-    readySteps: nextReadySteps(plan).map((step: any) => ({ id: step.id, title: step.title })),
+    readySteps: nextReadySteps(plan).map((step) => ({ id: step.id, title: step.title })),
     validation: validatePlanDag(plan),
   };
 }

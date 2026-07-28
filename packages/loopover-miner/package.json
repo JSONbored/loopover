@@ -48,7 +48,7 @@
   },
   "dependencies": {
     "@loopover/contract": "^0.1.0",
-    "@loopover/engine": "^3.15.2",
+    "@loopover/engine": "^3.16.0",
     "@modelcontextprotocol/sdk": "1.29.0",
     "@sentry/node": "^10.67.0",
     "zod": "^4.4.3"

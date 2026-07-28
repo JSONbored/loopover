@@ -5635,6 +5635,10 @@ describe("queue processors", () => {
     });
 
     expect(fanned.some((job) => job.type === "agent-regate-pr" && job.prNumber === 56)).toBe(true); // still woken despite the lookup miss
+    // #9499: with no local row there is no createdAt to thread, so the wake goes out WITHOUT the sort hint
+    // rather than being skipped -- the same fail-open posture as the bare cooldown key below.
+    const woken = fanned.find((job) => job.type === "agent-regate-pr" && job.prNumber === 56) as { prCreatedAt?: string } | undefined;
+    expect(woken?.prCreatedAt).toBeUndefined();
     const call = setSpy.mock.calls.find(([key]) => (key as string).startsWith("contributor-cap-wake:jsonbored/gittensory#56"));
     expect(call?.[0]).toBe("contributor-cap-wake:jsonbored/gittensory#56"); // bare key -- no headSha suffix
     expect(call?.[2]).toBe(60); // CI_COALESCE_WINDOW_SECONDS, not the ~1800s headSha-keyed cooldown

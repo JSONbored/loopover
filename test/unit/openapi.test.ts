@@ -1,19 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildOpenApiSpec } from "../../src/openapi/spec";
 import {
-  evaluateEscalationShape,
-  evaluateEscalationOutputSchema,
-  buildResultsPayloadShape,
-  buildResultsPayloadOutputSchema,
-  buildProgressSnapshotShape,
-  buildProgressSnapshotOutputSchema,
-  intakeIdeaShape,
-  intakeIdeaOutputSchema,
-  planIdeaClaimsOutputSchema,
-  listPendingActionsOutputSchema,
-  proposeActionOutputSchema,
-  proposeActionShape,
-  decidePendingActionOutputSchema,
   gatePrecisionOutputSchema,
   maintainerMeasurementReportOutputSchema,
 } from "../../src/mcp/server";
@@ -28,6 +15,19 @@ import {
   ExplainScoreBreakdownOutput,
   GetEligibilityPlanOutput,
   WatchIssuesOutput,
+  EvaluateEscalationInput,
+  EvaluateEscalationOutput,
+  BuildResultsPayloadInput,
+  BuildResultsPayloadOutput,
+  BuildProgressSnapshotInput,
+  BuildProgressSnapshotOutput,
+  IntakeIdeaInput,
+  IntakeIdeaOutput,
+  PlanIdeaClaimsOutput,
+  ListPendingActionsOutput,
+  ProposeActionInput,
+  ProposeActionOutput,
+  DecidePendingActionOutput,
 } from "@loopover/contract/tools";
 
 describe("OpenAPI contract", () => {
@@ -231,7 +231,7 @@ describe("OpenAPI contract", () => {
     expect(getOp?.responses?.["200"]?.content?.["application/json"]?.schema?.$ref).toBe(
       "#/components/schemas/ListPendingActionsResponse",
     );
-    expect(schemaProps("ListPendingActionsResponse")).toEqual(Object.keys(listPendingActionsOutputSchema).sort());
+    expect(schemaProps("ListPendingActionsResponse")).toEqual(Object.keys(ListPendingActionsOutput.shape).sort());
 
     const proposeOp = spec.paths["/v1/repos/{owner}/{repo}/agent/pending-actions"]?.post as {
       requestBody?: { content?: Record<string, { schema?: { $ref?: string } }> };
@@ -239,14 +239,14 @@ describe("OpenAPI contract", () => {
     };
     expect(proposeOp?.requestBody?.content?.["application/json"]?.schema?.$ref).toBe("#/components/schemas/ProposeActionRequest");
     expect(schemaProps("ProposeActionRequest")).toEqual(
-      Object.keys(proposeActionShape)
+      Object.keys(ProposeActionInput.shape)
         .filter((k) => k !== "owner" && k !== "repo")
         .sort(),
     );
     expect(proposeOp?.responses?.["200"]?.content?.["application/json"]?.schema?.$ref).toBe(
       "#/components/schemas/ProposeActionResponse",
     );
-    expect(schemaProps("ProposeActionResponse")).toEqual(Object.keys(proposeActionOutputSchema).sort());
+    expect(schemaProps("ProposeActionResponse")).toEqual(Object.keys(ProposeActionOutput.shape).sort());
 
     const decideOp = spec.paths["/v1/repos/{owner}/{repo}/agent/pending-actions/{id}/{decision}"]?.post as {
       responses?: Record<string, { content?: Record<string, { schema?: { $ref?: string } }> }>;
@@ -254,7 +254,7 @@ describe("OpenAPI contract", () => {
     expect(decideOp?.responses?.["200"]?.content?.["application/json"]?.schema?.$ref).toBe(
       "#/components/schemas/DecidePendingActionResponse",
     );
-    expect(schemaProps("DecidePendingActionResponse")).toEqual(Object.keys(decidePendingActionOutputSchema).sort());
+    expect(schemaProps("DecidePendingActionResponse")).toEqual(Object.keys(DecidePendingActionOutput.shape).sort());
   });
 
   // #5810: every operation needs a title in the generated spec and the rendered API browser. Iterating the built
@@ -287,37 +287,37 @@ describe("OpenAPI contract", () => {
         path: "/v1/loop/evaluate-escalation",
         request: "EvaluateEscalationRequest",
         response: "EvaluateEscalationResponse",
-        inputShape: evaluateEscalationShape,
-        outputShape: evaluateEscalationOutputSchema,
+        inputShape: EvaluateEscalationInput.shape,
+        outputShape: EvaluateEscalationOutput.shape,
       },
       {
         path: "/v1/loop/results-payload",
         request: "BuildResultsPayloadRequest",
         response: "BuildResultsPayloadResponse",
-        inputShape: buildResultsPayloadShape,
-        outputShape: buildResultsPayloadOutputSchema,
+        inputShape: BuildResultsPayloadInput.shape,
+        outputShape: BuildResultsPayloadOutput.shape,
       },
       {
         path: "/v1/loop/progress-snapshot",
         request: "BuildProgressSnapshotRequest",
         response: "BuildProgressSnapshotResponse",
-        inputShape: buildProgressSnapshotShape,
-        outputShape: buildProgressSnapshotOutputSchema,
+        inputShape: BuildProgressSnapshotInput.shape,
+        outputShape: BuildProgressSnapshotOutput.shape,
       },
       {
         path: "/v1/loop/intake-idea",
         request: "IntakeIdeaRequest",
         response: "IntakeIdeaResponse",
-        inputShape: intakeIdeaShape,
-        outputShape: intakeIdeaOutputSchema,
+        inputShape: IntakeIdeaInput.shape,
+        outputShape: IntakeIdeaOutput.shape,
       },
       {
-        // plan-idea-claims reuses intakeIdeaShape as its input; its output is the claim-plan disposition.
+        // plan-idea-claims reuses IntakeIdeaInput as its input; its output is the claim-plan disposition.
         path: "/v1/loop/plan-idea-claims",
         request: "PlanIdeaClaimsRequest",
         response: "PlanIdeaClaimsResponse",
-        inputShape: intakeIdeaShape,
-        outputShape: planIdeaClaimsOutputSchema,
+        inputShape: IntakeIdeaInput.shape,
+        outputShape: PlanIdeaClaimsOutput.shape,
       },
     ];
 

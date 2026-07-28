@@ -40,3 +40,30 @@ export const PREDICT_GATE_MAX_CHANGED_PATHS = 500;
  * servers accepts today, which is the one thing an input schema may never do.
  */
 export const PREDICT_GATE_MAX_CHANGED_PATH_CHARS = 400;
+
+/**
+ * Bounds on the local-execution write-spec tools' free text (#780).
+ *
+ * These tools never perform a write -- they return a spec the caller runs with its own credentials
+ * -- so the bounds are about keeping a spec small enough to be reviewable before it is executed,
+ * not about protecting a database column. `bodyChars` matches GitHub's own 65536-character comment
+ * ceiling with headroom for the wrapper the spec builder adds.
+ */
+export const WRITE_TOOL_LIMITS = {
+  titleChars: 400,
+  bodyChars: 60_000,
+  branchChars: 255,
+  targetFiles: 50,
+} as const;
+
+/**
+ * Repo and branch identifier bounds.
+ *
+ * Restated from src/scenarios/input-model.ts for the same reason PREFLIGHT_LIMITS is restated from
+ * the engine -- this package is a zod-only leaf and cannot import the Worker's `src/` -- and pinned
+ * against it by a meta-test so the two cannot drift.
+ */
+export const SCENARIO_LIMITS = {
+  repoFullNameChars: 200,
+  branchRefChars: 200,
+} as const;

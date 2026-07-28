@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { decomposeIssueToPlan, type IssuePlanInput } from "../../packages/loopover-engine/src/issue-plan-decomposition";
 import type { RawPlanStep } from "../../packages/loopover-engine/src/plan-templates";
-import { rawPlanStepSchema } from "../../src/mcp/server";
+import { rawPlanStepSchema } from "@loopover/contract/tools";
 
 // Assert the structural rules plan-store.js's validatePlanDag enforces (rawPlanStepSchema-valid steps, unique ids,
 // in-plan non-self deps, every dep declared BEFORE use → acyclic with a ready topo order). Mirrors the equivalent

@@ -85,12 +85,42 @@ import {
   validateConfigTool,
   localStatusTool,
 } from "./discovery-utility.js";
+import {
+  intakeIdeaTool,
+  planIdeaClaimsTool,
+  buildResultsPayloadTool,
+  buildProgressSnapshotTool,
+  evaluateEscalationTool,
+  openPrTool,
+  fileIssueTool,
+  applyLabelsTool,
+  postEligibilityCommentTool,
+  postSoftClaimTool,
+  createBranchTool,
+  deleteBranchTool,
+  generateTestsTool,
+  fileFollowUpIssueTool,
+  closePrTool,
+  buildPlanTool,
+  planStatusTool,
+  recordStepResultTool,
+  getAutomationStateTool,
+  setAgentPausedTool,
+  setActionAutonomyTool,
+  proposeActionTool,
+  listPendingActionsTool,
+  decidePendingActionTool,
+  getAgentAuditFeedTool,
+  agentPlanNextWorkTool,
+  agentExplainNextActionTool,
+  agentStartRunTool,
+  agentGetRunTool,
+} from "./agent.js";
 
 /**
  * #9517's pilot batch, the full AMS miner server (#9536, all 11 tools), and the remote server's
- * `admin`, `maintainer`, `review`, `branch`, `discovery` and `utility` categories (#9518). The
- * remaining remote category (`agent`) migrates in the rest of #9518; the stdio server has its own
- * issue (#9537).
+ * every remote-server category (#9518) -- the second server migrated to completion. The stdio
+ * server is the last one left, and has its own issue (#9537).
  */
 export const TOOL_CONTRACTS: readonly ToolContract[] = [
   getRepoContextTool,
@@ -159,6 +189,35 @@ export const TOOL_CONTRACTS: readonly ToolContract[] = [
   getUpstreamRulesetTool,
   validateConfigTool,
   localStatusTool,
+  intakeIdeaTool,
+  planIdeaClaimsTool,
+  buildResultsPayloadTool,
+  buildProgressSnapshotTool,
+  evaluateEscalationTool,
+  openPrTool,
+  fileIssueTool,
+  applyLabelsTool,
+  postEligibilityCommentTool,
+  postSoftClaimTool,
+  createBranchTool,
+  deleteBranchTool,
+  generateTestsTool,
+  fileFollowUpIssueTool,
+  closePrTool,
+  buildPlanTool,
+  planStatusTool,
+  recordStepResultTool,
+  getAutomationStateTool,
+  setAgentPausedTool,
+  setActionAutonomyTool,
+  proposeActionTool,
+  listPendingActionsTool,
+  decidePendingActionTool,
+  getAgentAuditFeedTool,
+  agentPlanNextWorkTool,
+  agentExplainNextActionTool,
+  agentStartRunTool,
+  agentGetRunTool,
   minerPingTool,
   minerPortfolioDashboardTool,
   minerManageStatusTool,
@@ -199,4 +258,5 @@ export * from "./maintainer.js";
 export * from "./review.js";
 export * from "./branch.js";
 export * from "./discovery-utility.js";
+export * from "./agent.js";
 export * from "./miner.js";

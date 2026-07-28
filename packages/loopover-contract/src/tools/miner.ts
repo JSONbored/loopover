@@ -11,6 +11,7 @@
 // gains is a description of what it already returns, not a new shape.
 import { z } from "zod";
 import { defineTool } from "../tool-definition.js";
+import { PLAN_STEP_STATUSES } from "../enums.js";
 
 /** Statuses a portfolio-queue entry can hold. */
 export const QUEUE_STATUSES = ["queued", "in_progress", "done"] as const;
@@ -238,8 +239,9 @@ export const minerGetRunStateTool = defineTool({
 /** `PlanStatus` (packages/loopover-miner/lib/plan-store.ts). */
 export const MINER_PLAN_STATUSES = ["pending", "running", "completed", "failed"] as const;
 
-/** `PlanStepStatus`, same file. */
-export const MINER_PLAN_STEP_STATUSES = ["pending", "running", "completed", "failed", "skipped"] as const;
+/** `PlanStepStatus`, same file. Aliases the shared vocabulary rather than restating it -- the plan
+ *  store and the remote plan-DAG tools move the same steps through the same states. */
+export const MINER_PLAN_STEP_STATUSES = PLAN_STEP_STATUSES;
 
 /** `PlanStep`. `lastError` is nullish (both unset and explicit null appear -- the store's own type
  *  spells it `string | null | undefined`). */

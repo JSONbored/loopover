@@ -42,4 +42,29 @@ describe("MCP loopover_run_local_scorer (#782)", () => {
     const data = result.structuredContent as { tokenScores: { warnings?: string[] } };
     expect(data.tokenScores.warnings?.[0]).toMatch(/validation reported failures/i);
   });
+
+  // #9518: the changed-file and validation schemas are strict, and that strictness IS the no-upload
+  // boundary -- a caller that smuggles source text must get a rejected call, not a silently-stripped
+  // one, or it will believe the upload succeeded. The strictness was briefly lost when these schemas
+  // moved into @loopover/contract; these two cases pin it.
+  it("rejects source content smuggled into changed-file metadata", async () => {
+    const client = await connect();
+    const result = await client.callTool({
+      name: "loopover_run_local_scorer",
+      arguments: { changedFiles: [{ path: "src/a.ts", additions: 4, patch: "+const secret = 1;\n" }] },
+    });
+    expect(result.isError).toBe(true);
+  });
+
+  it("rejects an unknown field on a validation entry", async () => {
+    const client = await connect();
+    const result = await client.callTool({
+      name: "loopover_run_local_scorer",
+      arguments: {
+        changedFiles: [{ path: "src/a.ts", additions: 4 }],
+        validation: [{ command: "npm test", status: "failed", output: "assertion failed at src/a.ts:3" }],
+      },
+    });
+    expect(result.isError).toBe(true);
+  });
 });

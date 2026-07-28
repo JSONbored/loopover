@@ -50,8 +50,18 @@ export type ProposeActionClass = (typeof PROPOSE_ACTION_CLASSES)[number];
 export const TEST_FRAMEWORKS = ["vitest", "jest", "pytest", "go-test", "rspec", "cargo-test"] as const;
 export type TestFramework = (typeof TEST_FRAMEWORKS)[number];
 
-/** Lifecycle states of a plan step in the stateless plan-DAG tools. */
-export const PLAN_STEP_STATUSES = ["pending", "in_progress", "completed", "skipped", "failed"] as const;
+/**
+ * Lifecycle states of a plan step.
+ *
+ * One vocabulary, deliberately: the remote server's stateless plan-DAG tools (loopover_build_plan /
+ * plan_status / record_step_result) and the miner's own plan store hold the same steps at different
+ * points in their life, and a step written by one and read by the other must round-trip.
+ *
+ * This list said `in_progress` where both real surfaces say `running` until #9518. Nothing consumed
+ * it yet, so nothing broke -- but the first consumer would have rejected every running step the
+ * plan store has ever persisted.
+ */
+export const PLAN_STEP_STATUSES = ["pending", "running", "completed", "failed", "skipped"] as const;
 export type PlanStepStatus = (typeof PLAN_STEP_STATUSES)[number];
 
 /** Verdicts the pre-start feasibility surfaces return. */

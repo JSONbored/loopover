@@ -23,7 +23,7 @@ export {
 } from "./tool-definition.js";
 
 export * from "./enums.js";
-export { PREFLIGHT_LIMITS, PREDICT_GATE_MAX_CHANGED_PATHS, PREDICT_GATE_MAX_CHANGED_PATH_CHARS } from "./limits.js";
+export { PREFLIGHT_LIMITS, PREDICT_GATE_MAX_CHANGED_PATHS, PREDICT_GATE_MAX_CHANGED_PATH_CHARS, WRITE_TOOL_LIMITS, SCENARIO_LIMITS } from "./limits.js";
 export { ownerRepoInput, ownerRepoPullInput, freshnessFields, toolErrorFields } from "./shared.js";
 export { TOOL_CONTRACTS, listToolDefinitions, getToolContract } from "./tools/index.js";
 export {

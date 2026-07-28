@@ -182,10 +182,13 @@ export const checkIssueSlopTool = defineTool({
 // ── boundary tests ──────────────────────────────────────────────────────────────────────────────
 
 export const SuggestBoundaryTestsInput = z.object({
-  changedFiles: z.array(z.object({ path: z.string().min(1).max(400) })).max(500),
+  // `.strict()` is the privacy boundary, not a nicety: it is what makes a caller-supplied
+  // `patch`/content field a REJECTED call rather than a silently-stripped one, so an agent that
+  // tries to upload source text learns it immediately instead of thinking it succeeded.
+  changedFiles: z.array(z.strictObject({ path: z.string().min(1).max(400) })).max(500),
   boundaryTouches: z
     .array(
-      z.object({
+      z.strictObject({
         path: z.string().min(1).max(400),
         kind: z.enum(["array_index_bounds", "null_or_undefined_branch", "empty_collection_check"]),
       }),

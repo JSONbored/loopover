@@ -868,7 +868,7 @@ const runLocalScorerShape = {
 };
 
 // #6150 — loopover_build_plan/loopover_plan_status/loopover_record_step_result's input, mirroring the remote
-// server's rawPlanStepSchema/planStepSchema/planDagSchema (src/mcp/server.ts).
+// server's rawPlanStepSchema/planStepSchema/planDagSchema (@loopover/contract).
 const rawPlanStepShape = z
   .object({
     id: z.string().min(1).max(100),

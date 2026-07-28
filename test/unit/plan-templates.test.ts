@@ -11,7 +11,7 @@ import {
   type PlanTemplateStage,
   type RawPlanStep,
 } from "../../packages/loopover-engine/src/plan-templates";
-import { rawPlanStepSchema } from "../../src/mcp/server";
+import { rawPlanStepSchema } from "@loopover/contract/tools";
 
 const STAGES = Object.keys(PLAN_TEMPLATE_BUILDERS) as PlanTemplateStage[];
 

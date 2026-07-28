@@ -20,9 +20,15 @@ import { defineTool } from "../tool-definition.js";
 import { PREFLIGHT_LIMITS } from "../limits.js";
 import { PreflightPrInput, PreflightPrOutput } from "./preflight-pr.js";
 
-/** Changed-file metadata: paths plus line counts, never source content. Shared by the local-diff
- *  preflight and the local scorer. */
-const changedFileSchema = z.object({
+/**
+ * Changed-file metadata: paths plus line counts, never source content. Shared by the local-diff
+ * preflight and the local scorer.
+ *
+ * Strict on purpose. This is the no-upload boundary in schema form -- a caller that adds `patch` or
+ * `content` gets a rejected call, not a silently-stripped one, so it cannot believe it uploaded
+ * source and be wrong about it.
+ */
+const changedFileSchema = z.strictObject({
   path: z.string().min(1),
   previousPath: z.string().min(1).optional(),
   additions: z.number().int().min(0).optional(),
@@ -31,8 +37,8 @@ const changedFileSchema = z.object({
   binary: z.boolean().optional(),
 });
 
-/** One locally-executed validation command and its result. */
-const validationEntrySchema = z.object({
+/** One locally-executed validation command and its result. Strict for the same reason. */
+const validationEntrySchema = z.strictObject({
   command: z.string().min(1),
   status: z.enum(["passed", "failed", "not_run", "skipped", "focused", "unknown"]),
   summary: z.string().optional(),

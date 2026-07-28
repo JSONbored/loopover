@@ -155,6 +155,49 @@ import {
   ValidateConfigOutput,
   LocalStatusInput,
   LocalStatusOutput,
+  IntakeIdeaInput,
+  IntakeIdeaOutput,
+  PlanIdeaClaimsOutput,
+  BuildResultsPayloadInput,
+  BuildResultsPayloadOutput,
+  BuildProgressSnapshotInput,
+  BuildProgressSnapshotOutput,
+  EvaluateEscalationInput,
+  EvaluateEscalationOutput,
+  LocalWriteActionOutput,
+  OpenPrInput,
+  FileIssueInput,
+  ApplyLabelsInput,
+  PostEligibilityCommentInput,
+  PostSoftClaimInput,
+  CreateBranchInput,
+  DeleteBranchInput,
+  GenerateTestsInput,
+  FileFollowUpIssueInput,
+  ClosePrInput,
+  BuildPlanInput,
+  PlanStatusInput,
+  RecordStepResultInput,
+  PlanViewOutput,
+  GetAutomationStateInput,
+  GetAutomationStateOutput,
+  SetAgentPausedInput,
+  SetAgentPausedOutput,
+  SetActionAutonomyInput,
+  SetActionAutonomyOutput,
+  ProposeActionInput,
+  ProposeActionOutput,
+  ListPendingActionsInput,
+  ListPendingActionsOutput,
+  DecidePendingActionInput,
+  DecidePendingActionOutput,
+  GetAgentAuditFeedInput,
+  GetAgentAuditFeedOutput,
+  AgentPlanInput,
+  AgentPlanNextWorkOutput,
+  AgentExplainNextActionOutput,
+  AgentStartRunInput,
+  AgentGetRunInput,
 } from "@loopover/contract/tools";
 import {
   MAX_FIND_OPPORTUNITIES_LANGUAGE_LENGTH,
@@ -381,10 +424,6 @@ function decisionPackSummary(login: string, freshness: string, rebuildEnqueued: 
   return `LoopOver decision pack for ${login} (stale; rebuild not enqueued).`;
 }
 
-const ownerRepoShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-};
 
 const ownerRepoPullShape = {
   owner: z.string().min(1),
@@ -433,11 +472,6 @@ const fleetAnalyticsOutputSchema = {
 };
 
 
-
-
-
-
-
 const issueRagShape = {
   owner: z.string().max(MAX_ISSUE_RAG_OWNER_LENGTH),
   repo: z.string().max(MAX_ISSUE_RAG_REPO_LENGTH),
@@ -467,7 +501,6 @@ const findOpportunitiesShape = {
     .optional(),
   limit: z.number().int().min(1).max(50).optional(),
 };
-
 
 
 // #7721 admin tools — self-hosted-instance-only, gated behind LOOPOVER_MCP_ADMIN_ENABLED at
@@ -560,231 +593,10 @@ const runLocalScorerShape = {
 };
 
 
-// #780 miner write-tools. Inputs are content/targets; the OUTPUT is an action spec the LOCAL harness runs with
-// its own creds — loopover never performs the write.
-const WRITE_TOOL_TITLE_MAX = 400;
-const WRITE_TOOL_BODY_MAX = 60000;
-const WRITE_TOOL_BRANCH_MAX = 255;
-const openPrShape = {
-  repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
-  base: z.string().min(1).max(SCENARIO_MAX_BRANCH_REF_CHARS),
-  head: z.string().min(1).max(SCENARIO_MAX_BRANCH_REF_CHARS),
-  title: z.string().min(1).max(WRITE_TOOL_TITLE_MAX),
-  body: z.string().max(WRITE_TOOL_BODY_MAX),
-  draft: z.boolean().optional(),
-};
-const fileIssueShape = {
-  repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
-  title: z.string().min(1).max(WRITE_TOOL_TITLE_MAX),
-  body: z.string().max(WRITE_TOOL_BODY_MAX),
-  labels: z.array(z.string().min(1).max(100)).max(20).optional(),
-};
-const applyLabelsShape = {
-  repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
-  number: z.number().int().positive(),
-  labels: z.array(z.string().min(1).max(100)).min(1).max(20),
-};
-const closePrShape = {
-  repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
-  number: z.number().int().positive(),
-  comment: z.string().max(WRITE_TOOL_BODY_MAX).optional(),
-};
-const postEligibilityCommentShape = {
-  repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
-  number: z.number().int().positive(),
-  body: z.string().min(1).max(WRITE_TOOL_BODY_MAX),
-};
-// #2315/#9492: mirrors buildSoftClaimSpec's own input type exactly.
-const postSoftClaimShape = {
-  repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
-  number: z.number().int().positive(),
-  minerId: z.string().min(1).max(200),
-  claimedAt: z.string().datetime({ offset: true }),
-  expiresAt: z.string().datetime({ offset: true }).optional(),
-};
-const createBranchShape = { branch: z.string().min(1).max(WRITE_TOOL_BRANCH_MAX), base: z.string().min(1).max(WRITE_TOOL_BRANCH_MAX).optional() };
-const deleteBranchShape = { branch: z.string().min(1).max(WRITE_TOOL_BRANCH_MAX), remote: z.boolean().optional() };
-// #2188: the framework list mirrors detectTestConvention's TEST_FRAMEWORKS (#2187) so a caller cannot request a
-// spec for a framework the detector could never have produced.
-const WRITE_TOOL_TARGET_FILES_MAX = 50;
-const testGenShape = {
-  repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
-  targetFiles: z.array(z.string().min(1).max(500)).min(1).max(WRITE_TOOL_TARGET_FILES_MAX),
-  framework: z.enum(TEST_FRAMEWORKS),
-  testDir: z.string().min(1).max(255).optional(),
-  criteria: z.array(z.string().min(1).max(300)).max(20).optional(),
-};
-// #2177 (follow-up-issue slice of #1962): composes a file_issue spec from a single deferred review finding.
-const followUpIssueShape = {
-  repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
-  path: z.string().min(1).max(500),
-  line: z.number().int().positive().optional(),
-  finding: z.string().min(1).max(WRITE_TOOL_BODY_MAX),
-  label: z.string().min(1).max(100).optional(),
-};
-const localWriteActionOutputSchema = {
-  action: z.string(),
-  description: z.string(),
-  inputs: z.record(z.string(), z.unknown()),
-  command: z.string(),
-  boundary: z.string(),
-};
-
-// #783 plan DAG — STATELESS: the harness holds the plan and passes it back each call; these tools only advance
-// the state machine, so loopover keeps no record of the miner's plan.
-const planStepStatusEnum = z.enum(["pending", "running", "completed", "failed", "skipped"]);
-export const rawPlanStepSchema = z
-  .object({
-    id: z.string().min(1).max(100),
-    title: z.string().min(1).max(300),
-    actionClass: z.string().min(1).max(60).optional(),
-    dependsOn: z.array(z.string().min(1).max(100)).max(50).optional(),
-    maxAttempts: z.number().int().min(1).max(10).optional(),
-    codingAgentMode: z.enum(["paused", "dry_run", "live"]).optional(),
-  })
-  .strict();
-const planStepSchema = z
-  .object({
-    id: z.string().min(1).max(100),
-    title: z.string().min(1).max(300),
-    actionClass: z.string().min(1).max(60).optional(),
-    dependsOn: z.array(z.string().min(1).max(100)).max(50),
-    status: planStepStatusEnum,
-    attempts: z.number().int().min(0),
-    maxAttempts: z.number().int().min(1).max(10),
-    lastError: z.string().max(2000).nullable().optional(),
-  })
-  .strict();
-const planDagSchema = z.object({ steps: z.array(planStepSchema).max(100) }).strict();
-const buildPlanShape = { steps: z.array(rawPlanStepSchema).min(1).max(100) };
-const planStatusShape = { plan: planDagSchema };
-const recordStepResultShape = {
-  plan: planDagSchema,
-  stepId: z.string().min(1).max(100),
-  outcome: z.enum(["completed", "failed", "skipped"]),
-  error: z.string().max(2000).optional(),
-};
-const planViewOutputSchema = {
-  plan: planDagSchema.optional(),
-  progress: z
-    .object({ total: z.number(), completed: z.number(), failed: z.number(), running: z.number(), pending: z.number(), skipped: z.number(), status: z.string() })
-    .optional(),
-  readySteps: z.array(z.object({ id: z.string(), title: z.string() })).optional(),
-  validation: z.object({ valid: z.boolean(), errors: z.array(z.string()) }).optional(),
-};
-
-// #784 (MCP slice) — propose-action: a maintainer stages an action into the approval queue (#779).
-export const proposeActionShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  pullNumber: z.number().int().positive(),
-  actionClass: z.enum(["review", "request_changes", "approve", "merge", "close", "label", "review_state_label"]),
-  reason: z.string().max(500).optional(),
-  label: z.string().min(1).max(100).optional(),
-  reviewBody: z.string().max(60000).optional(),
-  mergeMethod: z.enum(["merge", "squash", "rebase"]).optional(),
-  closeComment: z.string().max(60000).optional(),
-};
-
 // GitHub permissions that imply real write access to a repo. Cached PR author_association can report
 // MEMBER/COLLABORATOR for users without push permission, so write-capable MCP surfaces must verify live.
 const REPO_WRITE_PERMISSIONS = new Set(["admin", "maintain", "write"]);
 
-export const proposeActionOutputSchema = {
-  created: z.boolean().optional(),
-  action: z
-    .object({ id: z.string(), actionClass: z.string(), pullNumber: z.number(), status: z.string(), reason: z.string().nullable() })
-    .optional(),
-};
-
-// #784 (MCP slice) — the read side of the agent automation control surface for a repo.
-const automationStateOutputSchema = {
-  repoFullName: z.string().optional(),
-  configured: z.boolean().optional(),
-  autonomy: z.record(z.string(), z.string()).optional(),
-  autoMaintain: z.object({ requireApprovals: z.number(), mergeMethod: z.string() }).optional(),
-  agentPaused: z.boolean().optional(),
-  agentDryRun: z.boolean().optional(),
-  mode: z.string().optional(),
-  permissionReadiness: z.string().optional(),
-  actingActionClasses: z.array(z.string()).optional(),
-  pendingActionCount: z.number().optional(),
-};
-
-// #6087 (MCP slice) — the write side of the automation control surface: pause/resume and per-action autonomy,
-// the two `maintain` CLI operations (loopover-mcp.js:1783-1800) that had no MCP tool yet. Both read-merge-write
-// over the same repo `settings` row loopover_get_automation_state reads, so unrelated settings groups (and,
-// for autonomy, other action classes) are preserved.
-const setAgentPausedShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  paused: z.boolean(),
-};
-
-const setAgentPausedOutputSchema = {
-  repoFullName: z.string().optional(),
-  agentPaused: z.boolean().optional(),
-};
-
-// `action` mirrors the CLI's MAINTAIN_ACTION_CLASSES exactly (loopover-mcp.js). `level` validates against the
-// LIVE AUTONOMY_LEVELS (src/settings/autonomy.ts) rather than restating one: "suggest"/"propose" were removed
-// server-side by #4620 and are silently dropped by normalizeAutonomyPolicy on persist, so accepting either here
-// would report success on a write that never actually took effect. (#6153: the CLI's own MAINTAIN_AUTONOMY_LEVELS
-// carried both until then -- binding to the live enum is what kept this surface correct while that one drifted.)
-const MAINTAIN_AUTONOMY_ACTION_CLASSES = ["review", "request_changes", "approve", "merge", "close", "label"] as const;
-
-const setActionAutonomyShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  action: z.enum(MAINTAIN_AUTONOMY_ACTION_CLASSES),
-  level: z.enum(AUTONOMY_LEVELS),
-};
-
-const setActionAutonomyOutputSchema = {
-  repoFullName: z.string().optional(),
-  action: z.string().optional(),
-  level: z.string().optional(),
-  autonomy: z.record(z.string(), z.string()).optional(),
-};
-
-// #784 (MCP slice) — surface + decide the approval queue, so an MCP client can do the full loop it can
-// already propose into: list staged actions, then accept (execute) or reject one.
-const listPendingActionsShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  status: z.enum(["pending", "accepted", "rejected", "errored"]).optional(),
-};
-
-const pendingActionEntrySchema = z.object({
-  id: z.string(),
-  actionClass: z.string(),
-  pullNumber: z.number(),
-  status: z.string(),
-  autonomyLevel: z.string(),
-  reason: z.string().nullable(),
-  decidedBy: z.string().nullable(),
-  decidedAt: z.string().nullable(),
-  createdAt: z.string(),
-});
-
-export const listPendingActionsOutputSchema = {
-  repoFullName: z.string().optional(),
-  status: z.string().optional(),
-  pendingActions: z.array(pendingActionEntrySchema).optional(),
-};
-
-const decidePendingActionShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  id: z.string().min(1),
-  decision: z.enum(["accept", "reject"]),
-};
-
-export const decidePendingActionOutputSchema = {
-  status: z.string().optional(),
-  executionOutcome: z.string().optional(),
-  action: pendingActionEntrySchema.optional(),
-};
 
 // #3003 (part of #2993) — on-demand repo-doc refresh, the manual counterpart to the scheduled sweep
 // (src/queue/processors.ts's "repo-doc-refresh-sweep"). Both call the SAME performRepoDocRefresh runner, which
@@ -876,28 +688,7 @@ const planRepoIssuesOutputSchema = {
 };
 
 // #784 (MCP slice) — the agent audit feed: executed actions + approval decisions for a repo.
-const auditFeedShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  since: z.string().datetime({ offset: true }).optional(),
-  limit: z.number().int().positive().max(200).optional(),
-};
 
-const auditFeedOutputSchema = {
-  repoFullName: z.string().optional(),
-  events: z
-    .array(
-      z.object({
-        eventType: z.string(),
-        pullNumber: z.number().nullable(),
-        outcome: z.string(),
-        actor: z.string().nullable(),
-        detail: z.string().nullable(),
-        createdAt: z.string(),
-      }),
-    )
-    .optional(),
-};
 
 const focusManifestInputSchema = z
   .record(z.string(), z.unknown())
@@ -957,23 +748,6 @@ const localBranchVariantsShape = {
   variants: z.array(z.object(localBranchAnalysisShape).strict()).min(1).max(10),
 };
 
-const agentRunShape = {
-  objective: z.string().min(1).max(500),
-  actorLogin: z.string().min(1),
-  targetRepoFullName: z.string().min(3).optional(),
-  targetPullNumber: z.number().int().positive().optional(),
-  targetIssueNumber: z.number().int().positive().optional(),
-};
-
-const agentRunIdShape = {
-  runId: z.string().min(1),
-};
-
-const agentPlanShape = {
-  login: z.string().min(1),
-  objective: z.string().min(1).max(500).optional(),
-  repoFullName: z.string().min(3).optional(),
-};
 
 function contributorOpenIssueCount(issues: Array<{ repoFullName: string; state: string }>, repoFullName: string): number {
   const targetRepo = repoFullName.toLowerCase();
@@ -1041,18 +815,6 @@ const repoContextOutputSchema = {
 };
 
 
-
-
-
-
-
-
-
-
-
-
-
-
 export const maintainerMeasurementReportOutputSchema = {
   repoFullName: z.string().optional(),
   generatedAt: z.string().optional(),
@@ -1074,16 +836,6 @@ export const gatePrecisionOutputSchema = {
   overall: z.unknown().optional(),
   signals: z.array(z.string()).optional(),
 };
-
-
-
-
-
-
-
-
-
-
 
 
 const loginRepoPullShape = {
@@ -1132,91 +884,19 @@ const checkSlopRiskOutputSchema = {
 // owns the real bounds/format checks and returns the actionable error list — an empty/malformed submission
 // reaches the handler rather than being rejected upstream by the schema. `decomposition` is the optional
 // renter-reviewed idea→issues split (the one fuzzy step, supplied in); omit it for the single-issue baseline.
-export const intakeIdeaShape = {
-  id: z.string().optional(),
-  title: z.string().optional(),
-  body: z.string().optional(),
-  targetRepo: z.string().optional(),
-  constraints: z.array(z.string()).max(50).optional(),
-  acceptanceHints: z.array(z.string()).max(50).optional(),
-  priority: z.string().optional(),
-  decomposition: z
-    .array(z.object({ key: z.string(), title: z.string(), body: z.string(), dependsOn: z.array(z.string()).max(50).optional() }))
-    .max(50)
-    .optional(),
-};
 
-export const intakeIdeaOutputSchema = {
-  ok: z.boolean(),
-  verdict: z.enum(["go", "raise", "avoid"]).optional(),
-  taskGraph: z.unknown().optional(),
-  errors: z.array(z.string()).optional(),
-};
 
 // Claim-plan hand-off (#4799): same idea input, but the output is the loop disposition — which constituent
 // issues the claim/code/submit loop can claim now vs. must defer or skip.
-export const planIdeaClaimsOutputSchema = {
-  ok: z.boolean(),
-  verdict: z.enum(["go", "raise", "avoid"]).optional(),
-  claimPlan: z.unknown().optional(),
-  errors: z.array(z.string()).optional(),
-};
 
 // Loop results-delivery input (#4801): a completed iteration's already-computed metadata.
-export const buildResultsPayloadShape = {
-  repoFullName: z.string().min(1),
-  prNumber: z.number().int().nullable().optional(),
-  title: z.string(),
-  changedFiles: z
-    .array(z.object({ path: z.string(), additions: z.number().int().optional(), deletions: z.number().int().optional() }))
-    .max(5000)
-    .optional(),
-  status: z.enum(["open", "merged", "closed"]).optional(),
-};
 
-export const buildResultsPayloadOutputSchema = {
-  prLink: z.string().nullable().optional(),
-  summary: z.string().optional(),
-  diffPreview: z.unknown().optional(),
-  totals: z.unknown().optional(),
-};
 
 // Loop progress-snapshot input (#4800): a running loop's already-computed state.
-export const buildProgressSnapshotShape = {
-  iteration: z.number().int(),
-  maxIterations: z.number().int().nullable().optional(),
-  phase: z.enum(["queued", "claiming", "coding", "reviewing", "submitting", "done"]),
-  status: z.enum(["running", "converged", "abandoned", "error"]),
-  recentActivity: z
-    .array(z.object({ step: z.string(), detail: z.string().optional(), at: z.string().optional() }))
-    .max(1000)
-    .optional(),
-};
 
-export const buildProgressSnapshotOutputSchema = {
-  phase: z.string().optional(),
-  status: z.string().optional(),
-  iteration: z.number().optional(),
-  maxIterations: z.number().nullable().optional(),
-  percentComplete: z.number().nullable().optional(),
-  recentActivity: z.unknown().optional(),
-  done: z.boolean().optional(),
-};
 
 // Loop escalation evaluator input (#4806): an already-computed loop outcome + health tier + operator signals.
-export const evaluateEscalationShape = {
-  runStatus: z.enum(["running", "converged", "abandoned", "error"]),
-  healthStatus: z.enum(["healthy", "degraded", "critical"]).optional(),
-  customerFlagged: z.boolean().optional(),
-  killRequested: z.boolean().optional(),
-};
 
-export const evaluateEscalationOutputSchema = {
-  shouldEscalate: z.boolean().optional(),
-  action: z.enum(["none", "notify", "human_review", "stop"]).optional(),
-  severity: z.enum(["none", "low", "medium", "high"]).optional(),
-  reasons: z.array(z.string()).optional(),
-};
 
 // Deterministic structural-improvement counterpart to checkSlopRiskShape (#4746, sub-issue I of epic #4737):
 // the positive-axis mirror of checkSlopRisk, same pure local-metadata contract. changedFiles/tests/testFiles
@@ -1304,7 +984,6 @@ const suggestBoundaryTestsShape = {
 };
 
 
-
 const predictGateOutputSchema = {
   predicted: z.boolean().optional(),
   basis: z.string().optional(),
@@ -1318,7 +997,6 @@ const predictGateOutputSchema = {
   funnel: z.unknown().optional(),
   note: z.string().optional(),
 };
-
 
 
 const markNotificationsReadShape = {
@@ -1337,21 +1015,6 @@ const watchIssuesShape = {
   repoFullName: z.string().min(3).max(200).optional(),
   labels: z.array(z.string().min(1).max(100)).max(50).optional(),
 };
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 // admin tool output schemas (#9518) now come from @loopover/contract/tools.
@@ -1414,21 +1077,6 @@ export const simulateOpenPrPressureShape = {
   queueHealth: simulateOpenPrPressureQueueHealthSchema,
   roleContext: z.object({ maintainerLane: z.boolean() }).passthrough(),
   contributorOpenPrCount: simulateOpenPrPressureCountSchema.optional(),
-};
-const agentRunBundleOutputSchema = {
-  run: z.unknown().optional(),
-  actions: z.array(z.unknown()).optional(),
-  contextSnapshots: z.array(z.unknown()).optional(),
-  summary: z.unknown().optional(),
-};
-const agentPlanNextWorkOutputSchema = {
-  ...agentRunBundleOutputSchema,
-  planningElicitation: z.unknown().optional(),
-  planningChoices: z.unknown().optional(),
-};
-const agentExplainNextActionOutputSchema = {
-  ...agentRunBundleOutputSchema,
-  topAction: z.unknown().optional(),
 };
 
 export async function handleMcpRequest(c: AppContext): Promise<Response> {
@@ -1969,8 +1617,8 @@ export class LoopoverMcp {
       {
         description:
           "Turn a freeform renter idea into a strict, claimable task-graph (spec #4779) and score it against the same feasibility gate the loop runs on. Deterministic and source-free: validates the submission, assembles constituent issues (an optional caller-supplied decomposition, else a single-issue baseline), and returns the graph plus its go/raise/avoid verdict. A malformed or empty submission returns an actionable error list, not a silent failure.",
-        inputSchema: intakeIdeaShape,
-        outputSchema: intakeIdeaOutputSchema,
+        inputSchema: IntakeIdeaInput.shape,
+        outputSchema: IntakeIdeaOutput.shape,
       },
       async (input) => this.toolResult(await this.intakeIdea(input)),
     );
@@ -1980,8 +1628,8 @@ export class LoopoverMcp {
       {
         description:
           "Route a freeform idea through the intake bridge (#4798) into a claim/code/submit-loop plan (#4799): validates the submission, builds the scored task-graph, and returns which constituent issues the loop can claim now vs. defer (held on a prerequisite) vs. skip (unshippable) — dependency-ordered so a prerequisite is always claimed before its dependents. Deterministic and source-free; it decides what to claim, it does not claim or run anything. A malformed/empty submission returns an actionable error list.",
-        inputSchema: intakeIdeaShape,
-        outputSchema: planIdeaClaimsOutputSchema,
+        inputSchema: IntakeIdeaInput.shape,
+        outputSchema: PlanIdeaClaimsOutput.shape,
       },
       async (input) => this.toolResult(await this.planIdeaClaims(input)),
     );
@@ -1991,8 +1639,8 @@ export class LoopoverMcp {
       {
         description:
           "Package a completed loop iteration into the customer-facing result (#4801): a PR link, a plain-language summary, and a bounded diff preview, from already-computed iteration metadata. Deterministic and source-free — it formats the result, it does not fetch, open, or deliver anything.",
-        inputSchema: buildResultsPayloadShape,
-        outputSchema: buildResultsPayloadOutputSchema,
+        inputSchema: BuildResultsPayloadInput.shape,
+        outputSchema: BuildResultsPayloadOutput.shape,
       },
       async (input) => this.toolResult(await this.buildLoopResults(input)),
     );
@@ -2002,8 +1650,8 @@ export class LoopoverMcp {
       {
         description:
           "Build a near-real-time progress snapshot for a running rented loop (#4800): phase, status, iteration/percent-complete, and a bounded recent-activity tail, from already-computed loop state. Deterministic and source-free; a customer surface pushes it on change (via the engine's progressChanged) rather than polling on a fixed interval.",
-        inputSchema: buildProgressSnapshotShape,
-        outputSchema: buildProgressSnapshotOutputSchema,
+        inputSchema: BuildProgressSnapshotInput.shape,
+        outputSchema: BuildProgressSnapshotOutput.shape,
       },
       async (input) => this.toolResult(await this.buildLoopProgress(input)),
     );
@@ -2013,8 +1661,8 @@ export class LoopoverMcp {
       {
         description:
           "Decide whether a rented loop needs a human, and what action to take (#4806), from an already-computed run outcome, health tier, and operator/customer signals — the deterministic support/escalation-path logic. Source-free; returns shouldEscalate + action (none/notify/human_review/stop) + severity + reasons. It decides; the caller wires the action.",
-        inputSchema: evaluateEscalationShape,
-        outputSchema: evaluateEscalationOutputSchema,
+        inputSchema: EvaluateEscalationInput.shape,
+        outputSchema: EvaluateEscalationOutput.shape,
       },
       async (input) => this.toolResult(await this.evalEscalation(input)),
     );
@@ -2400,22 +2048,22 @@ export class LoopoverMcp {
     // #780 miner write-tools — each returns a LOCAL-execution action spec; loopover never performs the write.
     register(
       "loopover_open_pr",
-      { description: "Build a LOCAL-execution spec to open a pull request from your branch (run it with your own gh creds; loopover never performs the write).", inputSchema: openPrShape, outputSchema: localWriteActionOutputSchema },
+      { description: "Build a LOCAL-execution spec to open a pull request from your branch (run it with your own gh creds; loopover never performs the write).", inputSchema: OpenPrInput.shape, outputSchema: LocalWriteActionOutput.shape },
       async (input) => this.toolResult(this.localWriteSpec(buildOpenPrSpec(input))),
     );
     register(
       "loopover_file_issue",
-      { description: "Build a LOCAL-execution spec to file an issue (run it with your own gh creds; loopover never performs the write).", inputSchema: fileIssueShape, outputSchema: localWriteActionOutputSchema },
+      { description: "Build a LOCAL-execution spec to file an issue (run it with your own gh creds; loopover never performs the write).", inputSchema: FileIssueInput.shape, outputSchema: LocalWriteActionOutput.shape },
       async (input) => this.toolResult(this.localWriteSpec(buildFileIssueSpec(input))),
     );
     register(
       "loopover_apply_labels",
-      { description: "Build a LOCAL-execution spec to add labels to an issue or PR (run it with your own gh creds; loopover never performs the write).", inputSchema: applyLabelsShape, outputSchema: localWriteActionOutputSchema },
+      { description: "Build a LOCAL-execution spec to add labels to an issue or PR (run it with your own gh creds; loopover never performs the write).", inputSchema: ApplyLabelsInput.shape, outputSchema: LocalWriteActionOutput.shape },
       async (input) => this.toolResult(this.localWriteSpec(buildApplyLabelsSpec(input))),
     );
     register(
       "loopover_post_eligibility_comment",
-      { description: "Build a LOCAL-execution spec to post an eligibility/context comment on an issue or PR (run it with your own gh creds; loopover never performs the write).", inputSchema: postEligibilityCommentShape, outputSchema: localWriteActionOutputSchema },
+      { description: "Build a LOCAL-execution spec to post an eligibility/context comment on an issue or PR (run it with your own gh creds; loopover never performs the write).", inputSchema: PostEligibilityCommentInput.shape, outputSchema: LocalWriteActionOutput.shape },
       async (input) => this.toolResult(this.localWriteSpec(buildPostEligibilityCommentSpec(input))),
     );
     register(
@@ -2423,19 +2071,19 @@ export class LoopoverMcp {
       {
         description:
           "Build a LOCAL-execution spec to post a soft-claim comment on an issue, signaling a miner is working on it to reduce duplicate work (run it with your own gh creds; loopover never performs the write). Not an assignment -- purely advisory.",
-        inputSchema: postSoftClaimShape,
-        outputSchema: localWriteActionOutputSchema,
+        inputSchema: PostSoftClaimInput.shape,
+        outputSchema: LocalWriteActionOutput.shape,
       },
       async (input) => this.toolResult(this.localWriteSpec(buildSoftClaimSpec(input))),
     );
     register(
       "loopover_create_branch",
-      { description: "Build a LOCAL-execution spec to create a branch (run it locally; loopover never performs the write).", inputSchema: createBranchShape, outputSchema: localWriteActionOutputSchema },
+      { description: "Build a LOCAL-execution spec to create a branch (run it locally; loopover never performs the write).", inputSchema: CreateBranchInput.shape, outputSchema: LocalWriteActionOutput.shape },
       async (input) => this.toolResult(this.localWriteSpec(buildCreateBranchSpec(input))),
     );
     register(
       "loopover_delete_branch",
-      { description: "Build a LOCAL-execution spec to delete a branch (run it locally; loopover never performs the write).", inputSchema: deleteBranchShape, outputSchema: localWriteActionOutputSchema },
+      { description: "Build a LOCAL-execution spec to delete a branch (run it locally; loopover never performs the write).", inputSchema: DeleteBranchInput.shape, outputSchema: LocalWriteActionOutput.shape },
       async (input) => this.toolResult(this.localWriteSpec(buildDeleteBranchSpec(input))),
     );
     register(
@@ -2443,8 +2091,8 @@ export class LoopoverMcp {
       {
         description:
           "Build a LOCAL-execution spec describing WHAT boundary-safe test cases should exist for the given target files, using the repo's detected framework/convention (see loopover's test-evidence signal). LoopOver supplies the criteria; your OWN agent scaffolds and runs the actual test files locally — no source code is uploaded and loopover never performs the write.",
-        inputSchema: testGenShape,
-        outputSchema: localWriteActionOutputSchema,
+        inputSchema: GenerateTestsInput.shape,
+        outputSchema: LocalWriteActionOutput.shape,
       },
       async (input) => this.toolResult(this.localWriteSpec(buildTestGenSpec(input))),
     );
@@ -2453,31 +2101,31 @@ export class LoopoverMcp {
       {
         description:
           "Build a LOCAL-execution spec to file a follow-up issue for a review finding a maintainer wants TRACKED rather than blocked on this PR. Composes a bounded, public-safe title/body from the finding (run it with your own gh creds; loopover never performs the write).",
-        inputSchema: followUpIssueShape,
-        outputSchema: localWriteActionOutputSchema,
+        inputSchema: FileFollowUpIssueInput.shape,
+        outputSchema: LocalWriteActionOutput.shape,
       },
       async (input) => this.toolResult(this.localWriteSpec(buildFollowUpIssueSpec(input))),
     );
     register(
       "loopover_close_pr",
-      { description: "Build a LOCAL-execution spec to close a pull request, optionally with a comment (run it with your own gh creds; loopover never performs the write).", inputSchema: closePrShape, outputSchema: localWriteActionOutputSchema },
+      { description: "Build a LOCAL-execution spec to close a pull request, optionally with a comment (run it with your own gh creds; loopover never performs the write).", inputSchema: ClosePrInput.shape, outputSchema: LocalWriteActionOutput.shape },
       async (input) => this.toolResult(this.localWriteSpec(buildClosePrSpec(input))),
     );
 
     // #783 multi-step plan DAG — stateless: pass the plan back each call.
     register(
       "loopover_build_plan",
-      { description: "Normalize raw steps into a validated multi-step plan DAG (per-step state + retries). Returns the plan to hold and pass back to the other plan tools.", inputSchema: buildPlanShape, outputSchema: planViewOutputSchema },
+      { description: "Normalize raw steps into a validated multi-step plan DAG (per-step state + retries). Returns the plan to hold and pass back to the other plan tools.", inputSchema: BuildPlanInput.shape, outputSchema: PlanViewOutput.shape },
       async (input) => this.toolResult(this.buildPlan(input)),
     );
     register(
       "loopover_plan_status",
-      { description: "Return a plan's progress, validation, and the steps ready to run now (all dependencies met).", inputSchema: planStatusShape, outputSchema: planViewOutputSchema },
+      { description: "Return a plan's progress, validation, and the steps ready to run now (all dependencies met).", inputSchema: PlanStatusInput.shape, outputSchema: PlanViewOutput.shape },
       async (input) => this.toolResult(this.planStatusTool(input)),
     );
     register(
       "loopover_record_step_result",
-      { description: "Record a step's outcome (completed / failed / skipped). A failure retries until maxAttempts is exhausted. Returns the advanced plan + the next ready steps.", inputSchema: recordStepResultShape, outputSchema: planViewOutputSchema },
+      { description: "Record a step's outcome (completed / failed / skipped). A failure retries until maxAttempts is exhausted. Returns the advanced plan + the next ready steps.", inputSchema: RecordStepResultInput.shape, outputSchema: PlanViewOutput.shape },
       async (input) => this.toolResult(this.recordStepResult(input)),
     );
 
@@ -2488,8 +2136,8 @@ export class LoopoverMcp {
       {
         description:
           "Return a repo's agent automation state: the per-action autonomy levels, kill-switch / dry-run mode, GitHub write-permission readiness, and how many auto_with_approval actions are awaiting a maintainer decision.",
-        inputSchema: ownerRepoShape,
-        outputSchema: automationStateOutputSchema,
+        inputSchema: GetAutomationStateInput.shape,
+        outputSchema: GetAutomationStateOutput.shape,
       },
       async (input) => this.toolResult(await this.getAutomationState(input)),
     );
@@ -2501,8 +2149,8 @@ export class LoopoverMcp {
       {
         description:
           "Pause or resume ALL agent actions on a repo (the kill-switch toggle) -- the write-side counterpart to loopover_get_automation_state's agentPaused/mode fields, same as `loopover-mcp maintain pause|resume`. Maintainer access required.",
-        inputSchema: setAgentPausedShape,
-        outputSchema: setAgentPausedOutputSchema,
+        inputSchema: SetAgentPausedInput.shape,
+        outputSchema: SetAgentPausedOutput.shape,
       },
       async (input) => this.toolResult(await this.setAgentPaused(input)),
     );
@@ -2514,8 +2162,8 @@ export class LoopoverMcp {
       {
         description:
           "Set the autonomy level for one action class via a read-merge-write so other classes are left untouched -- the write-side counterpart to loopover_get_automation_state's autonomy map, same as `loopover-mcp maintain set-level <action> <level>`. Maintainer access required.",
-        inputSchema: setActionAutonomyShape,
-        outputSchema: setActionAutonomyOutputSchema,
+        inputSchema: SetActionAutonomyInput.shape,
+        outputSchema: SetActionAutonomyOutput.shape,
       },
       async (input) => this.toolResult(await this.setActionAutonomy(input)),
     );
@@ -2525,8 +2173,8 @@ export class LoopoverMcp {
       {
         description:
           "Stage a PR action (label / request_changes / approve / merge / close) into the repo's approval queue for a maintainer to accept or reject. Maintainer access required; the action is NOT executed until approved.",
-        inputSchema: proposeActionShape,
-        outputSchema: proposeActionOutputSchema,
+        inputSchema: ProposeActionInput.shape,
+        outputSchema: ProposeActionOutput.shape,
       },
       async (input) => this.toolResult(await this.proposeAction(input)),
     );
@@ -2536,8 +2184,8 @@ export class LoopoverMcp {
       {
         description:
           "List the agent actions staged in a repo's approval queue (default status=pending), so a maintainer can review what is awaiting a decision. Maintainer access required.",
-        inputSchema: listPendingActionsShape,
-        outputSchema: listPendingActionsOutputSchema,
+        inputSchema: ListPendingActionsInput.shape,
+        outputSchema: ListPendingActionsOutput.shape,
       },
       async (input) => this.toolResult(await this.listPendingActions(input)),
     );
@@ -2547,8 +2195,8 @@ export class LoopoverMcp {
       {
         description:
           "Accept (execute) or reject a staged approval-queue action by id. Accept runs it through the live executor gates; reject cancels it. Idempotent and scoped to this repo. Maintainer access required.",
-        inputSchema: decidePendingActionShape,
-        outputSchema: decidePendingActionOutputSchema,
+        inputSchema: DecidePendingActionInput.shape,
+        outputSchema: DecidePendingActionOutput.shape,
       },
       async (input) => this.toolResult(await this.decidePendingAction(input)),
     );
@@ -2591,8 +2239,8 @@ export class LoopoverMcp {
       {
         description:
           "Return a repo's agent audit feed: executed actions (agent.action.*) and approval-queue decisions (accepted/rejected), newest first. Read-only and public-safe (action posture only). Maintainer access required.",
-        inputSchema: auditFeedShape,
-        outputSchema: auditFeedOutputSchema,
+        inputSchema: GetAgentAuditFeedInput.shape,
+        outputSchema: GetAgentAuditFeedOutput.shape,
       },
       async (input) => this.toolResult(await this.getAgentAuditFeed(input)),
     );
@@ -2751,8 +2399,8 @@ export class LoopoverMcp {
       "loopover_agent_plan_next_work",
       {
         description: "Run the deterministic LoopOver base-agent planner and rank the next Gittensor OSS contribution actions.",
-        inputSchema: agentPlanShape,
-        outputSchema: agentPlanNextWorkOutputSchema,
+        inputSchema: AgentPlanInput.shape,
+        outputSchema: AgentPlanNextWorkOutput.shape,
       },
       async (input, extra) => this.toolResult(await this.agentPlanNextWork(input, extra, server)),
     );
@@ -2761,7 +2409,7 @@ export class LoopoverMcp {
       "loopover_agent_start_run",
       {
         description: "Create a queued copilot-only LoopOver agent run. The agent plans and explains; it does not edit code or open PRs.",
-        inputSchema: agentRunShape,
+        inputSchema: AgentStartRunInput.shape,
         outputSchema: AgentRunBundleOutput.shape,
       },
       async (input) => this.toolResult(await this.agentStartRun(input)),
@@ -2771,7 +2419,7 @@ export class LoopoverMcp {
       "loopover_agent_get_run",
       {
         description: "Fetch a persisted LoopOver agent run with ranked actions and context snapshots.",
-        inputSchema: agentRunIdShape,
+        inputSchema: AgentGetRunInput.shape,
         outputSchema: AgentRunBundleOutput.shape,
       },
       async (input) => this.toolResult(await this.agentGetRun(input.runId)),
@@ -2781,8 +2429,8 @@ export class LoopoverMcp {
       "loopover_agent_explain_next_action",
       {
         description: "Explain the top deterministic next action and its scoreability/risk/maintainer impact.",
-        inputSchema: agentPlanShape,
-        outputSchema: agentExplainNextActionOutputSchema,
+        inputSchema: AgentPlanInput.shape,
+        outputSchema: AgentExplainNextActionOutput.shape,
       },
       async (input) => this.toolResult(await this.agentExplainNextAction(input)),
     );
@@ -2863,7 +2511,7 @@ export class LoopoverMcp {
       {
         title: "Select contribution issue",
         description: "Identify the best open issue for a contributor to work on based on lane fit, issue quality, and queue signals. Advisory only — no GitHub writes.",
-        argsSchema: { ...ownerRepoShape, login: z.string().min(1) },
+        argsSchema: { ...GetAutomationStateInput.shape, login: z.string().min(1) },
       },
       ({ owner, repo, login }) => ({
         messages: [
@@ -2883,7 +2531,7 @@ export class LoopoverMcp {
       {
         title: "Draft contribution PR packet",
         description: "Draft a public-safe PR submission packet for a planned contribution without uploading source code. Advisory only — no GitHub writes.",
-        argsSchema: { ...ownerRepoShape, login: z.string().min(1) },
+        argsSchema: { ...GetAutomationStateInput.shape, login: z.string().min(1) },
       },
       ({ owner, repo, login }) => ({
         messages: [
@@ -2903,7 +2551,7 @@ export class LoopoverMcp {
       {
         title: "Preflight contribution branch",
         description: "Assess branch readiness before opening a PR using cached lane and preflight signals. Advisory only — no GitHub writes.",
-        argsSchema: { ...ownerRepoShape, login: z.string().min(1) },
+        argsSchema: { ...GetAutomationStateInput.shape, login: z.string().min(1) },
       },
       ({ owner, repo, login }) => ({
         messages: [
@@ -4177,7 +3825,7 @@ export class LoopoverMcp {
     }
   }
 
-  private async intakeIdea(input: z.infer<z.ZodObject<typeof intakeIdeaShape>>): Promise<ToolPayload> {
+  private async intakeIdea(input: z.infer<typeof IntakeIdeaInput>): Promise<ToolPayload> {
     await this.enforceToolRateLimit("loopover_intake_idea");
     const validated = validateIdeaSubmission(input);
     if (!validated.ok) {
@@ -4193,7 +3841,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async planIdeaClaims(input: z.infer<z.ZodObject<typeof intakeIdeaShape>>): Promise<ToolPayload> {
+  private async planIdeaClaims(input: z.infer<typeof IntakeIdeaInput>): Promise<ToolPayload> {
     await this.enforceToolRateLimit("loopover_plan_idea_claims");
     const validated = validateIdeaSubmission(input);
     if (!validated.ok) {
@@ -4210,7 +3858,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async buildLoopResults(input: z.infer<z.ZodObject<typeof buildResultsPayloadShape>>): Promise<ToolPayload> {
+  private async buildLoopResults(input: z.infer<typeof BuildResultsPayloadInput>): Promise<ToolPayload> {
     await this.enforceToolRateLimit("loopover_build_results_payload");
     const payload = buildResultsPayload(input);
     return {
@@ -4219,7 +3867,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async evalEscalation(input: z.infer<z.ZodObject<typeof evaluateEscalationShape>>): Promise<ToolPayload> {
+  private async evalEscalation(input: z.infer<typeof EvaluateEscalationInput>): Promise<ToolPayload> {
     await this.enforceToolRateLimit("loopover_evaluate_escalation");
     const decision = evaluateEscalation(input);
     return {
@@ -4228,7 +3876,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async buildLoopProgress(input: z.infer<z.ZodObject<typeof buildProgressSnapshotShape>>): Promise<ToolPayload> {
+  private async buildLoopProgress(input: z.infer<typeof BuildProgressSnapshotInput>): Promise<ToolPayload> {
     await this.enforceToolRateLimit("loopover_build_progress_snapshot");
     const snapshot = buildProgressSnapshot(input);
     return {
@@ -4644,18 +4292,18 @@ export class LoopoverMcp {
     };
   }
 
-  private buildPlan(input: z.infer<z.ZodObject<typeof buildPlanShape>>): ToolPayload {
+  private buildPlan(input: z.infer<typeof BuildPlanInput>): ToolPayload {
     const plan = buildPlanDag(input.steps);
     const validation = validatePlanDag(plan);
     return { summary: `Built a ${plan.steps.length}-step plan (${validation.valid ? "valid DAG" : `INVALID: ${validation.errors.join("; ")}`}).`, data: this.planView(plan) };
   }
 
-  private planStatusTool(input: z.infer<z.ZodObject<typeof planStatusShape>>): ToolPayload {
+  private planStatusTool(input: z.infer<typeof PlanStatusInput>): ToolPayload {
     const plan = input.plan as PlanDag;
     return { summary: `Plan status: ${planProgress(plan).status}.`, data: this.planView(plan) };
   }
 
-  private recordStepResult(input: z.infer<z.ZodObject<typeof recordStepResultShape>>): ToolPayload {
+  private recordStepResult(input: z.infer<typeof RecordStepResultInput>): ToolPayload {
     const plan = applyStepResult(input.plan as PlanDag, input.stepId, { outcome: input.outcome, ...(input.error !== undefined ? { error: input.error } : {}) });
     return { summary: `Recorded ${input.outcome} for step ${input.stepId}; plan is now ${planProgress(plan).status}.`, data: this.planView(plan) };
   }
@@ -4675,7 +4323,7 @@ export class LoopoverMcp {
   // mode/agentPaused fields. Reads the RAW settings row (not resolveRepositorySettings's yaml-merged view --
   // writing back a yaml-only override would wrongly persist it into the DB row) and writes the whole row back,
   // mirroring the PUT /settings route's own read-merge-write so unrelated settings groups are preserved.
-  private async setAgentPaused(input: z.infer<z.ZodObject<typeof setAgentPausedShape>>): Promise<ToolPayload> {
+  private async setAgentPaused(input: z.infer<typeof SetAgentPausedInput>): Promise<ToolPayload> {
     const fullName = `${input.owner}/${input.repo}`;
     await this.requireRepoManageAccess(fullName);
     const current = await getRepositorySettings(this.env, fullName);
@@ -4711,7 +4359,7 @@ export class LoopoverMcp {
   // #6087 — set-level: the write-side per-action-class autonomy dial. Read-merge-write over the autonomy map
   // (mirrors the CLI's own read-merge-write, loopover-mcp.js:1789-1796) so setting one action class's level
   // never clobbers the others.
-  private async setActionAutonomy(input: z.infer<z.ZodObject<typeof setActionAutonomyShape>>): Promise<ToolPayload> {
+  private async setActionAutonomy(input: z.infer<typeof SetActionAutonomyInput>): Promise<ToolPayload> {
     const fullName = `${input.owner}/${input.repo}`;
     await this.requireRepoManageAccess(fullName);
     const current = await getRepositorySettings(this.env, fullName);
@@ -4735,7 +4383,7 @@ export class LoopoverMcp {
 
   // #784 — stage a proposed PR action into the approval queue (#779) for a maintainer to accept/reject. The
   // action is auto_with_approval (never auto-executes); maintainer-manage access required.
-  private async proposeAction(input: z.infer<z.ZodObject<typeof proposeActionShape>>): Promise<ToolPayload> {
+  private async proposeAction(input: z.infer<typeof ProposeActionInput>): Promise<ToolPayload> {
     const fullName = `${input.owner}/${input.repo}`;
     await this.requireRepoManageAccess(fullName);
     const repo = await getRepository(this.env, fullName);
@@ -4769,7 +4417,7 @@ export class LoopoverMcp {
 
   // #784 — surface the approval queue an MCP client can already propose into. Maintainer-manage scoped
   // (the full queue with reasons is more sensitive than the bare count in get_automation_state).
-  private async listPendingActions(input: z.infer<z.ZodObject<typeof listPendingActionsShape>>): Promise<ToolPayload> {
+  private async listPendingActions(input: z.infer<typeof ListPendingActionsInput>): Promise<ToolPayload> {
     const fullName = `${input.owner}/${input.repo}`;
     await this.requireRepoApprovalQueueAccess(fullName);
     const status = input.status ?? "pending";
@@ -4796,7 +4444,7 @@ export class LoopoverMcp {
 
   // #784 — accept (execute) or reject a staged action. Mirrors the HTTP decision route: maintainer-manage
   // access, repo-scoped (a guessed id from another repo's queue cannot be decided), idempotent.
-  private async decidePendingAction(input: z.infer<z.ZodObject<typeof decidePendingActionShape>>): Promise<ToolPayload> {
+  private async decidePendingAction(input: z.infer<typeof DecidePendingActionInput>): Promise<ToolPayload> {
     const fullName = `${input.owner}/${input.repo}`;
     await this.requireRepoApprovalQueueAccess(fullName);
     const pending = await getPendingAgentAction(this.env, input.id);
@@ -4936,7 +4584,7 @@ export class LoopoverMcp {
 
   // #784 — the agent audit feed: executed actions + approval decisions for a repo, newest first.
   // Maintainer-manage scoped; read-only and public-safe (action posture only — no trust/score metadata).
-  private async getAgentAuditFeed(input: z.infer<z.ZodObject<typeof auditFeedShape>>): Promise<ToolPayload> {
+  private async getAgentAuditFeed(input: z.infer<typeof GetAgentAuditFeedInput>): Promise<ToolPayload> {
     const fullName = `${input.owner}/${input.repo}`;
     await this.requireRepoManageAccess(fullName);
     const events = await listAgentAuditEvents(this.env, {
@@ -5051,7 +4699,7 @@ export class LoopoverMcp {
   }
 
   private async agentPlanNextWork(
-    input: z.infer<z.ZodObject<typeof agentPlanShape>>,
+    input: z.infer<typeof AgentPlanInput>,
     extra?: McpToolExtra,
     mcpServer?: McpServer,
   ): Promise<ToolPayload> {
@@ -5070,7 +4718,7 @@ export class LoopoverMcp {
   }
 
   private async collectPlanningChoices(
-    input: z.infer<z.ZodObject<typeof agentPlanShape>>,
+    input: z.infer<typeof AgentPlanInput>,
     extra?: McpToolExtra,
     mcpServer?: McpServer,
   ): Promise<{ supported: boolean; requested: boolean; accepted: boolean; choices: McpPlanningChoices }> {
@@ -5091,7 +4739,7 @@ export class LoopoverMcp {
     }
   }
 
-  private async agentStartRun(input: z.infer<z.ZodObject<typeof agentRunShape>>): Promise<ToolPayload> {
+  private async agentStartRun(input: z.infer<typeof AgentStartRunInput>): Promise<ToolPayload> {
     this.requireContributorAccess(input.actorLogin);
     const bundle = await startAgentRun(this.env, {
       objective: input.objective,
@@ -5119,7 +4767,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async agentExplainNextAction(input: z.infer<z.ZodObject<typeof agentPlanShape>>): Promise<ToolPayload> {
+  private async agentExplainNextAction(input: z.infer<typeof AgentPlanInput>): Promise<ToolPayload> {
     this.requireContributorAccess(input.login);
     const bundle = await explainBlockersWithAgent(this.env, { ...input, surface: "mcp" });
     return {

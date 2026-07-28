@@ -1,111 +1,16 @@
+import type { z } from "zod";
+import type { PublicStatsSchema } from "@loopover/contract/public-api";
 // Pure types + helpers for the Proof of Power (#1059) homepage stats band, split from the component so the
 // component file only exports components (react-refresh) — mirrors the audit-feed / audit-feed-model split.
 
-export type PublicStats = {
-  generatedAt: string;
-  updatedAt: string;
-  totals: {
-    handled: number;
-    reviewed: number;
-    merged: number;
-    closed: number;
-    commented: number;
-    ignored: number;
-    manual: number;
-    error: number;
-    reversed: number;
-    filteredPct: number | null;
-    accuracyPct: number | null;
-    minutesSaved: number;
-  };
-  weekly: { reviewed: number; merged: number };
-  byProject: Array<{
-    project: string;
-    reviewed: number;
-    merged: number;
-    closed: number;
-    accuracyPct: number | null;
-  }>;
-  /** Live, fleet-wide accuracy across registered self-hosted ORB instances -- preferred over totals.accuracyPct
-   *  (a frozen own-ledger snapshot) whenever instanceCount > 0. See public-stats.ts's PublicStatsPayload. */
-  fleetAccuracy: {
-    accuracyPct: number | null;
-    /** #8829 fields -- optional-chained at the render site: an older backend simply omits them and the tile
-     *  degrades to the bare figure rather than throwing. */
-    accuracyCiPct?: { lo: number; hi: number } | null;
-    mergePrecisionPct?: number | null;
-    mergePrecisionCiPct?: { lo: number; hi: number } | null;
-    closePrecisionPct?: number | null;
-    closePrecisionCiPct?: { lo: number; hi: number } | null;
-    coveragePct?: number | null;
-    decidedCount?: number;
-    /** #9050: `aiJudgedCoveragePct` (renamed from `coveragePct`) is the share of the arm's AI-JUDGED
-     *  sub-population the guarantee covers, not a share of all decided signals (that's the sibling
-     *  `coveragePct` above) -- render the population it's actually over, not a bare percentage.
-     *  `backfilledPct` is null when the stored calibration predates that field. */
-    guaranteed?: {
-      close: {
-        alpha: number;
-        lambda: number;
-        aiJudgedCoveragePct: number;
-        n: number;
-        backfilledPct: number | null;
-      } | null;
-      merge: {
-        alpha: number;
-        lambda: number;
-        aiJudgedCoveragePct: number;
-        n: number;
-        backfilledPct: number | null;
-      } | null;
-    };
-    instanceCount: number;
-    windowDays: number;
-    /** #9068: null (not 0) when the fleet has fewer than GAMING_MIN_ELIGIBLE eligible instances -- the
-     *  anti-farming detector cannot run below that floor, so a structural zero must never render as "checked,
-     *  found none". */
-    gamingFlagsCaught: number | null;
-  };
-  /** Trailing weekly history of totals.accuracyPct's SAME formula (#4447). */
-  accuracyTrend: Array<{
-    weekStart: string;
-    merged: number;
-    closed: number;
-    reversed: number;
-    accuracyPct: number | null;
-  }>;
-  /** Trailing weekly "how often we avoid redoing AI work" trend (#4448). */
-  reuseRateTrend: Array<{
-    weekStart: string;
-    hits: number;
-    misses: number;
-    reuseRatePct: number | null;
-  }>;
-  /** Trailing weekly review-volume/filtered-rate trend (#4445 follow-up) -- each week is the cohort of PRs
-   *  first published that week; `merged` reflects their CURRENT disposition, not necessarily merged that
-   *  same week. */
-  reviewVolumeTrend: Array<{
-    weekStart: string;
-    reviewed: number;
-    merged: number;
-    filteredPct: number | null;
-  }>;
-
-  /** Measured per-rule precision + the reproducibility freeze point (#8230/#8231). Optional-chained by
-   *  consumers: until the backend carrying it is deployed, an older /v1/public/stats response simply won't
-   *  have the field yet, and every surface must degrade to hiding the section rather than throw. */
-  rulePrecision?: {
-    windowDays: number;
-    rules: Array<{
-      ruleId: string;
-      decided: number;
-      /** confirmed / decided; null below the decided-sample floor -- rendered as "insufficient data", NEVER 0%. */
-      precision: number | null;
-    }>;
-    reversals: { reopened: number; reverted: number; superseded: number };
-    latestBacktestRun: { corpusChecksum: string; at: string } | null;
-  };
-};
+// #9282/#9521: DERIVED, not hand-authored. `PublicStats` was a parallel TypeScript interface kept in sync
+// with the backend by whoever last touched both files, and it had drifted -- it was missing
+// `fleetAccuracy.basis` and `rulePrecision.rules[].confirmed` outright, called `decidedCount` optional where
+// the wire says nullable, called `accuracyTrend`'s counts non-null where the wire says nullable, and made
+// `rulePrecision` optional where the wire says required. Inferring from the schema the Worker actually
+// serves makes the next such change a compile error here instead of broken rendering.
+export type { PublicRulePrecision } from "@loopover/contract/public-api";
+export type PublicStats = z.infer<typeof PublicStatsSchema>;
 
 /** Relative "updated Ns ago" label from the payload's updatedAt (mirrors MetaStrip's freshness logic). */
 export function formatStatsAgo(updatedAt: string | null, nowMs: number): string {

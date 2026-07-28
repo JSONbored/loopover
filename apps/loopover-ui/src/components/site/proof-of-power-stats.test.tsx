@@ -37,6 +37,14 @@ import {
 // Real prod proportions: reviewed 2,708 (merged 1,392 + closed 724 + commented 514 + manual 78), 33 reversals
 // over 2,116 auto-actions → 98.4% accuracy; filtered (reviewed−merged)/reviewed = 48.6%; 2,708×20min ≈ 38 days.
 const PAYLOAD: PublicStats = {
+  // The wire always carries rulePrecision (#8230/#8231). A fixture without it is not a payload the
+  // current backend can produce -- the one test that needs that shape strips it explicitly.
+  rulePrecision: {
+    windowDays: 90,
+    rules: [],
+    reversals: { reopened: 0, reverted: 0, superseded: 0 },
+    latestBacktestRun: null,
+  },
   generatedAt: "2026-06-22T01:00:00.000Z",
   updatedAt: "2026-06-22T01:00:00.000Z",
   totals: {
@@ -73,7 +81,23 @@ const PAYLOAD: PublicStats = {
   ],
   // No eligible registered self-hosted instances in this baseline fixture -- the tile falls back to
   // totals.accuracyPct (own-ledger). A dedicated test below covers the fleet-eligible path.
-  fleetAccuracy: { accuracyPct: null, instanceCount: 0, windowDays: 90, gamingFlagsCaught: 0 },
+  fleetAccuracy: {
+    accuracyPct: null,
+    // Every #8829/#9168 field the wire always carries. The fixture used to omit them, which the
+    // hand-typed interface allowed and the real payload never does.
+    accuracyCiPct: null,
+    mergePrecisionPct: null,
+    mergePrecisionCiPct: null,
+    closePrecisionPct: null,
+    closePrecisionCiPct: null,
+    coveragePct: null,
+    decidedCount: null,
+    guaranteed: { close: null, merge: null },
+    instanceCount: 0,
+    basis: "single_instance_self_report",
+    windowDays: 90,
+    gamingFlagsCaught: 0,
+  },
   accuracyTrend: [
     { weekStart: "2026-05-04", merged: 40, closed: 10, reversed: 2, accuracyPct: 96 },
     { weekStart: "2026-05-11", merged: 42, closed: 9, reversed: 1, accuracyPct: 98 },

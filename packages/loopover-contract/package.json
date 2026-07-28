@@ -51,6 +51,10 @@
     "./orb-broker": {
       "types": "./dist/orb-broker.d.ts",
       "default": "./dist/orb-broker.js"
+    },
+    "./public-api": {
+      "types": "./dist/public-api.d.ts",
+      "default": "./dist/public-api.js"
     }
   },
   "files": [

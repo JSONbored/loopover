@@ -30,6 +30,7 @@ export default defineConfig({
       "@loopover/contract/tools": new URL("./packages/loopover-contract/src/tools/index.ts", import.meta.url).pathname,
       "@loopover/contract/local-config": new URL("./packages/loopover-contract/src/local-config.ts", import.meta.url).pathname,
       "@loopover/contract/orb-broker": new URL("./packages/loopover-contract/src/orb-broker.ts", import.meta.url).pathname,
+      "@loopover/contract/public-api": new URL("./packages/loopover-contract/src/public-api.ts", import.meta.url).pathname,
       "@loopover/contract": new URL("./packages/loopover-contract/src/index.ts", import.meta.url).pathname,
     },
   },

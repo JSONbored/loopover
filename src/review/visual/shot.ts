@@ -297,20 +297,37 @@ async function captureBoundedFullPageShot(page: ScreenshotPage, viewport: Viewpo
 }
 
 /**
+ * `captureShot`'s outcome. `renderFailed` (#9464) separates "the RENDERER broke" -- a browserless outage, a
+ * navigation timeout, a binding quota error, a Chromium crash -- from every other reason `png` can be null:
+ * an SSRF/redirect refusal, an auth wall, or visual review simply not being configured (`!env.BROWSER`).
+ *
+ * The distinction is load-bearing, not cosmetic. The screenshot-table gate reads "no bot capture" as "the
+ * author supplied no visual evidence" and CLOSES the PR one-shot. Only the renderer-broke case is a false
+ * negative that must defer that close; the others are accurate answers the gate should keep acting on. Basing
+ * the signal on "zero pairs were produced" instead would fold all of them together and neuter the gate.
+ */
+export interface CaptureShotResult {
+  png: Uint8Array | null;
+  authWalled: boolean;
+  /** True ONLY for a thrown renderer error (the `catch` below). Never for a refusal or an unconfigured binding. */
+  renderFailed: boolean;
+}
+
+/**
  * Render a page to a PNG via the Browser Rendering binding, also reporting whether the route redirected to a
  * sign-in wall. `authWalled` is true when the FINAL url looks like a login page that the REQUESTED url was
  * not — the caller then shows an honest "requires authentication" placeholder instead of a screenshot of the
  * login screen. `png` is null on any render failure (callers degrade gracefully).
  */
-export async function captureShot(env: Env, url: string, viewport: Viewport = VIEWPORT, opts: CaptureShotOptions = {}): Promise<{ png: Uint8Array | null; authWalled: boolean }> {
+export async function captureShot(env: Env, url: string, viewport: Viewport = VIEWPORT, opts: CaptureShotOptions = {}): Promise<CaptureShotResult> {
   // SSRF defense-in-depth: NEVER navigate the headless browser to a non-public host (loopback / link-local /
   // private / cloud-metadata 169.254.169.254 / etc.). Callers may resolve `url` from a deployment_status
   // webhook or a PR-comment preview link, so guard at this choke point regardless of how the URL was obtained.
   if (!url || !isSafeHttpUrl(url) || (opts.isAllowedUrl && !opts.isAllowedUrl(url)) || !(await isDnsResolutionSafe(url))) {
     console.log(JSON.stringify({ event: "render_screenshot_blocked", url: String(url).slice(0, 120) }));
-    return { png: null, authWalled: false };
+    return { png: null, authWalled: false, renderFailed: false };
   }
-  if (!env.BROWSER) return { png: null, authWalled: false };
+  if (!env.BROWSER) return { png: null, authWalled: false, renderFailed: false };
   let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
   try {
     browser = await puppeteer.launch(env.BROWSER as unknown as Parameters<typeof puppeteer.launch>[0]);
@@ -340,14 +357,14 @@ export async function captureShot(env: Env, url: string, viewport: Viewport = VI
     await page.goto(url, { waitUntil: "networkidle0", timeout: 20000 });
     if (!isSafeHttpUrl(page.url()) || (opts.isAllowedUrl && !opts.isAllowedUrl(page.url()))) {
       console.log(JSON.stringify({ event: "render_screenshot_redirect_blocked", url, final: page.url().slice(0, 200) }));
-      return { png: null, authWalled: false };
+      return { png: null, authWalled: false, renderFailed: false };
     }
     // A protected route that redirected to a login page: don't return a screenshot of the sign-in screen —
     // flag it so the caller renders an honest auth placeholder. (The requested URL not itself being a login
     // page guards a PR that legitimately changes the login screen.)
     if (isAuthWallUrl(page.url()) && !isAuthWallUrl(url)) {
       console.log(JSON.stringify({ event: "render_screenshot_auth_walled", url, final: page.url().slice(0, 200) }));
-      return { png: null, authWalled: true };
+      return { png: null, authWalled: true, renderFailed: false };
     }
     // A configured themeStorageKey (#4109) ALSO forces the theme via localStorage, then reloads so the
     // app's own theme-init logic re-runs against the new stored value -- the fallback for a target whose
@@ -356,7 +373,9 @@ export async function captureShot(env: Env, url: string, viewport: Viewport = VI
     if (opts.theme && opts.themeStorageKey) {
       const storageKey = opts.themeStorageKey;
       const storageValue = opts.theme;
-      if (!(await forceThemeStorage(page, storageKey, storageValue))) return { png: null, authWalled: false };
+      // A failed localStorage write is the PAGE refusing (storage disabled/partitioned), not the renderer
+      // breaking -- the browser is demonstrably alive, since it navigated and ran script to get here.
+      if (!(await forceThemeStorage(page, storageKey, storageValue))) return { png: null, authWalled: false, renderFailed: false };
       await page.reload({ waitUntil: "networkidle0", timeout: THEME_STORAGE_RELOAD_TIMEOUT_MS });
     }
     // Full-page (not just the viewport), but bounded: before/after should include the same page position for
@@ -364,7 +383,7 @@ export async function captureShot(env: Env, url: string, viewport: Viewport = VI
     // Chromium raster work on the public screenshot route.
     const shot = await captureBoundedFullPageShot(page, viewport);
     incr("loopover_visual_capture_total", { result: "ok" });
-    return { png: shot, authWalled: false };
+    return { png: shot, authWalled: false, renderFailed: false };
   } catch (error) {
     // Log before degrading to null — otherwise a networkidle0 timeout, a binding quota error, or a render
     // crash is indistinguishable from "no page" and the cell silently blanks.
@@ -373,7 +392,9 @@ export async function captureShot(env: Env, url: string, viewport: Viewport = VI
     // absent evidence as a close signal, that outage could close legitimate visual PRs before anyone noticed.
     incr("loopover_visual_capture_total", { result: "error" });
     console.log(JSON.stringify({ event: "render_screenshot_error", mode: "binding", url, message: String(error).slice(0, 200) }));
-    return { png: null, authWalled: false };
+    // #9464: the ONLY site that reports renderFailed. Everything above returned a definite answer; this is the
+    // one path where we do not know what the page looks like because the renderer itself failed to tell us.
+    return { png: null, authWalled: false, renderFailed: true };
   } finally {
     if (browser) await browser.close().catch(() => undefined);
   }

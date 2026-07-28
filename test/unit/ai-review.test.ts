@@ -216,6 +216,59 @@ describe("runLoopOverAiReview gating", () => {
     expect(result.status).toBe("ok"); // NaN → clamped to the 256 floor, review still runs
   });
 
+  // #9479: the reservation booked ONE call per opinion slot, but runWorkersOpinion retries each model up to
+  // REVIEW_ATTEMPTS_PER_MODEL times and then falls through to that slot's fallback model with its own full
+  // budget -- so a dual-model block review can make 12 calls where 2 were booked. The daily neuron budget is a
+  // runaway-LOOP backstop; booking the best case made it 6x looser than it reads, which is the one direction a
+  // backstop must never be wrong in. The judge path below and ai-slop.ts's WORKERS_SLOP_MAX_CALLS already
+  // reserved worst-case; the main review path was the outlier.
+  it("REGRESSION (#9479): books the worst-case retry x fallback call count, so a budget that only covers the best case is refused", async () => {
+    const run = vi.fn();
+    // 2000 sat comfortably ABOVE the old best-case reservation for this exact input and so let the review
+    // start, even though actually running it could spend several times that.
+    const env = createTestEnv({
+      AI: { run } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "2000",
+    });
+
+    const result = await runLoopOverAiReview(env, { ...baseInput, mode: "block" });
+
+    expect(result.status).toBe("quota_exceeded");
+    expect(result.status === "quota_exceeded" && result.estimatedNeurons).toBeGreaterThan(2000);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("INVARIANT (#9479): the reservation tracks the real fallback structure — a pair with no distinct fallback books strictly less, not a flat inflation", async () => {
+    const run = vi.fn(async () => ({ response: reviewJson() }));
+    // Same budget, same input, but each slot reuses its own model as its fallback (the self-host shape), so the
+    // worst case is halved and this must still be ADMITTED. A blanket multiplier would have refused it too.
+    const env = createTestEnv({
+      AI: { run } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "2000",
+    });
+
+    const result = await runLoopOverAiReview(env, { ...baseInput, mode: "block", reviewers: [{ model: "claude-code" }, { model: "codex" }] });
+
+    expect(result.status).not.toBe("quota_exceeded");
+    expect(run).toHaveBeenCalled();
+  });
+
+  it("INVARIANT (#9479): an ADVISORY review is unaffected — it makes no blocking opinion calls, so its reservation is unchanged", async () => {
+    const run = vi.fn(async () => ({ response: reviewJson() }));
+    const env = createTestEnv({
+      AI: { run } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "2000",
+    });
+
+    await expect(runLoopOverAiReview(env, baseInput)).resolves.not.toMatchObject({ status: "quota_exceeded" });
+  });
+
   it("does NOT count a BYOK advisory against the free neuron budget (it bills the maintainer)", async () => {
     const fetchMock = vi.fn(
       async () =>

@@ -770,7 +770,7 @@ describe("buildCapture pixel-diff wiring (#3674)", () => {
   });
 
   it("returns just the URL (no bytes) for a fresh successful render when diffing is unavailable — the real default", async () => {
-    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: new Uint8Array([5, 5, 5]), authWalled: false });
+    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: new Uint8Array([5, 5, 5]), authWalled: false, renderFailed: false });
     try {
       const env = createTestEnv({
         PUBLIC_API_ORIGIN: "https://worker.example",
@@ -796,7 +796,7 @@ describe("buildCapture pixel-diff wiring (#3674)", () => {
   it("threads fresh screenshot bytes to the diff provider right after a successful render, not just on a cache hit", async () => {
     const availableSpy = vi.spyOn(pixelDiffModule, "isVisualDiffAvailable").mockReturnValue(true);
     const compareSpy = vi.spyOn(pixelDiffModule, "compareCapturedScreenshots").mockResolvedValue(null);
-    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: new Uint8Array([9, 9, 9]), authWalled: false });
+    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: new Uint8Array([9, 9, 9]), authWalled: false, renderFailed: false });
     try {
       const env = createTestEnv({
         PUBLIC_API_ORIGIN: "https://worker.example",
@@ -854,7 +854,7 @@ describe("buildCapture pixel-diff wiring (#3674)", () => {
 describe("buildCapture display-thumbnail wiring (#6324)", () => {
   it("never attempts a thumbnail when display downscaling is unavailable (the real, unmocked default) — byte-identical to pre-#6324", async () => {
     const downscaleSpy = vi.spyOn(imageDownscaleModule, "downscaleForDisplay");
-    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: new Uint8Array([9, 9, 9]), authWalled: false });
+    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: new Uint8Array([9, 9, 9]), authWalled: false, renderFailed: false });
     try {
       const result = await buildCapture(
         createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com", REVIEW_AUDIT: memoryReviewAudit() }),
@@ -874,7 +874,7 @@ describe("buildCapture display-thumbnail wiring (#6324)", () => {
   it("generates + stores a thumbnail and threads beforeThumbUrl/afterThumbUrl when downscaling is available and genuinely shrinks the image", async () => {
     const availableSpy = vi.spyOn(imageDownscaleModule, "isDisplayDownscaleAvailable").mockReturnValue(true);
     const downscaleSpy = vi.spyOn(imageDownscaleModule, "downscaleForDisplay").mockResolvedValue(new Uint8Array([1]));
-    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: new Uint8Array([9, 9, 9]), authWalled: false });
+    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: new Uint8Array([9, 9, 9]), authWalled: false, renderFailed: false });
     try {
       const env = createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com", REVIEW_AUDIT: memoryReviewAudit() });
       const result = await buildCapture(
@@ -900,7 +900,7 @@ describe("buildCapture display-thumbnail wiring (#6324)", () => {
   it("also generates a thumbnail for the mobile viewport when downscaling is available (bug fix — a full-page mobile capture is height-unbounded even though 390px width is already narrow)", async () => {
     const availableSpy = vi.spyOn(imageDownscaleModule, "isDisplayDownscaleAvailable").mockReturnValue(true);
     const downscaleSpy = vi.spyOn(imageDownscaleModule, "downscaleForDisplay").mockResolvedValue(new Uint8Array([1]));
-    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: new Uint8Array([9, 9, 9]), authWalled: false });
+    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: new Uint8Array([9, 9, 9]), authWalled: false, renderFailed: false });
     try {
       const env = createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com", REVIEW_AUDIT: memoryReviewAudit() });
       const result = await buildCapture(
@@ -929,7 +929,7 @@ describe("buildCapture display-thumbnail wiring (#6324)", () => {
     const same = new Uint8Array([9, 9, 9]);
     const availableSpy = vi.spyOn(imageDownscaleModule, "isDisplayDownscaleAvailable").mockReturnValue(true);
     const downscaleSpy = vi.spyOn(imageDownscaleModule, "downscaleForDisplay").mockResolvedValue(same);
-    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: same, authWalled: false });
+    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: same, authWalled: false, renderFailed: false });
     try {
       const env = createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com", REVIEW_AUDIT: memoryReviewAudit() });
       const result = await buildCapture(
@@ -951,7 +951,7 @@ describe("buildCapture display-thumbnail wiring (#6324)", () => {
   it("degrades to the original bytes (never throws) when downscaleForDisplay itself rejects", async () => {
     const availableSpy = vi.spyOn(imageDownscaleModule, "isDisplayDownscaleAvailable").mockReturnValue(true);
     const downscaleSpy = vi.spyOn(imageDownscaleModule, "downscaleForDisplay").mockRejectedValue(new Error("simulated decode failure"));
-    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: new Uint8Array([9, 9, 9]), authWalled: false });
+    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: new Uint8Array([9, 9, 9]), authWalled: false, renderFailed: false });
     try {
       const result = await buildCapture(
         createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com", REVIEW_AUDIT: memoryReviewAudit() }),
@@ -1021,7 +1021,7 @@ describe("buildCapture display-thumbnail wiring (#6324)", () => {
     const originalAfter = new Uint8Array([40, 50, 60]);
     const captureShotSpy = vi
       .spyOn(shotModule, "captureShot")
-      .mockImplementation(async (_env, url: string) => ({ png: url.includes("preview.example.com") ? originalAfter : originalBefore, authWalled: false }));
+      .mockImplementation(async (_env, url: string) => ({ png: url.includes("preview.example.com") ? originalAfter : originalBefore, authWalled: false, renderFailed: false }));
     try {
       await buildCapture(
         createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com", REVIEW_AUDIT: memoryReviewAudit() }),
@@ -1044,7 +1044,7 @@ describe("buildCapture display-thumbnail wiring (#6324)", () => {
   it("falls back to no thumbUrl (never throws) when the thumb-key WRITE itself fails on a fresh render, even though the original write succeeded", async () => {
     const availableSpy = vi.spyOn(imageDownscaleModule, "isDisplayDownscaleAvailable").mockReturnValue(true);
     const downscaleSpy = vi.spyOn(imageDownscaleModule, "downscaleForDisplay").mockResolvedValue(new Uint8Array([1]));
-    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: new Uint8Array([9, 9, 9]), authWalled: false });
+    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: new Uint8Array([9, 9, 9]), authWalled: false, renderFailed: false });
     try {
       const beforeThumb = await thumbKey(49, "before", "desktop", "https://prod.example.com/app");
       const env = createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com", REVIEW_AUDIT: memoryReviewAudit({ failPutKeys: [beforeThumb] }) });
@@ -1089,7 +1089,7 @@ describe("buildCapture display-thumbnail wiring (#6324)", () => {
   it("links a thumbnail directly at the bucket instead of this instance's /loopover/shot proxy when REVIEW_AUDIT_S3_PUBLIC_URL is configured", async () => {
     const availableSpy = vi.spyOn(imageDownscaleModule, "isDisplayDownscaleAvailable").mockReturnValue(true);
     const downscaleSpy = vi.spyOn(imageDownscaleModule, "downscaleForDisplay").mockResolvedValue(new Uint8Array([1]));
-    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: new Uint8Array([9, 9, 9]), authWalled: false });
+    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: new Uint8Array([9, 9, 9]), authWalled: false, renderFailed: false });
     try {
       const env = createTestEnv({
         PUBLIC_API_ORIGIN: "https://worker.example",
@@ -1283,7 +1283,7 @@ describe("buildCapture theme matrix (#3678)", () => {
   });
 
   it("passes the configured theme through to captureShot's render options", async () => {
-    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: null, authWalled: false });
+    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: null, authWalled: false, renderFailed: false });
     try {
       await buildCapture(
         createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com", REVIEW_AUDIT: memoryReviewAudit() }),
@@ -1302,7 +1302,7 @@ describe("buildCapture theme matrix (#3678)", () => {
   });
 
   it("never passes a theme option to captureShot when no themes are configured", async () => {
-    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: null, authWalled: false });
+    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: null, authWalled: false, renderFailed: false });
     try {
       await buildCapture(
         createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com", REVIEW_AUDIT: memoryReviewAudit() }),
@@ -1352,7 +1352,7 @@ describe("buildCapture theme matrix (#3678)", () => {
 
 describe("buildCapture theme-storage-key wiring (#4109)", () => {
   it("passes themeStorageKey through to captureShot's render options when both themes and theme_storage_key are configured", async () => {
-    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: null, authWalled: false });
+    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: null, authWalled: false, renderFailed: false });
     try {
       await buildCapture(
         createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com", REVIEW_AUDIT: memoryReviewAudit() }),
@@ -1371,7 +1371,7 @@ describe("buildCapture theme-storage-key wiring (#4109)", () => {
   });
 
   it("never passes themeStorageKey to captureShot when no themes are configured, even if theme_storage_key is set", async () => {
-    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: null, authWalled: false });
+    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: null, authWalled: false, renderFailed: false });
     try {
       await buildCapture(
         createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com", REVIEW_AUDIT: memoryReviewAudit() }),
@@ -1417,7 +1417,7 @@ describe("buildCapture theme-storage-key wiring (#4109)", () => {
   });
 
   it("threads the theme storage key into the shot fingerprint too, so it never collides with an untagged-key capture of the same theme", async () => {
-    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: new Uint8Array([9, 9, 9]), authWalled: false });
+    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: new Uint8Array([9, 9, 9]), authWalled: false, renderFailed: false });
     try {
       const env = createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com", REVIEW_AUDIT: memoryReviewAudit() });
       const result = await buildCapture(
@@ -3203,4 +3203,83 @@ describe("fetchExternalScreenshotContentBlock", () => {
 
     await expect(fetchExternalScreenshotContentBlock("https://example.com/first.png")).resolves.toBeUndefined();
   });
+});
+
+// #9464: a browserless outage was invisible to the screenshot-table gate. captureShot swallows its own renderer
+// errors and returns a null PNG, so buildCapture came back NORMALLY -- previewPending false, nothing thrown --
+// and neither the #9030 (thrown-error) nor the #9207 (previewPending) blip guard fired. The maintenance pass then
+// read "no visual evidence, no retry pending" and CLOSED the PR one-shot, which is unrecoverable by policy: a
+// contributor's only remedy is opening a fresh PR. The last time this gate misfired it closed five of them.
+//
+// The signal is deliberately "a render THREW", not "zero pairs were produced". The latter is also true when the
+// author genuinely supplied no visual evidence, which is the case the gate exists to close -- inferring the blip
+// from an empty result would have neutered the gate entirely.
+describe("renderer-failure blip signal (#9464)", () => {
+  const target = { repoFullName: "owner/repo", prNumber: 9464, previewUrl: "https://preview.example.com" };
+  const capturedEnv = () =>
+    createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com", REVIEW_AUDIT: memoryReviewAudit() });
+
+  it("REGRESSION: a renderer that fails on every shot reports renderFailed, so the gate's close is deferred instead of firing on a browserless outage", async () => {
+    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: null, authWalled: false, renderFailed: true });
+    try {
+      const result = await buildCapture(capturedEnv(), "installation-token", target, ["apps/loopover-ui/src/routes/app.index.tsx"]);
+
+      expect(result.renderFailed).toBe(true);
+      // The precise shape that used to fool the gate: nothing pending, nothing thrown, and no real pair.
+      expect(result.previewPending).toBe(false);
+      expect(hasSuccessfulBotCapture(result.routes)).toBe(false);
+    } finally {
+      captureShotSpy.mockRestore();
+    }
+  });
+
+  it("INVARIANT: a healthy renderer never reports renderFailed, so a genuine no-evidence PR still closes (#4110 guard)", async () => {
+    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: new Uint8Array([9, 9, 9]), authWalled: false, renderFailed: false });
+    try {
+      const result = await buildCapture(capturedEnv(), "installation-token", target, ["apps/loopover-ui/src/routes/app.index.tsx"]);
+
+      expect(result.renderFailed).toBe(false);
+    } finally {
+      captureShotSpy.mockRestore();
+    }
+  });
+
+  it("INVARIANT: an auth-walled route is a DEFINITE answer, not a renderer failure — it must not defer the gate", async () => {
+    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: null, authWalled: true, renderFailed: false });
+    try {
+      const result = await buildCapture(capturedEnv(), "installation-token", target, ["apps/loopover-ui/src/routes/app.index.tsx"]);
+
+      // No real pair either -- which is exactly why "zero pairs" could not have been the signal.
+      expect(hasSuccessfulBotCapture(result.routes)).toBe(false);
+      expect(result.renderFailed).toBe(false);
+    } finally {
+      captureShotSpy.mockRestore();
+    }
+  });
+
+  it("REGRESSION: ONE failed shot among otherwise-healthy ones still reports renderFailed — a partial outage can still have hidden evidence", async () => {
+    let call = 0;
+    const captureShotSpy = vi
+      .spyOn(shotModule, "captureShot")
+      .mockImplementation(async () => (call++ === 0 ? { png: null, authWalled: false, renderFailed: true } : { png: new Uint8Array([9, 9, 9]), authWalled: false, renderFailed: false }));
+    try {
+      const result = await buildCapture(capturedEnv(), "installation-token", target, ["apps/loopover-ui/src/routes/app.index.tsx"]);
+
+      expect(result.renderFailed).toBe(true);
+    } finally {
+      captureShotSpy.mockRestore();
+    }
+  });
+
+  it("REGRESSION: captureShot REJECTING (rather than degrading) also reports renderFailed — the outer catch must not launder it into a clean result", async () => {
+    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockRejectedValue(new Error("dns guard exploded"));
+    try {
+      const result = await buildCapture(capturedEnv(), "installation-token", target, ["apps/loopover-ui/src/routes/app.index.tsx"]);
+
+      expect(result.renderFailed).toBe(true);
+    } finally {
+      captureShotSpy.mockRestore();
+    }
+  });
+
 });

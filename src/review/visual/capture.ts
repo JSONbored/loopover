@@ -89,6 +89,18 @@ export interface CaptureResult {
   routes: CaptureRoute[];
   interactions: CaptureInteractionRoute[];
   previewPending: boolean;
+  /**
+   * #9464: at least one shot in this capture failed because the RENDERER broke (see `CaptureShotResult.
+   * renderFailed`) -- browserless down, saturated, or timing out. Distinct from `previewPending`, which means
+   * the page we want to render does not exist yet.
+   *
+   * Both are "we could not obtain evidence", and the screenshot-table gate must defer its one-shot close for
+   * either. Before this, a renderer failure was swallowed per shot and `buildCapture` returned NORMALLY with
+   * `previewPending: false` and no throw, so the #9030/#9207 blip guards -- which trigger only on
+   * previewPending or a thrown error -- never fired, and the gate closed legitimate visual PRs during a
+   * browserless outage.
+   */
+  renderFailed: boolean;
 }
 
 /** True when `url` is a persisted rendered shot. `capturePage` can also return an on-demand `?url=`
@@ -342,6 +354,10 @@ function resolveShotUrl(env: Env, key: string): string {
  * the cell shows a dash. Reuses an identical cached fingerprint (a deployment_status re-run filling "after"
  * cells would otherwise re-render the same screenshot — Browser Rendering is the costliest binding).
  */
+/** What `capturePage` and its no-preview sibling `resolveFallbackAfterShot` both resolve to. `renderFailed`
+ *  is optional because only the live-render path can observe it -- see {@link CaptureResult.renderFailed}. */
+type CapturedShot = { url?: string | undefined; thumbUrl?: string | undefined; png?: Uint8Array | undefined; renderFailed?: boolean | undefined };
+
 async function capturePage(
   env: Env,
   target: CaptureTarget,
@@ -361,8 +377,12 @@ async function capturePage(
   // theming ignores prefers-color-scheme (see shot.ts's CaptureShotOptions.theme doc). Only takes effect
   // together with `theme`; undefined (every pre-#4109 caller) ⇒ byte-identical to today.
   themeStorageKey?: string | undefined,
-): Promise<{ url?: string | undefined; thumbUrl?: string | undefined; png?: Uint8Array | undefined }> {
+): Promise<CapturedShot> {
   if (!page) return {};
+  // #9464: sticky for the whole call, because the only return that can carry it is the on-demand tail below --
+  // every earlier return is a definite outcome (cache hit, auth wall, a real PNG) that by construction cannot
+  // have come from a broken renderer.
+  let renderFailed = false;
   const shotBase = env.PUBLIC_API_ORIGIN; // this worker's public origin (serves /loopover/shot)
   // Carries the theme (#3678) and, when set, the storage key (#4109) so a LATER on-demand fetch of this
   // exact URL (e.g. a failed/never-persisted render retried by GitHub's image proxy) still requests the
@@ -405,7 +425,14 @@ async function capturePage(
       const bytes = await new Response(cached.body).arrayBuffer().then((buf) => new Uint8Array(buf)).catch(() => undefined);
       return { url, ...(thumbUrl ? { thumbUrl } : {}), ...(bytes ? { png: bytes } : {}) };
     }
-    const { png, authWalled } = await captureShot(env, page, viewport, theme ? { theme, ...(themeStorageKey ? { themeStorageKey } : {}) } : {}).catch(() => ({ png: null, authWalled: false }));
+    // The outer `.catch` reports renderFailed too: captureShot swallows its own renderer errors, so anything
+    // that still escapes it (a DNS-guard or token-mint throw) is likewise an outcome we could not determine.
+    const { png, authWalled, renderFailed: shotRenderFailed } = await captureShot(env, page, viewport, theme ? { theme, ...(themeStorageKey ? { themeStorageKey } : {}) } : {}).catch(() => ({
+      png: null,
+      authWalled: false,
+      renderFailed: true,
+    }));
+    renderFailed = shotRenderFailed;
     // A protected route that redirected to a sign-in wall: show an honest "requires authentication"
     // placeholder rather than caching/serving a screenshot of the login screen.
     if (authWalled) {
@@ -430,7 +457,7 @@ async function capturePage(
       return { url, ...(thumbUrl ? { thumbUrl } : {}), ...(includeBytes ? { png } : {}) };
     }
   }
-  return { url: onDemand };
+  return { url: onDemand, renderFailed };
 }
 
 /** Resolve the "after" shot when there is no real preview page to render (#4112): if `review.visual.
@@ -446,7 +473,7 @@ async function resolveFallbackAfterShot(
   viewportName: "desktop" | "mobile",
   actionsFallbackEnabled: boolean,
   placeholder: string | undefined,
-): Promise<{ url?: string | undefined; thumbUrl?: string | undefined; png?: Uint8Array | undefined }> {
+): Promise<CapturedShot> {
   // #6324: never produces a thumbUrl (the actions_fallback artifact is stored as-is, no display downscale
   // applied) -- typed here purely so this function's return shape matches capturePage's, since buildCapture
   // uses both interchangeably for the "after" desktop slot.
@@ -800,6 +827,10 @@ export async function buildCapture(
   // `theme` iteration is undefined (the untagged default pass).
   const themeStorageKey = visualConfig?.themeStorageKey ? visualConfig.themeStorageKey : undefined;
   const captureRoutes: CaptureRoute[] = [];
+  // #9464: ORed across every shot of every route/viewport/theme. ONE failed render is enough -- the gate's
+  // question is "could we have missed evidence?", and a partial outage answers yes. When some routes DID
+  // render, hasSuccessfulBotCapture already satisfies the gate and this never gets consulted.
+  let renderFailed = false;
   for (const theme of themes) {
     for (const path of routes) {
       const beforePage = prodBase ? joinUrl(prodBase, path) : "";
@@ -815,6 +846,7 @@ export async function buildCapture(
           ? capturePage(env, target, afterPage, "after", "mobile", MOBILE_VIEWPORT, diffAvailable, theme, themeStorageKey)
           : resolveFallbackAfterShot(env, target, path, "mobile", actionsFallbackEnabled, afterPlaceholder),
       ]);
+      if ([beforeShot, beforeMobileShot, afterShot, afterMobileShot].some((shot) => shot.renderFailed === true)) renderFailed = true;
       // A diff needs BOTH sides' real bytes — a placeholder/dash slot (no preview yet, auth-walled, render
       // failure) has no `png`, so compareCapturedScreenshots degrades to null exactly like a missing shot does.
       const [desktopDiff, mobileDiff] = diffAvailable
@@ -926,5 +958,5 @@ export async function buildCapture(
     }
   }
 
-  return { routes: captureRoutes, interactions: interactionRoutes, previewPending };
+  return { routes: captureRoutes, interactions: interactionRoutes, previewPending, renderFailed };
 }

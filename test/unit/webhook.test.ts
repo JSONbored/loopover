@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "hono";
 import { enqueueWebhookByEnv, handleGitHubWebhook, handleOrbRelay } from "../../src/github/webhook";
+import { PUSH_COALESCE_QUIET_WINDOW_SECONDS } from "../../src/github/webhook-coalesce";
 import { getWebhookEvent, recordWebhookEvent } from "../../src/db/repositories";
 import { relaySignature } from "../../src/orb/relay";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
@@ -818,3 +819,35 @@ async function signWebhook(body: string, secret: string | undefined): Promise<st
   const signed = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body));
   return `sha256=${[...new Uint8Array(signed)].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
+
+// #9479: on a coalescing queue the delay is what CREATES the debounce window -- without it the first push of a
+// burst is claimed immediately and every later push finds no pending row to merge into, so the PR-scoped
+// coalesce key alone would save nothing.
+describe("push quiet window on enqueue (#9479)", () => {
+  const enqueue = (env: Env, deliveryId: string, action: string) =>
+    enqueueWebhookByEnv(
+      env,
+      deliveryId,
+      "pull_request",
+      JSON.stringify({ action, repository: { full_name: "JSONbored/gittensory" }, installation: { id: 1 }, pull_request: { number: 3, head: { sha: "a".repeat(40) } } }),
+    );
+
+  it("REGRESSION: a push is enqueued with the trailing quiet window", async () => {
+    const env = createTestEnv();
+    const delays: Array<number | undefined> = [];
+    env.WEBHOOKS = { send: async (_m: unknown, opts?: { delaySeconds?: number }) => void delays.push(opts?.delaySeconds) } as unknown as Queue;
+
+    expect(await enqueue(env, "push-window-1", "synchronize")).toBe("queued");
+    expect(delays).toEqual([PUSH_COALESCE_QUIET_WINDOW_SECONDS]);
+  });
+
+  it("INVARIANT: every other action is still enqueued with no delay — review latency is unchanged for them", async () => {
+    const env = createTestEnv();
+    const delays: Array<number | undefined> = [];
+    env.WEBHOOKS = { send: async (_m: unknown, opts?: { delaySeconds?: number }) => void delays.push(opts?.delaySeconds) } as unknown as Queue;
+
+    expect(await enqueue(env, "push-window-2", "opened")).toBe("queued");
+    expect(await enqueue(env, "push-window-3", "closed")).toBe("queued");
+    expect(delays).toEqual([0, 0]);
+  });
+});

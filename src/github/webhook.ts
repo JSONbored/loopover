@@ -8,6 +8,7 @@ import { isSelfHostedReviewRuntime } from "../selfhost/review-runtime";
 import { incr } from "../selfhost/metrics";
 import { getSelfHostRequestTraceParent } from "../selfhost/trace-context";
 import { isNonActionableWebhookNoise } from "./self-authored";
+import { githubWebhookCoalesceDelaySeconds } from "./webhook-coalesce";
 
 const DEFAULT_MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;
 // #9054: how long a 'queued'/'superseded' webhook_events row may sit unprocessed before a redelivery of the
@@ -225,7 +226,11 @@ export async function enqueueWebhookByEnv(env: Env, deliveryId: string, eventNam
   try {
     // Send to the dedicated WEBHOOKS lane (not the shared JOBS queue) so a maintenance burst on JOBS can never
     // starve real GitHub events into the DLQ. (#audit-webhook-queue)
-    await env.WEBHOOKS.send(message);
+    // #9479: a push is deferred by a short quiet window so a force-push storm coalesces into one review of the
+    // head that survives, instead of buying a full prologue + LLM call per intermediate SHA. Zero for every
+    // other event, so this is a no-op for everything but `pull_request`/`synchronize` -- see
+    // githubWebhookCoalesceDelaySeconds.
+    await env.WEBHOOKS.send(message, { delaySeconds: githubWebhookCoalesceDelaySeconds(eventName, payload) });
   } catch (error) {
     // Enqueue failed: flip the event to "error" so the dedup guard above lets GitHub redeliver / the next pull
     // re-deliver, instead of treating the webhook as handled (#786). Also covers the deploy-ordering case where

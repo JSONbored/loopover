@@ -466,6 +466,10 @@ export type AgentActionPlanInput = {
   // populates this field when the gate's configured `action` is `"close"` — an `"advisory"` violation (#4535)
   // never reaches the planner at all, by construction (see ScreenshotTableGateAction).
   screenshotTableMatch?: { matched: boolean; reason: string | null } | undefined;
+  /** #9462: the screenshot-table gate is violated in `close` mode but a bounded capture retry is still pending
+   *  for this head, so the evidence is UNRESOLVED rather than absent. Holds the PR (no close, and critically no
+   *  merge) until the retry settles. */
+  screenshotTableEvidenceUnresolved?: boolean | undefined;
   pr: {
     mergeableState?: string | null | undefined;
     reviewDecision?: string | null | undefined;
@@ -975,6 +979,17 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // already IS the full contract, so a separate enforcement label would be redundant noise on a PR that's
   // about to be closed anyway.
   const screenshotTableContributor = !input.authorIsOwner && !input.authorIsAdmin && !input.authorIsAutomationBot;
+  // #9462: the gate is violated in close mode but its evidence cannot be evaluated right now (the bot's own
+  // capture pipeline has a bounded retry pending for this head). Previously this left screenshotTableMatch
+  // undefined and the plan simply fell through to ordinary merit/CI evaluation -- so a green PR planned a
+  // MERGE, with no finding, hold or blocker representing "screenshot evidence unresolved". That is a
+  // disposition inversion: a PR the gate would have CLOSED could instead merge. Hold instead, mirroring
+  // pre-merge-checks' PRE_MERGE_CHECK_UNRESOLVED_CODE, whose doc is explicit that an unresolvable enforced
+  // check must never silently skip a hard requirement (an auto-merge bypass). Returning no actions is the hold:
+  // neither the close (the evidence may yet arrive) nor the merge (it may yet not).
+  if (input.screenshotTableEvidenceUnresolved === true && screenshotTableContributor) {
+    return actions;
+  }
   if (input.screenshotTableMatch?.matched === true && screenshotTableContributor) {
     if (acting("close")) {
       const reason = input.screenshotTableMatch.reason ?? "missing a before/after screenshot table";

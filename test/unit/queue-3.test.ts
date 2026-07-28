@@ -2271,6 +2271,74 @@ describe("queue processors", () => {
     expect(sentJobs.some((job) => job.type === "recapture-preview")).toBe(false);
   });
 
+  // #9462 regression: the sibling test above starts from a PR that never had a marker written, so it exercises
+  // the budget-exhausted early return but NOT the defect. The failing sequence is marker-SET-then-EXHAUSTED:
+  // the early return only skipped writing the marker AGAIN, so the previous attempt's marker stood forever --
+  // the sole other clear (markPullRequestVisualCaptureSatisfied) needs a SUCCESSFUL capture, which by
+  // definition never arrives when the pipeline keeps failing. A permanently marked head silently disabled the
+  // screenshot gate's close for that head, turning a deliberately temporary deferral into a permanent bypass.
+  it("screenshot-table gate (#9462): a marker written by an earlier attempt is CLEARED once the budget is exhausted", async () => {
+    const buildCaptureSpy = vi.spyOn(visualCaptureModule, "buildCapture").mockRejectedValue(new Error("browserless connection refused"));
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      LOOPOVER_REVIEW_SCREENSHOTS: "true",
+    });
+    const sentJobs: Array<Record<string, unknown>> = [];
+    env.JOBS = { async send(message: Record<string, unknown>) { sentJobs.push(message); } } as unknown as Queue;
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      autonomy: { close: "auto", label: "auto" },
+    });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { commentMode: "all_prs", publicSurface: "comment_only", checkRunMode: "off", screenshotTableGate: { enabled: true, whenLabels: ["visual"] }, reviewCheckMode: "required" } }, "repo_file");
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 62,
+      title: "Update the app index route",
+      state: "open",
+      user: { login: "visual-contributor" },
+      head: { sha: "vis62" },
+      labels: [{ name: "visual" }],
+      body: "Changed the route layout, no table here.",
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/62/files")) return Response.json([{ filename: "apps/loopover-ui/src/routes/app.index.tsx", status: "modified", additions: 5, deletions: 1, changes: 6, patch: "@@\n+const ok = true;" }]);
+      if (url.includes("/pulls/62/reviews")) return Response.json([]);
+      if (url.includes("/pulls/62/commits")) return Response.json([]);
+      if (url.endsWith("/pulls/62") && method === "PATCH") return Response.json({ number: 62, state: "closed" });
+      if (url.endsWith("/pulls/62")) return Response.json({ number: 62, state: "open", user: { login: "visual-contributor" }, head: { sha: "vis62" }, mergeable_state: "clean" });
+      if (url.includes("/commits/vis62/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/commits/vis62/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/vis62/check-suites")) return Response.json({ check_suites: [] });
+      if (url.includes("/issues/62/labels") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/62/comments")) return Response.json([]);
+      if (url.endsWith("/labels") && method === "POST") return Response.json([]);
+      if (url.endsWith("/check-runs") && method === "POST") return Response.json({ id: 902 }, { status: 201 });
+      if (url.includes("/check-runs/902") && method === "PATCH") return Response.json({ id: 902 });
+      return new Response("not found", { status: 404 });
+    });
+
+    try {
+      // Attempt 0 errors -> the marker IS written for this head and a retry is scheduled.
+      await processJob(env, { type: "recapture-preview", deliveryId: "screenshot-marker-clear-first", repoFullName: "JSONbored/gittensory", prNumber: 62, installationId: 123, attempt: 0 });
+      expect((await getPullRequest(env, "JSONbored/gittensory", 62))?.visualCaptureRetryPendingSha).toBe("vis62");
+
+      // The final attempt exhausts the budget while the pipeline is still failing.
+      await processJob(env, { type: "recapture-preview", deliveryId: "screenshot-marker-clear-exhausted", repoFullName: "JSONbored/gittensory", prNumber: 62, installationId: 123, attempt: MAX_PREVIEW_POLL_ATTEMPTS });
+    } finally {
+      buildCaptureSpy.mockRestore();
+    }
+
+    // The stale marker must not outlive the retries that justified it, or the gate stays disabled for this head.
+    expect((await getPullRequest(env, "JSONbored/gittensory", 62))?.visualCaptureRetryPendingSha).toBeNull();
+  });
+
   describe("live migrations/** collision recheck (#2550)", () => {
     // Full merge-eligible stub set (clean + green + approved), reused across scenarios — a positive test proves
     // the collision hold actually suppresses what would otherwise merge; a negative test proves the check

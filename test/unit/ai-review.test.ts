@@ -2461,18 +2461,94 @@ describe("pure helpers", () => {
       ).toEqual({ defect: null, split: false, inconclusive: false });
     });
 
-    it("synthesized defect drops a blocker whose only finding is blank or unsafe (fail-safe, same discipline as consensus)", () => {
+    it("a blank-only blocker is not a flag at all — still a clean pass (no hold)", () => {
+      // whitespace-only → realBlockersOf filters it → nobody actually flagged anything.
       expect(combineReviews([r(["   "])], { strategy: "single" })).toEqual({
         defect: null,
         split: false,
         inconclusive: false,
-      }); // whitespace-only → no primary
+      });
+      expect(
+        combineReviews([r(["   "]), clean], {
+          strategy: "synthesis",
+          onMerge: "either",
+        }),
+      ).toEqual({ defect: null, split: false, inconclusive: false });
+    });
+
+    // #9460 regression: a REAL blocker whose title toPublicSafe refuses to publish (ordinary review vocabulary —
+    // reward/payout/score/ranking/cohort) used to collapse to {defect: null, inconclusive: false} — indistinguishable
+    // from "the reviewer found nothing" — so the PR auto-MERGED with the defect unreported. It must HOLD instead.
+    // `single` is this deployment's live strategy (AI_PROVIDER=claude-code,ollama → resolveAiReviewerPlan).
+    it("#9460 single: an unpublishable blocker HOLDS instead of silently passing", () => {
+      expect(
+        combineReviews([r(["Boost your reward payout"])], {
+          strategy: "single",
+        }),
+      ).toEqual({ defect: null, split: false, inconclusive: true });
+    });
+
+    it("#9460 single: a publishable blocker still yields a defect (no regression)", () => {
+      const out = combineReviews([blocked], { strategy: "single" });
+      expect(out.defect).not.toBeNull();
+      expect(out.inconclusive).toBe(false);
+    });
+
+    // Ordinary review vocabulary that the public-safe filter rejects. `ranking`/`cohort`/`reward` are plain
+    // substring matches (FORBIDDEN_PUBLIC_COMMENT_WORDS); a bare `score` is matched by BARE_SCORE_TERM_PATTERN's
+    // word boundary. Note synthesizeDefect calls toPublicSafe with NO options, so the gate-bearing title is
+    // filtered even on a repo in LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS (unlike composeAdvisoryNotes, which
+    // passes allowBareScoreTerm) — i.e. the allowlist does not rescue this path.
+    it.each([
+      ["score is NaN when the input list is empty"],
+      ["the ranking comparator drops the tie-break"],
+      ["cohort assignment leaks across tenants"],
+      ["reward calculation overflows on a large diff"],
+    ])(
+      "#9460 single: %s is a real blocker that must hold, not pass",
+      (blockerTitle) => {
+        expect(
+          combineReviews([r([blockerTitle])], { strategy: "single" }),
+        ).toEqual({ defect: null, split: false, inconclusive: true });
+      },
+    );
+
+    // The word-boundary shape means a camelCase identifier is NOT filtered — "computeScore" has no boundary
+    // before "Score". Pinned so a future widening of the pattern is a deliberate, visible decision.
+    it("#9460 single: a camelCase identifier containing 'Score' is publishable and still yields a defect", () => {
+      const out = combineReviews(
+        [r(["computeScore divides by zero when items is empty"])],
+        { strategy: "single" },
+      );
+      expect(out.defect).not.toBeNull();
+      expect(out.inconclusive).toBe(false);
+    });
+
+    it("#9460 synthesis/either: an unpublishable blocker HOLDS instead of silently passing", () => {
       expect(
         combineReviews([r(["Boost your reward payout"]), clean], {
           strategy: "synthesis",
           onMerge: "either",
         }),
-      ).toEqual({ defect: null, split: false, inconclusive: false }); // unsafe title dropped
+      ).toEqual({ defect: null, split: false, inconclusive: true });
+    });
+
+    it("#9460 synthesis/both: an unpublishable blocker flagged by EVERY reviewer HOLDS", () => {
+      expect(
+        combineReviews(
+          [r(["Boost your reward payout"]), r(["Reward farming risk here"])],
+          { strategy: "synthesis", onMerge: "both" },
+        ),
+      ).toEqual({ defect: null, split: false, inconclusive: true });
+    });
+
+    it("#9460 synthesis/both: a partial flag still passes without a hold (unchanged)", () => {
+      expect(
+        combineReviews([r(["Boost your reward payout"]), clean], {
+          strategy: "synthesis",
+          onMerge: "both",
+        }),
+      ).toEqual({ defect: null, split: false, inconclusive: false });
     });
 
     it("a consensus defect carries the MIN of the two reviewers' confidences (#8)", () => {

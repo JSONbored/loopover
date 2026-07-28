@@ -4505,6 +4505,22 @@ export async function markPullRequestVisualCaptureRetryPending(env: Env, fullNam
     .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number), eq(pullRequests.headSha, headSha)));
 }
 
+/** #9462: clear the retry marker once the bounded recapture budget is EXHAUSTED. Without this the marker set by
+ *  the previous attempt outlives the retries that justified it: `scheduleVisualCaptureRetry` early-returns at the
+ *  budget, which only skips writing it AGAIN, so `visualCaptureRetryPendingSha === headSha` stayed true forever
+ *  for that head. The only other clear is markPullRequestVisualCaptureSatisfied's, which requires a SUCCESSFUL
+ *  capture -- exactly the thing that is not happening. A permanently-marked head silently disabled the
+ *  screenshotTableGate's close (see the botCaptureRetryPending branch in processors.ts), so the deferral, meant
+ *  to be temporary, became a permanent bypass. Not scoped to headSha on the write: the caller has already
+ *  established which head it is finishing, and a row whose head moved on has a stale marker worth clearing too. */
+export async function clearPullRequestVisualCaptureRetryPending(env: Env, fullName: string, number: number, headSha: string): Promise<void> {
+  const db = getDb(env.DB);
+  await db
+    .update(pullRequests)
+    .set({ visualCaptureRetryPendingSha: null, updatedAt: nowIso() })
+    .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number), eq(pullRequests.visualCaptureRetryPendingSha, headSha)));
+}
+
 /** Screenshot-table PRESENCE-mode staleness correlation (#stale-screenshot-table-fix): record the (headSha,
  *  evidenceFingerprint) checkpoint at which evaluateScreenshotTableGate's presence-mode check just satisfied
  *  the gate for this PR (see that function's `presenceModeSatisfiedState` result field and staleness comment).

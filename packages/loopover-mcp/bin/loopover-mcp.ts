@@ -98,18 +98,12 @@ import {
   GetPrAiReviewFindingsInput,
   GetPrMaintainerPacketInput,
   GetPrReviewabilityInput,
-  GetPrReviewabilityOutput,
   GetRegistrationReadinessInput,
-  GetRegistryChangesInput,
-  GetRegistrySnapshotInput,
   GetRepoContextInput,
-  GetRepoContextOutput,
   GetRepoFocusManifestInput,
   GetRepoOnboardingPackInput,
   GetRepoOutcomePatternsInput,
   GetSelftuneOverrideAuditInput,
-  GetUpstreamDriftInput,
-  GetUpstreamRulesetInput,
   IntakeIdeaInput,
   LintPrTextInput,
   ListNotificationsInput,
@@ -117,7 +111,6 @@ import {
   LocalScoreInput,
   LocalStatusInput,
   LocalStatusStructuredInput,
-  LocalStatusStructuredOutput,
   MarkNotificationsReadInput,
   MonitorOpenPrsInput,
   OpenPrInput,
@@ -126,10 +119,8 @@ import {
   PostEligibilityCommentInput,
   PrOutcomeInput,
   PredictGateInput,
-  PredictGateOutput,
   PreflightLocalDiffInput,
   PreflightPrInput,
-  PreflightPrOutput,
   ProposeActionInput,
   RecordStepResultInput,
   RefreshRepoDocsInput,
@@ -385,10 +376,6 @@ const activeProfile = config.profiles?.[activeProfileName] ?? {};
 const configuredApiUrl = typeof activeProfile.apiUrl === "string" ? activeProfile.apiUrl.replace(/\/+$/, "") : typeof config.apiUrl === "string" ? config.apiUrl.replace(/\/+$/, "") : undefined;
 const apiUrl = (process.env.LOOPOVER_API_URL ?? (configuredApiUrl && !legacyDefaultApiUrls.has(configuredApiUrl) ? configuredApiUrl : defaultApiUrl)).replace(/\/+$/, "");
 
-const ownerRepoShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-};
 
 // #7756: stdio mirror of the remote loopover_get_repo_onboarding_pack shape (src/mcp/server.ts) + the
 // `maintain onboarding-pack` CLI. owner/repo are required like the sibling get-repo tools; `refresh` is
@@ -398,17 +385,6 @@ const ownerRepoShape = {
 // #7753: mirrors the remote loopover_propose_action input (src/mcp/server.ts's proposeActionShape) so the local
 // stdio tool validates identically. actionClass reuses PROPOSE_ACTION_CLASSES (same enum the route +
 // `maintain propose` accept); the optional fields carry per-action-class detail and are stripped when absent.
-const proposeActionShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  pullNumber: z.number().int().positive(),
-  actionClass: z.enum(PROPOSE_ACTION_CLASSES),
-  reason: z.string().max(500).optional(),
-  label: z.string().min(1).max(100).optional(),
-  reviewBody: z.string().max(60000).optional(),
-  mergeMethod: z.enum(["merge", "squash", "rebase"]).optional(),
-  closeComment: z.string().max(60000).optional(),
-};
 
 
 // #7757: stdio mirror of the remote loopover_get_agent_audit_feed shape (src/mcp/server.ts) -- owner/repo plus
@@ -423,35 +399,14 @@ const proposeActionShape = {
 
 // #6149 write-tool input shapes -- mirror src/mcp/server.ts's remote shapes (same bounds) so the local
 // server validates identically. The builders (buildOpenPrSpec, ...) are the same @loopover/engine functions.
-const WRITE_TOOL_REPO_FULL_NAME_MAX = 200;
-const WRITE_TOOL_BRANCH_REF_MAX = 200;
-const WRITE_TOOL_TITLE_MAX = 400;
-const WRITE_TOOL_BODY_MAX = 60000;
-const WRITE_TOOL_BRANCH_MAX = 255;
 // Mirrors @loopover/engine/signals/test-evidence's TEST_FRAMEWORKS (the detectTestConvention framework set),
 // so a caller cannot request a test-gen spec for a framework the detector could never produce -- same guard the
 // remote server's testGenShape uses.
-const TEST_FRAMEWORKS = ["vitest", "jest", "pytest", "go-test", "rspec", "cargo-test"];
-const writeToolRepoFullName = z.string().min(3).max(WRITE_TOOL_REPO_FULL_NAME_MAX);
-const testGenShape = {
-  repoFullName: writeToolRepoFullName,
-  targetFiles: z.array(z.string().min(1).max(500)).min(1).max(50),
-  framework: z.enum(TEST_FRAMEWORKS),
-  testDir: z.string().min(1).max(255).optional(),
-  criteria: z.array(z.string().min(1).max(300)).max(20).optional(),
-};
 
-const loginShape = {
-  login: z.string().min(1),
-};
 
 // #7762: stdio mirror of the remote loopover_mark_notifications_read shape (src/mcp/server.ts). login is
 // optional here, resolved from `login` / the active session / LOOPOVER_LOGIN like the notifications-read CLI;
 // ids is optional -- omit to mark every delivered notification read.
-const markNotificationsReadShape = {
-  login: z.string().min(1).optional(),
-  ids: z.array(z.string().min(1)).optional(),
-};
 
 // #7763: stdio mirror of the remote loopover_watch_issues shape (src/mcp/server.ts). login is optional here,
 // resolved from `login` / the active session / LOOPOVER_LOGIN like the `watch` CLI; action defaults to `list`,
@@ -530,211 +485,38 @@ async function resolveLedgerClaimStatus(repoFullName: any, issueNumber: any) {
 
 // #6754: mirrors evaluateEscalationShape in src/mcp/server.ts exactly, so the local tool, the remote tool, and
 // the REST route all accept an identical payload.
-const evaluateEscalationShape = {
-  runStatus: z.enum(["running", "converged", "abandoned", "error"]),
-  healthStatus: z.enum(["healthy", "degraded", "critical"]).optional(),
-  customerFlagged: z.boolean().optional(),
-  killRequested: z.boolean().optional(),
-};
 
 // #6755: mirrors intakeIdeaShape in src/mcp/server.ts exactly, so the local tool, the remote tool, and the REST
 // route all accept an identical payload. Deliberately loose -- validateIdeaSubmission owns the real checks.
-const intakeIdeaShape = {
-  id: z.string().optional(),
-  title: z.string().optional(),
-  body: z.string().optional(),
-  targetRepo: z.string().optional(),
-  constraints: z.array(z.string()).max(50).optional(),
-  acceptanceHints: z.array(z.string()).max(50).optional(),
-  priority: z.string().optional(),
-  decomposition: z
-    .array(z.object({ key: z.string(), title: z.string(), body: z.string(), dependsOn: z.array(z.string()).max(50).optional() }))
-    .max(50)
-    .optional(),
-};
 
 // #6752: mirrors buildResultsPayloadShape in src/mcp/server.ts exactly, so the local tool, the remote tool, and
 // the REST route all accept an identical payload.
 
 // #6753: mirrors buildProgressSnapshotShape in src/mcp/server.ts exactly, so the local tool, the remote tool, and
 // the REST route all accept an identical payload.
-const buildProgressSnapshotShape = {
-  iteration: z.number().int(),
-  maxIterations: z.number().int().nullable().optional(),
-  phase: z.enum(["queued", "claiming", "coding", "reviewing", "submitting", "done"]),
-  status: z.enum(["running", "converged", "abandoned", "error"]),
-  recentActivity: z
-    .array(z.object({ step: z.string(), detail: z.string().optional(), at: z.string().optional() }))
-    .max(1000)
-    .optional(),
-};
 
 // #6749: mirrors checkTestEvidenceShape in src/mcp/server.ts VERBATIM (same bounds, same optionality).
-const checkTestEvidenceShape = {
-  changedPaths: z.array(z.string().min(1).max(400)).max(2000),
-  testFiles: z.array(z.string().min(1).max(400)).max(2000).optional(),
-  tests: z.array(z.string().max(400)).max(2000).optional(),
-};
 
 // #6750: mirrors suggestBoundaryTestsShape in src/mcp/server.ts VERBATIM.
-const suggestBoundaryTestsShape = {
-  changedFiles: z.array(z.object({ path: z.string().min(1).max(400) }).strict()).max(500),
-  boundaryTouches: z
-    .array(z.object({ path: z.string().min(1).max(400), kind: z.enum(["array_index_bounds", "null_or_undefined_branch", "empty_collection_check"]) }).strict())
-    .max(20)
-    .optional(),
-  tests: z.array(z.string().max(400)).max(2000).optional(),
-  testFiles: z.array(z.string().max(400)).max(2000).optional(),
-};
 
 // #6751: mirrors simulateOpenPrPressureShape in src/mcp/server.ts VERBATIM. The bin cannot import from src/
 // (package boundary), so this copy is the one place parity is by convention rather than construction — the
 // route parses with the tool's own exported shape, and mcp-cli-open-pr-pressure-tool.test.ts pins that a
 // payload this shape accepts is one the route accepts too.
-const simulateOpenPrPressureCount = z.number().int().min(0).max(1000000);
-const simulateOpenPrPressureShape = {
-  repoFullName: z.string().min(3).max(200),
-  generatedAt: z.string().min(1).max(100),
-  queueHealth: z
-    .object({
-      repoFullName: z.string().min(3).max(200),
-      generatedAt: z.string().min(1).max(100),
-      burdenScore: z.number().finite(),
-      level: z.enum(["low", "medium", "high", "critical"]),
-      summary: z.string().max(1000),
-      signals: z
-        .object({
-          openIssues: simulateOpenPrPressureCount,
-          openPullRequests: simulateOpenPrPressureCount,
-          unlinkedPullRequests: simulateOpenPrPressureCount,
-          stalePullRequests: simulateOpenPrPressureCount,
-          draftPullRequests: simulateOpenPrPressureCount,
-          maintainerAuthoredPullRequests: simulateOpenPrPressureCount,
-          collisionClusters: simulateOpenPrPressureCount,
-          ageBuckets: z
-            .object({ under7Days: simulateOpenPrPressureCount, days7To30: simulateOpenPrPressureCount, over30Days: simulateOpenPrPressureCount })
-            .passthrough(),
-          likelyReviewablePullRequests: simulateOpenPrPressureCount,
-          cachedOpenPullRequests: simulateOpenPrPressureCount.optional(),
-          likelyReviewablePullRequestsSource: z.enum(["cache", "sampled_cache", "authoritative"]).optional(),
-        })
-        .passthrough(),
-      findings: z.array(z.unknown()).max(100),
-    })
-    .passthrough()
-    .nullable(),
-  roleContext: z.object({ maintainerLane: z.boolean() }).passthrough(),
-  contributorOpenPrCount: simulateOpenPrPressureCount.optional(),
-};
 
 
 // #7759: mirrors checkImprovementPotentialShape in src/mcp/server.ts — same optional local-metadata fields the
 // CLI / REST route already accept. Stdio proxies POST /v1/lint/improvement-potential (builders stay app-side).
-const checkImprovementPotentialShape = {
-  changedFiles: z
-    .array(z.object({ path: z.string().min(1).max(400), additions: z.number().int().min(0).optional(), deletions: z.number().int().min(0).optional() }))
-    .max(2000)
-    .optional(),
-  tests: z.array(z.string().max(400)).max(2000).optional(),
-  testFiles: z.array(z.string().max(400)).max(2000).optional(),
-  patchCoverageDeltaPercent: z.number().optional(),
-  complexityDeltas: z
-    .array(
-      z.object({
-        file: z.string().min(1).max(400),
-        line: z.number().int().min(1),
-        name: z.string().min(1).max(400),
-        before: z.number().int().min(0),
-        after: z.number().int().min(0),
-        delta: z.number().int(),
-      }),
-    )
-    .max(2000)
-    .optional(),
-  duplicationDeltas: z
-    .array(
-      z.object({
-        file: z.string().min(1).max(400),
-        line: z.number().int().min(1),
-        duplicateOfLine: z.number().int().min(1),
-        lines: z.number().int().min(1),
-      }),
-    )
-    .max(2000)
-    .optional(),
-};
 
 
 // #6150 — loopover_run_local_scorer's input, mirroring the remote server's changedFileSchema/validationEntrySchema.
-const localScorerChangedFileShape = z
-  .object({
-    path: z.string().min(1).max(400),
-    previousPath: z.string().min(1).max(400).optional(),
-    additions: z.number().int().min(0).optional(),
-    deletions: z.number().int().min(0).optional(),
-    status: z.enum(["added", "modified", "deleted", "renamed", "copied", "unknown"]).optional(),
-    binary: z.boolean().optional(),
-  })
-  .strict();
-const localScorerValidationShape = z
-  .object({
-    command: z.string().min(1).max(400),
-    status: z.enum(["passed", "failed", "not_run", "skipped", "focused", "unknown"]),
-    summary: z.string().max(2000).optional(),
-    durationMs: z.number().int().min(0).optional(),
-    exitCode: z.number().int().min(0).optional(),
-  })
-  .strict();
 
 // #6150 — loopover_build_plan/loopover_plan_status/loopover_record_step_result's input, mirroring the remote
 // server's rawPlanStepSchema/planStepSchema/planDagSchema (@loopover/contract).
-const rawPlanStepShape = z
-  .object({
-    id: z.string().min(1).max(100),
-    title: z.string().min(1).max(300),
-    actionClass: z.string().min(1).max(60).optional(),
-    dependsOn: z.array(z.string().min(1).max(100)).max(50).optional(),
-    maxAttempts: z.number().int().min(1).max(10).optional(),
-  })
-  .strict();
-const planStepShape = z
-  .object({
-    id: z.string().min(1).max(100),
-    title: z.string().min(1).max(300),
-    actionClass: z.string().min(1).max(60).optional(),
-    dependsOn: z.array(z.string().min(1).max(100)).max(50),
-    status: z.enum(["pending", "running", "completed", "failed", "skipped"]),
-    attempts: z.number().int().min(0),
-    maxAttempts: z.number().int().min(1).max(10),
-    lastError: z.string().max(2000).nullable().optional(),
-  })
-  .strict();
-const planDagShape = z.object({ steps: z.array(planStepShape).max(100) }).strict();
-const buildPlanShape = { steps: z.array(rawPlanStepShape).min(1).max(100) };
-const planStatusShape = { plan: planDagShape };
 
 // #6150 — loopover_predict_gate's input, mirroring the remote server's predictGateShape. Metadata-only (no
 // git/workspace context needed): predicts the gate outcome for a PLANNED PR before any local code exists, the
 // same use case loopover_preflight_pr already serves for lane/duplicate/linked-issue checks.
-const predictGateShape = {
-  login: z.string().min(1),
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  title: z.string().min(1),
-  body: z.string().max(40000).optional(),
-  labels: z.array(z.string()).max(50).optional(),
-  linkedIssues: z.array(z.number().int().positive()).max(50).optional(),
-  changedPaths: z.array(z.string().min(1).max(400)).max(500).optional(),
-};
-
-
-const agentRunShape = {
-  objective: z.string().min(1),
-  actorLogin: z.string().min(1),
-  targetRepoFullName: z.string().min(3).optional(),
-  targetPullNumber: z.number().int().positive().optional(),
-  targetIssueNumber: z.number().int().positive().optional(),
-};
 
 
 // #6152 maintain-surface tools. Each shape mirrors its already-shipped remote counterpart in src/mcp/server.ts
@@ -750,73 +532,26 @@ const agentRunShape = {
 // list, and be told it succeeded -- so it is left out of the schema and the description names the queue as the
 // pending one. An agent picks its arguments from the published schema, so a filter that isn't there is one it
 // won't ask for; a key sent anyway is dropped by the MCP layer before this handler and never reaches the URL.
-const listPendingActionsShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-};
 
-const decidePendingActionShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  id: z.string().min(1),
-  decision: z.enum(["accept", "reject"]),
-};
-
-const setAgentPausedShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  paused: z.boolean(),
-};
 
 // Reuses the CLI's own constants, so `maintain set-level`'s validation and this tool's schema can never disagree
 // about what the server accepts.
-const setActionAutonomyShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  action: z.enum(MAINTAIN_ACTION_CLASSES),
-  level: z.enum(MAINTAIN_AUTONOMY_LEVELS),
-};
 
 
 // #7798: owner/repo plus the optional row cap the audit route's ?limit query accepts.
-const selftuneOverrideAuditShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  limit: z.number().int().positive().optional(),
-};
 
 // #9300: write-side sibling of selftuneOverrideAuditShape — mirrors src/mcp/server.ts's
 // clearSelftuneOverrideShape (`confirm` must be the literal true; omitted/false is schema-rejected).
-const clearSelftuneOverrideShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  confirm: z.literal(true),
-};
 
 // #7764: mirrors the remote loopover_plan_repo_issues tool's input (src/mcp/server.ts's planRepoIssuesShape),
 // minus the create-only `milestone` which this proxy (and the `maintain plan-issues` CLI) does not expose --
 // forwarded to POST /v1/repos/:owner/:repo/issue-plan-drafts/generate. `goal` is the required maintainer
 // planning goal; dryRun/create carry the route's create-safety (create alone is rejected there). `limit` is
 // capped at 10, matching the route, because every draft costs real LLM spend.
-const planRepoIssuesShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  goal: z.string().min(1).max(2000),
-  dryRun: z.boolean().optional().default(true),
-  create: z.boolean().optional().default(false),
-  limit: z.number().int().min(1).max(10).optional().default(5),
-};
 
 // #7755: mirrors the remote loopover_generate_contributor_issue_drafts input (src/mcp/server.ts's
 // generateContributorIssueDraftsShape) -- dryRun/create carry the route's create-safety (create alone is
 // rejected there); `limit` is capped at 20, matching the route.
-const generateContributorIssueDraftsShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  dryRun: z.boolean().optional().default(true),
-  create: z.boolean().optional().default(false),
-  limit: z.number().int().min(1).max(20).optional().default(5),
-};
 
 /**
  * Which tools this server serves (#9537).
@@ -1471,7 +1206,9 @@ registerStdioTool(
   "loopover_preflight_local_diff",
   async (input: z.infer<typeof PreflightLocalDiffInput>) => {
     const workspaceInput = await withClientWorkspaceRoots(input);
-    const diff = collectLocalDiff(workspaceInput.cwd, input.baseRef, workspaceInput.workspaceRoots);
+    // `baseRef` is optional in the shared contract input (the remote server has no checkout to read),
+    // so the local collector gets the same default the stdio-only shape used to bake in.
+    const diff = collectLocalDiff(workspaceInput.cwd, input.baseRef ?? "HEAD", workspaceInput.workspaceRoots);
     const body = {
       repoFullName: input.repoFullName,
       contributorLogin: input.contributorLogin,

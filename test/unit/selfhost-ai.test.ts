@@ -18,7 +18,7 @@ const posthogMocks = vi.hoisted(() => {
 });
 vi.mock("posthog-node", () => ({ PostHog: posthogMocks.PostHog }));
 
-import { assertNoLegacySharedAiEnv, buildProvider, claudeErrorStatus, codexErrorFromStdout, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, extractCliUsage, isAiProviderHealthy, markAiProviderUnhealthyAtBoot, providerNameFromBaseUrl, resetAiProviderCircuitBreakerForTest, resetAiProviderHealthForTest, resolveAiReviewerPlan, resolveClaudeCliTimeoutMs, resolveClaudeFirstOutputTimeoutMs, resolveCodexAuthPath, resolveCodexCliTimeoutMs, resolveCodexEffort, resolveCodexFirstOutputTimeoutMs, resolveEffort, resolveModel, resolveProviderNames, resolveRequiredCliProviders, resolveSubscriptionCliPath, redactSecrets, routeProviders, shouldMarkAiProviderUnhealthyAtBoot, shouldWarnRagEmbedUnavailable, subscriptionCliEnv, withAdvisoryAiEnv, withAiGenerationCapture, __selfHostAiInternals } from "../../src/selfhost/ai";
+import { assertNoLegacySharedAiEnv, buildProvider, classifyProviderFailure, claudeErrorStatus, codexErrorFromStdout, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, extractCliUsage, isAiProviderHealthy, markAiProviderUnhealthyAtBoot, providerNameFromBaseUrl, resetAiProviderCircuitBreakerForTest, resetAiProviderHealthForTest, resolveAiReviewerPlan, resolveClaudeCliTimeoutMs, resolveClaudeFirstOutputTimeoutMs, resolveCodexAuthPath, resolveCodexCliTimeoutMs, resolveCodexEffort, resolveCodexFirstOutputTimeoutMs, resolveEffort, resolveModel, resolveProviderNames, resolveRequiredCliProviders, resolveSubscriptionCliPath, redactSecrets, routeProviders, shouldMarkAiProviderUnhealthyAtBoot, shouldWarnRagEmbedUnavailable, subscriptionCliEnv, withAdvisoryAiEnv, withAiGenerationCapture, __selfHostAiInternals } from "../../src/selfhost/ai";
 import { labelSelfHostReviewerModel, labelSelfHostReviewerModels } from "../../src/selfhost/ai-config";
 import { setFileSourcedSecrets } from "../../src/selfhost/file-sourced-secrets";
 import { setProviderCredentialResolver } from "../../src/selfhost/provider-credential-registry";
@@ -2633,5 +2633,91 @@ describe("resolveClaudeOauthToken (#9543 — rotate the credential without recre
     setFileSourcedSecrets(["CLAUDE_CODE_OAUTH_TOKEN"]);
     const spawn: StubSpawn = async () => ({ stdout: "", code: 0 });
     await expect(createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN_FILE: "/nonexistent/nope" }, spawn).run("m", { prompt: "x" })).rejects.toThrow(/claude_code_no_oauth_token/);
+  });
+});
+
+describe("classifyProviderFailure (#9549 — rotate or wait?)", () => {
+  it("classifies a rejected credential from the CLI's structured envelope", () => {
+    expect(classifyProviderFailure(new Error("claude_code_error_401"))).toBe("credential_invalid");
+    expect(classifyProviderFailure(new Error("claude_code_error_403"))).toBe("credential_invalid");
+    expect(classifyProviderFailure(new Error("codex_error_401"))).toBe("credential_invalid");
+  });
+
+  it("REGRESSION: classifies a 429 as quota, NOT as a credential problem", () => {
+    // The production incident this exists for: a burst of claude_code_error_429 read as "the token is
+    // dead", when rotating it could not possibly have helped.
+    expect(classifyProviderFailure(new Error("claude_code_error_429"))).toBe("quota_exhausted");
+  });
+
+  it("classifies a missing credential distinctly from a rejected one", () => {
+    // Different first response: nothing to rotate, something to CONFIGURE.
+    expect(classifyProviderFailure(new Error("claude_code_no_oauth_token"))).toBe("not_configured");
+    expect(classifyProviderFailure(new Error("codex_auth_not_configured: /root/.codex/auth.json not found"))).toBe("not_configured");
+  });
+
+  it("classifies timeouts", () => {
+    expect(classifyProviderFailure(new Error("subscription_cli_timeout"))).toBe("timeout");
+    expect(classifyProviderFailure(new Error("claude_stalled_no_output: no stdout within firstOutputTimeoutMs"))).toBe("timeout");
+  });
+
+  it("classifies HTTP providers, which report auth failures as prose rather than an error_NNN code", () => {
+    expect(classifyProviderFailure(new Error("anthropic 401: invalid api key"))).toBe("credential_invalid");
+    expect(classifyProviderFailure(new Error("HTTP 403 Forbidden"))).toBe("credential_invalid");
+    expect(classifyProviderFailure(new Error("openai 429 Too Many Requests"))).toBe("quota_exhausted");
+    expect(classifyProviderFailure(new Error("rate limit exceeded for this organization"))).toBe("quota_exhausted");
+  });
+
+  it("INVARIANT: an unrecognised failure stays 'other' rather than being confidently mislabelled", () => {
+    // A wrong label sends an operator to the wrong runbook, which is worse than an honest unknown.
+    expect(classifyProviderFailure(new Error("claude_code_exit_1: something unexpected"))).toBe("other");
+    expect(classifyProviderFailure(new Error("ECONNREFUSED"))).toBe("other");
+    expect(classifyProviderFailure(new Error("claude_code_error_500"))).toBe("other");
+    expect(classifyProviderFailure(new Error(""))).toBe("other");
+  });
+
+  it("handles a non-Error and a nullish rejection without throwing", () => {
+    expect(classifyProviderFailure("claude_code_error_429")).toBe("quota_exhausted");
+    expect(classifyProviderFailure(undefined)).toBe("other");
+    expect(classifyProviderFailure(null)).toBe("other");
+  });
+
+  it("does not read a status out of an unrelated number in the message", () => {
+    // `error_` is required before the digits, so a PR number or byte count never masquerades as a status.
+    expect(classifyProviderFailure(new Error("failed after 401 bytes of output"))).toBe("other");
+  });
+});
+
+describe("provider failure reason metric + log field (#9549)", () => {
+  afterEach(() => {
+    resetMetrics();
+  });
+
+  it("counts the reason separately from the existing failures counter, and logs it", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const quota: StubSpawn = async () => ({ stdout: JSON.stringify({ is_error: true, api_error_status: 429 }), code: 1 });
+    await expect(createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, quota).run("m", { prompt: "x" })).rejects.toThrow(/claude_code_error_429/);
+
+    expect(await renderMetrics()).toMatch(/loopover_ai_provider_failure_reason_total\{[^}]*reason="quota_exhausted"[^}]*\} 1/);
+    const logged = JSON.parse(errorSpy.mock.calls.at(-1)![0] as string) as { reason: string; event: string };
+    expect(logged.event).toBe("selfhost_ai_provider_failed");
+    expect(logged.reason).toBe("quota_exhausted");
+    errorSpy.mockRestore();
+  });
+
+  it("labels an auth failure as credential_invalid, so the two are distinguishable in metrics", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const unauthorized: StubSpawn = async () => ({ stdout: JSON.stringify({ is_error: true, api_error_status: 401 }), code: 1 });
+    await expect(createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, unauthorized).run("m", { prompt: "x" })).rejects.toThrow(/claude_code_error_401/);
+    expect(await renderMetrics()).toMatch(/loopover_ai_provider_failure_reason_total\{[^}]*reason="credential_invalid"[^}]*\} 1/);
+    errorSpy.mockRestore();
+  });
+
+  it("never leaks the credential into the reason metric's labels", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const token = "sk-ant-oat01-should-never-appear";
+    const unauthorized: StubSpawn = async () => ({ stdout: JSON.stringify({ is_error: true, api_error_status: 401 }), code: 1 });
+    await expect(createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: token }, unauthorized).run("m", { prompt: "x" })).rejects.toThrow();
+    expect(await renderMetrics()).not.toContain(token);
+    errorSpy.mockRestore();
   });
 });

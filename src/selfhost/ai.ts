@@ -997,6 +997,32 @@ function errorMessage(error: unknown, knownSecrets: readonly string[] = []): str
   return redactSecrets(message, knownSecrets).slice(0, 500);
 }
 
+/** Why a provider call failed, at the granularity an operator actually acts on (#9549).
+ *  `credential_invalid` → rotate the credential. `quota_exhausted` → wait, or raise the plan/limit.
+ *  Conflating the two is the whole problem: both surface today as an opaque `claude_code_error_NNN`, so a
+ *  429 (a quota signal that no rotation can clear) is indistinguishable from a 401 (a dead credential)
+ *  without grepping raw logs -- and rotating a token that was never the problem is the natural next move. */
+export type ProviderFailureReason = "credential_invalid" | "quota_exhausted" | "timeout" | "not_configured" | "other";
+
+/** Classify a provider failure from its error. Deliberately matches on the STRUCTURED error shapes this
+ *  module itself throws (`claude_code_error_<status>`, `codex_error_<status>`, the auth/timeout sentinels)
+ *  rather than free-text provider prose, which is not a stable contract. Anything unrecognised stays
+ *  `other` -- a wrong confident label is worse than an honest unknown, because it would send an operator
+ *  to the wrong runbook. */
+export function classifyProviderFailure(error: unknown): ProviderFailureReason {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  // HTTP status carried by the CLI's own structured error envelope, e.g. `claude_code_error_401`.
+  const status = /(?:^|[^0-9])(?:error_)(\d{3})\b/.exec(message)?.[1];
+  if (status === "401" || status === "403") return "credential_invalid";
+  if (status === "429") return "quota_exhausted";
+  if (/_no_oauth_token\b|_auth_not_configured\b/.test(message)) return "not_configured";
+  // The HTTP providers surface an auth failure as a plain status line rather than a `*_error_NNN` code.
+  if (/\b(?:401|403)\b/.test(message) && /unauthor|forbidden|invalid[_ ]api[_ ]key|authentication/i.test(message)) return "credential_invalid";
+  if (/\b429\b/.test(message) || /rate[_ ]limit|quota|too many requests/i.test(message)) return "quota_exhausted";
+  if (/timeout\b|_timed_out\b|stalled_no_output\b/.test(message)) return "timeout";
+  return "other";
+}
+
 function logSelfHostAiProviderFailed(input: {
   provider: string;
   model: string;
@@ -1018,6 +1044,11 @@ function logSelfHostAiProviderFailed(input: {
   // a single-shot caller that never sets this field keeps today's always-loud behavior.
   const level = input.finalAttempt === false ? "warn" : "error";
   const log = level === "warn" ? console.warn : console.error;
+  const reason = classifyProviderFailure(input.error);
+  // A separate counter rather than a new label on loopover_ai_provider_failures_total: that series is
+  // already referenced by shipped alert rules and dashboards, and silently multiplying it into one series
+  // per reason changes what those existing queries return. This is additive and breaks nothing.
+  incr("loopover_ai_provider_failure_reason_total", { provider: input.provider, reason });
   log(
     JSON.stringify({
       level,
@@ -1030,6 +1061,8 @@ function logSelfHostAiProviderFailed(input: {
       repoFullName: input.repoFullName,
       pullNumber: input.pullNumber,
       attempt: input.attempt,
+      // Greppable alongside the metric: `reason` answers "rotate or wait?" without decoding the raw error.
+      reason,
       error: errorMessage(input.error, input.knownSecrets),
     }),
   );

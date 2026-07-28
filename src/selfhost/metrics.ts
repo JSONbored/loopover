@@ -120,6 +120,7 @@ export const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["loopover_ai_total_tokens_total", { help: "AI provider total tokens observed.", type: "counter" }],
   ["loopover_ai_provider_circuit_open_total", { help: "AI provider circuit-open events.", type: "counter" }],
   ["loopover_ai_provider_failures_total", { help: "AI provider failures by provider.", type: "counter" }],
+  ["loopover_ai_provider_failure_reason_total", { help: "AI provider failures by provider AND classified reason (credential_invalid | quota_exhausted | other) — a rejected credential needs a rotation, an exhausted quota needs waiting, and loopover_ai_provider_failures_total alone cannot tell them apart.", type: "counter" }],
   ["loopover_ai_provider_request_duration_seconds", { help: "AI provider request duration in seconds, by provider and request kind.", type: "histogram" }],
   ["loopover_ai_provider_request_errors_total", { help: "AI provider request errors, by provider and request kind (excludes expected embedding-routing fallbacks).", type: "counter" }],
   ["loopover_ai_review_cache_hit_total", { help: "AI review cache hits.", type: "counter" }],

@@ -609,7 +609,8 @@
                 "nullable": true
               },
               "decidedCount": {
-                "type": "number"
+                "type": "number",
+                "nullable": true
               },
               "guaranteed": {
                 "type": "object",
@@ -687,6 +688,13 @@
               "gamingFlagsCaught": {
                 "type": "number",
                 "nullable": true
+              },
+              "basis": {
+                "type": "string",
+                "enum": [
+                  "fleet",
+                  "single_instance_self_report"
+                ]
               }
             },
             "required": [
@@ -700,6 +708,7 @@
               "decidedCount",
               "guaranteed",
               "instanceCount",
+              "basis",
               "windowDays",
               "gamingFlagsCaught"
             ]

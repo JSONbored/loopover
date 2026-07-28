@@ -543,3 +543,69 @@ describe("getFleetHealthSummary() (#4933)", () => {
     expect(await getFleetHealthSummary(env)).toEqual({ healthyCount: 1, unhealthyCount: 0, unknownCount: 0, totalCount: 1 });
   });
 });
+
+// #9168: `fleet` is a CLAIM, and below a few instances it is not a true one — a median of one is that one
+// value, a median of two is their mean, and the anti-farming detector cannot fire against a median an
+// instance is itself half of. The numbers stay published (they are real); `fleetFramingEligible` is what lets
+// the public surface say which of the two things they are, instead of letting fleet framing imply
+// corroboration a single-instance sample cannot provide.
+describe("fleetFramingEligible (#9168)", () => {
+  it("REGRESSION: one registered instance is NOT fleet-framed — the n=1 shape live in production today", async () => {
+    // The live payload at the time of writing: instanceCount 1, real numbers, published under fleet framing
+    // alongside a risk-control guarantee calibrated by that very same instance.
+    const env = createTestEnv();
+    await register(env, "solo");
+    await signals(env, "solo", 20, { verdict: "merge", outcome: "merged" });
+    const a = await computeFleetAnalytics(env);
+    expect(a.instanceCount).toBe(1);
+    expect(a.fleetFramingEligible).toBe(false);
+    // ...and the figures themselves are untouched: this gates the LABEL, never the measurement.
+    expect(a.fleet.mergePrecision).not.toBeNull();
+    expect(a.fleet.pooled.mergeVerdicts).toBe(20);
+  });
+
+  it("two instances are still not fleet-framed — a median of two is their mean, with no robustness", async () => {
+    const env = createTestEnv();
+    await register(env, "a", "b");
+    await signals(env, "a", 10, { verdict: "merge", outcome: "merged" });
+    await signals(env, "b", 10, { verdict: "merge", outcome: "merged" });
+    const a = await computeFleetAnalytics(env);
+    expect(a.instanceCount).toBe(2);
+    expect(a.fleetFramingEligible).toBe(false);
+  });
+
+  it("INVARIANT: three eligible instances clear the floor, and it moves in lockstep with the gaming detector", async () => {
+    const env = createTestEnv();
+    await register(env, "a", "b", "c");
+    for (const id of ["a", "b", "c"]) await signals(env, id, 10, { verdict: "merge", outcome: "merged" });
+    const a = await computeFleetAnalytics(env);
+    expect(a.instanceCount).toBe(3);
+    expect(a.fleetFramingEligible).toBe(true);
+    // Deliberately the SAME floor: the n at which a median becomes robust is the n at which "this far above
+    // the median" becomes satisfiable. Pinning them together stops one being moved without the other.
+    expect(a.gamingDetectionEligible).toBe(true);
+  });
+
+  it("INVARIANT: the floor counts ELIGIBLE instances — volume and registration both gate it", async () => {
+    const env = createTestEnv();
+    await register(env, "a", "b", "c");
+    await signals(env, "a", 10);
+    await signals(env, "b", 10);
+    await signals(env, "c", 1); // under MIN_DECIDED, so ineligible despite being registered
+    await signals(env, "unregistered", 10); // volume, but never opted in
+    const a = await computeFleetAnalytics(env);
+    expect(a.instanceCount).toBe(2);
+    expect(a.fleetFramingEligible).toBe(false);
+  });
+
+  it("INVARIANT: an unreadable fleet fails CLOSED — no fleet claim when the tables cannot be read", async () => {
+    const env = createTestEnv();
+    (env.DB as unknown as { prepare: () => never }).prepare = () => {
+      throw new Error("d1 unavailable");
+    };
+    const a = await computeFleetAnalytics(env);
+    expect(a.instanceCount).toBe(0);
+    expect(a.fleetFramingEligible).toBe(false);
+    expect(a.gamingDetectionEligible).toBe(false);
+  });
+});

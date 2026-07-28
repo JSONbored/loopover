@@ -256,7 +256,9 @@ export interface PublicStatsPayload {
      *  enforcement and sit outside both sides. */
     coveragePct: number | null;
     /** merge + close verdicts behind accuracyPct — the denominator a reader needs to judge the claim. */
-    decidedCount: number;
+    /** null when 1 < instanceCount < FLEET_FRAMING_MIN_INSTANCES — see the k-anonymity note at the assignment
+     *  site. A rate is publishable at any n; a pooled COUNT isolates one participant by subtraction at n=2. */
+    decidedCount: number | null;
     /** #8835: the live finite-sample guarantees, per arm, when a registered instance publishes one —
      *  "P(wrong | acted) ≤ alpha at aiJudgedCoveragePct" with the certification's own sample size. Null arms
      *  mean no guarantee is currently live (insufficient labels, or the instrument retracted it).
@@ -273,6 +275,13 @@ export interface PublicStatsPayload {
       merge: { alpha: number; lambda: number; aiJudgedCoveragePct: number; n: number; backfilledPct: number | null } | null;
     };
     instanceCount: number;
+    /** #9168: which of two things these figures are. `"fleet"` means instanceCount >= FLEET_FRAMING_MIN_INSTANCES,
+     *  the point at which a median is robust to a single bad contributor and the anti-farming detector can
+     *  fire. `"single_instance_self_report"` means they are ONE operator's own outcomes — real, and disclosed
+     *  as such, but not independent corroboration of anything that operator also publishes (the risk-control
+     *  guarantee in `guaranteed` is calibrated by the same instance, so fleet framing would invite a reader
+     *  to double-count one source as two). The numbers are published either way; only the claim changes. */
+    basis: "fleet" | "single_instance_self_report";
     windowDays: number;
     /** #9068: self-hosted instances flagged by computeFleetAnalytics's anti-farming detector
      *  (gamingPatternFlags, src/orb/analytics.ts). null (not 0) when the fleet has fewer than
@@ -577,9 +586,17 @@ export async function getPublicStats(
       closePrecisionPct: pooled.closeVerdicts > 0 ? pct(pooled.closeConfirmed / pooled.closeVerdicts) : null,
       closePrecisionCiPct: ciPct(pooled.closeConfirmed, pooled.closeVerdicts),
       coveragePct: pooled.coverage === null ? null : pct(pooled.coverage),
-      decidedCount: pooledVerdicts,
+      // #9168 (k-anonymity): the pooled count is a plain SUM over eligible instances, and this deployment's own
+      // volume is already public via byProject/own-ledger totals. So at exactly 2 instances a reader recovers
+      // the OTHER instance's decision volume by subtraction — and for a hosted tenant that volume is a business
+      // metric (how many PRs they ship, how many get closed), not ours to publish. Suppressed in that window.
+      // At n=1 there is nothing to subtract (the sum IS this deployment's own, already-public figure), and at
+      // n >= FLEET_FRAMING_MIN_INSTANCES the sum no longer isolates any single participant. RATES are safe at
+      // every n — a proportion carries no volume — so only the count is withheld.
+      decidedCount: fleet.instanceCount > 1 && !fleet.fleetFramingEligible ? null : pooledVerdicts,
       guaranteed,
       instanceCount: fleet.instanceCount,
+      basis: fleet.fleetFramingEligible ? "fleet" : "single_instance_self_report",
       windowDays: fleet.windowDays,
       gamingFlagsCaught: fleet.gamingDetectionEligible ? fleet.gamingPatternFlags.length : null,
     },

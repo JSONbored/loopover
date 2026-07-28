@@ -2469,4 +2469,3 @@ function applySecurityMetadata(document: GeneratedOpenApiDocument): GeneratedOpe
   }
   return document;
 }
-

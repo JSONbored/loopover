@@ -2,7 +2,12 @@
   "$schema": "https://turborepo.com/schema.json",
   "tasks": {
     "//#typecheck": {
-      "dependsOn": ["@loopover/engine#build"],
+      // @loopover/contract#build joins @loopover/engine#build for the identical reason spelled out at
+      // @loopover/ui-miner#typecheck below: src/mcp/server.ts imports "@loopover/contract/tools", whose
+      // "types" resolve to packages/loopover-contract/dist/tools/index.d.ts. The root package.json dependency
+      // does NOT create a build edge for a root ("//#") task, so without this turbo schedules the contract
+      // build CONCURRENTLY with this typecheck and a cache MISS on the build races the dist emit.
+      "dependsOn": ["@loopover/engine#build", "@loopover/contract#build"],
       // Root tsconfig.json's own "include" list ("src", "test", plus a handful of named config files) is
       // NOT a complete accounting of what tsc actually type-checks: "include" only seeds the starting file
       // set, and tsc's real surface expands to everything transitively imported from there, regardless of
@@ -79,8 +84,15 @@
     // driver-factory.ts as an input) since engine has no default inputs override -- its whole src/** is
     // already hashed by that task, so depending on it transitively covers this file (and any other engine
     // file a future test might import) without needing to track individual paths here too.
+    // @loopover/contract#build is a third explicit edge (added after #9530 introduced the package): this
+    // app's tsconfig includes $TURBO_ROOT$/worker-configuration.d.ts, which imports "./src/index" -- so the
+    // ENTIRE Worker is in this typecheck's program (src/index.ts -> src/api/routes.ts -> src/mcp/server.ts ->
+    // "@loopover/contract/tools"), and apps/loopover-ui has no package.json dependency on contract to create
+    // the edge via ^build. Confirmed with `tsc --explainFiles`, not inferred. This one bit in CI as a
+    // cache-dependent failure: turbo caches this task, so it passed on PRs that hit the cache and failed with
+    // "Cannot find module '@loopover/contract/tools'" (plus five downstream implicit-any errors) on a miss.
     "@loopover/ui#typecheck": {
-      "dependsOn": ["^build", "@loopover/engine#build"],
+      "dependsOn": ["^build", "@loopover/engine#build", "@loopover/contract#build"],
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/worker-configuration.d.ts",
@@ -122,8 +134,11 @@
     // fail with phantom "Cannot find module '@loopover/engine'" errors (observed intermittently in CI's
     // validate-code job -- a scheduling race, so it only bit when the engine cache missed AND the
     // scheduler interleaved the two tasks the wrong way).
+    // @loopover/contract#build is here for the same reason as the engine edge described just above: those
+    // reached-into packages/loopover-miner/lib/** files import @loopover/contract, and miner-ui has no
+    // package.json dependency on it either.
     "@loopover/ui-miner#typecheck": {
-      "dependsOn": ["^build", "@loopover/engine#build"],
+      "dependsOn": ["^build", "@loopover/engine#build", "@loopover/contract#build"],
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/packages/loopover-miner/lib/**"],
       "outputs": []
     },

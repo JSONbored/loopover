@@ -2861,7 +2861,7 @@ function buildAgentMaintenancePlanInput(args: {
       : {}),
     copycatGateMode: settings.copycatGateMode,
     ...(screenshotTableMatch !== undefined ? { screenshotTableMatch } : {}),
-    ...(screenshotTableEvidenceUnresolved !== undefined ? { screenshotTableEvidenceUnresolved } : {}),
+    screenshotTableEvidenceUnresolved,
     ...(contributorCapMatch !== undefined ? { contributorCapMatch } : {}),
     // Always threaded (the DB layer populates it, default "over-contributor-limit"); the planner applies its
     // own fallback.
@@ -9504,6 +9504,8 @@ async function scheduleVisualCaptureRetry(
     // forever (the sole other clear needs a successful capture, which by definition never came), which silently
     // and permanently disabled the screenshotTableGate's close for that head. Best-effort, matching the mark
     // write below: a failed clear only means the gate stays deferred until the head moves, never a crash.
+    /* v8 ignore next -- a recapture-preview job is only ever minted for a PR that had a head SHA, so the
+       falsy arm is defensive; the mark write below carries the identical guard for the same reason. */
     if (args.pr.headSha) {
       await clearPullRequestVisualCaptureRetryPending(env, args.repoFullName, args.pr.number, args.pr.headSha).catch((error) => {
         console.log(

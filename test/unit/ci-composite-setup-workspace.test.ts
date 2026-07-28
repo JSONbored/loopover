@@ -53,7 +53,15 @@ describe("setup-workspace composite action", () => {
     expect(restore.uses).toContain("actions/cache/restore@");
     const restoreWith = record(restore.with, "restore.with");
     expect(String(restoreWith.path)).toContain("node_modules");
-    expect(String(restoreWith.path)).toContain("apps/loopover-ui/node_modules");
+    // #9596: the path list must cover EVERY workspace, via the same globs package.json declares -- npm
+    // decides per dependency whether it hoists to the root or nests under a workspace, and pinning one app
+    // by name is what let a cache hit restore a tree with no apps/loopover-miner-ui/node_modules at all.
+    expect(String(restoreWith.path)).toContain("apps/*/node_modules");
+    expect(String(restoreWith.path)).toContain("packages/*/node_modules");
+    // #9597: the path list and the KEY must move together. Widening the paths alone changes nothing --
+    // an unchanged lockfile keeps hitting the entry archived under the old list -- so the generation salt
+    // is asserted here, beside the paths, to keep the two from drifting apart again.
+    expect(String(restoreWith.key)).toContain("npm-v2-");
     expect(String(restoreWith.key)).toContain("hashFiles('package.json', 'apps/*/package.json', 'packages/*/package.json', 'package-lock.json')");
     expect(String(restoreWith.key)).toContain("package.json");
     expect(String(restoreWith.key)).toContain("apps/*/package.json");
@@ -74,6 +82,9 @@ describe("setup-workspace composite action", () => {
     expect(save.uses).toContain("actions/cache/save@");
     const saveWith = record(save.with, "save.with");
     expect(saveWith.key).toBe("${{ steps.node-modules-cache.outputs.cache-primary-key }}");
+    // The SAVE list is the one that decides what a future run can restore, so a narrowing here would be
+    // invisible until some later job failed on a missing workspace -- assert it matches the restore list.
+    expect(String(saveWith.path)).toBe(String(restoreWith.path));
 
     // Save must come after install (a broken/partial node_modules from a failed install step is never reached).
     const stepNames = steps.map((s) => s.name);

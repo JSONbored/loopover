@@ -2048,22 +2048,22 @@ export class LoopoverMcp {
     // #780 miner write-tools — each returns a LOCAL-execution action spec; loopover never performs the write.
     register(
       "loopover_open_pr",
-      { description: "Build a LOCAL-execution spec to open a pull request from your branch (run it with your own gh creds; loopover never performs the write).", inputSchema: OpenPrInput, outputSchema: LocalWriteActionOutput.shape },
+      { description: "Build a LOCAL-execution spec to open a pull request from your branch (run it with your own gh creds; loopover never performs the write).", inputSchema: OpenPrInput, outputSchema: LocalWriteActionOutput },
       async (input) => this.toolResult(this.localWriteSpec(buildOpenPrSpec(input))),
     );
     register(
       "loopover_file_issue",
-      { description: "Build a LOCAL-execution spec to file an issue (run it with your own gh creds; loopover never performs the write).", inputSchema: FileIssueInput, outputSchema: LocalWriteActionOutput.shape },
+      { description: "Build a LOCAL-execution spec to file an issue (run it with your own gh creds; loopover never performs the write).", inputSchema: FileIssueInput, outputSchema: LocalWriteActionOutput },
       async (input) => this.toolResult(this.localWriteSpec(buildFileIssueSpec(input))),
     );
     register(
       "loopover_apply_labels",
-      { description: "Build a LOCAL-execution spec to add labels to an issue or PR (run it with your own gh creds; loopover never performs the write).", inputSchema: ApplyLabelsInput, outputSchema: LocalWriteActionOutput.shape },
+      { description: "Build a LOCAL-execution spec to add labels to an issue or PR (run it with your own gh creds; loopover never performs the write).", inputSchema: ApplyLabelsInput, outputSchema: LocalWriteActionOutput },
       async (input) => this.toolResult(this.localWriteSpec(buildApplyLabelsSpec(input))),
     );
     register(
       "loopover_post_eligibility_comment",
-      { description: "Build a LOCAL-execution spec to post an eligibility/context comment on an issue or PR (run it with your own gh creds; loopover never performs the write).", inputSchema: PostEligibilityCommentInput, outputSchema: LocalWriteActionOutput.shape },
+      { description: "Build a LOCAL-execution spec to post an eligibility/context comment on an issue or PR (run it with your own gh creds; loopover never performs the write).", inputSchema: PostEligibilityCommentInput, outputSchema: LocalWriteActionOutput },
       async (input) => this.toolResult(this.localWriteSpec(buildPostEligibilityCommentSpec(input))),
     );
     register(
@@ -2078,12 +2078,12 @@ export class LoopoverMcp {
     );
     register(
       "loopover_create_branch",
-      { description: "Build a LOCAL-execution spec to create a branch (run it locally; loopover never performs the write).", inputSchema: CreateBranchInput, outputSchema: LocalWriteActionOutput.shape },
+      { description: "Build a LOCAL-execution spec to create a branch (run it locally; loopover never performs the write).", inputSchema: CreateBranchInput, outputSchema: LocalWriteActionOutput },
       async (input) => this.toolResult(this.localWriteSpec(buildCreateBranchSpec(input))),
     );
     register(
       "loopover_delete_branch",
-      { description: "Build a LOCAL-execution spec to delete a branch (run it locally; loopover never performs the write).", inputSchema: DeleteBranchInput, outputSchema: LocalWriteActionOutput.shape },
+      { description: "Build a LOCAL-execution spec to delete a branch (run it locally; loopover never performs the write).", inputSchema: DeleteBranchInput, outputSchema: LocalWriteActionOutput },
       async (input) => this.toolResult(this.localWriteSpec(buildDeleteBranchSpec(input))),
     );
     register(
@@ -2108,24 +2108,24 @@ export class LoopoverMcp {
     );
     register(
       "loopover_close_pr",
-      { description: "Build a LOCAL-execution spec to close a pull request, optionally with a comment (run it with your own gh creds; loopover never performs the write).", inputSchema: ClosePrInput, outputSchema: LocalWriteActionOutput.shape },
+      { description: "Build a LOCAL-execution spec to close a pull request, optionally with a comment (run it with your own gh creds; loopover never performs the write).", inputSchema: ClosePrInput, outputSchema: LocalWriteActionOutput },
       async (input) => this.toolResult(this.localWriteSpec(buildClosePrSpec(input))),
     );
 
     // #783 multi-step plan DAG — stateless: pass the plan back each call.
     register(
       "loopover_build_plan",
-      { description: "Normalize raw steps into a validated multi-step plan DAG (per-step state + retries). Returns the plan to hold and pass back to the other plan tools.", inputSchema: BuildPlanInput, outputSchema: PlanViewOutput.shape },
+      { description: "Normalize raw steps into a validated multi-step plan DAG (per-step state + retries). Returns the plan to hold and pass back to the other plan tools.", inputSchema: BuildPlanInput, outputSchema: PlanViewOutput },
       async (input) => this.toolResult(this.buildPlan(input)),
     );
     register(
       "loopover_plan_status",
-      { description: "Return a plan's progress, validation, and the steps ready to run now (all dependencies met).", inputSchema: PlanStatusInput, outputSchema: PlanViewOutput.shape },
+      { description: "Return a plan's progress, validation, and the steps ready to run now (all dependencies met).", inputSchema: PlanStatusInput, outputSchema: PlanViewOutput },
       async (input) => this.toolResult(this.planStatusTool(input)),
     );
     register(
       "loopover_record_step_result",
-      { description: "Record a step's outcome (completed / failed / skipped). A failure retries until maxAttempts is exhausted. Returns the advanced plan + the next ready steps.", inputSchema: RecordStepResultInput, outputSchema: PlanViewOutput.shape },
+      { description: "Record a step's outcome (completed / failed / skipped). A failure retries until maxAttempts is exhausted. Returns the advanced plan + the next ready steps.", inputSchema: RecordStepResultInput, outputSchema: PlanViewOutput },
       async (input) => this.toolResult(this.recordStepResult(input)),
     );
 

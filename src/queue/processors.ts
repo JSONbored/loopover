@@ -438,6 +438,7 @@ import {
 // below, and re-exported so test/unit/retention.test.ts and test/unit/selfhost-pg-retention.test.ts's
 // existing `import { ... } from "../../src/queue/processors"` keeps working unchanged.
 import { runRetentionPrune } from "./retention";
+import { runPrCommandPrologue, type PrCommandPrologueOutcome, type PrCommandPrologueSpec } from "./pr-command-prologue";
 export { runRetentionPrune } from "./retention";
 // #4013 step 8: same shim shape for the gate-check policy/publish/audit functions -- imported here for
 // this file's own many disposition/publish call sites, and re-exported so
@@ -13328,26 +13329,28 @@ async function recordGateOverrideSkip(
   });
 }
 
-async function maybeProcessResolveCommand(env: Env, deliveryId: string, payload: GitHubWebhookPayload): Promise<boolean> { const command = parseLoopOverMentionCommand(payload.comment?.body);
-  if (!command) return false;
-  if (command.name !== "resolve") return false;
-  const { classifyPrCommandRequest } = await import("../github/pr-command-request");
+async function maybeProcessResolveCommand(env: Env, deliveryId: string, payload: GitHubWebhookPayload): Promise<boolean> {
+  // #9541: the eleven-step prologue this command shares with its five siblings now lives in one place. This
+  // handler is why the seam exists -- it was the one #9312 missed, writing duplicate permanent review-memory
+  // suppression rows on every queue retry until #9561 caught it, because it sat 100..300 lines above its
+  // siblings in a different formatting style and did not read as a sixth site.
+  const outcome = await runPrCommandPrologueForEnv(env, deliveryId, payload, {
+    commandName: "resolve",
+    completedEventType: "github_app.finding_resolved",
+    needsMinerDetection: true,
+    recordSkip: async (reason, ctx) => {
+      await recordAuditEvent(env, { eventType: "github_app.finding_resolved_skipped", actor: ctx.actor, targetKey: ctx.targetKey, outcome: "completed", detail: reason, metadata: { deliveryId, repoFullName: ctx.repoFullName, reason } });
+      await recordGithubProductUsage(env, "finding_resolved_skipped", { actor: ctx.actor, repoFullName: ctx.repoFullName, targetKey: ctx.targetKey, outcome: "skipped", metadata: { reason } });
+    },
+    recordDenied: async (ctx) => {
+      await recordAuditEvent(env, { eventType: "github_app.finding_resolved_denied", actor: ctx.actor, targetKey: ctx.targetKey, outcome: "denied", detail: ctx.reason, metadata: { deliveryId, repoFullName: ctx.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(ctx.settings.commandAuthorization, "resolve") } });
+      await recordGithubProductUsage(env, "finding_resolved_denied", { actor: ctx.actor, repoFullName: ctx.repoFullName, targetKey: ctx.targetKey, outcome: "denied", metadata: { reason: ctx.reason, actorKind: ctx.actorKind, allowedRoles: commandAuthorizationAllowedRoles(ctx.settings.commandAuthorization, "resolve") } });
+    },
+  });
+  if (outcome.status === "notMine") return false;
+  if (outcome.status === "handled") return true;
+  const { req, targetKey, pr, settings, authorization, command } = outcome;
   const { normalizeResolveFindingRef, selectWarningsForResolve } = await import("../review/review-memory-wire");
-  const req = classifyPrCommandRequest(payload, getInstallationId(payload));
-  if (!req.ok) { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_skipped", actor: req.actor, targetKey: req.targetKey, outcome: "completed", detail: req.reason, metadata: { deliveryId, repoFullName: req.repoFullName ?? null, reason: req.reason } }); await recordGithubProductUsage(env, "finding_resolved_skipped", { actor: req.actor, repoFullName: req.repoFullName, targetKey: req.targetKey, outcome: "skipped", metadata: { reason: req.reason } }); return true; }
-  const targetKey = `${req.repoFullName}#${req.pr.number}`;
-  // #9312: webhook-redelivery guard, mirroring maybeThrottleReviewNagPing's #8681 short-circuit. GitHub can
-  // redeliver the same issue_comment (the job queue's max_retries:3 plus the dlq re-drive reuse the identical
-  // deliveryId); without this, the replay re-runs recordReviewSuppression, writing a SECOND permanent
-  // review-memory suppression row per finding, and re-posts the confirmation. Resolve was the one command
-  // handler #9312 missed -- its five siblings sit 100..300 lines below it in a different formatting style, so
-  // it did not read as a sixth site (scripts/check-command-redelivery-guards.ts now fails CI on a seventh).
-  const redeliverySinceIso = new Date(Date.now() - COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS).toISOString();
-  if (await hasAuditEventForDelivery(env, req.actor, "github_app.finding_resolved", targetKey, deliveryId, redeliverySinceIso)) return true;
-  const [pr, settings] = await Promise.all([getPullRequest(env, req.repoFullName, req.pr.number), resolveRepositorySettings(env, req.repoFullName)]);
-  if (!pr) { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_skipped", actor: req.actor, targetKey, outcome: "completed", detail: "cached_pr_missing", metadata: { deliveryId, repoFullName: req.repoFullName, reason: "cached_pr_missing" } }); await recordGithubProductUsage(env, "finding_resolved_skipped", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "skipped", metadata: { reason: "cached_pr_missing" } }); return true; }
-  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "resolve" as LoopOverMentionCommandName, settings, pr, needsMinerDetection: true });
-  if (!authorization.authorized) { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_denied", actor: req.actor, targetKey, outcome: "denied", detail: authorization.reason, metadata: { deliveryId, repoFullName: req.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "resolve") } }); await recordGithubProductUsage(env, "finding_resolved_denied", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "denied", metadata: { reason: authorization.reason, actorKind: authorization.actorKind, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "resolve") } }); return true; }
   const findingRef = normalizeResolveFindingRef(command.reason);
   if (!findingRef.ok) { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_skipped", actor: req.actor, targetKey, outcome: "completed", detail: findingRef.reason, metadata: { deliveryId, repoFullName: req.repoFullName, reason: findingRef.reason } }); await recordGithubProductUsage(env, "finding_resolved_skipped", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "skipped", metadata: { reason: findingRef.reason } }); return true; }
   const { advisory } = await buildAuthorizedPrActionAdvisory(env, req.repoFullName, pr, settings);
@@ -13381,36 +13384,20 @@ async function maybeProcessResolveCommand(env: Env, deliveryId: string, payload:
  * shape. Returns true once it owns the event.
  */
 async function maybeProcessReviewCommand(env: Env, deliveryId: string, payload: GitHubWebhookPayload): Promise<boolean> {
-  const command = parseLoopOverMentionCommand(payload.comment?.body);
-  if (!command || command.name !== "review") return false;
-  const { classifyPrCommandRequest } = await import("../github/pr-command-request");
-  const req = classifyPrCommandRequest(payload, getInstallationId(payload));
-  if (!req.ok) {
-    await recordReviewCommandSkip(env, deliveryId, req.repoFullName, req.targetKey, req.actor, req.reason);
-    return true;
-  }
-  const targetKey = `${req.repoFullName}#${req.pr.number}`;
-  // #9312: webhook-redelivery guard, mirroring maybeThrottleReviewNagPing's #8681 short-circuit. GitHub can
-  // redeliver the same issue_comment (the job queue's max_retries:3 plus the dlq re-drive reuse the identical
-  // deliveryId); without this, the replay re-dispatches reReviewStoredPullRequest (real AI-review spend). The
-  // original delivery already recorded its completed event under this deliveryId, so short-circuit the replay.
-  const redeliverySinceIso = new Date(Date.now() - COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS).toISOString();
-  if (await hasAuditEventForDelivery(env, req.actor, "github_app.review_command_completed", targetKey, deliveryId, redeliverySinceIso)) return true;
-  const [pr, settings] = await Promise.all([getPullRequest(env, req.repoFullName, req.pr.number), resolveRepositorySettings(env, req.repoFullName)]);
-  if (!pr) {
-    await recordReviewCommandSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "cached_pr_missing");
-    return true;
-  }
-  // needsMinerDetection: true -- "review" is deliberately widened to confirmed_miner (see the doc comment
-  // above and DEFAULT_COMMAND_AUTHORIZATION_POLICY's own comment on this command), so the miner-status lookup
-  // authorizePrActionActor gates behind this flag MUST run here, or a confirmed miner re-triggering review on
-  // their own PR is wrongly denied (there is no other role they could match instead).
-  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "review" as LoopOverMentionCommandName, settings, pr, needsMinerDetection: true });
-  if (!authorization.authorized) {
-    await recordAuditEvent(env, { eventType: "github_app.review_command_denied", actor: req.actor, targetKey, outcome: "denied", detail: authorization.reason, metadata: { deliveryId, repoFullName: req.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "review") } });
-    await recordGithubProductUsage(env, "review_command_denied", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "denied", metadata: { reason: authorization.reason, actorKind: authorization.actorKind, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "review") } });
-    return true;
-  }
+  // #9541: the eleven-step prologue this command shares with its five siblings now lives in one place.
+  const outcome = await runPrCommandPrologueForEnv(env, deliveryId, payload, {
+    commandName: "review",
+    completedEventType: "github_app.review_command_completed",
+    needsMinerDetection: true,
+    recordSkip: (reason, ctx) => recordReviewCommandSkip(env, deliveryId, ctx.repoFullName, ctx.targetKey, ctx.actor, reason),
+    recordDenied: async (ctx) => {
+      await recordAuditEvent(env, { eventType: "github_app.review_command_denied", actor: ctx.actor, targetKey: ctx.targetKey, outcome: "denied", detail: ctx.reason, metadata: { deliveryId, repoFullName: ctx.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(ctx.settings.commandAuthorization, "review") } });
+      await recordGithubProductUsage(env, "review_command_denied", { actor: ctx.actor, repoFullName: ctx.repoFullName, targetKey: ctx.targetKey, outcome: "denied", metadata: { reason: ctx.reason, actorKind: ctx.actorKind, allowedRoles: commandAuthorizationAllowedRoles(ctx.settings.commandAuthorization, "review") } });
+    },
+  });
+  if (outcome.status === "notMine") return false;
+  if (outcome.status === "handled") return true;
+  const { req, targetKey, pr, settings, authorization, command } = outcome;
   // Same dry-run/paused gate every other action command respects (pause/resolve/explain/gate-override/
   // generate-tests) -- a paused or dry-run repo must not dispatch a live re-review or post a confirmation.
   const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), instanceMode: forcedSelfhostMode(env), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
@@ -13446,33 +13433,63 @@ async function recordReviewCommandSkip(env: Env, deliveryId: string, repoFullNam
  * unconditionally on an authorized pause. Returns true once it owns the event; a non-pause comment returns false
  * and falls through to the other command handlers.
  */
-async function maybeProcessPauseCommand(env: Env, deliveryId: string, payload: GitHubWebhookPayload): Promise<boolean> {
-  const command = parseLoopOverMentionCommand(payload.comment?.body);
-  if (!command || command.name !== "pause") return false;
+/**
+ * #9541: binds {@link runPrCommandPrologue}'s injected IO to this module's real implementations, once, so the
+ * six `@loopover <verb>` handlers below share one copy of the sequence instead of six.
+ *
+ * The dynamic `classifyPrCommandRequest` import is preserved exactly as each handler had it — it is a
+ * deliberate lazy load, not an accident, and hoisting it to a static import would pull the module into every
+ * webhook path that never runs a command.
+ */
+async function runPrCommandPrologueForEnv(
+  env: Env,
+  deliveryId: string,
+  payload: GitHubWebhookPayload,
+  spec: PrCommandPrologueSpec,
+) {
   const { classifyPrCommandRequest } = await import("../github/pr-command-request");
-  const req = classifyPrCommandRequest(payload, getInstallationId(payload));
-  if (!req.ok) {
-    await recordAutoreviewPausedSkip(env, deliveryId, req.repoFullName, req.targetKey, req.actor, req.reason);
-    return true;
-  }
-  const targetKey = `${req.repoFullName}#${req.pr.number}`;
-  // #9312: webhook-redelivery guard, mirroring maybeThrottleReviewNagPing's #8681 short-circuit. GitHub can
-  // redeliver the same issue_comment (the job queue's max_retries:3 plus the dlq re-drive reuse the identical
-  // deliveryId); without this, the replay re-records the pause and re-posts its confirmation. The original
-  // delivery already recorded its completed event under this deliveryId, so short-circuit the replay.
-  const redeliverySinceIso = new Date(Date.now() - COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS).toISOString();
-  if (await hasAuditEventForDelivery(env, req.actor, "github_app.autoreview_paused", targetKey, deliveryId, redeliverySinceIso)) return true;
-  const [pr, settings] = await Promise.all([getPullRequest(env, req.repoFullName, req.pr.number), resolveRepositorySettings(env, req.repoFullName)]);
-  if (!pr) {
-    await recordAutoreviewPausedSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "cached_pr_missing");
-    return true;
-  }
-  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "pause" as LoopOverMentionCommandName, settings, pr, needsMinerDetection: true });
-  if (!authorization.authorized) {
-    await recordAuditEvent(env, { eventType: "github_app.autoreview_paused_denied", actor: req.actor, targetKey, outcome: "denied", detail: authorization.reason, metadata: { deliveryId, repoFullName: req.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "pause") } });
-    await recordGithubProductUsage(env, "autoreview_paused_denied", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "denied", metadata: { reason: authorization.reason, actorKind: authorization.actorKind, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "pause") } });
-    return true;
-  }
+  return runPrCommandPrologue(payload, deliveryId, spec, {
+    parseCommand: parseLoopOverMentionCommand,
+    classifyRequest: (candidate) => classifyPrCommandRequest(candidate, getInstallationId(candidate)),
+    hasSeenDelivery: (actor, eventType, targetKey, id) =>
+      hasAuditEventForDelivery(env, actor, eventType, targetKey, id, new Date(Date.now() - COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS).toISOString()),
+    loadPullRequest: (repoFullName, prNumber) => getPullRequest(env, repoFullName, prNumber),
+    loadSettings: (repoFullName) => resolveRepositorySettings(env, repoFullName),
+    authorize: async ({ req, settings, pr, needsMinerDetection }) =>
+      authorizePrActionActor({
+        env,
+        deliveryId,
+        installationId: req.installationId,
+        repoFullName: req.repoFullName,
+        issue: payload.issue!,
+        actor: req.actor,
+        // The established cast in this file: authorizePrActionActor takes the WIDER mention-command union,
+        // while a PR-command handler by definition owns an action verb.
+        commandName: spec.commandName as LoopOverMentionCommandName,
+        settings,
+        pr,
+        needsMinerDetection,
+      }),
+  });
+}
+
+async function maybeProcessPauseCommand(env: Env, deliveryId: string, payload: GitHubWebhookPayload): Promise<boolean> {
+  // #9541: the eleven-step prologue this command shares with its five siblings now lives in one place.
+  const outcome = await runPrCommandPrologueForEnv(env, deliveryId, payload, {
+    commandName: "pause",
+    completedEventType: "github_app.autoreview_paused",
+    // "pause" is deliberately widened to confirmed_miner, so the miner-status lookup MUST run or a confirmed
+    // miner pausing their own PR is wrongly denied (no other role could match them).
+    needsMinerDetection: true,
+    recordSkip: (reason, ctx) => recordAutoreviewPausedSkip(env, deliveryId, ctx.repoFullName, ctx.targetKey, ctx.actor, reason),
+    recordDenied: async (ctx) => {
+      await recordAuditEvent(env, { eventType: "github_app.autoreview_paused_denied", actor: ctx.actor, targetKey: ctx.targetKey, outcome: "denied", detail: ctx.reason, metadata: { deliveryId, repoFullName: ctx.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(ctx.settings.commandAuthorization, "pause") } });
+      await recordGithubProductUsage(env, "autoreview_paused_denied", { actor: ctx.actor, repoFullName: ctx.repoFullName, targetKey: ctx.targetKey, outcome: "denied", metadata: { reason: ctx.reason, actorKind: ctx.actorKind, allowedRoles: commandAuthorizationAllowedRoles(ctx.settings.commandAuthorization, "pause") } });
+    },
+  });
+  if (outcome.status === "notMine") return false;
+  if (outcome.status === "handled") return true;
+  const { req, targetKey, authorization, command } = outcome;
   const safeReason = sanitizePublicComment((command.reason ?? "").trim() || "No reason provided.");
   const confirmation = sanitizePublicComment([AGENT_COMMAND_COMMENT_MARKER, "", "> [!NOTE]", `> **Auto-review paused by @${req.actor}**`, "> Auto-review is paused for this PR only. Gate enforcement and the one-shot disposition are unchanged; use `@loopover resume` to re-enable auto-review.", "", `- Reason: ${safeReason}`, "", "---", loopoverFooter(env)].join("\n"));
   await createIssueComment(env, req.installationId, req.repoFullName, req.pr.number, confirmation);
@@ -13496,32 +13513,20 @@ async function recordAutoreviewPausedSkip(env: Env, deliveryId: string, repoFull
  * record shape exactly. Returns true once it owns the event.
  */
 async function maybeProcessResumeCommand(env: Env, deliveryId: string, payload: GitHubWebhookPayload): Promise<boolean> {
-  const command = parseLoopOverMentionCommand(payload.comment?.body);
-  if (!command || command.name !== "resume") return false;
-  const { classifyPrCommandRequest } = await import("../github/pr-command-request");
-  const req = classifyPrCommandRequest(payload, getInstallationId(payload));
-  if (!req.ok) {
-    await recordAutoreviewResumedSkip(env, deliveryId, req.repoFullName, req.targetKey, req.actor, req.reason);
-    return true;
-  }
-  const targetKey = `${req.repoFullName}#${req.pr.number}`;
-  // #9312: webhook-redelivery guard, mirroring maybeThrottleReviewNagPing's #8681 short-circuit. GitHub can
-  // redeliver the same issue_comment (the job queue's max_retries:3 plus the dlq re-drive reuse the identical
-  // deliveryId); without this, the replay re-records the resume and re-posts its confirmation. The original
-  // delivery already recorded its completed event under this deliveryId, so short-circuit the replay.
-  const redeliverySinceIso = new Date(Date.now() - COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS).toISOString();
-  if (await hasAuditEventForDelivery(env, req.actor, "github_app.autoreview_resumed", targetKey, deliveryId, redeliverySinceIso)) return true;
-  const [pr, settings] = await Promise.all([getPullRequest(env, req.repoFullName, req.pr.number), resolveRepositorySettings(env, req.repoFullName)]);
-  if (!pr) {
-    await recordAutoreviewResumedSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "cached_pr_missing");
-    return true;
-  }
-  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "resume" as LoopOverMentionCommandName, settings, pr, needsMinerDetection: true });
-  if (!authorization.authorized) {
-    await recordAuditEvent(env, { eventType: "github_app.autoreview_resumed_denied", actor: req.actor, targetKey, outcome: "denied", detail: authorization.reason, metadata: { deliveryId, repoFullName: req.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "resume") } });
-    await recordGithubProductUsage(env, "autoreview_resumed_denied", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "denied", metadata: { reason: authorization.reason, actorKind: authorization.actorKind, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "resume") } });
-    return true;
-  }
+  // #9541: the eleven-step prologue this command shares with its five siblings now lives in one place.
+  const outcome = await runPrCommandPrologueForEnv(env, deliveryId, payload, {
+    commandName: "resume",
+    completedEventType: "github_app.autoreview_resumed",
+    needsMinerDetection: true,
+    recordSkip: (reason, ctx) => recordAutoreviewResumedSkip(env, deliveryId, ctx.repoFullName, ctx.targetKey, ctx.actor, reason),
+    recordDenied: async (ctx) => {
+      await recordAuditEvent(env, { eventType: "github_app.autoreview_resumed_denied", actor: ctx.actor, targetKey: ctx.targetKey, outcome: "denied", detail: ctx.reason, metadata: { deliveryId, repoFullName: ctx.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(ctx.settings.commandAuthorization, "resume") } });
+      await recordGithubProductUsage(env, "autoreview_resumed_denied", { actor: ctx.actor, repoFullName: ctx.repoFullName, targetKey: ctx.targetKey, outcome: "denied", metadata: { reason: ctx.reason, actorKind: ctx.actorKind, allowedRoles: commandAuthorizationAllowedRoles(ctx.settings.commandAuthorization, "resume") } });
+    },
+  });
+  if (outcome.status === "notMine") return false;
+  if (outcome.status === "handled") return true;
+  const { req, targetKey, pr, settings, authorization, command } = outcome;
   const confirmation = sanitizePublicComment([AGENT_COMMAND_COMMENT_MARKER, "", "> [!NOTE]", `> **Auto-review resumed by @${req.actor}**`, "> Auto-review is resumed for this PR. Gate enforcement and the one-shot disposition were never affected by pause.", "", "---", loopoverFooter(env)].join("\n"));
   await createIssueComment(env, req.installationId, req.repoFullName, req.pr.number, confirmation);
   await recordAuditEvent(env, { eventType: "github_app.autoreview_resumed", actor: req.actor, targetKey, outcome: "completed", detail: "Auto-review resumed.", metadata: { deliveryId, repoFullName: req.repoFullName } });
@@ -13568,33 +13573,23 @@ async function hasAutoreviewPausedMarker(env: Env, repoFullName: string, prNumbe
  * An unknown id gets a public-safe not-found note rather than a silent no-op. Returns true once it owns the event.
  */
 async function maybeProcessExplainCommand(env: Env, deliveryId: string, payload: GitHubWebhookPayload): Promise<boolean> {
-  const command = parseLoopOverMentionCommand(payload.comment?.body);
-  if (!command || command.name !== "explain") return false;
-  const { classifyPrCommandRequest } = await import("../github/pr-command-request");
+  // #9541: the eleven-step prologue this command shares with its five siblings now lives in one place.
+  const outcome = await runPrCommandPrologueForEnv(env, deliveryId, payload, {
+    commandName: "explain",
+    completedEventType: "github_app.finding_explained",
+    needsMinerDetection: true,
+    recordSkip: (reason, ctx) => recordFindingExplainedSkip(env, deliveryId, ctx.repoFullName, ctx.targetKey, ctx.actor, reason),
+    recordDenied: async (ctx) => {
+      await recordAuditEvent(env, { eventType: "github_app.finding_explained_denied", actor: ctx.actor, targetKey: ctx.targetKey, outcome: "denied", detail: ctx.reason, metadata: { deliveryId, repoFullName: ctx.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(ctx.settings.commandAuthorization, "explain") } });
+      await recordGithubProductUsage(env, "finding_explained_denied", { actor: ctx.actor, repoFullName: ctx.repoFullName, targetKey: ctx.targetKey, outcome: "denied", metadata: { reason: ctx.reason, actorKind: ctx.actorKind, allowedRoles: commandAuthorizationAllowedRoles(ctx.settings.commandAuthorization, "explain") } });
+    },
+  });
+  if (outcome.status === "notMine") return false;
+  if (outcome.status === "handled") return true;
+  const { req, targetKey, pr, settings, authorization, command } = outcome;
+  // Lazy on purpose (unchanged): review-memory-wire is only needed once a command is authorized, so a webhook
+  // that never reaches here never pays for the module.
   const { normalizeResolveFindingRef, selectWarningsForResolve } = await import("../review/review-memory-wire");
-  const req = classifyPrCommandRequest(payload, getInstallationId(payload));
-  if (!req.ok) {
-    await recordFindingExplainedSkip(env, deliveryId, req.repoFullName, req.targetKey, req.actor, req.reason);
-    return true;
-  }
-  const targetKey = `${req.repoFullName}#${req.pr.number}`;
-  // #9312: webhook-redelivery guard, mirroring maybeThrottleReviewNagPing's #8681 short-circuit. GitHub can
-  // redeliver the same issue_comment (the job queue's max_retries:3 plus the dlq re-drive reuse the identical
-  // deliveryId); without this, the replay re-posts the explanation comment. The original delivery already
-  // recorded its completed event under this deliveryId, so short-circuit the replay.
-  const redeliverySinceIso = new Date(Date.now() - COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS).toISOString();
-  if (await hasAuditEventForDelivery(env, req.actor, "github_app.finding_explained", targetKey, deliveryId, redeliverySinceIso)) return true;
-  const [pr, settings] = await Promise.all([getPullRequest(env, req.repoFullName, req.pr.number), resolveRepositorySettings(env, req.repoFullName)]);
-  if (!pr) {
-    await recordFindingExplainedSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "cached_pr_missing");
-    return true;
-  }
-  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "explain" as LoopOverMentionCommandName, settings, pr, needsMinerDetection: true });
-  if (!authorization.authorized) {
-    await recordAuditEvent(env, { eventType: "github_app.finding_explained_denied", actor: req.actor, targetKey, outcome: "denied", detail: authorization.reason, metadata: { deliveryId, repoFullName: req.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "explain") } });
-    await recordGithubProductUsage(env, "finding_explained_denied", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "denied", metadata: { reason: authorization.reason, actorKind: authorization.actorKind, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "explain") } });
-    return true;
-  }
   const findingRef = normalizeResolveFindingRef(command.argument);
   if (!findingRef.ok) {
     await recordFindingExplainedSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, findingRef.reason);
@@ -13656,38 +13651,23 @@ async function recordFindingExplainedSkip(env: Env, deliveryId: string, repoFull
  * reply comment" precedent for on-demand actions.
  */
 async function maybeProcessGenerateTestsCommand(env: Env, deliveryId: string, payload: GitHubWebhookPayload): Promise<boolean> {
-  const command = parseLoopOverMentionCommand(payload.comment?.body);
-  if (!command || command.name !== "generate-tests") return false;
-  const { classifyPrCommandRequest } = await import("../github/pr-command-request");
-  const req = classifyPrCommandRequest(payload, getInstallationId(payload));
-  if (!req.ok) {
-    await recordGenerateTestsSkip(env, deliveryId, req.repoFullName, req.targetKey, req.actor, req.reason);
-    return true;
-  }
-  const targetKey = `${req.repoFullName}#${req.pr.number}`;
-  // #9312: webhook-redelivery guard, mirroring maybeThrottleReviewNagPing's #8681 short-circuit. GitHub can
-  // redeliver the same issue_comment (the job queue's max_retries:3 plus the dlq re-drive reuse the identical
-  // deliveryId); without this, the replay regenerates and re-commits an E2E test. The original delivery already
-  // recorded its completed event under this deliveryId, so short-circuit the replay.
-  const redeliverySinceIso = new Date(Date.now() - COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS).toISOString();
-  if (await hasAuditEventForDelivery(env, req.actor, "github_app.e2e_tests_generation", targetKey, deliveryId, redeliverySinceIso)) return true;
-  const [pr, settings] = await Promise.all([getPullRequest(env, req.repoFullName, req.pr.number), resolveRepositorySettings(env, req.repoFullName)]);
-  if (!pr) {
-    await recordGenerateTestsSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "cached_pr_missing");
-    return true;
-  }
-  // #9020 / #9311: mirrors maybeProcessPrPanelRetrigger's and maybeProcessPrPanelGenerateTests's identical guard --
-  // the text-command twin must not spend AI generation or attempt a commit on a closed/merged PR.
-  if (pr.state !== "open") {
-    await recordGenerateTestsSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "pr_not_open");
-    return true;
-  }
-  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "generate-tests" as LoopOverMentionCommandName, settings, pr, needsMinerDetection: true });
-  if (!authorization.authorized) {
-    await recordAuditEvent(env, { eventType: "github_app.e2e_tests_generation_denied", actor: req.actor, targetKey, outcome: "denied", detail: authorization.reason, metadata: { deliveryId, repoFullName: req.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "generate-tests") } });
-    await recordGithubProductUsage(env, "e2e_tests_generation_denied", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "denied", metadata: { reason: authorization.reason, actorKind: authorization.actorKind, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "generate-tests") } });
-    return true;
-  }
+  // #9541: the eleven-step prologue this command shares with its five siblings now lives in one place.
+  const outcome = await runPrCommandPrologueForEnv(env, deliveryId, payload, {
+    commandName: "generate-tests",
+    completedEventType: "github_app.e2e_tests_generation",
+    needsMinerDetection: true,
+    // #9020/#9311: this command spends AI generation and attempts a branch commit, so it must not run on a
+    // closed/merged PR — the same guard both PR-panel twins carry.
+    requireOpenPr: true,
+    recordSkip: (reason, ctx) => recordGenerateTestsSkip(env, deliveryId, ctx.repoFullName, ctx.targetKey, ctx.actor, reason),
+    recordDenied: async (ctx) => {
+      await recordAuditEvent(env, { eventType: "github_app.e2e_tests_generation_denied", actor: ctx.actor, targetKey: ctx.targetKey, outcome: "denied", detail: ctx.reason, metadata: { deliveryId, repoFullName: ctx.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(ctx.settings.commandAuthorization, "generate-tests") } });
+      await recordGithubProductUsage(env, "e2e_tests_generation_denied", { actor: ctx.actor, repoFullName: ctx.repoFullName, targetKey: ctx.targetKey, outcome: "denied", metadata: { reason: ctx.reason, actorKind: ctx.actorKind, allowedRoles: commandAuthorizationAllowedRoles(ctx.settings.commandAuthorization, "generate-tests") } });
+    },
+  });
+  if (outcome.status === "notMine") return false;
+  if (outcome.status === "handled") return true;
+  const { req, targetKey, pr, settings, authorization, command } = outcome;
   const manifest = await loadRepoFocusManifest(env, req.repoFullName).catch(() => null);
   if (!resolveConvergedFeature(env, manifest, "e2eTests", req.repoFullName)) {
     await postGenerateTestsNotEnabledComment(env, req.installationId, req.repoFullName, req.pr.number);

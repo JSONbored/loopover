@@ -31,8 +31,15 @@ import { fileURLToPath } from "node:url";
 
 const SCANNED_FILE = "src/queue/processors.ts";
 
-/** The guard's one required call. Any handler that reaches it has made the decision. */
-const GUARD_CALL = "hasAuditEventForDelivery";
+/**
+ * The calls that count as having made the decision — either satisfies this check.
+ *
+ * `hasAuditEventForDelivery` is the guard itself. `runPrCommandPrologueForEnv` is #9541's shared prologue,
+ * which OWNS that call for the `@loopover <verb>` command family: a handler delegating to it cannot skip the
+ * guard, because the sequence is no longer the handler's to get wrong. Accepting delegation is the point —
+ * it means the cheapest way to satisfy this check is also the structurally correct one.
+ */
+const GUARD_CALLS = ["hasAuditEventForDelivery", "runPrCommandPrologueForEnv"] as const;
 
 /**
  * Hard ceiling on how far a handler body may be scanned, purely so a malformed/unbalanced file cannot make
@@ -84,7 +91,7 @@ export function findMissingRedeliveryGuards(
   const violations: RedeliveryGuardViolation[] = [];
   for (const [index, handler] of handlerDeclarations(lines)) {
     if (allowedWithoutGuard.has(handler)) continue;
-    if (bodyText(lines, index).includes(GUARD_CALL)) continue;
+    if (GUARD_CALLS.some((call) => bodyText(lines, index).includes(call))) continue;
     violations.push({ file, line: index + 1, handler });
   }
   return violations.sort((a, b) => a.line - b.line);
@@ -159,7 +166,8 @@ function main(): void {
       "duplicate permanent suppression rows and, for the panel handlers, a second paid model call.\n\n" +
       "Either add the guard:\n\n" +
       "  const redeliverySinceIso = new Date(Date.now() - COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS).toISOString();\n" +
-      `  if (await ${GUARD_CALL}(env, actor, "<completed event type>", targetKey, deliveryId, redeliverySinceIso)) return true;\n\n` +
+      `  if (await ${GUARD_CALLS[0]}(env, actor, "<completed event type>", targetKey, deliveryId, redeliverySinceIso)) return true;\n\n` +
+      "...or delegate the whole prologue to runPrCommandPrologueForEnv (#9541), which owns the guard for you.\n\n" +
       "...or, if the handler is genuinely replay-safe, add it to ALLOWED_WITHOUT_GUARD in\n" +
       "scripts/check-command-redelivery-guards.ts WITH the mechanism that makes it safe.\n",
   );

@@ -19,6 +19,16 @@ import {
   minerGovernorDecisionsTool,
   minerStatusTool,
   minerCalibrationReportTool,
+  minerDoctorTool,
+  minerMetricsSnapshotTool,
+  minerGovernorPauseTool,
+  minerGovernorResumeTool,
+  minerQueueReleaseTool,
+  minerQueueRequeueTool,
+  minerClaimReleaseTool,
+  minerDenyHooksDecideTool,
+  minerRunMigrationsTool,
+  minerPurgeRepoTool,
 } from "@loopover/contract/tools";
 import {
   MinerPingInput,
@@ -37,6 +47,21 @@ import {
   MinerListPlansOutput,
   MinerGetPlanInput,
   MinerGetPlanOutput,
+  MinerDoctorInput,
+  MinerDoctorOutput,
+  MinerMetricsSnapshotInput,
+  MinerMetricsSnapshotOutput,
+  MinerGovernorPauseInput,
+  MinerGovernorResumeInput,
+  MinerQueueReleaseInput,
+  MinerQueueRequeueInput,
+  MinerClaimReleaseInput,
+  MinerDenyHooksDecideInput,
+  MinerRunMigrationsInput,
+  MinerRunMigrationsOutput,
+  MinerPurgeRepoInput,
+  MinerPurgeRepoOutput,
+  MinerGovernorActionOutput,
   MinerGovernorDecisionsInput,
   MinerGovernorDecisionsOutput,
   MinerStatusInput,
@@ -55,6 +80,21 @@ import { initRunStateStore, type RunStateStore } from "../lib/run-state.js";
 import { openPlanStore } from "../lib/plan-store.js";
 import { initGovernorLedger } from "../lib/governor-ledger.js";
 import { collectStatus, runDoctorChecks } from "../lib/status.js";
+import { collectMinerPredictionMetrics } from "@loopover/engine";
+import { collectPredictionMetricRows } from "../lib/metrics-cli.js";
+import { dispatchChatAction } from "../lib/chat-action-dispatch.js";
+import {
+  MINER_CLAIM_RELEASE_ACTION,
+  MINER_DENY_HOOKS_DECIDE_ACTION,
+  MINER_PURGE_REPO_ACTION,
+  MINER_QUEUE_RELEASE_ACTION,
+  MINER_QUEUE_REQUEUE_ACTION,
+  MINER_RUN_MIGRATIONS_ACTION,
+  registerMinerOpsChatActions,
+  type MinerOpsActions,
+} from "../lib/chat-miner-ops-actions.js";
+import { createMinerOpsActions } from "../lib/miner-ops-actions.js";
+import { GOVERNOR_PAUSE_CHAT_ACTION, GOVERNOR_RESUME_CHAT_ACTION, registerGovernorChatActions } from "../lib/chat-governor-actions.js";
 import { buildCalibrationReport } from "../lib/calibration.js";
 import { toOutcomeRecords, toPredictionRecords } from "../lib/calibration-cli.js";
 import { initPredictionLedger, type PredictionLedgerEntry } from "../lib/prediction-ledger.js";
@@ -196,6 +236,17 @@ export interface MinerMcpServerOptions {
   collectStatus?: () => unknown;
   /** Override the doctor-checks reader (defaults to status.js's runDoctorChecks); injection seam for tests. */
   runDoctorChecks?: () => unknown[];
+  /**
+   * The mutating ops this server exposes (#9523). Defaults to the real on-disk stores; injected only by
+   * tests. The MCP layer never touches a store directly -- every mutation is DISPATCHED by action name
+   * through the governor-gated chat-action chokepoint, and these are what that chokepoint's handlers
+   * ultimately call.
+   */
+  opsActions?: MinerOpsActions;
+  /** Override the chat-action dispatcher; injection seam for tests. Defaults to the real dispatchChatAction. */
+  dispatchAction?: typeof dispatchChatAction;
+  /** Override the governor pause/resume clients the chat actions are wired to; injection seam for tests. */
+  governorClients?: { pauseGovernor: (reason?: string) => Promise<unknown>; resumeGovernor: () => Promise<unknown> };
   /**
    * Override the prediction-ledger opener (defaults to the real on-disk ledger); injection seam for tests. Typed
    * to the minimal read surface the calibration-report tool uses (never appendPrediction).
@@ -402,6 +453,124 @@ export function createMinerMcpServer(options: MinerMcpServerOptions = {}) {
         status: (options.collectStatus ?? collectStatus)(),
         doctor: (options.runDoctorChecks ?? runDoctorChecks)(),
       }), minerStatusTool.name),
+  );
+
+  // ── #9523 mutations, every one dispatched through the governor gate ────
+  //
+  // Registered ONLY when opsActions is supplied: a deployment that has not wired the store operations
+  // advertises nothing it cannot serve. The MCP layer never calls a store -- it dispatches an action NAME
+  // through dispatchChatAction, which runs the registry's governor-gated handler. That is why an MCP caller
+  // can never reach a write path the dashboard could not: both go through the same chokepoint.
+  {
+    // Registered UNCONDITIONALLY, against the real stores unless a test injects otherwise: a tool the
+    // registry declares but the server does not serve is a promised capability with nothing behind it, which
+    // is exactly what validate:mcp refuses.
+    registerMinerOpsChatActions(options.opsActions ?? createMinerOpsActions());
+    if (options.governorClients) registerGovernorChatActions(options.governorClients);
+    const dispatch = options.dispatchAction ?? dispatchChatAction;
+
+    /** Shape a dispatch result into the tools' shared output: blocked/declined/ok, never a thrown gate. */
+    const dispatchResult = async (action: string, params: Record<string, unknown>) => {
+      const result = await dispatch({ action, params });
+      if (result.ok) return { ok: true, action, result: (result as { result?: unknown }).result };
+      // A refusal is an ANSWER, not a transport failure: the caller needs to know the governor said no and
+      // why, which a thrown error would flatten into a generic tool error.
+      return { ok: false, action, blocked: true, reason: result.status, ...(result.error ? { error: result.error } : {}) };
+    };
+
+    server.registerTool(
+      minerGovernorPauseTool.name,
+      { description: minerGovernorPauseTool.description, inputSchema: MinerGovernorPauseInput.shape, outputSchema: MinerGovernorActionOutput.shape },
+      (input) => withMinerToolErrorHandling(() => dispatchResult(GOVERNOR_PAUSE_CHAT_ACTION, input.reason ? { reason: input.reason } : {}), minerGovernorPauseTool.name),
+    );
+
+    server.registerTool(
+      minerGovernorResumeTool.name,
+      { description: minerGovernorResumeTool.description, inputSchema: MinerGovernorResumeInput.shape, outputSchema: MinerGovernorActionOutput.shape },
+      () => withMinerToolErrorHandling(() => dispatchResult(GOVERNOR_RESUME_CHAT_ACTION, {}), minerGovernorResumeTool.name),
+    );
+
+    server.registerTool(
+      minerQueueReleaseTool.name,
+      { description: minerQueueReleaseTool.description, inputSchema: MinerQueueReleaseInput.shape, outputSchema: MinerGovernorActionOutput.shape },
+      (input) => withMinerToolErrorHandling(() => dispatchResult(MINER_QUEUE_RELEASE_ACTION, { ...input }), minerQueueReleaseTool.name),
+    );
+
+    server.registerTool(
+      minerQueueRequeueTool.name,
+      { description: minerQueueRequeueTool.description, inputSchema: MinerQueueRequeueInput.shape, outputSchema: MinerGovernorActionOutput.shape },
+      (input) => withMinerToolErrorHandling(() => dispatchResult(MINER_QUEUE_REQUEUE_ACTION, { ...input }), minerQueueRequeueTool.name),
+    );
+
+    server.registerTool(
+      minerClaimReleaseTool.name,
+      { description: minerClaimReleaseTool.description, inputSchema: MinerClaimReleaseInput.shape, outputSchema: MinerGovernorActionOutput.shape },
+      (input) => withMinerToolErrorHandling(() => dispatchResult(MINER_CLAIM_RELEASE_ACTION, { ...input }), minerClaimReleaseTool.name),
+    );
+
+    server.registerTool(
+      minerDenyHooksDecideTool.name,
+      { description: minerDenyHooksDecideTool.description, inputSchema: MinerDenyHooksDecideInput.shape, outputSchema: MinerGovernorActionOutput.shape },
+      (input) => withMinerToolErrorHandling(() => dispatchResult(MINER_DENY_HOOKS_DECIDE_ACTION, { ...input }), minerDenyHooksDecideTool.name),
+    );
+
+    server.registerTool(
+      minerRunMigrationsTool.name,
+      { description: minerRunMigrationsTool.description, inputSchema: MinerRunMigrationsInput.shape, outputSchema: MinerRunMigrationsOutput.shape },
+      () => withMinerToolErrorHandling(() => dispatchResult(MINER_RUN_MIGRATIONS_ACTION, {}), minerRunMigrationsTool.name),
+    );
+
+    server.registerTool(
+      minerPurgeRepoTool.name,
+      { description: minerPurgeRepoTool.description, inputSchema: MinerPurgeRepoInput.shape, outputSchema: MinerPurgeRepoOutput.shape },
+      (input) =>
+        withMinerToolErrorHandling(async () => {
+          const result = await dispatchResult(MINER_PURGE_REPO_ACTION, { repoFullName: input.repoFullName });
+          return { ...result, repoFullName: input.repoFullName };
+        }, minerPurgeRepoTool.name),
+    );
+  }
+
+  // ── #9523 reads ────────────────────────────────────────────────────────
+  server.registerTool(
+    minerDoctorTool.name,
+    { description: minerDoctorTool.description, inputSchema: MinerDoctorInput.shape, outputSchema: MinerDoctorOutput.shape },
+    () =>
+      withMinerToolErrorHandling(() => {
+        // status.js reports each check as {name, ok, detail}. The contract carries pass/warn/fail because the
+        // catalog wants doctor to GROW checks (#9523) and a boolean cannot express "degraded but working";
+        // every check maps to pass/fail today, and `warn` is reserved for the first check that needs it.
+        const checks = ((options.runDoctorChecks ?? runDoctorChecks)() as { name: string; ok: boolean; detail: string }[]).map((check) => ({
+          name: check.name,
+          status: check.ok ? ("pass" as const) : ("fail" as const),
+          detail: check.detail,
+        }));
+        return { ok: checks.every((check) => check.status !== "fail"), checks };
+      }, minerDoctorTool.name),
+  );
+
+  server.registerTool(
+    minerMetricsSnapshotTool.name,
+    { description: minerMetricsSnapshotTool.description, inputSchema: MinerMetricsSnapshotInput.shape, outputSchema: MinerMetricsSnapshotOutput.shape },
+    () =>
+      withMinerToolErrorHandling(() => {
+        const ownsPredictionLedger = options.initPredictionLedger === undefined;
+        const ownsEventLedger = options.initEventLedger === undefined;
+        let predictionLedger;
+        let eventLedger;
+        try {
+          predictionLedger = (options.initPredictionLedger ?? initPredictionLedger)();
+          eventLedger = (options.initEventLedger ?? initEventLedger)();
+          const outcomes = toOutcomeRecords(eventLedger.readEvents() as never);
+          // The SAME aggregation the Prometheus scrape renders (#9523) -- a second summing pass here would be
+          // a second definition of what each counter means, free to drift from the text exposition.
+          const families = collectMinerPredictionMetrics(collectPredictionMetricRows(predictionLedger as never, outcomes));
+          return { generatedAt: new Date(options.nowMs ?? Date.now()).toISOString(), families };
+        } finally {
+          if (ownsPredictionLedger) predictionLedger?.close();
+          if (ownsEventLedger) eventLedger?.close();
+        }
+      }, minerMetricsSnapshotTool.name),
   );
 
   server.registerTool(

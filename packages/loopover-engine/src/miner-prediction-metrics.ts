@@ -45,7 +45,24 @@ function escapeLabelValue(value: string): string {
  * series are emitted in sorted order. Always emits HELP/TYPE for every counter, so the surface is well-formed even
  * for an empty ledger.
  */
-export function renderMinerPredictionMetrics(rows: readonly MinerPredictionMetricRow[]): string {
+
+/** One metric family, structured — the same content the text exposition renders. */
+export type MinerPredictionMetricFamily = {
+  name: string;
+  type: "counter";
+  help: string;
+  samples: { value: number; labels?: Record<string, string> }[];
+};
+
+/**
+ * Aggregate the ledger rows into structured metric families (#9523).
+ *
+ * This is the ONE aggregation: {@link renderMinerPredictionMetrics} formats these into Prometheus text, and
+ * the miner's `loopover_miner_get_metrics_snapshot` MCP tool returns them as JSON. A second summing pass for
+ * the JSON surface would be a second definition of what each counter means, free to drift from the scrape.
+ * Deterministic — conclusion series are emitted in sorted order.
+ */
+export function collectMinerPredictionMetrics(rows: readonly MinerPredictionMetricRow[]): MinerPredictionMetricFamily[] {
   const totalByConclusion = new Map<string, number>();
   let correct = 0;
   let incorrect = 0;
@@ -54,21 +71,43 @@ export function renderMinerPredictionMetrics(rows: readonly MinerPredictionMetri
     if (row.correct === true) correct += 1;
     else if (row.correct === false) incorrect += 1;
   }
+  return [
+    {
+      name: MINER_PREDICTIONS_TOTAL,
+      type: "counter",
+      help: "Gate-outcome predictions the miner has recorded, by predicted conclusion.",
+      samples: [...totalByConclusion.entries()]
+        .sort((left, right) => left[0].localeCompare(right[0]))
+        .map(([conclusion, value]) => ({ value, labels: { conclusion } })),
+    },
+    {
+      name: MINER_PREDICTION_CORRECT_TOTAL,
+      type: "counter",
+      help: "Predictions whose realized outcome matched the predicted conclusion.",
+      samples: [{ value: correct }],
+    },
+    {
+      name: MINER_PREDICTION_INCORRECT_TOTAL,
+      type: "counter",
+      help: "Predictions whose realized outcome differed from the predicted conclusion.",
+      samples: [{ value: incorrect }],
+    },
+  ];
+}
 
+export function renderMinerPredictionMetrics(rows: readonly MinerPredictionMetricRow[]): string {
   const lines: string[] = [];
-  lines.push(`# HELP ${MINER_PREDICTIONS_TOTAL} ${escapeHelpText("Gate-outcome predictions the miner has recorded, by predicted conclusion.")}`);
-  lines.push(`# TYPE ${MINER_PREDICTIONS_TOTAL} counter`);
-  for (const [conclusion, count] of [...totalByConclusion.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
-    lines.push(`${MINER_PREDICTIONS_TOTAL}{conclusion="${escapeLabelValue(conclusion)}"} ${count}`);
+  for (const family of collectMinerPredictionMetrics(rows)) {
+    lines.push(`# HELP ${family.name} ${escapeHelpText(family.help)}`);
+    lines.push(`# TYPE ${family.name} ${family.type}`);
+    for (const sample of family.samples) {
+      const labels = sample.labels
+        ? `{${Object.entries(sample.labels)
+            .map(([key, value]) => `${key}="${escapeLabelValue(value)}"`)
+            .join(",")}}`
+        : "";
+      lines.push(`${family.name}${labels} ${sample.value}`);
+    }
   }
-
-  lines.push(`# HELP ${MINER_PREDICTION_CORRECT_TOTAL} ${escapeHelpText("Predictions whose realized outcome matched the predicted conclusion.")}`);
-  lines.push(`# TYPE ${MINER_PREDICTION_CORRECT_TOTAL} counter`);
-  lines.push(`${MINER_PREDICTION_CORRECT_TOTAL} ${correct}`);
-
-  lines.push(`# HELP ${MINER_PREDICTION_INCORRECT_TOTAL} ${escapeHelpText("Predictions whose realized outcome differed from the predicted conclusion.")}`);
-  lines.push(`# TYPE ${MINER_PREDICTION_INCORRECT_TOTAL} counter`);
-  lines.push(`${MINER_PREDICTION_INCORRECT_TOTAL} ${incorrect}`);
-
   return `${lines.join("\n")}\n`;
 }

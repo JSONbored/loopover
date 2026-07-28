@@ -147,6 +147,8 @@ import { OPS_TOOLS } from "./ops.js";
 import { FLEET_TOOLS } from "./fleet.js";
 import { TENANT_TOOLS } from "./tenant.js";
 import { INSTANCE_OPS_TOOLS } from "./instance-ops.js";
+import { MINER_OPS_TOOLS } from "./miner-ops.js";
+import { AMS_TENANT_TOOLS } from "./ams-tenant.js";
 import { adminRotateSecretTool } from "./admin-config.js";
 
 export const TOOL_CONTRACTS: readonly ToolContract[] = [
@@ -282,6 +284,8 @@ export const TOOL_CONTRACTS: readonly ToolContract[] = [
   ...OPS_TOOLS,
   ...FLEET_TOOLS,
   ...TENANT_TOOLS,
+  ...MINER_OPS_TOOLS,
+  ...AMS_TENANT_TOOLS,
 ];
 
 const CONTRACTS_BY_NAME: ReadonlyMap<string, ToolContract> = new Map(
@@ -318,3 +322,5 @@ export * from "./ops.js";
 export * from "./fleet.js";
 export * from "./tenant.js";
 export * from "./instance-ops.js";
+export * from "./miner-ops.js";
+export * from "./ams-tenant.js";

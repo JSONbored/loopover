@@ -276,6 +276,12 @@ import {
   tenantListTool,
   tenantSetOrbInstallationTool,
   tenantDestroyTool,
+  AmsTenantHealthInput,
+  AmsTenantHealthOutput,
+  AmsTenantWakeInput,
+  AmsTenantWakeOutput,
+  amsTenantHealthTool,
+  amsTenantWakeTool,
 } from "@loopover/contract/tools";
 import { TOOL_CATEGORIES, type ToolCategory } from "@loopover/contract";
 import {
@@ -390,7 +396,7 @@ import { computeFleetAnalytics } from "../orb/analytics";
 import { listFleetInstallations, listFleetInstances, registerFleetInstallation, registerFleetInstance } from "../orb/fleet-admin";
 import { backfillOrbInstallations } from "../orb/installations";
 import { pushFleetConfig } from "../orb/fleet-config-push";
-import { createTenant, destroyTenant, isControlPlaneConfigured, listTenants, setTenantOrbInstallation } from "../orb/control-plane-client";
+import { createTenant, destroyTenant, getAmsTenantHealth, isControlPlaneConfigured, listTenants, setTenantOrbInstallation, wakeAmsTenant } from "../orb/control-plane-client";
 import { processJob } from "../queue/job-dispatch";
 import { backfillContributorGateHistory } from "../review/contributor-gate-history-backfill";
 import { refreshInstallationHealth } from "../github/backfill";
@@ -2686,6 +2692,17 @@ export class LoopoverMcp {
       async (input, extra) => this.toolResult(await this.tenantDestroy(input, extra, server)),
     );
 
+    register(
+      "loopover_ams_tenant_health",
+      { description: amsTenantHealthTool.description, inputSchema: AmsTenantHealthInput.shape, outputSchema: AmsTenantHealthOutput, annotations: contractAnnotations(amsTenantHealthTool) },
+      async (input) => this.toolResult(await this.amsTenantHealth(input)),
+    );
+    register(
+      "loopover_ams_tenant_wake",
+      { description: amsTenantWakeTool.description, inputSchema: AmsTenantWakeInput.shape, outputSchema: AmsTenantWakeOutput, annotations: contractAnnotations(amsTenantWakeTool) },
+      async (input) => this.toolResult(await this.amsTenantWake(input)),
+    );
+
     // #2225 — read-only taxonomy discovery for AI review finding categories + severity ladder.
     server.registerResource(
       "loopover_finding_taxonomy",
@@ -3824,6 +3841,38 @@ export class LoopoverMcp {
       metadata: { name: input.name, product: input.product, surface: "mcp" },
     });
     return { summary: `LoopOver destroyed ${input.product} tenant ${input.name}.`, data: { configured: true, ...record } };
+  }
+
+  // ── #9523 hosted AMS tenant handlers ──────────────────────────────────
+  //
+  // AMS tenant CREATE/LIST/DESTROY are not here: #9522's loopover_tenant_* tools are product-parameterized
+  // and already serve product "ams", because the control plane's own routes are. These two are the pair with
+  // no ORB counterpart -- an AMS tenant's wake schedule, and triggering a cycle now.
+  private async amsTenantHealth(input: { name: string }): Promise<ToolPayload> {
+    this.requireInternal();
+    if (!isControlPlaneConfigured(this.env)) return this.controlPlaneUnavailable("read a tenant's health");
+    const record = await getAmsTenantHealth(this.env, input);
+    return { summary: `LoopOver AMS tenant ${input.name}: ${String(record.state ?? "unknown")}.`, data: { configured: true, ...record } };
+  }
+
+  private async amsTenantWake(input: { name: string }): Promise<ToolPayload> {
+    this.requireInternal();
+    if (!isControlPlaneConfigured(this.env)) return this.controlPlaneUnavailable("wake a tenant");
+    const record = await wakeAmsTenant(this.env, input);
+    // A throttled wake is an ANSWER -- the schedule guard did its job -- so it is not audited as a cycle.
+    if (record.throttled !== true) {
+      await recordAuditEvent(this.env, {
+        eventType: "operator.ams_tenant_woken",
+        actor: this.identity.actor,
+        targetKey: `tenant#ams:${input.name}`,
+        outcome: "completed",
+        metadata: { name: input.name, surface: "mcp" },
+      });
+    }
+    return {
+      summary: record.throttled === true ? `LoopOver did not wake ${input.name}: its schedule guard refused a wake this soon.` : `LoopOver woke AMS tenant ${input.name}.`,
+      data: { configured: true, ...record },
+    };
   }
 
   private requireMcpAdmin(): void {

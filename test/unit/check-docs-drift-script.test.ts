@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { join } from "node:path";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
@@ -374,19 +375,19 @@ describe("check-docs-drift script", () => {
 
     it("passes cleanly against a fully-consistent synthetic fixture set", () => {
       const files = baseFixtures();
-      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files) });
+      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files), listDocsPages: () => [] });
 
       expect(result.failures).toEqual([]);
       // gateModes bumped 14 -> 15 for backtestRegressionGateMode (#8105).
       // settingsFields = 15 GATE_MODE_MANIFEST fields + 20 synthetic extras; focusManifestFields = 18
       // synthetic review fields + the nested review.visual.productionUrl leaf (#4617).
-      expect(result.counts).toEqual({ flags: 10, commands: 19, gateModes: 15, settingsFields: 35, focusManifestFields: 19 });
+      expect(result.counts).toEqual({ flags: 10, commands: 19, gateModes: 15, settingsFields: 35, focusManifestFields: 19, mcpToolMentions: 0 });
     });
 
     it("catches an unmapped *GateMode field missing from GATE_MODE_MANIFEST", () => {
       const files = baseFixtures();
       files["src/types.ts"] += "\nnewThingGateMode?: GateRuleMode;";
-      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files) });
+      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files), listDocsPages: () => [] });
 
       const hit = result.failures.find((failure) => failure.includes("newThingGateMode") && failure.includes("GATE_MODE_MANIFEST"));
       expect(hit).toBeDefined();
@@ -399,7 +400,7 @@ describe("check-docs-drift script", () => {
         buildFlagsPageText(baseFlagNames.filter((flag) => flag !== "LOOPOVER_REVIEW_FLAG_3")),
         buildGateModePageText(),
       ].join("\n");
-      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files) });
+      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files), listDocsPages: () => [] });
 
       const hit = result.failures.find((failure) => failure.includes("tuning.mdx") && failure.includes("LOOPOVER_REVIEW_FLAG_3"));
       expect(hit).toBeDefined();
@@ -410,7 +411,7 @@ describe("check-docs-drift script", () => {
       files["apps/loopover-ui/content/docs/maintainer-workflow.mdx"] = buildDocsPageText(
         allBaseCommandIds.filter((id) => id !== "public-5"),
       );
-      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files) });
+      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files), listDocsPages: () => [] });
 
       const hit = result.failures.find((failure) => failure.includes("maintainer-workflow.mdx") && failure.includes("public-5"));
       expect(hit).toBeDefined();
@@ -423,7 +424,7 @@ describe("check-docs-drift script", () => {
       // it switched to `import { PUBLIC_COMMAND_LIST, MAINTAINER_COMMAND_LIST } from "@/lib/command-reference"`.
       files["apps/loopover-ui/content/docs/maintainer-workflow.mdx"] =
         'import { PUBLIC_COMMAND_LIST } from "@/lib/command-reference";';
-      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files) });
+      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files), listDocsPages: () => [] });
 
       expect(result.failures).toEqual([]);
     });
@@ -433,7 +434,7 @@ describe("check-docs-drift script", () => {
       files["apps/loopover-ui/content/docs/maintainer-install-trust.mdx"] = buildDocsPageText(
         allBaseCommandIds.filter((id) => id !== "maint-2"),
       );
-      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files) });
+      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files), listDocsPages: () => [] });
 
       const hit = result.failures.find((failure) => failure.includes("maintainer-install-trust.mdx") && failure.includes("maint-2"));
       expect(hit).toBeDefined();
@@ -445,7 +446,7 @@ describe("check-docs-drift script", () => {
         .flatMap((row) => row.aliases)
         .join("\n");
       files["apps/loopover-ui/content/docs/tuning.mdx"] = [buildFlagsPageText(baseFlagNames), withoutSlop].join("\n");
-      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files) });
+      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files), listDocsPages: () => [] });
 
       const hit = result.failures.find((failure) => failure.includes("tuning.mdx") && failure.includes("slopGateMode"));
       expect(hit).toBeDefined();
@@ -454,7 +455,7 @@ describe("check-docs-drift script", () => {
     it("self-defends against a broken flag-extraction regex (fewer than 10 flags found)", () => {
       const files = baseFixtures();
       files["src/env.d.ts"] = "LOOPOVER_REVIEW_ONLY_ONE?: string;";
-      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files) });
+      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files), listDocsPages: () => [] });
 
       const hit = result.failures.find((failure) => failure.includes("src/env.d.ts") && failure.includes("extraction regex may be broken"));
       expect(hit).toBeDefined();
@@ -466,7 +467,7 @@ describe("check-docs-drift script", () => {
         const PUBLIC_MENTION_COMMAND_CATALOG = [{ id: "only-one", title: "Only" }] as const;
         const MAINTAINER_QUEUE_DIGEST_COMMAND_CATALOG = [] as const;
       `;
-      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files) });
+      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files), listDocsPages: () => [] });
 
       const hit = result.failures.find((failure) => failure.includes("src/github/commands.ts") && failure.includes("extraction regex may be broken"));
       expect(hit).toBeDefined();
@@ -475,7 +476,7 @@ describe("check-docs-drift script", () => {
     it("self-defends against a broken gate-mode-extraction regex (fewer than 5 fields found)", () => {
       const files = baseFixtures();
       files["src/types.ts"] = "onlyOneGateMode: GateRuleMode;";
-      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files) });
+      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files), listDocsPages: () => [] });
 
       const hit = result.failures.find((failure) => failure.includes("src/types.ts") && failure.includes("extraction regex may be broken"));
       expect(hit).toBeDefined();
@@ -485,7 +486,7 @@ describe("check-docs-drift script", () => {
       const files = baseFixtures();
       // No "export type RepositorySettings = {" wrapper at all -- extractRepositorySettingsFields finds nothing.
       files["src/types.ts"] = "someField: string;";
-      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files) });
+      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files), listDocsPages: () => [] });
 
       const hit = result.failures.find(
         (failure) => failure.includes("src/types.ts") && failure.includes("RepositorySettings fields") && failure.includes("extraction regex may be broken"),
@@ -496,7 +497,7 @@ describe("check-docs-drift script", () => {
     it("self-defends against a broken FocusManifest-extraction (fewer than 15 leaf fields found, #4617)", () => {
       const files = baseFixtures();
       files["packages/loopover-engine/src/focus-manifest.ts"] = "export type FocusManifest = { present: boolean; onlyOneField: string; };";
-      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files) });
+      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files), listDocsPages: () => [] });
 
       const hit = result.failures.find(
         (failure) =>
@@ -510,7 +511,7 @@ describe("check-docs-drift script", () => {
     it("catches a RepositorySettings field with zero .loopover.yml.example mention and no alias/exclude entry (#4617)", () => {
       const files = baseFixtures();
       files["src/types.ts"] = files["src/types.ts"]!.replace("};", "  totallyUndocumentedField: boolean;\n};");
-      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files) });
+      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files), listDocsPages: () => [] });
 
       const hit = result.failures.find(
         (failure) => failure.includes(".loopover.yml.example") && failure.includes("totallyUndocumentedField"),
@@ -529,7 +530,7 @@ describe("check-docs-drift script", () => {
         const files = baseFixtures();
         files["src/types.ts"] = files["src/types.ts"]!.replace("};", `  ${row.field}: string;\n};`);
         files[".loopover.yml.example"] += `\n${row.aliases[0]}`;
-        const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files) });
+        const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files), listDocsPages: () => [] });
 
         expect(result.failures, `${row.field} should pass via alias ${row.aliases[0]}`).toEqual([]);
       }
@@ -541,7 +542,7 @@ describe("check-docs-drift script", () => {
         "};",
         "  repoFullName: string;\n  createdAt?: string | null | undefined;\n  updatedAt?: string | null | undefined;\n};",
       );
-      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files) });
+      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files), listDocsPages: () => [] });
 
       for (const field of ["repoFullName", "createdAt", "updatedAt"]) {
         expect(result.failures.find((failure) => failure.includes(field))).toBeUndefined();
@@ -551,7 +552,7 @@ describe("check-docs-drift script", () => {
     it("no longer excludes skipAutomationBotAuthors -- it's wired into FocusManifestSettings now, so a zero-yml-mention regression must fail like any other field (#automation-bot-skip)", () => {
       const files = baseFixtures();
       files["src/types.ts"] = files["src/types.ts"]!.replace("};", "  skipAutomationBotAuthors?: \"inherit\" | \"off\" | \"enabled\" | undefined;\n};");
-      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files) });
+      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files), listDocsPages: () => [] });
 
       expect(result.failures.find((failure) => failure.includes("skipAutomationBotAuthors"))).toBeDefined();
     });
@@ -563,7 +564,7 @@ describe("check-docs-drift script", () => {
         "productionUrl: string | null;",
         "productionUrl: string | null;\n  totallyUndocumentedNestedField: string | null;",
       );
-      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files) });
+      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files), listDocsPages: () => [] });
 
       const hit = result.failures.find(
         (failure) => failure.includes(".loopover.yml.example") && failure.includes("review.visual.totally_undocumented_nested_field"),
@@ -588,7 +589,7 @@ describe("check-docs-drift script", () => {
           `${leafName}: string | null;\n  visual: VisualConfig;`,
         );
         files[".loopover.yml.example"] += `\n${row.aliases[0]}`;
-        const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files) });
+        const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files), listDocsPages: () => [] });
 
         expect(result.failures, `${row.field} should pass via alias ${row.aliases[0]}`).toEqual([]);
       }
@@ -608,8 +609,81 @@ describe("check-docs-drift script", () => {
       const output = execFileSync("node", ["--experimental-strip-types", "scripts/check-docs-drift.ts"], { encoding: "utf8" });
 
       expect(output).toMatch(
-        /Docs-drift check ok: \d+ feature flags, \d+ commands, \d+ gate-mode fields, \d+ RepositorySettings fields, \d+ FocusManifest fields all documented\./,
+        /Docs-drift check ok: \d+ feature flags, \d+ commands, \d+ gate-mode fields, \d+ RepositorySettings fields, \d+ FocusManifest fields, \d+ MCP tool mentions all documented\./,
       );
     });
+  });
+});
+
+describe("checkDocsDrift — MCP tool mentions (#9521)", () => {
+  // These cases exercise ONLY the docs-page scan, so every non-docs read defers to the real repo
+  // files -- the same posture as running the script for real, minus the real docs directory.
+  const base = () => (root: string, relativePath: string): string =>
+    readFileSync(join(process.cwd(), relativePath), "utf8");
+
+  it("accepts a docs page whose tool mentions all exist in the registry", () => {
+    const readFile = (root: string, path: string) =>
+      path === "docs/a.mdx" ? "Use `loopover_real_tool` here." : base()(root, path);
+    const result = checkDocsDrift({
+      root: "/fake",
+      readFile,
+      listDocsPages: () => ["docs/a.mdx"],
+      mcpToolNames: new Set(["loopover_real_tool"]),
+      nonToolTokens: new Map(),
+    });
+    expect(result.failures).toEqual([]);
+    expect(result.counts.mcpToolMentions).toBe(1);
+  });
+
+  it("fails a docs page naming a tool the registry does not have", () => {
+    const readFile = (root: string, path: string) =>
+      path === "docs/a.mdx" ? "Run `loopover_renamed_away`." : base()(root, path);
+    const result = checkDocsDrift({
+      root: "/fake",
+      readFile,
+      listDocsPages: () => ["docs/a.mdx"],
+      mcpToolNames: new Set(["loopover_real_tool"]),
+      nonToolTokens: new Map(),
+    });
+    expect(result.failures.some((failure) => failure.includes("loopover_renamed_away"))).toBe(true);
+  });
+
+  it("skips Prometheus metric suffixes and metric-name globs", () => {
+    const readFile = (root: string, path: string) =>
+      path === "docs/a.mdx" ? "grep loopover_queue_depth_total and `loopover_miner_portfolio_queue*`." : base()(root, path);
+    const result = checkDocsDrift({
+      root: "/fake",
+      readFile,
+      listDocsPages: () => ["docs/a.mdx"],
+      mcpToolNames: new Set(["loopover_real_tool"]),
+      nonToolTokens: new Map(),
+    });
+    expect(result.failures).toEqual([]);
+    expect(result.counts.mcpToolMentions).toBe(0);
+  });
+
+  it("fails a registry tool named like a Prometheus metric, which the scan would silently skip", () => {
+    const readFile = (root: string, path: string) => (path === "docs/a.mdx" ? "no tool mentions" : base()(root, path));
+    const result = checkDocsDrift({
+      root: "/fake",
+      readFile,
+      listDocsPages: () => ["docs/a.mdx"],
+      mcpToolNames: new Set(["loopover_bad_name_total"]),
+      nonToolTokens: new Map(),
+    });
+    expect(result.failures.some((failure) => failure.includes("Prometheus metric suffix"))).toBe(true);
+  });
+
+  it("reports a stale non-tool exemption on a real scan, and stays quiet with no pages", () => {
+    const withPages = checkDocsDrift({
+      root: "/fake",
+      readFile: (root, path) => (path === "docs/a.mdx" ? "no tokens here" : base()(root, path)),
+      listDocsPages: () => ["docs/a.mdx"],
+      mcpToolNames: new Set(["loopover_real_tool"]),
+      nonToolTokens: new Map([["loopover_gone", "a token no page mentions any more"]]),
+    });
+    expect(withPages.failures.some((failure) => failure.includes("remove the stale exemption"))).toBe(true);
+    const noPages = checkDocsDrift({ root: "/fake", readFile: base(), listDocsPages: () => [], mcpToolNames: new Set() });
+    expect(noPages.failures.some((failure) => failure.includes("remove the stale exemption"))).toBe(false);
   });
 });

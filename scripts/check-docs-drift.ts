@@ -9,9 +9,10 @@
 // surface is never updated -- a reviewer has to notice by eye, and often doesn't (#4617's own audit found
 // `review.visual.production_url` this way: fully live in code, but not mentioned anywhere a maintainer would
 // think to look).
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { listToolDefinitions } from "@loopover/contract";
 
 /** Extract every unique LOOPOVER_REVIEW_<NAME> flag DECLARED as a TS interface field (e.g.
  *  `LOOPOVER_REVIEW_SAFETY?: string;`) from src/env.d.ts's text. Deliberately anchored on the declaration
@@ -292,9 +293,36 @@ function defaultReadFile(root: string, relativePath: string): string {
   return readFileSync(join(root, relativePath), "utf8");
 }
 
+
+/**
+ * Known NON-TOOL uses of the loopover_ prefix in the docs (#9521), each with the reason it exists.
+ * Anti-rot: an entry that stops matching anything fails the check, same as validate-no-hand-written-js's
+ * allowlist -- a stale exemption is a hole, not a convenience.
+ */
+const NON_TOOL_LOOPOVER_TOKENS: ReadonlyMap<string, string> = new Map([
+  ["loopover_verify", "a Postgres scratch DATABASE name in the backup-verify example (self-hosting-backup-scaling.mdx)"],
+  ["loopover_api_token", "the secrets FILENAME selfhost-init-secrets.sh generates (self-hosting-security.mdx)"],
+  ["loopover_queue", "the Prometheus metric PREFIX grepped in the troubleshooting runbook (self-hosting-troubleshooting.mdx)"],
+  ["loopover_miner", "the node_exporter textfile name loopover_miner.prom (ams-observability.mdx)"],
+]);
+
+/** Every docs page, as root-relative paths. */
+function defaultListDocsPages(root: string): string[] {
+  return readdirSync(join(root, "apps/loopover-ui/content/docs"))
+    .filter((name) => name.endsWith(".mdx"))
+    .map((name) => `apps/loopover-ui/content/docs/${name}`);
+}
+
+const DEFAULT_MCP_TOOL_NAMES: ReadonlySet<string> = new Set(listToolDefinitions().map((tool) => tool.name));
+
 export type CheckDocsDriftOptions = {
   root: string;
   readFile?: (root: string, relativePath: string) => string;
+  /** The docs pages to scan for MCP tool names, and the registry to check them against (#9521).
+   *  Injectable so a test can simulate a page naming a tool that does not exist. */
+  listDocsPages?: (root: string) => string[];
+  mcpToolNames?: ReadonlySet<string>;
+  nonToolTokens?: ReadonlyMap<string, string>;
 };
 
 export type CheckDocsDriftResult = {
@@ -305,6 +333,7 @@ export type CheckDocsDriftResult = {
     gateModes: number;
     settingsFields: number;
     focusManifestFields: number;
+    mcpToolMentions: number;
   };
 };
 
@@ -316,7 +345,13 @@ export type CheckDocsDriftResult = {
  * page or source file without touching the real filesystem. Returns `{ failures, counts }` -- pure given its
  * inputs, no process.exit/console side effects of its own (those live in main()).
  */
-export function checkDocsDrift({ root, readFile = defaultReadFile }: CheckDocsDriftOptions): CheckDocsDriftResult {
+export function checkDocsDrift({
+  root,
+  readFile = defaultReadFile,
+  listDocsPages = defaultListDocsPages,
+  mcpToolNames = DEFAULT_MCP_TOOL_NAMES,
+  nonToolTokens = NON_TOOL_LOOPOVER_TOKENS,
+}: CheckDocsDriftOptions): CheckDocsDriftResult {
   const failures: string[] = [];
   const read = (relativePath: string) => readFile(root, relativePath);
 
@@ -437,6 +472,51 @@ export function checkDocsDrift({ root, readFile = defaultReadFile }: CheckDocsDr
     }
   }
 
+  // 6. MCP tool names (#9521): every `loopover_*` token mentioned anywhere under content/docs must
+  // exist in the @loopover/contract registry. 32 tool names were hand-typed across these pages with
+  // no check at all, which is exactly the drift class this script exists to close -- a renamed tool
+  // silently left every doc mention pointing at nothing.
+  let mcpToolMentions = 0;
+  let scannedPages = 0;
+  const seenNonToolTokens = new Set<string>();
+  for (const page of listDocsPages(root)) {
+    scannedPages += 1;
+    const text = read(page);
+    for (const match of text.matchAll(/\bloopover_[a-z0-9_]+\b/g)) {
+      // Prometheus metric names share the loopover_ prefix (loopover_orb_webhook_total et al., in the
+      // self-hosting troubleshooting page). Their suffixes are the Prometheus naming convention, which
+      // no MCP tool uses -- asserted right below, so a future tool CANNOT quietly take such a name and
+      // slip out of this check.
+      if (/_(total|count|sum|bucket|seconds|ms|bytes|info)$/.test(match[0])) continue;
+      // A token immediately followed by `*` is a Prometheus metric-name GLOB (the observability
+      // pages write `loopover_miner_portfolio_queue*` and the like), never a tool mention.
+      if (text[(match.index ?? 0) + match[0].length] === "*") continue;
+      if (nonToolTokens.has(match[0])) {
+        seenNonToolTokens.add(match[0]);
+        continue;
+      }
+      mcpToolMentions += 1;
+      if (!mcpToolNames.has(match[0])) {
+        failures.push(`${page}: mentions MCP tool ${match[0]}, which does not exist in the @loopover/contract registry`);
+      }
+    }
+  }
+
+  // Anti-rot, but only against a REAL page scan: a test fixture with an empty page list is not
+  // evidence an exemption went stale.
+  if (scannedPages > 0) {
+    for (const [token, reason] of nonToolTokens) {
+      if (!seenNonToolTokens.has(token)) {
+        failures.push(`NON_TOOL_LOOPOVER_TOKENS: ${token} (${reason}) no longer appears in any docs page -- remove the stale exemption`);
+      }
+    }
+  }
+  for (const name of mcpToolNames) {
+    if (/_(total|count|sum|bucket|seconds|ms|bytes|info)$/.test(name)) {
+      failures.push(`@loopover/contract registry: tool ${name} ends in a Prometheus metric suffix, which the docs-drift scan skips -- rename one or the other`);
+    }
+  }
+
   return {
     failures,
     counts: {
@@ -445,6 +525,7 @@ export function checkDocsDrift({ root, readFile = defaultReadFile }: CheckDocsDr
       gateModes: gateModeFields.length,
       settingsFields: repositorySettingsFields.length,
       focusManifestFields: focusManifestFields.length,
+      mcpToolMentions,
     },
   };
 }
@@ -460,7 +541,8 @@ function main() {
 
   console.log(
     `Docs-drift check ok: ${counts.flags} feature flags, ${counts.commands} commands, ${counts.gateModes} gate-mode fields, ` +
-      `${counts.settingsFields} RepositorySettings fields, ${counts.focusManifestFields} FocusManifest fields all documented.`,
+      `${counts.settingsFields} RepositorySettings fields, ${counts.focusManifestFields} FocusManifest fields, ` +
+      `${counts.mcpToolMentions} MCP tool mentions all documented.`,
   );
 }
 

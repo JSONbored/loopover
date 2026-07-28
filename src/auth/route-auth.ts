@@ -48,6 +48,11 @@ export function requiresApiToken(path: string): boolean {
   if (path === "/v1/public/decision-ledger/anchor-key") return false;
   // #9271: the public anchor-attempt listing, added in the SAME PR as its route.
   if (path === "/v1/public/decision-ledger/anchors") return false;
+  // #9569: the public proof page's data and its README badge. Unauthenticated by design -- every figure
+  // they render is already served unauthenticated by the ledger-verify / anchors / decision-record routes
+  // above; this is a composition, not a new disclosure. Added in the SAME PR as the routes, per #9120.
+  if (/^\/v1\/public\/repos\/[^/]+\/[^/]+\/proof$/.test(path)) return false;
+  if (/^\/v1\/public\/repos\/[^/]+\/[^/]+\/proof-badge\.svg$/.test(path)) return false;
   // #9277: the current tip's signed checkpoint, for the operator's off-Worker Bittensor submitter (and
   // anyone else — it is the same payload the Rekor/git backends already publish externally). Added in the
   // SAME PR as its route, per the #9120 lesson.

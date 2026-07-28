@@ -601,6 +601,10 @@ declare global {
      *  worker is byte-identical to today. Exposes review-disposition counts + a reversal-grounded accuracy
      *  percentage + an estimated-time-saved figure ONLY — never PR content, authors, scores, or reward internals.
      *  See review/public-stats.ts. */
+    /** #9569: fleet-wide switch for the public proof page (`/proof/:owner/:repo`) and its badge. Default
+     *  OFF like every sibling public surface. A repo can opt OUT via its own manifest, but cannot opt IN
+     *  when this is off -- see isProofPageEnabledForRepo's recorded decision in review/proof-summary.ts. */
+    LOOPOVER_PUBLIC_PROOF?: string;
     LOOPOVER_PUBLIC_STATS?: string;
     /** Proof of Power (#1059): comma-separated allowlist of repo full-names ("owner/repo") whose OWN historical
      *  review ledger (audit_events "published a review surface" + pull_requests terminal state) counts toward

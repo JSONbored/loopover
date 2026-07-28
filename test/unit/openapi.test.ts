@@ -10,19 +10,25 @@ import {
   intakeIdeaShape,
   intakeIdeaOutputSchema,
   planIdeaClaimsOutputSchema,
-  eligibilityPlanOutputSchema,
-  scoreBreakdownOutputSchema,
   listPendingActionsOutputSchema,
   proposeActionOutputSchema,
   proposeActionShape,
   decidePendingActionOutputSchema,
-  maintainerNoiseOutputSchema,
-  amsMinerCohortOutputSchema,
   gatePrecisionOutputSchema,
   maintainerMeasurementReportOutputSchema,
-  activationPreviewOutputSchema,
-  watchIssuesOutputSchema,
 } from "../../src/mcp/server";
+// #9518: these tools' output schemas moved to @loopover/contract as each category migrated. The
+// REST<->MCP parity guards below are unchanged in intent -- they now read the contract (the single
+// source both the MCP server and these assertions derive from) instead of server-local declarations
+// that no longer exist.
+import {
+  GetMaintainerNoiseOutput,
+  GetAmsMinerCohortOutput,
+  GetActivationPreviewOutput,
+  ExplainScoreBreakdownOutput,
+  GetEligibilityPlanOutput,
+  WatchIssuesOutput,
+} from "@loopover/contract/tools";
 
 describe("OpenAPI contract", () => {
   it("exports the modern private-beta backend contract only", () => {
@@ -429,12 +435,12 @@ describe("OpenAPI contract", () => {
       {
         path: "/v1/scoring/eligibility-plan",
         response: "EligibilityPlanResponse",
-        outputShape: eligibilityPlanOutputSchema,
+        outputShape: GetEligibilityPlanOutput.shape,
       },
       {
         path: "/v1/scoring/explain-breakdown",
         response: "ScoreBreakdownResponse",
-        outputShape: scoreBreakdownOutputSchema,
+        outputShape: ExplainScoreBreakdownOutput.shape,
       },
     ];
 
@@ -462,12 +468,12 @@ describe("OpenAPI contract", () => {
       {
         path: "/v1/repos/{owner}/{repo}/maintainer-noise",
         response: "MaintainerNoiseReport",
-        outputShape: maintainerNoiseOutputSchema,
+        outputShape: GetMaintainerNoiseOutput.shape,
       },
       {
         path: "/v1/repos/{owner}/{repo}/ams-miner-cohort",
         response: "AmsMinerCohortComparison",
-        outputShape: amsMinerCohortOutputSchema,
+        outputShape: GetAmsMinerCohortOutput.shape,
       },
       {
         path: "/v1/repos/{owner}/{repo}/gate-precision",
@@ -482,7 +488,7 @@ describe("OpenAPI contract", () => {
       {
         path: "/v1/repos/{owner}/{repo}/activation-preview",
         response: "ActivationPreviewResponse",
-        outputShape: activationPreviewOutputSchema,
+        outputShape: GetActivationPreviewOutput.shape,
       },
     ];
 
@@ -497,7 +503,7 @@ describe("OpenAPI contract", () => {
 
   // #9306: GET/POST/DELETE /v1/contributors/{login}/watches are the REST mirror of loopover_watch_issues
   // but were missing from the OpenAPI contract. Assert all three verbs are documented with a response
-  // component whose keys match watchIssuesOutputSchema, and POST/DELETE carry the watch request body.
+  // component whose keys match the tool's contract output, and POST/DELETE carry the watch request body.
   it("documents contributor watches GET/POST/DELETE with tool-parity schemas (#9306)", () => {
     const spec = buildOpenApiSpec();
     const schemas = spec.components?.schemas ?? {};
@@ -512,7 +518,7 @@ describe("OpenAPI contract", () => {
 
     expect(schemas.ContributorWatchesResponse).toBeDefined();
     expect(schemas.ContributorWatchRequest).toBeDefined();
-    expect(propKeys("ContributorWatchesResponse")).toEqual(Object.keys(watchIssuesOutputSchema).sort());
+    expect(propKeys("ContributorWatchesResponse")).toEqual(Object.keys(WatchIssuesOutput.shape).sort());
     expect(propKeys("ContributorWatchRequest")).toEqual(["labels", "repoFullName"].sort());
 
     expect(spec.paths[path]?.post?.requestBody).toBeDefined();

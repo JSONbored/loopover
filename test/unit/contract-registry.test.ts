@@ -23,10 +23,12 @@ import {
   MAINTAIN_ACTION_CLASSES,
   PROPOSE_ACTION_CLASSES,
   PREFLIGHT_LIMITS,
+  PUBLIC_SURFACE_SKIP_REASONS,
 } from "@loopover/contract";
 import { LocalStatusStructuredInput } from "@loopover/contract/tools";
 import { GetRepoContextInput } from "@loopover/contract/tools";
 import { PREFLIGHT_LIMITS as ENGINE_PREFLIGHT_LIMITS } from "../../packages/loopover-engine/src/signals/preflight-limits.js";
+import { PUBLIC_SURFACE_SKIP_REASONS as SERVER_PUBLIC_SURFACE_SKIP_REASONS } from "../../src/signals/settings-preview";
 import { AUTONOMY_LEVELS as ENGINE_AUTONOMY_LEVELS, AGENT_ACTION_CLASSES as ENGINE_AGENT_ACTION_CLASSES } from "../../packages/loopover-engine/src/settings/autonomy.js";
 
 describe("contract tool registry", () => {
@@ -239,6 +241,12 @@ describe("contract enums", () => {
     for (const actionClass of PROPOSE_ACTION_CLASSES) {
       expect(ENGINE_AGENT_ACTION_CLASSES as readonly string[], actionClass).toContain(actionClass);
     }
+  });
+
+  it("pins the skipped-PR audit reason codes against the server's live enum", () => {
+    // Same reason as the autonomy pins: the contract cannot import the Worker's src/, and a filter
+    // vocabulary that silently stops matching the server's is worse than one that fails loudly.
+    expect([...PUBLIC_SURFACE_SKIP_REASONS]).toEqual([...SERVER_PUBLIC_SURFACE_SKIP_REASONS]);
   });
 
   it("pins the preflight input bounds against the engine's live limits", () => {

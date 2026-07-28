@@ -9,7 +9,6 @@ import { getPrReviewabilityTool } from "./pr-reviewability.js";
 import { predictGateTool } from "./predict-gate.js";
 import { preflightPrTool } from "./preflight-pr.js";
 import { localStatusStructuredTool } from "./local-status.js";
-import { adminGetConfigTool } from "./admin-config.js";
 import {
   minerPingTool,
   minerPortfolioDashboardTool,
@@ -23,11 +22,75 @@ import {
   minerStatusTool,
   minerCalibrationReportTool,
 } from "./miner.js";
+import { adminGetConfigTool, adminWriteConfigTool, adminListConfigBackupsTool, adminTriggerRedeployTool } from "./admin-config.js";
+import {
+  getMaintainerNoiseTool,
+  getAmsMinerCohortTool,
+  getRepoFocusManifestTool,
+  refreshRepoFocusManifestTool,
+  getActivationPreviewTool,
+  getLabelAuditTool,
+  getMaintainerLaneTool,
+  getRepoOnboardingPackTool,
+  getRegistrationReadinessTool,
+  getConfigRecommendationTool,
+  getBurdenForecastTool,
+  getRepoOutcomePatternsTool,
+  getOutcomeCalibrationTool,
+  getGatePrecisionTool,
+  getSelftuneOverrideAuditTool,
+  clearSelftuneOverrideTool,
+  fileIncidentReportTool,
+  getSkippedPrAuditTool,
+  getFleetAnalyticsTool,
+  getRecommendationQualityTool,
+  getIssueQualityTool,
+  getLiveGateThresholdsTool,
+  getGateConfigEffectiveTool,
+  getRepoSettingsTool,
+  refreshRepoDocsTool,
+  generateContributorIssueDraftsTool,
+  planRepoIssuesTool,
+} from "./maintainer.js";
+import {
+  explainGateDispositionTool,
+  checkSlopRiskTool,
+  checkImprovementPotentialTool,
+  checkTestEvidenceTool,
+  checkIssueSlopTool,
+  suggestBoundaryTestsTool,
+  prOutcomeTool,
+  getPrAiReviewFindingsTool,
+  getPrMaintainerPacketTool,
+  lintPrTextTool,
+  explainScoreBreakdownTool,
+  explainReviewRiskTool,
+} from "./review.js";
+import { preflightLocalDiffTool, runLocalScorerTool } from "./branch.js";
+import {
+  getContributorProfileTool,
+  getDecisionPackTool,
+  monitorOpenPrsTool,
+  explainRepoDecisionTool,
+  getBountyAdvisoryTool,
+  listBountiesTool,
+  getBountyLifecycleTool,
+  validateLinkedIssueTool,
+  checkBeforeStartTool,
+  listNotificationsTool,
+  getRegistryChangesTool,
+  getRegistrySnapshotTool,
+  getUpstreamDriftTool,
+  getUpstreamRulesetTool,
+  validateConfigTool,
+  localStatusTool,
+} from "./discovery-utility.js";
 
 /**
- * Pilot batch (#9517) plus the full AMS miner server (#9536, all 11 tools -- the first server
- * migrated to completion). The remaining ~110 remote / ~91 stdio tools migrate in #9518/#9537's
- * category batches.
+ * #9517's pilot batch, the full AMS miner server (#9536, all 11 tools), and the remote server's
+ * `admin`, `maintainer`, `review`, `branch`, `discovery` and `utility` categories (#9518). The
+ * remaining remote category (`agent`) migrates in the rest of #9518; the stdio server has its own
+ * issue (#9537).
  */
 export const TOOL_CONTRACTS: readonly ToolContract[] = [
   getRepoContextTool,
@@ -36,6 +99,66 @@ export const TOOL_CONTRACTS: readonly ToolContract[] = [
   preflightPrTool,
   localStatusStructuredTool,
   adminGetConfigTool,
+  adminWriteConfigTool,
+  adminListConfigBackupsTool,
+  adminTriggerRedeployTool,
+  getMaintainerNoiseTool,
+  getAmsMinerCohortTool,
+  getRepoFocusManifestTool,
+  refreshRepoFocusManifestTool,
+  getActivationPreviewTool,
+  getLabelAuditTool,
+  getMaintainerLaneTool,
+  getRepoOnboardingPackTool,
+  getRegistrationReadinessTool,
+  getConfigRecommendationTool,
+  getBurdenForecastTool,
+  getRepoOutcomePatternsTool,
+  getOutcomeCalibrationTool,
+  getGatePrecisionTool,
+  getSelftuneOverrideAuditTool,
+  clearSelftuneOverrideTool,
+  fileIncidentReportTool,
+  getSkippedPrAuditTool,
+  getFleetAnalyticsTool,
+  getRecommendationQualityTool,
+  getIssueQualityTool,
+  getLiveGateThresholdsTool,
+  getGateConfigEffectiveTool,
+  getRepoSettingsTool,
+  refreshRepoDocsTool,
+  generateContributorIssueDraftsTool,
+  planRepoIssuesTool,
+  explainGateDispositionTool,
+  checkSlopRiskTool,
+  checkImprovementPotentialTool,
+  checkTestEvidenceTool,
+  checkIssueSlopTool,
+  suggestBoundaryTestsTool,
+  prOutcomeTool,
+  getPrAiReviewFindingsTool,
+  getPrMaintainerPacketTool,
+  lintPrTextTool,
+  explainScoreBreakdownTool,
+  explainReviewRiskTool,
+  preflightLocalDiffTool,
+  runLocalScorerTool,
+  getContributorProfileTool,
+  getDecisionPackTool,
+  monitorOpenPrsTool,
+  explainRepoDecisionTool,
+  getBountyAdvisoryTool,
+  listBountiesTool,
+  getBountyLifecycleTool,
+  validateLinkedIssueTool,
+  checkBeforeStartTool,
+  listNotificationsTool,
+  getRegistryChangesTool,
+  getRegistrySnapshotTool,
+  getUpstreamDriftTool,
+  getUpstreamRulesetTool,
+  validateConfigTool,
+  localStatusTool,
   minerPingTool,
   minerPortfolioDashboardTool,
   minerManageStatusTool,
@@ -72,4 +195,8 @@ export * from "./predict-gate.js";
 export * from "./preflight-pr.js";
 export * from "./local-status.js";
 export * from "./admin-config.js";
+export * from "./maintainer.js";
+export * from "./review.js";
+export * from "./branch.js";
+export * from "./discovery-utility.js";
 export * from "./miner.js";

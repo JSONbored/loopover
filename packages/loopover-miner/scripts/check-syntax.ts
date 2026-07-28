@@ -11,20 +11,24 @@ import { execFileSync } from "node:child_process";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 
-function listJsFiles(dir) {
+function listFiles(dir: string, extension: string): string[] {
   return readdirSync(join(ROOT, dir), { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
+    .filter((entry) => entry.isFile() && entry.name.endsWith(extension))
     .map((entry) => join(dir, entry.name));
 }
 
-const files = [...listJsFiles("dist/bin"), ...listJsFiles("dist/lib")].sort();
+// scripts/*.ts is included so this package's own build scripts stay syntax-verified after the #9527
+// port -- `node --check` accepts .ts under --experimental-strip-types. Without it, porting a script
+// out of .mjs would silently remove it from every check in the repo.
+const files = [...listFiles("dist/bin", ".js"), ...listFiles("dist/lib", ".js"), ...listFiles("scripts", ".ts")].sort();
 
-const failures = [];
+const failures: Array<{ file: string; message: string }> = [];
 for (const file of files) {
   try {
-    execFileSync(process.execPath, ["--check", file], { cwd: ROOT, stdio: "pipe" });
+    execFileSync(process.execPath, ["--experimental-strip-types", "--check", file], { cwd: ROOT, stdio: "pipe" });
   } catch (error) {
-    failures.push({ file, message: error.stderr?.toString().trim() || String(error) });
+    const stderr = (error as { stderr?: Buffer | string }).stderr;
+    failures.push({ file, message: stderr?.toString().trim() || String(error) });
   }
 }
 

@@ -11,7 +11,7 @@ const c8Bin = join(root, "control-plane", "node_modules", "c8", "bin", "c8.js");
 const reportDir = join(root, "control-plane", "coverage");
 const testRoot = join(root, "control-plane", "test");
 
-function collectTests(dir, out = []) {
+function collectTests(dir: string, out: string[] = []): string[] {
   for (const ent of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, ent.name);
     if (ent.isDirectory()) collectTests(path, out);
@@ -56,7 +56,7 @@ try {
   const raw = readFileSync(lcovPath, "utf8");
   writeFileSync(
     lcovPath,
-    raw.replace(/^SF:(.*)$/gm, (_match, path) => `SF:${String(path).replace(/\\/g, "/")}`),
+    raw.replace(/^SF:(.*)$/gm, (_match: string, path: string) => `SF:${path.replace(/\\/g, "/")}`),
   );
 } catch {
   // CI's "Verify control-plane coverage report exists" step fails closed if the report is missing.

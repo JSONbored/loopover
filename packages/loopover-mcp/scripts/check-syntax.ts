@@ -13,20 +13,25 @@ import { execFileSync } from "node:child_process";
 // drive prefix (D:\D:\...), which breaks readdirSync. Same pattern as packages/loopover-miner/bin.
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-function listFiles(dir, extension) {
+function listFiles(dir: string, extension: string): string[] {
   return readdirSync(join(ROOT, dir), { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(extension))
     .map((entry) => join(dir, entry.name));
 }
 
-const files = [...listFiles("dist/bin", ".js"), ...listFiles("dist/lib", ".js"), ...listFiles("scripts", ".mjs")].sort();
+// scripts/ holds both .ts (this file, strip-bin-sourcemap) and .mjs (gittensor-score-preview, which
+// ships in the tarball and runs under end users' plain node). `node --check` accepts a .ts file when
+// --experimental-strip-types is on, so both extensions stay syntax-verified after the #9527 port --
+// without it, porting a script here would have silently removed it from this check's reach.
+const files = [...listFiles("dist/bin", ".js"), ...listFiles("dist/lib", ".js"), ...listFiles("scripts", ".mjs"), ...listFiles("scripts", ".ts")].sort();
 
-const failures = [];
+const failures: Array<{ file: string; message: string }> = [];
 for (const file of files) {
   try {
-    execFileSync(process.execPath, ["--check", file], { cwd: ROOT, stdio: "pipe" });
+    execFileSync(process.execPath, ["--experimental-strip-types", "--check", file], { cwd: ROOT, stdio: "pipe" });
   } catch (error) {
-    failures.push({ file, message: error.stderr?.toString().trim() || String(error) });
+    const stderr = (error as { stderr?: Buffer | string }).stderr;
+    failures.push({ file, message: stderr?.toString().trim() || String(error) });
   }
 }
 

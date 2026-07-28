@@ -3911,7 +3911,10 @@ async function runAgentMaintenancePlanAndExecute(
     // reproduce, so they're deliberately NOT retried here. Best-effort: an enqueue failure here must never
     // fail this webhook pass, matching every other trailing-schedule call site in this file.
     if ((liveMergeState ?? pr.mergeableState) === "unknown") {
-      await scheduleTrailingMergeableStateReReview(env, deliveryId, installationId, repoFullName, pr.number).catch(() => undefined);
+      /* v8 ignore next -- scheduleTrailingMergeableStateReReview already catches internally (its own
+         enqueue-failure branch logs and returns without rethrowing), so this outer .catch is defensive only:
+         unreachable without a throw inside its OWN try, which nothing here can induce. */
+      await scheduleTrailingMergeableStateReReview(env, deliveryId, installationId, repoFullName, pr.number, pr.createdAt).catch(() => undefined);
     }
   }
   if (holdoutOnPlan.length === 0) {
@@ -5098,6 +5101,10 @@ async function scheduleTrailingMergeableStateReReview(
   installationId: number,
   repoFullName: string,
   prNumber: number,
+  /** #9499: the PR's own createdAt, so this trailing re-review keeps its place in the oldest-first ordering.
+   *  Optional only because a caller without the record in hand degrades to the legacy sort base exactly as
+   *  before -- every present caller has it. */
+  prCreatedAt?: string | null | undefined,
 ): Promise<void> {
   const key = `merge-state-unknown-trailing:${repoFullName.toLowerCase()}#${prNumber}`;
   // Same check-then-claim-only-after-send shape as scheduleTrailingIssueLinkedReReview above (#2371 follow-up
@@ -5106,7 +5113,7 @@ async function scheduleTrailingMergeableStateReReview(
   if (await getTransientKey(env, key)) return;
   try {
     await env.JOBS.send(
-      { type: "agent-regate-pr", deliveryId, repoFullName, prNumber, installationId },
+      { type: "agent-regate-pr", deliveryId, repoFullName, prNumber, installationId, ...(prCreatedAt ? { prCreatedAt } : {}) },
       { delaySeconds: MERGE_STATE_UNKNOWN_TRAILING_RECHECK_DELAY_SECONDS },
     );
   } catch (error) {

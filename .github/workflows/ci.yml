@@ -370,6 +370,12 @@ jobs:
       - name: Dead source-file check
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
         run: npm run dead-source-files:check
+      # #9499: an agent-regate-pr producer that omits prCreatedAt does not merely lose the oldest-first
+      # ordering, it INVERTS it -- the legacy sort fallback places such a job ahead of every real PR. Five of
+      # eight producers had drifted that way before this check existed.
+      - name: Re-gate sort-key check
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
+        run: npm run regate-sort-key:check
       # Mechanical drift tripwire for the hand-duplicated src/{review,settings,signals} <-> loopover-engine
       # twin files, plus a version-skew check on the installed @loopover/engine (#4260). Same
       # local-only-until-now gap as the drift checks above. Also gated on `miner`: the reverse-direction

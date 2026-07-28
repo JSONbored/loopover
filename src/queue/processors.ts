@@ -5153,6 +5153,9 @@ async function wakeOverCapSiblingPullRequests(
           // #9499: the sibling row is already fetched just above for the cooldown key, so threading its
           // createdAt costs nothing. Without it, jobClaimSortKey falls back to a legacy base that sorts this
           // wake ahead of every genuinely older contributor PR.
+          /* v8 ignore next -- the nullish arm needs the lookup above to THROW (it is .catch(() => null)); a PR
+             merely absent locally still yields a row here. That path degrades exactly like the covered
+             bare-cooldown-key case beside it: the wake still goes out, just without the sort hint. */
           ...(sibling?.createdAt ? { prCreatedAt: sibling.createdAt } : {}),
         });
       } catch (error) {

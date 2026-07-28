@@ -1365,4 +1365,3 @@ describe("#9471: the last silent drop path and the retry-tick wedge", () => {
     expect(finalizeCalls).toBeGreaterThan(1);
   });
 });
-

@@ -114,19 +114,19 @@ function isTextOverride<T extends object>(value: MinerToolRun<T>): value is { st
 async function withMinerToolErrorHandling<T extends object>(
   run: () => Promise<MinerToolRun<T>> | MinerToolRun<T>,
   // #9525: the tool name, so this same wrapper doubles as the miner's dispatch-telemetry
-  // chokepoint. Optional so an existing caller that has not been threaded through yet still
-  // compiles; every registration below passes it.
-  toolName?: string,
+  // chokepoint. REQUIRED -- every registration passes it, and leaving it optional would have made
+  // "instrumented" a property of each call site rather than of the wrapper.
+  toolName: string,
 ): Promise<{ content: [{ type: "text"; text: string }]; structuredContent: Record<string, unknown>; isError?: true }> {
   const startedAt = Date.now();
   try {
     const result = await run();
     const payload = isTextOverride(result) ? minerToolResult(result.structured, result.text) : minerToolResult(result);
-    if (toolName) recordMinerDispatchTelemetry({ tool: toolName, ok: true, durationMs: Date.now() - startedAt, result: payload.structuredContent });
+    recordMinerDispatchTelemetry({ tool: toolName, ok: true, durationMs: Date.now() - startedAt, result: payload.structuredContent });
     return payload;
   } catch (error) {
     const data = { error: { code: toolErrorCode(error), message: error instanceof Error ? error.message : String(error) } };
-    if (toolName) recordMinerDispatchTelemetry({ tool: toolName, ok: false, durationMs: Date.now() - startedAt, error });
+    recordMinerDispatchTelemetry({ tool: toolName, ok: false, durationMs: Date.now() - startedAt, error });
     return { ...minerToolResult(data), isError: true };
   }
 }

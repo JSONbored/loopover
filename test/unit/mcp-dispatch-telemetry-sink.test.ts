@@ -119,3 +119,33 @@ describe("MCP dispatch telemetry sink (#9525)", () => {
     expect(injectedCalls).toBe(1);
   });
 });
+
+describe("LoopoverMcp telemetry-sink injection (#9525)", () => {
+  it("routes a real tool call through the injected sink", async () => {
+    const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+    const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
+    const { LoopoverMcp } = await import("../../src/mcp/server");
+    const { createTestEnv } = await import("../helpers/d1");
+
+    const recorded: McpToolCallTelemetry[] = [];
+    const sink = {
+      recordToolCall: (entry: McpToolCallTelemetry) => recorded.push(entry),
+      captureException: () => undefined,
+      withSpan: async <T>(_name: string, _attributes: Record<string, unknown>, fn: () => Promise<T>) => fn(),
+    };
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "sink-injection-test", version: "0.0.0" });
+    await Promise.all([new LoopoverMcp(createTestEnv(), undefined, sink).createServer().connect(serverTransport), client.connect(clientTransport)]);
+    try {
+      await client.callTool({ name: "loopover_get_repo_context", arguments: { owner: "acme", repo: "widgets" } });
+    } finally {
+      await client.close().catch(() => undefined);
+    }
+
+    // The chokepoint is the register wrapper, so this proves the injection reaches every tool
+    // rather than just the one under test -- there is only one wrapper.
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]).toMatchObject({ tool: "loopover_get_repo_context", category: "maintainer", surface: "remote" });
+  }, 30_000);
+});

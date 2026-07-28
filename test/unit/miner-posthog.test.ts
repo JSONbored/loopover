@@ -18,6 +18,7 @@ vi.mock("posthog-node", () => ({ PostHog: posthogMock.PostHog }));
 
 import {
   captureMinerPostHogAiGeneration,
+  captureMinerPostHogEvent,
   captureMinerPostHogError,
   captureMinerPostHogErrorAndFlush,
   flushMinerPostHog,
@@ -244,5 +245,41 @@ describe("loopover-miner opt-in PostHog (#8292, epic #8286)", () => {
       posthogMock.flush.mockRejectedValueOnce(new Error("flush timed out"));
       await expect(captureMinerPostHogErrorAndFlush(new Error("crash"))).resolves.toBeUndefined();
     });
+  });
+});
+
+// #9525: the thin send the MCP dispatch chokepoint composes its events for. The properties come
+// from @loopover/contract so all three servers emit one shape; what is asserted here is this
+// function's own contract -- gated, scrubbed, and never throwing.
+describe("captureMinerPostHogEvent (#9525)", () => {
+  it("sends nothing when PostHog was never initialized", () => {
+    captureMinerPostHogEvent("usage_event", { tool: "loopover_miner_ping" });
+    expect(posthogMock.capture).not.toHaveBeenCalled();
+  });
+
+  it("sends the event anonymously, with geoip disabled, once initialized", async () => {
+    await initMinerPostHog({ LOOPOVER_MINER_POSTHOG_API_KEY: "phc_test_key" });
+    captureMinerPostHogEvent("usage_event", { tool: "loopover_miner_ping", ok: true });
+    expect(posthogMock.capture).toHaveBeenCalledOnce();
+    expect(posthogMock.capture.mock.calls[0]![0]).toMatchObject({
+      distinctId: "loopover-miner",
+      event: "usage_event",
+      properties: { tool: "loopover_miner_ping", ok: true },
+      disableGeoip: true,
+    });
+  });
+
+  it("scrubs a secret-shaped property key on the way out", async () => {
+    await initMinerPostHog({ LOOPOVER_MINER_POSTHOG_API_KEY: "phc_test_key" });
+    captureMinerPostHogEvent("usage_event", { tool: "t", githubToken: "ghp_realtokenvaluehere" });
+    expect(posthogMock.capture.mock.calls[0]![0].properties.githubToken).toBe("[redacted]");
+  });
+
+  it("never throws when the SDK's capture does", async () => {
+    await initMinerPostHog({ LOOPOVER_MINER_POSTHOG_API_KEY: "phc_test_key" });
+    posthogMock.capture.mockImplementationOnce(() => {
+      throw new Error("capture failed");
+    });
+    expect(() => captureMinerPostHogEvent("usage_event", { tool: "t" })).not.toThrow();
   });
 });

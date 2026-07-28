@@ -44,7 +44,7 @@ function isTruthyEnvValue(value: string): boolean {
 
 // Reads below use literal `env.LOOPOVER_MINER_*` property access (not the exported *_FLAG constants above,
 // which exist for callers/tests to reference the exact name without a typo) because
-// scripts/generate-env-reference.mjs statically greps for exactly this `env.NAME ?? "default"` shape to keep
+// scripts/generate-env-reference.ts statically greps for exactly this `env.NAME ?? "default"` shape to keep
 // packages/loopover-miner/docs/env-reference.md honest -- a dynamic `env[SOME_CONST]` lookup is invisible to it.
 
 /** Master opt-in (default off). When false, no discovery-index traffic and no telemetry may be emitted. */

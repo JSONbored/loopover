@@ -40,8 +40,8 @@
     "expected-engine.version"
   ],
   "scripts": {
-    "benchmark": "node scripts/benchmark.mjs",
-    "cross-repo-eval": "node scripts/cross-repo-evaluation.mjs",
+    "benchmark": "node --experimental-strip-types scripts/benchmark.ts",
+    "cross-repo-eval": "node --experimental-strip-types scripts/cross-repo-evaluation.ts",
     "build": "npm run build:tsc && npm run build:verify",
     "build:tsc": "tsc -p tsconfig.json",
     "build:verify": "node --experimental-strip-types scripts/check-syntax.ts"

@@ -330,7 +330,7 @@ jobs:
       # exact gap let a stale env-reference block an unrelated MCP npm release, since the release
       # workflow was the only place this check ever ran. Gated on `ui` too, same reason as its sibling:
       # the generated UI-side file lives under apps/loopover-ui/**. Also gated on `engine`:
-      # DEFAULT_SOURCE_ROOTS in generate-env-reference.mjs explicitly includes
+      # DEFAULT_SOURCE_ROOTS in generate-env-reference.ts explicitly includes
       # packages/loopover-engine/src/miner (the coding-agent driver's env vars live there, not under
       # packages/loopover-miner itself), so an engine-only PR touching that directory used to skip this
       # check entirely.

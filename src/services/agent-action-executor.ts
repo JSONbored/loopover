@@ -437,8 +437,11 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
     // 4) auto_with_approval stages the action in the approval queue (#779) for a one-tap maintainer decision
     //    instead of executing it now. Staging is not a GitHub mutation; execution/replay runs this guard later.
     if (action.requiresApproval) {
-      await stageForApproval(env, ctx, action, autonomyLevel);
-      await audit("queued", `awaiting maintainer approval — ${action.reason}`);
+      // #9481: the audit is conditional on staging having actually happened. It used to fire unconditionally,
+      // so when staging no-op'd against an existing row every later sweep still recorded "awaiting maintainer
+      // approval" -- an audit trail asserting a notification that was never sent.
+      const staged = await stageForApproval(env, ctx, action, autonomyLevel);
+      if (staged) await audit("queued", `awaiting maintainer approval — ${action.reason}`);
       continue;
     }
     // 5) Write-permission readiness: a PR-visible action needs its exact GitHub App write permission granted.
@@ -1350,7 +1353,9 @@ export function pendingActionToPlanned(input: { actionClass: AgentActionClass; p
 }
 
 // Persist the staged action + notify the maintainer ONCE (on first staging, not on every re-evaluation).
-async function stageForApproval(env: Env, ctx: AgentActionExecutionContext, action: PlannedAgentAction, autonomyLevel: AutonomyLevel): Promise<void> {
+/** Returns whether a row was actually staged (a fresh one, or an expired one reopened per #9481) -- the
+ *  caller only audits "awaiting maintainer approval" when a notification genuinely went out. */
+async function stageForApproval(env: Env, ctx: AgentActionExecutionContext, action: PlannedAgentAction, autonomyLevel: AutonomyLevel): Promise<boolean> {
   const { created } = await createPendingAgentActionIfAbsent(env, {
     repoFullName: ctx.repoFullName,
     pullNumber: ctx.pullNumber,
@@ -1360,7 +1365,7 @@ async function stageForApproval(env: Env, ctx: AgentActionExecutionContext, acti
     params: actionParams(action),
     reason: action.reason,
   });
-  if (!created) return;
+  if (!created) return false;
   /* v8 ignore next -- a repo full name always has an owner segment; the empty fallback is purely defensive. */
   const recipientLogin = ctx.repoFullName.split("/")[0] ?? "";
   await insertNotificationDeliveryIfAbsent(env, {
@@ -1375,4 +1380,5 @@ async function stageForApproval(env: Env, ctx: AgentActionExecutionContext, acti
     deeplink: `https://github.com/${ctx.repoFullName}/pull/${ctx.pullNumber}`,
     actorLogin: AGENT_ACTOR,
   });
+  return true;
 }

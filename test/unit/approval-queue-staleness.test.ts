@@ -186,3 +186,85 @@ describe("sweepStaleApprovalQueue (#9032)", () => {
     expect((await getPendingAgentAction(env, id))?.status).toBe("pending");
   });
 });
+
+// #9481 regression: the unique index on (repo_full_name, pull_number, action_class) has NO status predicate,
+// and createPendingAgentActionIfAbsent used onConflictDoNothing against it. So once #9032's sweep expired a
+// row, every later re-plan conflicted with it permanently -- `created: false`, so stageForApproval returned
+// before notifying and decidePendingAgentAction reported already_decided. Nothing anywhere deleted or reopened
+// an expired row, which made an auto_with_approval merge/close whose maintainer was away for the expiry window
+// PERMANENTLY unexecutable via the queue for that PR + action class. That is strictly worse than the
+// pre-#9032 behaviour (rows waited forever but stayed acceptable), and the sweep's own doc promises the
+// opposite: "a later pass that re-plans the same action stages a fresh row with a fresh notification".
+describe("re-staging after expiry (#9481)", () => {
+  const stage = (env: Env, reason: string) =>
+    createPendingAgentActionIfAbsent(env, {
+      repoFullName: "acme/widgets",
+      pullNumber: 42,
+      installationId: 5,
+      actionClass: "merge",
+      autonomyLevel: "auto_with_approval",
+      params: {},
+      reason,
+    });
+
+  it("reopens an EXPIRED row so the action can be staged again", async () => {
+    const env = createTestEnv();
+    const first = await stage(env, "original reason");
+    expect(first.created).toBe(true);
+
+    await setPendingAgentActionStatus(env, first.action.id, { status: "expired", decidedBy: "system" });
+    expect((await getPendingAgentAction(env, first.action.id))?.status).toBe("expired");
+
+    const restaged = await stage(env, "re-planned reason");
+    // `created: true` is what makes the caller notify -- without it the maintainer is never told.
+    expect(restaged.created).toBe(true);
+    expect(restaged.action.status).toBe("pending");
+    expect(restaged.action.reason).toBe("re-planned reason");
+    // Reopened in place, so the unique index is still satisfied and there is exactly one row for the target.
+    expect(restaged.action.id).toBe(first.action.id);
+    expect((await listPendingAgentActions(env, { repoFullName: "acme/widgets" })).length).toBe(1);
+  });
+
+  it("clears the prior decision metadata when reopening, so the row does not look already-decided", async () => {
+    const env = createTestEnv();
+    const first = await stage(env, "original");
+    await setPendingAgentActionStatus(env, first.action.id, { status: "expired", decidedBy: "sweeper" });
+
+    const restaged = await stage(env, "re-planned");
+    expect(restaged.action.decidedBy).toBeNull();
+    expect(restaged.action.decidedAt).toBeNull();
+  });
+
+  it("INVARIANT: a PENDING row stays sticky — a re-plan must not reset a decision that is still outstanding", async () => {
+    const env = createTestEnv();
+    const first = await stage(env, "original");
+    const second = await stage(env, "should not overwrite");
+
+    expect(second.created).toBe(false);
+    expect(second.action.id).toBe(first.action.id);
+    expect(second.action.reason).toBe("original");
+  });
+
+  it.each([["accepted"], ["rejected"]] as const)(
+    "INVARIANT: a %s row stays terminal — only expiry reopens",
+    async (status) => {
+      const env = createTestEnv();
+      const first = await stage(env, "original");
+      await setPendingAgentActionStatus(env, first.action.id, { status, decidedBy: "maintainer" });
+
+      const restaged = await stage(env, "re-planned");
+      expect(restaged.created).toBe(false);
+      expect(restaged.action.status).toBe(status);
+      expect(restaged.action.reason).toBe("original");
+    },
+  );
+
+  it("a reopened row can be expired and reopened again (no one-shot recovery)", async () => {
+    const env = createTestEnv();
+    const first = await stage(env, "one");
+    await setPendingAgentActionStatus(env, first.action.id, { status: "expired", decidedBy: "system" });
+    expect((await stage(env, "two")).created).toBe(true);
+    await setPendingAgentActionStatus(env, first.action.id, { status: "expired", decidedBy: "system" });
+    expect((await stage(env, "three")).created).toBe(true);
+  });
+});

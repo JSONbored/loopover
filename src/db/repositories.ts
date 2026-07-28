@@ -6554,6 +6554,39 @@ export async function createPendingAgentActionIfAbsent(
     .limit(1);
   /* v8 ignore next -- onConflictDoNothing only no-ops when a conflicting row exists, so the lookup always finds it. */
   if (!existing) throw new Error(`pending action conflict had no row: ${repoFullName}#${input.pullNumber} ${input.actionClass}`);
+  // #9481: an EXPIRED row must not block re-staging forever. The unique index is on
+  // (repo_full_name, pull_number, action_class) with no status predicate, so once #9032's sweep expired a row
+  // this insert conflicted against it permanently -- `created: false`, so stageForApproval returned before
+  // notifying and decidePendingAgentAction reported `already_decided`. Nothing anywhere deletes or reopens an
+  // expired row, so an auto_with_approval merge/close whose maintainer was away for the expiry window became
+  // PERMANENTLY unexecutable via the queue for that PR + action class -- strictly worse than the pre-#9032
+  // behaviour, where rows waited indefinitely but stayed acceptable. The sweep's own doc promises the
+  // opposite: "a later pass that re-plans the same action stages a fresh row with a fresh notification".
+  //
+  // Reopen it in place instead, guarded on status='expired' so a concurrent accept/reject can never be
+  // clobbered, and report `created: true` so the caller notifies exactly as it would for a brand-new row.
+  // Only `expired` reopens: `pending` is legitimately sticky (a decision is outstanding) and accepted/rejected
+  // are terminal by design.
+  if (existing.status === "expired") {
+    const [reopened] = await getDb(env.DB)
+      .update(agentPendingActions)
+      .set({
+        installationId: input.installationId,
+        autonomyLevel: input.autonomyLevel,
+        paramsJson: jsonString(input.params),
+        reason: input.reason ?? null,
+        status: "pending",
+        decidedBy: null,
+        decidedAt: null,
+        createdAt: nowIso(),
+      })
+      .where(and(eq(agentPendingActions.id, existing.id), eq(agentPendingActions.status, "expired")))
+      .returning();
+    if (reopened) return { action: toAgentPendingActionRecord(reopened), created: true };
+    // Lost the CAS to a concurrent decision — fall through and report the row as it now stands.
+    const [current] = await getDb(env.DB).select().from(agentPendingActions).where(eq(agentPendingActions.id, existing.id)).limit(1);
+    if (current) return { action: toAgentPendingActionRecord(current), created: false };
+  }
   return { action: toAgentPendingActionRecord(existing), created: false };
 }
 

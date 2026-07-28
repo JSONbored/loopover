@@ -1,0 +1,14 @@
+-- #9483: the verdict-flip guard (#9016) counted a flip whenever the fresh verdict's direction changed, keyed
+-- per (repo, pull) with no content dimension. The exploit it defends against is re-rolling a non-deterministic
+-- reviewer against the SAME content until a lucky clean roll lands -- but an honest contributor iterating on
+-- real feedback produces exactly the same signal: defect(head A) -> fix -> clean(head B) is flip 1, a new real
+-- issue on head C is flip 2, fixed on head D is flip 3 -> escalate. Two honest fix cycles reached the
+-- threshold, and because flipCount never decreased the PR then escalated on EVERY later fresh verdict --
+-- an absorbing state whose own user-facing advice ("push a substantive fix so the next review reflects real
+-- content change") was structurally unable to clear it.
+--
+-- Recording the content fingerprint each verdict was produced against lets the guard distinguish the two: a
+-- re-roll at an UNCHANGED fingerprint is the abuse pattern and still counts; a verdict against genuinely
+-- different content resets the count. Nullable so pre-existing rows keep working (a null prior fingerprint
+-- simply cannot match, so the first verdict after this migration resets rather than escalating).
+ALTER TABLE ai_review_verdict_flips ADD COLUMN last_fingerprint TEXT;

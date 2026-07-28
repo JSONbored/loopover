@@ -37,9 +37,13 @@ function trimmedOrUndefined(value: string | undefined): string | undefined {
 /** Deferred work the caller schedules via `waitUntil`, so a slow flush never delays the response. */
 export type DeferWork = (work: Promise<unknown>) => void;
 
-async function captureEvents(env: DispatchTelemetryEnv, properties: { usage: Record<string, unknown>; mcpToolCall: Record<string, unknown> }): Promise<void> {
-  const apiKey = trimmedOrUndefined(env.POSTHOG_API_KEY);
-  if (!apiKey) return;
+/** Only ever reached from behind `recordToolCall`'s gate, so it takes the resolved key rather than
+ *  re-deriving and re-checking it -- a second guard here would be unreachable by construction. */
+async function captureEvents(
+  env: DispatchTelemetryEnv,
+  apiKey: string,
+  properties: { usage: Record<string, unknown>; mcpToolCall: Record<string, unknown> },
+): Promise<void> {
   try {
     const { PostHog } = await import("posthog-node");
     const client = new PostHog(apiKey, {
@@ -76,8 +80,9 @@ export function createDispatchTelemetrySink(
 ): DispatchTelemetrySink {
   return {
     recordToolCall: (_call, properties) => {
-      if (!trimmedOrUndefined(env.POSTHOG_API_KEY)) return;
-      defer(captureEvents(env, properties));
+      const apiKey = trimmedOrUndefined(env.POSTHOG_API_KEY);
+      if (!apiKey) return;
+      defer(captureEvents(env, apiKey, properties));
     },
     captureException: (error, call) => {
       if (!isWorkerPostHogConfigured(env)) return;

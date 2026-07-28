@@ -21,6 +21,7 @@
 // ledger (same `github_app.pr_public_surface_published` rows + `reviewEffortMinutes` metadata public-stats.ts uses).
 // Bearer-gated here only — never folded into the public homepage counter.
 import { bandFromMinutes } from "./review-effort";
+import { LATEST_DECISION_RECORD_FILTER } from "./ops";
 
 // ── Inlined report types (ported shapes from reviewbot src/core/{eval,tuning}.ts) ────────────────
 
@@ -388,7 +389,15 @@ export function aggregateReviewEffort(perPrMinutes: number[]): ReviewEffortAggre
   };
 }
 
-/** Aggregate the decision ledger for the dashboard. Pure-ish (reads D1 only); no GitHub I/O. */
+/**
+ * Aggregate the decision ledger for the dashboard. Pure-ish (reads D1 only); no GitHub I/O.
+ *
+ * #9136 kept this rather than deleting it with the rest of the review_targets readers. It is not
+ * wired to a route today -- only a comment in src/api/routes.ts references handleStats -- but it is
+ * an exported, bearer-gated feed, and silently retiring a capability is a different change from
+ * retiring an orphaned table. Its one review_targets read is repointed below, exactly like every
+ * other reader in this PR.
+ */
 export async function computeStats(
   env: Env,
   opts: { days: number; bucket: string; nowMs: number },
@@ -401,14 +410,32 @@ export async function computeStats(
   // `bucket` is now always a present BUCKET_SQL key (day/week/month), so `BUCKET_SQL[bucket]` is never
   // undefined; the `?? BUCKET_SQL.day` only satisfies noUncheckedIndexedAccess and is unreachable.
   /* v8 ignore next */
-  const bucketExpr = BUCKET_SQL[bucket] ?? BUCKET_SQL.day;
+  const bucketExpr = BUCKET_SQL[bucket] ?? BUCKET_SQL.day!;
+  // decision_records is aliased `dr` in the decision query below, and `created_at` is ambiguous there
+  // because LATEST_DECISION_RECORD_FILTER's correlated subquery also names one.
+  const decisionBucketExpr = bucketExpr.replace(/created_at/g, "dr.created_at");
   const fromIso = new Date(opts.nowMs - days * 86_400_000).toISOString().slice(0, 10); // YYYY-MM-DD
 
   const [decisionRows, reversalRows, effortRows, cycleTime, findingAcceptance] = await Promise.all([
+    // #9136: repointed off the orphaned review_targets, the same way ops.ts's four reads were. Two
+    // shape changes fall out of the move and both are visible in the payload:
+    //
+    //  - decision_records has no `project` column -- it is written only by this app for its own repos --
+    //    so the series is keyed by repo_full_name. The dashboard pivots on whatever `project` holds, so
+    //    it keeps working; the label is now the repo rather than a project slug.
+    //  - `COALESCE(verdict, status)` becomes `action` -- merge | close | hold, the acted disposition.
+    //    review_targets' verdict/status pair has no analogue here, and `action` is what ops.ts reads
+    //    for the same purpose. (Not `decision`: decision_records has no such column, which the
+    //    real-D1 test in test/unit/stats.test.ts catches rather than the stubbed ones.)
+    //
+    // LATEST_DECISION_RECORD_FILTER for the same reason ops.ts needs it: a PR accumulates one row per
+    // head sha, and counting all of them would inflate every bucket by the number of times a PR was
+    // re-reviewed.
     storage(env).prepare(
-      `SELECT ${bucketExpr} AS bucket, project, COALESCE(verdict, status) AS verdict, COUNT(*) AS n
-       FROM review_targets
-       WHERE created_at >= ?
+      `SELECT ${decisionBucketExpr} AS bucket,
+              dr.repo_full_name AS project, dr.action AS verdict, COUNT(*) AS n
+       FROM decision_records dr
+       WHERE dr.created_at >= ? AND ${LATEST_DECISION_RECORD_FILTER}
        GROUP BY bucket, project, verdict
        ORDER BY bucket ASC`,
     ).bind(fromIso).all<{ bucket: string; project: string; verdict: string; n: number }>(),

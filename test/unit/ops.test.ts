@@ -57,20 +57,32 @@ describe("defaultOpsHealthDeps.isFrozen — DB-backed global freeze (#audit-§5.
 
 // ── computeCalibration (ported from reviewbot test/calibration.test.ts) ──────────────────────────
 
+/**
+ * #9136: reads are sourced from decision_records + review_audit now, not the orphaned review_targets.
+ *
+ * The old stub keyed on `FROM review_targets` and handed BOTH queries the same bare ids ("a"/"b"/"c"), which
+ * quietly made the two id namespaces agree — so these tests passed for as long as production was broken by
+ * exactly that disagreement. Ids here are the real `owner/repo#n` target keys both live tables actually use,
+ * so a namespace regression fails the test instead of hiding in it.
+ *
+ * Also note the calibration queries are a mix of bound (`.bind(slug).all()`) and unbound (`.all()`) calls —
+ * decision_records carries no `project` column — so the stub supports both shapes.
+ */
 function calibrationEnv(merged: Array<{ id: string; confidence: number }>, revertedIds: string[]): Env {
+  const results = (sql: string): { results: unknown[] } => {
+    if (sql.includes("FROM decision_records") && sql.includes("'merge'")) {
+      return { results: merged.map((m) => ({ target_id: m.id, decision_json: JSON.stringify({ action: "merge", aiConfidence: m.confidence }) })) };
+    }
+    if (sql.includes("FROM review_audit") && sql.includes("reversal_reverted")) {
+      return { results: revertedIds.map((target_id) => ({ target_id })) };
+    }
+    return { results: [] }; // closes-by-reason and disputed-closes: not under test here
+  };
   return {
     DB: {
       prepare(sql: string) {
-        return {
-          bind() {
-            return {
-              all: async () =>
-                sql.includes("FROM review_targets")
-                  ? { results: merged.map((m) => ({ id: m.id, decision_json: JSON.stringify({ verdict: "merge", confidence: m.confidence }) })) }
-                  : { results: revertedIds.map((target_id) => ({ target_id })) },
-            };
-          },
-        };
+        const all = async () => results(sql);
+        return { all, bind: () => ({ all }) };
       },
     },
   } as unknown as Env;
@@ -80,7 +92,7 @@ const calConfig: OpsAgentConfig = { slug: "metagraphed", confidenceFloor: 0.9, s
 
 describe("computeCalibration", () => {
   it("recommends raising the floor above the highest-confidence reverted merge", async () => {
-    const env = calibrationEnv([{ id: "a", confidence: 0.95 }, { id: "b", confidence: 0.92 }, { id: "c", confidence: 0.99 }], ["b"]);
+    const env = calibrationEnv([{ id: "o/r#1", confidence: 0.95 }, { id: "o/r#2", confidence: 0.92 }, { id: "o/r#3", confidence: 0.99 }], ["o/r#2"]);
     const cal = await computeCalibration(env, calConfig);
     expect(cal.revertedCount).toBe(1);
     expect(cal.revertedMaxConfidence).toBe(0.92);
@@ -94,20 +106,20 @@ describe("computeCalibration", () => {
   });
 
   it("recommends no change when nothing was reverted", async () => {
-    const env = calibrationEnv([{ id: "a", confidence: 0.95 }], []);
+    const env = calibrationEnv([{ id: "o/r#1", confidence: 0.95 }], []);
     const cal = await computeCalibration(env, calConfig);
     expect(cal.recommendedFloor).toBeNull();
     expect(cal.note).toMatch(/adequate/);
   });
 
   it("recommends no change when the floor already sits above the reverted merges", async () => {
-    const env = calibrationEnv([{ id: "a", confidence: 0.85 }], ["a"]); // reverted at 0.85, floor 0.9 already higher
+    const env = calibrationEnv([{ id: "o/r#1", confidence: 0.85 }], ["o/r#1"]); // reverted at 0.85, floor 0.9 already higher
     const cal = await computeCalibration(env, calConfig);
     expect(cal.recommendedFloor).toBeNull();
   });
 
   it("treats a missing confidenceFloor as 0 (config.confidenceFloor ?? 0)", async () => {
-    const env = calibrationEnv([{ id: "a", confidence: 0.5 }], ["a"]); // reverted at 0.5 → suggest 0.52 > floor 0
+    const env = calibrationEnv([{ id: "o/r#1", confidence: 0.5 }], ["o/r#1"]); // reverted at 0.5 → suggest 0.52 > floor 0
     const cal = await computeCalibration(env, { slug: "x", secrets: {} }); // no confidenceFloor
     expect(cal.currentFloor).toBe(0);
     expect(cal.recommendedFloor).toBe(0.52);
@@ -174,7 +186,12 @@ describe("handleInternalCalibration", () => {
 
 // ── handleInternalDecision (ported from reviewbot test/decision-endpoint.test.ts) ────────────────
 
-function decisionEnv(targetRow: Record<string, unknown> | null): Env {
+/**
+ * #9136: the endpoint reads pull_requests (realized state) + decision_records (the standing decision) +
+ * review_audit (the trail), not the orphaned review_targets. `prRow` null models "no such PR" — which, before
+ * this fix, was the answer for EVERY pull request opened since the 2026-06-22 cutover.
+ */
+function decisionEnv(prRow: Record<string, unknown> | null, recordRow: Record<string, unknown> | null = null, auditRows?: unknown[]): Env {
   return {
     INTERNAL_SECRET: "s3cret",
     DB: {
@@ -182,14 +199,23 @@ function decisionEnv(targetRow: Record<string, unknown> | null): Env {
         return {
           bind() {
             return {
-              first: async () => (sql.includes("SELECT * FROM review_targets") ? targetRow : null),
-              all: async () => ({ results: sql.includes("review_audit") ? [{ event_type: "reviewed", decision: "manual", summary: "needs human", created_at: "2026-06-13T00:00:00Z" }] : [] }),
+              first: async () => (sql.includes("FROM pull_requests") ? prRow : sql.includes("FROM decision_records") ? recordRow : null),
+              all: async () => ({
+                results: sql.includes("review_audit")
+                  ? (auditRows ?? [{ event_type: "reviewed", decision: "manual", summary: "needs human", created_at: "2026-06-13T00:00:00Z" }])
+                  : [],
+              }),
             };
           },
         };
       },
     },
   } as unknown as Env;
+}
+
+/** A merged PR row in the live pull_requests shape. */
+function livePr(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return { repo_full_name: "o/r", number: 5, state: "open", head_sha: "head1", merged_at: null, merge_attempt_count: 1, ...over };
 }
 
 const decisionConfig: OpsAgentConfig = { slug: "metagraphed", secrets: { internalSecret: "INTERNAL_SECRET" } };
@@ -228,26 +254,38 @@ describe("handleInternalDecision", () => {
     expect(r.status).toBe(404);
   });
 
-  it("returns the cached decision + audit trail for an existing target", async () => {
-    const row = {
-      id: "metagraphed:pull_request:o/r#5",
-      project: "metagraphed",
-      kind: "pull_request",
-      repo: "o/r",
-      number: 5,
-      status: "manual",
-      attempt_count: 1,
-      terminal_at: null,
-      decided_sha: "abc",
-      decision_json: JSON.stringify({ verdict: "manual", summary: "ownership-sensitive", confidence: 0.4 }),
-    };
-    const r = await handleInternalDecision(new Request(url, { headers: auth }), decisionEnv(row), decisionConfig);
+  it("REGRESSION (#9136): returns the standing decision + audit trail for a live PR, which used to 404", async () => {
+    // Every PR since the 2026-06-22 cutover hit the `!target` 404 above, because the only lookup was against
+    // a table nothing writes. The endpoint stayed routed and authenticated the whole time.
+    const record = { head_sha: "abc", action: "hold", reason_code: "ownership_sensitive", record_json: JSON.stringify({ action: "hold", aiConfidence: 0.4 }), created_at: "2026-06-13T00:00:00Z" };
+    const r = await handleInternalDecision(new Request(url, { headers: auth }), decisionEnv(livePr(), record), decisionConfig);
     expect(r.status).toBe(200);
-    const body = (await r.json()) as { target: { status: string; attemptCount: number }; decision: { verdict: string }; audit: unknown[] };
-    expect(body.target.status).toBe("manual");
+    const body = (await r.json()) as { target: { status: string; attemptCount: number; verdict: string; decidedSha: string; reasonCode: string; terminalAt: string | null }; decision: { action: string }; audit: unknown[] };
+    expect(body.target.status).toBe("open");
     expect(body.target.attemptCount).toBe(1);
-    expect(body.decision.verdict).toBe("manual");
+    expect(body.target.verdict).toBe("hold");
+    expect(body.target.decidedSha).toBe("abc"); // the sha the standing decision was actually made on
+    expect(body.target.reasonCode).toBe("ownership_sensitive");
+    expect(body.target.terminalAt).toBeNull(); // a hold is not terminal
+    expect(body.decision.action).toBe("hold");
     expect(body.audit).toHaveLength(1);
+  });
+
+  it("reports the realized disposition: merged wins over state, and a close is terminal at its decision", async () => {
+    const merged = await handleInternalDecision(new Request(url, { headers: auth }), decisionEnv(livePr({ state: "closed", merged_at: "2026-06-14T00:00:00Z" })), decisionConfig);
+    expect((await merged.json() as { target: { status: string; terminalAt: string } }).target).toMatchObject({ status: "merged", terminalAt: "2026-06-14T00:00:00Z" });
+
+    const closeRecord = { head_sha: "abc", action: "close", reason_code: "duplicate", record_json: null, created_at: "2026-06-15T00:00:00Z" };
+    const closed = await handleInternalDecision(new Request(url, { headers: auth }), decisionEnv(livePr({ state: "closed" }), closeRecord), decisionConfig);
+    expect((await closed.json() as { target: { status: string; terminalAt: string } }).target).toMatchObject({ status: "closed", terminalAt: "2026-06-15T00:00:00Z" });
+  });
+
+  it("a PR with no decision record yet reports nulls rather than failing", async () => {
+    const r = await handleInternalDecision(new Request(url, { headers: auth }), decisionEnv(livePr()), decisionConfig);
+    expect(r.status).toBe(200);
+    const body = (await r.json()) as { target: { verdict: null; decidedSha: null; reasonCode: null }; decision: null };
+    expect(body.target).toMatchObject({ verdict: null, decidedSha: null, reasonCode: null });
+    expect(body.decision).toBeNull();
   });
 });
 
@@ -268,8 +306,8 @@ function healthEnv(): Env {
                 return { n: 0 };
               },
               all: async () => {
-                if (sql.includes("GROUP BY status")) return { results: [{ status: "merged", n: 8 }, { status: "manual", n: 2 }, { status: "queued", n: 1 }] };
-                if (sql.includes("GROUP BY verdict")) return { results: [{ verdict: "merge", n: 8 }, { verdict: "manual", n: 2 }] };
+                // #9136: byStatus/byVerdict -> byDecision, from review_audit's own gate_decision rows.
+                if (sql.includes("GROUP BY decision")) return { results: [{ decision: "merge", n: 8 }, { decision: "close", n: 2 }, { decision: "hold", n: 1 }] };
                 // #9136: repo/number parsed from target_id (owner/repo#n), no review_targets join.
                 if (sql.includes("reversal_reverted")) return { results: [{ target_id: "o/r#99", event_type: "reversal_reverted" }] };
                 if (sql.includes("event_type IN ('reviewed', 'shadow_reviewed')")) return { results: [{ target_id: "t1", decision: "merge", summary: "ok", created_at: "2026-06-13T00:00:00Z" }] };
@@ -288,10 +326,12 @@ const healthConfig: OpsAgentConfig = { slug: "loopover", confidenceFloor: 0.9, s
 describe("computeAgentHealth (native D1, default gate deps)", () => {
   it("computes terminal/manual-rate/reversals from the ledger; defaults to no config issues / unfrozen", async () => {
     const h = await computeAgentHealth(healthEnv(), healthConfig);
-    expect(h.byStatus.merged).toBe(8);
-    expect(h.nonTerminal).toBe(1); // queued
-    expect(h.terminalCount).toBe(10); // merged 8 + manual 2
-    expect(h.manualRate).toBe(0.2);
+    expect(h.byDecision.merge).toBe(8);
+    expect(h.nonTerminal).toBe(1); // hold — the gate deferring to a human
+    expect(h.terminalCount).toBe(10); // merge 8 + close 2 — the gate acting
+    // #9136: hold / ALL decisions (11), not the old hold / terminalCount, whose denominator excluded the
+    // very rows it was counting.
+    expect(h.manualRate).toBe(0.091);
     expect(h.reversals).toBe(1);
     expect(h.reversalRate).toBe(0.5); // 1 reversal / 2 recent auto-actions
     expect(h.recentAutoActions).toBe(2);
@@ -326,7 +366,7 @@ describe("handleInternalStatus", () => {
     });
     expect(r.status).toBe(200);
     const body = (await r.json()) as { health: { manualRate: number; aiErrors: number }; recent: unknown[] };
-    expect(body.health.manualRate).toBe(0.2);
+    expect(body.health.manualRate).toBe(0.091); // hold 1 / all 11 decisions (#9136)
     expect(body.health.aiErrors).toBe(4);
     expect(body.recent).toHaveLength(1);
   });
@@ -355,12 +395,12 @@ describe("handleInternalStatus", () => {
     } as unknown as Env;
     const r = await handleInternalStatus(new Request("https://x/s", { headers: auth }), emptyEnv, healthConfig);
     expect(r.status).toBe(200);
-    const body = (await r.json()) as { health: { aiErrors: number; manualRate: number; reversalRate: number; frozen: boolean; holdOnly: boolean }; counts: { byStatus: Record<string, number> }; recent: unknown[] };
+    const body = (await r.json()) as { health: { aiErrors: number; manualRate: number; reversalRate: number; frozen: boolean; holdOnly: boolean }; counts: { byDecision: Record<string, number> }; recent: unknown[] };
     expect(body.health.aiErrors).toBe(0); // defaultRecentAiErrorCount
     expect(body.health.manualRate).toBe(0); // terminalCount 0 → ternary false branch
     expect(body.health.reversalRate).toBe(0); // recentAutoActions 0 → ternary false branch
     expect(body.health.frozen).toBe(false); // health.frozen ?? false (undefined → false not exercised, but default deps give false)
-    expect(body.counts.byStatus).toEqual({});
+    expect(body.counts.byDecision).toEqual({});
     expect(body.recent).toEqual([]);
   });
 });
@@ -428,38 +468,38 @@ describe("computeCalibration confidenceOf branches", () => {
     const env = {
       DB: {
         prepare(sql: string) {
-          return {
-            bind() {
+          const all = async () => {
+            if (sql.includes("FROM decision_records") && sql.includes("'merge'")) {
               return {
-                all: async () => {
-                  if (sql.includes("status = 'merged'")) {
-                    return {
-                      results: [
-                        { id: "a", decision_json: null }, // confidenceOf → null (if !j)
-                        { id: "b", decision_json: "{not json" }, // JSON.parse throws → catch returns null (line 271)
-                        { id: "c", decision_json: JSON.stringify({ confidence: "high" }) }, // non-number → null
-                        { id: "d", decision_json: JSON.stringify({ confidence: 0.8 }) }, // counted
-                      ],
-                    };
-                  }
-                  return { results: [] };
-                },
+                results: [
+                  { target_id: "o/r#1", decision_json: null }, // confidenceOf → null (if !j)
+                  { target_id: "o/r#2", decision_json: "{not json" }, // JSON.parse throws → catch returns null
+                  { target_id: "o/r#3", decision_json: JSON.stringify({ aiConfidence: "high" }) }, // non-number → null
+                  { target_id: "o/r#4", decision_json: JSON.stringify({ aiConfidence: 0.8 }) }, // counted
+                  // #9136: the LEGACY spelling still parses, so records written before decision_records
+                  // renamed the field are not silently dropped from the curve.
+                  { target_id: "o/r#5", decision_json: JSON.stringify({ confidence: 0.8 }) }, // counted
+                ],
               };
-            },
+            }
+            return { results: [] };
           };
+          return { all, bind: () => ({ all }) };
         },
       },
     } as unknown as Env;
     const cal = await computeCalibration(env, calConfig);
-    // only "d" had a numeric confidence and was kept (none reverted)
+    // only the two numeric-confidence rows (new and legacy spelling) count, both kept (none reverted)
     expect(cal.keptAvgConfidence).toBe(0.8);
+    expect(cal.mergedCount).toBe(5); // every merge row counts; only the confidence CURVE skips the unusable ones
     expect(cal.recommendedFloor).toBeNull();
     expect(cal.note).toMatch(/adequate/);
   });
 
   it("defaults closesByReason + disputedByReason to [] when those queries return no results", async () => {
     const env = {
-      DB: { prepare() { return { bind() { return { all: async () => ({}) }; } }; } }, // every query: undefined results
+      // every query: undefined results. Both call shapes, since decision_records reads are unbound.
+      DB: { prepare() { const all = async () => ({}); return { all, bind: () => ({ all }) }; } },
     } as unknown as Env;
     const cal = await computeCalibration(env, calConfig);
     expect(cal.closesByReason).toEqual([]);
@@ -472,16 +512,18 @@ describe("computeCalibration confidenceOf branches", () => {
     const env = {
       DB: {
         prepare(sql: string) {
+          const all = async () => {
+            // The disputed-closes query ALSO reads decision_records with action 'close' and groups by rc, so
+            // it must be matched FIRST or the closes-by-reason branch swallows it.
+            if (sql.includes("reversal_reopened")) return { results: [{ rc: "duplicate", n: 1 }] };
+            if (sql.includes("FROM decision_records") && sql.includes("'close'") && sql.includes("GROUP BY rc")) {
+              return { results: [{ rc: "duplicate", n: 5 }, { rc: "conflict", n: 2 }] };
+            }
+            return {}; // merged + reverted: undefined results → `?? []` fallback
+          };
           return {
-            bind() {
-              return {
-                all: async () => {
-                  if (sql.includes("status = 'closed' GROUP BY rc")) return { results: [{ rc: "duplicate", n: 5 }, { rc: "conflict", n: 2 }] };
-                  if (sql.includes("reversal_reopened")) return { results: [{ rc: "duplicate", n: 1 }] };
-                  return {}; // merged + reverted: undefined results → `?? []` fallback
-                },
-              };
-            },
+            all,
+            bind: () => ({ all }),
           };
         },
       },
@@ -521,39 +563,32 @@ describe("handleInternalDecision decision_json parse + nullish target fields", (
   });
 
   it("defaults the audit list to empty when review_audit returns no results", async () => {
-    const row = {
-      id: "metagraphed:pull_request:o/r#5",
-      repo: "o/r",
-      number: 5,
-      kind: "pull_request",
-      status: "merged",
-      verdict: "merge",
-      head_sha: "abc",
-      decided_sha: "abc",
-      attempt_count: 2,
-      terminal_at: "2026-06-13T00:00:00Z",
-      decision_json: null, // skips the parse block entirely (if target.decision_json false branch)
-    };
     const env = {
       INTERNAL_SECRET: "s3cret",
       DB: {
         prepare(sql: string) {
-          return { bind() { return { first: async () => (sql.includes("SELECT * FROM review_targets") ? row : null), all: async () => ({}) }; } };
+          return {
+            bind() {
+              return {
+                first: async () => (sql.includes("FROM pull_requests") ? livePr({ state: "closed", merged_at: "2026-06-13T00:00:00Z", merge_attempt_count: 2 }) : null),
+                all: async () => ({}), // undefined results -> the `?? []` fallback
+              };
+            },
+          };
         },
       },
     } as unknown as Env;
     const r = await handleInternalDecision(new Request(url, { headers: auth }), env, decisionConfig);
     expect(r.status).toBe(200);
     const body = (await r.json()) as { decision: unknown; audit: unknown[]; target: { terminalAt: unknown } };
-    expect(body.decision).toBeNull();
+    expect(body.decision).toBeNull(); // no decision record for this PR
     expect(body.audit).toEqual([]);
     expect(body.target.terminalAt).toBe("2026-06-13T00:00:00Z");
   });
 
   it("defaults kind to pull_request when ?kind is an unknown value", async () => {
     // exercises the `params.get("kind") === "issue" ? "issue" : "pull_request"` false branch with a non-issue value
-    const row = { id: "metagraphed:pull_request:o/r#5", repo: "o/r", number: 5, kind: "pull_request", status: "merged", verdict: "merge", head_sha: "a", decided_sha: "a", attempt_count: 1, terminal_at: null, decision_json: null };
-    const r = await handleInternalDecision(new Request("https://x/d?repo=o/r&number=5&kind=bogus", { headers: auth }), decisionEnv(row), decisionConfig);
+    const r = await handleInternalDecision(new Request("https://x/d?repo=o/r&number=5&kind=bogus", { headers: auth }), decisionEnv(livePr()), decisionConfig);
     expect(r.status).toBe(200);
     const body = (await r.json()) as { target: { kind: string } };
     expect(body.target.kind).toBe("pull_request");
@@ -580,13 +615,10 @@ describe("computeAgentHealth empty-ledger fallbacks", () => {
       },
     } as unknown as Env;
     const h = await computeAgentHealth(emptyEnv, healthConfig);
-    expect(h.byStatus).toEqual({});
-    expect(h.byVerdict).toEqual({});
+    expect(h.byDecision).toEqual({});
     expect(h.terminalCount).toBe(0);
     expect(h.nonTerminal).toBe(0);
-    expect(h.manualRate).toBe(0); // terminalCount 0 → ternary false branch
-    expect(h.stuckRetryable).toBe(0); // byStatus.error_retryable ?? 0
-    expect(h.failed).toBe(0);
+    expect(h.manualRate).toBe(0); // no decisions at all → ternary false branch
     expect(h.dlqCount).toBe(0); // dlqCountRow?.n ?? dlqTargets.length (both fall through)
     expect(h.dlqTargets).toEqual([]);
     expect(h.reversals).toBe(0);
@@ -594,7 +626,7 @@ describe("computeAgentHealth empty-ledger fallbacks", () => {
     expect(h.recentAutoActions).toBe(0);
   });
 
-  it("computes manualRate with a present terminalCount but no manual rows (byStatus.manual ?? 0 fallback)", async () => {
+  it("computes manualRate with decisions but no holds (the `?? 0` fallback)", async () => {
     const env = {
       DB: {
         prepare(sql: string) {
@@ -603,7 +635,7 @@ describe("computeAgentHealth empty-ledger fallbacks", () => {
               return {
                 first: async () => ({}),
                 all: async () => {
-                  if (sql.includes("GROUP BY status")) return { results: [{ status: "merged", n: 4 }] }; // terminal but no `manual`
+                  if (sql.includes("GROUP BY decision")) return { results: [{ decision: "merge", n: 4 }] }; // acted, never held
                   return {};
                 },
               };
@@ -614,31 +646,13 @@ describe("computeAgentHealth empty-ledger fallbacks", () => {
     } as unknown as Env;
     const h = await computeAgentHealth(env, healthConfig);
     expect(h.terminalCount).toBe(4);
-    expect(h.manualRate).toBe(0); // (byStatus.manual ?? 0) / 4
+    expect(h.manualRate).toBe(0); // (byDecision.hold ?? 0) / 4
   });
 
-  it("maps recent failed (status='error') rows into failedTargets", async () => {
-    const env = {
-      DB: {
-        prepare(sql: string) {
-          return {
-            bind() {
-              return {
-                first: async () => ({ n: 0 }),
-                all: async () => {
-                  if (sql.includes("status = 'error' AND updated_at")) return { results: [{ number: 42, repo: "o/r", verdict: null, last_error: "boom" }] };
-                  return {};
-                },
-              };
-            },
-          };
-        },
-      },
-    } as unknown as Env;
-    const h = await computeAgentHealth(env, healthConfig);
-    expect(h.failed).toBe(1);
-    expect(h.failedTargets?.[0]).toEqual({ number: 42, repo: "o/r", verdict: null, lastError: "boom" });
-  });
+  // #9136: the "maps recent failed (status='error') rows into failedTargets" test is GONE with the signal it
+  // covered. `status='error'` was a review_targets processing state the convergence cutover removed as a
+  // concept, so that query could only ever return nothing; dlqTargets (tested directly below) is the live
+  // signal for the same operator question.
 
   it("uses dlqTargets.length as the dlqCount fallback when the COUNT row lacks n", async () => {
     const env = {
@@ -676,13 +690,21 @@ describe("computeAgentHealth empty-ledger fallbacks", () => {
 // orphaning was for months. Real D1 (createTestEnv applies every migration), not a hand-rolled mock, so
 // the actual `datetime('now', ?)` window arithmetic is exercised for real. ─────────────────────────────
 describe("checkReviewSourceFreshness (#9136)", () => {
-  it("reads review_targets and review_audit as STALE when both are empty (the ground state right now)", async () => {
+  it("reads both live sources as STALE when both are empty", async () => {
     const env = createTestEnv();
     const checks = await checkReviewSourceFreshness(env);
     expect(checks).toEqual([
-      { table: "review_targets", windowDays: 90, fresh: false },
       { table: "review_audit", windowDays: 7, fresh: false },
+      { table: "decision_records", windowDays: 7, fresh: false },
     ]);
+  });
+
+  it("REGRESSION: review_targets is no longer probed at all — a frozen table cannot be 'fresh' again", async () => {
+    // It was checked on a 90-day window against a table with no writer since 2026-06-22, so the gauge read 0
+    // forever: an alert nothing could ever clear, which is noise rather than signal. A staleness probe only
+    // earns its place while something still READS the table, and nothing does now.
+    const env = createTestEnv();
+    expect((await checkReviewSourceFreshness(env)).map((c) => c.table)).not.toContain("review_targets");
   });
 
   it("reads review_audit as FRESH when it has a row inside its 7-day window (the live, steady-state case)", async () => {
@@ -707,26 +729,20 @@ describe("checkReviewSourceFreshness (#9136)", () => {
     expect(checks.find((c) => c.table === "review_audit")).toEqual({ table: "review_audit", windowDays: 7, fresh: false });
   });
 
-  it("reads review_targets as FRESH when it has a row inside its 90-day window", async () => {
-    const env = createTestEnv();
-    await env.DB.prepare(
-      `INSERT INTO review_targets (id, project, kind, repo, number, terminal_at) VALUES (?, ?, 'pull_request', ?, 1, datetime('now'))`,
-    )
-      .bind("loopover:pull_request:o/r#1", "loopover", "o/r")
-      .run();
-    const checks = await checkReviewSourceFreshness(env);
-    expect(checks.find((c) => c.table === "review_targets")).toEqual({ table: "review_targets", windowDays: 90, fresh: true });
-  });
+  it("reads decision_records as FRESH inside its window and STALE outside it — the source the calibration and decision surfaces now read", async () => {
+    const fresh = createTestEnv();
+    await fresh.DB.prepare(
+      `INSERT INTO decision_records (id, repo_full_name, pull_number, head_sha, action, reason_code, record_digest, record_json, created_at)
+       VALUES (?, ?, 1, 'sha', 'merge', 'gate_pass', 'd', '{}', datetime('now'))`,
+    ).bind("record:o/r#1@sha", "o/r").run();
+    expect((await checkReviewSourceFreshness(fresh)).find((c) => c.table === "decision_records")).toEqual({ table: "decision_records", windowDays: 7, fresh: true });
 
-  it("reads review_targets as STALE once its newest row falls outside the 90-day window (the 2026-09-20 cliff this exists to catch)", async () => {
-    const env = createTestEnv();
-    await env.DB.prepare(
-      `INSERT INTO review_targets (id, project, kind, repo, number, terminal_at) VALUES (?, ?, 'pull_request', ?, 1, datetime('now', '-91 days'))`,
-    )
-      .bind("loopover:pull_request:o/r#1", "loopover", "o/r")
-      .run();
-    const checks = await checkReviewSourceFreshness(env);
-    expect(checks.find((c) => c.table === "review_targets")).toEqual({ table: "review_targets", windowDays: 90, fresh: false });
+    const stale = createTestEnv();
+    await stale.DB.prepare(
+      `INSERT INTO decision_records (id, repo_full_name, pull_number, head_sha, action, reason_code, record_digest, record_json, created_at)
+       VALUES (?, ?, 1, 'sha', 'merge', 'gate_pass', 'd', '{}', datetime('now', '-8 days'))`,
+    ).bind("record:o/r#1@sha", "o/r").run();
+    expect((await checkReviewSourceFreshness(stale)).find((c) => c.table === "decision_records")).toEqual({ table: "decision_records", windowDays: 7, fresh: false });
   });
 
   it("fails CLOSED (stale) on a read error, e.g. a dropped/missing table, rather than throwing", async () => {

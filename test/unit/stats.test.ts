@@ -179,6 +179,35 @@ describe("aggregateReviewEffort — maintainer complexity fold (#2155)", () => {
   });
 });
 
+describe("computeStats — the decision series reads decision_records (#9136)", () => {
+  // Against a REAL D1, not the stub above. The stubbed cases route by SQL substring and would pass
+  // with any column name at all -- which is exactly how the first repoint of this query shipped
+  // `dr.decision`, a column decision_records does not have.
+  it("groups the acted disposition per repo, counting each PR's newest record only", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare(
+      `INSERT INTO decision_records (id, repo_full_name, pull_number, head_sha, action, reason_code, record_digest, record_json, created_at) VALUES
+        ('record:acme/api#1@sha1', 'acme/api', 1, 'sha1', 'hold',  'needs_tests', 'd1', '{}', '2026-06-01T00:00:00Z'),
+        ('record:acme/api#1@sha2', 'acme/api', 1, 'sha2', 'merge', 'clean',       'd2', '{}', '2026-06-02T00:00:00Z'),
+        ('record:acme/api#2@sha1', 'acme/api', 2, 'sha1', 'close', 'duplicate',   'd3', '{}', '2026-06-02T00:00:00Z'),
+        ('record:acme/web#3@sha1', 'acme/web', 3, 'sha1', 'merge', 'clean',       'd4', '{}', '2026-06-02T00:00:00Z')`,
+    ).run();
+
+    const out = await computeStats(env, { days: 90, bucket: "day", nowMs: Date.parse("2026-06-14T00:00:00Z") });
+
+    // PR #1 was re-reviewed: its `hold` on sha1 is superseded by `merge` on sha2 and must not be
+    // counted, or every bucket inflates by the number of times a PR was re-reviewed.
+    expect(out.rows).toEqual([
+      { bucket: "2026-06-02", project: "acme/api", verdict: "close", n: 1 },
+      { bucket: "2026-06-02", project: "acme/api", verdict: "merge", n: 1 },
+      { bucket: "2026-06-02", project: "acme/web", verdict: "merge", n: 1 },
+    ]);
+    // Keyed by repo now, not a project slug: decision_records has no `project` column.
+    expect(out.projects).toEqual(["acme/api", "acme/web"]);
+    expect(out.verdicts).toEqual(["close", "merge"]);
+  });
+});
+
 describe("computeStats — review-effort read is fail-safe", () => {
   function effortThrowingEnv(): Env {
     let lastSql = "";

@@ -1,6 +1,6 @@
 // Anomaly alerting (reviewbot→loopover convergence — ADDITIVE, NATIVE port of reviewbot
 // src/core/alerts.ts). On each cron tick, snapshot agent health and push a THROTTLED Discord alert when
-// something drifts — a manual-rate spike, stuck/failed targets, a DLQ spike, calibration drift, disputed
+// something drifts — a manual-rate spike, a DLQ spike, calibration drift, disputed
 // closes, or a config invariant violation — so drift is HEARD ABOUT instead of polled for.
 //
 // SELF-CONTAINED: every type + helper this module needs is defined HERE. No imports from reviewbot. The
@@ -36,16 +36,15 @@ export interface ReversedTarget {
 /** Per-agent health snapshot from review_targets + config invariants. Shared by /status and alerting.
  *  (Ported shape from reviewbot src/core/ops.ts AgentHealth — every field load-bearing here is kept.) */
 export interface AgentHealth {
-  byStatus: Record<string, number>;
-  byVerdict: Record<string, number>;
+  /** #9136: the gate's own decision breakdown (merge / close / hold), replacing the former byStatus +
+   *  byVerdict pair that read the orphaned review_targets. */
+  byDecision: Record<string, number>;
   /** Count of terminal decisions (merged/closed/commented/manual/error) — the manualRate denominator. */
   terminalCount: number;
   nonTerminal: number;
   /** Fraction of terminal decisions punted to a human. */
   manualRate: number;
-  stuckRetryable: number;
-  /** Permanently-failed (dead-lettered or attempt-exhausted) reviews in the recent window. */
-  failed: number;
+
   /** Dead-letter-queue events (event_type='dead_lettered') in the recent window — reviews the queue gave
    *  up on. A spike means a systemic problem (rate-limit storm, AI-quota exhaustion) dropped a batch. */
   dlqCount: number;
@@ -55,9 +54,8 @@ export interface AgentHealth {
   reversals: number;
   /** reversals / (merged + closed) — the ground-truth accuracy signal. 0 when nothing auto-acted. */
   reversalRate: number;
-  /** The specific recent failed / reversed PRs, for an actionable alert (capped). Absent on hand-built
+  /** The specific recent reversed PRs, for an actionable alert (capped). Absent on hand-built
    *  health objects (e.g. tests) — render defensively. */
-  failedTargets?: FailedTarget[];
   reversedTargets?: ReversedTarget[];
   configIssues: string[];
   /** Kill-switch state: true when this agent's autonomous writes are frozen. Optional for hand-built objects. */
@@ -142,9 +140,6 @@ function runChanges(result: unknown): number {
 
 const MANUAL_RATE_THRESHOLD = 0.6;
 const MIN_TERMINAL_FOR_RATE = 10; // don't cry "manual-rate spike" off a handful of decisions
-const STUCK_THRESHOLD = 5;
-// DLQ should be ~0 in normal operation — even a few dropped reviews is a systemic signal (rate-limit/AI-quota
-// storm). Alert low so we hear about it within a cron tick, not days later via manual audit.
 const DLQ_ALERT_THRESHOLD = 3;
 
 const MAX_LISTED = 8; // keep the embed readable; note the remainder
@@ -193,14 +188,13 @@ export function detectAnomalies(h: AgentHealth, calibration?: Calibration): stri
     const list = listSuffix(h.dlqTargets, (t) => `${prLink(t)}${t.lastError ? ` · ${t.lastError}` : ""}`);
     out.push(`⚠️ ${h.dlqCount} review(s) DEAD-LETTERED in the window — the queue gave up (likely a rate-limit / AI-quota storm). These were dropped and need a re-queue${list}`);
   }
-  if (h.failed > 0) {
-    const list = listSuffix(h.failedTargets, (t) => `${prLink(t)} (${t.verdict ?? "no verdict"}${t.lastError ? ` · ${t.lastError}` : ""})`);
-    out.push(`${h.failed} review(s) permanently failed — attempt-exhausted/dead-lettered${list}`);
-  }
+  // #9136: the "permanently failed" and "stuck in error_retryable" alerts are GONE, not repointed. Both read
+  // review_targets' processing-status enum, which the 2026-06-22 convergence cutover removed as a concept --
+  // so both had been structurally unfireable since, while still reading in the code as live coverage. The
+  // failure they were meant to catch is exactly what the DLQ alert directly above catches, from a live source.
   if (h.terminalCount >= MIN_TERMINAL_FOR_RATE && h.manualRate >= MANUAL_RATE_THRESHOLD) {
     out.push(`manual-rate ${Math.round(h.manualRate * 100)}% over ${h.terminalCount} decisions`);
   }
-  if (h.stuckRetryable >= STUCK_THRESHOLD) out.push(`${h.stuckRetryable} target(s) stuck in error_retryable`);
   if (h.reversals > 0) {
     const list = listSuffix(h.reversedTargets, (t) => prLink(t));
     out.push(`${h.reversals} auto-action(s) reverted/reopened by humans in the last 7d (reversal-rate ${Math.round(h.reversalRate * 100)}%)${list}`);

@@ -32,19 +32,30 @@ describe("GET /v1/internal/decision — operator decision-trail endpoint", () =>
   it("200s with the decision trail for a seeded target, scoped to the app slug", async () => {
     const app = createApp();
     const env = createTestEnv(); // GITHUB_APP_SLUG defaults to "loopover-orb"
-    // review_targets is raw-SQL-only (migration 0050) — seed the row the endpoint reads back. Its id is the
-    // project-namespaced natural key `${slug}:${kind}:${repo}#${number}` (rowId).
+    // #9136: seeds the LIVE ledgers the endpoint now reads — pull_requests for the realized state and
+    // decision_records for the standing decision. It previously seeded review_targets, which nothing has
+    // written since the 2026-06-22 cutover.
     await env.DB.prepare(
-      `INSERT INTO review_targets (id, project, kind, repo, number, status, verdict, head_sha, decided_sha, attempt_count, terminal_at, decision_json)
-       VALUES (?, ?, 'pull_request', ?, ?, 'merged', 'merge', 'abc123', 'abc123', 1, '2026-07-01T00:00:00Z', ?)`,
+      `INSERT INTO pull_requests (repo_full_name, number, title, state, head_sha, merged_at, merge_attempt_count)
+       VALUES (?, ?, 'seeded', 'closed', 'abc123', '2026-07-01T00:00:00Z', 1)`,
     )
-      .bind("loopover-orb:pull_request:owner/repo#5", "loopover-orb", "owner/repo", 5, JSON.stringify({ action: "merge", confidence: 0.9 }))
+      .bind("owner/repo", 5)
       .run();
+    await env.DB.prepare(
+      `INSERT INTO decision_records (id, repo_full_name, pull_number, head_sha, action, reason_code, record_digest, record_json, created_at)
+       VALUES (?, ?, ?, 'abc123', 'merge', 'gate_pass', 'digest', ?, '2026-07-01T00:00:00Z')`,
+    )
+      .bind("record:owner/repo#5@abc123", "owner/repo", 5, JSON.stringify({ action: "merge", aiConfidence: 0.9 }))
+      .run();
+    // CRITICAL (#9136): review_audit.target_id is `owner/repo#5`, NOT the project-namespaced rowId. This test
+    // used to seed the rowId shape, which made the audit trail appear to work while production — which writes
+    // the bare `owner/repo#n` — got an empty trail every time. Seeding the real shape is what makes this a
+    // regression test rather than a restatement of the bug.
     await env.DB.prepare(
       `INSERT INTO review_audit (id, project, target_id, event_type, decision, summary, created_at)
        VALUES ('a1', 'loopover-orb', ?, 'reviewed', 'merge', 'looks good', '2026-07-01T00:00:00Z')`,
     )
-      .bind("loopover-orb:pull_request:owner/repo#5")
+      .bind("owner/repo#5")
       .run();
     const res = await app.request("/v1/internal/decision?repo=owner/repo&number=5", { headers: bearer(env) }, env);
     expect(res.status).toBe(200);
@@ -52,7 +63,7 @@ describe("GET /v1/internal/decision — operator decision-trail endpoint", () =>
     expect(body.project).toBe("loopover-orb");
     expect(body.target.number).toBe(5);
     expect(body.target.status).toBe("merged");
-    expect(body.decision).toEqual({ action: "merge", confidence: 0.9 });
+    expect(body.decision).toEqual({ action: "merge", aiConfidence: 0.9 });
     expect(body.audit.map((a) => a.event)).toContain("reviewed");
     // Privacy: aggregate review state only — never actor logins / trust internals.
     expect(JSON.stringify(body)).not.toMatch(/login|actor|reward|payout|trust|wallet|hotkey/i);
@@ -103,12 +114,13 @@ describe("GET /v1/internal/status — operator agent-health endpoint (#8904)", (
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       project: string;
-      counts: { byStatus: unknown; byVerdict: unknown };
+      counts: { byDecision: unknown };
       health: { manualRate: number };
     };
     expect(body.project).toBe("loopover-orb");
     expect(body.counts).toBeTruthy();
-    expect(body.counts.byStatus).toBeTruthy();
+    // #9136: byStatus + byVerdict collapsed into byDecision, sourced from review_audit's gate_decision rows.
+    expect(body.counts.byDecision).toBeTruthy();
     expect(typeof body.health.manualRate).toBe("number");
     // Privacy: aggregate review state only — never actor logins / trust internals.
     expect(JSON.stringify(body)).not.toMatch(/login|actor|reward|payout|trust|wallet|hotkey/i);

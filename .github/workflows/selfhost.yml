@@ -77,6 +77,11 @@ jobs:
       # dist/ is gitignored and only exists after this build step, so the test fails to resolve the
       # package's exports without it -- this workflow never needed the engine package built before, so it
       # never had this step; it does now.
+      # Built before the engine for the same reason the Dockerfile does: src/'s import graph reaches
+      # @loopover/contract, whose package exports resolve to dist/, so anything type-checking or
+      # bundling src/ needs it emitted first. Zod-only leaf, no workspace dependencies of its own.
+      - name: Build contract package
+        run: npm run build --workspace @loopover/contract
       - name: Build engine package
         run: npm run build --workspace @loopover/engine
 

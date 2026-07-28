@@ -761,13 +761,6 @@ export const gatePrecisionOutputSchema = {
 };
 
 
-const loginRepoPullShape = {
-  login: z.string().min(1),
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  pullNumber: z.number().int().positive(),
-};
-
 
 const predictGateShape = {
   login: z.string().min(1),

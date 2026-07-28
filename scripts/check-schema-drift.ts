@@ -46,6 +46,10 @@ export const RAW_SQL_ONLY_TABLES: Set<string> = new Set([
   "decision_ledger_anchors",
   "decision_records",
   "decision_replay_inputs",
+  // #9028: same raw-SQL-only posture as its sibling above — an operator-private blob table the drizzle
+  // schema never queries (writes go through persistDecisionReplayPrompt's raw statement; reads happen only
+  // in the operator's own extract SQL for the replay CLI).
+  "decision_replay_prompts",
   "ai_review_verdict_flips",
   "global_agent_controls",
   "global_contributor_blacklist",

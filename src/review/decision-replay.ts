@@ -214,6 +214,50 @@ export async function persistDecisionReplayInputForGate(
   });
 }
 
+/** #9028: prompts above this size are SKIPPED, never truncated -- a truncated prompt re-queried against the
+ *  model would report an action-match rate for a prompt that was never sent, which is worse than reporting
+ *  nothing. The public promptDigest commitment is unaffected either way. Sized well under D1's row ceiling. */
+export const DECISION_REPLAY_PROMPT_MAX_CHARS = 900_000;
+
+/**
+ * #9028: persist the EXACT system prompt sent to the model, keyed by the BASE record id
+ * (`record:<repo>#<pr>@<head sha>`) rather than a supersession's `:rev<N>` id -- the prompt is a property of
+ * the (target, head, resolved-config) triple, not of which revision row happened to land, and upsert-last-wins
+ * means a superseding pass that rebuilt the prompt (config changed between passes) leaves the one that
+ * matches the LATEST decision. Private sibling of decision_replay_inputs with the same posture and a shorter
+ * (30-day) retention; the text must never reach the public record or any rendered surface.
+ *
+ * Best-effort like every persist in this family: prompt capture must never break the review pass that
+ * produced it.
+ */
+export async function persistDecisionReplayPrompt(
+  env: Env,
+  args: { repoFullName: string; pullNumber: number; headSha: string; systemPrompt: string; userPrompt: string },
+): Promise<void> {
+  if (args.systemPrompt.length + args.userPrompt.length > DECISION_REPLAY_PROMPT_MAX_CHARS) {
+    console.warn(
+      JSON.stringify({
+        event: "decision_replay_prompt_skipped_oversize",
+        repoFullName: args.repoFullName,
+        pullNumber: args.pullNumber,
+        chars: args.systemPrompt.length + args.userPrompt.length,
+      }),
+    );
+    return;
+  }
+  const recordId = `record:${args.repoFullName}#${args.pullNumber}@${args.headSha}`.slice(0, 250);
+  try {
+    await env.DB.prepare(
+      `INSERT INTO decision_replay_prompts (record_id, prompt_json, created_at) VALUES (?, ?, ?)
+       ON CONFLICT(record_id) DO UPDATE SET prompt_json = excluded.prompt_json, created_at = excluded.created_at`,
+    )
+      .bind(recordId, JSON.stringify({ systemPrompt: args.systemPrompt, userPrompt: args.userPrompt }), nowIso())
+      .run();
+  } catch (error) {
+    console.warn(JSON.stringify({ event: "decision_replay_prompt_persist_error", recordId: recordId.slice(0, 120), message: errorMessage(error).slice(0, 160) }));
+  }
+}
+
 export async function persistDecisionReplayInput(env: Env, recordId: string, input: DecisionReplayInput): Promise<void> {
   try {
     await env.DB.prepare(

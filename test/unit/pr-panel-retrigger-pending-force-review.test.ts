@@ -597,4 +597,56 @@ describe("PR-panel retrigger pending force-review marker (#7626)", () => {
     // non-matching "consumed" sentinel rather than leaving the original marker value behind.
     expect(cache.values.get(pendingKey as string)).toBe("consumed");
   });
+
+  it("#9028: a pass that runs the AI persists the EXACT prompt, keyed by the base record id", async () => {
+    // The replay harness's --requery mode re-runs the model against decision_replay_prompts.prompt_json.
+    // Captured at the orchestration site (never through findings, which reach public render surfaces), keyed
+    // record:<repo>#<pr>@<head> so a supersession's :rev<N> row still finds its head's prompt.
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      AI: { run: async () => ({ response: JSON.stringify({ assessment: "Fine.", blockers: [], nits: [], suggestions: [] }) }) } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    await seedRetriggerRepo(env);
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 704,
+      title: "Prompt capture PR",
+      state: "open",
+      user: { login: "contributor" },
+      author_association: "CONTRIBUTOR",
+      head: { sha: "shaPrompt704" },
+      base: { ref: "main" },
+      labels: [],
+      body: "Closes #1",
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+      if (url.includes("/pulls/704/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const marker9028 = true;" }]);
+      if (url.endsWith("/pulls/704")) return Response.json({ number: 704, title: "Prompt capture PR", state: "open", user: { login: "contributor" }, head: { sha: "shaPrompt704" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+      if (url.includes("/commits/shaPrompt704/check-runs")) return Response.json({ total_count: 1, check_runs: [{ name: "test", status: "completed", conclusion: "success", app: { slug: "github-actions" } }] });
+      if (url.includes("/commits/shaPrompt704/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/issues/704/comments") && (method === "POST" || method === "PATCH")) return Response.json({ id: 1 }, { status: 201 });
+      if (url.includes("/issues/704/comments")) return Response.json([]);
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+
+    await reReviewStoredPullRequest(env, "prompt-capture-704", 123, "JSONbored/gittensory", 704);
+
+    const row = await env.DB.prepare("select record_id, prompt_json from decision_replay_prompts where record_id = ?")
+      .bind("record:JSONbored/gittensory#704@shaPrompt704")
+      .first<{ record_id: string; prompt_json: string }>();
+    expect(row).toBeTruthy();
+    const prompt = JSON.parse(row?.prompt_json ?? "{}") as { systemPrompt: string; userPrompt: string };
+    // BOTH turns, because the decision inputs split across them: the system prompt carries the rubric, and
+    // the USER turn carries this PR's actual diff -- which is exactly why the table is operator-private with
+    // 30-day retention, and why capturing the system prompt alone would make requery review nothing.
+    expect(prompt.systemPrompt).toContain("senior open-source maintainer");
+    expect(prompt.userPrompt).toContain("marker9028");
+  });
 });

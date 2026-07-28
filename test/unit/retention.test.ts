@@ -106,6 +106,24 @@ describe("pruneExpiredRecords", () => {
     expect(remaining?.n).toBe(1); // one old row left for the next run
   });
 
+  it("prunes decision_replay_prompts at its own SHORTER 30-day window, keyed by record_id (#9028)", async () => {
+    // Deliberately shorter than decision_replay_inputs' 180d: the prompt blob embeds the full diff (the
+    // largest, most sensitive artifact in the replay family), and the public promptDigest commitment
+    // outlives the text. Past the window, --requery honestly refuses; replay itself still works forever.
+    const env = createTestEnv();
+    await env.DB.prepare(
+      `INSERT INTO decision_replay_prompts (record_id, prompt_json, created_at) VALUES
+         ('record:o/r#1@old', '{"systemPrompt":"aged out"}', ?),
+         ('record:o/r#2@new', '{"systemPrompt":"kept"}', ?)`,
+    )
+      .bind(new Date(NOW - 31 * 86_400_000).toISOString(), new Date(NOW - 29 * 86_400_000).toISOString())
+      .run();
+    const results = await pruneExpiredRecords(env, { nowMs: NOW });
+    expect(results.find((r) => r.table === "decision_replay_prompts")?.deleted).toBe(1);
+    const rows = await env.DB.prepare("SELECT record_id FROM decision_replay_prompts").all<{ record_id: string }>();
+    expect((rows.results ?? []).map((r) => r.record_id)).toEqual(["record:o/r#2@new"]);
+  });
+
   it("rejects an unsafe table/column identifier (defensive guard)", async () => {
     const env = createTestEnv();
     await expect(pruneExpiredRecords(env, { policy: [{ table: "webhook_events; DROP TABLE x", column: "received_at", days: 1 }] })).rejects.toThrow("Unsafe retention identifier");

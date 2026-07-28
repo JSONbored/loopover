@@ -46,6 +46,14 @@
       ],
       "outputs": []
     },
+    // Zod-only leaf: no ^build edge because it depends on nothing in the workspace, which is the
+    // property that lets every other package (Worker, both stdio bins, miner, UI) depend on IT
+    // without dragging a build graph along. .tsbuildinfo restored alongside dist/ for the same
+    // reason @loopover/mcp#build declares it: a tsc run seeing a stale .tsbuildinfo with a missing
+    // dist/ silently no-ops, believing the build is already done.
+    "@loopover/contract#build": {
+      "outputs": ["dist/**", ".tsbuildinfo"]
+    },
     "@loopover/engine#build": {
       "outputs": ["dist/**"]
     },

@@ -40,6 +40,21 @@ import { buildProgressSnapshot } from "@loopover/engine";
 // #6755: the same pure bridge the remote MCP tool + /v1/loop/intake-idea both call.
 import { validateIdeaSubmission, buildTaskGraph, buildClaimPlan } from "@loopover/engine";
 import { z } from "zod";
+// #9517: pilot-tool schemas come from the shared contract, replacing shapes this file previously
+// hand-mirrored from src/mcp/server.ts. Output schemas arrive with them, so these tools stop
+// returning unschematized structured content.
+import {
+  GetPrReviewabilityInput,
+  GetPrReviewabilityOutput,
+  GetRepoContextInput,
+  GetRepoContextOutput,
+  LocalStatusStructuredInput,
+  LocalStatusStructuredOutput,
+  PredictGateInput,
+  PredictGateOutput,
+  PreflightPrInput,
+  PreflightPrOutput,
+} from "@loopover/contract/tools";
 import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadata, probeLocalScorer, referenceScorePreviewExample, resolveScorePreviewCommand, resolveWorkspaceCwd, sanitizeLocalScorerStatus, setupGuidanceForLocalScorer, isTestFile } from "../lib/local-branch.js";
 import { formatTable } from "../lib/format-table.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "../lib/cli-error.js";
@@ -1747,7 +1762,8 @@ registerStdioTool(
   "loopover_get_repo_context",
   {
     description: stdioToolDescription("loopover_get_repo_context"),
-    inputSchema: ownerRepoShape,
+    inputSchema: GetRepoContextInput.shape,
+    outputSchema: GetRepoContextOutput.shape,
   },
   async ({ owner, repo }: any) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
@@ -1759,7 +1775,8 @@ registerStdioTool(
   "loopover_get_pr_reviewability",
   {
     description: stdioToolDescription("loopover_get_pr_reviewability"),
-    inputSchema: ownerRepoPullShape,
+    inputSchema: GetPrReviewabilityInput.shape,
+    outputSchema: GetPrReviewabilityOutput.shape,
   },
   async ({ owner, repo, number }: any) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
@@ -1987,7 +2004,8 @@ registerStdioTool(
   "loopover_preflight_pr",
   {
     description: stdioToolDescription("loopover_preflight_pr"),
-    inputSchema: preflightShape,
+    inputSchema: PreflightPrInput.shape,
+    outputSchema: PreflightPrOutput.shape,
   },
   async (input: any) => toolResult("LoopOver PR preflight.", await apiPost("/v1/preflight/pr", input)),
 );
@@ -2294,7 +2312,8 @@ registerStdioTool(
   "loopover_predict_gate",
   {
     description: stdioToolDescription("loopover_predict_gate"),
-    inputSchema: predictGateShape,
+    inputSchema: PredictGateInput.shape,
+    outputSchema: PredictGateOutput.shape,
   },
   async (input: any) => {
     const body = {
@@ -2962,22 +2981,8 @@ registerStdioTool(
   "loopover_local_status_structured",
   {
     description: stdioToolDescription("loopover_local_status_structured"),
-    inputSchema: {
-      cwd: z.string().optional(),
-      baseRef: z.string().optional(),
-      repoFullName: z.string().min(3).optional(),
-    },
-    outputSchema: z.object({
-      apiUrl: z.string(),
-      package: z.object({ name: z.string(), version: z.string() }),
-      hasToken: z.boolean(),
-      profile: z.record(z.string(), z.unknown()),
-      authLogin: z.string().nullable(),
-      sessionExpiresAt: z.string().nullable(),
-      sourceUploadDefault: z.boolean(),
-      sourceUploadSupported: z.boolean(),
-      git: z.record(z.string(), z.unknown()),
-    }),
+    inputSchema: LocalStatusStructuredInput.shape,
+    outputSchema: LocalStatusStructuredOutput.shape,
   },
   async (input: any) => {
     let git = null;

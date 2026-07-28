@@ -10,6 +10,25 @@ export default defineConfig({
     alias: {
       "cloudflare:email": new URL("./test/stubs/cloudflare-email.ts", import.meta.url).pathname,
       "cloudflare:workers": new URL("./test/stubs/cloudflare-workers.ts", import.meta.url).pathname,
+      // @loopover/contract is consumed everywhere by its package specifier, which resolves through
+      // node_modules via that package's own "exports" map -- straight to dist/*.js, since (unlike
+      // packages/loopover-{mcp,miner}'s RELATIVE "../lib/foo.js" imports) there's no missing-file
+      // fallback to a sibling .ts for a package-specifier resolution that already found a real
+      // compiled file. Left unaliased, v8 coverage instruments and attributes every hit to the
+      // gitignored dist/ output instead of packages/loopover-contract/src/**/*.ts -- exactly what
+      // coverage.include below expects -- so Codecov sees 0% patch coverage on real, tested source
+      // (confirmed live on #9530). Aliasing straight to source is what the mcp/miner packages get
+      // for free from their relative-import resolution; this closes the same gap for a package
+      // that's actually installed as a workspace dependency.
+      //
+      // "/tools" MUST be listed before the bare "@loopover/contract" entry: Vite's string-`find`
+      // alias matcher treats a plain string as matching BOTH the exact specifier and anything
+      // starting with `find + "/"`, first-match-wins in declaration order -- so with the bare entry
+      // first, it silently intercepted "@loopover/contract/tools" too and rewrote it to a bogus
+      // "<index.ts path>/tools" that resolved nowhere. Confirmed by reproducing the failure with a
+      // throwaway probe test before reordering, not assumed from reading Vite's docs alone.
+      "@loopover/contract/tools": new URL("./packages/loopover-contract/src/tools/index.ts", import.meta.url).pathname,
+      "@loopover/contract": new URL("./packages/loopover-contract/src/index.ts", import.meta.url).pathname,
     },
   },
   test: {
@@ -58,6 +77,10 @@ export default defineConfig({
         // export the way bin/loopover-miner-mcp.ts already was.
         "packages/loopover-miner/bin/**/*.ts",
         "packages/discovery-index/src/**/*.ts",
+        // @loopover/contract is pure schema + pure projection functions with no I/O of any kind, imported
+        // in-process by test/unit/contract-*.test.ts -- fully unit-coverable, so it is graded like any
+        // other src surface rather than exempted.
+        "packages/loopover-contract/src/**/*.ts",
         // All 5 packages/loopover-mcp/lib/*.ts files (format-table/local-branch/redact-local-path/
         // telemetry/cli-error) are imported in-process by test/unit/*.test.ts (cli-error's own
         // test/unit/mcp-cli-error.test.ts landed in #7409), so a PR touching any of them is covered by

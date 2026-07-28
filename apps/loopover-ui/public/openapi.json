@@ -1417,6 +1417,15 @@
                   "sampled_cache",
                   "authoritative"
                 ]
+              },
+              "draftPullRequests": {
+                "type": "number"
+              },
+              "slopFlaggedPullRequests": {
+                "type": "number"
+              },
+              "duplicateFlaggedPullRequests": {
+                "type": "number"
               }
             },
             "required": [
@@ -1424,8 +1433,11 @@
               "openPullRequests",
               "unlinkedPullRequests",
               "stalePullRequests",
+              "draftPullRequests",
               "maintainerAuthoredPullRequests",
               "collisionClusters",
+              "slopFlaggedPullRequests",
+              "duplicateFlaggedPullRequests",
               "ageBuckets",
               "likelyReviewablePullRequests"
             ]
@@ -1434,6 +1446,32 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Finding"
+            }
+          },
+          "rankedPullRequests": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "number": {
+                  "type": "number"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "authorLogin": {
+                  "type": "string"
+                },
+                "recommendation": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "number",
+                "title",
+                "authorLogin",
+                "recommendation"
+              ]
             }
           }
         },
@@ -1527,7 +1565,8 @@
             "type": "string",
             "enum": [
               "issue",
-              "pull_request"
+              "pull_request",
+              "recent_merged_pull_request"
             ]
           },
           "number": {
@@ -1541,6 +1580,32 @@
             "nullable": true
           },
           "htmlUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "linkedIssues": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "linkedIssueClaimedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "changedFiles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "body": {
             "type": "string",
             "nullable": true
           }

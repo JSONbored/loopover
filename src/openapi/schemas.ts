@@ -265,13 +265,22 @@ export const LaneAdviceSchema = z
   })
   .openapi("LaneAdvice");
 
+// #9517: `recent_merged_pull_request` was missing from `type` even though buildCollisionReport is
+// handed recent merged PRs and emits items with exactly that discriminant -- so a client validating
+// a real response against the published spec rejected it. The remaining fields were absent too,
+// which understated what this endpoint actually returns.
 export const CollisionItemSchema = z
   .object({
-    type: z.enum(["issue", "pull_request"]),
+    type: z.enum(["issue", "pull_request", "recent_merged_pull_request"]),
     number: z.number(),
     title: z.string(),
     authorLogin: z.string().nullable().optional(),
     htmlUrl: z.string().nullable().optional(),
+    labels: z.array(z.string()).optional(),
+    linkedIssues: z.array(z.number()).optional(),
+    linkedIssueClaimedAt: z.string().nullable().optional(),
+    changedFiles: z.array(z.string()).optional(),
+    body: z.string().nullable().optional(),
   })
   .openapi("CollisionItem");
 
@@ -304,13 +313,20 @@ export const QueueHealthSchema = z
     burdenScore: z.number(),
     level: z.enum(["low", "medium", "high", "critical"]),
     summary: z.string(),
+    // #9517: draftPullRequests, slopFlaggedPullRequests and duplicateFlaggedPullRequests are all
+    // REQUIRED on the QueueHealth type and always emitted by buildQueueHealth, but were missing
+    // here -- the published spec understated the response. The two flagged counts are deliberately
+    // public-safe counts, carrying no score or ranking detail.
     signals: z.object({
       openIssues: z.number(),
       openPullRequests: z.number(),
       unlinkedPullRequests: z.number(),
       stalePullRequests: z.number(),
+      draftPullRequests: z.number(),
       maintainerAuthoredPullRequests: z.number(),
       collisionClusters: z.number(),
+      slopFlaggedPullRequests: z.number(),
+      duplicateFlaggedPullRequests: z.number(),
       ageBuckets: z.object({
         under7Days: z.number(),
         days7To30: z.number(),
@@ -321,6 +337,16 @@ export const QueueHealthSchema = z
       likelyReviewablePullRequestsSource: z.enum(["cache", "sampled_cache", "authoritative"]).optional(),
     }),
     findings: z.array(FindingSchema),
+    rankedPullRequests: z
+      .array(
+        z.object({
+          number: z.number(),
+          title: z.string(),
+          authorLogin: z.string(),
+          recommendation: z.string(),
+        }),
+      )
+      .optional(),
   })
   .openapi("QueueHealth");
 

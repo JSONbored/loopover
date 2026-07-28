@@ -77,7 +77,21 @@ describe("MCP loopover_get_pr_reviewability (#6154)", () => {
       targetKey: "owner/repo#7",
       repoFullName: "owner/repo",
       generatedAt: "2026-05-30T00:00:00.000Z",
-      payload: { repoFullName: "owner/repo", pullNumber: 7, generatedAt: "2026-05-30T00:00:00.000Z", summary: "cached" },
+      // #9517: a persisted pr-reviewability snapshot is always a full PullRequestReviewability --
+      // src/api/routes.ts's reviewability route persists the whole computed object, never a partial
+      // one -- so the fixture matches that shape now that the tool validates it against a real
+      // output schema instead of z.unknown().
+      payload: {
+        repoFullName: "owner/repo",
+        pullNumber: 7,
+        generatedAt: "2026-05-30T00:00:00.000Z",
+        score: 0.5,
+        action: "review_now",
+        noiseSources: [],
+        whyThisHelps: [],
+        maintainerNextSteps: [],
+        privateSummary: "cached",
+      },
     });
     const client = await connect(env);
     const result = await client.callTool({ name: "loopover_get_pr_reviewability", arguments: { owner: "owner", repo: "repo", number: 7 } });
@@ -93,7 +107,19 @@ describe("MCP loopover_get_pr_reviewability (#6154)", () => {
       `insert into signal_snapshots (id, signal_type, target_key, repo_full_name, payload_json, generated_at)
        values ('reviewability-payload-generated', 'pr-reviewability', 'owner/repo#7', 'owner/repo', ?, '')`,
     )
-      .bind(JSON.stringify({ repoFullName: "owner/repo", pullNumber: 7, generatedAt: "2026-05-29T00:00:00.000Z", summary: "payload" }))
+      .bind(
+        JSON.stringify({
+          repoFullName: "owner/repo",
+          pullNumber: 7,
+          generatedAt: "2026-05-29T00:00:00.000Z",
+          score: 0.5,
+          action: "review_now",
+          noiseSources: [],
+          whyThisHelps: [],
+          maintainerNextSteps: [],
+          privateSummary: "payload",
+        }),
+      )
       .run();
     const client = await connect(env);
     const result = await client.callTool({ name: "loopover_get_pr_reviewability", arguments: { owner: "owner", repo: "repo", number: 7 } });
@@ -108,7 +134,18 @@ describe("MCP loopover_get_pr_reviewability (#6154)", () => {
       `insert into signal_snapshots (id, signal_type, target_key, repo_full_name, payload_json, generated_at)
        values ('reviewability-no-generated', 'pr-reviewability', 'owner/repo#7', 'owner/repo', ?, '')`,
     )
-      .bind(JSON.stringify({ repoFullName: "owner/repo", pullNumber: 7, summary: "no-timestamp" }))
+      .bind(
+        JSON.stringify({
+          repoFullName: "owner/repo",
+          pullNumber: 7,
+          score: 0.5,
+          action: "review_now",
+          noiseSources: [],
+          whyThisHelps: [],
+          maintainerNextSteps: [],
+          privateSummary: "no-timestamp",
+        }),
+      )
       .run();
     const client = await connect(env);
     const result = await client.callTool({ name: "loopover_get_pr_reviewability", arguments: { owner: "owner", repo: "repo", number: 7 } });

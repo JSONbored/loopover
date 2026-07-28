@@ -129,6 +129,11 @@ jobs:
       # That package's dist/ is gitignored and only exists after this build step -- the regular CI smoke
       # test's narrower (non --all) build never hits this import chain, so it never caught the gap that
       # ci.yml's own validate-code job hit for ordinary backend PRs (fixed there separately).
+      # Built before the engine for the same reason the Dockerfile does: src/'s import graph reaches
+      # @loopover/contract, whose package exports resolve to dist/, so anything type-checking or
+      # bundling src/ needs it emitted first. Zod-only leaf, no workspace dependencies of its own.
+      - name: Build contract package
+        run: npm run build --workspace @loopover/contract
       - name: Build engine package
         run: npm run build --workspace @loopover/engine
 

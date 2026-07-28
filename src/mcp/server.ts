@@ -4,6 +4,22 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import { ElicitResultSchema, type ServerNotification, type ServerRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+// #9517: the pilot tools' schemas come from the shared contract instead of being declared here.
+// `.shape` is what the MCP SDK's registerTool wants; the same ZodObject also drives the JSON Schema
+// the agent-tool specs and the contract validator read, so there is one definition per tool rather
+// than one per server.
+import {
+  AdminGetConfigInput,
+  AdminGetConfigOutput,
+  GetPrReviewabilityInput,
+  GetPrReviewabilityOutput,
+  GetRepoContextInput,
+  GetRepoContextOutput,
+  PredictGateInput,
+  PredictGateOutput,
+  PreflightPrInput,
+  PreflightPrOutput,
+} from "@loopover/contract/tools";
 import {
   MAX_FIND_OPPORTUNITIES_LANGUAGE_LENGTH,
   MAX_FIND_OPPORTUNITIES_LANGUAGES,
@@ -2180,8 +2196,8 @@ export class LoopoverMcp {
       "loopover_get_repo_context",
       {
         description: "Return LoopOver repo context: registration, lane, queue health, collisions, and config quality.",
-        inputSchema: ownerRepoShape,
-        outputSchema: repoContextOutputSchema,
+        inputSchema: GetRepoContextInput.shape,
+        outputSchema: GetRepoContextOutput.shape,
       },
       async (input) => this.toolResult(await this.getRepoContext(input)),
     );
@@ -2454,8 +2470,8 @@ export class LoopoverMcp {
       {
         description:
           "Predict whether a planned PR would pass the repo's LoopOver gate, from its PUBLIC .loopover.yml only — an agent-native pre-submission self-check that works on ANY repo (no Gittensor account). Under the oss-anti-slop pack the verdict applies to any author; self-scoped to the authenticated login.",
-        inputSchema: predictGateShape,
-        outputSchema: predictGateOutputSchema,
+        inputSchema: PredictGateInput.shape,
+        outputSchema: PredictGateOutput.shape,
       },
       async (input) => this.toolResult(await this.predictGate(input)),
     );
@@ -2650,8 +2666,8 @@ export class LoopoverMcp {
       "loopover_preflight_pr",
       {
         description: "Preflight a planned PR for lane correctness, duplicate risk, linked issues, and review burden.",
-        inputSchema: preflightShape,
-        outputSchema: preflightResultOutputSchema,
+        inputSchema: PreflightPrInput.shape,
+        outputSchema: PreflightPrOutput.shape,
       },
       async (input) => this.toolResult(await this.preflightPr(input)),
     );
@@ -2742,8 +2758,8 @@ export class LoopoverMcp {
       {
         description:
           "Return the cached or freshly-computed reviewability report for an open PR: how ready it is to review/merge, the blocking or advisory signals against it, and its lane/duplicate/linked-issue context. Metadata-only, repo-scoped, no GitHub writes.",
-        inputSchema: ownerRepoPullShape,
-        outputSchema: freshnessResponseOutputSchema,
+        inputSchema: GetPrReviewabilityInput.shape,
+        outputSchema: GetPrReviewabilityOutput.shape,
       },
       async (input) => this.toolResult(await this.getPrReviewability(input)),
     );
@@ -3298,8 +3314,8 @@ export class LoopoverMcp {
         {
           description:
             "Self-hosted-operator only. Read this instance's own private .loopover.yml config: the merged effective config for a repo (shared base + global default + per-repo override), or just the raw global-default layer, or just the raw per-repo layer. Requires LOOPOVER_MCP_ADMIN_TOKEN. Returns configured=false if LOOPOVER_REPO_CONFIG_DIR is unset.",
-          inputSchema: adminConfigScopeShape,
-          outputSchema: adminGetConfigOutputSchema,
+          inputSchema: AdminGetConfigInput.shape,
+          outputSchema: AdminGetConfigOutput.shape,
         },
         async (input) => this.toolResult(await this.adminGetConfig(input)),
       );

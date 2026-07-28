@@ -1,0 +1,64 @@
+{
+  "name": "@loopover/contract",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "description": "Single zod source of truth for LoopOver's MCP tool and API contracts — schemas, tool metadata, and the projections every server and client derives from.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JSONbored/loopover.git",
+    "directory": "packages/loopover-contract"
+  },
+  "homepage": "https://github.com/JSONbored/loopover#readme",
+  "bugs": {
+    "url": "https://github.com/JSONbored/loopover/issues"
+  },
+  "keywords": [
+    "loopover",
+    "mcp",
+    "model-context-protocol",
+    "zod",
+    "openapi",
+    "schema"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./enums": {
+      "types": "./dist/enums.d.ts",
+      "default": "./dist/enums.js"
+    },
+    "./tools": {
+      "types": "./dist/tools/index.d.ts",
+      "default": "./dist/tools/index.js"
+    },
+    "./agent-specs": {
+      "types": "./dist/agent-specs.d.ts",
+      "default": "./dist/agent-specs.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=22.0.0 <23.0.0"
+  }
+}

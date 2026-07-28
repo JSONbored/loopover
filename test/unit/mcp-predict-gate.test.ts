@@ -51,9 +51,13 @@ describe("MCP loopover_predict_gate", () => {
     const env = createTestEnv();
     const client = await connect(env);
 
+    // #9517: the per-path cap is now @loopover/contract's PREDICT_GATE_MAX_CHANGED_PATH_CHARS
+    // (400), the wider of the two servers' historical bounds (this server's own predictGateShape
+    // used PREFLIGHT_LIMITS.changedFileChars, 300; the stdio server used 400) -- a shared input
+    // schema may only widen a bound, never tighten one, so 400 is what both servers accept today.
     const result = await client.callTool({
       name: "loopover_predict_gate",
-      arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "Huge path", changedPaths: [`src/${"a".repeat(301)}.ts`] },
+      arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "Huge path", changedPaths: [`src/${"a".repeat(401)}.ts`] },
     });
 
     expect(result.isError).toBe(true);

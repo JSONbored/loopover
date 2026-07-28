@@ -1128,7 +1128,15 @@ export function localBranchAnalysisFixture() {
       rerunWhen: "Rerun after account/queue maturity blockers clear.",
     },
     dataQuality: { signalFidelity: { status: "complete" } },
+    // #9517: predicted/basis/funnel/note were missing here, though PredictedGateVerdict
+    // (packages/loopover-engine/src/predicted-gate.ts) declares all four as required and
+    // buildPredictedGateVerdict always emits them -- the fixture had drifted from the real payload,
+    // which only surfaced once loopover_predict_gate gained an output schema to validate against.
+    // funnel is null under the `gittensor` pack (the contributor is already registered); it is only
+    // populated under `oss-anti-slop`.
     predictedGate: {
+      predicted: true,
+      basis: "public_config",
       pack: "gittensor",
       conclusion: "advisory_pass",
       title: "Predicted gate: advisory pass",
@@ -1136,6 +1144,8 @@ export function localBranchAnalysisFixture() {
       readinessScore: 72,
       blockers: [],
       warnings: [{ code: "missing_tests", title: "Missing tests", detail: "No test files accompany the changed paths." }],
+      funnel: null,
+      note: "Predicted from the repo's public .loopover.yml gate config + safe defaults.",
     },
   };
 }

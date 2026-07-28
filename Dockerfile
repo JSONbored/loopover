@@ -19,6 +19,10 @@ COPY . .
 # --ignore-scripts: no native builds are needed (SQLite is the built-in node:sqlite; @hono/node-server is
 # pure JS; esbuild ships its binary as an optional dependency, not a script).
 RUN npm ci --ignore-scripts
+# @loopover/contract before the engine: src/ imports it, and its package exports resolve to dist/,
+# so esbuild in build-selfhost.ts below cannot resolve the import until it has been emitted. A
+# zod-only leaf with no workspace dependencies, so it builds first and standalone.
+RUN npm --workspace @loopover/contract run build
 RUN npm --workspace @loopover/engine run build
 # --all: bundle every dependency into one self-contained dist/server.mjs, so the runtime image needs no
 # node_modules (≈10× smaller). The bundle has zero `cloudflare:*` imports (stubbed at build), so no loader.

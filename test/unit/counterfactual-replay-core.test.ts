@@ -126,7 +126,7 @@ describe("budget + artifacts helpers (#8221)", () => {
 
 describe("#8222: prompt version + CI comment/persist helpers", () => {
   it("the canonical judge prompt is a stable pure function of source and the version constant is pinned", () => {
-    expect(REVIEW_PROMPT_VERSION).toBe("review-prompt-v2");
+    expect(REVIEW_PROMPT_VERSION).toBe("review-prompt-v3");
     const prompt = buildCanonicalJudgePrompt();
     expect(prompt.length).toBeGreaterThan(100);
     expect(prompt).toBe(buildCanonicalJudgePrompt()); // no clock, no env, no input

@@ -106,6 +106,7 @@ export const REVIEW_SYSTEM_PROMPT = [
   "PERFORMANCE SEVERITY — a performance concern is a blocker ONLY when the diff introduces a genuine, visible regression with a concrete trigger (a DB query or network call moved inside a loop, a loop/fanout over input whose size the diff removed a bound on). A stylistic or micro-optimization preference ('could use a Map instead of an array', 'this could be slightly faster') is a NIT, not a blocker, even if real.",
   "DIFF SCOPE — the diff shows only CHANGED lines, NOT whole files. A function, variable, import, type, or symbol you do not SEE may already be defined or imported elsewhere in the same file/module. NEVER report a 'missing import', 'undefined/not-imported symbol', or 'X is not defined -> ReferenceError' as a blocker unless the diff ITSELF removes the definition or introduces the symbol without defining it anywhere shown. When you cannot confirm a symbol is missing from the visible diff, it is NOT a blocker — at most a nit ('verify X is imported/defined').",
   "TRACE BEFORE ASSERTING ABSENCE — this rule extends to ANY 'X is missing' blocker (a missing schema/annotation/field, a missing null/array/type guard, a missing await/error-handler, an unregistered route/tool/handler): a backfill loop, a default, an early guard, or a registration ELSEWHERE may already supply it. Before calling absence a blocker, find the line in the visible context that WOULD break and reference it; if you cannot SEE the breaking code, downgrade to a nit phrased as a verification ('confirm X is registered/guarded'), never a blocker.",
+  'ABSENCE CLAIMS ARE VERIFIED MECHANICALLY — when a blocker asserts something is MISSING, you MUST use the object form in the blockers array: {"claim": "<the one-sentence blocker>", "kind": "<one of missing_symbol | missing_import | missing_guard | missing_handling | missing_registration>", "evidence": "<the exact line, copied VERBATIM from the visible diff or context, that breaks because of the absence>"}. The evidence quote is checked mechanically against the material you were shown: an absence blocker whose quote is not found there is automatically demoted to a verification nit. Non-absence blockers remain plain strings.',
   // #8789: the bail is for MECHANICAL breakage only. The previous wording ("does not cohere with the PR
   // title/description") made a model bail on a VALID diff whose title merely undersold it — confirmed live
   // (2026-07-26, PR #8735: a "trivial test-fixture fix" title over a diff also carrying real production
@@ -541,6 +542,17 @@ export type ModelReview = {
    * fabricates a value or a fallback band.
    */
   valueAssessment?: { magnitude: ImprovementMagnitude; rationale: string } | undefined;
+  /**
+   * #8833 (structured verifiable blockers): the ABSENCE-family claims the model emitted in object form,
+   * carrying the exact visible line the model says would break (`evidence`). Populated by parseModelReview
+   * from object-form blocker entries; ALWAYS present (defaults []). The claims also appear as plain strings
+   * in `blockers` (the canonical decision surface — nothing downstream changes shape); this parallel field
+   * exists so demoteUnverifiedAbsenceBlockers can machine-check each claim's evidence against the material
+   * the model was actually shown, which is what makes the DIFF SCOPE / TRACE-BEFORE-ASSERTING-ABSENCE rules
+   * enforceable instead of requested. Optional (absent === []) so the many existing ModelReview literals in
+   * combiners/tests keep compiling — only parseModelReview writes it and only the demotion reads it.
+   */
+  absenceClaims?: { claim: string; evidence: string }[] | undefined;
 };
 
 export type AiReviewDiagnostic = {
@@ -1025,6 +1037,47 @@ export function demoteStaleBaseClaimBlockers(review: ModelReview): { review: Mod
   };
 }
 
+/** #8833 (structured verifiable blockers): the ABSENCE-claim kinds whose object form is REQUIRED by the
+ *  rubric, because each asserts that something is NOT there — the one claim family the confirmed
+ *  hallucination pattern lives in (a symbol/import/guard/handler the model merely could not SEE). Every
+ *  other kind remains free-form judgment; this list is deliberately closed so a novel kind string can never
+ *  smuggle a claim past verification (unknown kinds are treated as plain judgment, not as absence). */
+export const ABSENCE_CLAIM_KINDS = new Set(["missing_symbol", "missing_import", "missing_guard", "missing_handling", "missing_registration"]);
+
+/** #8833: the minimum usable evidence quote. Shorter fragments ("x", ") {") appear in virtually any diff, so
+ *  they would verify vacuously — a quote must be long enough to plausibly identify ONE breaking line. */
+export const ABSENCE_EVIDENCE_MIN_CHARS = 8;
+
+/** #8833 (structured verifiable blockers): machine-check every ABSENCE claim's quoted evidence against the
+ *  material the model was actually shown, and demote the unverifiable ones to verification nits.
+ *
+ *  The rubric's DIFF SCOPE / TRACE-BEFORE-ASSERTING-ABSENCE rules have always REQUESTED this discipline
+ *  ("find the line that WOULD break ... if you cannot SEE the breaking code, downgrade to a nit"); the
+ *  object-form blocker schema makes it checkable and this function makes it ENFORCED: an absence claim
+ *  whose `evidence` does not appear verbatim in the prompt (after stripping a leading diff +/- marker) is
+ *  exactly the "cannot see the breaking code" case, downgraded to the same verification nit the rubric
+ *  prescribes. A verified quote leaves the blocker standing untouched — this can only ever remove claims
+ *  the model provably could not ground, never real judgment. PURE. */
+export function demoteUnverifiedAbsenceBlockers(review: ModelReview, promptText: string): { review: ModelReview; demoted: string[] } {
+  const claims = review.absenceClaims ?? [];
+  if (claims.length === 0) return { review, demoted: [] };
+  const unverified = new Set<string>();
+  for (const { claim, evidence } of claims) {
+    const quote = evidence.trim().replace(/^[+-]\s?/, "");
+    if (quote.length < ABSENCE_EVIDENCE_MIN_CHARS || !promptText.includes(quote)) unverified.add(claim);
+  }
+  const demoted = review.blockers.filter((blocker) => unverified.has(blocker));
+  if (demoted.length === 0) return { review, demoted };
+  return {
+    review: {
+      ...review,
+      blockers: review.blockers.filter((blocker) => !unverified.has(blocker)),
+      nits: [...review.nits, ...demoted.map((claim) => `Verify: ${claim} (demoted: absence claim whose quoted evidence was not found in the reviewed material — the breaking line must be visible to block)`)],
+    },
+    demoted,
+  };
+}
+
 /** Parse a model's JSON review into a normalized {@link ModelReview}, or null when unparseable. */
 export function parseModelReview(text: string): ModelReview | null {
   const jsonText = extractLastJsonObject(text);
@@ -1099,7 +1152,38 @@ export function parseModelReview(text: string): ModelReview | null {
     };
     const assessment =
       typeof obj.assessment === "string" ? obj.assessment.trim() : "";
-    const blockers = toList(obj.blockers);
+    // #8833 (structured verifiable blockers): a blocker entry may be the OBJECT form
+    // {claim, kind, evidence}. Every usable entry lands in `blockers` as its plain claim string — the
+    // canonical decision surface is unchanged — and entries whose kind is an ABSENCE claim additionally
+    // land in `absenceClaims` for evidence verification. Fail-safe per entry: a non-string/non-object
+    // entry, or an object without a usable `claim`, is dropped, exactly like toList drops non-strings.
+    // An unknown `kind` is kept as plain judgment but NEVER as an absence claim (closed kind set — a
+    // novel kind string cannot smuggle a claim past verification).
+    const toBlockers = (value: unknown): { blockers: string[]; absenceClaims: { claim: string; evidence: string }[] } => {
+      if (!Array.isArray(value)) return { blockers: [], absenceClaims: [] };
+      const flat: string[] = [];
+      const absence: { claim: string; evidence: string }[] = [];
+      for (const entry of value) {
+        if (typeof entry === "string") {
+          const claim = entry.trim();
+          if (claim) flat.push(claim);
+          continue;
+        }
+        if (entry && typeof entry === "object") {
+          const o = entry as Record<string, unknown>;
+          const claim = typeof o.claim === "string" ? o.claim.trim() : "";
+          if (!claim) continue;
+          flat.push(claim);
+          if (typeof o.kind === "string" && ABSENCE_CLAIM_KINDS.has(o.kind)) {
+            absence.push({ claim, evidence: typeof o.evidence === "string" ? o.evidence : "" });
+          }
+        }
+      }
+      const kept = flat.slice(0, 6);
+      const keptSet = new Set(kept);
+      return { blockers: kept, absenceClaims: absence.filter((a) => keptSet.has(a.claim)) };
+    };
+    const { blockers, absenceClaims } = toBlockers(obj.blockers);
     const nits = toList(obj.nits);
     const suggestions = toList(obj.suggestions);
     const inlineFindings = toInlineFindings(obj.inlineFindings);
@@ -1149,6 +1233,7 @@ export function parseModelReview(text: string): ModelReview | null {
       suggestions,
       inlineFindings,
       confidence,
+      absenceClaims,
       ...(valueAssessment ? { valueAssessment } : {}),
     };
   } catch {
@@ -1365,7 +1450,7 @@ const IMPROVEMENT_SIGNAL_SUFFIX =
  *  that shapes the judge's verdict surface — REVIEW_SYSTEM_PROMPT, buildSystemPrompt's suffix composition,
  *  or parseModelReview's accepted output shape. The CI replay compares base vs head canonical prompts and
  *  only spends when the version (or the canonical text) actually changed. */
-export const REVIEW_PROMPT_VERSION = "review-prompt-v2"; // v2 (#8833): size/stale-base adjudication ban + explicit "unknown" confidence abstention
+export const REVIEW_PROMPT_VERSION = "review-prompt-v3"; // v3 (#8833): structured verifiable absence-claim schema; v2: size/stale-base adjudication ban + explicit "unknown" confidence abstention
 
 /** #8222: the CANONICAL judge prompt — buildSystemPrompt with every optional suffix absent, which is the
  *  exact base-model system prompt a default-configured repo's review runs under. The replay harness diffs
@@ -1655,7 +1740,10 @@ async function runWorkersOpinion(
         const sizeDemotion = testEvidenceDemotion ? demoteSizeClaimBlockers(testEvidenceDemotion.review) : null;
         // ... and for base-staleness/rebase/conflict claims (owned by stale_base_ref + mergeable_state).
         const staleBaseDemotion = sizeDemotion ? demoteStaleBaseClaimBlockers(sizeDemotion.review) : null;
-        const parsed = staleBaseDemotion?.review ?? null;
+        // #8833 (structured verifiable blockers): absence claims must quote a breaking line that actually
+        // appears in what the model was shown -- checked against the SAME user prompt this call sent.
+        const absenceDemotion = staleBaseDemotion ? demoteUnverifiedAbsenceBlockers(staleBaseDemotion.review, user) : null;
+        const parsed = absenceDemotion?.review ?? null;
         if (demotion && demotion.demoted.length > 0) {
           console.warn(JSON.stringify({ level: "warn", event: "ai_review_ci_claim_demoted", model, count: demotion.demoted.length }));
         }
@@ -1670,6 +1758,9 @@ async function runWorkersOpinion(
         }
         if (staleBaseDemotion && staleBaseDemotion.demoted.length > 0) {
           console.warn(JSON.stringify({ level: "warn", event: "ai_review_stale_base_claim_demoted", model, count: staleBaseDemotion.demoted.length }));
+        }
+        if (absenceDemotion && absenceDemotion.demoted.length > 0) {
+          console.warn(JSON.stringify({ level: "warn", event: "ai_review_unverified_absence_demoted", model, count: absenceDemotion.demoted.length }));
         }
         if (parsed && parsed.assessment.trim() !== "") {
           diagnostics.push({ model, attempt, status: "parsed", responseChars: text.length, hasJsonObject: Boolean(extractLastJsonObject(text)), ...usageFields });
@@ -2071,7 +2162,12 @@ async function runProviderReview(
   if (providerStaleBaseDemotion && providerStaleBaseDemotion.demoted.length > 0) {
     console.warn(JSON.stringify({ level: "warn", event: "ai_review_stale_base_claim_demoted", provider: providerKey.provider, count: providerStaleBaseDemotion.demoted.length }));
   }
-  const review = providerStaleBaseDemotion?.review ?? null;
+  // #8833 (structured verifiable blockers): same evidence verification as the Workers path.
+  const providerAbsenceDemotion = providerStaleBaseDemotion ? demoteUnverifiedAbsenceBlockers(providerStaleBaseDemotion.review, user) : null;
+  if (providerAbsenceDemotion && providerAbsenceDemotion.demoted.length > 0) {
+    console.warn(JSON.stringify({ level: "warn", event: "ai_review_unverified_absence_demoted", provider: providerKey.provider, count: providerAbsenceDemotion.demoted.length }));
+  }
+  const review = providerAbsenceDemotion?.review ?? null;
   return {
     review,
     diagnostic: {

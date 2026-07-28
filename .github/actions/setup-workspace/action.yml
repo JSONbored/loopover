@@ -68,7 +68,13 @@ runs:
         # Globbing `apps/*` + `packages/*` (the workspace globs from package.json) makes the cache follow
         # npm's layout automatically instead of re-breaking on the next hoist change. review-enrichment
         # and control-plane are NOT workspaces -- they have their own installs and their own cache steps.
-        key: npm-${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true) && 'fork' || 'trusted' }}-${{ hashFiles('.nvmrc') }}-${{ hashFiles('package.json', 'apps/*/package.json', 'packages/*/package.json', 'package-lock.json') }}
+        # `v2` is a manual cache-generation salt, and it is REQUIRED whenever the `path` list changes.
+        # Widening `path` alone does not invalidate anything: the key is computed from manifests only, so
+        # an unchanged lockfile keeps HITTING the pre-existing entry, which was archived from the narrow
+        # path list and therefore still restores no `apps/loopover-miner-ui/node_modules` -- and a hit
+        # skips `npm ci`, so the tree stays incomplete exactly as before. Bumping the salt forces one
+        # clean miss so a complete tree gets archived under the new list.
+        key: npm-v2-${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true) && 'fork' || 'trusted' }}-${{ hashFiles('.nvmrc') }}-${{ hashFiles('package.json', 'apps/*/package.json', 'packages/*/package.json', 'package-lock.json') }}
 
     - name: Install dependencies (retry on transient failures)
       if: ${{ steps.node-modules-cache.outputs.cache-hit != 'true' }}

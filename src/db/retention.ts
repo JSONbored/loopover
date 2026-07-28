@@ -252,37 +252,72 @@ export async function pruneExpiredRecords(
     // per day (hundreds at most, vs the six-figure log tables the batching exists for), and a bounded delete
     // would reintroduce the split-commit problem for whatever the bound left behind.
     if (rule.table === "orb_pr_outcomes") {
-      const batchResults = await env.DB.batch([
-        // Fold EXACTLY the population getOrbGlobalStats counts: registered installations only, and only
-        // outcomes whose PR never published a review surface (those are already counted by the own ledger).
-        // Rows failing either filter are deleted WITHOUT folding -- the live query never counted them, so
-        // folding them would make the public total jump on prune day. Keyed per lowercased account_login so
-        // the stats query's excludeAccount de-dup keeps working against the rollup after the raw rows are gone.
-        env.DB.prepare(
-          `INSERT INTO orb_outcome_rollups (account_login, merged, closed, total, updated_at)
-           SELECT LOWER(COALESCE(i.account_login, '')) AS account_login,
-                  SUM(CASE WHEN o.outcome = 'merged' THEN 1 ELSE 0 END) AS merged,
-                  SUM(CASE WHEN o.outcome = 'closed' THEN 1 ELSE 0 END) AS closed,
-                  COUNT(*) AS total,
-                  ?2 AS updated_at
-           FROM orb_pr_outcomes o
-           JOIN orb_github_installations i ON i.installation_id = o.installation_id AND i.registered = 1
-           LEFT JOIN audit_events ae
-             ON ae.target_key = o.repository_full_name || '#' || o.pr_number
-             AND ae.event_type = 'github_app.pr_public_surface_published'
-           WHERE o.occurred_at < ?1 AND ae.id IS NULL
-           GROUP BY LOWER(COALESCE(i.account_login, ''))
-           ON CONFLICT(account_login) DO UPDATE SET
-             merged = orb_outcome_rollups.merged + excluded.merged,
-             closed = orb_outcome_rollups.closed + excluded.closed,
-             total = orb_outcome_rollups.total + excluded.total,
-             updated_at = excluded.updated_at`,
-        ).bind(cutoff, nowIso()),
-        env.DB.prepare(`DELETE FROM orb_pr_outcomes WHERE occurred_at < ?1`).bind(cutoff),
-      ]);
-      /* v8 ignore next 2 -- defensive: batch() returns exactly one result per statement on both backends, so
-       * the `?.`/`?? 0` arms only satisfy the driver types; a missing meta degrades the COUNT, never the prune. */
-      results.push({ table: rule.table, column: rule.column, cutoff, deleted: Number(batchResults[1]?.meta?.changes ?? 0) });
+      // #9474: this table feeds a CUMULATIVE public counter (getOrbGlobalStats -> the homepage "all-time"
+      // merged/closed totals), so every row must be folded into the durable orb_outcome_rollups totals in the
+      // SAME transaction that deletes it. A fold and delete that could commit separately would either
+      // double-count (fold landed, delete didn't, next run re-folds) or under-count (delete landed, fold
+      // didn't).
+      //
+      // BOUNDED, like every other table here. An earlier revision deleted the whole aged cohort in one
+      // unbatched statement, arguing the daily volume is small -- true today, and exactly the argument that
+      // ages badly (one fleet-wide backfill and it is a multi-million-row statement). Instead each slice
+      // picks a TIMESTAMP boundary and both statements share the identical `occurred_at` predicate, so they
+      // provably see the same rows without either depending on rowid/ctid (which pg-dialect rewrites to a
+      // PHYSICAL location -- the #9470 hazard) or on row-value tuple syntax (uneven SQLite support).
+      //
+      // Slice boundary = the `occurred_at` of the row at OFFSET batchSize-1 among expired rows, ascending,
+      // taken INCLUSIVELY (`<=`). Inclusive is what makes progress guaranteed even when many rows share one
+      // timestamp: an exclusive `<` boundary against a run of ties selects zero rows and spins forever (there
+      // is a dedicated regression test for exactly that). The slice is therefore batchSize rows plus any ties
+      // at the boundary, and the final slice (no row at that offset) takes the remainder with the real cutoff.
+      let deleted = 0;
+      for (;;) {
+        const boundaryRow = await env.DB.prepare(
+          `SELECT ${rule.column} AS boundary FROM ${rule.table} WHERE ${retentionWhere(rule)} ORDER BY ${rule.column} LIMIT 1 OFFSET ${batchSize - 1}`,
+        )
+          .bind(cutoff)
+          .first<{ boundary: string }>();
+        // `== null` deliberately: D1 drivers disagree on .first() returning null vs undefined for no-row.
+        const sliceIsFinal = boundaryRow == null;
+        const sliceWhere = sliceIsFinal ? `${rule.column} < ?1` : `${rule.column} <= ?1`;
+        const sliceBound = sliceIsFinal ? cutoff : boundaryRow.boundary;
+        const batchResults = await env.DB.batch([
+          // Fold EXACTLY the population getOrbGlobalStats counts: registered installations only, and only
+          // outcomes whose PR never published a review surface (those are already counted by the own ledger).
+          // Rows failing either filter are deleted WITHOUT folding -- the live query never counted them, so
+          // folding them would make the public total jump on prune day. Keyed per lowercased account_login so
+          // the stats query's excludeAccount de-dup keeps working against the rollup after the raw rows are gone.
+          env.DB.prepare(
+            `INSERT INTO orb_outcome_rollups (account_login, merged, closed, total, updated_at)
+             SELECT LOWER(COALESCE(i.account_login, '')) AS account_login,
+                    SUM(CASE WHEN o.outcome = 'merged' THEN 1 ELSE 0 END) AS merged,
+                    SUM(CASE WHEN o.outcome = 'closed' THEN 1 ELSE 0 END) AS closed,
+                    COUNT(*) AS total,
+                    ?2 AS updated_at
+             FROM orb_pr_outcomes o
+             JOIN orb_github_installations i ON i.installation_id = o.installation_id AND i.registered = 1
+             LEFT JOIN audit_events ae
+               ON ae.target_key = o.repository_full_name || '#' || o.pr_number
+               AND ae.event_type = 'github_app.pr_public_surface_published'
+             WHERE o.${sliceWhere} AND ae.id IS NULL
+             GROUP BY LOWER(COALESCE(i.account_login, ''))
+             ON CONFLICT(account_login) DO UPDATE SET
+               merged = orb_outcome_rollups.merged + excluded.merged,
+               closed = orb_outcome_rollups.closed + excluded.closed,
+               total = orb_outcome_rollups.total + excluded.total,
+               updated_at = excluded.updated_at`,
+          ).bind(sliceBound, nowIso()),
+          env.DB.prepare(`DELETE FROM ${rule.table} WHERE ${sliceWhere}`).bind(sliceBound),
+        ]);
+        /* v8 ignore next 2 -- defensive: batch() returns exactly one result per statement on both backends, so
+         * the `?.`/`?? 0` arms only satisfy the driver types; a missing meta degrades the COUNT, never the prune. */
+        const changes = Number(batchResults[1]?.meta?.changes ?? 0);
+        deleted += changes;
+        // The final slice always ends the loop; a non-final slice that somehow removed nothing would too,
+        // so a driver anomaly can never spin here.
+        if (sliceIsFinal || changes === 0 || deleted >= maxPerTable) break;
+      }
+      results.push({ table: rule.table, column: rule.column, cutoff, deleted });
       continue;
     }
 

@@ -868,6 +868,59 @@ describe("orb_pr_outcomes fold-before-delete (#9474)", () => {
     expect(await getOrbGlobalStats(env, { excludeAccount: "jsonbored" })).toEqual(beforeExcluded);
   });
 
+  // Review feedback on #9532: the first revision deleted the whole aged cohort in ONE unbatched statement,
+  // arguing the daily volume is small. True today, and exactly the argument that ages badly -- one fleet-wide
+  // backfill makes it a multi-million-row statement, removing the batching safety net this file enforces for
+  // every other table. Slices are bounded now, and each slice's fold+delete still commit together.
+  it("REGRESSION: deletes in BOUNDED slices, not one unbatched statement — and the cumulative total is still exact", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare("INSERT INTO orb_github_installations (installation_id, account_login, registered) VALUES (1, 'acme', 1)").run();
+    // 25 aged rows with DISTINCT timestamps, so slicing has real boundaries to find.
+    const values = Array.from({ length: 25 }, (_, i) => `('acme/widgets', ${i + 1}, 1, '${i % 2 === 0 ? "merged" : "closed"}', '${daysAgo(200 - i)}')`).join(",");
+    await env.DB.prepare(`INSERT INTO orb_pr_outcomes (repository_full_name, pr_number, installation_id, outcome, occurred_at) VALUES ${values}`).run();
+    const before = await getOrbGlobalStats(env);
+    expect(before.total).toBe(25);
+
+    const results = await pruneExpiredRecords(env, { nowMs: NOW, policy: [RULE], batchSize: 10 });
+
+    expect(results[0]?.deleted).toBe(25); // every aged row removed, across multiple bounded slices
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM orb_pr_outcomes").first<{ n: number }>())?.n).toBe(0);
+    expect(await getOrbGlobalStats(env)).toEqual(before); // the public counter is untouched by the slicing
+  });
+
+  it("INVARIANT: a run of rows sharing ONE timestamp still makes progress — the inclusive slice boundary cannot spin", async () => {
+    // An exclusive `<` boundary against a tie run selects zero rows and loops forever. All 12 rows here share
+    // one occurred_at, so the first slice's boundary IS that timestamp: inclusive is what guarantees progress.
+    const env = createTestEnv();
+    await env.DB.prepare("INSERT INTO orb_github_installations (installation_id, account_login, registered) VALUES (1, 'acme', 1)").run();
+    const tied = daysAgo(150);
+    const values = Array.from({ length: 12 }, (_, i) => `('acme/widgets', ${i + 1}, 1, 'merged', '${tied}')`).join(",");
+    await env.DB.prepare(`INSERT INTO orb_pr_outcomes (repository_full_name, pr_number, installation_id, outcome, occurred_at) VALUES ${values}`).run();
+
+    const results = await pruneExpiredRecords(env, { nowMs: NOW, policy: [RULE], batchSize: 5 });
+
+    expect(results[0]?.deleted).toBe(12);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM orb_pr_outcomes").first<{ n: number }>())?.n).toBe(0);
+    expect((await getOrbGlobalStats(env)).total).toBe(12); // all 12 folded exactly once, no double-count
+  });
+
+  it("INVARIANT: maxPerTable still caps one run, leaving the remainder (and its rollup) for the next", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare("INSERT INTO orb_github_installations (installation_id, account_login, registered) VALUES (1, 'acme', 1)").run();
+    const values = Array.from({ length: 20 }, (_, i) => `('acme/widgets', ${i + 1}, 1, 'merged', '${daysAgo(200 - i)}')`).join(",");
+    await env.DB.prepare(`INSERT INTO orb_pr_outcomes (repository_full_name, pr_number, installation_id, outcome, occurred_at) VALUES ${values}`).run();
+
+    const first = await pruneExpiredRecords(env, { nowMs: NOW, policy: [RULE], batchSize: 5, maxPerTable: 10 });
+    expect(first[0]?.deleted).toBe(10);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM orb_pr_outcomes").first<{ n: number }>())?.n).toBe(10);
+    // The cumulative total is exact at EVERY point, not only once the cohort is fully drained.
+    expect((await getOrbGlobalStats(env)).total).toBe(20);
+
+    const second = await pruneExpiredRecords(env, { nowMs: NOW, policy: [RULE], batchSize: 5, maxPerTable: 10 });
+    expect(second[0]?.deleted).toBe(10);
+    expect((await getOrbGlobalStats(env)).total).toBe(20);
+  });
+
   it("INVARIANT: dryRun counts without folding or deleting", async () => {
     const env = createTestEnv();
     await seedOutcomes(env);

@@ -13,6 +13,7 @@
 // shape and their `--include=<pkg>/dist/**/*.js` + `--all` + lcov-path-normalize recipe.
 import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join, relative } from "node:path";
 import { fileURLToPath, URL } from "node:url";
 
@@ -46,8 +47,12 @@ function collectTests(dir: string, out: string[] = []): string[] {
 
 function main() {
   const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
-  const c8Bin = join(root, "node_modules", "c8", "bin", "c8.js");
   const pkgDir = join(root, "packages", "loopover-engine");
+  // #8608: resolved through Node's own algorithm FROM the workspace rather than a hardcoded
+  // node_modules path -- npm decides per-version whether c8 hoists to the root or nests under the
+  // workspace (the c8@11 bump nested it), and a hardcoded path breaks on exactly that. createRequire
+  // anchored in the workspace finds the binary wherever the install put it (same idiom as rees-coverage).
+  const c8Bin = createRequire(join(pkgDir, "package.json")).resolve("c8/bin/c8.js");
   const reportDir = join(pkgDir, "coverage");
   const testRoot = join(pkgDir, "dist-test");
 

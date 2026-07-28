@@ -127,11 +127,28 @@ asking LoopOver anything.
 
 <Callout variant="warn">
   **Bittensor on-chain anchoring is optional, separate corroboration — not part of this default
-  check.** A third, Gittensor/SN74-audience-specific backend (tracked, not yet
-  shipped — [#9277](https://github.com/JSONbored/loopover/issues/9277)) publishes the same checkpoint
-  as an on-chain commitment, signed by a dedicated hotkey run on the operator's own infrastructure.
-  It's additive corroboration for that specific audience, never folded into the default two-backend
-  claim every verifier above is told to check.
+  check.** A third, Gittensor/SN74-audience-specific
+  backend ([#9277](https://github.com/JSONbored/loopover/issues/9277)) publishes the same signed
+  checkpoint as an on-chain commitment. A submitter on the operator's own node infrastructure — never
+  this Worker, and its dedicated anchor-only hotkey never leaves that infrastructure — fetches
+  `GET /v1/public/decision-ledger/anchor-payload` and commits `sha256(signingInput)` via the
+  commitments pallet's `set_commitment(netuid, Data::Sha256)`, then reports the attempt (success
+  *and* failure, like every other backend) back into the public attempt log, where it appears as
+  `backend: "bittensor"`. It's additive corroboration for that specific audience, never folded into
+  the default two-backend claim every verifier above is told to check.
+</Callout>
+
+<Callout variant="info">
+  **Historical retrieval — read the block, not chain state.** The commitments pallet's
+  `CommitmentOf` map is **overwritten in place**: only the *latest* commitment per (netuid, account)
+  survives in current chain state. To verify an older anchor, use its `backendRef` from the attempt
+  log — `{netuid, blockNumber, blockHash, hotkey}` — and query **archive state at that block**
+  (`state_getStorage` at `blockHash`, or the block's events), not the current tip. Then check the
+  stored commitment's `Sha256` bytes equal `sha256(signingInput)` of the anchor's own
+  `payload_json`, and verify the payload's signature against the published anchor keys exactly as in
+  step (c) above. Any Bittensor archive node can answer this; the operator's own archive is merely
+  the convenient one — the same trust posture as the git backend's "GitHub hosts it, the mirror
+  cross-checks it."
 </Callout>
 
 ### 2. Decision-record authenticity

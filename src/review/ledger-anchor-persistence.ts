@@ -7,7 +7,7 @@
 import { nowIso, errorMessage } from "../utils/json";
 import type { LedgerAnchorPayload } from "./ledger-anchor";
 
-export type LedgerAnchorBackend = "rekor" | "git" | "ots";
+export type LedgerAnchorBackend = "rekor" | "git" | "ots" | "bittensor";
 
 /** What a backend passes in to record ONE attempt -- success or failure, same shape either way. */
 export type LedgerAnchorAttemptInput = {

@@ -652,6 +652,12 @@ declare global {
      *  chokepoint every other GitHub write in this engine goes through). Unset (alongside the owner/repo
      *  pair above) means the git backend does not run this tick; Rekor is unaffected. */
     LOOPOVER_LEDGER_ANCHOR_GIT_INSTALLATION_ID?: string;
+    /** External ledger anchoring (#9277, epic #9267): bearer token the operator's OFF-Worker Bittensor
+     *  commitment submitter presents to `POST /v1/decision-ledger/anchor-attempts` when reporting an
+     *  on-chain anchor attempt back into the public attempt log. FAILS CLOSED when unset (the route
+     *  rejects everything, same isAuthorizedIngest posture as ORB_INGEST_TOKEN) — the submitter itself and
+     *  its hotkey live entirely on the operator's node infrastructure, never in this repo or this Worker. */
+    LOOPOVER_LEDGER_ANCHOR_REPORT_TOKEN?: string;
     /** Convergence (port): public OAuth draft-submission flow ported from reviewbot. When truthy, the
      *  /v1/drafts endpoints accept a contributor draft -> GitHub OAuth -> fork PR against the content repo.
      *  Default OFF — unset/false makes every draft endpoint 404 and writes nothing (byte-identical worker). */

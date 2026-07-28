@@ -499,6 +499,31 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
       agentDryRun: settings.agentDryRun,
       installationPermissions: installation ? installation.permissions : null,
       mergeTrainMode: settings.mergeTrainMode,
+      // #9482: three protections were silently VOID on this replay path because the ctx omitted the fields
+      // they key on, while the live path (src/queue/processors.ts) supplies all three.
+      //
+      // authorLogin: step 8c claims `claimContributorCapLock(env, repo, ctx.authorLogin ?? "")`, so an absent
+      // author produced the key `contributor-cap-lock:<repo>:` -- the EMPTY-author key. #9159's whole point is
+      // that an accept-merge and a sibling's cap-close for the same author serialize on one mutex; keyed on
+      // "" it provided zero mutual exclusion against the live path's `...:<author>` key, leaving the #7284
+      // TOCTOU wide open, while also making every accept-path merge in a repo contend on one shared key.
+      // maybeEscalateModeration also early-returns on a falsy authorLogin, so a staged-then-accepted
+      // blacklist / contributor-cap / review-nag close recorded NO moderation violation at all -- a
+      // contributor whose enforcement closes always route through approval accumulated zero standing
+      // violations toward the warning/ban ladder.
+      authorLogin: pr?.authorLogin,
+      moderationSettings: {
+        moderationGateMode: settings.moderationGateMode,
+        moderationRules: settings.moderationRules,
+        moderationWarningLabel: settings.moderationWarningLabel,
+        moderationBannedLabel: settings.moderationBannedLabel,
+      },
+      // expectedBaseRef: fetchPullRequestFreshness only checks the base when this is set (pr-freshness.ts), so
+      // #9055's base-retarget guard never fired on a replay. NOTE this is the base as it stands NOW, which
+      // closes the common case (a retarget between staging and accept is visible here) but not the full one:
+      // catching a retarget that the webhook already wrote back requires the STAGING-TIME base persisted into
+      // AgentPendingActionParams, which has no field for it. Tracked as the remaining half of #9482.
+      expectedBaseRef: pr?.baseRef,
       pullRequestCreatedAt: pr?.createdAt,
       pullRequestLinkedIssues: pr?.linkedIssues,
       pullRequestChangedFiles: pr?.changedFiles,

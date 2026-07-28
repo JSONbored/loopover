@@ -11491,7 +11491,7 @@ async function maybePublishPrPublicSurface(
             // gates on the AI verdict, so there is nothing to shop for there. Best-effort/fail-open by
             // construction (recordVerdictFlip never throws); a persistable placeholder never counts as a roll.
             if (aiReview && aiReview.persistable !== false && settings.aiReviewMode === "block") {
-              const verdictFlip = await recordVerdictFlip(env, repoFullName, pr.number, aiReview.findings ?? []);
+              const verdictFlip = await recordVerdictFlip(env, repoFullName, pr.number, aiReview.findings ?? [], inputFingerprint);
               if (verdictFlip.escalate) {
                 advisory.findings.push({
                   code: "ai_review_inconclusive",

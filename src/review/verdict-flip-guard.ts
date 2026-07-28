@@ -13,7 +13,14 @@ import { AI_JUDGMENT_BLOCKER_CODES } from "../rules/advisory";
  *  churn (one legitimate re-review after a real fix is not abuse). */
 export const VERDICT_FLIP_ESCALATION_THRESHOLD = 3;
 
-export type VerdictFlipState = { lastHadDefect: boolean; flipCount: number };
+export type VerdictFlipState = {
+  lastHadDefect: boolean;
+  flipCount: number;
+  /** #9483: the content fingerprint the prior fresh verdict was produced against. Null for rows written
+   *  before this was tracked (migration 0196) — a null can never match, so the first verdict after the
+   *  migration resets rather than escalating, which is the fail-open direction. */
+  lastFingerprint?: string | null | undefined;
+};
 export type VerdictFlipResult = VerdictFlipState & { escalate: boolean };
 
 /**
@@ -24,10 +31,31 @@ export type VerdictFlipResult = VerdictFlipState & { escalate: boolean };
  * consistently clean, across many honest re-reviews is not the abuse pattern this guards against, only
  * genuine oscillation is.
  */
-export function nextVerdictFlipState(prior: VerdictFlipState | null, hadDefect: boolean): VerdictFlipResult {
-  if (prior === null) return { lastHadDefect: hadDefect, flipCount: 0, escalate: false };
+export function nextVerdictFlipState(
+  prior: VerdictFlipState | null,
+  hadDefect: boolean,
+  fingerprint?: string | null | undefined,
+): VerdictFlipResult {
+  if (prior === null) return { lastHadDefect: hadDefect, flipCount: 0, lastFingerprint: fingerprint ?? null, escalate: false };
+  // #9483: only a re-roll against UNCHANGED content is the abuse pattern this guards against. The exploit is
+  // re-rolling a non-deterministic reviewer over the same diff until a lucky clean roll lands; an honest
+  // contributor iterating on real feedback produced an identical signal, so defect -> fix -> clean -> new
+  // issue -> fixed (two honest cycles) hit the threshold. Worse, flipCount never decreased, so the PR then
+  // escalated on every later fresh verdict forever -- an absorbing state whose own advice to the contributor
+  // ("push a substantive fix so the next review reflects real content change") could not clear it, because a
+  // substantive fix produced a fresh verdict that re-escalated. A changed fingerprint resets the count.
+  // Written as an early return rather than a `sameContent` boolean so TypeScript narrows `fingerprint` to a
+  // string below -- otherwise the counting path needs a `?? null` fallback whose null arm is unreachable.
+  if (fingerprint == null || prior.lastFingerprint == null || prior.lastFingerprint !== fingerprint) {
+    return { lastHadDefect: hadDefect, flipCount: 0, lastFingerprint: fingerprint ?? null, escalate: false };
+  }
   const flipCount = prior.lastHadDefect === hadDefect ? prior.flipCount : prior.flipCount + 1;
-  return { lastHadDefect: hadDefect, flipCount, escalate: flipCount >= VERDICT_FLIP_ESCALATION_THRESHOLD };
+  return {
+    lastHadDefect: hadDefect,
+    flipCount,
+    lastFingerprint: fingerprint,
+    escalate: flipCount >= VERDICT_FLIP_ESCALATION_THRESHOLD,
+  };
 }
 
 /** Whether a fresh review's findings carry a blocking AI-judgment defect (ai_consensus_defect /

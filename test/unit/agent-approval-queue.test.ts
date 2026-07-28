@@ -68,6 +68,8 @@ import { resolveLinkedIssueHardRule } from "../../src/review/linked-issue-hard-r
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { actionParams, executeAgentMaintenanceActions, pendingActionToPlanned, type AgentActionExecutionContext } from "../../src/services/agent-action-executor";
 import { decidePendingAgentAction } from "../../src/services/agent-approval-queue";
+import { claimContributorCapLock, releaseContributorCapLock } from "../../src/queue/transient-locks";
+import { fetchPullRequestFreshness } from "../../src/github/pr-freshness";
 import {
   countPendingAgentActions,
   createPendingAgentActionIfAbsent,
@@ -1879,5 +1881,66 @@ describe("#9159: the accept-replay path threads a contributor-cap merge re-check
 
     expect(result.status).toBe("accepted");
     expect(mergePullRequest).toHaveBeenCalled();
+  });
+});
+
+// #9482: the accept-replay path built a THINNER executor context than the live path, silently voiding three
+// #-numbered protections. The ctx omitted authorLogin, expectedBaseRef and moderationSettings entirely, and
+// every one of those fields is optional, so nothing forced parity with runAgentMaintenancePlanAndExecute's ctx.
+describe("#9482: the accept-replay path threads the same protective context the live path does", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("REGRESSION: passes expectedBaseRef, so #9055's base-retarget guard is not inert on a replay", async () => {
+    // fetchPullRequestFreshness only evaluates the base when expectedBaseRef is set (pr-freshness.ts), so with
+    // it absent a contributor could retarget the PR's base between staging and accept -- head unchanged, so
+    // the head-SHA pin still matched -- and the merge landed against a base the reviewed diff and CI never
+    // targeted. Wrong-merge class.
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", {
+      number: 8,
+      title: "PR",
+      state: "open",
+      user: { login: "contributor1" },
+      head: { sha: "h8" },
+      base: { ref: "main" },
+      labels: [],
+      body: "x",
+    });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 8, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h8" }, reason: "clean" });
+
+    await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+
+    const freshnessCalls = vi.mocked(fetchPullRequestFreshness).mock.calls;
+    expect(freshnessCalls.length).toBeGreaterThan(0);
+    // The guard can only fire if the executor is told what base to expect.
+    expect(freshnessCalls.some(([, args]) => (args as { expectedBaseRef?: string | null }).expectedBaseRef === "main")).toBe(true);
+  });
+
+  it("REGRESSION: passes authorLogin, so the #9159 cap mutex keys on the author rather than the empty string", async () => {
+    // Step 8c claims claimContributorCapLock(env, repo, ctx.authorLogin ?? ""). With authorLogin absent the key
+    // was `contributor-cap-lock:<repo>:` -- an EMPTY-author key that shares no namespace with the live path's
+    // `...:<author>`, so #9159's mutex provided zero mutual exclusion against a sibling cap-close and every
+    // accept-path merge in a repo contended on one shared key.
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    await upsertRepoFocusManifest(env, "owner/repo", { settings: { contributorOpenPrCap: 5 } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 9, title: "PR", state: "open", user: { login: "farmer99" }, head: { sha: "h9" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 9, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h9" }, reason: "clean" });
+
+    // Pre-claim the AUTHOR-keyed lock. Before this fix the accept path claimed the empty-author key instead,
+    // so it did not contend at all and the merge proceeded; now it must be denied.
+    const held = await claimContributorCapLock(env, "owner/repo", "farmer99");
+    expect(held.acquired).toBe(true);
+    try {
+      await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+      expect(mergePullRequest).not.toHaveBeenCalled();
+    } finally {
+      await releaseContributorCapLock(env, "owner/repo", "farmer99", held.ownerToken);
+    }
   });
 });

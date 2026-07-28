@@ -97,6 +97,23 @@ export async function captureMinerPostHogErrorAndFlush(error: unknown, context?:
   await flushMinerPostHog();
 }
 
+/**
+ * Capture one arbitrary, already-built event (#9525).
+ *
+ * The MCP dispatch chokepoint composes its own properties from @loopover/contract so all three
+ * servers emit the same shape; this is the thin send. No-op when PostHog is off, never throws --
+ * same contract as every other capture function in this file. The properties are scrubbed by the
+ * same key denylist, so a future caller cannot leak a secret-shaped field through here either.
+ */
+export function captureMinerPostHogEvent(event: string, properties: Record<string, unknown>): void {
+  if (!active || !client) return;
+  try {
+    client.capture({ distinctId: MINER_POSTHOG_DISTINCT_ID, event, properties: scrubMinerContext(properties), disableGeoip: true });
+  } catch {
+    /* Capture must never crash the caller it is instrumenting. */
+  }
+}
+
 /** One AMS coding-agent driver attempt (#8296 AMS follow-up, epic #8286 track 3). All three driver types
  *  (claude-cli/codex-cli/agent-sdk, packages/loopover-engine's CodingAgentDriver) report a single blended
  *  `costUsd`/`tokensUsed` -- unlike ORB's self-host `AiUsage`, there is no input/output split available at

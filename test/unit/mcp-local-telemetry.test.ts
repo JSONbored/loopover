@@ -293,7 +293,10 @@ describe("recordStdioToolTelemetry / wrapStdioToolHandler (#8690)", () => {
     expect(settled).toBe(false);
     releaseFlush();
     await expect(pending).resolves.toEqual({ ok: true, isError: false });
-    expect(h.flushSpy).toHaveBeenCalledTimes(1);
+    // TWO flushes since #9525: the legacy `mcp_tool_call` event this file has always asserted, plus
+    // the shared dispatch pair (`usage_event` + `$mcp_tool_call`) all three servers now emit. The
+    // legacy one stays because an operator's existing dashboards read it.
+    expect(h.flushSpy).toHaveBeenCalledTimes(2);
     const message = h.captureSpy.mock.calls[0]![0] as CapturedMessage;
     expect(message.properties).toMatchObject({ tool: "loopover_demo", ok: true });
   });

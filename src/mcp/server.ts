@@ -1,4 +1,6 @@
 import { createMcpHandler } from "agents/mcp";
+import { instrumentToolDispatch, NOOP_DISPATCH_SINK, type DispatchTelemetrySink } from "./dispatch-telemetry";
+import { createDispatchTelemetrySink } from "./dispatch-telemetry-sink";
 import type { Context } from "hono";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
@@ -1087,8 +1089,15 @@ export async function handleMcpRequest(c: AppContext): Promise<Response> {
   const telemetry = buildMcpClientTelemetry(c.req.raw.headers, { defaultClientName: "mcp" })!;
   const usageMetadata = await describeMcpUsageRequest(c.req.raw, telemetry.metadata);
   const startedAt = Date.now();
-  const server = new LoopoverMcp(c.env, identity).createServer();
   const executionCtx = getExecutionContext(c);
+  // #9525: the dispatch chokepoint's sink is built per request so its deferred work rides this
+  // request's waitUntil. No OTel span on the Worker path -- the collector is a self-host concern, and
+  // importing src/selfhost/otel.ts here would pull it into the Worker bundle.
+  const server = new LoopoverMcp(
+    c.env,
+    identity,
+    createDispatchTelemetrySink(c.env, (work) => executionCtx.waitUntil(work)),
+  ).createServer();
   try {
     const response = await createMcpHandler(server, { route: "/mcp", enableJsonResponse: true })(c.req.raw, c.env, executionCtx);
     if (typeof usageMetadata.toolName === "string") {
@@ -1303,6 +1312,9 @@ export class LoopoverMcp {
   constructor(
     private readonly env: Env,
     private readonly identity: AuthIdentity = { kind: "static", actor: "mcp" },
+    // #9525: injected rather than constructed here so the Worker bundle never pulls the self-host
+    // OTel module in, and so a test can drive the chokepoint without a PostHog client.
+    private readonly telemetrySink?: DispatchTelemetrySink,
   ) {}
 
   createServer(): McpServer {
@@ -1313,9 +1325,17 @@ export class LoopoverMcp {
 
     // #6301 — register every tool through this thin wrapper so its category rides along as MCP
     // `_meta.category`, exposed in tools/list for clients (and mirrored by the CLI `tools` command).
+    // #9525: and through the dispatch-telemetry chokepoint, so all ~116 handlers are instrumented
+    // in one place rather than individually. `instrumentToolDispatch` is a safe passthrough when
+    // nothing is configured, which is every deployment that has not opted in.
     const baseRegister = server.registerTool.bind(server);
+    const telemetrySink = this.telemetrySink ?? NOOP_DISPATCH_SINK;
     const register: McpServer["registerTool"] = (name, config, cb) =>
-      baseRegister(name, { ...config, _meta: { category: MCP_TOOL_CATEGORIES[name] } }, cb);
+      baseRegister(
+        name,
+        { ...config, _meta: { category: MCP_TOOL_CATEGORIES[name] } },
+        instrumentToolDispatch(name, telemetrySink, cb as (...args: unknown[]) => Promise<{ isError?: boolean; structuredContent?: unknown }>) as typeof cb,
+      );
 
     register(
       "loopover_get_repo_context",

@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nodeSqliteDriver } from "../../src/selfhost/d1-adapter";
 import { createSqliteQueue } from "../../src/selfhost/sqlite-queue";
+import { PUSH_COALESCE_QUIET_WINDOW_SECONDS } from "../../src/github/webhook-coalesce";
 import { PrActuationLockContendedError } from "../../src/queue/transient-locks";
 import { ATTEMPT_FREE_RETRY_DEADLINE_MS } from "../../src/queue/retryable";
 import { jobCoalesceKey, queueSnapshotFromBinding } from "../../src/selfhost/queue-common";
@@ -28,7 +29,7 @@ const webhook = (sender: { login: string; type: string }, eventName = "issue_com
     eventName,
     payload: { action, sender },
   }) as unknown as JobMessage;
-const prWebhook = (deliveryId: string, action = "synchronize", sha = "a".repeat(40)): JobMessage =>
+const prWebhook = (deliveryId: string, action = "synchronize", sha = "a".repeat(40), prNumber = 1629): JobMessage =>
   ({
     type: "github-webhook",
     deliveryId,
@@ -36,7 +37,7 @@ const prWebhook = (deliveryId: string, action = "synchronize", sha = "a".repeat(
     payload: {
       action,
       repository: { full_name: "JSONbored/gittensory" },
-      pull_request: { number: 1629, head: { sha } },
+      pull_request: { number: prNumber, head: { sha } },
     },
   }) as unknown as JobMessage;
 const ciWebhook = (deliveryId: string, eventName: "check_suite" | "check_run" = "check_suite", sha = "b".repeat(40)): JobMessage =>
@@ -865,7 +866,8 @@ describe("createSqliteQueue (durable #980)", () => {
     expect(rows.map((row) => row.job_key).sort()).toEqual([
       "agent-regate-sweep:all",
       `github-webhook:ci-completed:jsonbored/gittensory@${"b".repeat(40)}#1629`,
-      `github-webhook:pr-refresh:jsonbored/gittensory#1629@${"a".repeat(40)}`,
+      // #9479: a push keys on the PR alone (no head SHA), so a re-push collapses into the pending review.
+      "github-webhook:pr-push:jsonbored/gittensory#1629",
     ]);
     expect(rows.map((row) => JSON.parse(row.payload).deliveryId).filter(Boolean).sort()).toEqual(["ci-2", "pr-2"]);
     expect(await q.stats()).toMatchObject({
@@ -947,12 +949,46 @@ describe("createSqliteQueue (durable #980)", () => {
     expect(event?.status).toBe("queued"); // untouched -- there is nothing genuinely superseded here
   });
 
+  // #9479: the end-to-end shape of a force-push storm. Each push mints a new head SHA, so under the old
+  // SHA-scoped key these were five independent jobs -- five full review prologues and five LLM calls, four of
+  // them for heads that no longer exist. The PR-scoped key plus the trailing quiet window collapses them into
+  // ONE review, of the head that actually survived.
+  it("REGRESSION (#9479): five rapid pushes to one PR collapse into a single job carrying the FINAL head", async () => {
+    const driver = makeDriver();
+    const q = createSqliteQueue(driver, async () => undefined);
+    const shas = ["a", "b", "c", "d", "e"].map((c) => c.repeat(40));
+    for (const [index, sha] of shas.entries()) {
+      await q.binding.send(prWebhook(`push-${index + 1}`, "synchronize", sha), { delaySeconds: PUSH_COALESCE_QUIET_WINDOW_SECONDS });
+    }
+
+    const rows = driver.query("SELECT payload, job_key FROM _selfhost_jobs ORDER BY id", []).rows as Array<{ payload: string; job_key: string }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.job_key).toBe("github-webhook:pr-push:jsonbored/gittensory#1629");
+    const payload = JSON.parse(rows[0]!.payload) as { deliveryId: string; payload: { pull_request: { head: { sha: string } } } };
+    // The SURVIVING head, not the first one -- reviewing an abandoned intermediate SHA is the waste being fixed.
+    expect(payload.deliveryId).toBe("push-5");
+    expect(payload.payload.pull_request.head.sha).toBe(shas[4]);
+  });
+
+  it("INVARIANT (#9479): the quiet window EXTENDS on each push, so the review runs after the storm settles rather than mid-burst", async () => {
+    const driver = makeDriver();
+    const q = createSqliteQueue(driver, async () => undefined);
+    await q.binding.send(prWebhook("push-1", "synchronize", "a".repeat(40)), { delaySeconds: PUSH_COALESCE_QUIET_WINDOW_SECONDS });
+    const first = (driver.query("SELECT run_after FROM _selfhost_jobs", []).rows[0] as { run_after: number }).run_after;
+    // A later push must push the deadline OUT (GREATEST(run_after, ...)), never pull it in -- otherwise the
+    // first push in a burst would fix the review time and the debounce would only ever save the tail.
+    await q.binding.send(prWebhook("push-2", "synchronize", "b".repeat(40)), { delaySeconds: PUSH_COALESCE_QUIET_WINDOW_SECONDS * 2 });
+
+    const second = (driver.query("SELECT run_after FROM _selfhost_jobs", []).rows[0] as { run_after: number }).run_after;
+    expect(second).toBeGreaterThan(first);
+  });
+
   it("tolerates an unparseable existing payload (a corrupted row) without throwing", async () => {
     const driver = makeDriver();
     const q = createSqliteQueue(driver, async () => undefined);
     driver.query(
       `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key) VALUES (?, 'pending', 0, ?, ?, 5, ?)`,
-      ["not valid json{", Date.now() + 60_000, Date.now(), `github-webhook:pr-refresh:jsonbored/gittensory#1629@${"a".repeat(40)}`],
+      ["not valid json{", Date.now() + 60_000, Date.now(), "github-webhook:pr-push:jsonbored/gittensory#1629"],
     );
 
     await expect(q.binding.send(prWebhook("pr-2"), { delaySeconds: 1 })).resolves.toBeUndefined();
@@ -1491,10 +1527,11 @@ describe("createSqliteQueue (durable #980)", () => {
       const seen: string[] = [];
       const q = createSqliteQueue(driver, async (m) => void seen.push((m as unknown as { deliveryId: string }).deliveryId), { concurrency: 1 });
       for (let i = 1; i <= 6; i++) await q.binding.send(backlogJob("owner/repo", i));
-      // Distinct head SHAs -- prWebhook's coalesce key is repo#pr@headSha, so two same-PR events with the
-      // SAME default sha would coalesce into one row instead of two.
-      await q.binding.send(prWebhook("fresh-1", "synchronize", "a".repeat(40)));
-      await q.binding.send(prWebhook("fresh-2", "synchronize", "b".repeat(40)));
+      // Distinct PR NUMBERS -- #9479 keys a push on repo#pr alone (deliberately, so a force-push storm
+      // coalesces), so two same-PR pushes now collapse into one row no matter how their head SHAs differ. This
+      // test is about the fairness RATIO, so it needs two genuinely independent fresh-intake jobs.
+      await q.binding.send(prWebhook("fresh-1", "synchronize", "a".repeat(40), 1629));
+      await q.binding.send(prWebhook("fresh-2", "synchronize", "b".repeat(40), 1630));
       await q.drain();
       expect(seen).toEqual([
         "backlog-convergence:owner/repo#1",

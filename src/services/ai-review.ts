@@ -1443,6 +1443,11 @@ export function isStructuralProviderConfigError(error: unknown): boolean {
  *  a large chunk of model output into Sentry/audit context. */
 const UNPARSEABLE_RESPONSE_SNIPPET_MAX_CHARS = 400;
 
+/** Retries per model inside one opinion slot, before the slot falls through to its fallback model (which then
+ *  gets its own full budget). Exported-in-spirit as a named constant because the neuron pre-booking in
+ *  {@link runAiReview} must reserve exactly this worst case -- #9479 was that loop and the budget disagreeing. */
+const REVIEW_ATTEMPTS_PER_MODEL = 3;
+
 /** One reviewer opinion (whichever provider `env.AI` resolves to — self-host Codex/Claude Code/etc, or the
  *  legacy Workers-AI pair) with a per-slot reliable fallback and a 3× retry on the primary. */
 async function runWorkersOpinion(
@@ -1504,7 +1509,7 @@ async function runWorkersOpinion(
     // stop-retrying-this-model reasoning as the deliberate-bail/timeout/429 breaks below; the next model
     // still gets its own full budget.
     let lastRawText: string | undefined;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    for (let attempt = 0; attempt < REVIEW_ATTEMPTS_PER_MODEL; attempt += 1) {
       try {
         const cliSystemAppend = selfHostCliSystemAppend(model, systemAppend);
         const result = await ai.run(
@@ -2809,8 +2814,16 @@ export async function runLoopOverAiReview(
     incr("loopover_ai_review_onmerge_clamped_total", { mode: input.mode });
   }
   const dual = combine !== "single" && (!configured || configured.length > 1);
+  // #9479: ONE call per opinion slot was never the worst case -- runWorkersOpinion retries each model up to
+  // REVIEW_ATTEMPTS_PER_MODEL times and then falls through to the slot's fallback model with its own full
+  // budget, so a dual-model block review can make 12 calls where this booked 2. The daily neuron budget is a
+  // runaway-LOOP backstop; booking the best case made it 6x looser than it reads, which is the one direction a
+  // backstop must never be wrong in. The tie-break judge below and ai-slop.ts's WORKERS_SLOP_MAX_CALLS both
+  // already reserve worst-case -- the main review path was the outlier, not the rule.
+  const slotCalls = (model: string, modelFallback: string): number => REVIEW_ATTEMPTS_PER_MODEL * (modelFallback !== model ? 2 : 1);
   const freeAiCalls =
-    (input.mode === "block" ? (dual ? 2 : 1) : 0) + (input.providerKey ? 0 : 1);
+    (input.mode === "block" ? slotCalls(primary.model, primaryFallback) + (dual ? slotCalls(secondary.model, secondaryFallback) : 0) : 0) +
+    (input.providerKey ? 0 : 1);
   // Consensus disagreements may spend extra free calls on the order-swapped tie-break judge. Reserve the
   // worst-case retry budget up front so the daily limiter remains a hard cap even when judge output is unstable.
   const tieBreakAiCalls =

@@ -1027,7 +1027,8 @@ describe("self-host queue common helpers", () => {
           },
         }),
       ),
-    ).toBe("github-webhook:pr-refresh:jsonbored/gittensory#99");
+      // #9479: a push keys on the PR alone so a force-push storm coalesces into one review.
+    ).toBe("github-webhook:pr-push:jsonbored/gittensory#99");
     expect(
       jobCoalesceKey(
         payload({

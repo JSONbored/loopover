@@ -3109,24 +3109,43 @@ export async function countRecentAuditEventsForActorInRepoWithTargetSuffix(
   return row.count;
 }
 
-// #orb-stale-recheck-priority: the THREE self-resolving "denied" detail strings the executor's live staleness
-// rechecks can produce (agent-action-executor.ts's "8) Live ... re-verification" block -- duplicateStaleReason /
-// mergeableStaleReason / threadStaleReason, each suffixed with " — action not executed" by that block's shared
-// `audit("denied", ...)` call). Deliberately NOT imported from agent-action-executor.ts: that module imports
+// #orb-stale-recheck-priority: the self-resolving "denied" detail strings the executor can produce for a PR
+// that NOTHING will otherwise re-drive. Three come from its live staleness rechecks (agent-action-executor.ts's
+// "8) Live ... re-verification" block -- duplicateStaleReason / mergeableStaleReason / threadStaleReason); the
+// fourth is the merge-train wait. All are suffixed with " — action not executed" by the shared
+// `audit("denied", ...)` call. Deliberately NOT imported from agent-action-executor.ts: that module imports
 // FROM db/repositories.ts (installation tokens, PR records, ...), so importing back would create a real
 // module-load cycle -- same hazard agent-actions.ts's CONCRETE_EVIDENCE_BLOCKER_CODES comment documents for the
-// identical reason. A source-text parity test guards these three literals against producer-side drift instead.
-// Deliberately EXCLUDES a CI-staleness denial (ciStaleReason): CI flipping already re-triggers a fresh
-// evaluation via the check-run/status webhook that changed it, so it doesn't share the other three's "no
-// webhook ever reaches this PR" gap.
+// identical reason. A source-text parity test guards these literals against producer-side drift instead.
+//
+// #9483: the merge-train wait was originally excluded here as "durable, externally-actioned", on the theory
+// that the blocker merging would wake the waiter via maybeEnqueueSiblingRegateForMergedPr. That classification
+// was wrong, and the blocker MERGING is the only case it holds for. A blocker can also leave the train by
+// being CLOSED UNMERGED (that wake returns early on `!mergedAt`), by AGING past MERGE_TRAIN_MAX_WAIT_MS, or by
+// gaining the manual-review label (#9039 eviction) -- and the latter two are consulted only at the waiter's own
+// evaluation time, which nothing schedules. In every one of those three the waiter sat open indefinitely with
+// no signal, which under one-shot review reads to the contributor as a silent rejection. It is in fact the
+// PUREST instance of the gap this whole mechanism exists for: resolving the blocker fires a webhook about the
+// BLOCKER, never about the PR waiting on it.
+//
+// Bounded by construction, so this cannot become a retry storm: a matching PR inherits
+// surfaceRepairPriorityPullNumbers' existing REGATE_REPAIR_MAX_ATTEMPTS_PER_PR budget, and that budget's
+// lookback window is ROLLING and the same 24h as MERGE_TRAIN_MAX_WAIT_MS -- so a PR blocked long enough for its
+// blocker to age out of the train has also had its earliest attempts age out, and gets fresh looks exactly when
+// the age-out makes them useful.
+//
+// Still deliberately EXCLUDES a CI-staleness denial (ciStaleReason): CI flipping already re-triggers a fresh
+// evaluation via the check-run/status webhook that changed it, so it doesn't share the others' "no webhook ever
+// reaches this PR" gap.
 const STALE_RECHECK_DENIAL_DETAIL_PATTERN =
-  /^(duplicate-cluster winner #\d+ is no longer open|the base-branch conflict that justified this close has since cleared|the review thread\(s\) that justified this close are now all resolved) — action not executed$/;
+  /^(duplicate-cluster winner #\d+ is no longer open|the base-branch conflict that justified this close has since cleared|the review thread\(s\) that justified this close are now all resolved|merge train: waiting for older mergeable sibling #\d+) — action not executed$/;
 
 /**
  * PR numbers within `repoFullName` whose most recent `agent.action.close`/`agent.action.merge` attempt was
- * DENIED by one of the executor's live staleness rechecks (duplicate-cluster winner / base-conflict / review-
- * thread) within `sinceIso`, rather than by a durable, externally-actioned reason (a manual-review label, a
- * merge-train wait, contributor-cap contention, ...). Those rechecks exist precisely because the fact that
+ * DENIED by a self-resolving reason (duplicate-cluster winner / base-conflict / review-thread staleness, or a
+ * merge-train wait -- see the pattern's own comment for why the last one belongs here) within `sinceIso`,
+ * rather than by a durable, externally-actioned reason (a manual-review label, contributor-cap contention,
+ * ...). Those rechecks exist precisely because the fact that
  * justified the close/merge can flip WITHOUT a webhook ever notifying THIS pr -- a duplicate-cluster sibling
  * merging fires a webhook about the SIBLING, not this PR, so nothing naturally re-triggers a look here. Callers
  * (surfaceRepairPriorityPullNumbers) fold this into the SAME priority set the outage-repair path already uses,

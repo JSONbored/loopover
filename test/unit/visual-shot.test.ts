@@ -256,7 +256,7 @@ describe("visual screenshot on-demand SSRF guard", () => {
       const result = captureShot(env(), "https://preview.pages.dev/page");
       await vi.advanceTimersByTimeAsync(10_000);
 
-      await expect(result).resolves.toEqual({ png: null, authWalled: false });
+      await expect(result).resolves.toEqual({ png: null, authWalled: false, renderFailed: false });
     } finally {
       vi.useRealTimers();
     }
@@ -271,7 +271,7 @@ describe("visual screenshot on-demand SSRF guard", () => {
       const result = captureShot(env(), "https://preview.pages.dev/page");
       await vi.advanceTimersByTimeAsync(2_000);
 
-      await expect(result).resolves.toEqual({ png: null, authWalled: false });
+      await expect(result).resolves.toEqual({ png: null, authWalled: false, renderFailed: false });
       expect(mocks.screenshot).not.toHaveBeenCalled();
       expect(mocks.close).toHaveBeenCalled();
     } finally {
@@ -336,7 +336,7 @@ describe("visual screenshot on-demand SSRF guard", () => {
       const result = captureShot(env(), "https://preview.pages.dev/page", undefined, { theme: "dark", themeStorageKey: "theme" });
       await vi.advanceTimersByTimeAsync(2_000);
 
-      await expect(result).resolves.toEqual({ png: null, authWalled: false });
+      await expect(result).resolves.toEqual({ png: null, authWalled: false, renderFailed: false });
       expect(mocks.reload).not.toHaveBeenCalled();
       expect(mocks.screenshot).not.toHaveBeenCalled();
       expect(mocks.close).toHaveBeenCalled();
@@ -374,7 +374,7 @@ describe("visual screenshot on-demand SSRF guard", () => {
 
   it("captureShot rejects an unsafe target before launching the browser (defense-in-depth)", async () => {
     const result = await captureShot(env(), "http://127.0.0.1/admin");
-    expect(result).toEqual({ png: null, authWalled: false });
+    expect(result).toEqual({ png: null, authWalled: false, renderFailed: false });
     expect(mocks.launch).not.toHaveBeenCalled();
   });
 
@@ -526,6 +526,13 @@ describe("captureScrollFrames (#3612 scroll-through GIF evidence)", () => {
     expect(result).toEqual({ frames: [], authWalled: false });
     expect(mocks.screenshot).not.toHaveBeenCalled();
     expect(mocks.close).toHaveBeenCalled();
+  });
+
+  // #9464: an auth wall is a DEFINITE answer about the page, not a renderer failure -- it must never set
+  // renderFailed, or a repo with one protected route would defer the screenshot-table gate on every review.
+  it("flags authWalled WITHOUT renderFailed on a login-page redirect (#9464)", async () => {
+    mocks.finalUrl = "https://preview.pages.dev/login";
+    await expect(captureShot(env(), "https://preview.pages.dev/dashboard")).resolves.toEqual({ png: null, authWalled: true, renderFailed: false });
   });
 
   it("flags authWalled and captures no frames on a login-page redirect", async () => {
@@ -949,7 +956,7 @@ describe("DNS-resolution pin (#9044, best-effort SSRF defense-in-depth)", () => 
   it("captureShot rejects a public hostname whose DNS resolves to a disallowed address, before launching the browser", async () => {
     mocks.dnsLookup.mockResolvedValueOnce({ address: "169.254.169.254", family: 4 }); // cloud metadata
     const result = await captureShot(env(), "https://attacker-controlled.pages.dev/page");
-    expect(result).toEqual({ png: null, authWalled: false });
+    expect(result).toEqual({ png: null, authWalled: false, renderFailed: false });
     expect(mocks.launch).not.toHaveBeenCalled();
   });
 
@@ -979,7 +986,7 @@ describe("DNS-resolution pin (#9044, best-effort SSRF defense-in-depth)", () => 
       mocks.dnsLookup.mockReturnValueOnce(new Promise(() => undefined));
       const result = captureShot(env(), "https://preview.pages.dev/page");
       await vi.advanceTimersByTimeAsync(1_500);
-      await expect(result).resolves.toEqual({ png: expect.any(Uint8Array), authWalled: false });
+      await expect(result).resolves.toEqual({ png: expect.any(Uint8Array), authWalled: false, renderFailed: false });
     } finally {
       vi.useRealTimers();
     }
@@ -1100,7 +1107,7 @@ describe("visual capture result metric (#9487)", () => {
     resetMetrics();
     mocks.screenshot.mockRejectedValueOnce(new Error("Protocol error: Target closed"));
 
-    await expect(captureShot(env(), "https://preview.pages.dev/page")).resolves.toEqual({ png: null, authWalled: false });
+    await expect(captureShot(env(), "https://preview.pages.dev/page")).resolves.toEqual({ png: null, authWalled: false, renderFailed: true });
 
     expect(counterValue("loopover_visual_capture_total", { result: "error" })).toBe(1);
   });

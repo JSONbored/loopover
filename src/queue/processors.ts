@@ -12540,7 +12540,7 @@ async function maybePublishPrPublicSurface(
           // ordinary "nothing found" capture would, with no separate code path to maintain.
           const capture =
             reviewVisualConfig.enabled === false
-              ? { routes: [], interactions: [], previewPending: false }
+              ? { routes: [], interactions: [], previewPending: false, renderFailed: false }
               : await buildCapture(env, token, captureTarget, visualFiles, githubRateLimitAdmissionKeyForInstallation(installationId), reviewVisualConfig, changedCssFiles);
           beforeAfter = capture.routes;
           interactionPreviews = capture.interactions;
@@ -12566,8 +12566,14 @@ async function maybePublishPrPublicSurface(
           // preview deploy isn't live yet (capture.previewPending). Schedule a delayed re-review to re-capture
           // the now-ready shot — bounded by `attempt` so a never-resolving preview can't loop (the deployment_status
           // webhook also refills it; this is the backstop when that event is missed/late).
+          //
+          // #9464: `capture.renderFailed` joins previewPending here as a SECOND blip class. captureShot
+          // swallows a renderer error per shot and returns a null PNG, so buildCapture used to return
+          // normally -- previewPending false, nothing thrown -- and neither the #9030 nor the #9207 guard
+          // fired. The maintenance pass then read "no evidence, no retry pending" and CLOSED the PR one-shot.
+          // A browserless outage now degrades to "we could not capture evidence, holding" instead.
           const previewPollAttempt = webhook.previewPollAttempt ?? 0;
-          if (capture.previewPending) {
+          if (capture.previewPending || capture.renderFailed) {
             await scheduleVisualCaptureRetry(env, {
               webhook,
               repoFullName,

@@ -1152,6 +1152,51 @@ describe("database row parser hardening", () => {
       expect(await recentStaleRecheckDeniedPullNumbers(env, "owner/repo", "2026-06-24T09:00:00.000Z")).toEqual([6]);
     });
 
+    // #9483: a merge-train waiter had NO path back to evaluation unless its blocker MERGED. The blocker being
+    // closed unmerged, aging past MERGE_TRAIN_MAX_WAIT_MS, or gaining the manual-review label all leave the
+    // waiter open indefinitely with no signal, because every one of those fires a webhook about the BLOCKER and
+    // the two age/label checks are consulted only at the waiter's own evaluation time -- which nothing
+    // schedules. Under one-shot review that reads to the contributor as a silent rejection.
+    it("REGRESSION (#9483): returns the PR number for a merge-train wait, which nothing else re-drives", async () => {
+      const env = createTestEnv();
+      await recordAuditEvent(env, {
+        eventType: "agent.action.merge",
+        actor: "loopover",
+        targetKey: "owner/repo#20",
+        outcome: "denied",
+        detail: "merge train: waiting for older mergeable sibling #19 — action not executed",
+        createdAt: "2026-06-24T10:00:00.000Z",
+      });
+
+      expect(await recentStaleRecheckDeniedPullNumbers(env, "owner/repo", "2026-06-24T09:00:00.000Z")).toEqual([20]);
+    });
+
+    it("INVARIANT (#9483): a merge-train wait matches on the blocking PR number only as part of the WHOLE reason — no partial/suffix match", async () => {
+      const env = createTestEnv();
+      // Missing the " — action not executed" suffix the shared audit() closure appends: this is not a shape the
+      // executor produces, and anchoring the pattern at both ends is what keeps an attacker-influenced or
+      // hand-written detail string out of the priority set.
+      await recordAuditEvent(env, {
+        eventType: "agent.action.merge",
+        actor: "loopover",
+        targetKey: "owner/repo#21",
+        outcome: "denied",
+        detail: "merge train: waiting for older mergeable sibling #19",
+        createdAt: "2026-06-24T10:00:00.000Z",
+      });
+      // A non-numeric blocker reference likewise must not match.
+      await recordAuditEvent(env, {
+        eventType: "agent.action.merge",
+        actor: "loopover",
+        targetKey: "owner/repo#22",
+        outcome: "denied",
+        detail: "merge train: waiting for older mergeable sibling #abc — action not executed",
+        createdAt: "2026-06-24T10:00:00.000Z",
+      });
+
+      expect(await recentStaleRecheckDeniedPullNumbers(env, "owner/repo", "2026-06-24T09:00:00.000Z")).toEqual([]);
+    });
+
     it("ignores a denial reason that is NOT one of the three self-resolving staleness reasons", async () => {
       const env = createTestEnv();
       // A manual-review-label denial is durable (needs a human to remove the label) -- retrying fast wastes a
@@ -1223,7 +1268,13 @@ describe("database row parser hardening", () => {
     // agent-actions.test.ts, documents). This reads the real producer source text instead, so a future rewording
     // at the producer fails this test immediately rather than silently making the hand-typed pattern permanently
     // unmatchable.
-    it.each(["duplicate-cluster winner #${action.duplicateWinnerPrNumber} is no longer open", "the base-branch conflict that justified this close has since cleared", "the review thread(s) that justified this close are now all resolved"])(
+    it.each([
+      "duplicate-cluster winner #${action.duplicateWinnerPrNumber} is no longer open",
+      "the base-branch conflict that justified this close has since cleared",
+      "the review thread(s) that justified this close are now all resolved",
+      // #9483: the merge-train wait joined the pattern; it needs the same producer-drift guard as the others.
+      "merge train: waiting for older mergeable sibling #${decision.blockingPr}",
+    ])(
       "%s is still produced (not merely mentioned) in its producer (src/services/agent-action-executor.ts)",
       (reason) => {
         const source = readFileSync("src/services/agent-action-executor.ts", "utf8");

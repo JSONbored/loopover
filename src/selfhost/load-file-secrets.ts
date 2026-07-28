@@ -27,8 +27,9 @@ export function loadFileSecrets(
     const target = key.slice(0, -"_FILE".length);
     if (env[target]) continue; // an explicit value wins
     const path = env[key] as string;
+    let value: string;
     try {
-      env[target] = readFile(path).trim();
+      value = readFile(path).trim();
     } catch (error) {
       console.error(
         JSON.stringify({
@@ -43,5 +44,26 @@ export function loadFileSecrets(
         }`,
       );
     }
+    // #9487: an EMPTY (zero-byte or whitespace-only) secret file is as fatal as a missing one. Setting
+    // `env[target] = ""` looks like a successful load, but every downstream `nonBlank()` reads "" as
+    // UNCONFIGURED and preflight.ts deliberately skips absent values -- so a truncated
+    // GITHUB_WEBHOOK_SECRET file booted an instance that silently rejected every webhook. Directly adjacent
+    // to the known secret-rotation footgun on edge-nl-01, where a file is rewritten in place: the window in
+    // which it is momentarily empty is exactly when a container restart reads it.
+    //
+    // Checked OUTSIDE the try above on purpose: throwing inside it would be caught by that catch and
+    // re-reported as "unreadable", collapsing two genuinely different operator problems (a bad path/permission
+    // vs a truncated write) into one misleading message and the wrong log event.
+    if (value === "") {
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "selfhost_secret_file_empty",
+          var: key,
+        }),
+      );
+      throw new Error(`Secret file for ${key} (${path}) is empty; an empty secret silently reads as unconfigured downstream. Write the value, or unset ${key}.`);
+    }
+    env[target] = value;
   }
 }

@@ -176,3 +176,66 @@ describe("self-host process crash handlers (#9133)", () => {
     expect(logged.error.length).toBe(4000);
   });
 });
+
+// #9487: this handler exists to GUARANTEE the restart, and it awaited `flush()` with no deadline before
+// exit(1). A wedged telemetry egress (PostHog, via server.ts's flushPostHog) therefore delayed — or entirely
+// prevented — the very exit the module is here to perform, leaving a process that has already logged a fatal
+// alive and serving from a state it declared unsound. Losing a few telemetry events is the cheaper failure.
+describe("fatal flush is bounded (#9487)", () => {
+  beforeEach(() => {
+    resetSelfHostCrashHandlersForTest();
+  });
+
+  it("REGRESSION: exits even when flush never settles", async () => {
+    const { proc, handlers, exit } = makeFakeProcess();
+    installSelfHostCrashHandlers({
+      process: proc,
+      log: () => {},
+      exit,
+      flush: () => new Promise<void>(() => {}), // never settles, the wedged-egress case
+      flushDeadlineMs: 1,
+      force: true,
+    });
+
+    await handlers.get("uncaughtException")!(new Error("boom"));
+
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("INVARIANT: a flush that settles first is still awaited — the deadline is a ceiling, not a truncation", async () => {
+    const { proc, handlers, exit } = makeFakeProcess();
+    let flushed = false;
+    installSelfHostCrashHandlers({
+      process: proc,
+      log: () => {},
+      exit,
+      flush: async () => {
+        flushed = true;
+      },
+      flushDeadlineMs: 60_000, // far longer than the flush takes
+      force: true,
+    });
+
+    await handlers.get("unhandledRejection")!(new Error("boom"));
+
+    expect(flushed).toBe(true);
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("INVARIANT: both fatal events are bounded identically — neither can hang the restart", async () => {
+    for (const event of ["uncaughtException", "unhandledRejection"] as const) {
+      resetSelfHostCrashHandlersForTest();
+      const { proc, handlers, exit } = makeFakeProcess();
+      installSelfHostCrashHandlers({
+        process: proc,
+        log: () => {},
+        exit,
+        flush: () => new Promise<void>(() => {}),
+        flushDeadlineMs: 1,
+        force: true,
+      });
+      await handlers.get(event)!(new Error("boom"));
+      expect(exit, event).toHaveBeenCalledWith(1);
+    }
+  });
+});

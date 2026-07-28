@@ -47,11 +47,20 @@ export type InstallSelfHostCrashHandlersOptions = {
    *  `process.exit()` tears the event loop down immediately otherwise, which would make capture a near-total
    *  no-op in practice for a batching client. No-op default. Never expected to throw/reject. */
   flush?: () => Promise<void>;
+  /** #9487: hard ceiling on how long the flush above may delay the exit. Injectable so a test can drive the
+   *  deadline path deterministically instead of waiting out the real one. */
+  flushDeadlineMs?: number;
   /** Reinstall even if handlers were already installed (mainly for tests). */
   force?: boolean;
 };
 
 let handlersInstalled = false;
+
+/** #9487: how long a fatal handler may wait on telemetry flush before exiting anyway. This handler exists to
+ *  GUARANTEE the restart; a wedged egress must not be able to hold a process that has already declared itself
+ *  unsound. Three seconds is generous for a batching HTTP client and still far inside any restart supervisor's
+ *  patience. */
+const FATAL_FLUSH_DEADLINE_MS = 3_000;
 
 /** Render any thrown/rejected value as a single log-safe string, preferring an Error's stack -- mirrors the
  *  miner's own describeError exactly. */
@@ -74,6 +83,7 @@ export function installSelfHostCrashHandlers(options: InstallSelfHostCrashHandle
   const exit = typeof options.exit === "function" ? options.exit : (code: number) => proc.exit(code);
   const captureError = typeof options.captureError === "function" ? options.captureError : () => {};
   const flush = typeof options.flush === "function" ? options.flush : async () => {};
+  const flushDeadlineMs = typeof options.flushDeadlineMs === "number" ? options.flushDeadlineMs : FATAL_FLUSH_DEADLINE_MS;
 
   if (handlersInstalled && options.force !== true) return false;
   handlersInstalled = true;
@@ -87,7 +97,21 @@ export function installSelfHostCrashHandlers(options: InstallSelfHostCrashHandle
       }),
     );
     captureError(error, { kind });
-    await flush();
+    // #9487: bounded. This handler exists to GUARANTEE the restart, and an unbounded `await flush()` let a
+    // wedged telemetry egress (PostHog, via server.ts's flushPostHog) delay or entirely prevent the very exit
+    // it is here to perform -- a process that has already logged a fatal sitting alive indefinitely, serving
+    // requests from a state it declared unsound. Losing a few telemetry events is unambiguously the cheaper
+    // failure. `race` (not a cancel) because there is nothing to cancel: the flush promise is abandoned and
+    // the process exits under it.
+    await Promise.race([
+      flush(),
+      new Promise<void>((resolve) => {
+        // `unref()` so a pending deadline timer can never itself hold the process open past a flush that
+        // resolved first -- the timer exists to bound the wait, not to extend the lifetime it is bounding.
+        const timer = setTimeout(resolve, flushDeadlineMs);
+        (timer as unknown as { unref?: () => void }).unref?.();
+      }),
+    ]);
     exit(1);
   };
 

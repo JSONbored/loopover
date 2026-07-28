@@ -16,7 +16,9 @@ import type { JobMessage } from "../../src/types";
 // Real host CPU load is nondeterministic (and can legitimately spike on a busy CI runner), so every
 // maintenance-admission test in this file would be flaky against the real node:os signal. Default to
 // "unavailable" (null, never gates) here; individual host-load tests override the mock explicitly.
-vi.mock("../../src/selfhost/host-pressure", () => ({ hostLoadAvg1PerCore: vi.fn(() => null) }));
+// #9487: hostMemoryUsedFraction joined this module as a peer pressure signal — a partial mock would leave it
+// undefined at runtime, which reads as "unavailable" only by accident.
+vi.mock("../../src/selfhost/host-pressure", () => ({ hostLoadAvg1PerCore: vi.fn(() => null), hostMemoryUsedFraction: vi.fn(() => null) }));
 
 function makeDriver(): ReturnType<typeof nodeSqliteDriver> {
   return nodeSqliteDriver(new DatabaseSync(":memory:") as never);

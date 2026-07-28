@@ -119,7 +119,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "BROWSER_WS_ENDPOINT",
-    firstReference: "src/selfhost/stubs/puppeteer.ts",
+    firstReference: "src/selfhost/health.ts",
   },
   {
     name: "CLAUDE_AI_EFFORT",
@@ -331,6 +331,10 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "MAINTENANCE_ADMISSION_MAX_HOST_LOAD",
+    firstReference: "src/selfhost/maintenance-admission.ts",
+  },
+  {
+    name: "MAINTENANCE_ADMISSION_MAX_HOST_MEMORY",
     firstReference: "src/selfhost/maintenance-admission.ts",
   },
   {
@@ -698,7 +702,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `ANTHROPIC_AI_MODEL` | `src/selfhost/ai.ts` |",
   "| `ANTHROPIC_API_KEY` | `src/selfhost/ai-config.ts` |",
   "| `BACKUP_ACKNOWLEDGED` | `src/server.ts` |",
-  "| `BROWSER_WS_ENDPOINT` | `src/selfhost/stubs/puppeteer.ts` |",
+  "| `BROWSER_WS_ENDPOINT` | `src/selfhost/health.ts` |",
   "| `CLAUDE_AI_EFFORT` | `src/selfhost/ai.ts` |",
   "| `CLAUDE_AI_FIRST_OUTPUT_TIMEOUT_MS` | `src/selfhost/ai.ts` |",
   "| `CLAUDE_AI_MODEL` | `src/selfhost/ai.ts` |",
@@ -752,6 +756,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `MAINTENANCE_ADMISSION_MAX_BACKLOG_CONVERGENCE_PENDING` | `src/selfhost/maintenance-admission.ts` |",
   "| `MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS` | `src/selfhost/maintenance-admission.ts` |",
   "| `MAINTENANCE_ADMISSION_MAX_HOST_LOAD` | `src/selfhost/maintenance-admission.ts` |",
+  "| `MAINTENANCE_ADMISSION_MAX_HOST_MEMORY` | `src/selfhost/maintenance-admission.ts` |",
   "| `MAINTENANCE_ADMISSION_MAX_LIVE_AGE_MS` | `src/selfhost/maintenance-admission.ts` |",
   "| `MAINTENANCE_ADMISSION_MAX_LIVE_PENDING` | `src/selfhost/maintenance-admission.ts` |",
   "| `MAINTENANCE_ADMISSION_MAX_PENDING` | `src/selfhost/maintenance-admission.ts` |",

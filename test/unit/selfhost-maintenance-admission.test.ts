@@ -21,6 +21,7 @@ const CLEAR_SIGNALS: MaintenancePressureSignals = {
   backlogConvergencePendingCount: 0,
   freshIntakePendingCount: 0,
   hostLoadAvg1PerCore: null,
+  hostMemoryUsedFraction: null,
 };
 
 const CONFIG: MaintenanceAdmissionConfig = {
@@ -29,6 +30,7 @@ const CONFIG: MaintenanceAdmissionConfig = {
   maxLiveJobAgeMs: 120_000,
   maxMaintenancePendingCount: 15,
   maxHostLoadAvg1PerCore: 1.5,
+  maxHostMemoryUsedFraction: 0.92,
   maxBacklogConvergencePendingCount: 10,
   deferMs: 180_000,
   maxDeferAgeMs: 4 * 60 * 60_000,
@@ -412,6 +414,7 @@ describe("resolveMaintenanceAdmissionConfig", () => {
       maxLiveJobAgeMs: 120_000,
       maxMaintenancePendingCount: 15,
       maxHostLoadAvg1PerCore: 1.5,
+      maxHostMemoryUsedFraction: 0.92,
       maxBacklogConvergencePendingCount: 10,
       deferMs: 180_000,
       maxDeferAgeMs: 4 * 60 * 60_000,
@@ -488,5 +491,68 @@ describe("resolveMaintenanceAdmissionConfig", () => {
   it("falls back to the default host-load threshold on a negative float", () => {
     process.env.MAINTENANCE_ADMISSION_MAX_HOST_LOAD = "-1";
     expect(resolveMaintenanceAdmissionConfig().maxHostLoadAvg1PerCore).toBe(1.5);
+  });
+});
+
+// #9487: memory joins CPU as a peer pressure dimension. Deferring one maintenance job is unambiguously
+// cheaper than an OOM kill, which takes the container and every in-flight job with it.
+describe("host memory pressure (#9487)", () => {
+  it("REGRESSION: defers maintenance when host memory is above the threshold, with its own distinct reason", () => {
+    const decision = evaluateMaintenanceAdmission(
+      { ...CLEAR_SIGNALS, hostMemoryUsedFraction: 0.97 },
+      CONFIG,
+      0,
+      0,
+    );
+    expect(decision).toEqual({ admit: false, reason: "host_memory_high" });
+  });
+
+  it("INVARIANT: memory at or below the threshold admits — the gate is strictly-greater, not >=", () => {
+    for (const fraction of [0.92, 0.5, 0]) {
+      expect(
+        evaluateMaintenanceAdmission({ ...CLEAR_SIGNALS, hostMemoryUsedFraction: fraction }, CONFIG, 0, 0),
+      ).toEqual({ admit: true, reason: "pressure_clear" });
+    }
+  });
+
+  it("INVARIANT: a null reading SKIPS the check — an unavailable signal must never itself defer work", () => {
+    expect(
+      evaluateMaintenanceAdmission({ ...CLEAR_SIGNALS, hostMemoryUsedFraction: null }, CONFIG, 0, 0),
+    ).toEqual({ admit: true, reason: "pressure_clear" });
+  });
+
+  it("REGRESSION: memory also gates the maintenance-drain ESCAPE — draining onto a near-OOM box is what the signal exists to prevent", () => {
+    const decision = evaluateMaintenanceAdmission(
+      { ...CLEAR_SIGNALS, maintenancePendingCount: CONFIG.maxMaintenancePendingCount + 1, hostMemoryUsedFraction: 0.97 },
+      CONFIG,
+      Date.now() - CONFIG.maintenanceDrainAgeMs,
+      Date.now(),
+    );
+    expect(decision).toEqual({ admit: false, reason: "host_memory_high" });
+  });
+
+  it("INVARIANT: CPU still outranks memory, so an existing host_load_high denial keeps its reason", () => {
+    // Both dimensions over threshold: the reason must stay stable rather than flip with evaluation order,
+    // since operators alert and dashboard on these reason strings.
+    const decision = evaluateMaintenanceAdmission(
+      { ...CLEAR_SIGNALS, hostLoadAvg1PerCore: 99, hostMemoryUsedFraction: 0.99 },
+      CONFIG,
+      0,
+      0,
+    );
+    expect(decision).toEqual({ admit: false, reason: "host_load_high" });
+  });
+
+  it("INVARIANT: MAINTENANCE_ADMISSION_MAX_HOST_MEMORY overrides the default, and a junk value falls back", () => {
+    const original = process.env.MAINTENANCE_ADMISSION_MAX_HOST_MEMORY;
+    try {
+      process.env.MAINTENANCE_ADMISSION_MAX_HOST_MEMORY = "0.5";
+      expect(resolveMaintenanceAdmissionConfig().maxHostMemoryUsedFraction).toBe(0.5);
+      process.env.MAINTENANCE_ADMISSION_MAX_HOST_MEMORY = "not-a-number";
+      expect(resolveMaintenanceAdmissionConfig().maxHostMemoryUsedFraction).toBe(0.92);
+    } finally {
+      if (original === undefined) delete process.env.MAINTENANCE_ADMISSION_MAX_HOST_MEMORY;
+      else process.env.MAINTENANCE_ADMISSION_MAX_HOST_MEMORY = original;
+    }
   });
 });

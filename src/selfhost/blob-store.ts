@@ -5,7 +5,8 @@
 // surface those two paths use; every other R2Bucket method is unused on self-host. Node-only (fs import never
 // reaches the Worker bundle — wired in server.ts behind REVIEW_AUDIT_DIR). MODULAR + off by default: unset
 // REVIEW_AUDIT_DIR ⇒ no REVIEW_AUDIT binding ⇒ captures degrade to on-demand exactly as before.
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { dirname, resolve, sep } from "node:path";
 
 /** Build a filesystem-backed REVIEW_AUDIT store rooted at `baseDir`. Keys are app-generated
@@ -48,7 +49,27 @@ export function createFsBlobStore(baseDir: string): R2Bucket {
     async put(key: string, value: ReadableStream | ArrayBuffer | ArrayBufferView | string | Blob | null): Promise<R2Object> {
       const target = pathFor(key);
       await mkdir(dirname(target), { recursive: true });
-      await writeFile(target, Buffer.from(await new Response(value ?? "").arrayBuffer()));
+      // #9487: write to a unique temp path, then rename. Keys here are INPUT-HASH-ADDRESSED
+      // (`loopover/shots/<hash>.png`), so a half-written file from a mid-write kill is never retried or
+      // overwritten -- the next lookup for that same input hits it, finds a file, and serves a truncated PNG
+      // as a permanently "valid" cache entry. rename(2) is atomic within a filesystem, so a reader sees
+      // either no file or the complete one, never a partial. Same tmp+rename the config writer already does
+      // (private-config.ts's atomicWriteWithBackup) -- and the temp name carries a UUID so two concurrent
+      // puts of the same key cannot clobber each other's in-progress file.
+      const tmpTarget = `${target}.tmp-${randomUUID()}`;
+      try {
+        await writeFile(tmpTarget, Buffer.from(await new Response(value ?? "").arrayBuffer()));
+        await rename(tmpTarget, target);
+      } catch (error) {
+        // Never leave the temp file behind on a failed write -- otherwise a full disk or a mid-write crash
+        // accretes orphans in the same directory the real objects live in. Best-effort: the original error is
+        // what the caller needs, not a cleanup failure.
+        /* v8 ignore next -- the cleanup's own failure arm: `force: true` already swallows ENOENT, so this only
+           fires for something like an unwritable directory, in which case the ORIGINAL write error is what the
+           caller needs. Unreachable without mocking fs, and mocking it here would test the mock. */
+        await rm(tmpTarget, { force: true }).catch(() => undefined);
+        throw error;
+      }
       return { key } as unknown as R2Object;
     },
     /** Remove a stored object. A missing file is not an error (matches R2's own delete-is-idempotent

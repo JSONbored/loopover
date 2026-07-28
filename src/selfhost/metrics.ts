@@ -57,7 +57,7 @@ export const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["loopover_backup_acknowledged", { help: "1 when SQLite backup is acknowledged or Postgres is in use; 0 when the boot backup advisory would fire.", type: "gauge" }],
   ["loopover_config_dir_empty_acknowledged", { help: "1 when LOOPOVER_REPO_CONFIG_DIR is unset, has entries, or is acknowledged; 0 when it's configured but the mounted directory is empty.", type: "gauge" }],
   ["loopover_http_requests_total", { help: "HTTP app requests by response status class.", type: "counter" }],
-  ["loopover_http_request_duration_seconds", { help: "HTTP app request duration in seconds.", type: "histogram" }],
+  ["loopover_http_request_duration_seconds", { help: "HTTP app request duration in seconds, labelled by bounded route group (see httpRouteGroup).", type: "histogram" }],
   ["loopover_visual_capture_total", { help: "Visual capture attempts by result -- a browserless outage is otherwise invisible while it silently degrades screenshots to dash cells, and the screenshot gate treats absent evidence as a close signal (#9487).", type: "counter" }],
   ["loopover_webhook_dedup_total", { help: "Webhook deliveries deduplicated before enqueue.", type: "counter" }],
   ["loopover_webhook_enqueue_total", { help: "Webhook enqueue outcomes by event and action.", type: "counter" }],
@@ -424,4 +424,65 @@ export function resetMetrics(): void {
   metricMeta.clear();
   redactedRepoLabels.clear();
   for (const [name, meta] of DEFAULT_METRIC_META) metricMeta.set(name, meta);
+}
+
+/**
+ * #9487: the FIXED set of route groups `loopover_http_request_duration_seconds` may be labelled with.
+ *
+ * The histogram had no route label at all, so `sum by (le, route) (...)` returned a single unlabelled series
+ * and a fired latency-SLO alert could not be attributed to anything. The reason it had none is the reason
+ * this list is an ALLOWLIST rather than a path sanitizer: the label value must be bounded by CONSTRUCTION,
+ * because a caller-controlled path (or any per-PR/per-repo id inside one) is unbounded cardinality — the one
+ * failure that takes a Prometheus down rather than merely misinforming it.
+ *
+ * Groups are the first path segment under `/v1` plus the handful of top-level surfaces, chosen because that
+ * is the granularity an operator actually acts on ("the webhook lane is slow", "MCP is slow"). Anything not
+ * listed collapses to `other` — including every 404 — so an attacker probing random paths adds exactly zero
+ * new series.
+ */
+const HTTP_ROUTE_GROUPS: ReadonlySet<string> = new Set([
+  "agent",
+  "ams",
+  "app",
+  "auth",
+  "bounties",
+  "contributors",
+  "drafts",
+  "enrichment-analyzers",
+  "finding-taxonomy",
+  "github",
+  "installations",
+  "internal",
+  "issue-rag",
+  "lint",
+  "local",
+  "loop",
+  "mcp",
+  "opportunities",
+  "orb",
+  "preflight",
+  "public",
+  "repos",
+  "reviews",
+  "settings",
+  "signals",
+  "stats",
+  "webhooks",
+]);
+
+/**
+ * A bounded, low-cardinality group for `path` — never the raw path. Returns one of {@link HTTP_ROUTE_GROUPS},
+ * `loopover` for the public shot/asset surface, or `other`. PURE.
+ *
+ * Deliberately NOT a "replace ids with :param" normalizer: that still trusts the path's SHAPE, and one
+ * unmatched route pattern reintroduces unbounded cardinality silently. An allowlist can only ever be wrong in
+ * the safe direction (a real route lands in `other` until someone adds it).
+ */
+export function httpRouteGroup(path: string): string {
+  if (path.startsWith("/loopover/")) return "loopover";
+  if (!path.startsWith("/v1/")) return "other";
+  /* v8 ignore next -- String.split always yields at least one element (even "".split("/") is [""]), so the
+     nullish arm is unreachable; it exists only to satisfy noUncheckedIndexedAccess. */
+  const segment = path.slice("/v1/".length).split("/")[0] ?? "";
+  return HTTP_ROUTE_GROUPS.has(segment) ? segment : "other";
 }

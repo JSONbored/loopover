@@ -108,6 +108,12 @@ export interface MaintenancePressureSignals {
   oldestMaintenancePendingAgeMs: number | null;
   /** Null when unavailable (see host-pressure.ts) -- a caller must treat null as "skip this check". */
   hostLoadAvg1PerCore: number | null;
+  /** #9487: fraction of host memory in use (0..1), or null when unavailable -- same skip-on-null contract as
+   *  hostLoadAvg1PerCore above. Pressure watched CPU only, but on a box also running Ollama (~9.9 GiB) and
+   *  browserless (~1.5 GiB) memory is the realistic killer, and nothing observed it: the OOM killer decided
+   *  instead, taking the whole container and every in-flight job with it rather than deferring one
+   *  maintenance job. */
+  hostMemoryUsedFraction: number | null;
   /** #selfhost-backlog-convergence: pending+processing count of `agent-regate-pr` jobs tagged
    *  `foreground_lane='backlog'` (queue-fairness.ts) -- the backlog-convergence sweeper's own output, DISTINCT
    *  from `livePendingCount` (which is priority-gated, not lane-gated, and includes fresh webhook/foreground
@@ -128,6 +134,8 @@ export interface MaintenanceAdmissionConfig {
   maxLiveJobAgeMs: number;
   maxMaintenancePendingCount: number;
   maxHostLoadAvg1PerCore: number;
+  /** #9487: defer maintenance above this fraction of host memory in use. */
+  maxHostMemoryUsedFraction: number;
   maxBacklogConvergencePendingCount: number;
   deferMs: number;
   maxDeferAgeMs: number;
@@ -146,6 +154,10 @@ const DEFAULT_MAX_LIVE_PENDING_COUNT = 5;
 const DEFAULT_MAX_LIVE_JOB_AGE_MS = 2 * 60_000;
 const DEFAULT_MAX_MAINTENANCE_PENDING_COUNT = 15;
 const DEFAULT_MAX_HOST_LOAD_AVG1_PER_CORE = 1.5;
+// #9487: 0.92 leaves genuine headroom before the OOM killer without deferring on ordinary steady-state usage
+// -- a box running a resident model server sits legitimately high (page cache plus a multi-GiB model), so a
+// tighter default would defer maintenance permanently on exactly the deployment this was found on.
+const DEFAULT_MAX_HOST_MEMORY_USED_FRACTION = 0.92;
 // Deliberately more permissive than maxLivePendingCount (5): a real incident's backlog-convergence sweep can
 // legitimately queue several PRs across several repos at once (BACKLOG_CONVERGENCE_SWEEP_MAX_PRS=5 per repo per
 // sweep, selfhost/backlog-convergence.ts) without that alone meaning maintenance must fully yield -- only a
@@ -200,6 +212,10 @@ export function resolveMaintenanceAdmissionConfig(): MaintenanceAdmissionConfig 
       "MAINTENANCE_ADMISSION_MAX_HOST_LOAD",
       DEFAULT_MAX_HOST_LOAD_AVG1_PER_CORE,
     ),
+    maxHostMemoryUsedFraction: parsePositiveFloatEnv(
+      "MAINTENANCE_ADMISSION_MAX_HOST_MEMORY",
+      DEFAULT_MAX_HOST_MEMORY_USED_FRACTION,
+    ),
     maxBacklogConvergencePendingCount: parsePositiveIntEnv("MAINTENANCE_ADMISSION_MAX_BACKLOG_CONVERGENCE_PENDING", {
       min: 0,
       fallback: DEFAULT_MAX_BACKLOG_CONVERGENCE_PENDING_COUNT,
@@ -225,6 +241,7 @@ export type MaintenanceAdmissionReason =
   | "maintenance_pending_high"
   | "maintenance_pending_high_drain"
   | "host_load_high"
+  | "host_memory_high"
   | "pressure_clear";
 
 export interface MaintenanceAdmissionDecision {
@@ -268,6 +285,9 @@ export function evaluateMaintenanceAdmission(
   }
   const hostLoadHigh =
     signals.hostLoadAvg1PerCore !== null && signals.hostLoadAvg1PerCore > config.maxHostLoadAvg1PerCore;
+  // #9487: memory sits beside CPU as a peer pressure dimension, with the identical null-means-skip contract.
+  const hostMemoryHigh =
+    signals.hostMemoryUsedFraction !== null && signals.hostMemoryUsedFraction > config.maxHostMemoryUsedFraction;
   if (signals.maintenancePendingCount > config.maxMaintenancePendingCount) {
     if (nowMs - pendingSinceMs >= config.maintenanceDrainAgeMs) {
       // Host load is re-checked HERE, gating the drain escape specifically: draining more maintenance work onto
@@ -275,11 +295,15 @@ export function evaluateMaintenanceAdmission(
       // drain age yet is denied `maintenance_pending_high` regardless of host load (unchanged from before this
       // escape existed) -- this check only ever changes the outcome for a job the drain would otherwise admit.
       if (hostLoadHigh) return { admit: false, reason: "host_load_high" };
+      // Memory gates the drain escape for the same reason load does: draining more work onto a box that is
+      // already near its memory ceiling is what invites the OOM kill this signal exists to avoid.
+      if (hostMemoryHigh) return { admit: false, reason: "host_memory_high" };
       return { admit: true, reason: "maintenance_pending_high_drain" };
     }
     return { admit: false, reason: "maintenance_pending_high" };
   }
   if (hostLoadHigh) return { admit: false, reason: "host_load_high" };
+  if (hostMemoryHigh) return { admit: false, reason: "host_memory_high" };
   return { admit: true, reason: "pressure_clear" };
 }
 

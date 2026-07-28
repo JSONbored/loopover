@@ -46,7 +46,7 @@ import {
   type GitHubRateLimitAdmissionTarget,
   type SelfHostQueueSnapshot,
 } from "./queue-common";
-import { hostLoadAvg1PerCore } from "./host-pressure";
+import { hostLoadAvg1PerCore, hostMemoryUsedFraction } from "./host-pressure";
 import {
   evaluateMaintenanceAdmission,
   isMaintenanceAdmissionGrantedUnderPressure,
@@ -1631,6 +1631,7 @@ function maintenancePressureSignals(driver: SqliteDriver, now: number): Maintena
     backlogConvergencePendingCount: Number(backlogConvergence.cnt),
     freshIntakePendingCount: Number(freshIntake.cnt),
     hostLoadAvg1PerCore: hostLoadAvg1PerCore(),
+      hostMemoryUsedFraction: hostMemoryUsedFraction(),
   };
 }
 

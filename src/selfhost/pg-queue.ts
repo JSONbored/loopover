@@ -139,7 +139,7 @@ async function retryPoolUpdateOrLeaveForReclaim(
     return null;
   }
 }
-import { hostLoadAvg1PerCore } from "./host-pressure";
+import { hostLoadAvg1PerCore, hostMemoryUsedFraction } from "./host-pressure";
 import {
   evaluateMaintenanceAdmission,
   isMaintenanceAdmissionGrantedUnderPressure,
@@ -531,6 +531,7 @@ export function createPgQueue(
       backlogConvergencePendingCount: Number(backlogConvergence.cnt),
       freshIntakePendingCount: Number(freshIntake.cnt),
       hostLoadAvg1PerCore: hostLoadAvg1PerCore(),
+      hostMemoryUsedFraction: hostMemoryUsedFraction(),
     };
   }
 

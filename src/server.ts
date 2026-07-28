@@ -51,6 +51,7 @@ import { loadFileSecrets } from "./selfhost/load-file-secrets";
 import {
   backupAcknowledgedGaugeValue,
   buildHealthBody,
+  browserEndpointReadinessProbe,
   codexAuthReadinessProbe,
   emptyConfigDirAcknowledgedGaugeValue,
   emptyConfigDirAdvisory,
@@ -63,7 +64,7 @@ import {
 } from "./selfhost/health";
 import { clockSkewSampleAgeSeconds, clockSkewSecondsSample } from "./selfhost/clock-skew";
 import { d1DatabaseSizeBytesSample, d1SignalSnapshotsRowsPerKeySample, d1TableRowCountSamples, isD1SizeProbeEnabled, runD1SizeProbe } from "./selfhost/d1-size-probe";
-import { gauge, gaugeVector, incr, observe, renderMetrics, setSelfHostedMetricsMode, setSelfHostedRawRepoLabels } from "./selfhost/metrics";
+import { gauge, gaugeVector, httpRouteGroup, incr, observe, renderMetrics, setSelfHostedMetricsMode, setSelfHostedRawRepoLabels } from "./selfhost/metrics";
 import { CRON_INTERVAL_MIN_MS, delayToNextWallClockBoundaryMs } from "./selfhost/cron-alignment";
 import { runSelfHostMigrations } from "./selfhost/migrate";
 import { createPgAdapter, tuneGithubRateLimitObservationsAutovacuum, widenGithubIdColumnsToBigint } from "./selfhost/pg-adapter";
@@ -912,6 +913,20 @@ async function main(): Promise<void> {
     });
   }
 
+  // #9487/#9464: browserless readiness. A visual-capture outage used to be invisible in /ready and in
+  // Prometheus while it silently affected gate outcomes; this makes it observable at the same place every
+  // other optional backend is. No-op unless BROWSER_WS_ENDPOINT is configured.
+  const browserProbe = browserEndpointReadinessProbe(process.env, async (url) => {
+    const response = await fetch(url, { signal: AbortSignal.timeout(1500) });
+    return { ok: response.ok };
+  });
+  if (browserProbe) {
+    readinessProbes.push({
+      name: browserProbe.name,
+      check: () => withTimeout(browserProbe.check()),
+    });
+  }
+
   gauge("loopover_queue_pending", () => backend.queue.size());
   gauge("loopover_queue_dead", () => backend.queue.deadCount());
   // #9139: pass backend.queue's own recentDeadCount so this reads the self-host dead-letter path (the
@@ -1197,9 +1212,12 @@ async function main(): Promise<void> {
                 incr("loopover_http_requests_total", {
                   status: `${Math.floor(response.status / 100)}xx`,
                 });
+                // #9487: labelled by BOUNDED route group, never the raw path -- a fired latency-SLO alert
+                // was previously unattributable, because this histogram had a single unlabelled series.
                 observe(
                   "loopover_http_request_duration_seconds",
                   (Date.now() - startedReq) / 1000,
+                  { route: httpRouteGroup(path) },
                 );
                 setCurrentOtelSpanAttributes(selfHostHttpResponseAttributes(response.status));
                 return response;

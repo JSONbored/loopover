@@ -8,6 +8,7 @@ import {
   gauge,
   gaugeVector,
   hitRatio,
+  httpRouteGroup,
   incr,
   observe,
   registerMetricMeta,
@@ -496,5 +497,56 @@ describe("DEFAULT_METRIC_META completeness (drift guard, 2026-07 fix)", () => {
     expect(used.size).toBeGreaterThan(50); // sanity: the scan found the real call sites, not an empty tree
     const missing = [...used].filter((name) => !registered.has(name)).sort();
     expect(missing).toEqual([]);
+  });
+});
+
+// #9487: LoopoverRequestLatencySLOBreach fired at p95 = 9.75s against a 1s SLO and was UNACTIONABLE — the
+// histogram carried no route label, so `sum by (le, route) (...)` returned one unlabelled series and the
+// alert could not be attributed to anything. The reason it had no label is exactly why this one is an
+// allowlist: an unbounded label value is the failure that takes Prometheus down, not merely misinforms it.
+describe("httpRouteGroup (#9487)", () => {
+  it("groups a /v1 route by its first segment", () => {
+    expect(httpRouteGroup("/v1/github/webhook")).toBe("github");
+    expect(httpRouteGroup("/v1/mcp")).toBe("mcp");
+    expect(httpRouteGroup("/v1/public/stats")).toBe("public");
+    expect(httpRouteGroup("/v1/repos/owner/name/agent/pending-actions")).toBe("repos");
+  });
+
+  it("groups the public asset/shot surface", () => {
+    expect(httpRouteGroup("/loopover/shot?key=abc")).toBe("loopover");
+  });
+
+  it("REGRESSION: an UNKNOWN path is always `other` — cardinality is bounded by construction, not by sanitizing", () => {
+    // The decisive property. A caller-controlled path (or an id embedded in one) must add zero new series,
+    // so probing random paths cannot grow the metric at all.
+    for (const path of [
+      "/",
+      "/nope",
+      "/v1/",
+      "/v1/not-a-real-surface/x",
+      "/v1/github-but-not-really",
+      "/v2/github/webhook",
+      "/v1/../../etc/passwd",
+      `/v1/${"x".repeat(5000)}`,
+      "/loopoverx/shot",
+    ]) {
+      expect(httpRouteGroup(path), path).toBe("other");
+    }
+  });
+
+  it("INVARIANT: the group set is finite, so the label can only ever take a known value", () => {
+    // Fuzz over random paths: every result must be a value the allowlist could produce. This is the property
+    // that makes the label safe to ship on a per-request histogram at all.
+    const seen = new Set<string>();
+    for (let i = 0; i < 500; i += 1) {
+      seen.add(httpRouteGroup(`/v1/${Math.random().toString(36).slice(2)}/${i}`));
+      seen.add(httpRouteGroup(`/${Math.random().toString(36).slice(2)}`));
+    }
+    expect([...seen]).toEqual(["other"]);
+  });
+
+  it("INVARIANT: a per-PR path never leaks an id into the label", () => {
+    expect(httpRouteGroup("/v1/repos/acme/widgets/pulls/12345/review")).toBe("repos");
+    expect(httpRouteGroup("/v1/orb/instances/inst-abc-123/status")).toBe("orb");
   });
 });

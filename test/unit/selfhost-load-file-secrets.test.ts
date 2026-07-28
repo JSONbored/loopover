@@ -104,3 +104,53 @@ describe("loadFileSecrets (#4403)", () => {
     }
   });
 });
+
+// #9487: a missing/unreadable secret file correctly throws (#6284), but a zero-byte or whitespace-only one
+// set `env[NAME] = ""` — which every downstream `nonBlank()` reads as UNCONFIGURED, and preflight.ts
+// deliberately skips absent values. So a truncated GITHUB_WEBHOOK_SECRET file booted an instance that
+// rejected every webhook, healthily, forever. Directly adjacent to the known rotation footgun on edge-nl-01,
+// where the file is rewritten in place: the window in which it is momentarily empty is exactly when a
+// container restart reads it.
+describe("empty secret files are fatal, not silently unconfigured (#9487)", () => {
+  it.each([
+    ["zero-byte", ""],
+    ["whitespace-only", "   \n\t  "],
+  ])("REGRESSION: a %s secret file throws instead of setting an empty value", (_label, contents) => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const env: Record<string, string | undefined> = { GITHUB_WEBHOOK_SECRET_FILE: "/run/secrets/webhook" };
+
+    expect(() => loadFileSecrets(env, () => contents)).toThrow(/empty/i);
+    // The decisive assertion: the target must be left UNSET, never "" — an empty string is precisely the
+    // value that reads as "not configured" downstream while looking like a successful load here.
+    expect(env.GITHUB_WEBHOOK_SECRET).toBeUndefined();
+    expect(errorSpy.mock.calls.some((call) => String(call[0]).includes("selfhost_secret_file_empty"))).toBe(true);
+    errorSpy.mockRestore();
+  });
+
+  it("INVARIANT: the empty and unreadable failures stay DISTINCT — an operator must know which problem they have", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const unreadable: Record<string, string | undefined> = { A_SECRET_FILE: "/nope" };
+    expect(() =>
+      loadFileSecrets(unreadable, () => {
+        throw new Error("ENOENT");
+      }),
+    ).toThrow(/Failed to read secret file/);
+    expect(errorSpy.mock.calls.some((call) => String(call[0]).includes("selfhost_secret_file_unreadable"))).toBe(true);
+    expect(errorSpy.mock.calls.some((call) => String(call[0]).includes("selfhost_secret_file_empty"))).toBe(false);
+    errorSpy.mockRestore();
+  });
+
+  it("INVARIANT: a secret file with surrounding whitespace still loads, trimmed — only a FULLY empty one is fatal", () => {
+    const env: Record<string, string | undefined> = { A_SECRET_FILE: "/run/secrets/a" };
+    loadFileSecrets(env, () => "  real-value\n");
+    expect(env.A_SECRET).toBe("real-value");
+  });
+
+  it("INVARIANT: an explicit env value still wins and the file is never read, empty or not", () => {
+    const readFile = vi.fn(() => "");
+    const env: Record<string, string | undefined> = { A_SECRET: "explicit", A_SECRET_FILE: "/run/secrets/a" };
+    loadFileSecrets(env, readFile);
+    expect(env.A_SECRET).toBe("explicit");
+    expect(readFile).not.toHaveBeenCalled();
+  });
+});

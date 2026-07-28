@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -76,5 +76,74 @@ describe("createFsBlobStore (#10 — self-host visual screenshot persistence)", 
 
   it("delete on a key that was never written does not throw (idempotent, matches R2)", async () => {
     await expect(createFsBlobStore(dir).delete("loopover/shots/never-existed.png")).resolves.toBeUndefined();
+  });
+});
+
+// #9487: keys here are INPUT-HASH-ADDRESSED (`loopover/shots/<hash>.png`), so a half-written file from a
+// mid-write kill is never retried or overwritten — the next lookup for that same input finds a file and
+// serves a truncated PNG as a permanently "valid" cache entry. tmp+rename makes a reader see either no file
+// or the complete one; the config writer (private-config.ts's atomicWriteWithBackup) already did this.
+//
+// HONEST SCOPE: the primary benefit is crash-safety (SIGKILL between the first and last byte), which cannot
+// be simulated in-process — nothing here can kill the writer mid-`writeFile`. These tests pin what IS
+// observable: that the mechanism is tmp+rename rather than a direct write, that no temp files survive either
+// outcome, and that concurrent writers of one key cannot publish each other's bytes.
+describe("atomic writes (#9487)", () => {
+  /** A body that yields some bytes and then errors — the shape of a source dying mid-write. */
+  const erroringStream = (): ReadableStream<Uint8Array> =>
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([0x89, 0x50]));
+        controller.error(new Error("source died mid-write"));
+      },
+    });
+
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "gitt-blob-atomic-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+
+  // The mechanism itself, pinned at the source. A direct `writeFile(target, ...)` is the bug; without this
+  // assertion nothing in this file would notice a revert, because the crash window it protects is exactly the
+  // part an in-process test cannot reach.
+  it("REGRESSION: writes via a unique temp path and renames — never a direct write to the target key", () => {
+    const source = readFileSync("src/selfhost/blob-store.ts", "utf8");
+    expect(source).toContain("await rename(tmpTarget, target)");
+    expect(source).toContain(".tmp-${randomUUID()}");
+    expect(source).not.toContain("await writeFile(target,");
+  });
+
+  it("INVARIANT: a successful put leaves the object and NO temp leftovers", async () => {
+    const store = createFsBlobStore(dir);
+    await store.put("loopover/shots/abc.png", new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
+
+    expect(readdirSync(join(dir, "loopover", "shots"))).toEqual(["abc.png"]);
+  });
+
+  it("INVARIANT: a failed put leaves no object at the key and no temp leftovers", async () => {
+    const store = createFsBlobStore(dir);
+    await expect(store.put("loopover/shots/broken.png", erroringStream())).rejects.toThrow();
+
+    expect(await store.get("loopover/shots/broken.png")).toBeNull();
+    const shotsDir = join(dir, "loopover", "shots");
+    expect(existsSync(shotsDir) ? readdirSync(shotsDir) : []).toEqual([]);
+  });
+
+  it("INVARIANT: two concurrent puts of the SAME key both complete, and the object is one of them INTACT", async () => {
+    // Unique temp names are what make this safe: a shared temp path would let one writer's rename publish the
+    // other's partially-written file.
+    const store = createFsBlobStore(dir);
+    const a = new Uint8Array([1, 1, 1, 1, 1, 1, 1, 1]);
+    const b = new Uint8Array([2, 2, 2, 2]);
+    await Promise.all([store.put("loopover/shots/race.png", a), store.put("loopover/shots/race.png", b)]);
+
+    const obj = await store.get("loopover/shots/race.png");
+    const bytes = Array.from(new Uint8Array(await new Response(obj!.body).arrayBuffer()));
+    expect([Array.from(a), Array.from(b)]).toContainEqual(bytes); // intact, never interleaved or truncated
+    expect(readdirSync(join(dir, "loopover", "shots"))).toEqual(["race.png"]);
   });
 });

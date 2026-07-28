@@ -143,6 +143,75 @@ export function codexAuthReadinessProbe(
   };
 }
 
+/**
+ * #9487/#9464: readiness probe for the browserless endpoint backing visual capture.
+ *
+ * Every other dependency the review path needs has a probe (Redis, Qdrant, the GitHub App, codex);
+ * `BROWSER_WS_ENDPOINT` had none, so a browserless outage was invisible in `/ready` AND in Prometheus while it
+ * silently changed gate OUTCOMES — the screenshot-table gate reads absent evidence as a close signal. #9464
+ * stopped that from closing PRs; this makes the outage itself visible instead of inferred after the fact.
+ *
+ * Only registered when the endpoint is configured — an instance with visual review switched off is not
+ * degraded for lacking a browser, so an unconditional probe would make `/ready` red for every deployment that
+ * never wanted the feature.
+ *
+ * Probes the endpoint's HTTP sibling rather than opening a websocket + launching Chromium: a readiness check
+ * must be cheap enough to run on every poll, and a real launch costs a browser process. browserless answers
+ * `/json/version` over plain HTTP on the same host/port as its `ws://` endpoint, which is exactly the
+ * "is the service accepting connections" signal wanted here.
+ *
+ * Result is cached like the codex probe (same `cacheMs` shape, same single-flight guard) so a poll loop can't
+ * turn readiness into its own load source against an already-struggling backend.
+ */
+export function browserEndpointReadinessProbe(
+  env: Record<string, string | undefined>,
+  fetchImpl: (url: string) => Promise<{ ok: boolean }>,
+  cacheMs = 30_000,
+): ReadinessProbe | null {
+  const endpoint = (env.BROWSER_WS_ENDPOINT ?? "").trim();
+  if (!endpoint) return null;
+  const versionUrl = browserVersionUrl(endpoint);
+  // A configured-but-unparseable endpoint is a real misconfiguration, and one the ordinary capture path would
+  // only surface as a per-shot render failure. Fail readiness closed rather than skipping the probe.
+  if (versionUrl === null) return { name: "browser_endpoint", check: () => Promise.resolve(false) };
+  let cached: boolean | undefined;
+  let cachedUntil = 0;
+  let inFlight: Promise<boolean> | undefined;
+  return {
+    name: "browser_endpoint",
+    check: () => {
+      const now = Date.now();
+      if (cached !== undefined && now < cachedUntil) return Promise.resolve(cached);
+      if (inFlight) return inFlight;
+      inFlight = fetchImpl(versionUrl)
+        .then((response) => response.ok)
+        .catch(() => false)
+        .then((ok) => {
+          cached = ok;
+          cachedUntil = Date.now() + cacheMs;
+          return ok;
+        })
+        .finally(() => {
+          inFlight = undefined;
+        });
+      return inFlight;
+    },
+  };
+}
+
+/** The `http(s)://<host>/json/version` sibling of a `ws(s)://` browserless endpoint, or null when the
+ *  configured value is not a parseable ws/wss URL. Query strings (browserless carries `?token=`) are dropped:
+ *  the version endpoint needs no auth and the token must never end up in a probe URL that could be logged. */
+function browserVersionUrl(endpoint: string): string | null {
+  try {
+    const url = new URL(endpoint);
+    if (url.protocol !== "ws:" && url.protocol !== "wss:") return null;
+    return `${url.protocol === "wss:" ? "https:" : "http:"}//${url.host}/json/version`;
+  } catch {
+    return null;
+  }
+}
+
 /** Boot-time DATA-SAFETY advisory. A single SQLite file with no acknowledged backup is a data-loss SPOF — yet
  *  `/ready` would still answer 200, so an operator can run with zero durability believing they're healthy. Returns
  *  the warning to log at boot (or null on Postgres, or once the operator sets `BACKUP_ACKNOWLEDGED=true` after

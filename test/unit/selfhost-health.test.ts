@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createD1Adapter, nodeSqliteDriver } from "../../src/selfhost/d1-adapter";
 import {
   backupAcknowledgedGaugeValue,
+  browserEndpointReadinessProbe,
   buildHealthBody,
   codexAuthReadinessProbe,
   emptyConfigDirAcknowledgedGaugeValue,
@@ -456,5 +457,89 @@ describe("readiness (#982)", () => {
       checks: { db: true, migrations: true, redis: false, qdrant: false },
       durationsMs: { db: 4, migrations: 7, redis: 2, qdrant: 9 },
     });
+  });
+});
+
+// #9487/#9464: every other dependency the review path needs has a readiness probe (Redis, Qdrant, the GitHub
+// App, codex); BROWSER_WS_ENDPOINT had none. A browserless outage was therefore invisible in /ready AND in
+// Prometheus while it silently changed gate OUTCOMES — the screenshot-table gate reads absent visual evidence
+// as a close signal. #9464 stopped that from closing PRs; this makes the outage itself visible rather than
+// inferred afterwards.
+describe("browserEndpointReadinessProbe (#9487)", () => {
+  it("is not registered at all when the endpoint is unconfigured — a deployment without visual review is not degraded", () => {
+    expect(browserEndpointReadinessProbe({}, async () => ({ ok: true }))).toBeNull();
+    expect(browserEndpointReadinessProbe({ BROWSER_WS_ENDPOINT: "   " }, async () => ({ ok: true }))).toBeNull();
+  });
+
+  it("REGRESSION: reports ready when the endpoint answers, and NOT ready when it does not", async () => {
+    const up = browserEndpointReadinessProbe({ BROWSER_WS_ENDPOINT: "ws://browserless:3000" }, async () => ({ ok: true }));
+    await expect(up!.check()).resolves.toBe(true);
+
+    const down = browserEndpointReadinessProbe({ BROWSER_WS_ENDPOINT: "ws://browserless:3000" }, async () => ({ ok: false }));
+    await expect(down!.check()).resolves.toBe(false);
+
+    const unreachable = browserEndpointReadinessProbe({ BROWSER_WS_ENDPOINT: "ws://browserless:3000" }, async () => {
+      throw new Error("ECONNREFUSED");
+    });
+    await expect(unreachable!.check()).resolves.toBe(false);
+  });
+
+  it("probes the HTTP sibling of the ws endpoint, dropping any query string", async () => {
+    // Cheap enough for a poll loop (no websocket, no Chromium launch). The token must never reach a probe URL
+    // that could be logged — and /json/version needs no auth.
+    const seen: string[] = [];
+    const probe = browserEndpointReadinessProbe({ BROWSER_WS_ENDPOINT: "ws://browserless:3000?token=secret-token" }, async (url) => {
+      seen.push(url);
+      return { ok: true };
+    });
+    await probe!.check();
+    expect(seen).toEqual(["http://browserless:3000/json/version"]);
+    expect(seen[0]).not.toContain("secret-token");
+  });
+
+  it("maps wss:// to https://", async () => {
+    const seen: string[] = [];
+    const probe = browserEndpointReadinessProbe({ BROWSER_WS_ENDPOINT: "wss://browser.example.com" }, async (url) => {
+      seen.push(url);
+      return { ok: true };
+    });
+    await probe!.check();
+    expect(seen).toEqual(["https://browser.example.com/json/version"]);
+  });
+
+  it("INVARIANT: a configured-but-unparseable endpoint fails readiness CLOSED rather than silently skipping", async () => {
+    for (const bad of ["http://browserless:3000", "not-a-url", "://nope"]) {
+      const probe = browserEndpointReadinessProbe({ BROWSER_WS_ENDPOINT: bad }, async () => ({ ok: true }));
+      expect(probe, bad).not.toBeNull();
+      await expect(probe!.check(), bad).resolves.toBe(false);
+    }
+  });
+
+  it("INVARIANT: caches within the TTL and single-flights concurrent checks, so /ready polling cannot itself load a struggling backend", async () => {
+    let calls = 0;
+    const probe = browserEndpointReadinessProbe({ BROWSER_WS_ENDPOINT: "ws://browserless:3000" }, async () => {
+      calls += 1;
+      return { ok: true };
+    });
+    await Promise.all([probe!.check(), probe!.check(), probe!.check()]);
+    await probe!.check();
+    expect(calls).toBe(1);
+  });
+
+  it("INVARIANT: re-probes once the TTL lapses, so a recovered backend is not pinned unhealthy", async () => {
+    let ok = false;
+    let calls = 0;
+    const probe = browserEndpointReadinessProbe(
+      { BROWSER_WS_ENDPOINT: "ws://browserless:3000" },
+      async () => {
+        calls += 1;
+        return { ok };
+      },
+      0, // TTL 0 ⇒ every check re-probes
+    );
+    await expect(probe!.check()).resolves.toBe(false);
+    ok = true;
+    await expect(probe!.check()).resolves.toBe(true);
+    expect(calls).toBe(2);
   });
 });

@@ -6,7 +6,6 @@ import {
   incompletePatchLessSecretScanFinding,
   SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS,
   SECRET_SCAN_PATCH_FALLBACK_MAX_FETCHES,
-  markEligiblePatchLessFilesIncomplete,
   patchlessSecretScanInternals,
 } from "../../src/queue/patchless-secret-scan";
 import type { FileFetcher } from "../../src/review/review-grounding";

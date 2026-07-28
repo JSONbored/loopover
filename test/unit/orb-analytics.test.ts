@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { computeFleetAnalytics, getFleetHealthSummary, HEALTH_STALE_HOURS, wilsonInterval } from "../../src/orb/analytics";
-import { createTestEnv, TestD1Database } from "../helpers/d1";
+import { createTestEnv, } from "../helpers/d1";
 
 let seq = 0;
 /** Insert N orb_signals rows for one instance with a fixed verdict/outcome/reversal/cycle. */

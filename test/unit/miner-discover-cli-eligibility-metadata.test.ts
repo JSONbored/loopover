@@ -270,7 +270,6 @@ describe("recordEligibilityExclusionSignals via runDiscover (#8544)", () => {
     ];
     const { opts } = discoverWith(issues, new Map([["acme/widgets", trustworthyProfile]]), { nowMs: NOW });
     const { fired, store } = fakeSignalStore();
-    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const exitCode = await runDiscover(["acme/widgets", "--json"], { ...opts, initSignalTrackingStore: () => store });
     expect(exitCode).toBe(0);
     expect(fired).toEqual([
@@ -298,7 +297,6 @@ describe("recordEligibilityExclusionSignals via runDiscover (#8544)", () => {
     ];
     const { opts } = discoverWith(issues, new Map([["acme/widgets", trustworthyProfile]]), { nowMs: NOW });
     const { fired, store } = fakeSignalStore();
-    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     await runDiscover(["acme/widgets", "--json"], { ...opts, initSignalTrackingStore: () => store });
     expect(fired).toEqual([
       {
@@ -313,7 +311,6 @@ describe("recordEligibilityExclusionSignals via runDiscover (#8544)", () => {
     const issues = [fanOutIssue({ issueNumber: 1, labels: ["help wanted"] })];
     const { opts } = discoverWith(issues, new Map([["acme/widgets", trustworthyProfile]]), { nowMs: NOW });
     const { fired, store } = fakeSignalStore();
-    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     await runDiscover(["acme/widgets", "--json"], { ...opts, initSignalTrackingStore: () => store });
     expect(fired).toEqual([]);
     expect(store.recordRuleFired).not.toHaveBeenCalled();
@@ -349,7 +346,6 @@ describe("recordEligibilityExclusionSignals via runDiscover (#8544)", () => {
       calls += 1;
       if (calls === 1) throw new Error("write failed");
     });
-    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const exitCode = await runDiscover(["acme/widgets", "--json"], {
       ...opts,
       initSignalTrackingStore: () => ({
@@ -366,7 +362,6 @@ describe("recordEligibilityExclusionSignals via runDiscover (#8544)", () => {
     const issues = [fanOutIssue({ issueNumber: 2, labels: ["blocked"] })];
     const { opts } = discoverWith(issues, new Map([["acme/widgets", trustworthyProfile]]));
     const { store } = fakeSignalStore();
-    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(Date, "now").mockReturnValue(NOW);
     const exitCode = await runDiscover(["acme/widgets", "--json"], { ...opts, initSignalTrackingStore: () => store });
     expect(exitCode).toBe(0);

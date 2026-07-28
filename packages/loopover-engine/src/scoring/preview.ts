@@ -1,6 +1,5 @@
 import type { ContributorEvidenceRecord, JsonValue, RepositoryRecord, RepoTimeDecayOverrides, ScoringModelSnapshotRecord, ScorePreviewRecord } from "./types.js";
 import { DEFAULT_SCORING_CONSTANTS } from "./model.js";
-import { hasUnsafeWildcardCount } from "../signals/change-guardrail.js";
 import {
   clearLabelPatternRegExpCacheForTest,
   LABEL_PATTERN_REGEXP_CACHE_MAX_ENTRIES,
@@ -11,10 +10,12 @@ import {
 // Deterministic score-preview builder extracted verbatim from the backend's `src/scoring/preview.ts`
 // (#2282) — this file has no D1/network/env dependency in the original, so it ports unchanged aside from
 // its imports and one tiny pure helper (`nowIso`) inlined below, which the backend sources from
-// `src/utils/json.ts`. `hasUnsafeWildcardCount` is imported from this package's own
-// `signals/change-guardrail.ts` (#4611) rather than re-derived here — that file is a verbatim port of the
-// backend's `src/signals/change-guardrail.ts`, kept in sync by the engine-parity contract test, so importing
-// it carries the same ReDoS-safety guarantee without a third hand-maintained copy.
+// `src/utils/json.ts`.
+//
+// The ReDoS-safety guarantee this file used to claim via a direct `hasUnsafeWildcardCount` import (#4611) now
+// arrives through `labelMatchesPattern` (./label-match.ts), which applies the same cap internally — the import
+// here had been dead since 625e236b4 deduped this file's label matching onto that module. The guarantee is
+// unchanged; only the route to it is, and stating the live route is the point of saying so at all.
 
 // The package's tsconfig sets `types: []` (no ambient DOM/Node globals, keeping the engine's type surface
 // independent of any consumer's lib config), so the Web Crypto global needs a minimal local declaration.

@@ -7,7 +7,6 @@ import type { DurableQueue } from "./backend-contracts";
 import { logAudit, extractPayloadType, extractPayloadContext } from "./audit";
 import { incr } from "./metrics";
 import { withReviewSpan } from "./tracing";
-import { withOtelSpan } from "./otel";
 import { capturePostHogError, withPostHogMonitor } from "./posthog";
 import {
   ATTEMPT_FREE_RETRY_DEADLINE_MS,

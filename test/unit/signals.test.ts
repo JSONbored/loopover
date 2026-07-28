@@ -31,7 +31,7 @@ import {
   shouldPublishPrIntelligenceComment,
   type CollisionReport,
 } from "../../src/signals/engine";
-import { GITTENSOR_HOME_URL } from "../../src/github/footer";
+import { } from "../../src/github/footer";
 import type {
   BountyRecord,
   CheckSummaryRecord,
@@ -557,18 +557,6 @@ describe("world-class backend signals", () => {
       aiReviewByok: false,
       aiReviewAllAuthors: false, closeOwnerAuthors: false,
     };
-    const collisions = buildCollisionReport(repo.fullName, issues, pullRequests);
-    const queueHealth = buildQueueHealth(repo, issues, pullRequests, collisions);
-    const preflight = buildPreflightResult(
-      { repoFullName: repo.fullName, title: currentPr.title, body: "Fixes #7", linkedIssues: [7] },
-      repo,
-      issues,
-      pullRequests,
-    );
-    const profile = buildContributorProfile("oktofeesh1", { login: "oktofeesh1", topLanguages: ["TypeScript"], source: "github" }, [
-      currentPr,
-      priorPr,
-    ], []);
     expect(detection.detected).toBe(true);
     expect(shouldPublishPrIntelligenceComment(settings, detection)).toBe(true);
   });

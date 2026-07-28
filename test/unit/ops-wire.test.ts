@@ -461,7 +461,6 @@ describe("runOpsAlerts — cron path over gittensory's outcome data", () => {
         outcome: "completed",
       });
     }
-    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const found = await runOpsAlerts(env);
 
@@ -488,7 +487,6 @@ describe("runOpsAlerts — cron path over gittensory's outcome data", () => {
         metadata: { repoFullName: "owner/repo", pullNumber: 99, inconclusive: true },
       });
     }
-    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const found = await runOpsAlerts(env);
 

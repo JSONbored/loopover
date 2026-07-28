@@ -35,11 +35,6 @@ function tempEventLedger() {
   return ledger;
 }
 
-function tempDbPath() {
-  const root = mkdtempSync(join(tmpdir(), "loopover-miner-metrics-cli-"));
-  roots.push(root);
-  return join(root, "prediction-ledger.sqlite3");
-}
 
 function appendPrediction(ledger: PredictionLedger, targetId: number, conclusion: string) {
   ledger.appendPrediction({ repoFullName: REPO, targetId, conclusion, pack: "gittensor", engineVersion: "0.2.0" });

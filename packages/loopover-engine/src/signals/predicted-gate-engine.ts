@@ -1,5 +1,4 @@
 import type {
-  AdvisoryFinding,
   BountyLifecycle,
   BountyRecord,
   CollisionCluster,
@@ -46,13 +45,6 @@ const STOPWORDS = new Set([
 const MAX_COLLISION_PAIRWISE_ISSUES = 80;
 const MAX_COLLISION_PAIRWISE_PULL_REQUESTS = 120;
 const MAX_COLLISION_PAIRWISE_RECENT_MERGES = 40;
-const ISSUE_DISCOVERY_LIFECYCLE_REPORT_CAP = 300;
-const ISSUE_QUALITY_REPORT_CAP = 100;
-const REPO_OUTCOME_STALE_OPEN_DAYS = 30;
-const REPO_OUTCOME_MIN_DECIDED_SAMPLE = 3;
-const REPO_OUTCOME_MERGE_WELL_RATE = 0.7;
-const REPO_OUTCOME_CLOSURE_RISK_RATE = 0.34;
-const REPO_OUTCOME_MAX_PATTERNS = 12;
 
 export function buildLaneAdvice(repo: RepositoryRecord | null, fullName: string): LaneAdvice {
   const config = repo?.registryConfig;

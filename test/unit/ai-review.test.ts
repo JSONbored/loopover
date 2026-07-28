@@ -5291,7 +5291,7 @@ describe("#8833: enforced boundaries between model judgment and deterministic fa
   });
 
   it("#8833: whole-PR test-absence blockers demote ONLY when the path classifier contradicts them", async () => {
-    const { demoteTestEvidenceAbsenceBlockers, prHasTestPathEvidence } = await import("../../src/services/ai-review");
+    const { demoteTestEvidenceAbsenceBlockers } = await import("../../src/services/ai-review");
     const claims = ["No tests were added for this change", "The new helper is untested", "Null deref in src/a.ts"];
     // Arm 1 — the PR really ships no test paths: the claim may well be TRUE, so it keeps its severity and the
     // zero-demotion path returns the SAME object (no reallocation).

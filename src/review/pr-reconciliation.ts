@@ -12,7 +12,7 @@
 import { githubRateLimitAdmissionKeyForToken } from "../github/client";
 import { createInstallationToken } from "../github/app";
 import { fetchLivePullRequest, reconcileOpenPullRequests } from "../github/backfill";
-import { getRepository, listRepositories, upsertPullRequestFromGitHub } from "../db/repositories";
+import { listRepositories, upsertPullRequestFromGitHub } from "../db/repositories";
 import { isAgentConfigured } from "../settings/autonomy";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";

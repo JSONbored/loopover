@@ -25,7 +25,7 @@ import type {
   ScoringModelSnapshotRecord,
 } from "../../../../src/types.js";
 import type { PublicContributorProfile } from "../../../../src/github/public.js";
-import { commandReferenceUrl, loopoverFooter, gittensorRepoEarnUrl, type LoopOverFooterEnv } from "../../../../src/github/footer.js";
+import { commandReferenceUrl, type LoopOverFooterEnv } from "../../../../src/github/footer.js";
 import type { FocusManifestReviewConfig, ReviewFieldKey } from "../../../../src/signals/focus-manifest.js";
 import type { GittensorContributorSnapshot } from "../../../../src/gittensor/api.js";
 import { nowIso } from "../utils/json.js";
@@ -33,14 +33,13 @@ import { extractLinkedIssueNumbers } from "../../../../src/db/repositories.js";
 import { sanitizePublicComment } from "../../../../src/queue-intelligence.js";
 import { labelMatchesPattern, projectLinkedIssueMultiplierForPlannedSolve, type LinkedIssueMultiplierStatus } from "../scoring/preview.js";
 import { isSuspiciousConfiguredLabel } from "../scoring/label-match.js";
-import { hasLocalTestEvidence, hasValidationNote, isTestPath } from "./test-evidence.js";
+import { hasLocalTestEvidence, hasValidationNote, } from "./test-evidence.js";
 import { isCodeFile, isTestFile } from "./path-matchers.js";
 import { isFailingCheckSummary } from "./check-summary.js";
 import { isDuplicateClusterWinnerByClaim } from "./duplicate-winner.js";
 import { PREFLIGHT_LIMITS } from "./preflight-limits.js";
 import type { UnifiedCollapsible } from "../../../../src/review/unified-comment.js";
-import { splitAiReviewNits } from "../../../../src/review/ai-notes.js";
-import { LOOPOVER_GATE_CHECK_NAME, shouldPublishReviewCheck } from "../../../../src/review/check-names.js";
+import { shouldPublishReviewCheck } from "../../../../src/review/check-names.js";
 import { isAgentConfigured } from "../settings/autonomy.js";
 import { diffFilePriority } from "../review/diff-file-priority.js";
 import type { ImprovementBand, StructuralImprovementAssessment } from "../../../../src/signals/improvement.js";

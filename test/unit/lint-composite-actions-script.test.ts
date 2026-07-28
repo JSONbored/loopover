@@ -111,7 +111,7 @@ describe("runLint (#7459)", () => {
     const code = runLint({
       actionsDir: ".github/actions",
       readdir: () => [dir("bad")],
-      readFile: (path: string, encoding?: string) => {
+      readFile: (_path: string, encoding?: string) => {
         if (encoding === "utf8") return content;
         return "exists";
       },
@@ -127,7 +127,7 @@ describe("runLint (#7459)", () => {
     const code = runLint({
       actionsDir: ".github/actions",
       readdir: () => [dir("ok")],
-      readFile: (path: string, encoding?: string) => (encoding === "utf8" ? WELL_FORMED : "exists"),
+      readFile: (_path: string, encoding?: string) => (encoding === "utf8" ? WELL_FORMED : "exists"),
       validateSchema,
       log: () => {},
       error: () => {},

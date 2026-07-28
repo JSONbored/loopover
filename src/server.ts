@@ -11,7 +11,6 @@ import { delimiter, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { serve, type Http2Bindings, type HttpBindings } from "@hono/node-server";
-import packageJson from "../package.json";
 import worker from "./index";
 import { githubRestRateLimitRemainingSamples } from "./github/client";
 import { processJob } from "./queue/processors";

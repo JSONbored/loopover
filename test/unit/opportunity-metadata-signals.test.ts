@@ -4,7 +4,6 @@ import {
   computeMetadataDupRisk,
   computeMetadataFeasibility,
   computeMetadataPotential,
-  opportunityMetadataInternals,
   rankMetadataOpportunities,
 } from "../../packages/loopover-engine/src/opportunity-metadata";
 import { pickTopMetadataOpportunities } from "../../packages/loopover-engine/src/metadata-top-pick";

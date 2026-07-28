@@ -21,7 +21,7 @@ const tightPolicies: WriteRateLimitPolicies = {
   backoffBaseMs: 100,
 };
 
-function emptyState(nowMs: number): {
+function emptyState(_nowMs: number): {
   buckets: WriteRateLimitBucketStore;
   backoffAttempts: WriteRateLimitBackoffStore;
 } {

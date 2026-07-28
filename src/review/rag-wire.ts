@@ -20,7 +20,7 @@
 // flag ON but a cold/empty index, `retrieveContext` returns "" — the capability activates once an index exists.
 
 import { createReviewAdapters } from "./adapters";
-import { type RagChunk, retrieveContextWithMetrics, upsertChunks } from "./rag";
+import { retrieveContextWithMetrics, } from "./rag";
 
 /** True when RAG retrieval is enabled. Flag-OFF (default) → the caller takes no new branch, so no retrieval is
  *  performed and the reviewer prompt is unchanged. */

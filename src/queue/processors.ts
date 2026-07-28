@@ -172,8 +172,6 @@ import {
   parseLoopOverMentionCommand,
   sanitizePublicComment,
 } from "../github/commands";
-import { classifyPrCommandRequest } from "../github/pr-command-request";
-import { normalizeResolveFindingRef } from "../github/resolve-command";
 import {
   ensurePullRequestLabel,
   removePullRequestLabel,
@@ -338,7 +336,7 @@ import {
 import { isDuplicateClusterWinnerByClaim } from "../signals/duplicate-winner";
 import { isDuplicateWinnerEnabledGlobally, resolveDuplicateWinnerEnabled } from "../settings/duplicate-winner-mode";
 import { isOpenPrFileCollisionEnabledGlobally, resolveOpenPrFileCollisionEnabled } from "../settings/open-pr-file-collision-mode";
-import { buildAiReviewDiff, buildSecretScanDiff, buildUnifiedReviewDiff, totalAddedLineCount } from "../review/review-diff";
+import { buildAiReviewDiff, buildSecretScanDiff, totalAddedLineCount } from "../review/review-diff";
 // #4013 step 4 (prep): buildAiReviewDiff/buildSecretScanDiff moved to review-diff.ts (a natural existing
 // home -- both already wrapped buildUnifiedReviewDiff there) rather than staying here, since keeping them
 // in this file would have made the new slop-detection.ts below circularly import this file just for
@@ -372,7 +370,7 @@ import { startAiReviewLockHeartbeat } from "./ai-review-orchestration";
 // loadOpenQueueCounts moved there too (it has no other callers besides generateSignalSnapshots and this
 // file's own buildBurdenForecasts) rather than staying here and importing back, which would have made the
 // two files circularly dependent.
-import { generateSignalSnapshots, loadOpenQueueCounts } from "./signal-snapshot";
+import { loadOpenQueueCounts } from "./signal-snapshot";
 export { generateSignalSnapshots } from "./signal-snapshot";
 // #4013 step 3: same shim shape for the duplicate-cluster adjudication/reconciliation functions -- imported
 // here for this file's own internal callers, and re-exported so test/unit/duplicate-winner.test.ts and
@@ -382,7 +380,6 @@ import {
   dupWinnerLinkedDuplicateCount,
   dupWinnerLinkedDuplicateWinnerNumber,
   linkedIssueDuplicatePullRequestRecordsForGate,
-  linkedIssueDuplicatePullRequestsForGate,
   reconcileLiveDuplicateSiblings,
   resolveScopedLinkedIssueClaimedAt,
 } from "./duplicate-detection";
@@ -437,7 +434,6 @@ import {
 // #4013 step 7: same shim shape for runRetentionPrune -- imported here for processJob's own internal call
 // below, and re-exported so test/unit/retention.test.ts and test/unit/selfhost-pg-retention.test.ts's
 // existing `import { ... } from "../../src/queue/processors"` keeps working unchanged.
-import { runRetentionPrune } from "./retention";
 import { runPrCommandPrologue, type PrCommandPrologueOutcome, type PrCommandPrologueSpec } from "./pr-command-prologue";
 export { runRetentionPrune } from "./retention";
 // #4013 step 8: same shim shape for the gate-check policy/publish/audit functions -- imported here for
@@ -551,7 +547,7 @@ import {
   mapWithConcurrencyLimit,
 } from "../signals/focus-manifest-loader";
 import { resolveRepositorySettings } from "../settings/repository-settings";
-import { getLastRepoDocRefreshAttemptedAtBulk, performRepoDocRefresh } from "../github/repo-doc-refresh-runner";
+import { getLastRepoDocRefreshAttemptedAtBulk, } from "../github/repo-doc-refresh-runner";
 import { isRepoDocRefreshDue } from "../review/repo-doc-refresh-schedule";
 import type { LocalBranchAnalysisInput } from "../signals/local-branch";
 import {
@@ -592,8 +588,7 @@ import {
   incompletePatchLessSecretScanFinding,
   markEligiblePatchLessFilesIncomplete,
 } from "./patchless-secret-scan";
-import { isRagEnabled } from "../review/rag-wire";
-import { computeImpactMap, type ImpactMapEntry } from "../review/impact-map";
+import { type ImpactMapEntry } from "../review/impact-map";
 import { shouldComputeImpactMap } from "../review/impact-map-wire";
 import { shouldEmitFixHandoff } from "../review/fix-handoff";
 import { buildFixHandoffBlocks } from "../review/fix-handoff-render";
@@ -1871,7 +1866,7 @@ export async function sweepRepoBacklogConvergence(
       targetKey: repoFullName,
       outcome: "denied",
       detail: "agent actions paused — backlog-convergence sweep skipped",
-      metadata: { repoFullName, mode },
+      metadata: { repoFullName, mode, requestedBy },
     });
     return;
   }
@@ -1921,7 +1916,7 @@ export async function sweepRepoBacklogConvergence(
         targetKey: repoFullName,
         outcome: "denied",
         detail: `backlog-convergence sweep found ${orderedCandidates.length} open PR(s) needing convergence, all repair-exhausted`,
-        metadata: { repoFullName, examined: examinedCount, totalCandidates: orderedCandidates.length },
+        metadata: { repoFullName, examined: examinedCount, totalCandidates: orderedCandidates.length, requestedBy },
       });
     }
     return;

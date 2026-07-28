@@ -2,78 +2,38 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import { clearInstallationTokenCacheForTest } from "../../src/github/app";
 import { jobClaimSortKey } from "../../src/selfhost/queue-common";
-import { clearReviewSuppressionCacheForTest } from "../../src/review/review-memory-wire";
-import { PR_PANEL_COMMENT_MARKER } from "../../src/github/comments";
-import * as backfillModule from "../../src/github/backfill";
-import * as rateLimitModule from "../../src/github/rate-limit";
+import { } from "../../src/review/review-memory-wire";
+import { } from "../../src/github/comments";
 import * as repositoriesModule from "../../src/db/repositories";
-import * as reviewEffortModule from "../../src/review/review-effort";
 import * as repositorySettingsModule from "../../src/settings/repository-settings";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
-import { jobCoalesceKey } from "../../src/selfhost/queue-common";
+import { } from "../../src/selfhost/queue-common";
 import {
-  listCollisionEdges,
-  createAgentRun,
-  getCommandUsefulnessSummary,
-  getBurdenForecast,
-  getContributorEvidence,
-  getAgentRun,
-  getContributorScoringProfile,
-  getWebhookEvent,
   getInstallation,
-  getLatestUpstreamRulesetSnapshot,
   getPullRequest,
   getPullRequestDetailSyncState,
   upsertPullRequestDetailSyncState,
-  getRepository,
-  listUpstreamDriftReports,
-  listInstallationHealth,
-  listProductUsageDailyRollups,
-  listProductUsageEvents,
-  listPullRequests,
-  listPullRequestFiles,
-  listRepoSyncStates,
-  listSignalSnapshots,
-  persistSignalSnapshot,
   recordGateBlockOutcome,
   markGateOutcomeOverridden,
-  recordProductUsageEvent,
-  upsertAgentCommandAnswer,
-  upsertCheckSummary,
-  upsertIssueFromGitHub,
-  upsertRepoSyncSegment,
   upsertInstallation,
-  updatePullRequestSlopAssessment,
   upsertOfficialMinerDetection,
   upsertPullRequestFile,
   upsertPullRequestFromGitHub,
-  upsertIssueWatchSubscription,
-  upsertRepositoryAiKey,
   upsertRepositorySettings,
   upsertRepositoryFromGitHub,
-  putCachedAiReview,
-  markAiReviewPublished,
-  putCachedAiSlopAdvisory,
-  putCachedLinkedIssueSatisfaction,
-  recordReviewSuppression,
-  listReviewSuppressions,
-  setGlobalAgentFrozen,
 } from "../../src/db/repositories";
-import { agentMaintenanceHeadMatchesGate, changedPathsForGuardrail, claimAiReviewLock, claimPrActuationLock, contributorEvidenceBatchSize, enrichOpenPullRequestsWithChangedFiles, processJob, reconcileLiveDuplicateSiblings, releaseAiReviewLock, releasePrActuationLock, reviewDurationMsSince, SWEEP_FANOUT_RESOLUTION_CONCURRENCY } from "../../src/queue/processors";
+import { agentMaintenanceHeadMatchesGate, changedPathsForGuardrail, enrichOpenPullRequestsWithChangedFiles, processJob, reconcileLiveDuplicateSiblings, SWEEP_FANOUT_RESOLUTION_CONCURRENCY } from "../../src/queue/processors";
 import type { PullRequestRecord } from "../../src/types";
-import { aiReviewCacheInputFingerprint } from "../../src/review/ai-review-cache-input";
-import { fingerprint as reviewMemoryFingerprint } from "../../src/review/review-memory-match";
+import { } from "../../src/review/ai-review-cache-input";
+import { } from "../../src/review/review-memory-match";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import * as focusManifestLoaderModule from "../../src/signals/focus-manifest-loader";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
 import {
-  classifyPullRequestFreshness,
   fetchPullRequestFreshness,
 } from "../../src/github/pr-freshness";
 import { createTestEnv } from "../helpers/d1";
-import { ISSUE_WAKE_MAX_PRS, MERGE_WAKE_MAX_PRS, SWEEP_MAX_PRS } from "../../src/settings/agent-sweep";
-import { AGENT_LABEL_PENDING_CLOSURE, DEFAULT_LINKED_ISSUE_HARD_RULES } from "../../src/review/linked-issue-hard-rules";
 import { generatePrivateKeyPem } from "../helpers/github-app-key";
 
 vi.mock("../../src/github/pr-freshness", async (importOriginal) => {
@@ -89,65 +49,11 @@ vi.mock("../../src/github/pr-freshness", async (importOriginal) => {
   };
 });
 
-// The re-gate sweep now FANS OUT the heavy re-review + marker stamp into per-PR `agent-regate-pr` jobs
-// (#audit-sweep-fanout). A test asserting the re-review/stamp side effects must run the sweep AND drain the
-// per-PR jobs it enqueues. Returns the captured agent-regate-pr jobs for assertions.
-async function sweepAndDrainPerPr(env: Env, repoFullName: string): Promise<import("../../src/types").JobMessage[]> {
-  const fanned: import("../../src/types").JobMessage[] = [];
-  const send = env.JOBS.send.bind(env.JOBS);
-  env.JOBS.send = (async (message: import("../../src/types").JobMessage, options?: QueueSendOptions) => {
-    if (message.type === "agent-regate-pr") fanned.push(message);
-    return send(message, options);
-  }) as typeof env.JOBS.send;
-  await processJob(env, { type: "agent-regate-sweep", requestedBy: "test", repoFullName });
-  env.JOBS.send = send;
-  for (const job of fanned) await processJob(env, job);
-  return fanned;
-}
 
 
-function completeSegment(repoFullName: string, segment: "labels" | "open_issues" | "open_pull_requests") {
-  return {
-    repoFullName,
-    segment,
-    status: "complete" as const,
-    sourceKind: "test" as const,
-    mode: "resume" as const,
-    fetchedCount: 1,
-    expectedCount: 1,
-    pageCount: 1,
-    completedAt: "2026-05-25T00:00:00.000Z",
-    warnings: [],
-  };
-}
 
-type CommandAnswerFixture = Parameters<typeof upsertAgentCommandAnswer>[1];
 
-function commandAnswer(id: string, command: string, overrides: Partial<CommandAnswerFixture> = {}): CommandAnswerFixture {
-  return {
-    id,
-    repoFullName: "JSONbored/gittensory",
-    issueNumber: 77,
-    command,
-    requestCommentId: 7,
-    responseCommentId: 9001,
-    responseUrl: "https://github.com/JSONbored/gittensory/pull/77#issuecomment-9001",
-    actorKind: "maintainer" as const,
-    createdAt: "2026-05-28T00:00:00.000Z",
-    updatedAt: "2026-05-28T00:00:00.000Z",
-    metadata: {},
-    ...overrides,
-  };
-}
 
-function commandAnswerBody(answerId: string, command: string): string {
-  return [
-    "<!-- gittensory-agent-command -->",
-    `<!-- gittensory-agent-command-answer:${answerId} -->`,
-    `Command: \`@loopover ${command}\``,
-    "Feedback is aggregate-only.",
-  ].join("\n");
-}
 
 function queueMinerSnapshot(login: string) {
   return {
@@ -181,25 +87,7 @@ function queueMinerSnapshot(login: string) {
   };
 }
 
-function b64(value: string): string {
-  return Buffer.from(value, "utf8").toString("base64");
-}
 
-function withProductUsageInsertFailure(env: Env): Env {
-  const db = env.DB as unknown as { prepare(sql: string): unknown; batch(statements: unknown[]): Promise<unknown> };
-  return {
-    ...env,
-    DB: {
-      prepare(sql: string) {
-        if (sql.includes("product_usage_events")) throw new Error("product usage insert failed");
-        return db.prepare.call(db, sql);
-      },
-      batch(statements: unknown[]) {
-        return db.batch.call(db, statements);
-      },
-    } as unknown as D1Database,
-  };
-}
 
 describe("changedPathsForGuardrail", () => {
   it("collects current + rename paths and skips empty entries", () => {
@@ -660,7 +548,7 @@ describe("one-shot reopen prevention", () => {
   });
 
   it("swallows a recordAuditEvent failure on the stale-reopen denial path — handler still completes (#2130)", async () => {
-    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = input.toString();
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
       if (url.endsWith("/collaborators/contributor/permission")) return Response.json({ permission: "read" });
@@ -979,7 +867,7 @@ describe("one-shot reopen prevention", () => {
   });
 
   it("swallows createIssueComment, closePullRequest, and recordAuditEvent errors on reclose (fail-safe — all .catch() bodies)", async () => {
-    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = input.toString();
       if (url.includes("/access_tokens")) return Response.json({ token: "t" });
       if (url.endsWith("/collaborators/contributor/permission")) return Response.json({ permission: "read" });
@@ -1271,7 +1159,7 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
   });
 
   it("swallows a recordAuditEvent failure on the stale-draft-dodge denial path — handler still completes (#2130)", async () => {
-    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = input.toString();
       if (url.includes("/access_tokens")) return Response.json({ token: "t" });
       return new Response("not found", { status: 404 });
@@ -1677,7 +1565,7 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
   });
 
   it("swallows createIssueComment and closePullRequest API errors (fail-safe — both .catch() bodies)", async () => {
-    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = input.toString();
       if (url.includes("/access_tokens")) return Response.json({ token: "t" });
       throw new Error("simulated network error"); // all GitHub calls throw
@@ -5428,9 +5316,8 @@ describe("auto-action convergence: end-to-end plan+execute for the general heuri
       scheduled.push(options ? { message, options } : { message });
       return originalSend(message, options);
     }) as typeof env.JOBS.send;
-    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = input.toString();
-      const method = init?.method ?? "GET";
       if (url === "https://api.gittensor.io/miners") return Response.json([]);
       if (url === "https://api.github.com/graphql") {
         return Response.json({ data: { repository: { pullRequest: { reviewDecision: "APPROVED" } } } });

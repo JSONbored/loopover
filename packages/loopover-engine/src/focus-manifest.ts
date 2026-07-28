@@ -28,25 +28,21 @@ import { normalizeAutonomyPolicy, normalizeAutoMaintainPolicy } from "./settings
 import { normalizeCommandAuthorizationPolicy } from "./settings/command-authorization.js";
 import { normalizeContributorBlacklist } from "./settings/contributor-blacklist.js";
 import { normalizeAutoCloseExemptLogins } from "./settings/auto-close-exempt.js";
-import { DEFAULT_TYPE_LABELS, MAX_TYPE_LABEL_NAME_LENGTH, normalizeTypeLabelSet } from "./settings/pr-type-label.js";
+import { MAX_TYPE_LABEL_NAME_LENGTH, normalizeTypeLabelSet } from "./settings/pr-type-label.js";
 import {
-  DEFAULT_LINKED_ISSUE_LABEL_PROPAGATION,
   normalizeLinkedIssueLabelPropagationConfig,
   VALID_LINKED_ISSUE_LABEL_PROPAGATION_MODES,
 } from "./review/linked-issue-label-propagation.js";
 import {
-  DEFAULT_LINKED_ISSUE_HARD_RULES,
   isLinkedIssueHardRuleMode,
   normalizeLinkedIssueHardRulesConfig,
 } from "./review/linked-issue-hard-rules-config.js";
 import {
-  DEFAULT_UNLINKED_ISSUE_GUARDRAIL,
   isUnlinkedIssueGuardrailMode,
   normalizeUnlinkedIssueGuardrailConfig,
 } from "./review/unlinked-issue-guardrail-config.js";
 import { normalizeAdvisoryAiRoutingConfig } from "./review/advisory-ai-routing-config.js";
 import {
-  DEFAULT_SCREENSHOT_TABLE_GATE,
   isScreenshotTableGateAction,
   normalizeScreenshotTableGateConfig,
 } from "./review/screenshot-table-gate.js";

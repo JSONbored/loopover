@@ -244,7 +244,7 @@ describe("runMaintainerRecapJob — cross-repo digest (#1963, #2248)", () => {
     await recordGateBlockOutcome(env, { repoFullName: "owner/alpha", pullNumber: 1, blockerCodes: ["slop_risk"] });
     await upsertPullRequestFromGitHub(env, "owner/alpha", { number: 2, title: "human PR", state: "closed", user: { login: "human-bob" } });
     await recordGateBlockOutcome(env, { repoFullName: "owner/alpha", pullNumber: 2, blockerCodes: ["slop_risk"] });
-    vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal("fetch", async (url: RequestInfo | URL, _init?: RequestInit) => {
       if (String(url) === HOOK) return new Response(null, { status: 204 });
       if (String(url) === "https://api.gittensor.io/miners") return Response.json([{ uid: 1, githubUsername: "miner-alice", githubId: "1" }]);
       return new Response(null, { status: 204 });

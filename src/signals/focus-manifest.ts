@@ -124,7 +124,6 @@ import {
   type FocusManifestFinding,
   type FocusManifestGateConfig,
   type FocusManifestGuidance,
-  type FocusManifestSource,
   type MaxFindingsConfig,
   type PreMergeCheck,
   type ReviewFindingSeverity,

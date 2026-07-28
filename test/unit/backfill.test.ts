@@ -38,19 +38,9 @@ import {
   buildInstallationRepairDiagnostics,
   enqueueRepositoryOpenDataBackfill,
   enrichInstallationHealth,
-  fetchAndStorePullRequestFilesForReview,
   fetchBaseAheadBy,
   fetchLinkedIssueClosedByPullRequest,
-  fetchLinkedIssueFacts,
   fetchLiveBaseBranchAdvancedAt,
-  fetchLiveCiAggregate,
-  fetchLiveReviewThreadBlockers,
-  fetchNamedCheckRunConclusion,
-  fetchRequiredStatusContexts,
-  isOwnReviewThreadAuthor,
-  isRateLimitedGitHubFailure,
-  mergeRequiredCiContexts,
-  reconcileOpenPullRequests,
   refreshContributorActivity,
   refreshInstallationHealth,
   refreshPullRequestDetails,
@@ -64,7 +54,7 @@ import {
 } from "../../src/github/client";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
-import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
+import { renderMetrics, } from "../../src/selfhost/metrics";
 import { asCloudEnv, createTestEnv } from "../helpers/d1";
 import { generatePrivateKeyPem } from "../helpers/github-app-key";
 

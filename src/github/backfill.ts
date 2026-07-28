@@ -45,7 +45,6 @@ import { agentRequiresContentsWrite, agentRequiresPrWrite } from "../settings/ag
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import type {
   ContributorRepoStatRecord,
-  GitHubRateLimitObservationRecord,
   GitHubIssuePayload,
   GitHubPullRequestPayload,
   GitHubRepositoryPayload,

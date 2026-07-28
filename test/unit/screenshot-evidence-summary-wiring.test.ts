@@ -65,9 +65,8 @@ async function runWebhookPass(args: {
   const pullPath = `/pulls/${args.pull}`;
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = input.toString();
-      const method = init?.method ?? "GET";
       if (url === "https://api.gittensor.io/miners") return Response.json([]);
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
       if (url === BEFORE_URL) return new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "content-type": "image/png" } });

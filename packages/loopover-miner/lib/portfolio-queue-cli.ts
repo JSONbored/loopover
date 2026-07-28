@@ -45,11 +45,6 @@ export type ParsedQueueClaimBatchArgs =
   | { json: boolean; dryRun: boolean; globalWipCap: number; perRepoWipCap: number }
   | { error: string };
 
-type PortfolioQueueCliOptions = {
-  initPortfolioQueue?: () => PortfolioQueueStore;
-  initPortfolioQueueManager?: (opts: unknown) => PortfolioQueueManager;
-  nowMs?: number;
-};
 
 function parseRepoArg(value: string | undefined, usage: string): { error: string } | { repoFullName: string } {
   if (!value) return { error: usage };

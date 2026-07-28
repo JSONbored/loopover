@@ -3,7 +3,6 @@ import {
   buildGrounding,
   diffFilePriority,
   diffFullyCoversFile,
-  FILE_CONTENT_BUDGET,
   fetchFullFileContents,
   type FileFetcher,
   formatGroundingSections,

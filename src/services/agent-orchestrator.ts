@@ -22,7 +22,7 @@ import {
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } from "../gittensor/api";
 import { fetchPublicContributorProfile } from "../github/public";
 import { getOrCreateScoringModelSnapshot } from "../scoring/model";
-import { loadContributorDecisionPackForServing, repoDecisionFromPack, type ActionPortfolio, type ActionPortfolioBucketName, type ContributorDecisionPack, type DecisionAction, type RepoDecision, type RepoOutcomeSummary } from "./decision-pack";
+import { loadContributorDecisionPackForServing, type ActionPortfolio, type ActionPortfolioBucketName, type ContributorDecisionPack, type DecisionAction, type RepoDecision, type RepoOutcomeSummary } from "./decision-pack";
 import { loadOrComputeIssueQualityResponse } from "./issue-quality";
 import { summarizeAgentBundleWithAi } from "./ai-summaries";
 import { buildContributorFit, buildContributorOutcomeHistory, buildContributorProfile, buildContributorScoringProfile } from "../signals/engine";

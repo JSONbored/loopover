@@ -1,6 +1,6 @@
 import type { Redis } from "ioredis";
 import { afterEach, describe, expect, it } from "vitest";
-import { counterValue, incr, renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
+import { incr, renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { createRedisResponseCache } from "../../src/selfhost/redis-response-cache";
 
 function fakeRedis(): {

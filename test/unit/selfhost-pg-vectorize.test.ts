@@ -1,7 +1,7 @@
 // Unit tests for pg-vectorize (#980 pgvector RAG). Uses a mock pg Pool so no real Postgres is required.
 // The integration path (initPgVectorize + real Postgres) is covered by selfhost-pg-queue.test.ts (which
 // already spins up Postgres in CI via the pg integration harness).
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach } from "vitest";
 import { createPgVectorize, initPgVectorize } from "../../src/selfhost/pg-vectorize";
 import type { Pool } from "pg";
 

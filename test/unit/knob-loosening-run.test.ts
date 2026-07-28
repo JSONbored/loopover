@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { splitBacktestCorpus } from "@loopover/engine";
 import * as looseningKnobs from "../../src/services/loosening-knobs";
-import { LOOSENABLE_KNOBS, type LoosenableKnob } from "../../src/services/loosening-knobs";
+import { LOOSENABLE_KNOBS, } from "../../src/services/loosening-knobs";
 import {
   GENERIC_LIVE_KNOBS,
   genericLiveKnobs,

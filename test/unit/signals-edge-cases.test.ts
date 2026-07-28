@@ -44,7 +44,6 @@ import { PREFLIGHT_LIMITS } from "../../src/signals/preflight-limits";
 import { REVIEW_FIELD_KEYS } from "../../src/signals/focus-manifest";
 import type { GittensorContributorSnapshot } from "../../src/gittensor/api";
 import type {
-  ContributorRepoStatRecord,
   CheckSummaryRecord,
   IssueRecord,
   PullRequestFileRecord,

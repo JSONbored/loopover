@@ -9,7 +9,6 @@ import {
   preflightBranchWithAgent,
   preparePrPacketWithAgent,
   startAgentRun,
-  type AgentRunBundle,
 } from "../../src/services/agent-orchestrator";
 import { buildAgentActionExplanationCard } from "../../src/services/agent-action-explanation-card";
 import * as aiSummariesModule from "../../src/services/ai-summaries";

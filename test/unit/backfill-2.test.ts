@@ -1,44 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  getInstallationHealth,
-  listCheckSummaries,
-  listContributorRepoStats,
-  listIssues,
-  listLatestRepoGithubTotalsSnapshots,
   listPullRequestFiles,
-  listPullRequestReviews,
-  listPullRequests,
-  listPullRequestDetailSyncStates,
-  listRecentMergedPullRequests,
-  upsertRecentMergedPullRequest,
   listLatestGitHubRateLimitObservations,
-  listRepoLabels,
-  listRepoSyncSegments,
-  listRepoSyncStates,
-  persistRepoGithubTotalsSnapshot,
-  recordGitHubRateLimitObservation,
-  upsertInstallation,
-  upsertInstallationHealth,
-  upsertRepoSyncSegment,
-  upsertRepoSyncState,
-  getPullRequest,
-  upsertPullRequestFile,
   upsertPullRequestFromGitHub,
-  upsertIssueFromGitHub,
-  upsertRepoLabel,
-  upsertRepositoryFromGitHub,
-  upsertRepositorySettings,
 } from "../../src/db/repositories";
 import {
-  backfillOpenPullRequestDetails,
-  backfillRegisteredRepositories,
-  backfillRepositorySegment,
-  buildInstallationRepairDiagnostics,
-  enqueueRepositoryOpenDataBackfill,
-  enrichInstallationHealth,
   fetchAndStorePullRequestFilesForReview,
   fetchLinkedIssueFacts,
-  fetchLiveBaseBranchAdvancedAt,
   fetchLiveCiAggregate,
   fetchLiveReviewThreadBlockers,
   fetchLivePullRequestReviewDecision,
@@ -49,13 +17,9 @@ import {
   isRateLimitedGitHubFailure,
   mergeRequiredCiContexts,
   reconcileOpenPullRequests,
-  refreshContributorActivity,
-  refreshInstallationHealth,
-  refreshPullRequestDetails,
 } from "../../src/github/backfill";
 import {
   clearGitHubResponseCacheForTest,
-  githubRateLimitAdmissionKeyForInstallation,
   githubRateLimitAdmissionKeyForPublicToken,
   setGitHubResponseCache,
   type CachedGitHubResponse,
@@ -65,7 +29,6 @@ import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { asCloudEnv, createTestEnv } from "../helpers/d1";
-import { generatePrivateKeyPem } from "../helpers/github-app-key";
 
 // #4682 incident (2026-07-10): the stored-body cap used to be 4000 chars -- well under what a compliant
 // screenshot-evidence table (or any sufficiently detailed PR/issue) actually needs -- and every body-content
@@ -92,46 +55,7 @@ async function seedRegisteredRepo(env: Env) {
   );
 }
 
-async function persistTotalsSnapshot(
-  env: Env,
-  overrides: {
-    fetchedAt?: string;
-    sourceKind?: "github" | "installation";
-    openIssuesTotal?: number;
-    openPullRequestsTotal?: number;
-    mergedPullRequestsTotal?: number;
-    closedUnmergedPullRequestsTotal?: number;
-    labelsTotal?: number;
-  } = {},
-) {
-  await persistRepoGithubTotalsSnapshot(env, {
-    id: crypto.randomUUID(),
-    repoFullName: "JSONbored/gittensory",
-    openIssuesTotal: overrides.openIssuesTotal ?? 0,
-    openPullRequestsTotal: overrides.openPullRequestsTotal ?? 0,
-    mergedPullRequestsTotal: overrides.mergedPullRequestsTotal ?? 0,
-    closedUnmergedPullRequestsTotal: overrides.closedUnmergedPullRequestsTotal ?? 0,
-    labelsTotal: overrides.labelsTotal ?? 0,
-    sourceKind: overrides.sourceKind ?? "github",
-    fetchedAt: overrides.fetchedAt ?? "2026-05-25T00:00:00.000Z",
-    payload: {},
-  });
-}
 
-function githubTotalsResponse(counts: { openIssues: number; openPullRequests: number; mergedPullRequests: number; closedPullRequests: number; labels: number }) {
-  return Response.json({
-    data: {
-      rateLimit: { remaining: 4999, resetAt: "2026-05-25T01:00:00.000Z" },
-      repository: {
-        issues: { totalCount: counts.openIssues },
-        openPullRequests: { totalCount: counts.openPullRequests },
-        mergedPullRequests: { totalCount: counts.mergedPullRequests },
-        closedPullRequests: { totalCount: counts.closedPullRequests },
-        labels: { totalCount: counts.labels },
-      },
-    },
-  });
-}
 
 describe("GitHub backfill", () => {
   afterEach(() => {

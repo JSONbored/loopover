@@ -93,7 +93,6 @@ import {
   GetPrMaintainerPacketOutput,
   LintPrTextInput,
   LintPrTextOutput,
-  ExplainScoreBreakdownInput,
   ExplainScoreBreakdownOutput,
   ExplainReviewRiskInput,
   ExplainReviewRiskOutput,
@@ -231,7 +230,6 @@ import {
 import { canLoginAccessRepo, canWatchRepo, loadControlPanelAccessScope, loadControlPanelRoleSummary, type ControlPanelAccessScope } from "../services/control-panel-roles";
 import {
   countOpenIssues,
-  countPendingAgentActions,
   countOpenPullRequests,
   createPendingAgentActionIfAbsent,
   getBounty,
@@ -240,14 +238,12 @@ import {
   listBountyLifecycleEvents,
   getContributorEvidence,
   getLatestRepoGithubTotalsSnapshot,
-  getInstallation,
   getIssue,
   getPendingAgentAction,
   getPullRequest,
   getRepository,
   getRepositorySettings,
   getLatestUpstreamRulesetSnapshot,
-  isGlobalAgentFrozen,
   getRepoQueueTrendSnapshot,
   listAgentAuditEvents,
   listCheckSummaries,
@@ -284,7 +280,7 @@ import { decidePendingAgentAction } from "../services/agent-approval-queue";
 import { automationStateSummary, buildAutomationState } from "../services/automation-state";
 import { nowIso } from "../utils/json";
 import { buildNotificationFeed } from "../notifications/service";
-import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } from "../gittensor/api";
+import { fetchGittensorContributorSnapshot } from "../gittensor/api";
 import { getRepositoryCollaboratorPermission } from "../github/app";
 import { performRepoDocRefresh } from "../github/repo-doc-refresh-runner";
 import { generateContributorIssueDrafts } from "../services/contributor-issue-draft";
@@ -352,7 +348,7 @@ import {
   buildQueueHealth,
   buildRegistryChangeReport,
 } from "../signals/engine";
-import { PUBLIC_SURFACE_SKIP_REASONS, skippedPrAuditRemediation, type PublicSurfaceSkipReason } from "../signals/settings-preview";
+import { skippedPrAuditRemediation, type PublicSurfaceSkipReason } from "../signals/settings-preview";
 import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { buildContributorPrOutcomes } from "../signals/contributor-pr-outcomes";
 import { buildReviewRiskExplanation } from "../signals/review-risk";
@@ -375,11 +371,9 @@ import {
 // silently-dead-feature shape this audit's check-dead-source-files.ts now guards against. Wired up here,
 // following the identical local-write-tools pattern every sibling in this block already uses.
 import { buildSoftClaimSpec } from "../miner/soft-claim";
-import { buildTestEvidenceReport, classifyTestCoverage, hasLocalTestEvidence, isCodeFile, isTestPath, TEST_FRAMEWORKS } from "../signals/test-evidence";
+import { buildTestEvidenceReport, } from "../signals/test-evidence";
 import { applyStepResult, buildPlanDag, nextReadySteps, planProgress, validatePlanDag, type PlanDag } from "../services/plan-dag";
 import { buildFocusManifestValidation } from "../services/focus-manifest-validation";
-import { isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness } from "../settings/agent-execution";
-import { AUTONOMY_LEVELS } from "../settings/autonomy";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { isDuplicateWinnerEnabledGlobally, resolveDuplicateWinnerEnabled } from "../settings/duplicate-winner-mode";
 import { compileFocusManifestPolicy, MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
@@ -433,11 +427,6 @@ const ownerRepoPullShape = {
   number: z.number().int().positive(),
 };
 
-const ownerRepoWindowShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  windowDays: z.number().int().positive().optional(),
-};
 
 
 // (#8660) write-side mirror of DELETE /v1/repos/:owner/:repo/selftune/overrides. `confirm` is the required
@@ -465,13 +454,6 @@ const fileIncidentReportShape = {
 };
 
 
-const fleetAnalyticsOutputSchema = {
-  windowDays: z.number().optional(),
-  instanceCount: z.number().optional(),
-  fleet: z.unknown().optional(),
-  instances: z.array(z.unknown()).optional(),
-  outliers: z.array(z.unknown()).optional(),
-};
 
 
 const issueRagShape = {
@@ -621,18 +603,6 @@ const generateContributorIssueDraftsShape = {
   limit: z.number().int().min(1).max(20).optional().default(5),
 };
 
-const generateContributorIssueDraftsOutputSchema = {
-  repoFullName: z.string(),
-  generatedAt: z.string(),
-  dryRun: z.boolean(),
-  createRequested: z.boolean(),
-  proposed: z.number(),
-  skippedDuplicate: z.number(),
-  skippedDeclined: z.number(),
-  skippedUnsafe: z.number(),
-  created: z.number(),
-  skippedCreateFailed: z.number(),
-};
 
 // #7426: dryRun/create/limit mirror generateContributorIssueDraftsShape's own bounds/defaults (create alone is
 // rejected -- the handler re-applies the explicit_create_requires_dry_run_false guard). `limit` is capped lower
@@ -656,38 +626,6 @@ const planRepoIssuesShape = {
   milestone: planRepoIssuesMilestoneShape.optional(),
 };
 
-const planRepoIssuesOutputSchema = {
-  repoFullName: z.string(),
-  generatedAt: z.string(),
-  status: z.string(),
-  dryRun: z.boolean(),
-  createRequested: z.boolean(),
-  proposed: z.number(),
-  skippedDuplicate: z.number(),
-  skippedDeclined: z.number(),
-  skippedUnsafe: z.number(),
-  created: z.number(),
-  skippedCreateFailed: z.number(),
-  // Unlike generateContributorIssueDraftsOutputSchema, this INCLUDES each draft's title/body/labels: the content
-  // is generated fresh from the caller's own goal for their own repo (no loopover-internal signal to scrub), and
-  // the whole point of the dry-run-by-default posture is letting a maintainer actually read the proposal before
-  // deciding to create it.
-  drafts: z
-    .array(
-      z.object({
-        title: z.string(),
-        body: z.string(),
-        labels: z.array(z.string()),
-        status: z.string(),
-        issueNumber: z.number().optional(),
-        issueUrl: z.string().optional(),
-      }),
-    )
-    .optional(),
-  // Set only when a milestone target was given AND creation actually ran AND resolution succeeded (#7427) --
-  // absent on a dry run, no milestone requested, or a degraded (failed) resolution.
-  milestoneNumber: z.number().optional(),
-};
 
 // #784 (MCP slice) — the agent audit feed: executed actions + approval decisions for a repo.
 
@@ -798,23 +736,6 @@ const variantsShape = {
   variants: z.array(z.object(scorePreviewShape)).min(1).max(10),
 };
 
-// ── MCP tool output schemas ────────────────────────────────────────────────
-// Structured-output metadata for machine-readable tools so modern MCP clients
-// can discover and validate LoopOver responses. Schemas declare documented
-// top-level fields; complex/nullable/variant fields use a permissive type so
-// validation never rejects a real response (the SDK strips unknown keys). All
-// fields are optional because several tools return either a result payload or a
-// `{ status: "not_found" | ... }` / refresh envelope.
-const repoContextOutputSchema = {
-  repoFullName: z.string().optional(),
-  repo: z.unknown().optional(),
-  lane: z.unknown().optional(),
-  queueHealth: z.unknown().optional(),
-  queueTrends: z.unknown().optional(),
-  collisions: z.unknown().optional(),
-  configQuality: z.unknown().optional(),
-  dataQuality: z.unknown().optional(),
-};
 
 
 export const maintainerMeasurementReportOutputSchema = {
@@ -875,12 +796,6 @@ const checkSlopRiskShape = {
   issueDiscoveryLane: z.boolean().optional(),
 };
 
-const checkSlopRiskOutputSchema = {
-  slopRisk: z.number().optional(),
-  band: z.enum(["clean", "low", "elevated", "high"]).optional(),
-  findings: z.unknown().optional(),
-  rubric: z.string().optional(),
-};
 
 // Idea-intake bridge input (#4798, spec #4779). Fields are loose here so the engine's validateIdeaSubmission
 // owns the real bounds/format checks and returns the actionable error list — an empty/malformed submission
@@ -986,19 +901,6 @@ const suggestBoundaryTestsShape = {
 };
 
 
-const predictGateOutputSchema = {
-  predicted: z.boolean().optional(),
-  basis: z.string().optional(),
-  pack: z.enum(["gittensor", "oss-anti-slop"]).optional(),
-  conclusion: z.string().optional(),
-  title: z.string().optional(),
-  summary: z.string().optional(),
-  readinessScore: z.number().nullable().optional(),
-  blockers: z.unknown().optional(),
-  warnings: z.unknown().optional(),
-  funnel: z.unknown().optional(),
-  note: z.string().optional(),
-};
 
 
 const markNotificationsReadShape = {
@@ -1019,20 +921,6 @@ const watchIssuesShape = {
 };
 
 
-// admin tool output schemas (#9518) now come from @loopover/contract/tools.
-// #550: output schemas for the remaining tools (preflight/score/local-branch/agent), so MCP clients can
-// machine-validate their results. Same lenient style as the schemas above — documented top-level keys,
-// all optional, complex values as z.unknown(). No behavior change; these mirror the existing payloads.
-const preflightResultOutputSchema = {
-  repoFullName: z.string().optional(),
-  generatedAt: z.string().optional(),
-  status: z.string().optional(),
-  lane: z.unknown().optional(),
-  reviewBurden: z.unknown().optional(),
-  linkedIssues: z.unknown().optional(),
-  findings: z.array(z.unknown()).optional(),
-  collisions: z.unknown().optional(),
-};
 
 const SIMULATE_OPEN_PR_PRESSURE_MAX_COUNT = 1_000_000;
 const simulateOpenPrPressureCountSchema = z.number().int().min(0).max(SIMULATE_OPEN_PR_PRESSURE_MAX_COUNT);

@@ -13,11 +13,10 @@ import type {
   AdvisoryFinding,
   AdvisorySeverity,
   GateRuleMode,
-  IssueRecord,
   PullRequestRecord,
   RepositoryRecord,
 } from "../types/predicted-gate-types.js";
-import type { CollisionReport } from "../types/predicted-gate-types.js";
+import type { } from "../types/predicted-gate-types.js";
 import { isDuplicateClusterWinnerByClaim } from "../signals/duplicate-winner.js";
 import type { GuardrailPathMatch } from "../signals/change-guardrail.js";
 import { nowIso } from "../utils/json.js";

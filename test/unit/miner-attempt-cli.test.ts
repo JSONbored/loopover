@@ -1385,7 +1385,6 @@ describe("runAttempt (#5132)", () => {
 
   it("#8543: records NOTHING when the coding-task-spec is ready (capture is scoped to the infeasible branch)", async () => {
     const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
-    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const { store, fired } = fakeSignalStore();
     const worktreeResult = fakeWorktreeResult();
     const runMinerAttemptSpy = vi.fn().mockResolvedValue({

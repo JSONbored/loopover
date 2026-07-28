@@ -364,7 +364,7 @@ describe("runMaintainerRecap (#2252 end-to-end orchestration)", () => {
   });
 
   it("still delivers to Slack when Discord fetch fails (Discord outage must not abort Slack)", async () => {
-    vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal("fetch", async (url: RequestInfo | URL, _init?: RequestInit) => {
       if (String(url) === DISCORD_HOOK) throw new Error("discord down");
       if (String(url) === SLACK_HOOK) return new Response(null, { status: 204 });
       return new Response(null, { status: 204 });

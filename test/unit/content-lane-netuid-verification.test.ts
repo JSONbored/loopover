@@ -83,7 +83,7 @@ describe("fetchTaostatsSubnetIdentity (key-gated, fail-open)", () => {
 
   it("sends the key as a RAW Authorization header (not Bearer)", async () => {
     let auth: string | null = null;
-    const f = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const f = (async (_input: RequestInfo | URL, init?: RequestInit) => {
       auth = new Headers(init?.headers).get("authorization");
       return new Response(JSON.stringify({ data: [{ netuid: 9, subnet_name: "N" }] }), { status: 200 });
     }) as unknown as typeof fetch;

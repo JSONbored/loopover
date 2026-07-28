@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { resolveActionlintDownloadAttempts } from "./lib/actionlint-download-attempts.ts";
+import { resolveActionlintDownloadAttempts } from "./lib/actionlint-download-attempts";
 import type { ActionlintOptions, ActionlintResult } from "github-actionlint";
 import type { Result } from "@tktco/node-actionlint/build/types.js";
 

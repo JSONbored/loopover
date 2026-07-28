@@ -1,14 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { buildOpenApiSpec } from "../../src/openapi/spec";
-import {
-  gatePrecisionOutputSchema,
-  maintainerMeasurementReportOutputSchema,
-} from "../../src/mcp/server";
 // #9518: these tools' output schemas moved to @loopover/contract as each category migrated. The
 // REST<->MCP parity guards below are unchanged in intent -- they now read the contract (the single
 // source both the MCP server and these assertions derive from) instead of server-local declarations
 // that no longer exist.
 import {
+  GetGatePrecisionOutput,
+  GetOutcomeCalibrationOutput,
   GetMaintainerNoiseOutput,
   GetAmsMinerCohortOutput,
   GetActivationPreviewOutput,
@@ -478,12 +476,17 @@ describe("OpenAPI contract", () => {
       {
         path: "/v1/repos/{owner}/{repo}/gate-precision",
         response: "GatePrecisionResponse",
-        outputShape: gatePrecisionOutputSchema,
+        // #9302 guard, re-anchored: this asserted against src/mcp/server.ts's own gatePrecisionOutputSchema,
+        // which the tool stopped registering when #9518 moved its output to the contract. The two shapes were
+        // still identical, so nothing had drifted YET -- but the guard was watching an object no runtime reads,
+        // so a future contract change would have sailed past it. Now it reads what the tool actually registers.
+        outputShape: GetGatePrecisionOutput.shape,
       },
       {
         path: "/v1/repos/{owner}/{repo}/outcome-calibration",
         response: "OutcomeCalibrationResponse",
-        outputShape: maintainerMeasurementReportOutputSchema,
+        // Same re-anchoring as gate-precision directly above.
+        outputShape: GetOutcomeCalibrationOutput.shape,
       },
       {
         path: "/v1/repos/{owner}/{repo}/activation-preview",

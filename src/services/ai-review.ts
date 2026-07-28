@@ -27,6 +27,7 @@ import {
 } from "../db/repositories";
 import { isPublicScoreTermSafeForRepo, sanitizePublicComment } from "../queue-intelligence";
 import { defangReviewInput } from "../review/safety";
+import { JUDGE_EXEMPLAR_SET_VERSION, planSelfConsistencyRuns, resolveSelfConsistencyRuns, rotatedExemplarSuffix } from "../review/self-consistency";
 import { convergedFeatureActive } from "../review/feature-activation";
 import { labelSelfHostReviewerModels, labelSelfHostReviewerNames, resolveConfiguredProviderNames } from "../selfhost/ai-config";
 import { incr } from "../selfhost/metrics";
@@ -449,6 +450,13 @@ export type LoopOverAiReviewResult =
        *  order-swap — which operates downstream on copies — can never misattribute a vote. Block-mode only
        *  (the gate corpus is what the track records score against); empty in advisory-only runs. */
       reviewerVotes: { reviewer: string; votedFail: boolean }[];
+      /** #8834 (paid half): stances from the rotated-exemplar self-consistency runs, kept SEPARATE from
+       *  reviewerVotes so they feed only the agreement score -- never split detection, which is a statement
+       *  about independent reviewers, not about one judge's reproducibility. */
+      selfConsistencySamples: { reviewer: string; votedFail: boolean }[];
+      /** True when the daily budget funded fewer extra runs than configured -- the recorded confidence is
+       *  exactly what the reduced sample set supports (the uncorroborated arm), never fabricated. */
+      selfConsistencyDegraded: boolean;
       inlineFindings: InlineFinding[];
       /** Combined improvement/value judgment (#4743), public-safe and ready to render. ALWAYS present (`null`
        *  when `input.improvementSignal` is falsy, when neither reviewer emitted a usable judgment, or when the
@@ -3077,6 +3085,56 @@ export async function runLoopOverAiReview(
     }
   }
 
+  // #8834, the paid half (see self-consistency.ts's header for the flag/budget/rotation decisions). Extra
+  // SAME-judge runs with rotated exemplar windows, their stances folded into the recorded confidence by the
+  // orchestration's scoreJudgmentAgreement call. Gated on a primary stance existing at all -- corroborating a
+  // review that produced no usable verdict would spend real money measuring nothing.
+  const selfConsistencySamples: { reviewer: string; votedFail: boolean }[] = [];
+  let selfConsistencyDegraded = false;
+  const configuredSelfConsistencyRuns = resolveSelfConsistencyRuns(env.AI_REVIEW_SELF_CONSISTENCY_RUNS);
+  if (configuredSelfConsistencyRuns >= 2 && reviewerVotes.length > 0) {
+    const plan = planSelfConsistencyRuns({
+      configuredTotalRuns: configuredSelfConsistencyRuns,
+      // The primary evaluation already spent its estimate this pass; extras fund themselves from what is
+      // left. Non-negative by construction: the quota gate above already returned when the estimate
+      // exceeded the remaining budget.
+      remainingBudget: remainingBudget - estimatedNeurons,
+      perRunEstimate: estimatedNeurons,
+    });
+    selfConsistencyDegraded = plan.degradedByBudget;
+    const rotationSeed = `${input.repoFullName}#${input.prNumber}`;
+    for (let runIndex = 1; runIndex <= plan.extraRuns; runIndex += 1) {
+      // The rotated window rides the SYSTEM turn itself: the `systemAppend` parameter is a self-host-CLI-only
+      // transport (selfHostCliSystemAppend drops it for every other provider), so appending there would make
+      // rotation silently provider-dependent. Suffixing `system` reaches every provider identically.
+      const sample = await runWorkersOpinion(
+        env,
+        primary.model,
+        primaryFallback,
+        system + rotatedExemplarSuffix(rotationSeed, runIndex),
+        user,
+        maxTokens,
+        reviewDiagnostics,
+        repoInstructionsSystemAppend,
+        aiRunCorrelation,
+        undefined,
+        bodyTruncated,
+        prHasTestEvidence,
+      );
+      // No fallbackNote handling: runWorkersOpinion never produces one (that field is the BYOK provider
+      // path's). A failed extra simply contributes no stance -- recorded below as spend, never fabricated.
+      if (sample.review) selfConsistencySamples.push({ reviewer: `${primary.model}#sc${runIndex}`, votedFail: sample.review.blockers.length > 0 });
+      // Rides the daily budget for real: sumAiEstimatedNeuronsSince sums status="ok" rows, so each extra run
+      // writes one. detail + metadata keep it distinguishable from a whole-review row in every analytics cut.
+      await record(env, input, "ok", estimatedNeurons, `self-consistency sample ${runIndex}/${plan.extraRuns}`, {
+        selfConsistency: true,
+        runIndex,
+        exemplarSetVersion: JUDGE_EXEMPLAR_SET_VERSION,
+        degradedByBudget: plan.degradedByBudget,
+      });
+    }
+  }
+
   const reviewsForNotes = [advisoryReview, secondReview].filter(
     (r): r is ModelReview => Boolean(r),
   );
@@ -3135,6 +3193,8 @@ export async function runLoopOverAiReview(
     status: "ok",
     advisoryNotes,
     reviewerVotes,
+    selfConsistencySamples,
+    selfConsistencyDegraded,
     consensusDefect,
     split: aiReviewSplit,
     // Carry the split's calibrated confidence (#8) so the caller can apply the same `aiReviewCloseConfidence`

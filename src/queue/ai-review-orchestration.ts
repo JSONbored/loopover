@@ -949,7 +949,11 @@ export async function runAiReviewForAdvisory(
     // #8834: inter-run agreement over the stances this review ALREADY produced (#8229's reviewerVotes) —
     // zero additional AI spend. Computed once and attached to whichever AI-judgment finding is built below,
     // so the decision record carries a per-decision confidence signal for the calibration set (#8835).
-    const aiJudgmentAgreement = (verbalizedConfidence: number) => scoreJudgmentAgreement(result.reviewerVotes, verbalizedConfidence);
+    // #8834 both halves meet here: the free half scores whatever stances exist; the paid half (flag-gated
+    // rotated-exemplar runs) contributes extra SAME-judge stances through selfConsistencySamples -- folded
+    // into the agreement axis only, never into split detection, which reads reviewerVotes alone.
+    const aiJudgmentAgreement = (verbalizedConfidence: number) =>
+      scoreJudgmentAgreement([...result.reviewerVotes, ...result.selfConsistencySamples], verbalizedConfidence);
     if (result.consensusDefect) {
       findings.push({
         code: "ai_consensus_defect",

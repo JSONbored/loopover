@@ -566,7 +566,7 @@ async function resolveLedgerClaimStatus(repoFullName: any, issueNumber: any) {
  * A name here with no contract entry throws at registration, and a registration whose name is
  * missing from this list fails the parity test -- so the two cannot drift apart silently.
  */
-const STDIO_TOOL_NAMES = [
+export const STDIO_TOOL_NAMES = [
   "loopover_get_repo_context",
   "loopover_get_pr_reviewability",
   "loopover_get_pr_maintainer_packet",

@@ -3152,6 +3152,36 @@ export const LocalWorkspaceIntelligenceSchema = z
   })
   .openapi("LocalWorkspaceIntelligence");
 
+/** The pre-submission gate prediction `POST /v1/local/branch-analysis` returns (#9517), authored here so
+ *  {@link LocalBranchAnalysisSchema} can finally declare the `predictedGate` field its route has always
+ *  emitted (#9531). Held in exact parity with `PredictedGateVerdict` (packages/loopover-engine/src/predicted-gate.ts)
+ *  by the compile-time assertion in test/unit/openapi-settings-schema-parity.test.ts. */
+const PredictedGateFindingSchema = z.object({
+  code: z.string(),
+  title: z.string(),
+  detail: z.string(),
+  action: z.string().optional(),
+});
+
+export const PredictedGateVerdictSchema = z
+  .object({
+    predicted: z.literal(true),
+    basis: z.literal("public_config"),
+    pack: z.enum(["gittensor", "oss-anti-slop"]),
+    conclusion: z.enum(["success", "failure", "action_required", "neutral", "skipped"]),
+    title: z.string(),
+    summary: z.string(),
+    readinessScore: z.number().nullable(),
+    // Absent, not null, under the `oss-anti-slop` pack -- see the field's doc comment on PredictedGateVerdict.
+    confirmedContributor: z.boolean().optional(),
+    blockers: z.array(PredictedGateFindingSchema),
+    warnings: z.array(PredictedGateFindingSchema),
+    /** Present only under the `oss-anti-slop` pack (#694); `null` under `gittensor`. */
+    funnel: z.object({ message: z.string(), registerUrl: z.string() }).nullable(),
+    note: z.string(),
+  })
+  .openapi("PredictedGateVerdict");
+
 export const LocalBranchAnalysisSchema = z
   .object({
     login: z.string(),
@@ -3255,6 +3285,12 @@ export const LocalBranchAnalysisSchema = z
     nextActions: z.array(RewardRiskActionSchema),
     workspaceIntelligence: LocalWorkspaceIntelligenceSchema,
     summary: z.string(),
+    // #9531: the route returns `{ ...analysis, predictedGate, dataQuality }` (src/api/routes.ts's
+    // POST /v1/local/branch-analysis) and this schema declared neither -- the published-spec lie #9531
+    // called out by name. `dataQuality` uses the same opaque record shape every other schema here models
+    // it with; `predictedGate` gets a real schema, pinned to its type by a compile-time assertion.
+    predictedGate: PredictedGateVerdictSchema,
+    dataQuality: z.record(z.string(), z.unknown()),
   })
   .openapi("LocalBranchAnalysis");
 

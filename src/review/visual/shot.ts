@@ -18,6 +18,7 @@
 // account API token. Returns null on any failure so callers degrade gracefully (the cell becomes a dash).
 import puppeteer from "@cloudflare/puppeteer";
 import { hostIsPrivateOrLocal, isSafeHttpUrl } from "../content-lane/safe-url";
+import { incr } from "../../selfhost/metrics";
 
 export type Viewport = { width: number; height: number };
 /** A `prefers-color-scheme` value the renderer can emulate before capture (#3678). */
@@ -362,10 +363,15 @@ export async function captureShot(env: Env, url: string, viewport: Viewport = VI
     // normal review pages without letting attacker-controlled document height or PNG size drive unbounded
     // Chromium raster work on the public screenshot route.
     const shot = await captureBoundedFullPageShot(page, viewport);
+    incr("loopover_visual_capture_total", { result: "ok" });
     return { png: shot, authWalled: false };
   } catch (error) {
     // Log before degrading to null — otherwise a networkidle0 timeout, a binding quota error, or a render
     // crash is indistinguishable from "no page" and the cell silently blanks.
+    // #9487: also COUNTED. The log alone is invisible to Prometheus, so a browserless outage silently degraded
+    // every screenshot to a dash cell with nothing to alert on -- and, because the screenshot-table gate treats
+    // absent evidence as a close signal, that outage could close legitimate visual PRs before anyone noticed.
+    incr("loopover_visual_capture_total", { result: "error" });
     console.log(JSON.stringify({ event: "render_screenshot_error", mode: "binding", url, message: String(error).slice(0, 200) }));
     return { png: null, authWalled: false };
   } finally {

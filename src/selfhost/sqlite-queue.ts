@@ -13,6 +13,7 @@ import { capturePostHogError, withPostHogMonitor } from "./posthog";
 import {
   ATTEMPT_FREE_RETRY_DEADLINE_MS,
   consumingRetryDelayMs,
+  shutdownDrainDeadlineMs,
   isAttemptFreeRetry,
   deterministicJitterMs,
   FOREGROUND_QUEUE_PRIORITY_FLOOR,
@@ -1432,7 +1433,33 @@ export function createSqliteQueue(
       if (timer) clearTimeout(timer);
       if (deadLetterReviveTimer) clearInterval(deadLetterReviveTimer);
       if (foregroundLivenessTimer) clearInterval(foregroundLivenessTimer);
-      while (active > 0) await new Promise((r) => setTimeout(r, 10)); // let in-flight pumps finish
+      // #9485: bounded, matching the pg backend. An unbounded wait meant a redeploy blocked on a multi-minute
+      // AI review until SIGKILL, and the killed job then sat unclaimed until its lease expired. On expiry we
+      // re-pend THIS PROCESS'S OWN in-flight rows (activeJobIds is process-local, so these are rows we claimed
+      // and are abandoning) so they retry immediately instead of waiting out the lease.
+      const deadlineMs = shutdownDrainDeadlineMs();
+      const waitUntil = Date.now() + deadlineMs;
+      while (active > 0 && Date.now() < waitUntil) await new Promise((r) => setTimeout(r, 10));
+      if (active > 0) {
+        const abandoned = [...activeJobIds];
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            event: "selfhost_queue_shutdown_drain_deadline",
+            active,
+            abandoned: abandoned.length,
+            deadline_ms: deadlineMs,
+            message: "drain deadline reached; re-pending this process's in-flight jobs so they retry immediately instead of waiting out their lease",
+          }),
+        );
+        for (const id of abandoned) {
+          try {
+            driver.query(`UPDATE ${TABLE} SET status='pending', run_after=? WHERE id=? AND status='processing'`, [Date.now(), id]);
+          } catch {
+            // best-effort: a failure just falls back to the pre-#9485 lease-expiry path
+          }
+        }
+      }
     },
     async drain() {
       // send() fire-and-forgets a pump; wait for any in-flight pumps to settle, then drain to completion.

@@ -58,6 +58,7 @@ export const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["loopover_config_dir_empty_acknowledged", { help: "1 when LOOPOVER_REPO_CONFIG_DIR is unset, has entries, or is acknowledged; 0 when it's configured but the mounted directory is empty.", type: "gauge" }],
   ["loopover_http_requests_total", { help: "HTTP app requests by response status class.", type: "counter" }],
   ["loopover_http_request_duration_seconds", { help: "HTTP app request duration in seconds.", type: "histogram" }],
+  ["loopover_visual_capture_total", { help: "Visual capture attempts by result -- a browserless outage is otherwise invisible while it silently degrades screenshots to dash cells, and the screenshot gate treats absent evidence as a close signal (#9487).", type: "counter" }],
   ["loopover_webhook_dedup_total", { help: "Webhook deliveries deduplicated before enqueue.", type: "counter" }],
   ["loopover_webhook_enqueue_total", { help: "Webhook enqueue outcomes by event and action.", type: "counter" }],
   ["loopover_jobs_enqueued_total", { help: "Durable queue jobs enqueued.", type: "counter" }],

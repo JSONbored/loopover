@@ -22,6 +22,7 @@ const DEFAULT_STARTUP_JITTER_MS = 3 * 60_000;
 const DEFAULT_RECOVERY_JITTER_MS = 60_000;
 const DEFAULT_SCHEDULED_ENQUEUE_JITTER_MS = 5 * 60_000;
 const DEFAULT_STARTUP_JITTER_MIN_JOBS = 8;
+const DEFAULT_SHUTDOWN_DRAIN_DEADLINE_MS = 120_000;
 const DEFAULT_PROCESSING_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_BACKGROUND_CONCURRENCY = 4;
 // Dead-letter auto-retry (#audit-rate-headroom): a job that exhausted its normal retry budget and landed in
@@ -723,6 +724,22 @@ export function queueProcessingTimeoutMs(): number {
     "QUEUE_PROCESSING_TIMEOUT_MS",
     DEFAULT_PROCESSING_TIMEOUT_MS,
   );
+}
+
+/**
+ * #9485: how long {@link stop} waits for in-flight work before re-pending it and returning.
+ *
+ * The wait used to be unbounded, so a redeploy blocked on a multi-minute AI review until the orchestrator's
+ * grace period expired and SIGKILLed the process -- and because the killed job's lease had been heartbeated
+ * right up to the kill, `reclaimExpiredProcessingJobs` (which only recovers rows older than
+ * QUEUE_PROCESSING_TIMEOUT_MS, 30 min by default) left it stalled for another 20-30 minutes.
+ *
+ * The default is deliberately generous: long enough that an ordinary review finishes and releases its own
+ * lock and lease cleanly, short enough to be well inside a typical `stop_grace_period` (this deployment's is
+ * 300s) so the re-pend happens on OUR terms rather than as a SIGKILL race.
+ */
+export function shutdownDrainDeadlineMs(): number {
+  return envDurationMs("QUEUE_SHUTDOWN_DRAIN_DEADLINE_MS", DEFAULT_SHUTDOWN_DRAIN_DEADLINE_MS);
 }
 
 export function queueStartupJitterMinJobs(): number {

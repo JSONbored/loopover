@@ -12,6 +12,7 @@ import { capturePostHogError, withPostHogMonitor } from "./posthog";
 import {
   ATTEMPT_FREE_RETRY_DEADLINE_MS,
   consumingRetryDelayMs,
+  shutdownDrainDeadlineMs,
   isAttemptFreeRetry,
   deterministicJitterMs,
   FOREGROUND_QUEUE_PRIORITY_FLOOR,
@@ -1822,7 +1823,39 @@ export function createPgQueue(
       if (timer) clearTimeout(timer);
       if (deadLetterReviveTimer) clearInterval(deadLetterReviveTimer);
       if (foregroundLivenessTimer) clearInterval(foregroundLivenessTimer);
-      while (active > 0) await new Promise((r) => setTimeout(r, 10));
+      // #9485: the drain wait is BOUNDED. It used to be `while (active > 0)` with no deadline, so a redeploy
+      // (redeploy-companion recreates the container) waited on an in-flight multi-minute AI review until the
+      // orchestrator's grace period expired and SIGKILLed the process. The killed job's lease had been
+      // heartbeated right up to the kill, so reclaimExpiredProcessingJobs -- which only recovers rows older
+      // than processingTimeoutMs (30 min by default) -- did not pick it up for another 20-30 minutes. Against a
+      // 1-5 minute latency target with AUTOMATED redeploys, that is the single largest source of "a review
+      // silently stalled for half an hour".
+      //
+      // On expiry we re-pend THIS PROCESS'S OWN in-flight rows before returning. That is safe precisely because
+      // activeJobIds is process-local: these are rows we claimed and are about to abandon, so releasing them
+      // converts a SIGKILL race into an immediate retry by whoever comes up next, instead of a lease-expiry
+      // wait. Jobs that finish normally inside the deadline are unaffected.
+      const deadlineMs = shutdownDrainDeadlineMs();
+      const waitUntil = Date.now() + deadlineMs;
+      while (active > 0 && Date.now() < waitUntil) await new Promise((r) => setTimeout(r, 10));
+      if (active > 0) {
+        const abandoned = [...activeJobIds];
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            event: "selfhost_queue_shutdown_drain_deadline",
+            active,
+            abandoned: abandoned.length,
+            deadline_ms: deadlineMs,
+            message: "drain deadline reached; re-pending this process's in-flight jobs so they retry immediately instead of waiting out their lease",
+          }),
+        );
+        if (abandoned.length > 0) {
+          await pool
+            .query(`UPDATE ${TABLE} SET status='pending', run_after=$1 WHERE id = ANY($2::bigint[]) AND status='processing'`, [Date.now(), abandoned])
+            .catch(() => undefined); // best-effort: a failure just falls back to the pre-#9485 lease-expiry path
+        }
+      }
     },
     async drain() {
       while (active > 0) await new Promise((r) => setTimeout(r, 5));

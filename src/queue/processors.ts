@@ -304,6 +304,7 @@ import {
   pendingClosureLabelApplied,
 } from "../services/agent-action-executor";
 import { activeMergeBlockedSha } from "../services/merge-failure";
+import { advisorySpendStopReason } from "./advisory-spend-gate";
 import { applyLowConfidenceHoldCap } from "../review/low-confidence-hold-cap";
 import { recordPendingClosureFlag } from "../review/pending-closure-watchdog";
 import { loadIssueQualityReportMap } from "../services/issue-quality";
@@ -8535,10 +8536,13 @@ export async function runLinkedIssueSatisfactionForAdvisory(
     commitThresholdReached: boolean;
   },
 ): Promise<{ status: "addressed" | "partial" | "unaddressed"; rationale: string } | null> {
-  if (args.mode === "paused" || !args.confirmedContributor || !args.advisory.headSha) return null;
-  // #9491: honor the cap the siblings honor. Deliberately no reuse-for-display fallback, matching
-  // slop-detection's identical early return -- past the cap this feature simply stops spending.
-  if (args.commitThresholdReached) return null;
+  // The author rule stays per-feature by design (ai_review deliberately reviews some unconfirmed authors --
+  // see advisory-spend-gate.ts's header for why it is NOT unified).
+  if (!args.confirmedContributor) return null;
+  // #9541/#9491: the universal spend stops (paused / no head / commit cap) come from ONE place. This advisory
+  // was the family member that shipped WITHOUT the cap, which is precisely the drift a shared predicate
+  // makes structurally impossible for the next one.
+  if (advisorySpendStopReason({ mode: args.mode, headSha: args.advisory.headSha, commitThresholdReached: args.commitThresholdReached }) !== null) return null;
   const primaryIssueNumber = args.pr.linkedIssues[0];
   if (primaryIssueNumber === undefined) return null;
   try {

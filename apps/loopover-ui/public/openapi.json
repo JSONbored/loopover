@@ -16573,6 +16573,17 @@
         "in": "cookie",
         "name": "loopover_session",
         "description": "HttpOnly browser session cookie set by GitHub web OAuth."
+      },
+      "OrbBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "ORB-issued instance token, minted by POST /v1/orb/token and presented by a self-hosted ORB instance on the relay endpoints. Not a LoopOver API token."
+      },
+      "OrbWebhookSignature": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-loopover-signature",
+        "description": "HMAC signature over the raw request body, verified against the instance's shared secret. The webhook carries no bearer token."
       }
     }
   },
@@ -16591,7 +16602,11 @@
               }
             }
           }
-        }
+        },
+        "operationId": "getHealth",
+        "tags": [
+          "Meta"
+        ]
       }
     },
     "/v1/mcp/compatibility": {
@@ -16608,7 +16623,11 @@
               }
             }
           }
-        }
+        },
+        "operationId": "getMcpCompatibility",
+        "tags": [
+          "MCP"
+        ]
       }
     },
     "/v1/public/stats": {
@@ -16631,7 +16650,11 @@
           "503": {
             "description": "Public stats are temporarily unavailable"
           }
-        }
+        },
+        "operationId": "listPublicStats",
+        "tags": [
+          "Public"
+        ]
       }
     },
     "/v1/public/github/repos/{owner}/{repo}/stats": {
@@ -16672,7 +16695,11 @@
           "503": {
             "description": "GitHub repository stats are unavailable"
           }
-        }
+        },
+        "operationId": "listPublicGithubReposByOwnerByRepoStats",
+        "tags": [
+          "Public"
+        ]
       }
     },
     "/v1/public/repos/{owner}/{repo}/quality": {
@@ -16713,7 +16740,11 @@
           "503": {
             "description": "Public quality metrics are temporarily unavailable"
           }
-        }
+        },
+        "operationId": "getPublicReposByOwnerByRepoQuality",
+        "tags": [
+          "Public"
+        ]
       }
     },
     "/v1/registry/snapshot": {
@@ -16738,6 +16769,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getRegistrySnapshot",
+        "tags": [
+          "Registry"
         ]
       }
     },
@@ -16763,6 +16798,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "listRegistryChanges",
+        "tags": [
+          "Registry"
         ]
       }
     },
@@ -16788,6 +16827,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getScoringModel",
+        "tags": [
+          "Scoring"
         ]
       }
     },
@@ -16813,6 +16856,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getFindingTaxonomy",
+        "tags": [
+          "API"
         ]
       }
     },
@@ -16838,6 +16885,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "listEnrichmentAnalyzers",
+        "tags": [
+          "API"
         ]
       }
     },
@@ -16863,6 +16914,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "listUpstreamStatus",
+        "tags": [
+          "Registry"
         ]
       }
     },
@@ -16891,6 +16946,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getUpstreamRuleset",
+        "tags": [
+          "Registry"
         ]
       }
     },
@@ -16935,6 +16994,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getUpstreamDrift",
+        "tags": [
+          "Registry"
         ]
       }
     },
@@ -16963,6 +17026,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postScoringPreview",
+        "tags": [
+          "Scoring"
         ]
       }
     },
@@ -16991,6 +17058,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postScoringEligibilityPlan",
+        "tags": [
+          "Scoring"
         ]
       }
     },
@@ -17019,6 +17090,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postScoringExplainBreakdown",
+        "tags": [
+          "Scoring"
         ]
       }
     },
@@ -17044,6 +17119,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "listSyncStatus",
+        "tags": [
+          "API"
         ]
       }
     },
@@ -17069,6 +17148,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "listReadiness",
+        "tags": [
+          "API"
         ]
       }
     },
@@ -17115,6 +17198,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "listInstallations",
+        "tags": [
+          "API"
         ]
       }
     },
@@ -17153,6 +17240,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getInstallationsByIdHealth",
+        "tags": [
+          "API"
         ]
       }
     },
@@ -17191,6 +17282,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getInstallationsByIdRepair",
+        "tags": [
+          "API"
         ]
       }
     },
@@ -17229,6 +17324,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postInstallationsByIdRepairRefresh",
+        "tags": [
+          "API"
         ]
       }
     },
@@ -17369,6 +17468,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getAppNotificationModel",
+        "tags": [
+          "Control panel"
         ]
       }
     },
@@ -17397,6 +17500,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "listRepos",
+        "tags": [
+          "API"
         ]
       }
     },
@@ -17443,6 +17550,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getReposByOwnerByRepo",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -17486,6 +17597,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getReposByOwnerByRepoIntelligence",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -17532,6 +17647,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getReposByOwnerByRepoIssueQuality",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -17581,6 +17700,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getReposByOwnerByRepoGateConfigEffective",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -17618,6 +17741,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postLoopEvaluateEscalation",
+        "tags": [
+          "Loop"
         ]
       }
     },
@@ -17655,6 +17782,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postLoopResultsPayload",
+        "tags": [
+          "Loop"
         ]
       }
     },
@@ -17692,6 +17823,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postLoopProgressSnapshot",
+        "tags": [
+          "Loop"
         ]
       }
     },
@@ -17729,6 +17864,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postLoopIntakeIdea",
+        "tags": [
+          "Loop"
         ]
       }
     },
@@ -17766,6 +17905,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postLoopPlanIdeaClaims",
+        "tags": [
+          "Loop"
         ]
       }
     },
@@ -17815,6 +17958,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "listReposByOwnerByRepoLiveGateThresholds",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -17864,6 +18011,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getReposByOwnerByRepoMaintainerNoise",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -17913,6 +18064,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getReposByOwnerByRepoAmsMinerCohort",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -17972,6 +18127,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getReposByOwnerByRepoGatePrecision",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -18031,6 +18190,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getReposByOwnerByRepoOutcomeCalibration",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -18080,6 +18243,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getReposByOwnerByRepoActivationPreview",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -18126,6 +18293,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "listReposByOwnerByRepoOutcomePatterns",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -18169,6 +18340,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "listReposByOwnerByRepoRegistrationReadiness",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -18212,6 +18387,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getReposByOwnerByRepoGittensorConfigRecommendation",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -18261,6 +18440,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getReposByOwnerByRepoFocusManifest",
+        "tags": [
+          "Repositories"
         ]
       },
       "put": {
@@ -18311,6 +18494,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "putReposByOwnerByRepoFocusManifest",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -18360,6 +18547,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postReposByOwnerByRepoFocusManifestRefresh",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -18507,6 +18698,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getReposByOwnerByRepoAgentAuditFeed",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -18632,6 +18827,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postReposByOwnerByRepoPullsByNumberIncidentReports",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -18743,6 +18942,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postAppIncidentReports",
+        "tags": [
+          "Control panel"
         ]
       }
     },
@@ -18774,6 +18977,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getAppSelfDogfoodRegistrationPack",
+        "tags": [
+          "Control panel"
         ]
       }
     },
@@ -18823,6 +19030,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getReposByOwnerByRepoSelfDogfoodRegistrationPack",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -18875,6 +19086,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getReposByOwnerByRepoOnboardingPackPreview",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -18927,6 +19142,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postReposByOwnerByRepoContributorIssueDraftsGenerate",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -18979,6 +19198,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postReposByOwnerByRepoIssuePlanDraftsGenerate",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -19021,6 +19244,57 @@
           },
           {
             "LoopOverSessionCookie": []
+          }
+        ],
+        "operationId": "listReposByOwnerByRepoSettings",
+        "tags": [
+          "Repositories"
+        ]
+      },
+      "put": {
+        "operationId": "updateRepoSettings",
+        "tags": [
+          "Repositories"
+        ],
+        "summary": "Replace a repo's LoopOver settings",
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Settings updated"
+          },
+          "400": {
+            "description": "Malformed settings"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "403": {
+            "description": "Insufficient control-panel role"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
           }
         ]
       }
@@ -19065,6 +19339,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getReposByOwnerByRepoAutomationState",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -19108,6 +19386,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postReposByOwnerByRepoRepoDocsRefresh",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -19154,6 +19436,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postReposByOwnerByRepoSettingsPreview",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -19205,6 +19491,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getReposByOwnerByRepoPullsByNumberMaintainerPacket",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -19256,6 +19546,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getReposByOwnerByRepoPullsByNumberReviewability",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -19327,6 +19621,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "listReposByOwnerByRepoPullsByNumberAiReviewFindings",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -19362,6 +19660,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getContributorsByLoginProfile",
+        "tags": [
+          "Contributors"
         ]
       }
     },
@@ -19407,6 +19709,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getContributorsByLoginDecisionPack",
+        "tags": [
+          "Contributors"
         ]
       }
     },
@@ -19442,6 +19748,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getContributorsByLoginOpenPrMonitor",
+        "tags": [
+          "Contributors"
         ]
       }
     },
@@ -19488,6 +19798,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "listContributorsByLoginPrOutcomes",
+        "tags": [
+          "Contributors"
         ]
       }
     },
@@ -19523,6 +19837,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "listContributorsByLoginNotifications",
+        "tags": [
+          "Contributors"
         ]
       }
     },
@@ -19578,6 +19896,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postContributorsByLoginNotificationsRead",
+        "tags": [
+          "Contributors"
         ]
       }
     },
@@ -19639,6 +19961,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getContributorsByLoginReposByOwnerByRepoDecision",
+        "tags": [
+          "Contributors"
         ]
       }
     },
@@ -19667,6 +19993,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postPreflightPr",
+        "tags": [
+          "Preflight"
         ]
       }
     },
@@ -19698,6 +20028,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postPreflightReviewRisk",
+        "tags": [
+          "Preflight"
         ]
       }
     },
@@ -19726,6 +20060,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postPreflightLocalDiff",
+        "tags": [
+          "Preflight"
         ]
       }
     },
@@ -19757,6 +20095,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postLocalBranchAnalysis",
+        "tags": [
+          "Local"
         ]
       }
     },
@@ -19788,6 +20130,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postAgentRuns",
+        "tags": [
+          "Agent automation"
         ]
       },
       "get": {
@@ -19851,6 +20197,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "listAgentRuns",
+        "tags": [
+          "Agent automation"
         ]
       }
     },
@@ -19889,6 +20239,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getAgentRunsById",
+        "tags": [
+          "Agent automation"
         ]
       }
     },
@@ -19930,6 +20284,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postAgentPlanNextWork",
+        "tags": [
+          "Agent automation"
         ]
       }
     },
@@ -19971,6 +20329,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postAgentPreflightBranch",
+        "tags": [
+          "Agent automation"
         ]
       }
     },
@@ -20012,6 +20374,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postAgentPreparePrPacket",
+        "tags": [
+          "Agent automation"
         ]
       }
     },
@@ -20053,6 +20419,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postAgentExplainBlockers",
+        "tags": [
+          "Agent automation"
         ]
       }
     },
@@ -20081,6 +20451,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "listBounties",
+        "tags": [
+          "Bounties"
         ]
       }
     },
@@ -20119,6 +20493,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getBountiesByIdAdvisory",
+        "tags": [
+          "Bounties"
         ]
       }
     },
@@ -20157,6 +20535,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getBountiesByIdLifecycle",
+        "tags": [
+          "Bounties"
         ]
       }
     },
@@ -20170,7 +20552,11 @@
           "401": {
             "description": "Invalid webhook signature"
           }
-        }
+        },
+        "operationId": "postGithubWebhook",
+        "tags": [
+          "Webhooks"
+        ]
       }
     },
     "/v1/public/decision-ledger/verify": {
@@ -20184,13 +20570,9 @@
             "description": "First break found: sequence_gap | predecessor_mismatch | row_hash_mismatch | missing_record | content_mismatch | short_tail (a record newer than the verified tip has no chain entry — the truncated-tail signature) | unchained_record (an INTERIOR record has no chain entry — the failed-append signature). Records younger than the 5-minute append grace window are not reported: the record insert and its chain append are two writes moments apart, and a verify landing between them is not evidence of tampering."
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
+        "operationId": "getPublicDecisionLedgerVerify",
+        "tags": [
+          "Public"
         ]
       }
     },
@@ -20218,13 +20600,9 @@
             "description": "No ledger row at that seq (never appended -- distinct from a row with empty fields)"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
+        "operationId": "getPublicDecisionLedgerRowBySeq",
+        "tags": [
+          "Public"
         ]
       }
     },
@@ -20236,13 +20614,9 @@
             "description": "{ keys: [{ keyId, publicKeySpki, notBefore, notAfter }], currentKeyId } — retired keys are retained so anchors signed under them stay verifiable; currentKeyId is null when unconfigured or the rotation state is ambiguous"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
+        "operationId": "getPublicDecisionLedgerAnchorKey",
+        "tags": [
+          "Public"
         ]
       }
     },
@@ -20285,13 +20659,9 @@
             "description": "{ anchors: [{ id, seq, rowHash, keyId, backend, backendRef, status, error, createdAt }], nextBefore } — a failed attempt is returned identically to a successful one, never filtered out or reshaped"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
+        "operationId": "listPublicDecisionLedgerAnchors",
+        "tags": [
+          "Public"
         ]
       }
     },
@@ -20335,13 +20705,9 @@
             "description": "No decision record persisted yet for this PR"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
+        "operationId": "getPublicDecisionRecordsByOwnerByRepoByPull",
+        "tags": [
+          "Public"
         ]
       }
     },
@@ -20374,13 +20740,9 @@
             "description": "Public stats disabled (same flag as /v1/public/stats)"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
+        "operationId": "listPublicEvalScores",
+        "tags": [
+          "Public"
         ]
       }
     },
@@ -20395,13 +20757,9 @@
             "description": "Malformed JSON or invalid payload shape"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
+        "operationId": "postOrbIngest",
+        "tags": [
+          "ORB"
         ]
       }
     },
@@ -20415,7 +20773,11 @@
           "503": {
             "description": "GitHub OAuth app secret is not configured"
           }
-        }
+        },
+        "operationId": "getAuthGithubStart",
+        "tags": [
+          "Auth"
+        ]
       }
     },
     "/v1/auth/github/callback": {
@@ -20425,7 +20787,11 @@
           "302": {
             "description": "Completes GitHub web OAuth and redirects to the app"
           }
-        }
+        },
+        "operationId": "getAuthGithubCallback",
+        "tags": [
+          "Auth"
+        ]
       }
     },
     "/v1/auth/github/device/start": {
@@ -20447,7 +20813,11 @@
           "429": {
             "description": "Rate limited"
           }
-        }
+        },
+        "operationId": "postAuthGithubDeviceStart",
+        "tags": [
+          "Auth"
+        ]
       }
     },
     "/v1/auth/github/device/poll": {
@@ -20469,7 +20839,11 @@
           "429": {
             "description": "Rate limited"
           }
-        }
+        },
+        "operationId": "postAuthGithubDevicePoll",
+        "tags": [
+          "Auth"
+        ]
       }
     },
     "/v1/auth/github/session": {
@@ -20491,7 +20865,11 @@
           "429": {
             "description": "Rate limited"
           }
-        }
+        },
+        "operationId": "postAuthGithubSession",
+        "tags": [
+          "Auth"
+        ]
       }
     },
     "/v1/auth/logout": {
@@ -20513,7 +20891,11 @@
           "429": {
             "description": "Rate limited"
           }
-        }
+        },
+        "operationId": "postAuthLogout",
+        "tags": [
+          "Auth"
+        ]
       }
     },
     "/v1/auth/session": {
@@ -20523,7 +20905,11 @@
           "200": {
             "description": "Current auth session, or signed_out when no app session is present"
           }
-        }
+        },
+        "operationId": "getAuthSession",
+        "tags": [
+          "Auth"
+        ]
       }
     },
     "/v1/auth/github/token": {
@@ -20558,10 +20944,11 @@
             "description": "Rate limited"
           }
         },
+        "operationId": "postAuthGithubToken",
+        "tags": [
+          "Auth"
+        ],
         "security": [
-          {
-            "LoopOverBearer": []
-          },
           {
             "LoopOverSessionCookie": []
           }
@@ -20599,6 +20986,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getAppOverview",
+        "tags": [
+          "Control panel"
         ]
       }
     },
@@ -20630,6 +21021,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getAppRoles",
+        "tags": [
+          "Control panel"
         ]
       }
     },
@@ -20661,6 +21056,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getAppMinerDashboard",
+        "tags": [
+          "Control panel"
         ]
       }
     },
@@ -20692,6 +21091,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getAppMaintainerDashboard",
+        "tags": [
+          "Control panel"
         ]
       }
     },
@@ -20723,6 +21126,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getAppOperatorDashboard",
+        "tags": [
+          "Control panel"
         ]
       }
     },
@@ -20754,6 +21161,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getAppCommands",
+        "tags": [
+          "Control panel"
         ]
       }
     },
@@ -20785,6 +21196,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getAppCommandsUsefulness",
+        "tags": [
+          "Control panel"
         ]
       }
     },
@@ -20816,6 +21231,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getAppDigest",
+        "tags": [
+          "Control panel"
         ]
       }
     },
@@ -20847,6 +21266,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getAppAnalyticsDailyRollups",
+        "tags": [
+          "Control panel"
         ]
       }
     },
@@ -20878,6 +21301,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getAppAnalyticsMcpCompatibility",
+        "tags": [
+          "Control panel"
         ]
       }
     },
@@ -20933,6 +21360,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postAppSelfhostQueueDeadByIdReplay",
+        "tags": [
+          "Control panel"
         ]
       }
     },
@@ -20988,6 +21419,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "deleteAppSelfhostQueueDeadById",
+        "tags": [
+          "Control panel"
         ]
       }
     },
@@ -21025,6 +21460,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "deleteAppSelfhostQueueDead",
+        "tags": [
+          "Control panel"
         ]
       },
       "get": {
@@ -21085,6 +21524,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getAppSelfhostQueueDead",
+        "tags": [
+          "Control panel"
         ]
       }
     },
@@ -21165,6 +21608,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getAppAnalyticsWeeklyValueReport",
+        "tags": [
+          "Control panel"
         ]
       }
     },
@@ -21260,6 +21707,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getAppSkippedPrAudit",
+        "tags": [
+          "Control panel"
         ]
       }
     },
@@ -21297,6 +21748,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postAppCommandsPreview",
+        "tags": [
+          "Control panel"
         ]
       }
     },
@@ -21344,6 +21799,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postAppCommandsFeedback",
+        "tags": [
+          "Control panel"
         ]
       }
     },
@@ -21391,15 +21850,19 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postAppDigestSubscriptions",
+        "tags": [
+          "Control panel"
         ]
       }
     },
     "/v1/internal/jobs/refresh-registry": {
       "post": {
-        "summary": "Queue a registry refresh job",
+        "summary": "Queue a job to refresh the Gittensor registry snapshot",
         "responses": {
           "202": {
-            "description": "Registry refresh queued"
+            "description": "Job queued"
           },
           "401": {
             "description": "Invalid internal token"
@@ -21408,19 +21871,21 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "queueRefreshRegistryJob",
+        "tags": [
+          "Internal",
+          "Jobs"
         ]
       }
     },
     "/v1/internal/jobs/backfill-registered-repos": {
       "post": {
-        "summary": "Queue a registered-repository backfill job",
+        "summary": "Queue a job to backfill registered repository records",
         "responses": {
           "202": {
-            "description": "Registered repo backfill queued"
+            "description": "Job queued"
           },
           "401": {
             "description": "Invalid internal token"
@@ -21429,22 +21894,21 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "queueBackfillRegisteredReposJob",
+        "tags": [
+          "Internal",
+          "Jobs"
         ]
       }
     },
     "/v1/internal/jobs/backfill-repo-segment": {
       "post": {
-        "summary": "Queue a repository segment backfill job",
+        "summary": "Queue a job to backfill repository segment assignments",
         "responses": {
           "202": {
-            "description": "Repository segment backfill queued"
-          },
-          "400": {
-            "description": "Invalid segment request"
+            "description": "Job queued"
           },
           "401": {
             "description": "Invalid internal token"
@@ -21453,22 +21917,21 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "queueBackfillRepoSegmentJob",
+        "tags": [
+          "Internal",
+          "Jobs"
         ]
       }
     },
     "/v1/internal/jobs/backfill-pr-details": {
       "post": {
-        "summary": "Queue an open pull request detail backfill job",
+        "summary": "Queue a job to backfill pull-request detail rows",
         "responses": {
           "202": {
-            "description": "Open PR detail backfill queued"
-          },
-          "400": {
-            "description": "Invalid PR detail backfill request"
+            "description": "Job queued"
           },
           "401": {
             "description": "Invalid internal token"
@@ -21477,22 +21940,21 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "queueBackfillPrDetailsJob",
+        "tags": [
+          "Internal",
+          "Jobs"
         ]
       }
     },
     "/v1/internal/jobs/generate-review-recap": {
       "post": {
-        "summary": "Queue a maintainer review recap digest job",
+        "summary": "Queue a job to generate the maintainer review recap",
         "responses": {
           "202": {
-            "description": "Maintainer review recap digest queued (#1963)"
-          },
-          "400": {
-            "description": "Missing repoFullName"
+            "description": "Job queued"
           },
           "401": {
             "description": "Invalid internal token"
@@ -21501,19 +21963,21 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "queueGenerateReviewRecapJob",
+        "tags": [
+          "Internal",
+          "Jobs"
         ]
       }
     },
     "/v1/internal/jobs/refresh-scoring-model": {
       "post": {
-        "summary": "Queue a scoring model refresh job",
+        "summary": "Queue a job to refresh the active scoring model",
         "responses": {
           "202": {
-            "description": "Internal job queued"
+            "description": "Job queued"
           },
           "401": {
             "description": "Invalid internal token"
@@ -21522,19 +21986,21 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "queueRefreshScoringModelJob",
+        "tags": [
+          "Internal",
+          "Jobs"
         ]
       }
     },
     "/v1/internal/jobs/refresh-upstream-drift": {
       "post": {
-        "summary": "Queue an upstream drift refresh job",
+        "summary": "Queue a job to recompute upstream ruleset drift",
         "responses": {
           "202": {
-            "description": "Internal job queued"
+            "description": "Job queued"
           },
           "401": {
             "description": "Invalid internal token"
@@ -21543,19 +22009,21 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "queueRefreshUpstreamDriftJob",
+        "tags": [
+          "Internal",
+          "Jobs"
         ]
       }
     },
     "/v1/internal/jobs/file-upstream-drift-issues": {
       "post": {
-        "summary": "Queue a job that files upstream drift issues",
+        "summary": "Queue a job to file issues for open upstream drift",
         "responses": {
           "202": {
-            "description": "Internal job queued"
+            "description": "Job queued"
           },
           "401": {
             "description": "Invalid internal token"
@@ -21564,10 +22032,12 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "queueFileUpstreamDriftIssuesJob",
+        "tags": [
+          "Internal",
+          "Jobs"
         ]
       }
     },
@@ -21582,22 +22052,18 @@
             "description": "Invalid internal token"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
+        "operationId": "postInternalJobsBuildContributorEvidence",
+        "tags": [
+          "Internal"
         ]
       }
     },
     "/v1/internal/jobs/build-contributor-decision-packs": {
       "post": {
-        "summary": "Queue a contributor decision pack build job",
+        "summary": "Queue a job to rebuild contributor decision packs",
         "responses": {
           "202": {
-            "description": "Internal job queued"
+            "description": "Job queued"
           },
           "401": {
             "description": "Invalid internal token"
@@ -21606,10 +22072,12 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "queueBuildContributorDecisionPacksJob",
+        "tags": [
+          "Internal",
+          "Jobs"
         ]
       }
     },
@@ -21624,22 +22092,18 @@
             "description": "Invalid internal token"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
+        "operationId": "postInternalJobsBuildBurdenForecasts",
+        "tags": [
+          "Internal"
         ]
       }
     },
     "/v1/internal/jobs/generate-signal-snapshots": {
       "post": {
-        "summary": "Queue a signal snapshot generation job",
+        "summary": "Queue a job to generate signal snapshots",
         "responses": {
           "202": {
-            "description": "Internal job queued"
+            "description": "Job queued"
           },
           "401": {
             "description": "Invalid internal token"
@@ -21648,19 +22112,21 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "queueGenerateSignalSnapshotsJob",
+        "tags": [
+          "Internal",
+          "Jobs"
         ]
       }
     },
     "/v1/internal/jobs/generate-weekly-value-report": {
       "post": {
-        "summary": "Queue a weekly value report job",
+        "summary": "Queue a job to generate the weekly value report",
         "responses": {
           "202": {
-            "description": "Internal job queued"
+            "description": "Job queued"
           },
           "401": {
             "description": "Invalid internal token"
@@ -21669,10 +22135,12 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "queueGenerateWeeklyValueReportJob",
+        "tags": [
+          "Internal",
+          "Jobs"
         ]
       }
     },
@@ -21687,13 +22155,9 @@
             "description": "Invalid internal token"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
+        "operationId": "postInternalJobsRepairDataFidelity",
+        "tags": [
+          "Internal"
         ]
       }
     },
@@ -21708,13 +22172,9 @@
             "description": "Invalid internal token"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
+        "operationId": "postInternalBountiesImport",
+        "tags": [
+          "Internal"
         ]
       }
     },
@@ -21761,6 +22221,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "listReposByOwnerByRepoAgentPendingActions",
+        "tags": [
+          "Repositories"
         ]
       },
       "post": {
@@ -21820,6 +22284,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postReposByOwnerByRepoAgentPendingActions",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -21895,6 +22363,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postReposByOwnerByRepoAgentPendingActionsByIdByDecision",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -21932,6 +22404,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postLintPrText",
+        "tags": [
+          "Advisory checks"
         ]
       }
     },
@@ -21969,6 +22445,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postLintSlopRisk",
+        "tags": [
+          "Advisory checks"
         ]
       }
     },
@@ -22006,6 +22486,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postLintImprovementPotential",
+        "tags": [
+          "Advisory checks"
         ]
       }
     },
@@ -22043,6 +22527,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postLintOpenPrPressure",
+        "tags": [
+          "Advisory checks"
         ]
       }
     },
@@ -22080,6 +22568,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postLintBoundaryTests",
+        "tags": [
+          "Advisory checks"
         ]
       }
     },
@@ -22117,6 +22609,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postLintTestEvidence",
+        "tags": [
+          "Advisory checks"
         ]
       }
     },
@@ -22154,6 +22650,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postLintIssueSlop",
+        "tags": [
+          "Advisory checks"
         ]
       }
     },
@@ -22191,6 +22691,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postValidateFocusManifest",
+        "tags": [
+          "Advisory checks"
         ]
       }
     },
@@ -22247,6 +22751,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "getReposByOwnerByRepoSelftuneOverridesAudit",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -22317,6 +22825,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "deleteReposByOwnerByRepoSelftuneOverrides",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -22378,6 +22890,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postReposByOwnerByRepoValidateLinkedIssue",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -22439,6 +22955,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postReposByOwnerByRepoCheckBeforeStart",
+        "tags": [
+          "Repositories"
         ]
       }
     },
@@ -22540,6 +23060,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postOpportunitiesFind",
+        "tags": [
+          "Discovery"
         ]
       }
     },
@@ -22619,6 +23143,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postIssueRagRetrieve",
+        "tags": [
+          "Discovery"
         ]
       }
     },
@@ -22660,6 +23188,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "listContributorsByLoginWatches",
+        "tags": [
+          "Contributors"
         ]
       },
       "post": {
@@ -22711,6 +23243,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "postContributorsByLoginWatches",
+        "tags": [
+          "Contributors"
         ]
       },
       "delete": {
@@ -22762,6 +23298,10 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "operationId": "deleteContributorsByLoginWatches",
+        "tags": [
+          "Contributors"
         ]
       }
     },
@@ -22846,13 +23386,9 @@
             "description": "Invalid internal token"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
+        "operationId": "getInternalProviderCredentialsByProvider",
+        "tags": [
+          "Internal"
         ]
       },
       "post": {
@@ -22912,13 +23448,9 @@
             "description": "TOKEN_ENCRYPTION_SECRET is not configured, so the credential cannot be stored encrypted"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
+        "operationId": "postInternalProviderCredentialsByProvider",
+        "tags": [
+          "Internal"
         ]
       },
       "delete": {
@@ -22966,6 +23498,342 @@
             "description": "Invalid internal token"
           }
         },
+        "operationId": "deleteInternalProviderCredentialsByProvider",
+        "tags": [
+          "Internal"
+        ]
+      }
+    },
+    "/v1/orb/token": {
+      "post": {
+        "operationId": "mintOrbInstanceToken",
+        "tags": [
+          "ORB"
+        ],
+        "summary": "Mint an ORB instance token",
+        "security": [
+          {
+            "OrbBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Instance token issued"
+          },
+          "400": {
+            "description": "Malformed enrollment request"
+          },
+          "401": {
+            "description": "Missing or invalid ORB instance token"
+          }
+        }
+      }
+    },
+    "/v1/orb/relay": {
+      "post": {
+        "operationId": "relayOrbEvent",
+        "tags": [
+          "ORB"
+        ],
+        "summary": "Relay one ORB event to the hosted control plane",
+        "security": [
+          {
+            "OrbBearer": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Event accepted for processing"
+          },
+          "400": {
+            "description": "Malformed relay payload"
+          },
+          "401": {
+            "description": "Missing or invalid ORB instance token"
+          }
+        }
+      }
+    },
+    "/v1/orb/relay/register": {
+      "post": {
+        "operationId": "registerOrbRelayInstance",
+        "tags": [
+          "ORB"
+        ],
+        "summary": "Register a self-hosted ORB instance with the relay",
+        "security": [
+          {
+            "OrbBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Instance registered"
+          },
+          "400": {
+            "description": "Malformed registration"
+          },
+          "401": {
+            "description": "Missing or invalid ORB instance token"
+          }
+        }
+      }
+    },
+    "/v1/orb/relay/pull": {
+      "post": {
+        "operationId": "pullOrbRelayWork",
+        "tags": [
+          "ORB"
+        ],
+        "summary": "Pull queued relay work for an ORB instance",
+        "security": [
+          {
+            "OrbBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Queued work, possibly empty"
+          },
+          "401": {
+            "description": "Missing or invalid ORB instance token"
+          }
+        }
+      }
+    },
+    "/v1/orb/webhook": {
+      "post": {
+        "operationId": "receiveOrbWebhook",
+        "tags": [
+          "ORB"
+        ],
+        "summary": "Receive a signed ORB webhook",
+        "security": [
+          {
+            "OrbWebhookSignature": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Webhook accepted"
+          },
+          "400": {
+            "description": "Malformed webhook body"
+          },
+          "401": {
+            "description": "Signature verification failed"
+          }
+        }
+      }
+    },
+    "/v1/orb/oauth/callback": {
+      "get": {
+        "operationId": "completeOrbOauth",
+        "tags": [
+          "ORB"
+        ],
+        "summary": "Complete the ORB GitHub OAuth flow",
+        "responses": {
+          "302": {
+            "description": "Redirect back to the ORB instance"
+          },
+          "400": {
+            "description": "Missing or invalid OAuth code"
+          }
+        },
+        "security": []
+      }
+    },
+    "/v1/internal/orb/instances": {
+      "get": {
+        "operationId": "listOrbInstances",
+        "tags": [
+          "ORB",
+          "Internal"
+        ],
+        "summary": "List registered ORB instances",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Registered instances"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/orb/instances/register": {
+      "post": {
+        "operationId": "registerOrbInstanceInternal",
+        "tags": [
+          "ORB",
+          "Internal"
+        ],
+        "summary": "Register an ORB instance from the control plane",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Instance registered"
+          },
+          "400": {
+            "description": "Malformed registration"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/orb/installations": {
+      "get": {
+        "operationId": "listOrbInstallations",
+        "tags": [
+          "ORB",
+          "Internal"
+        ],
+        "summary": "List GitHub App installations known to the ORB control plane",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Installations"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/orb/installations/register": {
+      "post": {
+        "operationId": "registerOrbInstallation",
+        "tags": [
+          "ORB",
+          "Internal"
+        ],
+        "summary": "Register a GitHub App installation with the ORB control plane",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Installation registered"
+          },
+          "400": {
+            "description": "Malformed registration"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/orb/installations/backfill": {
+      "post": {
+        "operationId": "backfillOrbInstallations",
+        "tags": [
+          "ORB",
+          "Internal"
+        ],
+        "summary": "Backfill ORB installation records from GitHub",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Backfill queued"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/orb/enrollments": {
+      "post": {
+        "operationId": "createOrbEnrollment",
+        "tags": [
+          "ORB",
+          "Internal"
+        ],
+        "summary": "Create an ORB instance enrollment",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Enrollment created"
+          },
+          "400": {
+            "description": "Malformed enrollment"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/orb/enrollments/{enrollId}/revoke": {
+      "post": {
+        "operationId": "revokeOrbEnrollment",
+        "tags": [
+          "ORB",
+          "Internal"
+        ],
+        "summary": "Revoke an ORB instance enrollment",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Enrollment revoked"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          },
+          "404": {
+            "description": "No such enrollment"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "enrollId",
+            "in": "path"
+          }
+        ]
+      }
+    },
+    "/v1/app/installations": {
+      "get": {
+        "operationId": "listAppInstallations",
+        "tags": [
+          "Control panel"
+        ],
+        "summary": "List the GitHub App installations the caller can administer",
         "security": [
           {
             "LoopOverBearer": []
@@ -22973,7 +23841,2236 @@
           {
             "LoopOverSessionCookie": []
           }
+        ],
+        "responses": {
+          "200": {
+            "description": "Installations"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "403": {
+            "description": "Insufficient control-panel role"
+          }
+        }
+      }
+    },
+    "/v1/app/installations/{id}/health": {
+      "get": {
+        "operationId": "getAppInstallationHealth",
+        "tags": [
+          "Control panel"
+        ],
+        "summary": "Return one installation's health summary",
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Installation health"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "403": {
+            "description": "Insufficient control-panel role"
+          },
+          "404": {
+            "description": "No such installation"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
         ]
+      }
+    },
+    "/v1/app/installations/{id}/repair": {
+      "get": {
+        "operationId": "getAppInstallationRepair",
+        "tags": [
+          "Control panel"
+        ],
+        "summary": "Return the repair plan for an unhealthy installation",
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Repair plan"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "403": {
+            "description": "Insufficient control-panel role"
+          },
+          "404": {
+            "description": "No such installation"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ]
+      }
+    },
+    "/v1/app/installations/{id}/repair/refresh": {
+      "post": {
+        "operationId": "refreshAppInstallationRepair",
+        "tags": [
+          "Control panel"
+        ],
+        "summary": "Recompute an installation's repair plan",
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Repair plan recomputed"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "403": {
+            "description": "Insufficient control-panel role"
+          },
+          "404": {
+            "description": "No such installation"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ]
+      }
+    },
+    "/v1/app/installations/{id}/agent/bulk-settings": {
+      "put": {
+        "operationId": "bulkUpdateInstallationAgentSettings",
+        "tags": [
+          "Control panel",
+          "Agent automation"
+        ],
+        "summary": "Apply agent settings across every repo in an installation",
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Settings applied"
+          },
+          "400": {
+            "description": "Malformed settings"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "403": {
+            "description": "Insufficient control-panel role"
+          },
+          "404": {
+            "description": "No such installation"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ]
+      }
+    },
+    "/v1/app/kill-switch": {
+      "get": {
+        "operationId": "getFleetKillSwitch",
+        "tags": [
+          "Control panel",
+          "Operations"
+        ],
+        "summary": "Read the fleet-wide agent kill switch",
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Kill-switch state"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "403": {
+            "description": "Insufficient control-panel role"
+          }
+        }
+      },
+      "post": {
+        "operationId": "setFleetKillSwitch",
+        "tags": [
+          "Control panel",
+          "Operations"
+        ],
+        "summary": "Set the fleet-wide agent kill switch",
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Kill switch updated"
+          },
+          "400": {
+            "description": "Malformed request"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "403": {
+            "description": "Insufficient control-panel role"
+          }
+        }
+      }
+    },
+    "/v1/app/fleet/config-push": {
+      "post": {
+        "operationId": "pushFleetConfig",
+        "tags": [
+          "Control panel",
+          "Operations"
+        ],
+        "summary": "Push a configuration change across the fleet",
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Config push queued"
+          },
+          "400": {
+            "description": "Malformed push"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "403": {
+            "description": "Insufficient control-panel role"
+          }
+        }
+      }
+    },
+    "/v1/app/miner-dashboard/refresh": {
+      "post": {
+        "operationId": "refreshMinerDashboard",
+        "tags": [
+          "Control panel"
+        ],
+        "summary": "Recompute the miner dashboard aggregates",
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Refresh queued"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "403": {
+            "description": "Insufficient control-panel role"
+          }
+        }
+      }
+    },
+    "/v1/repos/{owner}/{repo}/ai-key": {
+      "get": {
+        "operationId": "getAiKey",
+        "tags": [
+          "Repositories",
+          "Bring your own key"
+        ],
+        "summary": "Report whether a AI provider key is configured for this repo (never the key itself)",
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Key presence and metadata"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "403": {
+            "description": "Insufficient control-panel role"
+          },
+          "404": {
+            "description": "Repo not registered"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ]
+      },
+      "post": {
+        "operationId": "setAiKey",
+        "tags": [
+          "Repositories",
+          "Bring your own key"
+        ],
+        "summary": "Store a AI provider key for this repo",
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Key stored"
+          },
+          "400": {
+            "description": "Malformed key"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "403": {
+            "description": "Insufficient control-panel role"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "deleteAiKey",
+        "tags": [
+          "Repositories",
+          "Bring your own key"
+        ],
+        "summary": "Remove this repo's AI provider key",
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Key removed"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "403": {
+            "description": "Insufficient control-panel role"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ]
+      }
+    },
+    "/v1/internal/repos/{owner}/{repo}/ai-key": {
+      "get": {
+        "operationId": "getAiKeyInternal",
+        "tags": [
+          "Bring your own key",
+          "Internal"
+        ],
+        "summary": "Read this repo's AI provider key state from the control plane",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Key presence and metadata"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ]
+      },
+      "post": {
+        "operationId": "setAiKeyInternal",
+        "tags": [
+          "Bring your own key",
+          "Internal"
+        ],
+        "summary": "Store this repo's AI provider key from the control plane",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Key stored"
+          },
+          "400": {
+            "description": "Malformed key"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "deleteAiKeyInternal",
+        "tags": [
+          "Bring your own key",
+          "Internal"
+        ],
+        "summary": "Remove this repo's AI provider key from the control plane",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Key removed"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/linear-key": {
+      "get": {
+        "operationId": "getLinearKey",
+        "tags": [
+          "Repositories",
+          "Bring your own key"
+        ],
+        "summary": "Report whether a Linear key is configured for this repo (never the key itself)",
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Key presence and metadata"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "403": {
+            "description": "Insufficient control-panel role"
+          },
+          "404": {
+            "description": "Repo not registered"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ]
+      },
+      "post": {
+        "operationId": "setLinearKey",
+        "tags": [
+          "Repositories",
+          "Bring your own key"
+        ],
+        "summary": "Store a Linear key for this repo",
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Key stored"
+          },
+          "400": {
+            "description": "Malformed key"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "403": {
+            "description": "Insufficient control-panel role"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "deleteLinearKey",
+        "tags": [
+          "Repositories",
+          "Bring your own key"
+        ],
+        "summary": "Remove this repo's Linear key",
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Key removed"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "403": {
+            "description": "Insufficient control-panel role"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ]
+      }
+    },
+    "/v1/internal/repos/{owner}/{repo}/linear-key": {
+      "get": {
+        "operationId": "getLinearKeyInternal",
+        "tags": [
+          "Bring your own key",
+          "Internal"
+        ],
+        "summary": "Read this repo's Linear key state from the control plane",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Key presence and metadata"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ]
+      },
+      "post": {
+        "operationId": "setLinearKeyInternal",
+        "tags": [
+          "Bring your own key",
+          "Internal"
+        ],
+        "summary": "Store this repo's Linear key from the control plane",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Key stored"
+          },
+          "400": {
+            "description": "Malformed key"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "deleteLinearKeyInternal",
+        "tags": [
+          "Bring your own key",
+          "Internal"
+        ],
+        "summary": "Remove this repo's Linear key from the control plane",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Key removed"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/ai-review": {
+      "put": {
+        "operationId": "updateRepoAiReviewMode",
+        "tags": [
+          "Repositories"
+        ],
+        "summary": "Set a repo's AI-review mode",
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "AI-review mode updated"
+          },
+          "400": {
+            "description": "Malformed mode"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "403": {
+            "description": "Insufficient control-panel role"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ]
+      }
+    },
+    "/v1/internal/jobs/refresh-registry/run": {
+      "post": {
+        "operationId": "runRefreshRegistryJob",
+        "tags": [
+          "Internal",
+          "Jobs"
+        ],
+        "summary": "Run the job to refresh the Gittensor registry snapshot inline, bypassing the queue",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job ran inline and returned its result"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/jobs/refresh-scoring-model/run": {
+      "post": {
+        "operationId": "runRefreshScoringModelJob",
+        "tags": [
+          "Internal",
+          "Jobs"
+        ],
+        "summary": "Run the job to refresh the active scoring model inline, bypassing the queue",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job ran inline and returned its result"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/jobs/refresh-upstream-drift/run": {
+      "post": {
+        "operationId": "runRefreshUpstreamDriftJob",
+        "tags": [
+          "Internal",
+          "Jobs"
+        ],
+        "summary": "Run the job to recompute upstream ruleset drift inline, bypassing the queue",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job ran inline and returned its result"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/jobs/file-upstream-drift-issues/run": {
+      "post": {
+        "operationId": "runFileUpstreamDriftIssuesJob",
+        "tags": [
+          "Internal",
+          "Jobs"
+        ],
+        "summary": "Run the job to file issues for open upstream drift inline, bypassing the queue",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job ran inline and returned its result"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/jobs/build-contributor-decision-packs/run": {
+      "post": {
+        "operationId": "runBuildContributorDecisionPacksJob",
+        "tags": [
+          "Internal",
+          "Jobs"
+        ],
+        "summary": "Run the job to rebuild contributor decision packs inline, bypassing the queue",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job ran inline and returned its result"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/jobs/refresh-contributor-activity": {
+      "post": {
+        "operationId": "queueRefreshContributorActivityJob",
+        "tags": [
+          "Internal",
+          "Jobs"
+        ],
+        "summary": "Queue a job to refresh cached contributor activity",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Job queued"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/jobs/refresh-contributor-activity/run": {
+      "post": {
+        "operationId": "runRefreshContributorActivityJob",
+        "tags": [
+          "Internal",
+          "Jobs"
+        ],
+        "summary": "Run the job to refresh cached contributor activity inline, bypassing the queue",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job ran inline and returned its result"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/jobs/generate-signal-snapshots/run": {
+      "post": {
+        "operationId": "runGenerateSignalSnapshotsJob",
+        "tags": [
+          "Internal",
+          "Jobs"
+        ],
+        "summary": "Run the job to generate signal snapshots inline, bypassing the queue",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job ran inline and returned its result"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/jobs/generate-weekly-value-report/run": {
+      "post": {
+        "operationId": "runGenerateWeeklyValueReportJob",
+        "tags": [
+          "Internal",
+          "Jobs"
+        ],
+        "summary": "Run the job to generate the weekly value report inline, bypassing the queue",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job ran inline and returned its result"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/jobs/generate-review-recap/run": {
+      "post": {
+        "operationId": "runGenerateReviewRecapJob",
+        "tags": [
+          "Internal",
+          "Jobs"
+        ],
+        "summary": "Run the job to generate the maintainer review recap inline, bypassing the queue",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job ran inline and returned its result"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/jobs/backfill-registered-repos/run": {
+      "post": {
+        "operationId": "runBackfillRegisteredReposJob",
+        "tags": [
+          "Internal",
+          "Jobs"
+        ],
+        "summary": "Run the job to backfill registered repository records inline, bypassing the queue",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job ran inline and returned its result"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/jobs/backfill-repo-segment/run": {
+      "post": {
+        "operationId": "runBackfillRepoSegmentJob",
+        "tags": [
+          "Internal",
+          "Jobs"
+        ],
+        "summary": "Run the job to backfill repository segment assignments inline, bypassing the queue",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job ran inline and returned its result"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/jobs/backfill-pr-details/run": {
+      "post": {
+        "operationId": "runBackfillPrDetailsJob",
+        "tags": [
+          "Internal",
+          "Jobs"
+        ],
+        "summary": "Run the job to backfill pull-request detail rows inline, bypassing the queue",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job ran inline and returned its result"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/jobs/backfill-contributor-gate-history/run": {
+      "post": {
+        "operationId": "runBackfillContributorGateHistoryJob",
+        "tags": [
+          "Internal",
+          "Jobs"
+        ],
+        "summary": "Run the job to backfill contributor gate history",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job ran inline and returned its result"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/jobs/refresh-installation-health/run": {
+      "post": {
+        "operationId": "runRefreshInstallationHealthJob",
+        "tags": [
+          "Internal",
+          "Jobs"
+        ],
+        "summary": "Run the job to refresh GitHub App installation health",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job ran inline and returned its result"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/jobs/rollup-product-usage": {
+      "post": {
+        "operationId": "queueRollupProductUsageJob",
+        "tags": [
+          "Internal",
+          "Jobs"
+        ],
+        "summary": "Queue a job to roll up product usage counters",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Job queued"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/jobs/rollup-product-usage/run": {
+      "post": {
+        "operationId": "runRollupProductUsageJob",
+        "tags": [
+          "Internal",
+          "Jobs"
+        ],
+        "summary": "Run the job to roll up product usage counters inline, bypassing the queue",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job ran inline and returned its result"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/jobs/rag-index": {
+      "post": {
+        "operationId": "RunRagIndex",
+        "tags": [
+          "Internal",
+          "Jobs"
+        ],
+        "summary": "Run the job to index repository content for retrieval",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job ran inline and returned its result"
+          },
+          "400": {
+            "description": "Malformed job request"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/jobs/regate-pr": {
+      "post": {
+        "operationId": "RegatePullRequest",
+        "tags": [
+          "Internal",
+          "Jobs"
+        ],
+        "summary": "Run the job to re-run the gate for one pull request",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job ran inline and returned its result"
+          },
+          "400": {
+            "description": "Malformed job request"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/status": {
+      "get": {
+        "operationId": "getInternalStatus",
+        "tags": [
+          "Internal"
+        ],
+        "summary": "Return the control plane's own status",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Measurement payload"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/decision": {
+      "get": {
+        "operationId": "getInternalDecision",
+        "tags": [
+          "Internal"
+        ],
+        "summary": "Return one recorded gate decision",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Measurement payload"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/parity": {
+      "get": {
+        "operationId": "getInternalParity",
+        "tags": [
+          "Internal"
+        ],
+        "summary": "Return native-vs-live gate parity measurements",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Measurement payload"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/predicted-agreement": {
+      "get": {
+        "operationId": "getInternalPredictedAgreement",
+        "tags": [
+          "Internal"
+        ],
+        "summary": "Return predicted-gate agreement measurements",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Measurement payload"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/calibration": {
+      "get": {
+        "operationId": "getInternalCalibration",
+        "tags": [
+          "Internal"
+        ],
+        "summary": "Return gate calibration measurements",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Measurement payload"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/calibration-trend": {
+      "get": {
+        "operationId": "getInternalCalibrationTrend",
+        "tags": [
+          "Internal"
+        ],
+        "summary": "Return the calibration trend over time",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Measurement payload"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/calibration/knobs": {
+      "get": {
+        "operationId": "getInternalCalibrationKnobs",
+        "tags": [
+          "Internal"
+        ],
+        "summary": "Return the tunable calibration knobs and their live values",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Measurement payload"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/calibration/satisfaction-floor": {
+      "get": {
+        "operationId": "getInternalSatisfactionFloor",
+        "tags": [
+          "Internal"
+        ],
+        "summary": "Return the current satisfaction floor",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Measurement payload"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/audit-labels": {
+      "get": {
+        "operationId": "listInternalAuditLabels",
+        "tags": [
+          "Internal"
+        ],
+        "summary": "List adjudication labels for the audit corpus",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Measurement payload"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/fairness/contributors": {
+      "get": {
+        "operationId": "listInternalFairnessContributors",
+        "tags": [
+          "Internal"
+        ],
+        "summary": "List contributor fairness measurements",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Measurement payload"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/fleet/analytics": {
+      "get": {
+        "operationId": "getInternalFleetAnalytics",
+        "tags": [
+          "Internal"
+        ],
+        "summary": "Return fleet-wide analytics",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Measurement payload"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/ops/stats": {
+      "get": {
+        "operationId": "getInternalOpsStats",
+        "tags": [
+          "Internal"
+        ],
+        "summary": "Return operational statistics",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Measurement payload"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/retention/preview": {
+      "get": {
+        "operationId": "getInternalRetentionPreview",
+        "tags": [
+          "Internal"
+        ],
+        "summary": "Preview what a retention sweep would delete",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Measurement payload"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/fairness/contributors/{login}": {
+      "get": {
+        "operationId": "getInternalFairnessContributor",
+        "tags": [
+          "Internal"
+        ],
+        "summary": "Return one contributor's fairness measurements",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "login",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fairness measurements"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          },
+          "404": {
+            "description": "No such contributor"
+          }
+        }
+      }
+    },
+    "/v1/internal/audit-labels/adjudicate": {
+      "post": {
+        "operationId": "adjudicateAuditLabel",
+        "tags": [
+          "Internal"
+        ],
+        "summary": "Record an adjudication for one audit-corpus item",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Adjudication recorded"
+          },
+          "400": {
+            "description": "Malformed adjudication"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/calibration/loosen-satisfaction-floor": {
+      "post": {
+        "operationId": "loosenSatisfactionFloor",
+        "tags": [
+          "Internal"
+        ],
+        "summary": "Loosen the satisfaction floor by one calibrated step",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Floor updated"
+          },
+          "400": {
+            "description": "Malformed request"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/queue-intelligence": {
+      "post": {
+        "operationId": "recordQueueIntelligence",
+        "tags": [
+          "Internal"
+        ],
+        "summary": "Record a queue-intelligence observation",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Observation recorded"
+          },
+          "400": {
+            "description": "Malformed observation"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/repos/{owner}/{repo}/contribution-policy": {
+      "get": {
+        "operationId": "getRepoContributionPolicyInternal",
+        "tags": [
+          "Internal",
+          "Repositories"
+        ],
+        "summary": "Read a repo's contribution policy from the control plane",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Contribution policy"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      },
+      "post": {
+        "operationId": "setRepoContributionPolicyInternal",
+        "tags": [
+          "Internal",
+          "Repositories"
+        ],
+        "summary": "Write a repo's contribution policy from the control plane",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Policy written"
+          },
+          "400": {
+            "description": "Malformed policy"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/v1/internal/repos/{owner}/{repo}/settings": {
+      "post": {
+        "operationId": "setRepoSettingsInternal",
+        "tags": [
+          "Internal",
+          "Repositories"
+        ],
+        "summary": "Write a repo's settings from the control plane",
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Settings written"
+          },
+          "400": {
+            "description": "Malformed settings"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "operationId": "getOpenApiDocument",
+        "tags": [
+          "Meta"
+        ],
+        "summary": "Return this OpenAPI document",
+        "responses": {
+          "200": {
+            "description": "The OpenAPI 3 document"
+          }
+        },
+        "security": []
+      }
+    },
+    "/loopover/shot": {
+      "get": {
+        "operationId": "getLoopoverShot",
+        "tags": [
+          "Meta"
+        ],
+        "summary": "Return the LoopOver social preview image",
+        "responses": {
+          "200": {
+            "description": "Preview image"
+          }
+        },
+        "security": []
+      }
+    },
+    "/v1/public/subnet-interface": {
+      "get": {
+        "operationId": "getPublicSubnetInterface",
+        "tags": [
+          "Public"
+        ],
+        "summary": "Return the public subnet interface description",
+        "responses": {
+          "200": {
+            "description": "Subnet interface"
+          }
+        },
+        "security": []
+      }
+    },
+    "/v1/public/repos/{owner}/{repo}/badge.json": {
+      "get": {
+        "operationId": "getRepoBadgeJson",
+        "tags": [
+          "Public"
+        ],
+        "summary": "Return a shields.io-compatible badge payload for a repo",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Badge payload"
+          }
+        },
+        "security": []
+      }
+    },
+    "/v1/public/repos/{owner}/{repo}/badge.svg": {
+      "get": {
+        "operationId": "getRepoBadgeSvg",
+        "tags": [
+          "Public"
+        ],
+        "summary": "Return a rendered SVG badge for a repo",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SVG badge"
+          }
+        },
+        "security": []
+      }
+    },
+    "/v1/mcp/finding-taxonomy": {
+      "get": {
+        "operationId": "getMcpFindingTaxonomy",
+        "tags": [
+          "MCP"
+        ],
+        "summary": "Return the review finding taxonomy the MCP surfaces use",
+        "responses": {
+          "200": {
+            "description": "Finding taxonomy"
+          }
+        },
+        "security": []
+      }
+    },
+    "/v1/mcp/enrichment-analyzers": {
+      "get": {
+        "operationId": "getMcpEnrichmentAnalyzers",
+        "tags": [
+          "MCP"
+        ],
+        "summary": "Return the review-enrichment analyzers the MCP surfaces expose",
+        "responses": {
+          "200": {
+            "description": "Analyzer descriptions"
+          }
+        },
+        "security": []
+      }
+    },
+    "/v1/drafts": {
+      "post": {
+        "operationId": "createReviewDraft",
+        "tags": [
+          "Drafts"
+        ],
+        "summary": "Submit a review draft",
+        "responses": {
+          "200": {
+            "description": "Draft accepted"
+          },
+          "400": {
+            "description": "Malformed draft"
+          },
+          "404": {
+            "description": "Draft submission is disabled"
+          }
+        },
+        "security": []
+      }
+    },
+    "/v1/drafts/{id}": {
+      "get": {
+        "operationId": "getReviewDraft",
+        "tags": [
+          "Drafts"
+        ],
+        "summary": "Read one submitted review draft",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Draft"
+          },
+          "404": {
+            "description": "No such draft, or draft submission is disabled"
+          }
+        },
+        "security": []
+      }
+    },
+    "/v1/drafts/auth/callback": {
+      "get": {
+        "operationId": "completeDraftOauth",
+        "tags": [
+          "Drafts"
+        ],
+        "summary": "Complete the draft-submission GitHub OAuth flow",
+        "responses": {
+          "302": {
+            "description": "Redirect back to the draft"
+          },
+          "400": {
+            "description": "Missing or invalid OAuth code"
+          }
+        },
+        "security": []
+      }
+    },
+    "/v1/ams/ingest": {
+      "post": {
+        "operationId": "ingestAmsTelemetry",
+        "tags": [
+          "AMS"
+        ],
+        "summary": "Ingest an AMS miner telemetry batch",
+        "security": [
+          {
+            "OrbBearer": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Batch accepted"
+          },
+          "400": {
+            "description": "Malformed batch"
+          },
+          "401": {
+            "description": "Missing or invalid ingest credential"
+          }
+        }
+      }
+    },
+    "/v1/contributors/{login}/ams-notifications": {
+      "post": {
+        "operationId": "sendAmsNotification",
+        "tags": [
+          "Contributors",
+          "AMS"
+        ],
+        "summary": "Deliver an AMS notification to a contributor",
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "login",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Notification queued"
+          },
+          "400": {
+            "description": "Malformed notification"
+          },
+          "401": {
+            "description": "Missing or invalid token"
+          }
+        }
+      }
+    },
+    "/v1/local/remediation-plan": {
+      "post": {
+        "operationId": "buildLocalRemediationPlan",
+        "tags": [
+          "Local"
+        ],
+        "summary": "Build a remediation plan from local branch metadata",
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Remediation plan"
+          },
+          "400": {
+            "description": "Malformed branch metadata"
+          },
+          "401": {
+            "description": "Missing or invalid token"
+          }
+        }
+      }
+    },
+    "/v1/loop/request-apr-transfer": {
+      "post": {
+        "operationId": "requestAprTransfer",
+        "tags": [
+          "Loop"
+        ],
+        "summary": "Request an APR transfer for a rented loop",
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Transfer requested"
+          },
+          "400": {
+            "description": "Malformed request"
+          },
+          "401": {
+            "description": "Missing or invalid token"
+          }
+        }
+      }
+    },
+    "/v1/repos/{owner}/{repo}/pulls/{number}/chat-qa": {
+      "post": {
+        "operationId": "askPullRequestChatQuestion",
+        "tags": [
+          "Repositories",
+          "Review"
+        ],
+        "summary": "Ask a question about one pull request's review",
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "number",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Answer"
+          },
+          "400": {
+            "description": "Malformed question"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "404": {
+            "description": "No such pull request"
+          }
+        }
       }
     }
   },

@@ -149,7 +149,7 @@ describe("defineRoute", () => {
     expect((await app.request("/v1/thing?limit=nope")).status).toBe(400);
   });
 
-  it("omits a security stanza for public routes and requires credentials otherwise", () => {
+  it("declares an empty security stanza for public routes and requires credentials otherwise", () => {
     const { app, registry } = build();
     for (const [auth, path, id] of [
       ["public", "/v1/open", "openOp"],
@@ -160,7 +160,11 @@ describe("defineRoute", () => {
       defineRoute(app, registry, { method: "get", path, operationId: id, tags: ["t"], summary: "s", auth, responses: { 200: { description: "ok" } } }, (c) => c.json({}));
     }
     const paths = generate(registry).paths ?? {};
-    expect(paths["/v1/open"]?.get?.security).toBeUndefined();
+    // `[]`, not undefined (#9531): an empty array is OpenAPI's explicit "no credential required",
+    // where an absent one means "not stated". applySecurityMetadata fills in the legacy registerPath
+    // calls that never declared anything, and it can only leave a deliberately public route alone if
+    // that route says so out loud.
+    expect(paths["/v1/open"]?.get?.security).toEqual([]);
     // Internal routes are bearer-only: no browser session ever reaches them.
     expect(paths["/v1/internal/thing"]?.get?.security).toEqual([{ LoopOverBearer: [] }]);
     for (const path of ["/v1/tokened", "/v1/sessioned"]) {

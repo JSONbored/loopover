@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { requiresApiToken } from "../auth/route-auth";
 import { createWorkerPostHogErrorMiddleware } from "./worker-posthog";
 import { z } from "zod";
 import { parsePositiveInt } from "../utils/json";
@@ -6831,54 +6832,6 @@ async function isAuthorizedIngest(configuredToken: string | undefined, presented
   return timingSafeEqual(presentedToken, configuredToken);
 }
 
-function requiresApiToken(path: string): boolean {
-  if (path === "/health") return false;
-  if (path === "/v1/mcp/compatibility") return false;
-  if (path === "/v1/mcp/finding-taxonomy") return false;
-  if (path === "/v1/mcp/enrichment-analyzers") return false;
-  if (/^\/v1\/public\/github\/repos\/[^/]+\/[^/]+\/stats$/.test(path)) return false;
-  if (/^\/v1\/public\/repos\/[^/]+\/[^/]+\/badge\.(svg|json)$/.test(path)) return false;
-  if (/^\/v1\/public\/repos\/[^/]+\/[^/]+\/quality$/.test(path)) return false;
-  if (path === "/v1/public/subnet-interface") return false;
-  if (path === "/v1/public/stats") return false;
-  // #9120: this route's own doc comment always claimed "safe unauthenticated" but was missing from this exact
-  // list, so it 401'd in prod — verified live: subnet-interface/stats/quality answered 200, this one 401'd.
-  if (path === "/v1/public/decision-ledger/verify") return false;
-  // #9266: the eval-scores transport is unauthenticated by the same design as every /v1/public/* sibling
-  // above -- committed to a corpus checksum, independently re-derivable, nothing gated behind a token.
-  if (path === "/v1/public/eval-scores") return false;
-  // #9269: the single-row read, added in the SAME PR as its route so the two can never drift the way #9120's
-  // sibling did. Regex (not a literal) because of the :seq path parameter.
-  if (/^\/v1\/public\/decision-ledger\/row\/[^/]+$/.test(path)) return false;
-  // #9270: the published anchor-signing public keys, added in the SAME PR as its route so the two cannot
-  // drift the way #9120's sibling did.
-  if (path === "/v1/public/decision-ledger/anchor-key") return false;
-  // #9271: the public anchor-attempt listing, added in the SAME PR as its route.
-  if (path === "/v1/public/decision-ledger/anchors") return false;
-  // #9123: the new public decision-record read route — same unauthenticated posture as its ledger-verify
-  // sibling immediately above, added in the SAME PR so the two can never drift apart the way #9120 did. The
-  // pull segment matches any non-slash text (not just digits): an invalid pull number is the ROUTE's 400 to
-  // return, not the auth gate's 401 — mirrors every other dynamic-segment exemption below (owner/repo use the
-  // same unvalidated [^/]+).
-  if (/^\/v1\/public\/decision-records\/[^/]+\/[^/]+\/[^/]+$/.test(path)) return false;
-  if (path === "/openapi.json") return false;
-  if (path === "/mcp") return false;
-  // Public OAuth draft-submission flow (LOOPOVER_REVIEW_DRAFT): the submission entry points are unauthenticated
-  // by design. The handlers themselves 404 when the flag is off, so this exemption is inert flag-OFF.
-  if (path === "/v1/drafts" || path.startsWith("/v1/drafts/")) return false;
-  if (path.startsWith("/v1/auth/")) return false;
-  if (path === "/v1/github/webhook") return false;
-  if (path === "/v1/orb/webhook") return false;
-  if (path === "/v1/orb/relay") return false;
-  if (path === "/v1/orb/oauth/callback") return false;
-  if (path === "/v1/orb/token") return false;
-  if (path === "/v1/orb/relay/register") return false;
-  if (path === "/v1/orb/relay/pull") return false;
-  if (path === "/v1/orb/ingest") return false;
-  if (path === "/v1/ams/ingest") return false;
-  if (path.startsWith("/v1/internal/")) return false;
-  return path.startsWith("/v1/");
-}
 
 // Unauthenticated, cookie-free, aggregate-only public GET endpoints (health check, homepage stats counter,
 // per-repo public stats badge) -- open to any origin via a separate, credential-free CORS branch above.

@@ -21,7 +21,7 @@ import { z } from "zod";
  * declaration the runtime gate enforces -- replacing `isProtectedPath()`, a second, path-prefix
  * model of the same policy that had already drifted out of agreement with it.
  */
-export type RouteAuth = "public" | "token" | "session" | "internal";
+export type RouteAuth = "public" | "token" | "session" | "internal" | "orb" | "webhook";
 
 export type RouteMethod = "get" | "post" | "put" | "patch" | "delete";
 
@@ -46,16 +46,44 @@ export type DefineRouteOptions<Body extends z.ZodTypeAny | undefined, Query exte
   responses: Record<number, { description: string; schema?: z.ZodTypeAny }>;
 };
 
+/**
+ * Every `:param` in the path, as an OpenAPI `in: path` parameter schema.
+ *
+ * Emitted automatically rather than declared per route: a templated segment with no matching
+ * parameter is a schema-validation warning (Cloudflare 30046) and leaves a generated client with a
+ * URL it cannot fill, and there is no case where a path parameter is optional -- so the correct
+ * declaration is fully derivable from the path itself and nothing is gained by asking for it twice.
+ */
+function pathParameters(path: string): { params: z.ZodObject } | undefined {
+  const names = [...path.matchAll(/:([A-Za-z0-9_]+)/g)].map((match) => match[1]!);
+  if (names.length === 0) return undefined;
+  return { params: z.object(Object.fromEntries(names.map((name) => [name, z.string()]))) };
+}
+
 /** Hono writes `:param`; OpenAPI writes `{param}`. */
 function toSpecPath(path: string): string {
   return path.replace(/:([A-Za-z0-9_]+)/g, "{$1}");
 }
 
-/** `public` routes carry no security stanza; everything else accepts either credential the API
- *  actually supports. Internal routes are bearer-only -- there is no cookie path to them. */
+/**
+ * The security stanza a declared auth level emits.
+ *
+ * `public` carries none. `internal` is bearer-only -- there is no cookie path to it. `orb` and
+ * `webhook` (#9531) exist because the ORB ingress genuinely does not authenticate the way the rest
+ * of the API does, and collapsing them into `public` would publish a document that says these
+ * routes need no credential at all. They need a DIFFERENT one: an ORB-issued bearer for the relay
+ * and token endpoints, an HMAC signature header for the webhook. `requiresApiToken()` exempts both
+ * from the LoopOver bearer check, which is what made them look public to the old path-prefix model.
+ */
 function securityFor(auth: RouteAuth): RouteConfig["security"] {
-  if (auth === "public") return undefined;
+  // `[]`, not undefined: an empty security array is OpenAPI's explicit "this operation needs no
+  // credential", where an ABSENT one means "not stated". The distinction is load-bearing here --
+  // applySecurityMetadata fills in the legacy `registerPath` calls that never declared anything, and
+  // it can only tell those apart from a deliberately public route if public says so out loud.
+  if (auth === "public") return [];
   if (auth === "internal") return [{ LoopOverBearer: [] }];
+  if (auth === "orb") return [{ OrbBearer: [] }];
+  if (auth === "webhook") return [{ OrbWebhookSignature: [] }];
   return [{ LoopOverBearer: [] }, { LoopOverSessionCookie: [] }];
 }
 
@@ -138,6 +166,11 @@ export function registerRouteSpec(registry: OpenAPIRegistry, options: RouteSpecO
   registry.registerPath({
     method: options.method,
     path: toSpecPath(options.path),
+    request: {
+      ...(pathParameters(options.path) ?? {}),
+      ...(options.request?.body ? { body: { content: { "application/json": { schema: options.request.body } } } } : {}),
+      ...(options.request?.query ? { query: options.request.query } : {}),
+    },
     operationId: options.operationId,
     tags: options.tags,
     summary: options.summary,

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { TOOL_CONTRACTS } from "@loopover/contract/tools";
 import { createChatActionRegistry, governorGatedHandler } from "../../packages/loopover-miner/lib/chat-action-registry";
 import { MINER_OPS_CHAT_ACTIONS, registerMinerOpsChatActions, type MinerOpsActions } from "../../packages/loopover-miner/lib/chat-miner-ops-actions";
+import { CHAT_ACTION_DISPATCH_ENABLE_VALUE, CHAT_ACTION_DISPATCH_FLAG, dispatchChatAction } from "../../packages/loopover-miner/lib/chat-action-dispatch";
 
 // #9523 requirement 2 — the structural guarantee, not a spot check.
 //
@@ -100,6 +101,16 @@ describe("params validators reject malformed input before any dispatch (#9523)",
     ["miner_run_migrations", { apply: true }],
     ["miner_purge_repo", { repoFullName: "no-slash" }],
     ["miner_purge_repo", {}],
+    // The non-object guards: null, a primitive, and an array are all rejected before any field is read.
+    ["miner_queue_release", null],
+    ["miner_queue_release", "owner/repo"],
+    ["miner_queue_release", []],
+    ["miner_deny_hooks_decide", null],
+    ["miner_deny_hooks_decide", []],
+    ["miner_purge_repo", null],
+    ["miner_purge_repo", []],
+    ["miner_run_migrations", []],
+    ["miner_run_migrations", "go"],
   ])("%s rejects %j", (action, params) => {
     expect(registry.get(action)!.paramsValidator(params)).toBe(false);
   });
@@ -111,6 +122,12 @@ describe("params validators reject malformed input before any dispatch (#9523)",
     ["miner_purge_repo", { repoFullName: "owner/repo" }],
   ])("%s accepts %j", (action, params) => {
     expect(registry.get(action)!.paramsValidator(params)).toBe(true);
+  });
+
+  it("migrations accept the nullish 'no arguments' spellings", () => {
+    // `migrate` takes no options at all, so a caller may omit params entirely rather than send `{}`.
+    expect(registry.get("miner_run_migrations")!.paramsValidator(null)).toBe(true);
+    expect(registry.get("miner_run_migrations")!.paramsValidator(undefined)).toBe(true);
   });
 });
 
@@ -133,5 +150,63 @@ describe("the mutating tool catalog matches what is registered (#9523)", () => {
     for (const forbidden of ["loopover_miner_calibration_apply", "loopover_miner_calibration_revert", "loopover_miner_state_set", "loopover_miner_kill_switch"]) {
       expect(names, `${forbidden} was deliberately excluded`).not.toContain(forbidden);
     }
+  });
+});
+
+describe("end-to-end dispatch: MCP action name -> gate -> store operation (#9523)", () => {
+  // The whole path the MCP tools actually take. Anything that bypasses it cannot be registered at all, so
+  // this is the only route a mutation can travel — worth exercising per action rather than per unit.
+  const enabled = { [CHAT_ACTION_DISPATCH_FLAG]: CHAT_ACTION_DISPATCH_ENABLE_VALUE };
+
+  function harness() {
+    const registry = createChatActionRegistry();
+    const calls: string[] = [];
+    // An allowing gate: this block is about the DISPATCH path, and the gate's own refusal behavior is
+    // covered above. Production supplies no evaluateGate, so it gets the real chokepoint.
+    registerMinerOpsChatActions(fakeActions(calls), registry, { evaluateGate: () => ({ decision: { stage: "allow" } }) });
+    return { registry, calls };
+  }
+
+  it.each([
+    ["miner_queue_release", { repoFullName: "owner/repo", issueNumber: 1 }, "releaseQueueItem"],
+    ["miner_queue_requeue", { repoFullName: "owner/repo", issueNumber: 2 }, "requeueQueueItem"],
+    ["miner_claim_release", { repoFullName: "owner/repo", issueNumber: 3 }, "releaseClaim"],
+    ["miner_deny_hooks_decide", { repoFullName: "owner/repo", hookId: "h1", decision: "approve" }, "decideDenyHook"],
+    ["miner_run_migrations", {}, "runMigrations"],
+    ["miner_purge_repo", { repoFullName: "owner/repo" }, "purgeRepo"],
+  ])("%s dispatches to %s", async (action, params, expectedCall) => {
+    const { registry, calls } = harness();
+    const result = await dispatchChatAction({ action, params }, { registry, env: enabled });
+    expect(result.ok, `${action} should dispatch: ${JSON.stringify(result)}`).toBe(true);
+    expect(calls.join("|")).toContain(expectedCall);
+  });
+
+  it("dispatches an action whose request carries NO params at all", async () => {
+    const { registry, calls } = harness();
+    const result = await dispatchChatAction({ action: "miner_run_migrations" }, { registry, env: enabled });
+    expect(result.ok, JSON.stringify(result)).toBe(true);
+    expect(calls.join("|")).toContain("runMigrations");
+  });
+
+  it("rejects malformed params BEFORE reaching the store operation", async () => {
+    const { registry, calls } = harness();
+    const result = await dispatchChatAction({ action: "miner_purge_repo", params: { repoFullName: "no-slash" } }, { registry, env: enabled });
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe("invalid_params");
+    expect(calls, "an invalid request must not reach the store").toEqual([]);
+  });
+
+  it("fails CLOSED when the chat-action flag is not enabled", async () => {
+    const { registry, calls } = harness();
+    const result = await dispatchChatAction({ action: "miner_purge_repo", params: { repoFullName: "owner/repo" } }, { registry, env: {} });
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe("disabled");
+    expect(calls).toEqual([]);
+  });
+
+  it("rejects an action that was never registered", async () => {
+    const { registry } = harness();
+    const result = await dispatchChatAction({ action: "miner_not_a_thing", params: {} }, { registry, env: enabled });
+    expect(result.status).toBe("unknown_action");
   });
 });

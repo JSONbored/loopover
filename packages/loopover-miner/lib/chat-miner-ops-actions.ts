@@ -64,8 +64,13 @@ function isPurgeParams(params: unknown): boolean {
   return typeof repoFullName === "string" && repoFullName.includes("/");
 }
 
+/**
+ * No nullish fallback: every action that calls this has a params validator requiring an OBJECT, and
+ * dispatchChatAction runs that validator before the handler. A `?? {}` here would be unreachable defensive
+ * code -- `miner_run_migrations`, the one action that accepts absent params, takes none and never calls this.
+ */
 function paramsOf<T>(request: ChatActionRequest): T {
-  return (request?.params ?? {}) as T;
+  return request.params as T;
 }
 
 /**
@@ -76,7 +81,18 @@ function paramsOf<T>(request: ChatActionRequest): T {
  * `evaluateGovernorChokepointGate`, and through it the fail-closed precedence ladder in
  * @loopover/engine's governor chokepoint.
  */
-export function registerMinerOpsChatActions(actions: MinerOpsActions, registry: ChatActionRegistry = chatActionRegistry): void {
+export function registerMinerOpsChatActions(
+  actions: MinerOpsActions,
+  registry: ChatActionRegistry = chatActionRegistry,
+  /**
+   * Override the chokepoint evaluator. Mirrors the dashboard's own
+   * `registerPortfolioQueueChatActions({ evaluateGate })` seam: production always uses the DEFAULT (the real
+   * `evaluateGovernorChokepointGate`), and only a test supplies one, so the gate cannot be weakened by
+   * configuration.
+   */
+  options: { evaluateGate?: (input: unknown, gateOptions?: unknown) => unknown } = {},
+): void {
+  const gateOpts = options.evaluateGate ? { evaluateGate: options.evaluateGate } : undefined;
   const definitions: [string, (params: unknown) => boolean, (request: ChatActionRequest) => Promise<Record<string, unknown>>][] = [
     [
       MINER_QUEUE_RELEASE_ACTION,
@@ -104,7 +120,7 @@ export function registerMinerOpsChatActions(actions: MinerOpsActions, registry: 
 
   for (const [name, paramsValidator, run] of definitions) {
     if (registry.has(name)) continue;
-    registry.register(name, { paramsValidator, handler: governorGatedHandler(run) });
+    registry.register(name, { paramsValidator, handler: governorGatedHandler(run, gateOpts) });
   }
 }
 

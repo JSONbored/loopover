@@ -8,7 +8,7 @@ import {
   assessSubnetDocument,
   type RegistryLaneSpec,
 } from "../../src/review/content-lane/registry-logic";
-import { diffAppendedSurfaceEntries, runSurfaceReview, survivingExistingEntries, type SurfaceReviewInput } from "../../src/review/content-lane/orchestrator";
+import { diffAppendedSurfaceEntries, MAX_VERIFIED_ENTRIES_PER_RUN, runSurfaceReview, survivingExistingEntries, type SurfaceReviewInput } from "../../src/review/content-lane/orchestrator";
 
 const existing = { kind: "website", url: "https://old.example.ai", source_url: "https://github.com/a/b", public_safe: true };
 const newEntry = { kind: "subnet-api", url: "https://api.example.ai", source_url: "https://github.com/x/y", public_safe: true };
@@ -55,9 +55,36 @@ describe("diffAppendedSurfaceEntries", () => {
     expect(diffAppendedSurfaceEntries("{not json", doc([existing]), "surfaces")).toBeNull();
     expect(diffAppendedSurfaceEntries(JSON.stringify({ netuid: 14 }), doc([existing]), "surfaces")).toBeNull();
   });
+
+  // #9490: identity was raw JSON.stringify, which preserves key order -- so reordering an existing entry's
+  // keys read as a FRESH append (a farmable content-free "contribution") while simultaneously removing its
+  // prior self from the duplicate check's scope.
+  it("REGRESSION (#9490): a key-reordered copy of an existing entry is NOT an append — identity is key-order invariant", () => {
+    const reordered = Object.fromEntries(Object.entries(existing).reverse());
+    expect(JSON.stringify(reordered)).not.toBe(JSON.stringify(existing)); // the reorder is real...
+    expect(diffAppendedSurfaceEntries(doc([reordered]), doc([existing]), "surfaces")).toEqual([]); // ...and reads as zero appends
+
+    // Nested objects too — a shallow sort would miss this.
+    const nestedBase = { ...existing, probe: { expect: "ok", timeout: 5 } };
+    const nestedReordered = { ...existing, probe: { timeout: 5, expect: "ok" } };
+    expect(diffAppendedSurfaceEntries(doc([nestedReordered]), doc([nestedBase]), "surfaces")).toEqual([]);
+  });
+
+  it("INVARIANT (#9490): array ORDER still matters — a reordered array is a real content change, not a cosmetic one", () => {
+    const withList = { ...existing, tags: ["a", "b"] };
+    const reorderedList = { ...existing, tags: ["b", "a"] };
+    expect(diffAppendedSurfaceEntries(doc([reorderedList]), doc([withList]), "surfaces")).toEqual([reorderedList]);
+  });
 });
 
 describe("survivingExistingEntries", () => {
+  const doc9490 = (surfaces: unknown[]) => JSON.stringify({ netuid: 14, surfaces });
+
+  it("REGRESSION (#9490): a key-reordered entry still counts as SURVIVING, keeping its identity inside the duplicate check's scope", () => {
+    const reordered = Object.fromEntries(Object.entries(existing).reverse());
+    expect(survivingExistingEntries(doc9490([reordered]), doc9490([existing]), "surfaces")).toEqual([existing]);
+  });
+
   const doc = (surfaces: unknown[]) => JSON.stringify({ netuid: 14, surfaces });
 
   it("returns base entries that are still present, byte-identical, in head", () => {
@@ -608,6 +635,45 @@ describe("runSurfaceReview — verifyEntry hook", () => {
     // pickAggregateAssessment prefixes a multi-entry reason with its position so the offender is identifiable.
     expect(r?.verdict).toBe("close");
     expect(r?.summary).toBe("Surface entry 2 of 2: not served");
+  });
+
+  // #9490: each verification fetches up to 2 URLs x 5 hops x 10s -- uncapped over metagraphed's
+  // maxAppendedEntries:Infinity, a 500-entry PR was a request-amplification primitive and a subrequest-
+  // exhaustion path that converted into bulk probe_fetch_failed holds.
+  it("REGRESSION (#9490): verifies at most MAX_VERIFIED_ENTRIES_PER_RUN entries; the rest HOLD rather than merging unverified", async () => {
+    const entries = Array.from({ length: MAX_VERIFIED_ENTRIES_PER_RUN + 3 }, (_, i) => ({ ...newEntry, url: `https://api-${i}.example.ai` }));
+    let verified = 0;
+    const r = await withVerifier([existing, ...entries], () => {
+      verified += 1;
+      return Promise.resolve(null);
+    });
+    expect(verified).toBe(MAX_VERIFIED_ENTRIES_PER_RUN);
+    // The capped entries hold the PR: past-budget entries must never sneak through unprobed.
+    expect(r?.verdict).toBe("manual");
+    expect(r?.reason).toContain("verification-capacity");
+  });
+
+  it("INVARIANT (#9490): a run at exactly the cap verifies everything and merges — the cap is a ceiling, not a haircut", async () => {
+    const entries = Array.from({ length: MAX_VERIFIED_ENTRIES_PER_RUN }, (_, i) => ({ ...newEntry, url: `https://api-${i}.example.ai` }));
+    let verified = 0;
+    const r = await withVerifier([existing, ...entries], () => {
+      verified += 1;
+      return Promise.resolve(null);
+    });
+    expect(verified).toBe(MAX_VERIFIED_ENTRIES_PER_RUN);
+    expect(r?.verdict).toBe("merge");
+  });
+
+  it("INVARIANT (#9490): statically closed entries do not consume verification budget", async () => {
+    // One statically-closed entry (public_safe:false) among the appends: the budget must count VERIFIED
+    // entries, not appended ones, or a submitter could pad with invalid entries to starve the real ones.
+    const entries = Array.from({ length: MAX_VERIFIED_ENTRIES_PER_RUN }, (_, i) => ({ ...newEntry, url: `https://api-${i}.example.ai` }));
+    let verified = 0;
+    await withVerifier([existing, { ...newEntry, url: "https://bad.example.ai", public_safe: false }, ...entries], () => {
+      verified += 1;
+      return Promise.resolve(null);
+    });
+    expect(verified).toBe(MAX_VERIFIED_ENTRIES_PER_RUN);
   });
 
   it("HOLDS rather than merging when the verifier itself throws — a broken check never reads as a pass", async () => {

@@ -96,6 +96,34 @@ const unreachableProbe = (error: string, httpStatus: number | null = null): Surf
   error,
 });
 
+/**
+ * #9490: read at most `maxChars` characters, CANCELLING the stream past the cap. The previous
+ * `(await response.text()).slice(...)` buffered the FULL hostile body before slicing -- a streamed
+ * multi-hundred-MB response OOMed the isolate before the fail-closed path could ever run. Same shape as
+ * grounding-wire.ts's readTextWithLimit (the house pattern), inlined rather than imported so the content-lane
+ * module keeps its "no imports from the review pipeline" isolation.
+ */
+async function readProbeBodyBounded(response: Response, maxChars: number): Promise<string> {
+  if (!response.body) {
+    const text = await response.text();
+    return text.slice(0, maxChars);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    text += decoder.decode(value, { stream: true });
+    if (text.length >= maxChars) {
+      await reader.cancel().catch(() => undefined);
+      return text.slice(0, maxChars);
+    }
+  }
+  text += decoder.decode();
+  return text.slice(0, maxChars);
+}
+
 function redirectLocation(response: Response, currentUrl: string): string {
   const location = response.headers.get("location");
   if (!location) return "";
@@ -141,7 +169,7 @@ export async function fetchSurfaceProbe(url: string, fetchImpl: typeof fetch = f
     if (!response.ok) return unreachableProbe("probe_http_error", response.status);
     let body: string;
     try {
-      body = (await response.text()).slice(0, MAX_PROBE_BODY_CHARS);
+      body = await readProbeBodyBounded(response, MAX_PROBE_BODY_CHARS);
     } catch {
       // A 2xx whose body cannot be read (a broken/aborted stream) is NOT a served surface — the response line
       // alone proves nothing about what the URL serves, so this stays inconclusive rather than an empty pass.

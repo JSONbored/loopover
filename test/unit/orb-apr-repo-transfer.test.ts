@@ -9,6 +9,7 @@ import {
   initiateAprRepoTransfer,
   isAprRepoTransferPollEnabled,
   loadAprIdeaCompletion,
+  loadAprRepoBinding,
   loadPendingAprRepoTransfers,
   pollPendingAprRepoTransfers,
   probeAprRepoTransfer,
@@ -118,6 +119,12 @@ describe("evaluateAprRepoTransferRequestEligibility (#7742)", () => {
   });
 });
 
+describe("loadAprRepoBinding (#9490)", () => {
+  it("fail-closes: returns null until #7664 persists a binding record, so no transfer can authorize", async () => {
+    await expect(loadAprRepoBinding(createTestEnv(), { repoFullName: "loopover-repos/widgets" })).resolves.toBeNull();
+  });
+});
+
 describe("loadAprIdeaCompletion (#7742)", () => {
   it("fail-closes to incomplete until a persisted #7591/#7664 record exists", async () => {
     await expect(loadAprIdeaCompletion(createTestEnv(), { repoFullName: "loopover-repos/widgets" })).resolves.toEqual({
@@ -166,7 +173,8 @@ describe("requestAprRepoTransfer (#7742)", () => {
     const result = await requestAprRepoTransfer(
       env,
       { installationId: 7, repoFullName: "loopover-repos/widgets", newOwner: "customer-acct" },
-      { initiate, loadCompletion },
+      // #9490: completion alone no longer authorizes; the tenant binding must match too.
+      { initiate, loadCompletion, loadBinding: async () => ({ customerLogin: "customer-acct", installationId: 7 }) },
     );
     expect(initiate).toHaveBeenCalledWith(env, 7, "loopover-repos/widgets", "customer-acct");
     expect(result).toEqual({
@@ -180,7 +188,7 @@ describe("requestAprRepoTransfer (#7742)", () => {
     const result = await requestAprRepoTransfer(
       createTestEnv(),
       { installationId: 1, repoFullName: "loopover-repos/widgets", newOwner: "customer-acct" },
-      { initiate, loadCompletion: async () => ({ ideaComplete: true }) },
+      { initiate, loadCompletion: async () => ({ ideaComplete: true }), loadBinding: async () => ({ customerLogin: "customer-acct", installationId: 1 }) },
     );
     expect(result).toEqual({
       status: "failed",
@@ -194,7 +202,7 @@ describe("requestAprRepoTransfer (#7742)", () => {
     const result = await requestAprRepoTransfer(
       createTestEnv(),
       { installationId: 1, repoFullName: "loopover-repos/widgets", newOwner: "customer-acct" },
-      { loadCompletion: async () => ({ ideaComplete: true }) },
+      { loadCompletion: async () => ({ ideaComplete: true }), loadBinding: async () => ({ customerLogin: "customer-acct", installationId: 1 }) },
     );
     expect(result).toEqual({
       status: "initiated",
@@ -209,7 +217,7 @@ describe("requestAprRepoTransfer (#7742)", () => {
     const result = await requestAprRepoTransfer(
       env,
       { installationId: 3, repoFullName: "loopover-repos/widgets", newOwner: "customer-acct" },
-      { initiate, loadCompletion: async () => ({ ideaComplete: true }), pauseDispatch },
+      { initiate, loadCompletion: async () => ({ ideaComplete: true }), loadBinding: async () => ({ customerLogin: "customer-acct", installationId: 3 }), pauseDispatch },
     );
     expect(result.status).toBe("initiated");
     expect(pauseDispatch).toHaveBeenCalledWith(env, "loopover-repos/widgets");
@@ -229,6 +237,7 @@ describe("requestAprRepoTransfer (#7742)", () => {
       {
         initiate: vi.fn().mockResolvedValue({ initiated: false, status: 403, error: "no admin" }),
         loadCompletion: async () => ({ ideaComplete: true }),
+        loadBinding: async () => ({ customerLogin: "customer-acct", installationId: 1 }),
         pauseDispatch,
       },
     );
@@ -312,9 +321,51 @@ describe("probeAprRepoTransfer (#7741)", () => {
     expect(probe).toEqual({ state: "resolved_under_target" });
   });
 
-  it("treats a 404 (App access gone) as accepted-and-departed", async () => {
-    stubFetch(() => new Response("", { status: 404 }));
+  // #9490: a bare 404 at the original path is AMBIGUOUS -- ownership moved away, or the repo was deleted /
+  // the App uninstalled. Departure (a terminal SUCCESS outcome in the ledger) is only declared once the repo
+  // demonstrably resolves under the TARGET owner; otherwise the transfer stays pending and the expiry clock
+  // gives the bounded, truthful answer.
+  it("REGRESSION (#9490): 404 at the original path + repo confirmed under the target owner ⇒ accepted-and-departed", async () => {
+    stubFetch((url) =>
+      url.includes("/repos/customer-acct/widgets")
+        ? new Response(JSON.stringify({ owner: { login: "Customer-Acct" } }), { status: 200 })
+        : new Response("", { status: 404 }),
+    );
     expect(await probeAprRepoTransfer(createTestEnv(), transfer)).toEqual({ state: "access_departed" });
+  });
+
+  it("INVARIANT (#9490): 404 everywhere (repo deleted, or private under its new owner) stays pending — never a fabricated success", async () => {
+    stubFetch(() => new Response("", { status: 404 }));
+    expect(await probeAprRepoTransfer(createTestEnv(), transfer)).toEqual({ state: "pending" });
+  });
+
+  it("INVARIANT (#9490): 404 + a repo under the target PATH but owned by someone else stays pending", async () => {
+    stubFetch((url) =>
+      url.includes("/repos/customer-acct/widgets")
+        ? new Response(JSON.stringify({ owner: { login: "squatter" } }), { status: 200 })
+        : new Response("", { status: 404 }),
+    );
+    expect(await probeAprRepoTransfer(createTestEnv(), transfer)).toEqual({ state: "pending" });
+  });
+
+  it("INVARIANT (#9490): a malformed original path (no repo half) skips corroboration and stays pending", async () => {
+    stubFetch(() => new Response("", { status: 404 }));
+    expect(await probeAprRepoTransfer(createTestEnv(), { ...transfer, repoFullName: "just-an-owner" })).toEqual({ state: "pending" });
+  });
+
+  it("INVARIANT (#9490): a non-2xx or owner-less corroborating response stays pending", async () => {
+    stubFetch((url) => (url.includes("/repos/customer-acct/widgets") ? new Response("", { status: 500 }) : new Response("", { status: 404 })));
+    expect(await probeAprRepoTransfer(createTestEnv(), transfer)).toEqual({ state: "pending" });
+    stubFetch((url) => (url.includes("/repos/customer-acct/widgets") ? new Response(JSON.stringify({}), { status: 200 }) : new Response("", { status: 404 })));
+    expect(await probeAprRepoTransfer(createTestEnv(), transfer)).toEqual({ state: "pending" });
+  });
+
+  it("INVARIANT (#9490): the corroborating fetch itself throwing degrades to pending, honoring the never-throws contract", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (String(input).includes("/repos/customer-acct/widgets")) throw new Error("network down");
+      return new Response("", { status: 404 });
+    });
+    expect(await probeAprRepoTransfer(createTestEnv(), transfer)).toEqual({ state: "pending" });
   });
 
   it("stays pending while the repo is still under the original owner", async () => {

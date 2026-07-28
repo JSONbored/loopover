@@ -9,6 +9,7 @@ import {
   matchingFederatedKey,
   verifyFederatedBundle,
   type FederatedRejection,
+  MAX_INSTANCE_ID_CHARS,
 } from "../../src/orb/federated-import";
 import { createTestEnv, type TestD1Database } from "../helpers/d1";
 import type { FocusManifest } from "../../src/signals/focus-manifest";
@@ -163,6 +164,23 @@ describe("importPeerBundles (#6480)", () => {
   it("rejects an unknown schema version rather than guessing at it", () => {
     const result = importPeerBundles(manifest(), [signedWith(PEER_KEY_A, { schemaVersion: 999 })], { log: () => undefined });
     expect(result.rejected).toEqual([{ instanceId: "abc123def4567890", reason: "unsupported_schema_version" }]);
+  });
+
+  // #9490: instanceIds are persisted into the single system_flags peer-state blob, and nothing bounded their
+  // length -- 3-4 bundles carrying ~600 KB ids pushed that blob past D1's ~2 MB value limit, the state write
+  // failed silently, and replay/rollback watermarks stopped persisting for EVERY peer.
+  it("REGRESSION (#9490): rejects an oversized instanceId as malformed — it would poison the shared peer-state blob", () => {
+    const oversized = signedWith(PEER_KEY_A, { instanceId: "x".repeat(MAX_INSTANCE_ID_CHARS + 1) });
+    const result = importPeerBundles(manifest(), [oversized], { log: () => undefined });
+    expect(result.accepted).toEqual([]);
+    expect(result.rejected).toEqual([{ instanceId: "x".repeat(MAX_INSTANCE_ID_CHARS + 1), reason: "malformed" }]);
+  });
+
+  it("INVARIANT (#9490): an instanceId at exactly the cap still verifies, and an empty one is malformed", () => {
+    const atCap = signedWith(PEER_KEY_A, { instanceId: "x".repeat(MAX_INSTANCE_ID_CHARS) });
+    expect(importPeerBundles(manifest(), [atCap], { log: () => undefined }).accepted).toEqual([atCap]);
+    const empty = signedWith(PEER_KEY_A, { instanceId: "" });
+    expect(importPeerBundles(manifest(), [empty], { log: () => undefined }).rejected).toEqual([{ instanceId: "", reason: "malformed" }]);
   });
 
   it("rejects a malformed bundle whose signed field is the wrong type", () => {
@@ -395,6 +413,82 @@ describe("applyFederatedPeerWatermarks (#9148, the persisted gates)", () => {
     const bundle = signedWith(PEER_KEY_A);
     const result = await applyFederatedPeerWatermarks(e.DB, okResult([bundle]), [PEER_KEY_A], { now: Date.parse(bundle.generatedAt) });
     expect(result.accepted).toEqual([bundle]); // fail-safe: corrupt cache never blocks a legitimate peer
+  });
+
+  // #9490: an instanceId is BOUND to the first key that verified it. Without this, hostile-but-allowlisted
+  // peer B could claim honest peer A's id -- shadow A's bundle in-batch, overwrite the watermark entry's
+  // keyFingerprint, then ratchet lastGeneratedAtMs so A's genuine bundles reject as replayed_or_rollback
+  // forever: targeted suppression plus stat replacement, and a bypass of B's own Sybil cap (only NEW ids
+  // count against it). Squarely inside #9148's declared threat model.
+  it("REGRESSION (#9490): a second allowlisted key cannot take over an instanceId bound to the first key", async () => {
+    const e = env();
+    const honest = signedWith(PEER_KEY_A, { instanceId: "shared-target-id", generatedAt: "2026-03-01T00:00:00.000Z" });
+    await applyFederatedPeerWatermarks(e.DB, okResult([honest]), [PEER_KEY_A, PEER_KEY_B], { now: Date.parse(honest.generatedAt) });
+
+    // B verifies under its OWN (allowlisted) key but claims A's id, with a newer generatedAt -- the ratchet.
+    const takeover = signedWith(PEER_KEY_B, { instanceId: "shared-target-id", generatedAt: "2026-03-09T00:00:00.000Z" });
+    const result = await applyFederatedPeerWatermarks(e.DB, okResult([takeover]), [PEER_KEY_A, PEER_KEY_B], { now: Date.parse(takeover.generatedAt) });
+
+    expect(result.accepted).toEqual([]);
+    expect(result.rejected).toEqual([{ instanceId: "shared-target-id", reason: "instance_key_conflict" }]);
+
+    // The decisive invariant: A's NEXT genuine bundle still lands -- neither its watermark nor its key
+    // binding was moved by the attempt.
+    const next = signedWith(PEER_KEY_A, { instanceId: "shared-target-id", generatedAt: "2026-03-02T00:00:00.000Z" });
+    const after = await applyFederatedPeerWatermarks(e.DB, okResult([next]), [PEER_KEY_A, PEER_KEY_B], { now: Date.parse(next.generatedAt) });
+    expect(after.accepted).toEqual([next]);
+  });
+
+  it("INVARIANT (#9490): the takeover rejection does not free the id — repeated attempts keep failing without perturbing state", async () => {
+    const e = env();
+    const honest = signedWith(PEER_KEY_A, { instanceId: "sticky-id", generatedAt: "2026-03-01T00:00:00.000Z" });
+    await applyFederatedPeerWatermarks(e.DB, okResult([honest]), [PEER_KEY_A, PEER_KEY_B], { now: Date.parse(honest.generatedAt) });
+    for (const attemptAt of ["2026-03-03T00:00:00.000Z", "2026-03-04T00:00:00.000Z"]) {
+      const attempt = signedWith(PEER_KEY_B, { instanceId: "sticky-id", generatedAt: attemptAt });
+      const result = await applyFederatedPeerWatermarks(e.DB, okResult([attempt]), [PEER_KEY_A, PEER_KEY_B], { now: Date.parse(attemptAt) });
+      expect(result.rejected[0]?.reason).toBe("instance_key_conflict");
+    }
+  });
+
+  it("REGRESSION (#9490): a failing peer-state write is LOUD (error-level structured log) while still failing open", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const e = env();
+      // Make ONLY the system_flags write fail; the read path (SELECT) must still work.
+      const realDb = e.DB;
+      const failingDb = {
+        prepare: (sql: string) => {
+          const statement = realDb.prepare(sql);
+          if (/^INSERT OR REPLACE INTO system_flags/i.test(sql)) {
+            return { bind: () => ({ run: () => Promise.reject(new Error("value exceeds maximum size")) }) };
+          }
+          return statement;
+        },
+      } as unknown as D1Database;
+      const bundle = signedWith(PEER_KEY_A);
+
+      const result = await applyFederatedPeerWatermarks(failingDb, okResult([bundle]), [PEER_KEY_A], { now: Date.parse(bundle.generatedAt) });
+
+      expect(result.accepted).toEqual([bundle]); // fail-open: the sync tick is never failed by the write
+      expect(
+        errorSpy.mock.calls.some((call) => {
+          const line = String(call[0]);
+          return line.includes("federated_peer_state_write_failed") && line.includes("value exceeds maximum size");
+        }),
+      ).toBe(true);
+      // A non-Error rejection takes the String() arm rather than crashing the logger.
+      const failingDb2 = {
+        prepare: (sql: string) =>
+          /^INSERT OR REPLACE INTO system_flags/i.test(sql)
+            ? { bind: () => ({ run: () => Promise.reject("plain string failure") }) }
+            : realDb.prepare(sql),
+      } as unknown as D1Database;
+      const bundle2 = signedWith(PEER_KEY_A, { instanceId: "second-instance" });
+      await applyFederatedPeerWatermarks(failingDb2, okResult([bundle2]), [PEER_KEY_A], { now: Date.parse(bundle2.generatedAt) });
+      expect(errorSpy.mock.calls.some((call) => String(call[0]).includes("plain string failure"))).toBe(true);
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it("passes through prior rejections untouched alongside its own", async () => {

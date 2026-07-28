@@ -155,6 +155,7 @@ import { handleOrbIngest, readOrbIngestBody } from "../orb/ingest";
 import { handleAmsIngest } from "../ams/ingest";
 import { handleOrbWebhook } from "../orb/webhook";
 import { listFleetInstallations, listFleetInstances, registerFleetInstallation, registerFleetInstance } from "../orb/fleet-admin";
+import { pushFleetConfig } from "../orb/fleet-config-push";
 import { backfillOrbInstallations } from "../orb/installations";
 import { handleOrbOAuthCallback } from "../orb/oauth";
 import {
@@ -167,9 +168,7 @@ import {
   revokeOrbEnrollment,
 } from "../orb/broker";
 import {
-  enqueueConfigPushRelay,
   MAX_ORB_RELAY_REGISTER_BODY_BYTES,
-  pruneRelayPending,
   pullRelayPending,
   readOrbRelayRegisterBody,
   registerValidatedOrbRelay,
@@ -2170,49 +2169,7 @@ export function createApp() {
     const body = await c.req.json().catch(() => null);
     const parsed = configPushSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "invalid_config_push", issues: parsed.error.issues }, 400);
-    const { installationIds, ...payload } = parsed.data;
-    // #7611 review fix: prune ONCE for the whole request, not once per target -- enqueueConfigPushRelay no
-    // longer prunes itself (see its own doc comment) precisely so a 500-installation fan-out below can't turn
-    // into 500 redundant global TTL-prune scans/deletes against the shared orb_relay_pending table.
-    await pruneRelayPending(c.env);
-    // #8880: isolate each per-installation enqueue. A bare Promise.all let one target's throw abort the whole
-    // fan-out -- the audit event AND the response for the other ~499 installations were silently dropped, and
-    // there was no route-level try/catch to salvage them. Catch each target's failure inside its own fan-out
-    // task (mirroring pollPendingAprRepoTransfers' per-item isolation in src/orb/apr-repo-transfer.ts) so one
-    // bad row can't sink the batch, audit each failure so it is never silently swallowed, and still report the
-    // successful targets plus the partial failure to the caller.
-    const settled = await Promise.all(
-      installationIds.map(async (installationId): Promise<{ installationId: number; error?: string }> => {
-        try {
-          await enqueueConfigPushRelay(c.env, installationId, payload);
-          return { installationId };
-        } catch (error) {
-          return { installationId, error: errorMessage(error) };
-        }
-      }),
-    );
-    const failedInstallationIds: number[] = [];
-    for (const result of settled) {
-      if (result.error !== undefined) {
-        failedInstallationIds.push(result.installationId);
-        await recordAuditEvent(c.env, {
-          eventType: "operator.config_push_target_failed",
-          actor: identity.actor,
-          targetKey: `config_push#${parsed.data.pushId}#${result.installationId}`,
-          outcome: "error",
-          metadata: { installationId: result.installationId, pushId: parsed.data.pushId, message: result.error },
-        });
-      }
-    }
-    const succeededCount = installationIds.length - failedInstallationIds.length;
-    await recordAuditEvent(c.env, {
-      eventType: "operator.config_push_enqueued",
-      actor: identity.actor,
-      targetKey: `config_push#${parsed.data.pushId}`,
-      outcome: failedInstallationIds.length > 0 ? "error" : "completed",
-      metadata: { installationCount: installationIds.length, succeededCount, failedCount: failedInstallationIds.length, capability: payload.capability ?? null },
-    });
-    return c.json({ ok: true, pushId: parsed.data.pushId, installationCount: installationIds.length, succeededCount, failedInstallationIds });
+    return c.json(await pushFleetConfig(c.env, identity.actor, parsed.data));
   });
 
   // #5672 post-merge incident report, internal-operator side: same reporting path as the repo-scoped customer

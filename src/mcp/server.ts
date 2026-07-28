@@ -246,6 +246,24 @@ import {
   fleetIssueEnrollmentTool,
   fleetRotateEnrollmentTool,
   fleetRevokeEnrollmentTool,
+  AdminGetStatusInput,
+  AdminGetStatusOutput,
+  AdminDoctorInput,
+  AdminDoctorOutput,
+  AdminTailLogsInput,
+  AdminTailLogsOutput,
+  AdminGetBackupStatusInput,
+  AdminGetBackupStatusOutput,
+  adminGetStatusTool,
+  adminDoctorTool,
+  adminTailLogsTool,
+  adminGetBackupStatusTool,
+  FleetConfigPushInput,
+  FleetConfigPushOutput,
+  FleetRunJobInput,
+  FleetRunJobOutput,
+  fleetConfigPushTool,
+  fleetRunJobTool,
 } from "@loopover/contract/tools";
 import { TOOL_CATEGORIES, type ToolCategory } from "@loopover/contract";
 import {
@@ -326,7 +344,7 @@ import {
 } from "../db/repositories";
 import { decidePendingAgentAction } from "../services/agent-approval-queue";
 import { automationStateSummary, buildAutomationState } from "../services/automation-state";
-import { nowIso } from "../utils/json";
+import { errorMessage, nowIso } from "../utils/json";
 import { buildNotificationFeed } from "../notifications/service";
 import { fetchGittensorContributorSnapshot } from "../gittensor/api";
 import { getRepositoryCollaboratorPermission } from "../github/app";
@@ -359,11 +377,23 @@ import { buildRecommendationQualityReport } from "../services/recommendation-qua
 import { computeFleetAnalytics } from "../orb/analytics";
 import { listFleetInstallations, listFleetInstances, registerFleetInstallation, registerFleetInstance } from "../orb/fleet-admin";
 import { backfillOrbInstallations } from "../orb/installations";
+import { pushFleetConfig } from "../orb/fleet-config-push";
+import { processJob } from "../queue/job-dispatch";
+import { backfillContributorGateHistory } from "../review/contributor-gate-history-backfill";
+import { refreshInstallationHealth } from "../github/backfill";
+import { INTERNAL_JOB_SPEC, type InternalJobName, type InternalJobRunMode } from "@loopover/contract/enums";
+import type { JobMessage } from "../types";
 import { ORB_SECRET_TYPE_GITHUB_TOKEN, isOrbBrokerEnabled, issueOrbEnrollment, revokeOrbEnrollment } from "../orb/broker";
 import { loadMaintainerNoiseReport, maintainerNoiseSummary } from "../services/maintainer-noise";
 import { buildAmsMinerCohortComparison } from "../review/ams-miner-cohort";
 import { getConfigAdminFunctions } from "./private-config-admin-registry";
 import { getRedeployTrigger, getSecretRotator } from "./redeploy-companion-registry";
+import {
+  getInstanceBackupStatusReader,
+  getInstanceDoctorRunner,
+  getInstanceLogTailer,
+  getInstanceStatusReader,
+} from "./instance-diagnostics-registry";
 import { getLocalManifestReader } from "../signals/focus-manifest-loader";
 import type { ConfigAdminScope } from "../selfhost/private-config";
 import { buildMaintainerActivationPreview } from "../services/maintainer-activation";
@@ -1131,6 +1161,19 @@ export const MCP_TOOL_CATEGORY_IDS: readonly McpToolCategory[] = TOOL_CATEGORIES
 export const MCP_TOOL_CATEGORIES: Record<string, McpToolCategory> = Object.fromEntries(
   TOOL_CONTRACTS.map((contract) => [contract.name, contract.category]),
 );
+
+/**
+ * Every queue message `loopover_fleet_run_job` can send IS a real JobMessage type (#9522).
+ *
+ * The contract package cannot import src/, so INTERNAL_JOB_SPEC's messageType values are a transcription --
+ * and a transcription of a message-type union is only safe if something on this side checks it. This
+ * assignment is that check: a messageType that is not a JobMessage["type"] fails the build rather than
+ * enqueuing a message the dispatcher silently drops. `null` is allowed and means the job is run-only.
+ */
+const _INTERNAL_JOB_MESSAGE_TYPES_ARE_REAL: readonly (JobMessage["type"] | null)[] = Object.values(INTERNAL_JOB_SPEC).map(
+  (spec) => spec.messageType,
+);
+void _INTERNAL_JOB_MESSAGE_TYPES_ARE_REAL;
 
 /**
  * A contract's MCP annotations with the registry's own defaults applied (#9522). `ToolContract.annotations`
@@ -2360,6 +2403,26 @@ export class LoopoverMcp {
         async (input) => this.toolResult(await this.adminTriggerRedeploy(input)),
       );
       register(
+        "loopover_admin_get_status",
+        { description: adminGetStatusTool.description, inputSchema: AdminGetStatusInput.shape, outputSchema: AdminGetStatusOutput, annotations: contractAnnotations(adminGetStatusTool) },
+        async () => this.toolResult(await this.adminGetStatus()),
+      );
+      register(
+        "loopover_admin_doctor",
+        { description: adminDoctorTool.description, inputSchema: AdminDoctorInput.shape, outputSchema: AdminDoctorOutput, annotations: contractAnnotations(adminDoctorTool) },
+        async () => this.toolResult(await this.adminDoctor()),
+      );
+      register(
+        "loopover_admin_tail_logs",
+        { description: adminTailLogsTool.description, inputSchema: AdminTailLogsInput.shape, outputSchema: AdminTailLogsOutput, annotations: contractAnnotations(adminTailLogsTool) },
+        async (input) => this.toolResult(await this.adminTailLogs(input)),
+      );
+      register(
+        "loopover_admin_get_backup_status",
+        { description: adminGetBackupStatusTool.description, inputSchema: AdminGetBackupStatusInput.shape, outputSchema: AdminGetBackupStatusOutput, annotations: contractAnnotations(adminGetBackupStatusTool) },
+        async () => this.toolResult(await this.adminGetBackupStatus()),
+      );
+      register(
         "loopover_admin_rotate_secret",
         {
           description:
@@ -2575,6 +2638,17 @@ export class LoopoverMcp {
       "loopover_fleet_revoke_enrollment",
       { description: fleetRevokeEnrollmentTool.description, inputSchema: FleetRevokeEnrollmentInput.shape, outputSchema: FleetRevokeEnrollmentOutput, annotations: contractAnnotations(fleetRevokeEnrollmentTool) },
       async (input, extra) => this.toolResult(await this.fleetRevokeEnrollment(input, extra, server)),
+    );
+
+    register(
+      "loopover_fleet_config_push",
+      { description: fleetConfigPushTool.description, inputSchema: FleetConfigPushInput.shape, outputSchema: FleetConfigPushOutput, annotations: contractAnnotations(fleetConfigPushTool) },
+      async (input, extra) => this.toolResult(await this.fleetConfigPush(input, extra, server)),
+    );
+    register(
+      "loopover_fleet_run_job",
+      { description: fleetRunJobTool.description, inputSchema: FleetRunJobInput.shape, outputSchema: FleetRunJobOutput, annotations: contractAnnotations(fleetRunJobTool) },
+      async (input) => this.toolResult(await this.fleetRunJob(input)),
     );
 
     // #2225 — read-only taxonomy discovery for AI review finding categories + severity ladder.
@@ -3506,6 +3580,148 @@ export class LoopoverMcp {
       metadata: { enrollId: input.enrollId, surface: "mcp" },
     });
     return { summary: `LoopOver revoked enrollment ${input.enrollId}.`, data: result as unknown as Record<string, unknown> };
+  }
+
+  // ── #9522 self-host instance diagnostics ──────────────────────────────
+  //
+  // Each reaches its capability through the nullable registry only src/server.ts fills, so the Workers
+  // bundle never pulls a node builtin in and an unwired deployment answers `configured: false` instead of
+  // throwing -- the same shape the config-admin and redeploy tools already use.
+  private async adminGetStatus(): Promise<ToolPayload> {
+    this.requireMcpAdmin();
+    const reader = getInstanceStatusReader();
+    if (!reader) return { summary: "LoopOver instance status: not configured on this instance.", data: { configured: false } };
+    try {
+      const status = await reader();
+      const version = typeof status.appVersion === "string" ? status.appVersion : "unknown";
+      const behind = status.upToDate === false ? " (a redeploy is due)" : "";
+      return { summary: `LoopOver instance is running ${version}${behind}.`, data: { configured: true, ...status } };
+    } catch (error) {
+      return { summary: "LoopOver instance status could not be read.", data: { configured: true, error: errorMessage(error) } };
+    }
+  }
+
+  private async adminDoctor(): Promise<ToolPayload> {
+    this.requireMcpAdmin();
+    const runner = getInstanceDoctorRunner();
+    if (!runner) return { summary: "LoopOver instance doctor: not configured on this instance.", data: { configured: false } };
+    try {
+      const report = await runner();
+      const failed = report.checks.filter((check) => check.status === "fail").length;
+      const warned = report.checks.filter((check) => check.status === "warn").length;
+      return {
+        // Every check runs, so the summary reports the whole picture rather than the first failure.
+        summary: `LoopOver instance doctor: ${report.checks.length} check(s), ${failed} failing, ${warned} warning.`,
+        data: { configured: true, ok: report.ok, checks: report.checks as unknown as Record<string, unknown>[] },
+      };
+    } catch (error) {
+      return { summary: "LoopOver instance doctor could not run.", data: { configured: true, error: errorMessage(error) } };
+    }
+  }
+
+  private async adminTailLogs(input: { lines?: number | undefined; since?: string | undefined }): Promise<ToolPayload> {
+    this.requireMcpAdmin();
+    const tailer = getInstanceLogTailer();
+    if (!tailer) return { summary: "LoopOver log tail: not configured on this instance.", data: { configured: false } };
+    try {
+      // The cap is enforced HERE as well as in the implementation: a caller cannot widen it past the
+      // schema's own max, and the default stays modest so an unqualified call cannot dump the buffer.
+      const result = await tailer({ lines: Math.min(input.lines ?? 200, 1000), ...(input.since !== undefined ? { since: input.since } : {}) });
+      return {
+        summary: `LoopOver returned ${result.lines.length} log line(s)${result.truncated ? " (truncated by the byte cap)" : ""}.`,
+        data: { configured: true, lines: result.lines, truncated: result.truncated },
+      };
+    } catch (error) {
+      return { summary: "LoopOver log tail could not be read.", data: { configured: true, error: errorMessage(error) } };
+    }
+  }
+
+  private async adminGetBackupStatus(): Promise<ToolPayload> {
+    this.requireMcpAdmin();
+    const reader = getInstanceBackupStatusReader();
+    if (!reader) return { summary: "LoopOver backup status: not configured on this instance.", data: { configured: false } };
+    try {
+      const status = await reader();
+      const last = typeof status.lastBackupAt === "string" ? status.lastBackupAt : "never";
+      return { summary: `LoopOver last backup: ${last}.`, data: { configured: true, ...status } };
+    } catch (error) {
+      return { summary: "LoopOver backup status could not be read.", data: { configured: true, error: errorMessage(error) } };
+    }
+  }
+
+  // ── #9522 fleet config push + maintenance jobs ────────────────────────
+  private async fleetConfigPush(
+    input: { installationIds: number[]; pushId: string; message: string; capability?: string | undefined; deprecatesAt?: string | undefined },
+    extra?: McpToolExtra,
+    mcpServer?: McpServer,
+  ): Promise<ToolPayload> {
+    await this.requireOperator();
+    const confirmation = await this.confirmDestructive(
+      `Push config "${input.pushId}" to ${input.installationIds.length} installation(s)?`,
+      "Every listed installation receives it.",
+      extra,
+      mcpServer,
+    );
+    if (confirmation.declined) return { summary: `LoopOver did not push config "${input.pushId}" (declined).`, data: { declined: true, pushId: input.pushId } };
+    const result = await pushFleetConfig(this.env, this.identity.actor, input);
+    return {
+      summary: `LoopOver pushed config "${result.pushId}" to ${result.succeededCount}/${result.installationCount} installation(s).`,
+      data: result as unknown as Record<string, unknown>,
+    };
+  }
+
+  /**
+   * The run-only jobs: no queue message exists for them, so `run` dispatches to the SAME function each
+   * one's own `/run` route calls. Keyed by job name and exhaustive over the spec's `messageType: null`
+   * entries -- a new run-only job that is not wired here fails the fleet-job parity test.
+   */
+  private static readonly RUN_ONLY_JOBS: Record<string, (env: Env, payload: Record<string, unknown>) => Promise<unknown>> = {
+    "backfill-contributor-gate-history": (env, payload) =>
+      backfillContributorGateHistory(env, typeof payload.limit === "number" ? { limit: payload.limit } : {}),
+    "refresh-installation-health": (env) => refreshInstallationHealth(env),
+  };
+
+  private async fleetRunJob(input: { job: InternalJobName; mode: InternalJobRunMode; payload?: Record<string, unknown> | undefined }): Promise<ToolPayload> {
+    this.requireInternal();
+    const spec = INTERNAL_JOB_SPEC[input.job];
+    const supportedModes: readonly InternalJobRunMode[] = spec.modes;
+    if (!supportedModes.includes(input.mode)) {
+      // Answered, not thrown: "this job has no inline runner" is information the caller can act on, and
+      // the supported list is what it needs to retry correctly.
+      return {
+        summary: `LoopOver job ${input.job} does not support mode "${input.mode}" (supports: ${supportedModes.join(", ")}).`,
+        data: { job: input.job, mode: input.mode, unsupportedMode: true, supportedModes: [...supportedModes] },
+      };
+    }
+    const payload = input.payload ?? {};
+    if (spec.messageType === null) {
+      const runner = LoopoverMcp.RUN_ONLY_JOBS[input.job]!;
+      const result = await runner(this.env, payload);
+      await this.auditFleetJob(input.job, "operator.fleet_job_ran", { mode: "run" });
+      return { summary: `LoopOver ran job ${input.job} inline.`, data: { job: input.job, mode: input.mode, result: result as unknown } };
+    }
+    // The route path is not always the queue message type (rag-index -> rag-index-repo,
+    // regate-pr -> agent-regate-pr), so the message is built from the spec, never from the job name.
+    const message = { ...payload, type: spec.messageType, requestedBy: "mcp" } as unknown as JobMessage;
+    if (input.mode === "enqueue") {
+      await this.env.JOBS.send(message);
+      await this.auditFleetJob(input.job, "operator.fleet_job_enqueued", { mode: "enqueue", messageType: spec.messageType });
+      return { summary: `LoopOver queued job ${input.job}.`, data: { job: input.job, mode: input.mode, result: { status: "queued" } } };
+    }
+    // Inline: the SAME dispatcher the queue consumer runs, so an inline run and a queued run cannot diverge.
+    await processJob(this.env, message);
+    await this.auditFleetJob(input.job, "operator.fleet_job_ran", { mode: "run", messageType: spec.messageType });
+    return { summary: `LoopOver ran job ${input.job} inline.`, data: { job: input.job, mode: input.mode, result: { status: "completed" } } };
+  }
+
+  private async auditFleetJob(job: string, eventType: string, metadata: Record<string, unknown>): Promise<void> {
+    await recordAuditEvent(this.env, {
+      eventType,
+      actor: this.identity.actor,
+      targetKey: `job#${job}`,
+      outcome: "completed",
+      metadata: { job, surface: "mcp", ...metadata },
+    });
   }
 
   private requireMcpAdmin(): void {

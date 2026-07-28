@@ -199,8 +199,14 @@ export const fleetRevokeEnrollmentTool = defineTool({
   output: FleetRevokeEnrollmentOutput,
 });
 
+/** Mirrors the route's own configPushSchema, which is `.strict()` -- an unknown field is a caller error. */
 export const FleetConfigPushInput = z.object({
-  confirm: z.literal(true).describe("Must be exactly true. A config push takes effect fleet-wide."),
+  installationIds: z.array(z.number().int().positive()).min(1).max(500).describe("Explicit targets. There is no implicit fan-out to the whole fleet."),
+  pushId: z.string().min(1).max(120).regex(/^[A-Za-z0-9_.:-]+$/).describe("Caller-chosen id for this push, so a repeat is recognizable."),
+  message: z.string().min(1).max(500),
+  capability: z.string().min(1).max(120).optional(),
+  deprecatesAt: z.string().max(64).optional().describe("ISO-8601 timestamp after which the pushed capability is deprecated."),
+  confirm: z.literal(true).describe("Must be exactly true. A config push reaches every installation listed."),
 });
 
 export const FleetConfigPushOutput = z.looseObject({});

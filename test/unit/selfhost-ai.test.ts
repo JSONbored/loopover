@@ -1780,6 +1780,36 @@ describe("subscription CLI helpers + fail-safe", () => {
     }
   });
 
+  // #9479 REGRESSION: child.on("error") catches SPAWN failures only -- it never receives stdio stream errors.
+  // A CLI that exits before draining stdin (an unknown flag on an upgraded binary, an immediate auth abort, an
+  // OOM kill) made the ~250KB stdin write fail with EPIPE on an emitter with no "error" listener, which Node
+  // escalates to an UNCAUGHT exception -> installSelfHostCrashHandlers -> exit(1), taking down every in-flight
+  // queue job in the container. This drives the real subprocess so the listener is genuinely exercised: the
+  // fake exits immediately without reading stdin, and the write must be swallowed rather than crash the run.
+  it("REAL subprocess: a CLI that exits without draining stdin does not crash the worker (#9479)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fakecli-"));
+    const fake = join(dir, "claude");
+    // Exits at once, never reading stdin -> the parent's write lands on a closed pipe (EPIPE).
+    writeFileSync(fake, "#!/usr/bin/env node\nprocess.exit(2);\n");
+    chmodSync(fake, 0o755);
+    const origPath = process.env.PATH;
+    const uncaught: unknown[] = [];
+    const onUncaught = (err: unknown) => uncaught.push(err);
+    process.on("uncaughtException", onUncaught);
+    try {
+      // A large input makes the write span multiple chunks, so it cannot complete before the child is gone.
+      await expect(
+        createClaudeCodeAi({ PATH: `${dir}:${origPath ?? ""}`, CLAUDE_CODE_OAUTH_TOKEN: "t" }).run("sonnet", {
+          prompt: "x".repeat(300_000),
+        }),
+      ).rejects.toThrow(); // surfaces as a normal provider error via the exit-code guard...
+    } finally {
+      process.off("uncaughtException", onUncaught);
+      process.env.PATH = origPath;
+    }
+    expect(uncaught).toEqual([]); // ...and never as an uncaught EPIPE, which is what killed the container
+  });
+
   // REGRESSION (GITTENSORY-K/M/8/Z, #4994): the real defaultSpawn fast-fail path against a genuinely-hung fake
   // `claude` that writes nothing to either stream and never exits — mirrors the identical codex real-subprocess
   // test below, proving createClaudeCodeAi's plumbing (not just a stubbed spawn) actually wires

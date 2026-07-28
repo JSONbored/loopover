@@ -3540,6 +3540,21 @@ describe("pure helpers", () => {
     expect(run).toHaveBeenCalledTimes(2); // 1 primary (stalled) + 1 fallback (succeeded on its first try).
   });
 
+  it("REGRESSION (#9476): a non-Error throw is not mistaken for a stall and still uses the full budget", async () => {
+    // isStalledNoOutput must reject a non-Error value rather than throwing on `.message` -- a provider adapter
+    // can reject with a string, and misclassifying that as a deadline signal would silently skip retries.
+    let primaryAttempts = 0;
+    const run = vi.fn(async (model: string) => {
+      if (model === "fallback") return { response: reviewJson() };
+      primaryAttempts += 1;
+      throw "claude_stalled_no_output: not an Error instance";
+    });
+    const env = createTestEnv({ AI: { run } as unknown as Ai });
+    const diagnostics: Array<{ status: string; model: string }> = [];
+    await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256, diagnostics as never);
+    expect(primaryAttempts).toBe(3);
+  });
+
   it("REGRESSION (#9476): a genuinely transient error still gets the FULL retry budget (the break is narrow)", async () => {
     // Guards against over-broadening the break: only the non-transient deadline/rate-limit/config signals
     // short-circuit. A dropped connection must still be retried up to the budget.

@@ -363,6 +363,8 @@ import {
 // unchanged -- those tests are deeply interspersed with unrelated ones in that file family, not in a cleanly
 // extractable describe block, so relocating them is deliberately deferred rather than forced into this PR.
 export { claimPrActuationLock, releasePrActuationLock } from "./transient-locks";
+import { PR_ACTUATION_LOCK_TTL_SECONDS, prActuationLockKeyForHeartbeat, startLockHeartbeat } from "./transient-locks";
+import { startAiReviewLockHeartbeat } from "./ai-review-orchestration";
 // #4013 step 2: same shim shape for generateSignalSnapshots -- imported here for processJob's own internal
 // call below, and re-exported so src/api/routes.ts and test/unit/queue-trends.test.ts's existing
 // `import { generateSignalSnapshots } from "../../src/queue/processors"` keeps working unchanged.
@@ -4236,6 +4238,16 @@ export async function reReviewStoredPullRequest(
     }).catch(() => undefined);
     throw new PrActuationLockContendedError(repoFullName, pr.number, "public-surface-publish");
   }
+  // #9467: this lock now spans the WHOLE publish -> AI review -> maintain unit (#9013 moved the claim here),
+  // and the AI review alone can outlive the 600s TTL. Renew it while the work runs so a slow-but-healthy pass
+  // cannot have its lock claimed out from under it mid-flight. Compare-and-extend, so if this pass has already
+  // lost the key it learns that instead of extending the new owner's lock.
+  const actuationHeartbeat = startLockHeartbeat(
+    env,
+    prActuationLockKeyForHeartbeat(repoFullName, pr.number),
+    actuationLock.ownerToken,
+    PR_ACTUATION_LOCK_TTL_SECONDS,
+  );
   let gate: ReturnType<typeof evaluateGateCheck> | undefined;
   try {
     gate = await withReviewPipelineSpan(
@@ -4321,6 +4333,7 @@ export async function reReviewStoredPullRequest(
       );
     });
   } finally {
+    actuationHeartbeat.stop();
     await releasePrActuationLock(env, repoFullName, pr.number, actuationLock.ownerToken);
   }
   return true;
@@ -11155,9 +11168,21 @@ async function maybePublishPrPublicSurface(
         }).catch(() => undefined);
         aiReview = aiReviewLockContendedResult(advisory);
       } else {
+        // #9467: an LLM call can outlive the 1800s TTL (a single model's max-effort retry budget is exactly
+        // 3 x 600s, before a second reviewer or a per-repo timeout override). Renew while the review runs so a
+        // slow-but-healthy pass cannot have its lock claimed out from under it and pay for a duplicate call.
+        const aiReviewHeartbeat = startAiReviewLockHeartbeat(
+          env,
+          repoFullName,
+          pr.number,
+          aiReviewHeadSha,
+          settings.aiReviewMode,
+          aiReviewLock.ownerToken,
+        );
         try {
           await aiReviewCacheReadDecideAndRun(aiReviewLock);
         } finally {
+          aiReviewHeartbeat.stop();
           await releaseAiReviewLock(
             env,
             repoFullName,

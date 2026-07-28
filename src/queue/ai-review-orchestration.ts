@@ -17,6 +17,8 @@
 import {
   claimTransientLock,
   releaseTransientLockIfOwner,
+  startLockHeartbeat,
+  type LockHeartbeat,
   type TransientLockClaim,
 } from "./transient-locks";
 import { buildPullRequestAdvisory } from "../rules/advisory";
@@ -132,6 +134,38 @@ export async function claimAiReviewLock(
     registerHeldLock(key, claim.ownerToken, () => releaseTransientLockIfOwner(env, key, claim.ownerToken));
   }
   return claim;
+}
+
+/**
+ * #9467: keep an acquired AI-review lock alive for as long as the review is actually running.
+ *
+ * The 1800s TTL is documented as "a crash-safety backstop, not a throughput bound" -- but nothing bounded the
+ * work below it. At max effort a SINGLE model's retry budget is exactly 3 x 600s = 1800s, so any second
+ * reviewer, fallback chain, or per-repo claudeTimeoutMs override (clamped at 30 min PER ATTEMPT, #8458) runs
+ * past it. A second pass then claimed the same key, fired a duplicate LLM call, and the two passes'
+ * ai_review_cache upserts raced -- last writer wins, so two contradictory verdicts could alternate across
+ * passes at an unchanged head.
+ *
+ * The caller stops it in the same finally that releases the lock. See startLockHeartbeat for the fail-open
+ * posture: no compare-and-extend support, a fail-open claim, or a throwing renewal all leave the lock on its
+ * original fixed TTL rather than blocking work.
+ */
+export function startAiReviewLockHeartbeat(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  headSha: string,
+  mode: string,
+  ownerToken: string | null,
+  options?: { onLost?: () => void },
+): LockHeartbeat {
+  return startLockHeartbeat(
+    env,
+    aiReviewLockKey(repoFullName, prNumber, headSha, mode),
+    ownerToken,
+    AI_REVIEW_LOCK_TTL_SECONDS,
+    options,
+  );
 }
 
 /** Best-effort release, called from a finally block so the lock frees promptly instead of waiting out the TTL. */

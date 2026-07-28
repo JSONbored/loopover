@@ -136,7 +136,74 @@ async function releaseSubmissionLockIfBound(env: Env, key: string, ownerToken: s
   return true;
 }
 
-const PR_ACTUATION_LOCK_TTL_SECONDS = 600;
+/**
+ * #9467: keep a held lock alive for as long as its owner is actually working, instead of betting that the work
+ * finishes inside a fixed TTL.
+ *
+ * The TTLs were sized when the actuation lock covered only a short plan-and-execute section. #9013 moved the
+ * claim to BEFORE `maybePublishPrPublicSurface`, so the 600s actuation lock now wraps the entire publish -> AI
+ * review -> maintain unit -- and the AI review alone can legitimately exceed it (3 attempts x up to 600s per
+ * attempt, per model, with an operator override clamped at 1,800,000 ms per attempt). When the TTL lapsed
+ * mid-work the holder was never told: a second worker claimed the same PR and both actuated it, producing a
+ * duplicate close plus a duplicate explanation comment, or a losing pass's placeholder republished over a real
+ * verdict -- the exact thrash #9013 existed to eliminate.
+ *
+ * The queue proved this shape for its own processing lease in #9023; this is the same idea for transient locks.
+ * Renewal is compare-and-extend, so a holder that has ALREADY lost the key (TTL lapsed and someone re-claimed,
+ * or a maintainer stole it via #9008) cannot extend the new owner's lock -- it learns it lost instead, via
+ * `onLost`, and its caller aborts before mutating anything.
+ *
+ * Fails OPEN, exactly like every other operation in this module: an adapter without `renewIfValue`, or a
+ * throwing renewal, simply leaves the lock on its original fixed TTL -- never worse than the pre-#9467
+ * behavior, and never a reason to block real work.
+ */
+export type LockHeartbeat = { stop: () => void };
+
+export function startLockHeartbeat(
+  env: Env,
+  key: string,
+  ownerToken: string | null,
+  ttlSeconds: number,
+  options?: { onLost?: () => void; intervalMsOverride?: number },
+): LockHeartbeat {
+  const cache = env.SELFHOST_TRANSIENT_CACHE;
+  // Nothing to renew: a fail-open claim owns no key, and an adapter without compare-and-extend cannot renew
+  // safely (a blind re-set would extend whoever holds it now, which is the bug this exists to prevent).
+  if (!ownerToken || !cache?.renewIfValue) return { stop: () => undefined };
+  // A third of the TTL gives two chances to recover from a transient renewal failure before the lock lapses.
+  const intervalMs = options?.intervalMsOverride ?? Math.max(1_000, Math.floor((ttlSeconds * 1000) / 3));
+  let stopped = false;
+  const timer = setInterval(() => {
+    void (async () => {
+      // No pre-await `stopped` guard: stop() clears the interval, so a callback can never START after it.
+      // The check that matters is the one AFTER the await below, where stop() CAN have landed mid-renewal.
+      try {
+        const stillOurs = await cache.renewIfValue!(key, ownerToken, ttlSeconds);
+        if (!stillOurs && !stopped) {
+          stopped = true;
+          clearInterval(timer);
+          options?.onLost?.();
+        }
+      } catch {
+        // Fail open: a transient renewal error must not itself abort the work. The next tick retries, and if
+        // renewals keep failing the lock simply lapses on its original TTL -- the pre-#9467 behavior.
+      }
+    })();
+  }, intervalMs);
+  // Never hold the process open for a heartbeat (Node only; the Workers runtime has no unref).
+  (timer as unknown as { unref?: () => void }).unref?.();
+  return {
+    stop: () => {
+      stopped = true;
+      clearInterval(timer);
+    },
+  };
+}
+
+export const PR_ACTUATION_LOCK_TTL_SECONDS = 600;
+export function prActuationLockKeyForHeartbeat(repoFullName: string, prNumber: number): string {
+  return prActuationLockKey(repoFullName, prNumber);
+}
 function prActuationLockKey(repoFullName: string, prNumber: number): string {
   return `pr-actuation-lock:${repoFullName.toLowerCase()}#${prNumber}`;
 }

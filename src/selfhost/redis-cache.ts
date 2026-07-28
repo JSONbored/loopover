@@ -71,6 +71,20 @@ export function createRedisCache(redis: Redis) {
       const result = await redis.set(key, value, "EX", ttlSeconds, "NX");
       return result === "OK";
     },
+    // Compare-and-extend (#9467): same atomicity requirement as releaseIfValue below, for the same reason --
+    // a GET followed by a separate EXPIRE could extend a key that a NEW claimant wrote in between, handing the
+    // stale holder's renewal to the live holder's lock. Returning false is how a holder discovers it no longer
+    // owns the key (its TTL lapsed and someone else claimed it, or a maintainer stole it, #9008).
+    async renewIfValue(key: string, value: string, ttlSeconds: number): Promise<boolean> {
+      const result = await redis.eval(
+        "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('expire', KEYS[1], ARGV[2]) else return 0 end",
+        1,
+        key,
+        value,
+        String(ttlSeconds),
+      );
+      return result === 1;
+    },
     // Compare-and-delete: the read and the delete must be one atomic server-side step (a Lua eval), or a
     // holder's own release could race a NEW claimant's write between a separate GET and DEL and delete the
     // wrong holder's key -- the exact race per-holder ownership tokens exist to close.

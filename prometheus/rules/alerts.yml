@@ -604,6 +604,37 @@ groups:
           description: "Provider {{ $labels.provider }} has failed repeatedly and its circuit breaker is skipping calls fast during its cooldown (sustained 5m)."
           runbook: "Check that provider's credentials/reachability (CLI auth for claude-code/codex, or the configured API key/base URL for HTTP providers) via loopover_ai_provider_failures_total{provider=\"...\"} and recent selfhost_ai_provider_failed logs."
 
+      # The next two rules exist to separate the only two provider failures whose FIRST RESPONSE differs
+      # (#9549). Both previously surfaced as an opaque `claude_code_error_NNN` under the same counter, so a
+      # quota exhaustion looked exactly like a dead credential -- and rotating a perfectly good token is the
+      # natural, wasted next move. Distinct severities encode the difference: one needs a human NOW, the
+      # other resolves itself when the window rolls over.
+      - alert: LoopoverAiProviderCredentialInvalid
+        # A 401/403 from a provider: the credential is rejected outright. This does NOT self-heal -- every
+        # review degrades to the fallback provider (or fails) until someone rotates it. Any occurrence in
+        # 15m is actionable; `for: 5m` only filters a single blip during an in-flight rotation.
+        expr: increase(loopover_ai_provider_failure_reason_total{reason="credential_invalid"}[15m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "loopover AI provider {{ $labels.provider }} credential is being rejected"
+          description: "Provider {{ $labels.provider }} returned {{ $value | printf \"%.0f\" }} auth failure(s) in 15m (sustained 5m). The credential is invalid or expired — this will not recover on its own."
+          runbook: "Rotate the credential: `./scripts/rotate-secret.sh claude_code_oauth_token` (or the loopover_admin_rotate_secret MCP tool). No restart is needed — the token is re-read per AI call. Confirm recovery via loopover_ai_provider_failure_reason_total{reason=\"credential_invalid\"} going flat."
+
+      - alert: LoopoverAiProviderQuotaExhausted
+        # A 429: the credential is fine, the plan's limit is spent. Rotating it changes NOTHING, so this is a
+        # warning and the runbook says so explicitly. Sustained 15m rather than any-occurrence, because a
+        # short burst against a rate limit is normal and self-correcting.
+        expr: increase(loopover_ai_provider_failure_reason_total{reason="quota_exhausted"}[15m]) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "loopover AI provider {{ $labels.provider }} is out of quota"
+          description: "Provider {{ $labels.provider }} returned {{ $value | printf \"%.0f\" }} quota/rate-limit rejection(s) in 15m, sustained for 15m. The credential is valid; the plan's limit is spent."
+          runbook: "Do NOT rotate the credential — a 429 is a quota signal and a new token on the same account behaves identically. Wait for the window to roll over, raise the plan/limit, or configure a fallback in AI_PROVIDER so reviews degrade instead of failing."
+
   # ── Ops anomaly scan (review burst / review failure burst, #ops-anomaly-metric) ────
   - name: loopover-ops-anomalies
     rules:

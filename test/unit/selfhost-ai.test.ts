@@ -20,6 +20,8 @@ vi.mock("posthog-node", () => ({ PostHog: posthogMocks.PostHog }));
 
 import { assertNoLegacySharedAiEnv, buildProvider, claudeErrorStatus, codexErrorFromStdout, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, extractCliUsage, isAiProviderHealthy, markAiProviderUnhealthyAtBoot, providerNameFromBaseUrl, resetAiProviderCircuitBreakerForTest, resetAiProviderHealthForTest, resolveAiReviewerPlan, resolveClaudeCliTimeoutMs, resolveClaudeFirstOutputTimeoutMs, resolveCodexAuthPath, resolveCodexCliTimeoutMs, resolveCodexEffort, resolveCodexFirstOutputTimeoutMs, resolveEffort, resolveModel, resolveProviderNames, resolveRequiredCliProviders, resolveSubscriptionCliPath, redactSecrets, routeProviders, shouldMarkAiProviderUnhealthyAtBoot, shouldWarnRagEmbedUnavailable, subscriptionCliEnv, withAdvisoryAiEnv, withAiGenerationCapture, __selfHostAiInternals } from "../../src/selfhost/ai";
 import { labelSelfHostReviewerModel, labelSelfHostReviewerModels } from "../../src/selfhost/ai-config";
+import { setFileSourcedSecrets } from "../../src/selfhost/file-sourced-secrets";
+import { setProviderCredentialResolver } from "../../src/selfhost/provider-credential-registry";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { initPostHog, resetPostHogForTest } from "../../src/selfhost/posthog";
 import { ollamaContextOptions, ollamaNumCtx } from "../../src/selfhost/ai";
@@ -2519,5 +2521,117 @@ describe("ollama context window (#9478)", () => {
   it.each([[""], ["not-a-number"], ["0"], ["-1"]])("falls back to a sane default for %s", (value) => {
     process.env["OLLAMA_NUM_CTX"] = value;
     expect(ollamaNumCtx()).toBeGreaterThan(8_192); // must exceed the truncation-prone stock defaults
+  });
+});
+
+describe("resolveClaudeOauthToken (#9543 — rotate the credential without recreating the container)", () => {
+  // The token reaches the CLI only through the spawned subprocess env, so asserting on that is what
+  // actually proves which rung of the resolution order won.
+  const captureToken = () => {
+    const seen: Array<string | undefined> = [];
+    const spawn: StubSpawn = async (_cmd, _args, options) => {
+      seen.push((options as { env?: Record<string, string | undefined> }).env?.CLAUDE_CODE_OAUTH_TOKEN);
+      return { stdout: JSON.stringify({ type: "result", result: "ok" }), code: 0 };
+    };
+    return { seen, spawn };
+  };
+  const run = (env: Record<string, string | undefined>, spawn: StubSpawn) =>
+    createClaudeCodeAi(env, spawn).run("m", { prompt: "x" });
+
+  afterEach(() => {
+    setFileSourcedSecrets([]);
+    setProviderCredentialResolver(null);
+  });
+
+  it("uses the boot env value when no file and no resolver are configured", async () => {
+    const { seen, spawn } = captureToken();
+    await run({ CLAUDE_CODE_OAUTH_TOKEN: "boot-token" }, spawn);
+    expect(seen[0]).toBe("boot-token");
+  });
+
+  it("prefers a stored fleet credential over both the file and the boot env", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "rot-"));
+    const file = join(dir, "tok");
+    writeFileSync(file, "file-token");
+    setFileSourcedSecrets(["CLAUDE_CODE_OAUTH_TOKEN"]);
+    setProviderCredentialResolver(async () => "fleet-token");
+    const { seen, spawn } = captureToken();
+    await run({ CLAUDE_CODE_OAUTH_TOKEN: "boot-token", CLAUDE_CODE_OAUTH_TOKEN_FILE: file }, spawn);
+    expect(seen[0]).toBe("fleet-token");
+  });
+
+  it("passes the fleet credential through trimmed", async () => {
+    setProviderCredentialResolver(async () => "  padded-token\n");
+    const { seen, spawn } = captureToken();
+    await run({ CLAUDE_CODE_OAUTH_TOKEN: "boot-token" }, spawn);
+    expect(seen[0]).toBe("padded-token");
+  });
+
+  it("falls through to the next rung when the resolver returns null", async () => {
+    setProviderCredentialResolver(async () => null);
+    const { seen, spawn } = captureToken();
+    await run({ CLAUDE_CODE_OAUTH_TOKEN: "boot-token" }, spawn);
+    expect(seen[0]).toBe("boot-token");
+  });
+
+  it("falls through when the resolver returns an all-whitespace credential", async () => {
+    setProviderCredentialResolver(async () => "   ");
+    const { seen, spawn } = captureToken();
+    await run({ CLAUDE_CODE_OAUTH_TOKEN: "boot-token" }, spawn);
+    expect(seen[0]).toBe("boot-token");
+  });
+
+  it("degrades to the boot env instead of failing the review when the resolver throws", async () => {
+    setProviderCredentialResolver(async () => { throw new Error("db down"); });
+    const { seen, spawn } = captureToken();
+    await run({ CLAUDE_CODE_OAUTH_TOKEN: "boot-token" }, spawn);
+    expect(seen[0]).toBe("boot-token");
+  });
+
+  it("re-reads the secret file per call, so an in-place rotation lands with no restart", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "rot-"));
+    const file = join(dir, "tok");
+    writeFileSync(file, "first-token");
+    setFileSourcedSecrets(["CLAUDE_CODE_OAUTH_TOKEN"]);
+    const { seen, spawn } = captureToken();
+    const env = { CLAUDE_CODE_OAUTH_TOKEN: "first-token", CLAUDE_CODE_OAUTH_TOKEN_FILE: file };
+    await run(env, spawn);
+    writeFileSync(file, "rotated-token\n"); // in-place rewrite, exactly as the rotation path does it
+    await run(env, spawn);
+    expect(seen).toEqual(["first-token", "rotated-token"]);
+  });
+
+  it("does NOT re-read the file when the value was set inline (inline .env always wins)", async () => {
+    // docker-compose.yml sets <NAME>_FILE unconditionally, so its presence alone must never cause a
+    // re-read -- that would silently swap an inline operator's credential.
+    const dir = mkdtempSync(join(tmpdir(), "rot-"));
+    const file = join(dir, "tok");
+    writeFileSync(file, "file-token");
+    const { seen, spawn } = captureToken();
+    await run({ CLAUDE_CODE_OAUTH_TOKEN: "inline-token", CLAUDE_CODE_OAUTH_TOKEN_FILE: file }, spawn);
+    expect(seen[0]).toBe("inline-token");
+  });
+
+  it("keeps the last known good value when the file is momentarily empty mid-rotation", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "rot-"));
+    const file = join(dir, "tok");
+    writeFileSync(file, "   \n");
+    setFileSourcedSecrets(["CLAUDE_CODE_OAUTH_TOKEN"]);
+    const { seen, spawn } = captureToken();
+    await run({ CLAUDE_CODE_OAUTH_TOKEN: "boot-token", CLAUDE_CODE_OAUTH_TOKEN_FILE: file }, spawn);
+    expect(seen[0]).toBe("boot-token");
+  });
+
+  it("degrades to the boot env when the file is unreadable", async () => {
+    setFileSourcedSecrets(["CLAUDE_CODE_OAUTH_TOKEN"]);
+    const { seen, spawn } = captureToken();
+    await run({ CLAUDE_CODE_OAUTH_TOKEN: "boot-token", CLAUDE_CODE_OAUTH_TOKEN_FILE: "/nonexistent/definitely/not/here" }, spawn);
+    expect(seen[0]).toBe("boot-token");
+  });
+
+  it("still reports no-token when every rung is empty", async () => {
+    setFileSourcedSecrets(["CLAUDE_CODE_OAUTH_TOKEN"]);
+    const spawn: StubSpawn = async () => ({ stdout: "", code: 0 });
+    await expect(createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN_FILE: "/nonexistent/nope" }, spawn).run("m", { prompt: "x" })).rejects.toThrow(/claude_code_no_oauth_token/);
   });
 });

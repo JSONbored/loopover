@@ -117,6 +117,9 @@ import {
   upsertContributorScoringProfile,
   upsertRepositorySettings,
   clearPullRequestsRegatedAtForOpenPrs,
+  getProviderCredentialStatus,
+  upsertProviderCredential,
+  deleteProviderCredential,
   getRepositoryAiKeyStatus,
   upsertRepositoryAiKey,
   deleteRepositoryAiKey,
@@ -975,6 +978,22 @@ const repositoryAiKeySchema = z
     message: "API key does not match the selected provider (Anthropic keys start with sk-ant-, OpenAI keys start with sk-).",
     path: ["key"],
   });
+
+// Instance subscription-CLI credential (#9543). Write-only: encrypted at rest, never returned. The
+// single-line / no-comment / no-surrounding-whitespace rule is the SAME one the host-side rotation path
+// enforces, for the same reason -- src/selfhost/load-file-secrets.ts only .trim()s, so a label line above
+// the value silently becomes part of the credential and every AI call fails auth while the container stays
+// healthy. Validating it here too means the DB path cannot store a shape the file path would reject.
+const rotatableProviderSchema = z.enum(["claude-code", "codex"]);
+const providerCredentialSchema = z.object({
+  credential: z
+    .string()
+    .min(1)
+    .max(4096)
+    .refine((value) => !/[\r\n]/.test(value), "must be a single line -- a comment or label line would become part of the credential")
+    .refine((value) => value.trim() === value, "must not have leading or trailing whitespace")
+    .refine((value) => !value.startsWith("#"), "must not start with '#' -- that is a comment, not a credential"),
+});
 
 // Linear personal API key (#3186) -- no provider-prefix assertion (unlike the AI-key schema above): Linear's
 // key format is not a stable enough public contract to hard-validate against, so only a length bound applies.
@@ -5348,6 +5367,48 @@ export function createApp() {
   app.delete("/v1/internal/repos/:owner/:repo/ai-key", async (c) => {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
     await deleteRepositoryAiKey(c.env, fullName);
+    return c.json({ configured: false });
+  });
+
+  // Instance subscription-CLI credentials (#9543) -- the FLEET rotation path. A single self-hosted box can
+  // rotate its credential in place on disk (scripts/rotate-secret.sh, or the companion's rotate-secret
+  // verb), but a multi-instance deployment has no shared filesystem, so the value lives encrypted in the DB
+  // and every instance resolves it fresh at AI-call time. Stored here, a rotation takes effect on the very
+  // next review on every instance, with no restart anywhere.
+  //
+  // GET returns secret-free status ONLY (configured/last4/updatedAt) -- never the credential, matching the
+  // BYOK ai-key surface above. DELETE clears it, so resolution falls back to the secret file / boot env.
+  app.get("/v1/internal/provider-credentials/:provider", async (c) => {
+    const parsed = rotatableProviderSchema.safeParse(c.req.param("provider"));
+    if (!parsed.success) return c.json({ error: "unknown_provider" }, 400);
+    return c.json(await getProviderCredentialStatus(c.env, parsed.data));
+  });
+
+  app.post("/v1/internal/provider-credentials/:provider", async (c) => {
+    const parsedProvider = rotatableProviderSchema.safeParse(c.req.param("provider"));
+    if (!parsedProvider.success) return c.json({ error: "unknown_provider" }, 400);
+    const body = await c.req.json().catch(() => null);
+    const parsed = providerCredentialSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_credential", issues: parsed.error.issues }, 400);
+    try {
+      return c.json(await upsertProviderCredential(c.env, { provider: parsedProvider.data, credential: parsed.data.credential }));
+    } catch (error) {
+      // The only expected throw here is a missing encryption secret -- never echo credential material in
+      // the error. upsertProviderCredential's own `empty_credential` guard is deliberately NOT handled:
+      // providerCredentialSchema above already rejects an empty or whitespace-only credential with a 400,
+      // so that throw is unreachable through this route and a branch for it would be dead code (it still
+      // guards direct callers of the repository function).
+      if (error instanceof Error && error.message === "missing_encryption_secret") {
+        return c.json({ error: "encryption_unavailable", detail: "TOKEN_ENCRYPTION_SECRET is not configured." }, 503);
+      }
+      throw error;
+    }
+  });
+
+  app.delete("/v1/internal/provider-credentials/:provider", async (c) => {
+    const parsed = rotatableProviderSchema.safeParse(c.req.param("provider"));
+    if (!parsed.success) return c.json({ error: "unknown_provider" }, 400);
+    await deleteProviderCredential(c.env, parsed.data);
     return c.json({ configured: false });
   });
 

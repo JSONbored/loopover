@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { triggerRedeploy } from "../../src/selfhost/redeploy-companion-client";
+import { triggerRedeploy, rotateCompanionSecret } from "../../src/selfhost/redeploy-companion-client";
 
 // Real Unix domain sockets, not a mocked node:net -- this is the exact protocol
 // scripts/redeploy-companion.ts's own server speaks, so a fake with the wrong shape would prove nothing about
@@ -184,5 +184,44 @@ describe("triggerRedeploy (#7723)", () => {
 
     const result = await triggerRedeploy({ socketPath, token: "test-token" }, undefined);
     expect(result).toEqual({ ok: true, exitCode: 0, log: [] });
+  });
+});
+
+describe("rotateCompanionSecret (#9543)", () => {
+  it("sends the rotate-secret verb with the token, and returns the terminal result", async () => {
+    let received = "";
+    const socketPath = startFakeCompanion((line, write, end) => {
+      received = line;
+      write(JSON.stringify({ ok: true, backupPath: "/opt/loopover/.deploy-backups/x.bak" }));
+      end();
+    });
+    const result = await rotateCompanionSecret({ socketPath, token: "tok" }, "claude_code_oauth_token", "sk-ant-new");
+    expect(JSON.parse(received)).toEqual({ token: "tok", action: "rotate-secret", secret: "claude_code_oauth_token", value: "sk-ant-new" });
+    expect(result).toEqual({ ok: true, backupPath: "/opt/loopover/.deploy-backups/x.bak" });
+  });
+
+  it("surfaces a refusal from the host verbatim", async () => {
+    const socketPath = startFakeCompanion((_line, write, end) => {
+      write(JSON.stringify({ ok: false, error: "invalid_secret_value" }));
+      end();
+    });
+    await expect(rotateCompanionSecret({ socketPath, token: "tok" }, "claude_code_oauth_token", "bad")).resolves.toEqual({ ok: false, error: "invalid_secret_value" });
+  });
+
+  it("omits backupPath when the host did not report one", async () => {
+    const socketPath = startFakeCompanion((_line, write, end) => {
+      write(JSON.stringify({ ok: true }));
+      end();
+    });
+    await expect(rotateCompanionSecret({ socketPath, token: "tok" }, "claude_code_oauth_token", "v")).resolves.toEqual({ ok: true });
+  });
+
+  it("rejects when the companion closes before a terminal response", async () => {
+    const socketPath = startFakeCompanion((_line, _write, end) => end());
+    await expect(rotateCompanionSecret({ socketPath, token: "tok" }, "claude_code_oauth_token", "v")).rejects.toThrow(/closed the connection/);
+  });
+
+  it("rejects when the socket does not exist", async () => {
+    await expect(rotateCompanionSecret({ socketPath: "/nonexistent/companion.sock", token: "tok" }, "claude_code_oauth_token", "v")).rejects.toThrow();
   });
 });

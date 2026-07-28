@@ -55,6 +55,45 @@ To use a secret file instead of an inline `.env` value:
 Leave each file at the `644` the init script (`scripts/selfhost-init-secrets.sh`) sets by default —
 see the tradeoff explained above for why `600` breaks the app's own ability to read it back.
 
+## Rotating a secret (#9543)
+
+**Use `./scripts/rotate-secret.sh` rather than editing these files by hand** — it enforces both of the
+rules below, backs the old value up, and verifies the running container actually picked the change up:
+
+```sh
+printf '%s' 'sk-ant-oat01-your-new-token' | ./scripts/rotate-secret.sh claude_code_oauth_token
+```
+
+If you do edit by hand, two rules matter, and getting either wrong fails **silently** — the container
+stays healthy and the status stays green while every review quietly degrades to the fallback provider:
+
+1. **The file must contain the bare value and nothing else.** The loader
+   (`src/selfhost/load-file-secrets.ts`) only `.trim()`s — it does not strip comments and does not pick a
+   line. A label line above the value becomes *part of the credential*. To annotate which account a
+   credential belongs to, use a sidecar file (`claude_code_oauth_token.label`); it is ignored by
+   everything and gitignored the same as the secret itself.
+2. **Write in place; never write-new-then-rename.** A Compose `secrets:` entry is a plain bind mount
+   pinned to the **inode**. `printf '%s' … > file` truncates in place and the running container sees the
+   new bytes immediately. `mv` (and the default save behaviour of several editors) creates a *new* inode
+   and leaves the container serving the old value — and `docker compose up -d` will **not** repair it, as
+   it prints `Container Running` and changes nothing when the Compose config is unchanged. Recovering
+   from that needs `docker compose up -d --no-deps --force-recreate loopover`.
+
+**No restart is needed for `claude_code_oauth_token`** — it is re-read from this file on every AI call
+(`resolveClaudeOauthToken` in `src/selfhost/ai.ts`). Codex is likewise already hot: its `auth.json` lives
+in the `loopover-data` volume and is re-resolved per call. Every other secret here is materialised into
+the environment once at boot, so those do still need the service recreated.
+
+Two other ways to rotate, both covering the same ground without an SSH session:
+
+- **`loopover_admin_rotate_secret`** (MCP) — drives the host-side redeploy companion over its existing
+  Unix socket. Requires `LOOPOVER_MCP_ADMIN_TOKEN` + `LOOPOVER_MCP_ADMIN_ENABLED` and an installed
+  companion. The app container cannot write these files itself: the mount is read-only.
+- **`POST /v1/internal/provider-credentials/claude-code`** — the *fleet* path. Stores the credential
+  encrypted at rest (same AES-256-GCM envelope as the BYOK provider keys) so every instance resolves it
+  fresh at call time; a multi-instance deployment has no shared filesystem for the file path to use.
+  A stored credential takes precedence over this file; `DELETE` clears it and falls back here.
+
 ## Files
 
 | File | Env var | Purpose |

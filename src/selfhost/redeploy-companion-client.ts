@@ -15,12 +15,44 @@ export type RedeployCompanionConfig = {
 
 export type RedeployResult = { ok: boolean; exitCode: number | null; error?: string; log: string[] };
 
+/** Result of a host-side secret rotation. `backupPath` is absent when no prior value existed to back up. */
+export type RotateSecretResult = { ok: boolean; error?: string; backupPath?: string };
+
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000; // a real pull+recreate+health-wait can legitimately take minutes
 
 /** Send one redeploy request and collect the companion's streamed response. Rejects (never resolves with a
  *  fabricated result) on a connection/protocol failure -- the caller (adminTriggerRedeploy) is responsible for
  *  turning that into a clear tool-result error, not this function guessing at one. */
 export function triggerRedeploy(config: RedeployCompanionConfig, image: string | undefined): Promise<RedeployResult> {
+  return sendCompanionRequest(config, image !== undefined ? { image } : {}, (terminal, log) => ({
+    ok: terminal.ok,
+    exitCode: terminal.exitCode ?? null,
+    ...(terminal.error !== undefined ? { error: terminal.error } : {}),
+    log,
+  }));
+}
+
+/** Rotate one secret file on the host (#9543). Single request/response -- the companion streams no log
+ *  lines for this verb, so `log` is always empty and is not part of the result shape. */
+export function rotateCompanionSecret(config: RedeployCompanionConfig, secret: string, value: string): Promise<RotateSecretResult> {
+  return sendCompanionRequest(config, { action: "rotate-secret", secret, value }, (terminal) => ({
+    ok: terminal.ok,
+    ...(terminal.error !== undefined ? { error: terminal.error } : {}),
+    ...(terminal.backupPath !== undefined ? { backupPath: terminal.backupPath } : {}),
+  }));
+}
+
+type TerminalLine = { ok: boolean; exitCode?: number | null; error?: string; backupPath?: string };
+
+/** The shared connection lifecycle for every companion verb: connect, write one line-delimited JSON
+ *  request, collect any `{"log"}` lines, settle on the first terminal `{"ok"}` line. Extracted (#9543) so a
+ *  second verb cannot drift from the first on timeout/close/error handling -- the parts most likely to be
+ *  got subtly wrong twice. `shape` maps the terminal line to each verb's own result type. */
+function sendCompanionRequest<T>(
+  config: RedeployCompanionConfig,
+  payload: Record<string, unknown>,
+  shape: (terminal: TerminalLine, log: string[]) => T,
+): Promise<T> {
   return new Promise((resolve, reject) => {
     const socket = createConnection(config.socketPath);
     const log: string[] = [];
@@ -38,7 +70,7 @@ export function triggerRedeploy(config: RedeployCompanionConfig, image: string |
     }, config.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
     socket.on("connect", () => {
-      socket.write(`${JSON.stringify({ token: config.token, ...(image !== undefined ? { image } : {}) })}\n`);
+      socket.write(`${JSON.stringify({ token: config.token, ...payload })}\n`);
     });
 
     socket.on("data", (chunk) => {
@@ -63,9 +95,8 @@ export function triggerRedeploy(config: RedeployCompanionConfig, image: string |
           if (settled) continue;
           settled = true;
           clearTimeout(timeout);
-          const terminal = parsed as { ok: boolean; exitCode?: number | null; error?: string };
           socket.end();
-          resolve({ ok: terminal.ok, exitCode: terminal.exitCode ?? null, ...(terminal.error !== undefined ? { error: terminal.error } : {}), log });
+          resolve(shape(parsed as TerminalLine, log));
         }
       }
     });

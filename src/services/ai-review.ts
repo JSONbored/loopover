@@ -573,6 +573,12 @@ export function parsedReviewModelIds(diagnostics: readonly AiReviewDiagnostic[])
 type ReviewerOpinionOutcome = {
   review: ModelReview | null;
   fallbackNote?: string | undefined;
+  /** #9478: the model that actually PRODUCED this review. runWorkersOpinion iterates [primary, fallback]
+   *  internally, so a fallback-produced opinion was previously recorded as a primary vote -- poisoning the
+   *  reviewer_vote audit events, recordRoutingShadow's evidence-weighted routing track records (#8229), and
+   *  scoreJudgmentAgreement's contribution to decision-record confidence. The doc claimed slot<->model was
+   *  "unambiguous by construction", which holds for the tie-break slot SWAP but not for in-slot fallback. */
+  producedBy?: string | undefined;
 };
 
 type AiGatewayOptions = { gateway?: { id: string } };
@@ -1485,6 +1491,8 @@ async function runWorkersOpinion(
   // ONLY for the case where every attempt across every model comes back this way -- degrades to exactly today's
   // behavior in that (expected to be rare) worst case, never worse.
   let bestIncompleteReview: ModelReview | null = null;
+  // #9478: which model produced the last-resort candidate, so its vote is attributed correctly too.
+  let bestIncompleteReviewModel: string | undefined;
   const models = fallback && fallback !== primary ? [primary, fallback] : [primary];
   for (const [modelIndex, model] of models.entries()) {
     if (modelIndex > 0) {
@@ -1578,12 +1586,13 @@ async function runWorkersOpinion(
         }
         if (parsed && parsed.assessment.trim() !== "") {
           diagnostics.push({ model, attempt, status: "parsed", responseChars: text.length, hasJsonObject: Boolean(extractLastJsonObject(text)), ...usageFields });
-          return { review: parsed };
+          return { review: parsed, producedBy: model };
         }
         if (parsed) {
           // Valid JSON, real blockers/nits/suggestions, but the REQUIRED assessment came back empty --
           // keep it as a last-resort candidate and retry for a real one instead of accepting immediately.
           bestIncompleteReview = parsed;
+          bestIncompleteReviewModel = model;
           diagnostics.push({ model, attempt, status: "missing_assessment", responseChars: text.length, hasJsonObject: true, ...usageFields });
           console.warn(
             JSON.stringify({
@@ -1701,7 +1710,7 @@ async function runWorkersOpinion(
         nitsCount: bestIncompleteReview.nits.length,
       }),
     );
-    return { review: bestIncompleteReview };
+    return { review: bestIncompleteReview, ...(bestIncompleteReviewModel ? { producedBy: bestIncompleteReviewModel } : {}) };
   }
   return { review: null };
 }
@@ -2971,8 +2980,10 @@ export async function runLoopOverAiReview(
       if (a.fallbackNote) fallbackNotes.push(a.fallbackNote);
       if (b.fallbackNote) fallbackNotes.push(b.fallbackNote);
       // #8229 stage 0: attach votes HERE, where slot↔model is unambiguous by construction.
-      if (a.review) reviewerVotes.push({ reviewer: primary.model, votedFail: a.review.blockers.length > 0 });
-      if (b.review) reviewerVotes.push({ reviewer: secondary.model, votedFail: b.review.blockers.length > 0 });
+      // #9478: attribute to the model that ACTUALLY produced the review, falling back to the slot's configured
+      // model only when the outcome carries no producer (an unparseable/never-ran slot has no vote anyway).
+      if (a.review) reviewerVotes.push({ reviewer: a.producedBy ?? primary.model, votedFail: a.review.blockers.length > 0 });
+      if (b.review) reviewerVotes.push({ reviewer: b.producedBy ?? secondary.model, votedFail: b.review.blockers.length > 0 });
       secondReview = b.review;
       // Combine per the configured strategy (#dual-ai-combiner). Default `consensus` is byte-identical to the
       // historical logic: block only on agreement, lone blocker → split, a missing opinion → inconclusive

@@ -5308,3 +5308,33 @@ describe("#8833: enforced boundaries between model judgment and deterministic fa
     expect(parseReviewConfidence(-2)).toBe(0);
   });
 });
+
+// #9478: runWorkersOpinion iterates [primary, fallback] internally, and ReviewerOpinionOutcome carried no model
+// identity -- so a fallback-produced opinion was recorded as a PRIMARY vote. Those votes become reviewer_vote
+// audit events and feed recordRoutingShadow's evidence-weighted routing track records (#8229) plus
+// scoreJudgmentAgreement's contribution to decision-record confidence, so the calibration data was quietly
+// wrong whenever the primary failed over. The doc claimed slot<->model was "unambiguous by construction" --
+// true for the tie-break slot SWAP, false for in-slot fallback.
+describe("reviewer vote attribution (#9478)", () => {
+  it("REGRESSION: a fallback-produced review is attributed to the FALLBACK model, not the primary", async () => {
+    const run = vi.fn(async (model: string) => {
+      if (model === "primary") throw new Error("subscription_cli_timeout");
+      return { response: reviewJson() };
+    });
+    const env = createTestEnv({ AI: { run } as unknown as Ai });
+    const diagnostics: Array<{ status: string; model: string }> = [];
+    const parsed = await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256, diagnostics as never);
+
+    expect(parsed.review).not.toBeNull();
+    expect(parsed.producedBy).toBe("fallback"); // NOT "primary"
+  });
+
+  it("INVARIANT: a primary-produced review is still attributed to the primary", async () => {
+    const run = vi.fn(async () => ({ response: reviewJson() }));
+    const env = createTestEnv({ AI: { run } as unknown as Ai });
+    const diagnostics: Array<{ status: string; model: string }> = [];
+    const parsed = await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256, diagnostics as never);
+
+    expect(parsed.producedBy).toBe("primary");
+  });
+});

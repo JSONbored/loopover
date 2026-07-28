@@ -378,7 +378,15 @@ export function createOpenAiCompatibleAi(opts: {
           messages: toMessages(options).map((message) => ({ role: message.role, content: toOpenAiMessageContent(message.content) })),
           max_tokens: options.max_tokens,
           temperature: options.temperature,
-          ...(options.providerOptions ? { options: options.providerOptions } : {}),
+          // #9478: Ollama silently LEFT-TRUNCATES anything past its context window (num_ctx, typically 4k-8k
+          // by default) and then answers confidently over whatever survived -- which is the TAIL of the prompt,
+          // i.e. the context sections rather than the diff. The review path sends up to 120k chars of diff plus
+          // a 240k-char aggregate context budget, so on the fallback provider a review could be produced from a
+          // fraction of the change while carrying the SAME blocker authority and the same confidence semantics
+          // as the primary. Nothing surfaced which provider decided. Send an explicit num_ctx sized for the
+          // review prompt so the server allocates the window instead of quietly dropping the diff; an explicit
+          // caller-supplied providerOptions still wins.
+          ...ollamaContextOptions(opts.providerName, options),
           // #8790: force JSON mode when the caller declared a JSON contract — Ollama's and vLLM's
           // OpenAI-compatible layers both honor it; servers that don't get the 400-fallback below.
           ...(withResponseFormat && options.responseFormat === "json_object" ? { response_format: { type: "json_object" } } : {}),
@@ -711,6 +719,29 @@ function buildAiUsage(fields: {
  *  rows to a real provider instead of leaving them permanently unattributed. Recognizes the bundled
  *  docker-compose `ollama` service and OpenAI's own endpoint; anything else (vLLM, LM Studio, a custom
  *  hostname) is the honest generic "openai-compatible" bucket rather than a guessed, possibly-wrong label. */
+/**
+ * #9478: the `options` bag sent to an Ollama-compatible server, carrying an explicit context window.
+ *
+ * Only applied for the `ollama` provider -- other OpenAI-compatible servers may reject an unknown `options`
+ * key, and only Ollama has the silent-truncation behaviour this guards against. A caller that supplies its own
+ * providerOptions keeps full control (the vision path already sets num_ctx itself).
+ */
+export function ollamaContextOptions(
+  providerName: "ollama" | "openai" | "openai-compatible" | undefined,
+  options: { providerOptions?: Record<string, unknown> | undefined },
+): { options?: Record<string, unknown> } {
+  if (options.providerOptions) return { options: options.providerOptions };
+  if (providerName !== "ollama") return {};
+  return { options: { num_ctx: ollamaNumCtx() } };
+}
+
+/** Context window requested from Ollama for review-sized prompts. Overridable because it trades GPU memory
+ *  against how much of a large diff the model can actually see. */
+export function ollamaNumCtx(): number {
+  const raw = Number(process.env["OLLAMA_NUM_CTX"] ?? "");
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 32_768;
+}
+
 export function providerNameFromBaseUrl(baseUrl: string | undefined): "ollama" | "openai" | "openai-compatible" {
   let hostname = "";
   try {

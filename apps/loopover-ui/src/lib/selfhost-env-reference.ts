@@ -82,6 +82,10 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/services/ai-review.ts",
   },
   {
+    name: "AI_REVIEW_SELF_CONSISTENCY_RUNS",
+    firstReference: "src/services/ai-review.ts",
+  },
+  {
     name: "AI_SUMMARIES_ENABLED",
     firstReference: "src/services/ai-review.ts",
   },
@@ -705,6 +709,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `AI_PROVIDER` | `src/selfhost/ai-config.ts` |",
   "| `AI_PUBLIC_COMMENTS_ENABLED` | `src/services/ai-review.ts` |",
   "| `AI_REVIEW_PLAN` | `src/services/ai-review.ts` |",
+  "| `AI_REVIEW_SELF_CONSISTENCY_RUNS` | `src/services/ai-review.ts` |",
   "| `AI_SUMMARIES_ENABLED` | `src/services/ai-review.ts` |",
   "| `AI_VISION` | `src/queue/processors.ts` |",
   "| `AI_VISION_API_KEY` | `src/server.ts` |",

@@ -344,13 +344,19 @@ export async function ledgerRowHash(prevHash: string, fields: LedgerRowFields): 
  *  only needs "what is the tip right now" (the scheduled anchoring job, #9274) shouldn't pay for a
  *  self-consistency walk it isn't asking for. */
 export async function loadDecisionLedgerTip(env: Env): Promise<{ seq: number; rowHash: string; totalCount: number }> {
-  const [totalRow, tipRow] = await Promise.all([
-    env.DB.prepare("SELECT COUNT(*) AS n FROM decision_ledger").first<{ n: number }>(),
-    env.DB.prepare("SELECT seq, row_hash AS rowHash FROM decision_ledger ORDER BY seq DESC LIMIT 1").first<{ seq: number; rowHash: string }>(),
-  ]);
-  /* v8 ignore next -- defensive: a bare COUNT(*) always returns exactly one row, mirroring
-   * verifyDecisionLedger's identical note. */
-  return { seq: tipRow?.seq ?? 0, rowHash: tipRow?.rowHash ?? LEDGER_GENESIS_HASH, totalCount: totalRow?.n ?? 0 };
+  // #9489: ONE statement, not two under Promise.all. The seq/totalCount pair is exactly how a verifier detects
+  // truncation-and-rechaining (see buildLedgerAnchorPayload's own doc), so reading them separately meant a
+  // concurrent appendDecisionLedger landing between the two queries produced totalCount = seq + 1 alongside
+  // the OLD rowHash -- an internally inconsistent checkpoint. Anchoring then signs it and publishes it to
+  // Rekor, unretractably, as a FALSE tamper signal about the maintainer's own ledger. A single statement reads
+  // both from one snapshot, so the pair can never disagree.
+  const row = await env.DB
+    .prepare("SELECT (SELECT COUNT(*) FROM decision_ledger) AS n, seq, row_hash AS rowHash FROM decision_ledger ORDER BY seq DESC LIMIT 1")
+    .first<{ n: number; seq: number; rowHash: string }>();
+  // An empty ledger returns no row at all (the ORDER BY ... LIMIT 1 has nothing to return), which is the
+  // genesis case rather than a defensive one.
+  if (!row) return { seq: 0, rowHash: LEDGER_GENESIS_HASH, totalCount: 0 };
+  return { seq: row.seq, rowHash: row.rowHash, totalCount: row.n };
 }
 
 export async function appendDecisionLedger(env: Env, recordId: string, recordDigest: string, attempts = 3): Promise<void> {

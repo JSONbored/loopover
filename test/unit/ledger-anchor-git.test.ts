@@ -144,3 +144,100 @@ describe("submitToGitAnchor (#9273)", () => {
     await expect(submitToGitAnchor(env, signed, { request } as GitHubContentsRequester, TARGET)).resolves.toBeUndefined();
   });
 });
+
+// #9489: for a file between 1 MB and 100 MB the Contents API returns `content: ""` with `encoding: "none"`.
+// Because `typeof "" === "string"`, the old code accepted that as the file's real contents and the PUT
+// REWROTE the whole anchor log to a single line -- reporting status "ok" while destroying it. At ~300 bytes
+// per line on an hourly cadence that lands roughly 4-5 months out. Git history keeps the truncated commits,
+// but the file a skeptic is told to read shrinks, which is indistinguishable from the tampering this module's
+// own header teaches them to look for.
+describe("oversized anchor log (#9489)", () => {
+  it("REGRESSION: refuses to write when the Contents API elides the body, instead of truncating the log", async () => {
+    const env = createTestEnv();
+    const signed = makeSignedAnchor(1);
+    const octokit = {
+      request: vi.fn(async (route: string) => {
+        // No `size` here: GitHub does not always include it, and the error message must still read cleanly.
+        if (route.startsWith("GET")) return { data: { content: "", encoding: "none", sha: "abc" } };
+        return { data: {} };
+      }),
+    };
+
+    // submitToGitAnchor never rejects by contract -- it records the attempt instead -- so the refusal shows up
+    // as a FAILED anchor rather than a thrown error. Both properties matter:
+    await expect(submitToGitAnchor(env, signed, octokit as unknown as GitHubContentsRequester, TARGET)).resolves.toBeUndefined();
+    // 1. no PUT was attempted, so the existing log is untouched rather than rewritten to a single line;
+    expect(octokit.request.mock.calls.some(([route]) => String(route).startsWith("PUT"))).toBe(false);
+    // 2. the failure is visible on the public attempt log, so the unanchored tip is loud rather than silent.
+    const { anchors } = await loadPublicLedgerAnchors(env);
+    expect(anchors[0]).toMatchObject({ status: "failed" });
+    expect(String((anchors[0] as { error?: string }).error)).toMatch(/too large for the Contents API/);
+    expect(String((anchors[0] as { error?: string }).error)).toContain("size=unknown"); // degrades cleanly
+  });
+
+  it("INVARIANT: an ordinary small file still appends normally", async () => {
+    const env = createTestEnv();
+    const signed = makeSignedAnchor(1);
+    const octokit = {
+      request: vi.fn(async (route: string, _params?: Record<string, unknown>) => {
+        if (route.startsWith("GET")) return { data: { content: Buffer.from("existing line\n").toString("base64"), encoding: "base64", size: 14, sha: "abc" } };
+        return { data: {} };
+      }),
+    };
+
+    await submitToGitAnchor(env, signed, octokit as unknown as GitHubContentsRequester, TARGET);
+
+    const put = octokit.request.mock.calls.find((call) => String(call[0]).startsWith("PUT"));
+    expect(put).toBeDefined();
+    const written = Buffer.from(String((put?.[1] as Record<string, unknown> | undefined)?.["content"] ?? ""), "base64").toString("utf8");
+    expect(written).toContain("existing line"); // appended, not replaced
+  });
+
+  it("also refuses on the size-only shape, where the body is elided without encoding:none", async () => {
+    // GitHub has returned both shapes for an over-threshold file; keying on either alone would miss one.
+    const env = createTestEnv();
+    const signed = makeSignedAnchor(1);
+    const octokit = {
+      request: vi.fn(async (route: string, _params?: Record<string, unknown>) => {
+        if (route.startsWith("GET")) return { data: { content: "", size: 1_500_000, sha: "abc" } };
+        return { data: {} };
+      }),
+    };
+
+    await submitToGitAnchor(env, signed, octokit as unknown as GitHubContentsRequester, TARGET);
+
+    expect(octokit.request.mock.calls.some((call) => String(call[0]).startsWith("PUT"))).toBe(false);
+  });
+
+  it("INVARIANT: an empty body with NO size field is treated as empty, not elided", async () => {
+    // Without a size there is no evidence the body was withheld, so refusing would block the very first anchor
+    // on a freshly created empty file. Appending is the safe reading.
+    const env = createTestEnv();
+    const signed = makeSignedAnchor(1);
+    const octokit = {
+      request: vi.fn(async (route: string, _params?: Record<string, unknown>) => {
+        if (route.startsWith("GET")) return { data: { content: "", sha: "abc" } };
+        return { data: {} };
+      }),
+    };
+
+    await submitToGitAnchor(env, signed, octokit as unknown as GitHubContentsRequester, TARGET);
+
+    expect(octokit.request.mock.calls.some((call) => String(call[0]).startsWith("PUT"))).toBe(true);
+  });
+
+  it("INVARIANT: a genuinely empty (0-byte) file is not mistaken for an elided one", async () => {
+    // size 0 with content "" is a real empty file -- the first anchor should append to it, not refuse.
+    const env = createTestEnv();
+    const signed = makeSignedAnchor(1);
+    const octokit = {
+      request: vi.fn(async (route: string) => {
+        if (route.startsWith("GET")) return { data: { content: "", encoding: "base64", size: 0, sha: "abc" } };
+        return { data: {} };
+      }),
+    };
+
+    await expect(submitToGitAnchor(env, signed, octokit as unknown as GitHubContentsRequester, TARGET)).resolves.toBeUndefined();
+    expect(octokit.request.mock.calls.some(([route]) => String(route).startsWith("PUT"))).toBe(true);
+  });
+});

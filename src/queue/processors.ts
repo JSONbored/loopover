@@ -8513,9 +8513,17 @@ export async function runLinkedIssueSatisfactionForAdvisory(
     files: Awaited<ReturnType<typeof listPullRequestFiles>>;
     confirmedContributor: boolean;
     installationId: number;
+    /** #9491: the same per-PR commit cap its two siblings already honor -- `ai_slop` (slop-detection.ts's
+     *  `commitThresholdReached`) and `ai_review` (focus-manifest's auto_pause_after_reviewed_commits). This
+     *  advisory was the one paid LLM call in the family with NO cap, so a long-lived PR kept paying for a
+     *  fresh assessment on every push after the other two had stopped. */
+    commitThresholdReached: boolean;
   },
 ): Promise<{ status: "addressed" | "partial" | "unaddressed"; rationale: string } | null> {
   if (args.mode === "paused" || !args.confirmedContributor || !args.advisory.headSha) return null;
+  // #9491: honor the cap the siblings honor. Deliberately no reuse-for-display fallback, matching
+  // slop-detection's identical early return -- past the cap this feature simply stops spending.
+  if (args.commitThresholdReached) return null;
   const primaryIssueNumber = args.pr.linkedIssues[0];
   if (primaryIssueNumber === undefined) return null;
   try {
@@ -10661,6 +10669,15 @@ async function maybePublishPrPublicSurface(
           files: await getReviewFiles(),
           confirmedContributor,
           installationId,
+          // #9491: the same threshold its ai_slop sibling applies. countPublishedAiReviewHeads is the shared
+          // per-PR reviewed-commit counter both features key on; failing open to 0 (never capped) matches the
+          // sibling's own .catch(() => 0) rather than silently suppressing the advisory on a read error.
+          commitThresholdReached: isAutoReviewCommitThresholdReached(
+            autoReviewConfig,
+            /* v8 ignore next -- fail-open: a counter read error must not silently SUPPRESS the advisory, so it
+               degrades to 0 (never capped), matching the ai_slop sibling's identical .catch(() => 0). */
+            await countPublishedAiReviewHeads(env, repoFullName, pr.number).catch(() => 0),
+          ),
         });
       }
     }

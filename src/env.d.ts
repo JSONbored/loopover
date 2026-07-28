@@ -106,6 +106,12 @@ declare global {
      *  ai-review/ai-slop/ai-summaries/planner). The unit name is a Workers-AI holdover; it's applied as a
      *  provider-agnostic heuristic budget regardless of which configured provider actually serves the request. */
     AI_DAILY_NEURON_BUDGET?: string;
+    /** #8834: TOTAL judge evaluations per AI review for rotated-exemplar self-consistency. Unset/0 = off
+     *  (single evaluation, today's behavior); 2 or 3 = extra same-judge runs with rotated few-shot exemplars,
+     *  their stances folded into the recorded per-decision confidence. Each extra run is a real AI charge
+     *  riding the daily neuron budget; an exhausted budget degrades to fewer runs and a lower recorded
+     *  confidence, never a fabricated one. */
+    AI_REVIEW_SELF_CONSISTENCY_RUNS?: string;
     /** Per-repository/day cap for maintainer-paid BYOK AI review provider calls. */
     AI_BYOK_DAILY_REPO_LIMIT?: string;
     /** #9061: per-repository/day cap on AI calls for the FREE/default chain — the path the self-host actually

@@ -317,7 +317,7 @@ describe("runLoopOverAiReview gating", () => {
             content: [
               {
                 type: "text",
-                text: '{"assessment":"provider view","blockers":["The tests are failing on CI","No before/after screenshots provided for this visual change","Race in src/lock.ts"],"nits":[],"suggestions":[]}',
+                text: '{"assessment":"provider view","blockers":["The tests are failing on CI","No before/after screenshots provided for this visual change","This PR is too large and should be split into smaller PRs","The branch has merge conflicts with the base","Race in src/lock.ts"],"nits":[],"suggestions":[]}',
               },
             ],
           }),
@@ -350,6 +350,9 @@ describe("runLoopOverAiReview gating", () => {
     // live in the pure demotion tests and the workers-path tests above.
     expect(warn.mock.calls.some(([line]) => String(line).includes("ai_review_ci_claim_demoted"))).toBe(true);
     expect(warn.mock.calls.some(([line]) => String(line).includes("ai_review_evidence_absence_demoted"))).toBe(true);
+    // #8833: the size and stale-base bans hold on the provider path too.
+    expect(warn.mock.calls.some(([line]) => String(line).includes("ai_review_size_claim_demoted"))).toBe(true);
+    expect(warn.mock.calls.some(([line]) => String(line).includes("ai_review_stale_base_claim_demoted"))).toBe(true);
     warn.mockRestore();
   });
 
@@ -3519,6 +3522,22 @@ describe("pure helpers", () => {
     warn.mockRestore();
   });
 
+  it("#8833 REGRESSION: runWorkersOpinion demotes size and stale-base blockers — the LLM path can no longer flip either fact", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const run = vi.fn(async () => ({
+      response:
+        '{"assessment":"looks off","blockers":["This PR is too large and should be split into smaller PRs","The branch is behind the base and needs a rebase","Null deref in src/a.ts"],"nits":[],"suggestions":[]}',
+    }));
+    const env = createTestEnv({ AI: { run } as unknown as Ai });
+    const parsed = await runWorkersOpinion(env, "@cf/x/model", "@cf/x/model", "sys", "user", 256);
+    expect(parsed.review?.blockers).toEqual(["Null deref in src/a.ts"]);
+    expect(parsed.review?.nits.some((nit) => nit.includes("gated deterministically by sizeGateMode"))).toBe(true);
+    expect(parsed.review?.nits.some((nit) => nit.includes("base staleness and merge-conflict state are decided deterministically"))).toBe(true);
+    expect(warn.mock.calls.some(([line]) => String(line).includes("ai_review_size_claim_demoted"))).toBe(true);
+    expect(warn.mock.calls.some(([line]) => String(line).includes("ai_review_stale_base_claim_demoted"))).toBe(true);
+    warn.mockRestore();
+  });
+
   it("#8961: runWorkersOpinion demotes an evidence-absence blocker ONLY when the body was truncated", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const run = vi.fn(async () => ({
@@ -5359,6 +5378,90 @@ describe("#8833: enforced boundaries between model judgment and deterministic fa
     expect(parseReviewConfidence(0.97)).toBe(0.97);
     expect(parseReviewConfidence(1.7)).toBe(1);
     expect(parseReviewConfidence(-2)).toBe(0);
+  });
+
+  it('#8833: the EXPLICIT "unknown" abstention is offered by the rubric and lands under the close floor — abstain routes to a human, never a guessed verdict', async () => {
+    const { REVIEW_SYSTEM_PROMPT } = await import("../../src/services/ai-review");
+    // The rubric offers the abstention in exactly the shape the parser maps to the hold route.
+    expect(REVIEW_SYSTEM_PROMPT).toContain('set confidence to the string "unknown"');
+    expect(parseReviewConfidence("unknown")).toBe(CONFIDENCE_WHEN_UNSTATED);
+    expect(parseReviewConfidence("unknown")).toBeLessThan(0.93);
+  });
+
+  it("#8833: whole-PR SIZE blockers demote to nits — size gating is configuration-owned, in both prose orders and the split phrasing", async () => {
+    const { demoteSizeClaimBlockers, SIZE_CLAIM_PATTERN } = await import("../../src/services/ai-review");
+    for (const positive of [
+      "This PR is too large to review effectively",
+      "The pull request is oversized and mixes concerns",
+      "Oversized changeset touching 60 files",
+      "This should be split into smaller PRs",
+      "The change needs to be broken up into multiple commits",
+      "Too many files changed in this PR",
+    ]) {
+      expect(SIZE_CLAIM_PATTERN.test(positive)).toBe(true);
+    }
+    const claims = ["This PR is too large and should be split into smaller PRs", "Null deref in src/a.ts"];
+    const { review: out, demoted } = demoteSizeClaimBlockers(review(claims));
+    expect(demoted).toEqual(["This PR is too large and should be split into smaller PRs"]);
+    expect(out.blockers).toEqual(["Null deref in src/a.ts"]);
+    expect(out.nits.some((nit: string) => nit.includes("gated deterministically by sizeGateMode"))).toBe(true);
+    // Zero-demotion returns the SAME object (no reallocation), mirroring every sibling demotion.
+    const untouched = review(["Null deref in src/a.ts"]);
+    expect(demoteSizeClaimBlockers(untouched).review).toBe(untouched);
+  });
+
+  it("#8833: a CODE-magnitude judgment never matches the size ban — the ban covers the SUBMISSION, not sizes in the code", async () => {
+    const { SIZE_CLAIM_PATTERN, demoteSizeClaimBlockers } = await import("../../src/services/ai-review");
+    const kept = [
+      "This buffer is too large to allocate per request",
+      "The response payload is too big for the 1MB Worker limit",
+      "The batch size is excessively large for the rate limit",
+      "This function should be split into smaller helpers",
+    ];
+    for (const negative of kept) expect(SIZE_CLAIM_PATTERN.test(negative)).toBe(false);
+    expect(demoteSizeClaimBlockers(review(kept)).demoted).toEqual([]);
+  });
+
+  it("#8833: base-staleness / rebase / merge-conflict blockers demote to nits — repository state is not visible in a diff", async () => {
+    const { demoteStaleBaseClaimBlockers, STALE_BASE_CLAIM_PATTERN } = await import("../../src/services/ai-review");
+    for (const positive of [
+      "The branch is behind the base and must be updated",
+      "This PR is out of date with main",
+      "The head branch is severely outdated",
+      "Needs a rebase onto main before merging",
+      "A rebase is required to pick up the fix",
+      "The branch has merge conflicts with the base",
+      "This has merge conflicts",
+    ]) {
+      expect(STALE_BASE_CLAIM_PATTERN.test(positive)).toBe(true);
+    }
+    const claims = ["Needs a rebase onto main before merging", "The added check silently swallows the failure"];
+    const { review: out, demoted } = demoteStaleBaseClaimBlockers(review(claims));
+    expect(demoted).toEqual(["Needs a rebase onto main before merging"]);
+    expect(out.blockers).toEqual(["The added check silently swallows the failure"]);
+    expect(out.nits.some((nit: string) => nit.includes("decided deterministically by the gate"))).toBe(true);
+    const untouched = review(["Null deref in src/a.ts"]);
+    expect(demoteStaleBaseClaimBlockers(untouched).review).toBe(untouched);
+  });
+
+  it("#8833: code ABOUT rebasing/conflicts never matches the staleness ban — only the assertion shape does", async () => {
+    const { STALE_BASE_CLAIM_PATTERN, demoteStaleBaseClaimBlockers } = await import("../../src/services/ai-review");
+    const kept = [
+      "The conflict-resolution logic drops the theirs side silently",
+      "The rebase helper mutates the shared ref list",
+      "handleMergeConflict never releases the lock on the error path",
+      "The scheduler falls behind under load because the queue is unbounded",
+    ];
+    for (const negative of kept) expect(STALE_BASE_CLAIM_PATTERN.test(negative)).toBe(false);
+    expect(demoteStaleBaseClaimBlockers(review(kept)).demoted).toEqual([]);
+  });
+
+  it("#8833: the rubric names the full deterministic-fact family — CI, size, staleness, conflicts — as never-blockers", async () => {
+    const { REVIEW_SYSTEM_PROMPT } = await import("../../src/services/ai-review");
+    expect(REVIEW_SYSTEM_PROMPT).toContain("decided deterministically by the gate");
+    expect(REVIEW_SYSTEM_PROMPT).toContain("PR size");
+    expect(REVIEW_SYSTEM_PROMPT).toContain("base-branch staleness");
+    expect(REVIEW_SYSTEM_PROMPT).toContain("merge-conflict state");
   });
 });
 

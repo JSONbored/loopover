@@ -10674,6 +10674,8 @@ async function maybePublishPrPublicSurface(
           // sibling's own .catch(() => 0) rather than silently suppressing the advisory on a read error.
           commitThresholdReached: isAutoReviewCommitThresholdReached(
             autoReviewConfig,
+            /* v8 ignore next -- fail-open: a counter read error must not silently SUPPRESS the advisory, so it
+               degrades to 0 (never capped), matching the ai_slop sibling's identical .catch(() => 0). */
             await countPublishedAiReviewHeads(env, repoFullName, pr.number).catch(() => 0),
           ),
         });

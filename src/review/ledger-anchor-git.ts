@@ -72,7 +72,8 @@ export async function submitToGitAnchor(env: Env, signed: SignedLedgerAnchor, oc
       // but the file a skeptic is told to read shrinks -- indistinguishable from the tampering this module's
       // own header teaches them to look for. Refuse rather than silently truncate: an operator rotating the
       // file is a deliberate act, and an unanchored tip is loudly visible on the public attempt log (#9271).
-      if (data.encoding === "none" || (data.content === "" && (data.size ?? 0) > 0)) {
+      const bodyElided = data.encoding === "none" || (data.content === "" && typeof data.size === "number" && data.size > 0);
+      if (bodyElided) {
         throw new Error(
           `anchor log ${path} is too large for the Contents API (size=${data.size ?? "unknown"} bytes); rotate the file or switch to the Git Data API before anchoring can resume`,
         );

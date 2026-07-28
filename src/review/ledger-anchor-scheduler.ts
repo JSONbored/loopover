@@ -96,6 +96,8 @@ export async function runScheduledLedgerAnchor(env: Env, options: { isHourly: bo
   // "nothing to do" when it is genuinely anchored -- otherwise a failure at a quiet tip is never retried, and
   // a success on one backend masks a failure on the other, since the newest-attempt row wins regardless of
   // which backend wrote it.
+  /* v8 ignore next -- fail-open: an unreadable anchors table degrades to "nothing known to be missing", i.e.
+     exactly the pre-#9489 scheduling behaviour, rather than forcing an anchor on every tick. */
   const unanchoredBackends = await anchorBackendsMissingForRowHash(env, tip.rowHash, ANCHOR_BACKENDS_REQUIRING_SUCCESS).catch(() => []);
   const decision = decideLedgerAnchorSchedule({
     isHourly: options.isHourly,

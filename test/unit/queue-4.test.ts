@@ -79,6 +79,7 @@ import { asCloudEnv, createTestEnv } from "../helpers/d1";
 import { ISSUE_WAKE_MAX_PRS, MERGE_WAKE_MAX_PRS, SWEEP_MAX_PRS } from "../../src/settings/agent-sweep";
 import { AGENT_LABEL_PENDING_CLOSURE, DEFAULT_LINKED_ISSUE_HARD_RULES } from "../../src/review/linked-issue-hard-rules";
 import { generatePrivateKeyPem } from "../helpers/github-app-key";
+import { AI_REVIEW_CACHE_INPUT_VERSION } from "../../src/review/ai-review-cache-input";
 
 vi.mock("../../src/github/pr-freshness", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/github/pr-freshness")>();
@@ -1296,10 +1297,12 @@ describe("queue processors", () => {
     // comment) -- this assertion only cares that a real, current-shape fingerprint was computed and threaded
     // through, not the exact version number, so it is updated to the new version rather than left pinned to
     // the pre-fix one.
-    expect(cacheReadSpy.mock.calls[0]?.[5]).toMatch(/^ai-review-input:v6:/);
+    // #9477: assert against the constant, not a pinned literal -- this test broke on the v6 -> v7 bump,
+    // and the property that matters is "the fingerprint carries the current version", not which version it is.
+    expect(cacheReadSpy.mock.calls[0]?.[5]).toMatch(new RegExp(`^${AI_REVIEW_CACHE_INPUT_VERSION}:`));
     expect(cacheWriteSpy).toHaveBeenCalled();
     expect(cacheWriteSpy.mock.calls[0]?.[5]).toMatchObject({
-      metadata: { inputFingerprint: expect.stringMatching(/^ai-review-input:v6:/) },
+      metadata: { inputFingerprint: expect.stringMatching(new RegExp(`^${AI_REVIEW_CACHE_INPUT_VERSION}:`)) },
     });
     cacheReadSpy.mockRestore();
     cacheWriteSpy.mockRestore();

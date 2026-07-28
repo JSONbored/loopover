@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createTestEnv } from "../helpers/d1";
-import { loadLastLedgerAnchorAttempt, loadPublicLedgerAnchors, recordLedgerAnchorAttempt, type LedgerAnchorAttemptInput } from "../../src/review/ledger-anchor-persistence";
+import { loadLastLedgerAnchorAttempt, loadPublicLedgerAnchors, recordLedgerAnchorAttempt, type LedgerAnchorAttemptInput , anchorBackendsMissingForRowHash } from "../../src/review/ledger-anchor-persistence";
 import { buildLedgerAnchorPayload } from "../../src/review/ledger-anchor";
 
 // #9271 (epic #9267). The load-bearing property here is that a FAILURE is recorded and served exactly like a
@@ -149,5 +149,56 @@ describe("loadLastLedgerAnchorAttempt (#9274)", () => {
       "2026-07-27T12:05:00.000Z",
     );
     expect(await loadLastLedgerAnchorAttempt(env)).toEqual({ seq: 2, rowHash: "b".repeat(64) });
+  });
+});
+
+// #9489: "is this tip anchored" must be asked PER BACKEND against the exact rowHash. Asking only "what was the
+// newest attempt" meant a failure at a quiet tip was never retried, and one backend's success masked another's
+// failure because the newest row won regardless of which backend wrote it.
+describe("anchorBackendsMissingForRowHash (#9489)", () => {
+  const record = (env: Env, rowHash: string, backend: string, status: "ok" | "failed") =>
+    env.DB.prepare(
+      "INSERT INTO decision_ledger_anchors (id, seq, row_hash, payload_json, signature, key_id, backend, status, created_at) VALUES (?, 1, ?, '{}', 'sig', 'k1', ?, ?, ?)",
+    )
+      .bind(`${backend}-${status}-${rowHash}-${Math.random()}`, rowHash, backend, status, new Date().toISOString())
+      .run();
+
+  it("reports a backend with NO row at all as missing", async () => {
+    const env = createTestEnv();
+    expect(await anchorBackendsMissingForRowHash(env, "hash-a", ["rekor", "git"])).toEqual(["rekor", "git"]);
+  });
+
+  it("REGRESSION: a FAILED attempt does not count as anchored -- otherwise it is never retried", async () => {
+    const env = createTestEnv();
+    await record(env, "hash-a", "rekor", "failed");
+    expect(await anchorBackendsMissingForRowHash(env, "hash-a", ["rekor"])).toEqual(["rekor"]);
+  });
+
+  it("REGRESSION: one backend's success does not mask another's failure", async () => {
+    const env = createTestEnv();
+    await record(env, "hash-a", "git", "ok");
+    await record(env, "hash-a", "rekor", "failed");
+    expect(await anchorBackendsMissingForRowHash(env, "hash-a", ["rekor", "git"])).toEqual(["rekor"]);
+  });
+
+  it("INVARIANT: a fully anchored tip reports nothing missing", async () => {
+    const env = createTestEnv();
+    await record(env, "hash-a", "git", "ok");
+    await record(env, "hash-a", "rekor", "ok");
+    expect(await anchorBackendsMissingForRowHash(env, "hash-a", ["rekor", "git"])).toEqual([]);
+  });
+
+  it("INVARIANT: a success at a DIFFERENT rowHash does not anchor this tip", async () => {
+    // The whole point is per-tip, not per-ledger: an older anchored checkpoint says nothing about the tip.
+    const env = createTestEnv();
+    await record(env, "hash-old", "rekor", "ok");
+    expect(await anchorBackendsMissingForRowHash(env, "hash-new", ["rekor"])).toEqual(["rekor"]);
+  });
+
+  it("short-circuits on an empty backend list without querying", async () => {
+    const env = createTestEnv();
+    const spy = vi.spyOn(env.DB, "prepare");
+    expect(await anchorBackendsMissingForRowHash(env, "hash-a", [])).toEqual([]);
+    expect(spy).not.toHaveBeenCalled();
   });
 });

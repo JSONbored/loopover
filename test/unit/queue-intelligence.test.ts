@@ -5,6 +5,8 @@ import {
   isPublicScoreTermSafeForRepo,
   shouldWarnPublicScoreTermsAllowlistUnset,
   sanitizePublicComment,
+  ALWAYS_FORBIDDEN_PUBLIC_COMMENT_WORDS,
+  AMBIGUOUS_PUBLIC_COMMENT_WORDS,
   FORBIDDEN_PUBLIC_COMMENT_WORDS,
 } from "../../src/queue-intelligence";
 import type { ChecksStatus, PullRequestInput, RepoContext, Recommendation } from "../../src/queue-intelligence";
@@ -400,10 +402,44 @@ describe("sanitizePublicComment — allowBareScoreTerm option (#public-score-ter
     expect(() => sanitizePublicComment("The score looks good here.", { allowBareScoreTerm: false })).toThrow(/score/i);
   });
 
-  it("still throws on every OTHER forbidden phrase even when allowBareScoreTerm is true — only the bare-word check is relaxable", () => {
-    for (const forbiddenWord of FORBIDDEN_PUBLIC_COMMENT_WORDS) {
-      expect(() => sanitizePublicComment(`This comment contains ${forbiddenWord} information`, { allowBareScoreTerm: true })).toThrow();
+  // #9432: the exemption now covers the AMBIGUOUS tier (ordinary English) as well as bare "score" -- but the
+  // ALWAYS_FORBIDDEN tier, which is where every QUALIFIED private-value form lives, stays enforced for every
+  // repo. This is the security boundary of the whole feature, so it is asserted exhaustively over the real
+  // list rather than a hand-picked sample: a term moved into the wrong tier fails here immediately.
+  it("SECURITY: still throws on every ALWAYS-FORBIDDEN phrase even when allowBareScoreTerm is true — an allowlist never exempts a named private concept", () => {
+    for (const forbiddenWord of ALWAYS_FORBIDDEN_PUBLIC_COMMENT_WORDS) {
+      expect(() => sanitizePublicComment(`This comment contains ${forbiddenWord} information`, { allowBareScoreTerm: true }), forbiddenWord).toThrow();
     }
+  });
+
+  it("REGRESSION (#9432): an allowlisted repo keeps a sentence using ordinary review English — 'reviewability', 'ranking', 'reward'", () => {
+    // These are words a safe review of this codebase's own gate code uses naturally. Before the tiering they
+    // were matched unconditionally, so a sentence like "this improves reviewability" was dropped from the
+    // published narrative for every repo, allowlisted or not.
+    for (const word of AMBIGUOUS_PUBLIC_COMMENT_WORDS) {
+      expect(() => sanitizePublicComment(`This change improves ${word} in the comparator`, { allowBareScoreTerm: true }), word).not.toThrow();
+    }
+  });
+
+  it("INVARIANT: WITHOUT the exemption the ambiguous tier is still enforced — the default is unchanged for every non-allowlisted repo", () => {
+    for (const word of AMBIGUOUS_PUBLIC_COMMENT_WORDS) {
+      expect(() => sanitizePublicComment(`This change improves ${word} in the comparator`), word).toThrow();
+    }
+  });
+
+  it("INVARIANT: the two tiers are disjoint and together are exactly FORBIDDEN_PUBLIC_COMMENT_WORDS — no term can be silently lost or double-listed", () => {
+    const always = new Set<string>(ALWAYS_FORBIDDEN_PUBLIC_COMMENT_WORDS);
+    const ambiguous = new Set<string>(AMBIGUOUS_PUBLIC_COMMENT_WORDS);
+    for (const word of ambiguous) expect(always.has(word), word).toBe(false);
+    expect([...FORBIDDEN_PUBLIC_COMMENT_WORDS].sort()).toEqual([...always, ...ambiguous].sort());
+  });
+
+  it("SECURITY: a QUALIFIED private value stays blocked for an allowlisted repo even though its bare noun is exempt", () => {
+    // The decisive property behind the tiering: a leaked value is always qualified, and the qualified form
+    // lives in the always-forbidden tier. "reward" is exempt; "reward estimate 12 TAO" is not.
+    expect(() => sanitizePublicComment("the reward estimate is 12 TAO", { allowBareScoreTerm: true })).toThrow();
+    expect(() => sanitizePublicComment("raw trust score 0.82 for this miner", { allowBareScoreTerm: true })).toThrow();
+    expect(() => sanitizePublicComment("wallet 5Gv... and hotkey", { allowBareScoreTerm: true })).toThrow();
   });
 });
 

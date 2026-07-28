@@ -32,6 +32,7 @@ import {
   withAiGenerationCapture,
 } from "./selfhost/ai";
 import { shouldWarnPublicScoreTermsAllowlistUnset } from "./queue-intelligence";
+import { inertConfigGaugeSamples } from "./selfhost/inert-config";
 import {
   cookieValue,
   credentialsToEnv,
@@ -1007,6 +1008,12 @@ async function main(): Promise<void> {
   // when the probe is disabled or has never completed) so the metric names/HELP/TYPE lines are present on
   // the very first scrape, matching the seeded-counter convention below.
   gauge("loopover_d1_database_size_bytes", () => d1DatabaseSizeBytesSample());
+  // #9433: which config-gated behaviours are currently INERT on this box. A gauge, not a boot warning: the
+  // same unset value is correct on one runtime and a defect on another (LOOPOVER_PUBLIC_STATS_REPOS is unset
+  // and CORRECT here, since the Worker serves public stats), so warning unconditionally would be steady-state
+  // noise -- the alert-fatigue failure this repo has already been bitten by. Bounded cardinality: the key set
+  // is a fixed list in code. Absent series ⇒ nothing inert.
+  gaugeVector("loopover_inert_config", () => inertConfigGaugeSamples(process.env));
   gaugeVector("loopover_d1_table_row_count", () => d1TableRowCountSamples());
   gauge("loopover_signal_snapshots_rows_per_key", () => d1SignalSnapshotsRowsPerKeySample());
   // #9136: the generalizable fix — the NEXT review-source orphaning (a table a downstream module treats as

@@ -286,6 +286,14 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/server.ts",
   },
   {
+    name: "LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS",
+    firstReference: "src/selfhost/inert-config.ts",
+  },
+  {
+    name: "LOOPOVER_PUBLIC_STATS_REPOS",
+    firstReference: "src/selfhost/inert-config.ts",
+  },
+  {
     name: "LOOPOVER_REPO_CONFIG_DIR",
     firstReference: "src/server.ts",
   },
@@ -296,6 +304,10 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   {
     name: "LOOPOVER_REVIEW_RAG",
     firstReference: "src/selfhost/ai.ts",
+  },
+  {
+    name: "LOOPOVER_REVIEW_SAFETY",
+    firstReference: "src/selfhost/inert-config.ts",
   },
   {
     name: "LOOPOVER_SHUTDOWN_LOCK_RELEASE_AFTER_MS",
@@ -744,9 +756,12 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER` | `src/selfhost/ai.ts` |",
   "| `LOOPOVER_MCP_TOKEN` | `src/selfhost/preflight.ts` |",
   "| `LOOPOVER_METRICS_REPO_LABELS` | `src/server.ts` |",
+  "| `LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS` | `src/selfhost/inert-config.ts` |",
+  "| `LOOPOVER_PUBLIC_STATS_REPOS` | `src/selfhost/inert-config.ts` |",
   "| `LOOPOVER_REPO_CONFIG_DIR` | `src/server.ts` |",
   "| `LOOPOVER_REVIEW_CONTINUOUS` | `src/queue/processors.ts` |",
   "| `LOOPOVER_REVIEW_RAG` | `src/selfhost/ai.ts` |",
+  "| `LOOPOVER_REVIEW_SAFETY` | `src/selfhost/inert-config.ts` |",
   "| `LOOPOVER_SHUTDOWN_LOCK_RELEASE_AFTER_MS` | `src/server.ts` |",
   "| `LOOPOVER_SINGLE_INSTANCE` | `src/selfhost/redis-cache.ts` |",
   "| `LOOPOVER_VERSION` | `src/selfhost/otel.ts` |",

@@ -22,7 +22,15 @@ describe("docker-compose.miner.yml (#5177)", () => {
     expect(miner).toBeTruthy();
     expect(miner.build.dockerfile).toBe("packages/loopover-miner/Dockerfile");
     expect(miner.build.context).toBe("../..");
-    expect(miner.command).toContain("run");
+    expect(miner.command).toContain("loop");
+  });
+
+  it("REGRESSION: does not invoke `run`, which was never a registered miner subcommand", () => {
+    // `run` shipped in this file's very first commit (#5299) and was never dispatched by
+    // packages/loopover-miner/bin/loopover-miner.ts -- a fleet worker built from this compose file set up the
+    // egress firewall, then immediately exited 1 with "Unknown command: run." `loop` (#5303) is the real
+    // continuous fleet-worker daemon (see loop-cli.ts / DEPLOYMENT.md's "loopover-miner loop" usage).
+    expect(compose.services.miner.command).not.toContain("run");
   });
 
   it("tags the built image with the post-rename name (loopover-miner:latest)", () => {

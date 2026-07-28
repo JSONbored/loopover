@@ -46,8 +46,11 @@ spec:
         - name: miner
           # Replace with the image you built + pushed from packages/loopover-miner/Dockerfile.
           image: loopover-miner:latest
-          # ENTRYPOINT is `loopover-miner`; `run` is the continuous fleet-worker loop.
-          args: ["run"]
+          # ENTRYPOINT is `loopover-miner`; `loop` is the continuous fleet-worker loop (`run` was never a
+          # registered subcommand -- see packages/loopover-miner/bin/loopover-miner.ts's dispatch table).
+          # REQUIRED: replace <owner/repo> and <login> below -- see docker-compose.miner.yml's own comment and
+          # DEPLOYMENT.md's `loopover-miner loop` usage for the full flag set.
+          args: ["loop", "<owner/repo>", "--miner-login", "<login>"]
           env:
             - name: LOOPOVER_MINER_CONFIG_DIR
               value: /data/miner

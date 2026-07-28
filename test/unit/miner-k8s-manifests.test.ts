@@ -67,7 +67,7 @@ describe("k8s miner manifests (#5181)", () => {
     const container = containers[0];
     if (!container)
       throw new Error("no container in the StatefulSet pod template");
-    expect(container.args).toContain("run");
+    expect(container.args).toContain("loop");
     const env = container.env as Array<Record<string, any>>;
     const configDir = env.find((e) => e.name === "LOOPOVER_MINER_CONFIG_DIR");
     expect(configDir?.value).toBe("/data/miner");
@@ -75,6 +75,16 @@ describe("k8s miner manifests (#5181)", () => {
     expect(token?.valueFrom?.secretKeyRef?.key).toBe("GITHUB_TOKEN");
     expect(container.resources.requests).toBeTruthy();
     expect(container.resources.limits).toBeTruthy();
+  });
+
+  it("REGRESSION: does not invoke `run`, which was never a registered miner subcommand", () => {
+    // `run` shipped in this manifest's very first commit (#5258) and was never dispatched by
+    // packages/loopover-miner/bin/loopover-miner.ts -- a StatefulSet built from this manifest would set up
+    // (or, pre-#8282, skip) the pod, then immediately exit 1 with "Unknown command: run." `loop` (#5303) is the
+    // real continuous fleet-worker daemon (see loop-cli.ts / DEPLOYMENT.md's "loopover-miner loop" usage).
+    const containers = (deployment.spec as any).template.spec
+      .containers as Array<Record<string, any>>;
+    expect(containers[0]?.args).not.toContain("run");
   });
 
   it("secret template is a well-formed Secret exposing GITHUB_TOKEN", () => {

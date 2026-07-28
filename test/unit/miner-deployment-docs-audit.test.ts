@@ -3,8 +3,11 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  assertContainerCommandsInSync,
   assertDeploymentDocsInSync,
+  auditContainerCommands,
   auditDeploymentDocs,
+  extractContainerCommandClaim,
   extractEnvVarClaims,
   extractFilePathClaims,
   extractSubcommandClaims,
@@ -240,5 +243,79 @@ describe("loopover-miner DEPLOYMENT.md docs-accuracy audit (#5180)", () => {
     );
     expect(result.ok).toBe(true);
     expect(result.failures).toEqual([]);
+  });
+
+  describe("container-manifest command audit (fleet-mode `run`-vs-`loop` drift)", () => {
+    it("extractContainerCommandClaim reads a docker-compose `command:` list", () => {
+      expect(extractContainerCommandClaim('command: ["loop", "<owner/repo>", "--miner-login", "<login>"]')).toBe("loop");
+    });
+
+    it("extractContainerCommandClaim reads a Kubernetes container `args:` list", () => {
+      expect(extractContainerCommandClaim('          args: ["loop", "<owner/repo>", "--miner-login", "<login>"]')).toBe("loop");
+    });
+
+    it("extractContainerCommandClaim returns null when the manifest has no command/args list", () => {
+      expect(extractContainerCommandClaim("image: loopover-miner:latest\nrestart: unless-stopped\n")).toBeNull();
+    });
+
+    it("REGRESSION: extractContainerCommandClaim would have caught the never-registered `run` claim", () => {
+      // The exact stale value docker-compose.miner.yml and k8s/miner-deployment.yaml both shipped from their
+      // very first commits (#5299, #5258) -- `run` was never dispatched by the miner CLI.
+      expect(extractContainerCommandClaim('command: ["run"]')).toBe("run");
+      expect(extractContainerCommandClaim('args: ["run"]')).toBe("run");
+    });
+
+    it("auditContainerCommands reports ok when every manifest's command is registered", () => {
+      const result = auditContainerCommands(
+        [{ source: "docker-compose.miner.yml", command: "loop" }],
+        { isRegisteredCommand: () => true },
+      );
+      expect(result).toEqual({ ok: true, failures: [] });
+    });
+
+    it("flags a container manifest whose command is not registered in the CLI", () => {
+      const result = auditContainerCommands(
+        [{ source: "docker-compose.miner.yml", command: "run" }],
+        { isRegisteredCommand: () => false },
+      );
+      expect(result.ok).toBe(false);
+      expect(result.failures).toHaveLength(1);
+      expect(result.failures[0]).toContain("docker-compose.miner.yml");
+      expect(result.failures[0]).toContain("loopover-miner run");
+      expect(result.failures[0]).toContain("not registered");
+    });
+
+    it("auditContainerCommands names every stale manifest, not just the first", () => {
+      const result = auditContainerCommands(
+        [
+          { source: "docker-compose.miner.yml", command: "run" },
+          { source: "k8s/miner-deployment.yaml", command: "run" },
+        ],
+        { isRegisteredCommand: () => false },
+      );
+      expect(result.failures).toHaveLength(2);
+    });
+
+    it("assertContainerCommandsInSync throws naming the stale manifest and command", () => {
+      expect(() =>
+        assertContainerCommandsInSync([{ source: "k8s/miner-deployment.yaml", command: "run" }], { isRegisteredCommand: () => false }),
+      ).toThrow(/k8s\/miner-deployment\.yaml[\s\S]*loopover-miner run/);
+    });
+
+    it("assertContainerCommandsInSync returns the ok result without throwing when in sync", () => {
+      const result = assertContainerCommandsInSync([{ source: "docker-compose.miner.yml", command: "loop" }], { isRegisteredCommand: () => true });
+      expect(result.ok).toBe(true);
+      expect(result.failures).toEqual([]);
+    });
+
+    it("live fleet-mode manifests both invoke the real registered `loop` daemon, not `run`", () => {
+      const reality = buildLiveReality();
+      const claims = [
+        { source: "docker-compose.miner.yml", command: extractContainerCommandClaim(readFileSync(join(MINER_DIR, "docker-compose.miner.yml"), "utf8"))! },
+        { source: "k8s/miner-deployment.yaml", command: extractContainerCommandClaim(readFileSync(resolve(REPO_ROOT, "k8s/miner-deployment.yaml"), "utf8"))! },
+      ];
+      expect(claims.map((c) => c.command)).toEqual(["loop", "loop"]);
+      expect(assertContainerCommandsInSync(claims, reality)).toEqual({ ok: true, failures: [] });
+    });
   });
 });

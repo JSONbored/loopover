@@ -44,6 +44,10 @@ const NON_REPO_LINK_PATTERN = /^(?:https?:\/\/|mailto:|#|~|\/)/;
 /** `cliArgs[0] === "<name>"` guards in the miner bin — the CLI's registered top-level command table. */
 const CLI_DISPATCH_PATTERN = /cliArgs\[0\]\s*===\s*"([a-z][a-z0-9-]*)"/g;
 
+/** The first entry of a container manifest's `command:`/`args:` YAML list — the subcommand the image's
+ *  ENTRYPOINT invokes the miner CLI with (docker-compose's `command:`, a Kubernetes container's `args:`). */
+const CONTAINER_COMMAND_PATTERN = /^\s*(?:command|args):\s*\[\s*"([a-z][a-z0-9-]*)"/m;
+
 /** Collect every LOOPOVER_MINER_* / MINER_* token that appears in `text` (doc prose/code or source). */
 export function scanEnvVarTokens(text: string): Set<string> {
   const tokens = new Set<string>();
@@ -95,6 +99,53 @@ export function scanRegisteredCommands(binSource: string): Set<string> {
     commands.add(match[1]!);
   }
   return commands;
+}
+
+/** A fleet-mode container manifest's claimed subcommand (docker-compose's `command:`, a Kubernetes
+ *  container's `args:`), tagged with its source path so a drift failure names the exact file to fix. */
+export type ContainerCommandClaim = { source: string; command: string };
+
+/** Extracts the subcommand a container manifest's `command:`/`args:` YAML list invokes the miner CLI with
+ *  (e.g. `command: ["loop", "<owner/repo>", ...]` -> `"loop"`). Returns null when the manifest text has no
+ *  such list (e.g. a file whose command comes from the image's Dockerfile CMD instead). */
+export function extractContainerCommandClaim(manifestSource: string): string | null {
+  const match = CONTAINER_COMMAND_PATTERN.exec(manifestSource);
+  return match ? match[1]! : null;
+}
+
+/**
+ * Cross-checks container-manifest command claims against the live registered-command set — the same
+ * `isRegisteredCommand` reality predicate `auditDeploymentDocs` uses for DEPLOYMENT.md's prose. This is the
+ * same drift class (a stale or never-valid subcommand baked into a deploy artifact), just sourced from
+ * fleet-mode YAML instead of markdown: a container built from a manifest whose command isn't registered sets
+ * up, then immediately exits non-zero with "Unknown command: <name>" instead of ever doing real work.
+ */
+export function auditContainerCommands(
+  claims: ContainerCommandClaim[],
+  reality: Pick<DeploymentDocsReality, "isRegisteredCommand">,
+): DeploymentDocsAuditResult {
+  const failures: string[] = [];
+  for (const claim of claims) {
+    if (!reality.isRegisteredCommand(claim.command)) {
+      failures.push(
+        `container manifest "${claim.source}" invokes "loopover-miner ${claim.command}" but that subcommand is not registered in the CLI command table`,
+      );
+    }
+  }
+  return { ok: failures.length === 0, failures };
+}
+
+/** Run `auditContainerCommands` and throw a build-failing error naming every stale claim; returns the result
+ *  when every container manifest's command is genuinely registered. */
+export function assertContainerCommandsInSync(
+  claims: ContainerCommandClaim[],
+  reality: Pick<DeploymentDocsReality, "isRegisteredCommand">,
+): DeploymentDocsAuditResult {
+  const result = auditContainerCommands(claims, reality);
+  if (!result.ok) {
+    throw new Error(`Fleet-mode container manifests are out of sync with the miner CLI's registered commands:\n- ${result.failures.join("\n- ")}`);
+  }
+  return result;
 }
 
 /**

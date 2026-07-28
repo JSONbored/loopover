@@ -37,7 +37,7 @@ import {
   resolveDefaultManifestPath,
   runCrossRepoEvaluationCli,
   runCrossRepoFullExecutionCli,
-} from "../../packages/loopover-miner/scripts/cross-repo-evaluation.mjs";
+} from "../../packages/loopover-miner/scripts/cross-repo-evaluation";
 
 const roots: string[] = [];
 
@@ -984,7 +984,7 @@ describe("cross-repo evaluation harness (#4788)", () => {
     const doc = readFileSync(join(process.cwd(), "packages/loopover-miner/docs/cross-repo-evaluation.md"), "utf8");
     expect(doc).toContain("#4788");
     expect(doc).toContain("stack_detection_gap");
-    expect(doc).toContain("cross-repo-evaluation.mjs");
+    expect(doc).toContain("cross-repo-evaluation.ts");
     expect(doc).toContain("benchmarks/cross-repo/manifest.json");
     // #7634: the full-execution mode and its execution-specific failure categories are documented too.
     expect(doc).toContain("--full-execution");

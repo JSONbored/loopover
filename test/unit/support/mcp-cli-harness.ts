@@ -15,7 +15,7 @@ import { expect } from "vitest";
 // compiled dist/bin/loopover-mcp.js as plain JavaScript -- requires `npm run build:mcp` to have run first
 // (same precondition ci.yml's "Build MCP" step + this repo's local `npm run test:ci` already satisfy), but
 // is otherwise identical: same subprocess, same argv, same env plumbing. process.execPath (not a bare
-// "node") mirrors scripts/check-syntax.mjs's own convention -- guarantees the exact Node binary already
+// "node") mirrors scripts/check-syntax.ts's own convention -- guarantees the exact Node binary already
 // running the test, not whatever "node" resolves to on PATH.
 export const bin = join(process.cwd(), "packages/loopover-mcp/dist/bin/loopover-mcp.js");
 export const repoOnboardingPackFixture = {

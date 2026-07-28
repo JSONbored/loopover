@@ -36,13 +36,13 @@
     "dist",
     "scripts",
     "CHANGELOG.md",
-    "!scripts/check-syntax.mjs",
-    "!scripts/strip-bin-sourcemap.mjs"
+    "!scripts/check-syntax.ts",
+    "!scripts/strip-bin-sourcemap.ts"
   ],
   "scripts": {
     "build": "npm run build:tsc && npm run build:verify",
-    "build:tsc": "tsc -p tsconfig.json && node scripts/strip-bin-sourcemap.mjs",
-    "build:verify": "node scripts/check-syntax.mjs"
+    "build:tsc": "tsc -p tsconfig.json && node --experimental-strip-types scripts/strip-bin-sourcemap.ts",
+    "build:verify": "node --experimental-strip-types scripts/check-syntax.ts"
   },
   "dependencies": {
     "@loopover/contract": "^0.1.0",

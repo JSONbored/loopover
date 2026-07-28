@@ -7,7 +7,7 @@ import {
   formatBenchmarkReport,
   runLocalStoreBenchmark,
   runRankingBenchmark,
-} from "../../packages/loopover-miner/scripts/benchmark.mjs";
+} from "../../packages/loopover-miner/scripts/benchmark";
 
 describe("loopover-miner benchmark script (#4845)", () => {
   it("REGRESSION: synthetic candidate generation is byte-for-byte deterministic across calls", () => {
@@ -72,7 +72,7 @@ describe("loopover-miner benchmark script (#4845)", () => {
   });
 
   it("runs end-to-end as a CLI script and prints both benchmark lines", () => {
-    const result = spawnSync(process.execPath, ["packages/loopover-miner/scripts/benchmark.mjs"], {
+    const result = spawnSync(process.execPath, ["--experimental-strip-types", "packages/loopover-miner/scripts/benchmark.ts"], {
       cwd: process.cwd(),
       encoding: "utf8",
     });

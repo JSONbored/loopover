@@ -1,5 +1,5 @@
 {
-  "description": "Cross-repo evaluation benchmark set (#4788). Diverse public repos exercised by `node packages/loopover-miner/scripts/cross-repo-evaluation.mjs` after cloning into LOOPOVER_MINER_REPO_CLONE_DIR.",
+  "description": "Cross-repo evaluation benchmark set (#4788). Diverse public repos exercised by `node --experimental-strip-types packages/loopover-miner/scripts/cross-repo-evaluation.ts` after cloning into LOOPOVER_MINER_REPO_CLONE_DIR.",
   "repos": [
     {
       "repoFullName": "sindresorhus/is",

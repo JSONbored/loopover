@@ -10,19 +10,39 @@ import { pathToFileURL } from "node:url";
 const DEFAULT_POSTHOG_APP_HOST = "https://us.posthog.com";
 
 export class PostHogReleaseValidationError extends Error {
-  constructor(message, failures = []) {
+  readonly failures: string[];
+  constructor(message: string, failures: string[] = []) {
     super(message);
     this.name = "PostHogReleaseValidationError";
     this.failures = failures;
   }
 }
 
-function nonBlank(value) {
+/** The nested release object PostHog returns on a symbol set (never a flat string -- see
+ *  releaseIdentifier below). */
+type PostHogRelease = { project?: string | undefined; version?: string | undefined };
+
+/** One symbol set as the error_tracking API returns it. */
+type PostHogSymbolSet = { release?: PostHogRelease | undefined; failure_reason?: string | undefined };
+
+export type PostHogReleaseValidationConfig = {
+  apiKey: string | undefined;
+  projectId: string | undefined;
+  release: string | undefined;
+  baseUrl: string;
+};
+
+/** Only the vars this script actually reads. Deliberately NOT NodeJS.ProcessEnv: typing it as the
+ *  full environment would force every caller (and every test) to supply the ~50 unrelated vars the
+ *  app's own ProcessEnv declares, for a script that reads three. */
+type PostHogReleaseEnv = Record<string, string | undefined>;
+
+function nonBlank(value: string | undefined): string | undefined {
   const text = typeof value === "string" ? value.trim() : undefined;
   return text ? text : undefined;
 }
 
-function apiBaseUrl(value) {
+function apiBaseUrl(value: string | undefined): string {
   return (nonBlank(value) ?? DEFAULT_POSTHOG_APP_HOST).replace(/\/+$/, "");
 }
 
@@ -32,14 +52,14 @@ function apiBaseUrl(value) {
 // "{project}@{version}" here is what actually makes this comparable to our own POSTHOG_RELEASE
 // convention (the same "{release-name}@{release-version}" split posthog-cli's --release-name/
 // --release-version flags combine server-side into the release posthog-cli itself resolves).
-function releaseIdentifier(release) {
+function releaseIdentifier(release: PostHogRelease | undefined): string | undefined {
   if (!release || typeof release !== "object") return undefined;
   const project = nonBlank(release.project);
   const version = nonBlank(release.version);
   return project && version ? `${project}@${version}` : undefined;
 }
 
-export function loadPostHogReleaseValidationConfig(env = process.env) {
+export function loadPostHogReleaseValidationConfig(env: PostHogReleaseEnv = process.env): PostHogReleaseValidationConfig {
   return {
     // The same personal API key posthog-cli's upload step uses (error-tracking write + organization read
     // scopes) -- listing symbol sets needs error_tracking:read, which that scope grant already covers.
@@ -50,12 +70,12 @@ export function loadPostHogReleaseValidationConfig(env = process.env) {
   };
 }
 
-function requireConfig(config) {
-  const missing = [
+function requireConfig(config: PostHogReleaseValidationConfig): void {
+  const missing: string[] = ([
     ["POSTHOG_CLI_API_KEY", config.apiKey],
     ["POSTHOG_CLI_PROJECT_ID", config.projectId],
     ["POSTHOG_RELEASE", config.release],
-  ]
+  ] as Array<[string, string | undefined]>)
     .filter(([, value]) => !value)
     .map(([name]) => name);
   if (missing.length > 0) {
@@ -63,37 +83,38 @@ function requireConfig(config) {
   }
 }
 
-function symbolSetsUrl(config) {
-  return `${config.baseUrl}/api/projects/${encodeURIComponent(config.projectId)}/error_tracking/symbol_sets?limit=100`;
+function symbolSetsUrl(config: PostHogReleaseValidationConfig): string {
+  // requireConfig has already thrown if these are missing; TS cannot narrow across that call.
+  return `${config.baseUrl}/api/projects/${encodeURIComponent(config.projectId ?? "")}/error_tracking/symbol_sets?limit=100`;
 }
 
-async function fetchSymbolSets(config, fetchImpl) {
+async function fetchSymbolSets(config: PostHogReleaseValidationConfig, fetchImpl: typeof globalThis.fetch): Promise<PostHogSymbolSet[]> {
   const response = await fetchImpl(symbolSetsUrl(config), {
     headers: { accept: "application/json", authorization: `Bearer ${config.apiKey}` },
   });
   if (!response.ok) {
     let message = response.statusText;
     try {
-      const body = await response.json();
+      const body = (await response.json()) as { detail?: string; error?: string; message?: string };
       message = body?.detail ?? body?.error ?? body?.message ?? message;
     } catch {
       /* Keep the status text when the body is not JSON. */
     }
     throw new PostHogReleaseValidationError("PostHog API request failed", [`error_tracking/symbol_sets returned HTTP ${response.status}${message ? ` (${message})` : ""}`]);
   }
-  const body = await response.json();
+  const body = (await response.json()) as PostHogSymbolSet[] | { results?: PostHogSymbolSet[] };
   return Array.isArray(body) ? body : Array.isArray(body?.results) ? body.results : [];
 }
 
-function log(event, fields = {}) {
+function log(event: string, fields: Record<string, unknown> = {}): void {
   console.log(JSON.stringify({ event, ...fields }));
 }
 
-function logError(event, fields = {}) {
+function logError(event: string, fields: Record<string, unknown> = {}): void {
   console.error(JSON.stringify({ level: "error", event, ...fields }));
 }
 
-export async function validatePostHogRelease(env = process.env, fetchImpl = globalThis.fetch) {
+export async function validatePostHogRelease(env: PostHogReleaseEnv = process.env, fetchImpl: typeof globalThis.fetch = globalThis.fetch) {
   if (typeof fetchImpl !== "function") {
     throw new PostHogReleaseValidationError("fetch is unavailable", ["Node 20+ fetch support is required"]);
   }
@@ -102,13 +123,13 @@ export async function validatePostHogRelease(env = process.env, fetchImpl = glob
   requireConfig(config);
 
   const symbolSets = await fetchSymbolSets(config, fetchImpl);
-  const forRelease = symbolSets.filter((set) => releaseIdentifier(set?.release) === config.release);
+  const forRelease = symbolSets.filter((set: PostHogSymbolSet) => releaseIdentifier(set?.release) === config.release);
 
   const failures = [];
   if (forRelease.length === 0) {
     failures.push(`no symbol sets found for release ${config.release}`);
   }
-  const failed = forRelease.filter((set) => nonBlank(set?.failure_reason));
+  const failed = forRelease.filter((set: PostHogSymbolSet) => nonBlank(set?.failure_reason));
   if (failed.length > 0) {
     failures.push(`${failed.length} symbol set(s) for release ${config.release} recorded a failure_reason`);
   }
@@ -125,7 +146,7 @@ async function main() {
     const result = await validatePostHogRelease();
     log("discovery_index_posthog_release_validation_complete", result);
   } catch (error) {
-    const failures = Array.isArray(error?.failures) ? error.failures : [String(error)];
+    const failures = error instanceof PostHogReleaseValidationError ? error.failures : [String(error)];
     logError("discovery_index_posthog_release_validation_failed", { release: nonBlank(process.env.POSTHOG_RELEASE), failures });
     process.exitCode = 1;
   }

@@ -114,7 +114,7 @@ async function runReleaseValidation(release: string): Promise<void> {
   let output = "";
   let status: number | null = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const result = spawnSync(process.execPath, ["scripts/validate-posthog-release.mjs"], {
+    const result = spawnSync(process.execPath, ["--experimental-strip-types", "scripts/validate-posthog-release.ts"], {
       cwd: appDir,
       env: { ...process.env, POSTHOG_RELEASE: release },
       encoding: "utf8",

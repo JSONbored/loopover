@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 import { performance } from "node:perf_hooks";
 import { rankCandidateIssues } from "../dist/lib/opportunity-ranker.js";
+import type { RawCandidateIssue } from "../dist/lib/opportunity-fanout.js";
 import { initPortfolioQueueStore } from "../dist/lib/portfolio-queue.js";
+
+type RankingBenchmarkOptions = { candidateCount?: number; iterations?: number };
+type LocalStoreBenchmarkOptions = { operationCount?: number; iterations?: number };
+type BenchmarkResult = { name: string; unitCount: number; iterations: number; medianMs: number; opsPerSecond: number };
 
 // Committed micro-benchmark for the two hot local paths that have no other way to notice a regression: the
 // discovery fan-out ranking pass (opportunity-ranker.js, run once per repo per discovery cycle over every open
@@ -21,44 +26,53 @@ const SYNTHETIC_EPOCH_MS = Date.UTC(2024, 0, 1);
  * `Date.now()`, so `buildSyntheticCandidates(n)` returns byte-identical input on every call/machine/run -- the
  * benchmark's numbers are comparable across runs precisely because its input never varies.
  */
-export function buildSyntheticCandidates(count) {
-  const candidates = [];
+export function buildSyntheticCandidates(count: number): RawCandidateIssue[] {
+  const candidates: RawCandidateIssue[] = [];
   for (let i = 0; i < count; i += 1) {
     const timestamp = new Date(SYNTHETIC_EPOCH_MS + i * 3_600_000).toISOString();
     candidates.push({
+      owner: "bench-owner",
+      repo: `bench-repo-${i % 7}`,
       repoFullName: `bench-owner/bench-repo-${i % 7}`,
       issueNumber: i + 1,
       title: `Synthetic benchmark issue #${i + 1}`,
-      labels: [LABEL_POOL[i % LABEL_POOL.length]],
+      labels: [LABEL_POOL[i % LABEL_POOL.length]!],
+      assignees: [],
       commentsCount: i % 11,
       createdAt: timestamp,
       updatedAt: timestamp,
       htmlUrl: `https://github.com/bench-owner/bench-repo-${i % 7}/issues/${i + 1}`,
+      // RawCandidateIssue's aiPolicyAllowed is typed `true`-only (real production candidates
+      // are pre-filtered to allowed-only before reaching this stage), but rankCandidateIssues'
+      // own logic checks `candidate.aiPolicyAllowed !== false` at runtime -- it genuinely
+      // tolerates and branches on a false value. The benchmark deliberately mixes in some
+      // aiPolicyAllowed:false candidates to exercise that branch, so this is cast below rather
+      // than narrowed to true-only, which would silently drop real exercised coverage.
       aiPolicyAllowed: i % 5 !== 0,
       aiPolicySource: i % 5 === 0 ? "AI-USAGE.md" : "none",
-    });
+    } as RawCandidateIssue);
   }
   return candidates;
 }
 
-function timeMs(fn) {
+function timeMs(fn: () => void): number {
   const start = performance.now();
   fn();
   return performance.now() - start;
 }
 
-function median(values) {
+function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+  return sorted.length % 2 === 0 ? (sorted[mid - 1]! + sorted[mid]!) / 2 : sorted[mid]!;
 }
 
 /** Rank the same synthetic candidate set `iterations` times and report the median wall time (#4845). */
-export function runRankingBenchmark(options = {}) {
+export function runRankingBenchmark(options: RankingBenchmarkOptions = {}): BenchmarkResult {
   const candidateCount = options.candidateCount ?? DEFAULT_CANDIDATE_COUNT;
   const iterations = options.iterations ?? DEFAULT_ITERATIONS;
   const candidates = buildSyntheticCandidates(candidateCount);
-  const samples = [];
+  const samples: number[] = [];
   for (let i = 0; i < iterations; i += 1) {
     samples.push(timeMs(() => rankCandidateIssues(candidates, { nowMs: SYNTHETIC_EPOCH_MS })));
   }
@@ -77,10 +91,10 @@ export function runRankingBenchmark(options = {}) {
  * the median wall time -- the same read/write path every real enqueue/claim exercises against the on-disk file,
  * minus filesystem I/O, so the number isolates the query-plan/schema cost this package actually controls.
  */
-export function runLocalStoreBenchmark(options = {}) {
+export function runLocalStoreBenchmark(options: LocalStoreBenchmarkOptions = {}): BenchmarkResult {
   const operationCount = options.operationCount ?? DEFAULT_QUEUE_OPERATION_COUNT;
   const iterations = options.iterations ?? DEFAULT_ITERATIONS;
-  const samples = [];
+  const samples: number[] = [];
   for (let i = 0; i < iterations; i += 1) {
     const store = initPortfolioQueueStore(":memory:");
     try {
@@ -113,7 +127,7 @@ export function runLocalStoreBenchmark(options = {}) {
 }
 
 /** Render benchmark results as a stable, greppable text report (no locale-dependent number formatting). */
-export function formatBenchmarkReport(results) {
+export function formatBenchmarkReport(results: BenchmarkResult[]): string {
   const lines = ["loopover-miner benchmark", ""];
   for (const result of results) {
     lines.push(

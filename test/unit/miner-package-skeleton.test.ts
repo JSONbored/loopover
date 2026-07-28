@@ -49,7 +49,7 @@ describe("loopover-miner package skeleton (#2287)", () => {
     // hand-listed ~119-file chain here that had to be kept in sync by hand).
     expect(miner.scripts.build).toBe("npm run build:tsc && npm run build:verify");
     expect(miner.scripts["build:tsc"]).toBe("tsc -p tsconfig.json");
-    expect(miner.scripts["build:verify"]).toBe("node scripts/check-syntax.mjs");
+    expect(miner.scripts["build:verify"]).toBe("node --experimental-strip-types scripts/check-syntax.ts");
   });
 
   it(
@@ -64,7 +64,7 @@ describe("loopover-miner package skeleton (#2287)", () => {
       // load. 60000ms matches the same evidence-based ceiling already used for this repo's other
       // real-subprocess timeout flakes (agent-sdk-driver.test.ts, miner-attempt-worktree.test.ts,
       // miner-repo-clone.test.ts, #6869/#6871).
-      const result = spawnSync("node", ["scripts/check-syntax.mjs"], { cwd: minerRoot, encoding: "utf8" });
+      const result = spawnSync("node", ["--experimental-strip-types", "scripts/check-syntax.ts"], { cwd: minerRoot, encoding: "utf8" });
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("node --check passed for all");
       expect(result.stdout).toMatch(/passed for all \d+ files in dist\/bin\/ and dist\/lib\//);

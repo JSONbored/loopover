@@ -9,7 +9,7 @@
 //
 // Runs c8 from the monorepo root so source-map remapping (packages/loopover-engine/tsconfig.json's
 // "sourceMap": true) yields `packages/loopover-engine/src/**` paths, not bare `dist/**` -- mirroring
-// rees-coverage.ts / control-plane-coverage.mjs's identical "node:test suite invisible to vitest"
+// rees-coverage.ts / control-plane-coverage.ts's identical "node:test suite invisible to vitest"
 // shape and their `--include=<pkg>/dist/**/*.js` + `--all` + lcov-path-normalize recipe.
 import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";

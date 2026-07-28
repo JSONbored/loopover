@@ -39,7 +39,7 @@ function postHogCliStub(options: { echoOutput?: string } = {}) {
 }
 
 /** A real local HTTP server standing in for PostHog's error_tracking/symbol_sets API, so
- *  runReleaseValidation's actual retry/attempts/success logic (validate-posthog-release.mjs, spawned as a
+ *  runReleaseValidation's actual retry/attempts/success logic (validate-posthog-release.ts, spawned as a
  *  real subprocess-of-a-subprocess by upload-sourcemaps.js) gets exercised for real rather than always being
  *  skipped via REES_POSTHOG_VALIDATE_RELEASE=0. Mirrors the pre-Sentry-removal sentryApiServer() test helper
  *  this file's deleted predecessor (sentry-upload.test.ts) used for the identical purpose. */
@@ -56,7 +56,7 @@ async function postHogApiServer(options: { failFirstAttempt?: boolean } = {}) {
       return;
     }
     // The real error_tracking/symbol_sets API returns `release` as a nested {project, version} object, not
-    // a flat string (see validate-posthog-release.mjs's releaseIdentifier for why).
+    // a flat string (see validate-posthog-release.ts's releaseIdentifier for why).
     res.end(JSON.stringify({ results: [{ release: { project: "loopover-rees", version: "abc123" }, failure_reason: null }] }));
   });
   await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));

@@ -9,7 +9,7 @@ import {
   renderMinerEnvReferenceModule,
   writeMinerEnvReference,
   writeMinerEnvReferenceModule,
-} from "../../packages/loopover-miner/scripts/generate-env-reference.mjs";
+} from "../../packages/loopover-miner/scripts/generate-env-reference";
 
 function fixtureRoot(): string {
   const root = mkdtempSync(join(tmpdir(), "gt-miner-env-reference-"));

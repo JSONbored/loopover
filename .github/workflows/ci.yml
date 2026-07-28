@@ -330,7 +330,7 @@ jobs:
       # exact gap let a stale env-reference block an unrelated MCP npm release, since the release
       # workflow was the only place this check ever ran. Gated on `ui` too, same reason as its sibling:
       # the generated UI-side file lives under apps/loopover-ui/**. Also gated on `engine`:
-      # DEFAULT_SOURCE_ROOTS in generate-env-reference.mjs explicitly includes
+      # DEFAULT_SOURCE_ROOTS in generate-env-reference.ts explicitly includes
       # packages/loopover-engine/src/miner (the coding-agent driver's env vars live there, not under
       # packages/loopover-miner itself), so an engine-only PR touching that directory used to skip this
       # check entirely.
@@ -499,6 +499,16 @@ jobs:
       - name: Engine package check
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.ui == 'true' }}
         run: npm run test:engine-pack
+      # Moved ahead of Typecheck (was originally positioned much later, alongside "Miner package check"):
+      # benchmark.ts and cross-repo-evaluation.ts (packages/loopover-miner/scripts/, real .ts since #9527's
+      # port) import from this package's OWN ../dist/lib/*.js, so Typecheck cannot resolve them until this
+      # has run -- the identical class of gap the contract/engine build-order comments above already
+      # describe, just for the miner package's own dist rather than a workspace dependency's. Trigger
+      # condition matches Typecheck's exactly (not just miner/engine) for the same reason those two match:
+      # any trigger that typechecks must also have built what typechecking reads.
+      - name: Build miner CLI
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.miner == 'true' }}
+        run: npx turbo run build:tsc build:verify --filter=@loopover/miner
       # .tsbuildinfo mutates every run (tsc's own incremental state), unlike node_modules above which is
       # immutable per lockfile -- so this needs the run_id-suffixed-key + restore-keys-prefix pattern (always
       # creates a new cache entry to save into, restore falls back to the most recent matching prefix) rather
@@ -567,25 +577,6 @@ jobs:
       - name: MCP package check
         if: ${{ github.event_name == 'push' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.engine == 'true' }}
         run: npm run test:mcp-pack
-      # Same "ships .ts only, this build is for the published npm tarball + the pack-check below, not for
-      # tests" story as MCP's own "Build MCP" step above. Invokes turbo.json's @loopover/miner#build:tsc
-      # (real caching win since the 2026-07-24 dist/ migration -- previously cache: false, historically to
-      # avoid a cache restore stomping this package's hand-written .js files while the #7290 migration was
-      # still in-flight; #7317 closed that out, and the dist/ split removed the original in-place-emit
-      # hazard entirely, so caching was finally enabled) and @loopover/miner#build:verify (real caching
-      # win: skips re-`node --check`-ing all bin/lib files when neither changed) DIRECTLY as their own task names,
-      # deliberately NOT via the aggregate `@loopover/miner#build` task (which exists for standalone/local
-      # `npm run build` callers) -- that aggregate's own script is `npm run build:tsc && npm run
-      # build:verify`, i.e. it re-invokes both of these exact scripts a second time even when turbo already
-      # ran them as cached prerequisite tasks (declaring a task as a dependsOn prerequisite doesn't replace
-      # a parent task's own script body). Calling the aggregate here would silently double both the tsc
-      # compile and the syntax check on every run, negating the caching win this comment describes --
-      # confirmed by reproducing the double execution locally before switching to this direct form. This
-      # also finally activates the build:tsc/build:verify split from Phase 0, which no ci.yml step
-      # exercised until now.
-      - name: Build miner CLI
-        if: ${{ github.event_name == 'push' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.engine == 'true' }}
-        run: npx turbo run build:tsc build:verify --filter=@loopover/miner
       # loopover-miner depends on @loopover/engine for real too (same relationship as loopover-mcp above
       # -- packages/loopover-miner/package.json lists it as a dependency), so this and "Build miner CLI"
       # above now also trigger on an engine-only PR, matching "Build MCP"/"MCP package check"'s existing

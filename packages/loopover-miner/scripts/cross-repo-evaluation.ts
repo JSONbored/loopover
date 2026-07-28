@@ -9,15 +9,22 @@ import {
   runCrossRepoEvaluation,
   runCrossRepoFullExecution,
   summarizeCrossRepoEvaluation,
+  type ParsedCrossRepoEvaluationManifest,
 } from "../dist/lib/cross-repo-evaluation.js";
 
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+// dist/lib/cross-repo-evaluation.js DOES ship a sibling .d.ts (that package's declaration: true),
+// so the real ParsedCrossRepoEvaluationManifest type is available -- reused here rather than
+// duplicated. repoFilter is string | null (not string | undefined) to match
+// parseCrossRepoEvaluationArgs' own inferred return shape below.
+type CliOptions = { parsed?: ParsedCrossRepoEvaluationManifest; manifestPath?: string; repoFilter?: string | null };
 
 export function resolveDefaultManifestPath() {
   return join(PACKAGE_ROOT, DEFAULT_CROSS_REPO_MANIFEST_RELATIVE_PATH);
 }
 
-export function parseCrossRepoEvaluationArgs(argv) {
+export function parseCrossRepoEvaluationArgs(argv?: string[]) {
   const args = argv ?? process.argv.slice(2);
   let manifestPath = resolveDefaultManifestPath();
   let json = false;
@@ -60,23 +67,27 @@ export function parseCrossRepoEvaluationArgs(argv) {
   return { manifestPath, json, repoFilter, requireMajority, fullExecution };
 }
 
-export function loadCrossRepoEvaluationManifest(manifestPath) {
+export function loadCrossRepoEvaluationManifest(manifestPath: string): ParsedCrossRepoEvaluationManifest {
   const content = readFileSync(manifestPath, "utf8");
   return parseCrossRepoEvaluationManifest(content);
 }
 
-export function runCrossRepoEvaluationCli(options = {}) {
+export function runCrossRepoEvaluationCli(options: CliOptions = {}) {
   const parsed = options.parsed ?? loadCrossRepoEvaluationManifest(options.manifestPath ?? resolveDefaultManifestPath());
-  const results = runCrossRepoEvaluation(parsed, { repoFilter: options.repoFilter ?? null });
+  // exactOptionalPropertyTypes: conditionally spread rather than always set repoFilter to a
+  // possibly-undefined/null value -- the target type's repoFilter?: string admits "absent", not
+  // "present and undefined". null and undefined are equally falsy at every downstream truthiness
+  // check either way, so this is a type-only normalization, not a behavior change.
+  const results = runCrossRepoEvaluation(parsed, options.repoFilter ? { repoFilter: options.repoFilter } : {});
   const summary = summarizeCrossRepoEvaluation(results);
   return { parsed, results, summary };
 }
 
 /** Full-execution counterpart of runCrossRepoEvaluationCli (#7634) — same shape, async because agent runs and
  *  the benchmark repos' own test suites are. Dry-run: see runCrossRepoFullExecution. */
-export async function runCrossRepoFullExecutionCli(options = {}) {
+export async function runCrossRepoFullExecutionCli(options: CliOptions = {}) {
   const parsed = options.parsed ?? loadCrossRepoEvaluationManifest(options.manifestPath ?? resolveDefaultManifestPath());
-  const results = await runCrossRepoFullExecution(parsed, { repoFilter: options.repoFilter ?? null });
+  const results = await runCrossRepoFullExecution(parsed, options.repoFilter ? { repoFilter: options.repoFilter } : {});
   const summary = summarizeCrossRepoEvaluation(results);
   return { parsed, results, summary };
 }
@@ -87,7 +98,7 @@ function printHelp() {
       "loopover-miner cross-repo evaluation (#4788)",
       "",
       "Usage:",
-      "  node packages/loopover-miner/scripts/cross-repo-evaluation.mjs [options]",
+      "  node --experimental-strip-types packages/loopover-miner/scripts/cross-repo-evaluation.ts [options]",
       "",
       "Options:",
       "  --manifest <path>     Benchmark manifest (default: benchmarks/cross-repo/manifest.json)",

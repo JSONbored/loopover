@@ -5,7 +5,7 @@
 // driver-factory.ts) into the plain, already-tested Hono app (http-app.ts). Adds NO route logic of its own.
 //
 // Not unit-tested: exercised only by real Cloudflare Workers/KV/Containers infrastructure, matching
-// packages/discovery-index/src/worker.ts's own identical exclusion (see scripts/control-plane-coverage.mjs).
+// packages/discovery-index/src/worker.ts's own identical exclusion (see scripts/control-plane-coverage.ts).
 import { Container } from "@cloudflare/containers";
 import { wakeDueAmsTenants } from "./ams-wake.js";
 import { createTenantProvisioningDriver } from "./driver-factory.js";

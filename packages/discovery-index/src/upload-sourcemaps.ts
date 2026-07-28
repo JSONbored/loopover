@@ -103,7 +103,7 @@ async function runReleaseValidation(release: string): Promise<void> {
   let output = "";
   let status: number | null = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const result = spawnSync(process.execPath, ["scripts/validate-posthog-release.mjs"], {
+    const result = spawnSync(process.execPath, ["--experimental-strip-types", "scripts/validate-posthog-release.ts"], {
       cwd: appDir,
       env: { ...process.env, POSTHOG_RELEASE: release },
       encoding: "utf8",
@@ -126,7 +126,7 @@ async function runReleaseValidation(release: string): Promise<void> {
 // review-enrichment (a standalone, non-workspace package), discovery-index is a real npm workspace member,
 // so npm hoists @posthog/cli's binary to the ROOT node_modules/.bin/ by default -- a package-relative path
 // assumption would silently look in the wrong place. Same resolution pattern as the root repo's own
-// scripts/gen-cf-typegen.mjs resolveLocalWranglerBin().
+// scripts/gen-cf-typegen.ts resolveLocalWranglerBin().
 function postHogCliPath(): string {
   const override = nonBlank(process.env.POSTHOG_CLI_PATH);
   if (override) return override;

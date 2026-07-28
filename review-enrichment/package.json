@@ -9,12 +9,12 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "metadata": "npm run build && node scripts/generate-analyzer-metadata.mjs",
-    "metadata:check": "npm run build && node scripts/generate-analyzer-metadata.mjs --check",
-    "validate:sourcemaps": "node scripts/validate-sourcemaps.mjs",
+    "metadata": "npm run build && node --experimental-strip-types scripts/generate-analyzer-metadata.ts",
+    "metadata:check": "npm run build && node --experimental-strip-types scripts/generate-analyzer-metadata.ts --check",
+    "validate:sourcemaps": "node --experimental-strip-types scripts/validate-sourcemaps.ts",
     "start": "node dist/server.js",
     "dev": "node --experimental-strip-types --watch src/server.ts",
-    "test": "npm run build && npm run validate:sourcemaps && node scripts/generate-analyzer-metadata.mjs --check && (npm run test:node || npm run test:node)",
+    "test": "npm run build && npm run validate:sourcemaps && node --experimental-strip-types scripts/generate-analyzer-metadata.ts --check && (npm run test:node || npm run test:node)",
     "test:node": "node --test --experimental-strip-types \"test/**/*.test.ts\""
   },
   "dependencies": {

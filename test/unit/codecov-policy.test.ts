@@ -253,8 +253,8 @@ describe("Codecov policy", () => {
 
   it("captures control-plane node:test coverage for Codecov (#7743)", () => {
     const rootPkg = JSON.parse(readFileSync("package.json", "utf8")) as { scripts: Record<string, string> };
-    expect(rootPkg.scripts["control-plane:coverage"]).toBe("node scripts/control-plane-coverage.mjs");
-    const coverageScript = readFileSync("scripts/control-plane-coverage.mjs", "utf8");
+    expect(rootPkg.scripts["control-plane:coverage"]).toBe("node --experimental-strip-types scripts/control-plane-coverage.ts");
+    const coverageScript = readFileSync("scripts/control-plane-coverage.ts", "utf8");
     expect(coverageScript).toContain("c8");
     expect(coverageScript).toContain("control-plane");
     expect(coverageScript).toContain("coverage");

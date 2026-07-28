@@ -13,6 +13,7 @@ export {
   hasUnsafeWildcardCount,
   globToRegExp,
   matchesAny,
+  matchesAnyWithExclusions,
   changedPathsHittingGuardrail,
   type GuardrailPathMatch,
   guardrailPathMatches,

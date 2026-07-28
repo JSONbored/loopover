@@ -40,7 +40,34 @@ const HIGH_ISSUE_QUALITY_THRESHOLD = 0.7;
 const PENDING_STALE_THRESHOLD_DAYS = 2;
 const MILLISECONDS_PER_DAY = 1000 * 60 * 60 * 24;
 
-export const FORBIDDEN_PUBLIC_COMMENT_WORDS = [
+/**
+ * #9432: ordinary English that carries gittensor meaning ONLY in context. Each of these is a word a perfectly
+ * safe review of this codebase's own gate/scoring code uses naturally -- "updates the ranking comparator",
+ * "this improves reviewability", "the reward path". They are still matched by default (unchanged), but a repo
+ * that has POSITIVELY confirmed via {@link isPublicScoreTermSafeForRepo}'s allowlist that this vocabulary is
+ * safe public language for it can exempt them, exactly as bare "score" already could.
+ *
+ * WHY THIS IS SAFE, and why the split is where it is: the risk this filter exists to stop is a leaked private
+ * VALUE, and a value never appears as a bare noun -- it appears qualified ("reward estimate 12 TAO", "trust
+ * score 0.82", "score preview"). Every one of those QUALIFIED forms lives in
+ * {@link ALWAYS_FORBIDDEN_PUBLIC_COMMENT_WORDS} below and stays enforced for every repo, allowlisted or not.
+ * A bare "reward" or "ranking" with no number attached leaks nothing on its own. This generalizes the exact
+ * judgment `allowBareScoreTerm` already made for "score" to its siblings, rather than inventing a new one.
+ */
+export const AMBIGUOUS_PUBLIC_COMMENT_WORDS = [
+  "rewards",
+  "reward",
+  "farming",
+  "rankings",
+  "ranking",
+  "cohort",
+  "reviewability",
+] as const;
+
+/** Terms that name a private concept outright and are NEVER exemptible, for any repo. A leaked value is
+ *  necessarily qualified (see AMBIGUOUS_PUBLIC_COMMENT_WORDS' rationale), so every qualified form belongs
+ *  here -- this list is what actually holds the public/private boundary. */
+export const ALWAYS_FORBIDDEN_PUBLIC_COMMENT_WORDS = [
   "wallet",
   "hotkey",
   "raw trust score",
@@ -53,12 +80,8 @@ export const FORBIDDEN_PUBLIC_COMMENT_WORDS = [
   "reward estimate",
   "estimated rewards",
   "estimated reward",
-  "rewards",
-  "reward",
-  "farming",
   "private reviewability",
   "reviewability internals",
-  "reviewability",
   "private scoreability",
   "scoreability",
   "score preview",
@@ -67,13 +90,17 @@ export const FORBIDDEN_PUBLIC_COMMENT_WORDS = [
   "score estimate",
   "private rankings",
   "private ranking",
-  "rankings",
-  "ranking",
-  "cohort",
   "miner-originated",
   "miner originated",
   "human-originated",
   "human originated",
+] as const;
+
+/** Every forbidden term, both tiers -- the default (non-exempt) matching set. Preserved as a single exported
+ *  list so existing consumers and the redaction-parity test keep one canonical vocabulary to compare against. */
+export const FORBIDDEN_PUBLIC_COMMENT_WORDS = [
+  ...ALWAYS_FORBIDDEN_PUBLIC_COMMENT_WORDS,
+  ...AMBIGUOUS_PUBLIC_COMMENT_WORDS,
 ] as const;
 
 // A bare "score" is checked separately from the substring list above (not folded in as another entry):
@@ -218,7 +245,13 @@ export function shouldWarnPublicScoreTermsAllowlistUnset(env: Record<string, str
  *  positively confirmed (via a repo allowlist, never a blanket default) that "score" is safe public
  *  vocabulary for that repo. */
 export function sanitizePublicComment(comment: string, options?: { allowBareScoreTerm?: boolean }): string {
-  for (const forbiddenWord of FORBIDDEN_PUBLIC_COMMENT_WORDS) {
+  // #9432: an allowlisted repo exempts the AMBIGUOUS tier (ordinary English -- "reward", "ranking",
+  // "reviewability", ...) along with bare "score"; the ALWAYS_FORBIDDEN tier is checked for every repo,
+  // allowlisted or not, because that is where every qualified private-value form lives. Same flag, same
+  // allowlist, same positively-confirmed-per-repo requirement -- see AMBIGUOUS_PUBLIC_COMMENT_WORDS for why
+  // the split falls where it does.
+  const forbidden = options?.allowBareScoreTerm ? ALWAYS_FORBIDDEN_PUBLIC_COMMENT_WORDS : FORBIDDEN_PUBLIC_COMMENT_WORDS;
+  for (const forbiddenWord of forbidden) {
     if (comment.toLowerCase().includes(forbiddenWord.toLowerCase())) {
       throw new Error(`Public comment contains forbidden word: "${forbiddenWord}"`);
     }

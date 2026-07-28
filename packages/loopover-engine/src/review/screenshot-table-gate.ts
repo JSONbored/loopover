@@ -1,4 +1,4 @@
-import { matchesAny } from "../signals/change-guardrail.js";
+import { matchesAnyWithExclusions } from "../signals/change-guardrail.js";
 import type { ScreenshotTableGateAction, ScreenshotTableGateConfig } from "../types/manifest-deps-types.js";
 
 export type { ScreenshotTableGateAction, ScreenshotTableGateConfig } from "../types/manifest-deps-types.js";
@@ -174,7 +174,12 @@ export function hasCommittedImageFile(changedFiles: string[], scopedPaths: strin
   return changedFiles.some((file) => {
     const lower = file.toLowerCase();
     if (!IMAGE_EXTENSIONS.some((ext) => lower.endsWith(ext))) return false;
-    return scopedPaths.length === 0 || matchesAny(file, scopedPaths);
+    // #9434: exclusion-aware, so an operator can scope "this directory except these generated files"
+    // (e.g. "apps/loopover-ui/public/**" minus "!apps/loopover-ui/public/openapi.json") instead of being
+    // forced to enumerate every safe subpath. Must stay the SAME matcher isScreenshotTableGateInScope uses
+    // below -- both read config.whenPaths, and disagreeing on which paths count as "scoped" would make a
+    // path excluded from gate SCOPE still count as a stray committed image, or vice versa.
+    return scopedPaths.length === 0 || matchesAnyWithExclusions(file, scopedPaths);
   });
 }
 
@@ -312,7 +317,8 @@ export function isScreenshotTableGateInScope(config: ScreenshotTableGateConfig, 
   if (config.whenLabels.length === 0 && config.whenPaths.length === 0) return true;
   const wantedLabels = new Set(config.whenLabels.map((label) => label.toLowerCase()));
   const labelMatch = config.whenLabels.length > 0 && prLabels.some((label) => wantedLabels.has(label.toLowerCase()));
-  const pathMatch = config.whenPaths.length > 0 && changedFiles.some((file) => matchesAny(file, config.whenPaths));
+  // #9434: exclusion-aware -- see hasCommittedImageFile's own comment on why the two must share one matcher.
+  const pathMatch = config.whenPaths.length > 0 && changedFiles.some((file) => matchesAnyWithExclusions(file, config.whenPaths));
   return labelMatch || pathMatch;
 }
 

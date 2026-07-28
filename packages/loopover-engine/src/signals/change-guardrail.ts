@@ -117,6 +117,47 @@ export function matchesAny(path: string, globs: string[]): boolean {
 }
 
 /**
+ * #9434: `matchesAny` is deliberately positive-only — there is no way to say "this directory, except these
+ * generated files" without enumerating every safe subpath by hand. That gap is exactly what let
+ * `apps/loopover-ui/public/**` (a directory that is overwhelmingly non-visual: a generated openapi.json,
+ * robots.txt, sitemap.xml, favicons) sit in a screenshotTableGate `whenPaths` list and auto-close 5
+ * contributor PRs one-shot for regenerating a JSON spec file, with zero recovery — a one-shot close has none.
+ * Confirmed the identical glob shape independently present in two sibling repos' private configs.
+ *
+ * A glob prefixed with `!` here is an EXCLUSION: a path counts as matched only if it hits at least one
+ * INCLUDE glob and hits NO exclude glob. This is deliberately a SEPARATE function, not a change to
+ * `matchesAny` itself — `matchesAny` is also the hard-guardrail matcher, where an unrecognized/malformed
+ * glob shape failing towards "still matches" is the safety-correct default (see its own doc comment); adding
+ * `!`-parsing there would mean a maintainer's literal path starting with `!` (rare, but not impossible) is
+ * silently reinterpreted as an exclusion instead of guarding it. This function is opt-in for callers that
+ * explicitly want exclusion semantics (today: the screenshotTableGate `whenPaths` scope check) and leaves
+ * every existing `matchesAny` caller — including hardGuardrailGlobs — byte-identical.
+ *
+ * The INCLUDE half reuses `matchesAny` unchanged, so an over-complex include glob keeps its existing
+ * fail-toward-matching default. The EXCLUDE half deliberately does NOT reuse `matchesAny` for this: failing
+ * an unsafe glob toward "matches" is safe for an include (worst case, more paths are considered in scope) but
+ * WRONG for an exclude (an over-complex exclude glob resolving to "matches everything" would silently widen
+ * what gets excluded, shrinking a safety gate's coverage — the opposite failure direction from what the gate
+ * exists for). The exclude half therefore compiles each glob with `globToRegExp` directly, whose own
+ * NEVER_MATCHES fallback for an unsafe glob is exactly right here: a malformed/pathological exclude excludes
+ * NOTHING rather than excluding everything, so gate coverage can only ever be too WIDE from a bad exclude
+ * glob, never too narrow.
+ */
+export function matchesAnyWithExclusions(path: string, globs: string[]): boolean {
+  const includes: string[] = [];
+  const excludes: string[] = [];
+  for (const glob of globs) {
+    if (glob.startsWith("!") && glob.length > 1) excludes.push(glob.slice(1));
+    else includes.push(glob);
+  }
+  if (includes.length === 0) return false;
+  if (!matchesAny(path, includes)) return false;
+  if (excludes.length === 0) return true;
+  const canonicalPath = canonicalize(path);
+  return !excludes.some((exclude) => globToRegExp(exclude).test(canonicalPath));
+}
+
+/**
  * The changed paths (if any) that trip a hard guardrail. A non-empty result means the PR touches a guarded
  * path and MUST fall through to a human — loopover may neither auto-merge nor auto-close it. Pure.
  */

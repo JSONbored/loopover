@@ -172,6 +172,17 @@ describe("isScreenshotTableGateInScope", () => {
   it("only whenPaths configured (whenLabels empty) -- scope decided purely by path", () => {
     expect(isScreenshotTableGateInScope(config({ whenPaths: ["apps/ui/**"] }), ["frontend"], ["src/api/routes.ts"])).toBe(false);
   });
+
+  // #9434: "apps/loopover-ui/public/**" auto-closed 5 contributor PRs one-shot for regenerating a generated
+  // openapi.json -- the directory is overwhelmingly non-visual, and the old matcher had no way to exclude the
+  // one generated file inside it without dropping the whole directory from scope (which is what the loopover/
+  // metagraphed/awesome-claude private configs all did as the actual fix). This pins the alternative: an
+  // operator CAN keep the directory in scope and carve out just the generated file.
+  it("REGRESSION (#9434): a whenPaths exclusion carves a generated file out of an otherwise-visual directory", () => {
+    const cfg = config({ whenPaths: ["apps/ui/public/**", "!apps/ui/public/openapi.json"] });
+    expect(isScreenshotTableGateInScope(cfg, [], ["apps/ui/public/openapi.json"])).toBe(false);
+    expect(isScreenshotTableGateInScope(cfg, [], ["apps/ui/public/favicon.ico"])).toBe(true);
+  });
 });
 
 describe("normalizeScreenshotTableGateConfig", () => {

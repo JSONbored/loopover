@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { changedPathsHittingGuardrail, globToRegExp, GUARDRAIL_UNVERIFIABLE_FILE_COUNT, guardrailPathMatches, isGuardrailHit, matchesAny } from "../../src/signals/change-guardrail";
+import { changedPathsHittingGuardrail, globToRegExp, GUARDRAIL_UNVERIFIABLE_FILE_COUNT, guardrailPathMatches, isGuardrailHit, matchesAny, matchesAnyWithExclusions } from "../../src/signals/change-guardrail";
 
 describe("globToRegExp (the exported compiler itself — must be safe for ANY direct caller, not just matchesAny)", () => {
   it("compiles an ordinary glob to a working anchored RegExp", () => {
@@ -210,5 +210,64 @@ describe("configured hard-guardrail glob examples", () => {
     for (const p of ["src/utils/json.ts", "README.md", "anything/at/all.txt"]) {
       expect(matchesAny(p, ["**"])).toBe(true);
     }
+  });
+});
+
+// #9434: matchesAny is positive-only, and that gap let "apps/loopover-ui/public/**" (overwhelmingly
+// non-visual: a generated openapi.json, robots.txt, sitemap.xml, favicons) sit in a screenshotTableGate
+// whenPaths list and auto-close 5 contributor PRs one-shot for regenerating a JSON spec file. There was no
+// way to say "this directory except these generated files" without enumerating every safe subpath.
+describe("matchesAnyWithExclusions (#9434)", () => {
+  it("REGRESSION: excludes a specific file from an otherwise-matching directory glob — the metagraphed#8038-adjacent shape", () => {
+    const globs = ["apps/loopover-ui/public/**", "!apps/loopover-ui/public/openapi.json"];
+    expect(matchesAnyWithExclusions("apps/loopover-ui/public/openapi.json", globs)).toBe(false);
+    expect(matchesAnyWithExclusions("apps/loopover-ui/public/favicon.ico", globs)).toBe(true);
+  });
+
+  it("INVARIANT: with no exclusions at all, behaves identically to matchesAny", () => {
+    const globs = ["src/**", "apps/loopover-ui/src/**"];
+    for (const path of ["src/a.ts", "apps/loopover-ui/src/routes/x.tsx", "unrelated/file.md"]) {
+      expect(matchesAnyWithExclusions(path, globs)).toBe(matchesAny(path, globs));
+    }
+  });
+
+  it("INVARIANT: a path matching NO include glob is false, regardless of excludes", () => {
+    expect(matchesAnyWithExclusions("docs/readme.md", ["src/**", "!src/generated/**"])).toBe(false);
+  });
+
+  it("INVARIANT: excludes with no includes at all never match anything — an all-exclude list is not an implicit wildcard include", () => {
+    expect(matchesAnyWithExclusions("src/a.ts", ["!src/generated/**"])).toBe(false);
+    expect(matchesAnyWithExclusions("anything/at/all.ts", ["!**"])).toBe(false);
+  });
+
+  it("INVARIANT: multiple excludes all apply — matching ANY exclude removes the path", () => {
+    const globs = ["src/**", "!src/generated/**", "!src/vendor/**"];
+    expect(matchesAnyWithExclusions("src/generated/x.ts", globs)).toBe(false);
+    expect(matchesAnyWithExclusions("src/vendor/y.ts", globs)).toBe(false);
+    expect(matchesAnyWithExclusions("src/real/z.ts", globs)).toBe(true);
+  });
+
+  it("INVARIANT: a bare '!' with nothing after it is treated as a literal include glob, not a malformed exclusion", () => {
+    // length > 1 guard: "!" alone can't be sliced into a meaningful exclude pattern, so it stays an include
+    // (and, being an unusual literal, simply won't match real paths -- never silently swallowed).
+    expect(matchesAnyWithExclusions("!", ["!"])).toBe(true);
+  });
+
+  it("SECURITY (ReDoS): an exclude glob is bound by the SAME wildcard cap as an include -- it cannot smuggle in a pathological pattern", () => {
+    const pathological = "!src/*-*-*-final.ts"; // 3 wildcard groups, over the safety cap
+    const adversarialPath = "src/" + "a-".repeat(2000) + "X";
+    const start = Date.now();
+    // hasUnsafeWildcardCount rejects it (NEVER_MATCHES for the exclude half), so it excludes nothing --
+    // fails toward STILL SHOWING the path as matched (the include), not toward silently hiding it.
+    const result = matchesAnyWithExclusions(adversarialPath, ["src/**", pathological]);
+    expect(Date.now() - start).toBeLessThan(1000);
+    expect(result).toBe(true);
+  });
+
+  it("REGRESSION: the exact live shape — a directory scope with one generated-file exclusion — matches the fix applied to loopover/metagraphed/awesome-claude's private config", () => {
+    const globs = ["apps/ui/src/components/**", "apps/ui/src/routes/**", "apps/ui/src/styles.css", "apps/ui/public/**", "!apps/ui/public/openapi.json"];
+    expect(matchesAnyWithExclusions("apps/ui/public/openapi.json", globs)).toBe(false);
+    expect(matchesAnyWithExclusions("apps/ui/src/components/Button.tsx", globs)).toBe(true);
+    expect(matchesAnyWithExclusions("apps/ui/public/logo.svg", globs)).toBe(true);
   });
 });

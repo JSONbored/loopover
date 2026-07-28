@@ -620,7 +620,7 @@ groups:
         annotations:
           summary: "loopover AI provider {{ $labels.provider }} credential is being rejected"
           description: "Provider {{ $labels.provider }} returned {{ $value | printf \"%.0f\" }} auth failure(s) in 15m (sustained 5m). The credential is invalid or expired — this will not recover on its own."
-          runbook: "Rotate the credential: `./scripts/rotate-secret.sh claude_code_oauth_token` (or the loopover_admin_rotate_secret MCP tool). No restart is needed — the token is re-read per AI call. Confirm recovery via loopover_ai_provider_failure_reason_total{reason=\"credential_invalid\"} going flat."
+          runbook: "Rotate the credential by writing the new value into its secret file (e.g. /run/secrets/claude_code_oauth_token) as a BARE value — no comments, no trailing prose. No restart is needed: resolveClaudeOauthToken (#9543) re-reads the file on every AI call, and an empty or unreadable file falls back to the last known good value rather than dropping a working credential mid-rewrite. Confirm recovery by watching the credential_invalid series in loopover_ai_provider_failure_reason_total go flat."
 
       - alert: LoopoverAiProviderQuotaExhausted
         # A 429: the credential is fine, the plan's limit is spent. Rotating it changes NOTHING, so this is a

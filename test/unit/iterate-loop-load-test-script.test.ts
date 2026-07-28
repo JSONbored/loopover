@@ -9,7 +9,7 @@ import {
   formatLoadTestReport,
   runConcurrencyLevel,
   runLoadTest,
-} from "../../packages/loopover-engine/scripts/load-test-iterate-loop.mjs";
+} from "../../packages/loopover-engine/scripts/load-test-iterate-loop";
 
 describe("iterate-loop load-test script (#5224)", () => {
   it("the fake driver never spawns a real subprocess and resolves a scripted ok result after the configured latency", async () => {
@@ -76,7 +76,7 @@ describe("iterate-loop load-test script (#5224)", () => {
   });
 
   it("runs end-to-end as a CLI script and prints the report header plus every default concurrency level", () => {
-    const result = spawnSync(process.execPath, ["packages/loopover-engine/scripts/load-test-iterate-loop.mjs"], {
+    const result = spawnSync(process.execPath, ["--experimental-strip-types", "packages/loopover-engine/scripts/load-test-iterate-loop.ts"], {
       cwd: process.cwd(),
       encoding: "utf8",
     });

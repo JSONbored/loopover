@@ -14,7 +14,7 @@ mirrors; #5224 is the AMS-side counterpart this harness was built for.
 npm run loadtest:iterate-loop
 # or, from a workspace checkout, after building the engine:
 npm --workspace @loopover/engine run build
-node packages/loopover-engine/scripts/load-test-iterate-loop.mjs
+node --experimental-strip-types packages/loopover-engine/scripts/load-test-iterate-loop.ts
 ```
 
 This prints a short text report to stdout and exits `0`. It does not fail the build or a CI job on its own

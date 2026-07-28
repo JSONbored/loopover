@@ -1,6 +1,24 @@
 #!/usr/bin/env node
 import { performance } from "node:perf_hooks";
-import { parseFocusManifest, runIterateLoop } from "../dist/index.js";
+import {
+  parseFocusManifest,
+  runIterateLoop,
+  type IterateLoopInput,
+  type IterateLoopDeps,
+  type CodingAgentExecutionMode,
+  type CodingAgentDriverTask,
+  type CodingAgentDriverResult,
+} from "../dist/index.js";
+
+/** A driver implementing only `run()` -- the single member iterate-loop's own dependency injection
+ *  calls -- rather than the full CodingAgentDriver interface, which this harness never otherwise
+ *  touches. The task/result shapes themselves are the real CodingAgentDriverTask/Result types, not
+ *  narrowed, so a caller building a full realistic task (as the test double coverage below does)
+ *  gets real type checking on it. */
+type FakeLoadTestDriver = { run: (task: CodingAgentDriverTask) => Promise<CodingAgentDriverResult> };
+type ConcurrencyLevelOptions = { attemptCount?: number; latencyMs?: number };
+type ConcurrencyLevelResult = { concurrency: number; attemptCount: number; latencyMs: number; wallMs: number; handoffCount: number; attemptsPerSecond: number };
+type LoadTestOptions = ConcurrencyLevelOptions & { levels?: number[] };
 
 // Load-testing harness for the AMS iterate-loop orchestrator (#5224): every existing iterate-loop test is
 // correctness-oriented (single attempt, fake driver returns instantly), so there is no signal today for how
@@ -20,7 +38,7 @@ const SYNTHETIC_ISSUE_NUMBER = 7;
 /** One open issue per synthetic tenant repo, matching that tenant's own `passesPredictedGate` linkage below --
  *  each tenant is a fully independent repo/contributor pair (`buildSelfReviewPredictedGateInput`'s own identity
  *  fields), the same "multi-tenant-like" shape the issue's Problem section asks this harness to load-test. */
-function buildReviewContext(tenantRepoFullName) {
+function buildReviewContext(tenantRepoFullName: string) {
   return {
     manifest: parseFocusManifest({ gate: { duplicates: "block", linkedIssue: "advisory" } }),
     repo: { fullName: tenantRepoFullName, owner: tenantRepoFullName.split("/")[0], name: tenantRepoFullName.split("/")[1], isInstalled: true, isRegistered: true, isPrivate: false },
@@ -33,7 +51,7 @@ function buildReviewContext(tenantRepoFullName) {
  *  it resolves after `latencyMs` (simulating the wall-clock an iteration of a real coding-agent invocation
  *  would take) with a scripted, always-passing result. `latencyMs` uses a real `setTimeout`, not a busy-loop, so
  *  concurrent attempts genuinely interleave on the event loop the way concurrent live attempts would. */
-export function buildFakeLoadTestDriver(latencyMs) {
+export function buildFakeLoadTestDriver(latencyMs: number): FakeLoadTestDriver {
   return {
     async run(task) {
       await new Promise((resolve) => setTimeout(resolve, latencyMs));
@@ -48,15 +66,16 @@ const NOOP_SLOP_ASSESSMENT = { slopRisk: 0, band: "clean", findings: [] };
  *  issue that matches on the first iteration, so every attempt hands off in exactly one iteration -- isolating
  *  the measurement to iterate-loop's own per-attempt orchestration overhead rather than varying iteration counts
  *  across runs. */
-async function runOneAttempt(tenantIndex, driver) {
+async function runOneAttempt(tenantIndex: number, driver: FakeLoadTestDriver) {
   const repoFullName = `load-test-tenant-${tenantIndex}/repo`;
   const attemptId = `attempt-${tenantIndex}`;
+  const mode: CodingAgentExecutionMode = "live";
   const input = {
     attemptId,
     workingDirectory: `/tmp/${attemptId}`,
     acceptanceCriteriaPath: `/tmp/${attemptId}/acceptance-criteria.json`,
     instructions: "Synthetic load-test instructions",
-    mode: "live",
+    mode,
     maxIterations: 3,
     maxTurnsPerIteration: 20,
     repoFullName,
@@ -66,12 +85,16 @@ async function runOneAttempt(tenantIndex, driver) {
     linkedIssues: [SYNTHETIC_ISSUE_NUMBER],
     reviewContext: buildReviewContext(repoFullName),
     rejectionSignaled: false,
-  };
+  } as IterateLoopInput;
+  // FakeLoadTestDriver only implements the single `run()` member iterate-loop actually calls, not
+  // the full CodingAgentDriver interface -- deliberately narrow, matching this package's existing
+  // injection-seam convention of typing a test/harness double to the minimal surface exercised
+  // rather than the full production interface.
   const deps = {
     driver,
     runSlopAssessment: () => NOOP_SLOP_ASSESSMENT,
     appendAttemptLogEvent: () => {},
-  };
+  } as IterateLoopDeps;
   const start = performance.now();
   const result = await runIterateLoop(input, deps);
   return { elapsedMs: performance.now() - start, result };
@@ -83,13 +106,13 @@ async function runOneAttempt(tenantIndex, driver) {
  * to hand off after its first iteration (see {@link runOneAttempt}) -- a non-`"handoff"` outcome or a driver
  * error would silently understate real concurrent load, so both are counted and surfaced rather than ignored.
  */
-export async function runConcurrencyLevel(concurrency, options = {}) {
+export async function runConcurrencyLevel(concurrency: number, options: ConcurrencyLevelOptions = {}): Promise<ConcurrencyLevelResult> {
   const attemptCount = options.attemptCount ?? DEFAULT_ATTEMPTS_PER_LEVEL;
   const latencyMs = options.latencyMs ?? DEFAULT_SIMULATED_DRIVER_LATENCY_MS;
   const driver = buildFakeLoadTestDriver(latencyMs);
 
   const start = performance.now();
-  const outcomes = [];
+  const outcomes: Awaited<ReturnType<typeof runOneAttempt>>[] = [];
   for (let batchStart = 0; batchStart < attemptCount; batchStart += concurrency) {
     const batchSize = Math.min(concurrency, attemptCount - batchStart);
     const batch = await Promise.all(
@@ -112,9 +135,9 @@ export async function runConcurrencyLevel(concurrency, options = {}) {
 
 /** Run every concurrency level in `levels` in sequence (never overlapping each other), so one level's
  *  scheduling contention never bleeds into the next level's measurement. */
-export async function runLoadTest(options = {}) {
+export async function runLoadTest(options: LoadTestOptions = {}): Promise<ConcurrencyLevelResult[]> {
   const levels = options.levels ?? DEFAULT_CONCURRENCY_LEVELS;
-  const results = [];
+  const results: ConcurrencyLevelResult[] = [];
   for (const concurrency of levels) {
     results.push(await runConcurrencyLevel(concurrency, options));
   }
@@ -122,7 +145,7 @@ export async function runLoadTest(options = {}) {
 }
 
 /** Render load-test results as a stable, greppable text report (no locale-dependent number formatting). */
-export function formatLoadTestReport(results) {
+export function formatLoadTestReport(results: ConcurrencyLevelResult[]): string {
   const lines = ["iterate-loop load test", ""];
   for (const r of results) {
     lines.push(

@@ -51,7 +51,7 @@ fleet run-manifest).
 2. Run the harness from the repo root:
 
    ```bash
-   node packages/loopover-miner/scripts/cross-repo-evaluation.mjs
+   node --experimental-strip-types packages/loopover-miner/scripts/cross-repo-evaluation.ts
    ```
 
    Useful flags:
@@ -70,7 +70,7 @@ the coding agent runs against a synthetic benchmark issue inside that copy, and 
 test commands are executed there. The scratch tree is removed afterward in every outcome — execute-locally-and-discard.
 
 ```bash
-node packages/loopover-miner/scripts/cross-repo-evaluation.mjs --full-execution
+node --experimental-strip-types packages/loopover-miner/scripts/cross-repo-evaluation.ts --full-execution
 ```
 
 Prerequisites beyond the readiness mode: a configured coding-agent provider (`MINER_CODING_AGENT_PROVIDER`, see
@@ -93,7 +93,7 @@ defaults to `DEFAULT_CROSS_REPO_EXECUTION_MAX_TURNS` (24).
 
 ## Library API
 
-Pure functions live in [`lib/cross-repo-evaluation.js`](../lib/cross-repo-evaluation.js):
+Pure functions live in [`lib/cross-repo-evaluation.ts`](../lib/cross-repo-evaluation.ts):
 
 - `parseCrossRepoEvaluationManifest(content)`
 - `evaluateRepoReadiness(entry, options)` — inject `existsSync`, `detectRepoStack`, etc. for unit tests

@@ -375,7 +375,7 @@ describe("prompt-drift is an automatic cache miss (#9477)", () => {
 
   it("REGRESSION: the prompt VERSION participates too, so a deliberate bump also invalidates", async () => {
     const before = await aiReviewCacheInputFingerprint(baseInput());
-    const spy = vi.spyOn(aiReviewModule, "REVIEW_PROMPT_VERSION", "get").mockReturnValue("review-prompt-v2" as typeof aiReviewModule.REVIEW_PROMPT_VERSION);
+    const spy = vi.spyOn(aiReviewModule, "REVIEW_PROMPT_VERSION", "get").mockReturnValue("review-prompt-v99" as typeof aiReviewModule.REVIEW_PROMPT_VERSION);
     try {
       expect(await aiReviewCacheInputFingerprint(baseInput())).not.toBe(before);
     } finally {

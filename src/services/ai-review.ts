@@ -96,12 +96,12 @@ export const REVIEW_SYSTEM_PROMPT = [
   "- assessment: a substantive but CONCISE summary (2-4 sentences) — what the change does, whether it is correct, and the most notable detail. Specific to THIS diff; never a generic one-liner and never hedging ('appears to', 'seems to').",
   "The assessment field is REQUIRED and must never be empty; if blockers is [] then the assessment still summarizes why the visible diff is safe enough to proceed.",
   "- blockers: each ONE sentence naming a defect that WILL break the code as written — a missing import/symbol (ReferenceError), a logic error that produces wrong output, a security hole, data loss, a build/test breakage, an API/contract break, or a genuine algorithmic-complexity/performance regression introduced by the diff (e.g. a DB query or network call moved inside a loop creating an N+1 pattern, an unbounded loop/fanout over input whose size is not capped). Reference the file (and function/line). Empty [] if there are genuinely none.",
-  "- confidence: a single number in [0,1] — your CALIBRATED probability that the blockers above are REAL, must-fix defects (not false positives). Use 1.0 only when you are certain the diff itself breaks; use 0.5 for a genuine coin-flip; lower it when you cannot fully see the breaking code or the defect is speculative. When blockers is empty, set confidence to 1.0.",
+  "- confidence: a single number in [0,1] — your CALIBRATED probability that the blockers above are REAL, must-fix defects (not false positives). Use 1.0 only when you are certain the diff itself breaks; use 0.5 for a genuine coin-flip; lower it when you cannot fully see the breaking code or the defect is speculative. If you genuinely CANNOT judge whether your blockers are real (context you cannot see would decide it), set confidence to the string \"unknown\" instead of guessing a number — an honest abstention routes the decision to a human instead of gambling it. When blockers is empty, set confidence to 1.0.",
   "- nits: each ONE sentence — a NON-blocking point: style, naming, a missing doc, or DEFENSIVE hardening ('should handle the empty case', 'consider catching errors', 'add validation'). File-reference where you can.",
   "- suggestions: a few concrete, file-referenced improvements (may overlap nits).",
   "BE SELECTIVE — report only the findings that genuinely matter. List at MOST ~3 blockers and ~5 nits, keeping only the most important; prefer signal over volume and do NOT pad the lists.",
   "DEDUPLICATE — if the same kind of issue recurs across several functions or lines, report it ONCE and note it applies broadly; never repeat a near-identical finding per occurrence.",
-  "SEVERITY DISCIPLINE — defensive or speculative hardening ('should handle X', 'consider validating', 'add error handling') is a NIT, not a blocker, UNLESS a real input WILL actually trigger the failure. CI or check status itself (failing, pending, unverified) is NOT a code defect — never list it (the gate evaluates CI separately).",
+  "SEVERITY DISCIPLINE — defensive or speculative hardening ('should handle X', 'consider validating', 'add error handling') is a NIT, not a blocker, UNLESS a real input WILL actually trigger the failure. CI or check status itself (failing, pending, unverified) is NOT a code defect — never list it (the gate evaluates CI separately). The same applies to the SUBMISSION's shape: PR size ('too large', 'should be split'), base-branch staleness ('behind main', 'needs a rebase'), and merge-conflict state are all decided deterministically by the gate — never list any of them as a blocker.",
   "PERFORMANCE SEVERITY — a performance concern is a blocker ONLY when the diff introduces a genuine, visible regression with a concrete trigger (a DB query or network call moved inside a loop, a loop/fanout over input whose size the diff removed a bound on). A stylistic or micro-optimization preference ('could use a Map instead of an array', 'this could be slightly faster') is a NIT, not a blocker, even if real.",
   "DIFF SCOPE — the diff shows only CHANGED lines, NOT whole files. A function, variable, import, type, or symbol you do not SEE may already be defined or imported elsewhere in the same file/module. NEVER report a 'missing import', 'undefined/not-imported symbol', or 'X is not defined -> ReferenceError' as a blocker unless the diff ITSELF removes the definition or introduces the symbol without defining it anywhere shown. When you cannot confirm a symbol is missing from the visible diff, it is NOT a blocker — at most a nit ('verify X is imported/defined').",
   "TRACE BEFORE ASSERTING ABSENCE — this rule extends to ANY 'X is missing' blocker (a missing schema/annotation/field, a missing null/array/type guard, a missing await/error-handler, an unregistered route/tool/handler): a backfill loop, a default, an early guard, or a registration ELSEWHERE may already supply it. Before calling absence a blocker, find the line in the visible context that WOULD break and reference it; if you cannot SEE the breaking code, downgrade to a nit phrased as a verification ('confirm X is registered/guarded'), never a blocker.",
@@ -852,7 +852,10 @@ export const CONFIDENCE_WHEN_UNSTATED = 0.5;
 
 /** Coerce a model's `confidence` field to a calibrated value in [0,1] (#8). A finite number is clamped into
  *  range; anything else (absent, NaN/±Infinity — which JSON can't even encode — string, etc.) falls back to
- *  {@link CONFIDENCE_WHEN_UNSTATED} — silence is not certainty (#8833). PURE. */
+ *  {@link CONFIDENCE_WHEN_UNSTATED} — silence is not certainty (#8833). This is also what makes the rubric's
+ *  EXPLICIT `"confidence": "unknown"` abstention (#8833) work: the string lands here, maps to 0.5, and 0.5
+ *  sits below every sane close floor, so an honest "I cannot judge" routes to the low-confidence disposition
+ *  (default hold_for_review — a human decides) rather than a guessed verdict. PURE. */
 export function parseReviewConfidence(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value))
     return CONFIDENCE_WHEN_UNSTATED;
@@ -960,6 +963,58 @@ export function demoteTestEvidenceAbsenceBlockers(review: ModelReview, prHasTest
  *  test-evidence section can never disagree about the fact. PURE. */
 export function prHasTestPathEvidence(files: ReadonlyArray<{ path: string }> | null | undefined): boolean {
   return (files ?? []).some((file) => Boolean(file.path) && isTestPath(file.path));
+}
+
+/** #8833: a whole-PR SIZE claim — "this PR is too large / should be split into smaller PRs / too many files
+ *  changed". PR size gating is configuration-owned (`sizeGateMode` -> the deterministic `oversized_pr`
+ *  finding): a repo that turned the size gate off decided size does not block, and a repo that turned it on
+ *  already gets the deterministic finding — either way the model must never be the one to close on it.
+ *
+ *  Anchored on a PR/changeset noun so a genuine CODE judgment about magnitude ("this buffer is too large",
+ *  "the response payload is too big") never matches — the ban covers claims about the SUBMISSION's size,
+ *  not about sizes in the code under review. */
+export const SIZE_CLAIM_PATTERN =
+  /\b(?:pr|pull\s+request|change\s*set|diff|commit)\b[^.]{0,40}\b(?:too\s+(?:large|big|broad)|oversized|excessively\s+large)\b|\b(?:too\s+(?:large|big|broad)|oversized)\b[^.]{0,40}\b(?:pr|pull\s+request|change\s*set)\b|\b(?:should|could|must|needs?\s+to)\s+be\s+(?:split|broken)\s+(?:up\s+)?into\s+(?:smaller|multiple|separate)\s+(?:prs?|pull\s+requests?|commits?|changes?)\b|\btoo\s+many\s+(?:files?|changes?)\s+(?:changed|touched|modified|in\s+(?:this|a|one)\s+(?:pr|pull\s+request|commit))\b/i;
+
+/** #8833: deterministically demote whole-PR size blockers to nits, mirroring {@link demoteCiClaimBlockers}
+ *  exactly (unconditional: the deterministic owner exists regardless of repo configuration). PURE. */
+export function demoteSizeClaimBlockers(review: ModelReview): { review: ModelReview; demoted: string[] } {
+  const demoted = review.blockers.filter((blocker) => SIZE_CLAIM_PATTERN.test(blocker));
+  if (demoted.length === 0) return { review, demoted };
+  return {
+    review: {
+      ...review,
+      blockers: review.blockers.filter((blocker) => !SIZE_CLAIM_PATTERN.test(blocker)),
+      nits: [...review.nits, ...demoted.map((claim) => `${claim} (demoted: PR size is gated deterministically by sizeGateMode, not by review)`)],
+    },
+    demoted,
+  };
+}
+
+/** #8833: a base-STALENESS / rebase / merge-conflict claim — "branch is behind main", "needs a rebase",
+ *  "has merge conflicts with the base". All three facts have deterministic owners the gate already reads
+ *  (`fetchBaseAheadBy` -> `stale_base_ref`; GitHub's own `mergeable_state` for conflicts), and none of them
+ *  is visible in a diff at all — a model asserting them is inventing repository state.
+ *
+ *  Deliberately claim-shaped: "handle merge conflicts in this resolver" (code ABOUT conflicts) or "the
+ *  rebase logic here" (code ABOUT rebasing) never match — the ban needs the assertion shape ("has merge
+ *  conflicts", "needs a rebase", "branch is behind"). */
+export const STALE_BASE_CLAIM_PATTERN =
+  /\b(?:branch|pr|pull\s+request|head)\b[^.]{0,30}\b(?:is|was|are|has\s+(?:fallen|gotten))\s+(?:\w+\s+)?(?:behind|out\s+of\s+date|outdated|stale)\b|\bneeds?\s+(?:a\s+|to\s+be\s+)?rebas(?:e|ed|ing)\b|\brebase\s+(?:is\s+)?(?:needed|required)\b|\b(?:has|have|contains?)\s+merge\s+conflicts?\b|\bmerge\s+conflicts?\s+(?:with|against)\s+(?:the\s+)?(?:base|main|master|target|trunk|default\s+branch)\b/i;
+
+/** #8833: deterministically demote base-staleness/rebase/conflict blockers to nits — same shape and
+ *  unconditional arming as {@link demoteSizeClaimBlockers}. PURE. */
+export function demoteStaleBaseClaimBlockers(review: ModelReview): { review: ModelReview; demoted: string[] } {
+  const demoted = review.blockers.filter((blocker) => STALE_BASE_CLAIM_PATTERN.test(blocker));
+  if (demoted.length === 0) return { review, demoted };
+  return {
+    review: {
+      ...review,
+      blockers: review.blockers.filter((blocker) => !STALE_BASE_CLAIM_PATTERN.test(blocker)),
+      nits: [...review.nits, ...demoted.map((claim) => `${claim} (demoted: base staleness and merge-conflict state are decided deterministically by the gate, not by review)`)],
+    },
+    demoted,
+  };
 }
 
 /** Parse a model's JSON review into a normalized {@link ModelReview}, or null when unparseable. */
@@ -1302,7 +1357,7 @@ const IMPROVEMENT_SIGNAL_SUFFIX =
  *  that shapes the judge's verdict surface — REVIEW_SYSTEM_PROMPT, buildSystemPrompt's suffix composition,
  *  or parseModelReview's accepted output shape. The CI replay compares base vs head canonical prompts and
  *  only spends when the version (or the canonical text) actually changed. */
-export const REVIEW_PROMPT_VERSION = "review-prompt-v1";
+export const REVIEW_PROMPT_VERSION = "review-prompt-v2"; // v2 (#8833): size/stale-base adjudication ban + explicit "unknown" confidence abstention
 
 /** #8222: the CANONICAL judge prompt — buildSystemPrompt with every optional suffix absent, which is the
  *  exact base-model system prompt a default-configured repo's review runs under. The replay harness diffs
@@ -1588,7 +1643,11 @@ async function runWorkersOpinion(
         const evidenceDemotion = demotion ? demoteEvidenceAbsenceBlockers(demotion.review, bodyTruncated) : null;
         // #8833: same guarantee for whole-PR test-absence claims the path classifier already contradicts.
         const testEvidenceDemotion = evidenceDemotion ? demoteTestEvidenceAbsenceBlockers(evidenceDemotion.review, prHasTestEvidence) : null;
-        const parsed = testEvidenceDemotion?.review ?? null;
+        // #8833: same guarantee for submission-size claims (owned by sizeGateMode/oversized_pr) ...
+        const sizeDemotion = testEvidenceDemotion ? demoteSizeClaimBlockers(testEvidenceDemotion.review) : null;
+        // ... and for base-staleness/rebase/conflict claims (owned by stale_base_ref + mergeable_state).
+        const staleBaseDemotion = sizeDemotion ? demoteStaleBaseClaimBlockers(sizeDemotion.review) : null;
+        const parsed = staleBaseDemotion?.review ?? null;
         if (demotion && demotion.demoted.length > 0) {
           console.warn(JSON.stringify({ level: "warn", event: "ai_review_ci_claim_demoted", model, count: demotion.demoted.length }));
         }
@@ -1597,6 +1656,12 @@ async function runWorkersOpinion(
         }
         if (testEvidenceDemotion && testEvidenceDemotion.demoted.length > 0) {
           console.warn(JSON.stringify({ level: "warn", event: "ai_review_test_evidence_absence_demoted", model, count: testEvidenceDemotion.demoted.length }));
+        }
+        if (sizeDemotion && sizeDemotion.demoted.length > 0) {
+          console.warn(JSON.stringify({ level: "warn", event: "ai_review_size_claim_demoted", model, count: sizeDemotion.demoted.length }));
+        }
+        if (staleBaseDemotion && staleBaseDemotion.demoted.length > 0) {
+          console.warn(JSON.stringify({ level: "warn", event: "ai_review_stale_base_claim_demoted", model, count: staleBaseDemotion.demoted.length }));
         }
         if (parsed && parsed.assessment.trim() !== "") {
           diagnostics.push({ model, attempt, status: "parsed", responseChars: text.length, hasJsonObject: Boolean(extractLastJsonObject(text)), ...usageFields });
@@ -1989,7 +2054,16 @@ async function runProviderReview(
   if (providerTestEvidenceDemotion && providerTestEvidenceDemotion.demoted.length > 0) {
     console.warn(JSON.stringify({ level: "warn", event: "ai_review_test_evidence_absence_demoted", provider: providerKey.provider, count: providerTestEvidenceDemotion.demoted.length }));
   }
-  const review = providerTestEvidenceDemotion?.review ?? null;
+  // #8833: same size-claim and stale-base enforcement as the Workers path.
+  const providerSizeDemotion = providerTestEvidenceDemotion ? demoteSizeClaimBlockers(providerTestEvidenceDemotion.review) : null;
+  if (providerSizeDemotion && providerSizeDemotion.demoted.length > 0) {
+    console.warn(JSON.stringify({ level: "warn", event: "ai_review_size_claim_demoted", provider: providerKey.provider, count: providerSizeDemotion.demoted.length }));
+  }
+  const providerStaleBaseDemotion = providerSizeDemotion ? demoteStaleBaseClaimBlockers(providerSizeDemotion.review) : null;
+  if (providerStaleBaseDemotion && providerStaleBaseDemotion.demoted.length > 0) {
+    console.warn(JSON.stringify({ level: "warn", event: "ai_review_stale_base_claim_demoted", provider: providerKey.provider, count: providerStaleBaseDemotion.demoted.length }));
+  }
+  const review = providerStaleBaseDemotion?.review ?? null;
   return {
     review,
     diagnostic: {

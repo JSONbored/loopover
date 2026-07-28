@@ -7,10 +7,10 @@
 // 90 live routes had no spec entry, including every ORB management surface (/v1/orb/*,
 // /v1/internal/orb/*, fleet config-push, kill-switch, the DLQ admin quartet).
 //
-// The baseline is a RATCHET, not an allowlist: it may only shrink. A route removed from it can
-// never silently come back, and a NEW unspecced route fails immediately rather than joining a
-// growing pile. #9531 drives it to zero, at which point the file is deleted and this test keeps
-// enforcing the invariant with an empty set.
+// The baseline WAS a ratchet that could only shrink. #9531 drove it to zero and deleted the file;
+// what remains is the invariant it was protecting, now enforced absolutely: every live route has an
+// operation, and every operation has a live route. There is no longer anywhere to record an
+// exception, which is the point -- a new unspecced route fails immediately.
 import { describe, expect, it } from "vitest";
 import { createApp } from "../../src/api/routes";
 import { buildOpenApiSpec } from "../../src/openapi/spec";
@@ -21,9 +21,6 @@ import {
   listSpecRouteKeys,
   normalizeRoutePath,
 } from "../../src/openapi/route-inventory";
-import baseline from "../../src/openapi/unspecced-routes-baseline.json" with { type: "json" };
-
-const KNOWN_UNSPECCED = new Set<string>(baseline as string[]);
 
 describe("route inventory helpers", () => {
   it("rewrites Hono path params into OpenAPI form", () => {
@@ -62,41 +59,29 @@ describe("route inventory helpers", () => {
 describe("route↔spec ratchet", () => {
   const diff = diffRoutesAgainstSpec(listLiveRouteKeys(createApp() as never), listSpecRouteKeys(buildOpenApiSpec() as never));
 
-  it("describes every live route in the OpenAPI document, except the shrinking known-gap baseline", () => {
-    const newlyUnspecced = diff.missingFromSpec.filter((key) => !KNOWN_UNSPECCED.has(key));
+  it("describes every live route in the OpenAPI document", () => {
     expect(
-      newlyUnspecced,
-      `These routes exist in createApp() but have no OpenAPI operation. Register them through the spec ` +
-        `(see src/openapi/spec.ts) rather than adding them to src/openapi/unspecced-routes-baseline.json -- ` +
-        `that file may only shrink (#9531).`,
-    ).toEqual([]);
-  });
-
-  it("keeps the baseline honest: an entry that is now specced must be removed from it", () => {
-    // Without this, the baseline would quietly retain entries for routes someone specced along the
-    // way, and the "may only shrink" promise would be unverifiable -- the file would stop
-    // describing the real remaining work.
-    const stale = [...KNOWN_UNSPECCED].filter((key) => !diff.missingFromSpec.includes(key));
-    expect(
-      stale,
-      `These routes ARE now described in the OpenAPI document but are still listed in ` +
-        `src/openapi/unspecced-routes-baseline.json. Delete them from that file.`,
+      diff.missingFromSpec,
+      `These routes exist in createApp() but have no OpenAPI operation. Register them through the ` +
+        `seam (src/openapi/define-route.ts) -- there is no baseline to add them to (#9531).`,
     ).toEqual([]);
   });
 
   it("never publishes an operation for a route the app does not serve", () => {
     // Strictly worse than a missing entry: a generated client compiles a call that 404s at runtime.
-    // No baseline for this one -- it is zero today and must stay zero.
+    // This direction never had a baseline and caught two invented job routes during #9531 -- an
+    // assumption that every internal job had both an enqueue and a `/run` form, which two of them
+    // do not.
     expect(
       diff.missingFromApp,
       "These operations are in the OpenAPI document but no live route serves them.",
     ).toEqual([]);
   });
 
-  it("has a baseline that only contains real, currently-unspecced routes", () => {
-    expect(KNOWN_UNSPECCED.size).toBeGreaterThan(0);
-    for (const key of KNOWN_UNSPECCED) {
-      expect(key, `baseline entry is not a METHOD /path key`).toMatch(/^(GET|POST|PUT|PATCH|DELETE) \//);
-    }
+  it("describes a real, non-trivial surface -- so neither direction can pass by describing nothing", () => {
+    // Both assertions above are satisfied by two empty lists. This is what makes them mean
+    // something.
+    expect(listLiveRouteKeys(createApp() as never).length).toBeGreaterThan(200);
+    expect(listSpecRouteKeys(buildOpenApiSpec() as never).length).toBeGreaterThan(200);
   });
 });

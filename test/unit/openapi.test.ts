@@ -122,9 +122,11 @@ describe("OpenAPI contract", () => {
       "/v1/repos/{owner}/{repo}/maintainer-lane",
       "/v1/repos/{owner}/{repo}/pulls/{number}/review-intelligence",
       "/v1/repos/{owner}/{repo}/pulls/{number}/scoring-preview",
-      "/v1/internal/jobs/generate-signal-snapshots/run",
       "/v1/auth/extension/session",
       "/v1/extension/pull-context",
+      // #9531 removed "/v1/internal/jobs/generate-signal-snapshots/run" from this list: the route
+      // is LIVE (src/api/routes.ts registers it), so asserting the document must not describe it
+      // was asserting the document must stay wrong. It is specced now, like every other route.
     ]) {
       expect(spec.paths[removedPath]).toBeUndefined();
     }
@@ -333,8 +335,13 @@ describe("OpenAPI contract", () => {
       expect(propKeys(response)).toEqual(Object.keys(outputShape).sort());
     }
 
-    // request-apr-transfer is explicitly out of scope for this batch and must stay undocumented here.
-    expect(spec.paths["/v1/loop/request-apr-transfer"]).toBeUndefined();
+    // request-apr-transfer was out of scope for #9309's batch. #9531 documents every live route, so
+    // it is described now -- but deliberately WITHOUT the tool-parity request/response schemas the
+    // family above carries, because it has no MCP tool to be at parity with. Asserting that
+    // distinction is what this line is for now that "absent entirely" is no longer true of anything.
+    const aprTransfer = spec.paths["/v1/loop/request-apr-transfer"]?.post;
+    expect(aprTransfer?.operationId).toBe("requestAprTransfer");
+    expect(aprTransfer?.requestBody).toBeUndefined();
   });
 
   // #9308: the eight /v1/lint/* + /v1/validate/focus-manifest advisory-check routes are each backed by an MCP

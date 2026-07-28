@@ -1,4 +1,6 @@
 import { OpenApiGeneratorV3, OpenAPIRegistry } from "@asteasolutions/zod-to-openapi";
+import { registerOrbAndControlRouteSpecs } from "./orb-and-control-route-specs";
+import { registerInternalAndPublicRouteSpecs } from "./internal-and-public-route-specs";
 import { z } from "zod";
 import {
   AdvisorySchema,
@@ -2091,6 +2093,13 @@ export function buildOpenApiSpec() {
     },
   });
 
+  // #9531: the ORB ingress, the control-panel app surface, and the per-repo key/settings routes.
+  // Registered from their own module rather than inline here because each entry declares an auth
+  // level that DERIVES its security stanza, instead of having one bolted on afterwards by
+  // applySecurityMetadata's path-prefix guesswork.
+  registerOrbAndControlRouteSpecs(registry);
+  registerInternalAndPublicRouteSpecs(registry);
+
   const generator = new OpenApiGeneratorV3(registry.definitions);
   const document = generator.generateDocument({
     openapi: "3.0.3",
@@ -2123,6 +2132,20 @@ function applySecurityMetadata(document: GeneratedOpenApiDocument): GeneratedOpe
         in: "cookie",
         name: "loopover_session",
         description: "HttpOnly browser session cookie set by GitHub web OAuth.",
+      },
+      // #9531: the ORB ingress does not authenticate the way the rest of the API does, and the old
+      // path-prefix security model published it as needing no credential at all. It needs a
+      // different one.
+      OrbBearer: {
+        type: "http",
+        scheme: "bearer",
+        description: "ORB-issued instance token, minted by POST /v1/orb/token and presented by a self-hosted ORB instance on the relay endpoints. Not a LoopOver API token.",
+      },
+      OrbWebhookSignature: {
+        type: "apiKey",
+        in: "header",
+        name: "x-loopover-signature",
+        description: "HMAC signature over the raw request body, verified against the instance's shared secret. The webhook carries no bearer token.",
       },
     },
   };

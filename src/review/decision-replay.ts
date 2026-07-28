@@ -32,6 +32,22 @@
 // them is left to a follow-up widening this same input shape — documented here so the replay contract states
 // a narrower, honestly-achievable claim rather than an unqualified broad one.
 //
+// #9492 SCOPE UPDATE (narrowing the gap #9135's note left open): the recorded `clock` instant now reaches
+// EVERY clock-dependent read inside the maintenance decision pass, not just `maybeForceFreshRebase`. Newly
+// threaded: `activeMergeBlockedSha` (which feeds the plan AND the recorded reason code — previously a
+// SECOND, unrecorded `Date.now()` in the very pass that captures this instant), the account-age
+// `isNewAccount` derivation (which halves the contributor cap and can flip a cap close), and
+// `resolveUnlinkedIssueMatchDisposition`'s velocity exception (whose wall-clock gap chooses CLOSE vs HOLD).
+//
+// STILL LIVE-CLOCK, deliberately, and named here rather than left to be rediscovered:
+//   • The three `isBelowAccountAgeThreshold` callers OUTSIDE this pass (the PR-open cap check, the issue cap
+//     check, the issue webhook labeler). Each is its own pass with no captured instant and no replay record,
+//     so there is nothing to be consistent WITH; the seam exists on that helper for when one gains a record.
+//   • SQL-side `datetime('now', ?)` in src/review/submitter-reputation.ts — a class no JS-side clock seam can
+//     cover, since the instant is chosen by the database at statement time.
+//   • The precision-breaker flags, the live CI aggregate, and the global pause/freeze switches called out in
+//     the #9135 note above — unchanged, still unrecorded.
+//
 // A divergence is a bug BY DEFINITION (the pipeline is supposed to be deterministic): callers exit non-zero
 // and file it; there is no "close enough" outcome.
 import { evaluateGateCheck, type GateCheckPolicy } from "../rules/advisory";

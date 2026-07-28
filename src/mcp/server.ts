@@ -190,6 +190,10 @@ import {
   buildTestGenSpec,
   type LocalWriteActionSpec,
 } from "./local-write-tools";
+// #2315/#9492: buildSoftClaimSpec shipped in #2813 but was never registered as an MCP tool -- the exact
+// silently-dead-feature shape this audit's check-dead-source-files.ts now guards against. Wired up here,
+// following the identical local-write-tools pattern every sibling in this block already uses.
+import { buildSoftClaimSpec } from "../miner/soft-claim";
 import { buildTestEvidenceReport, classifyTestCoverage, hasLocalTestEvidence, isCodeFile, isTestPath, TEST_FRAMEWORKS } from "../signals/test-evidence";
 import { applyStepResult, buildPlanDag, nextReadySteps, planProgress, validatePlanDag, type PlanDag } from "../services/plan-dag";
 import { buildFocusManifestValidation } from "../services/focus-manifest-validation";
@@ -537,6 +541,14 @@ const postEligibilityCommentShape = {
   repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
   number: z.number().int().positive(),
   body: z.string().min(1).max(WRITE_TOOL_BODY_MAX),
+};
+// #2315/#9492: mirrors buildSoftClaimSpec's own input type exactly.
+const postSoftClaimShape = {
+  repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
+  number: z.number().int().positive(),
+  minerId: z.string().min(1).max(200),
+  claimedAt: z.string().datetime({ offset: true }),
+  expiresAt: z.string().datetime({ offset: true }).optional(),
 };
 const createBranchShape = { branch: z.string().min(1).max(WRITE_TOOL_BRANCH_MAX), base: z.string().min(1).max(WRITE_TOOL_BRANCH_MAX).optional() };
 const deleteBranchShape = { branch: z.string().min(1).max(WRITE_TOOL_BRANCH_MAX), remote: z.boolean().optional() };
@@ -2124,6 +2136,7 @@ export const MCP_TOOL_CATEGORIES: Record<string, McpToolCategory> = {
   loopover_file_issue: "agent",
   loopover_apply_labels: "agent",
   loopover_post_eligibility_comment: "agent",
+  loopover_post_soft_claim: "agent",
   loopover_create_branch: "agent",
   loopover_delete_branch: "agent",
   loopover_generate_tests: "agent",
@@ -2940,6 +2953,16 @@ export class LoopoverMcp {
       "loopover_post_eligibility_comment",
       { description: "Build a LOCAL-execution spec to post an eligibility/context comment on an issue or PR (run it with your own gh creds; loopover never performs the write).", inputSchema: postEligibilityCommentShape, outputSchema: localWriteActionOutputSchema },
       async (input) => this.toolResult(this.localWriteSpec(buildPostEligibilityCommentSpec(input))),
+    );
+    register(
+      "loopover_post_soft_claim",
+      {
+        description:
+          "Build a LOCAL-execution spec to post a soft-claim comment on an issue, signaling a miner is working on it to reduce duplicate work (run it with your own gh creds; loopover never performs the write). Not an assignment -- purely advisory.",
+        inputSchema: postSoftClaimShape,
+        outputSchema: localWriteActionOutputSchema,
+      },
+      async (input) => this.toolResult(this.localWriteSpec(buildSoftClaimSpec(input))),
     );
     register(
       "loopover_create_branch",

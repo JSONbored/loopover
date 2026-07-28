@@ -363,6 +363,13 @@ jobs:
       - name: Manifest drift check
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
         run: npm run manifest:drift-check
+      # #9492: a src/** module with no production importer is a silently dead feature — issue-rag-wire.ts
+      # sat that way with a green test suite, because its OWN test imported it and nothing else did.
+      # Coverage cannot catch the class; only reachability can. Gated on `backend` alone: the check reads
+      # only src/**, test/** and scripts/** import specifiers, none of which the other filters cover.
+      - name: Dead source-file check
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
+        run: npm run dead-source-files:check
       # Mechanical drift tripwire for the hand-duplicated src/{review,settings,signals} <-> loopover-engine
       # twin files, plus a version-skew check on the installed @loopover/engine (#4260). Same
       # local-only-until-now gap as the drift checks above. Also gated on `miner`: the reverse-direction

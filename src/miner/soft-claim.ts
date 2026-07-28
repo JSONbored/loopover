@@ -13,7 +13,7 @@ import {
 /** Format the deterministic Markdown body of a soft-claim comment: which miner claimed the issue, when, and — when
  *  provided — when the claim lapses. Pure: the same inputs always produce the same string. The body's shell-safety
  *  is guaranteed downstream by {@link buildSoftClaimSpec} reusing `local-write-tools`' single-quote escaping. */
-export function buildSoftClaimCommentBody(input: { minerId: string; claimedAt: string; expiresAt?: string }): string {
+export function buildSoftClaimCommentBody(input: { minerId: string; claimedAt: string; expiresAt?: string | undefined }): string {
   const lines = [
     `🤖 **Soft claim** — a Gittensor miner (\`${input.minerId}\`) is working on this issue, claimed at ${input.claimedAt}.`,
   ];
@@ -35,7 +35,7 @@ export function buildSoftClaimSpec(input: {
   number: number;
   minerId: string;
   claimedAt: string;
-  expiresAt?: string;
+  expiresAt?: string | undefined;
 }): LocalWriteActionSpec {
   const body = buildSoftClaimCommentBody(input);
   return buildPostEligibilityCommentSpec({ repoFullName: input.repoFullName, number: input.number, body });

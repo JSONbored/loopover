@@ -1,0 +1,28 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    // No "types" entry on purpose: this package must stay Workers-safe, so it never reaches for
+    // node builtins and has no need for @types/node. Adding it would let a node: import compile
+    // here and only fail later, in the Cloudflare bundle.
+    "types": [],
+    "declaration": true,
+    "sourceMap": true,
+    "rootDir": "src",
+    "outDir": "dist",
+    "noEmit": false,
+    // Dead schemas are exactly what this package exists to prevent, so the compiler rejects them
+    // here from day one (#9516 enabled the same pair for packages/loopover-mcp after five dead
+    // output-schema literals accumulated there unnoticed).
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    // Without this, the inherited root value ("./.tsbuildinfo") resolves relative to the ROOT
+    // config's location, not this one -- every package would then read/write the same cache file
+    // at the repo root and corrupt each other's incremental state (same collision documented in
+    // packages/loopover-engine/tsconfig.json and packages/loopover-mcp/tsconfig.json).
+    "tsBuildInfoFile": "./.tsbuildinfo"
+  },
+  "include": ["src"],
+  "exclude": []
+}

@@ -58,6 +58,10 @@ export default defineConfig({
         // export the way bin/loopover-miner-mcp.ts already was.
         "packages/loopover-miner/bin/**/*.ts",
         "packages/discovery-index/src/**/*.ts",
+        // @loopover/contract is pure schema + pure projection functions with no I/O of any kind, imported
+        // in-process by test/unit/contract-*.test.ts -- fully unit-coverable, so it is graded like any
+        // other src surface rather than exempted.
+        "packages/loopover-contract/src/**/*.ts",
         // All 5 packages/loopover-mcp/lib/*.ts files (format-table/local-branch/redact-local-path/
         // telemetry/cli-error) are imported in-process by test/unit/*.test.ts (cli-error's own
         // test/unit/mcp-cli-error.test.ts landed in #7409), so a PR touching any of them is covered by

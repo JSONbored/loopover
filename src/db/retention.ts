@@ -101,6 +101,10 @@ export const RETENTION_POLICY: readonly RetentionRule[] = [
   { table: "predicted_gate_calibration_ledger", column: "created_at", days: 90 },
   { table: "contributor_gate_history", column: "created_at", days: 90 },
   { table: "decision_replay_inputs", column: "created_at", days: 180 },
+  // #9028: deliberately SHORTER than decision_replay_inputs' 180d -- the prompt blob embeds the full diff
+  // plus contributor content (the largest, most sensitive artifact in the replay family), the re-query mode
+  // is a debugging tool for RECENT decisions, and the public promptDigest commitment outlives the text.
+  { table: "decision_replay_prompts", column: "created_at", days: 30 },
 ];
 
 // #9083: a real, single-column, indexable primary key for the ordered-range delete below, keyed by table
@@ -142,6 +146,8 @@ export const RETENTION_PK_COLUMN: Readonly<Record<string, string>> = {
   contributor_gate_history: "id",
   // decision_replay_inputs keys on record_id (decision_records.id), not an `id` column.
   decision_replay_inputs: "record_id",
+  // Same key shape as decision_replay_inputs above, for the same reason.
+  decision_replay_prompts: "record_id",
 };
 
 /**

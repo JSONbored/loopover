@@ -26,6 +26,7 @@ import { recordAuditEvent, getDecryptedRepositoryAiKey, getRepository, listCheck
 import { registerHeldLock, unregisterHeldLock } from "./held-lock-registry";
 import { recordRoutingShadow } from "../services/reviewer-routing";
 import { scoreJudgmentAgreement } from "../review/judgment-agreement";
+import { persistDecisionReplayPrompt } from "../review/decision-replay";
 import { createInstallationToken } from "../github/app";
 import type { AgentActionMode } from "../settings/agent-execution";
 import { buildAiReviewDiff } from "../review/review-diff";
@@ -927,6 +928,24 @@ export async function runAiReviewForAdvisory(
     // the REAL reviewer identities and the REAL system prompt into DecisionRecord instead of hardcoding null.
     const aiJudgmentModelIds = parsedReviewModelIds(result.reviewDiagnostics ?? []);
     const aiJudgmentPromptDigest = result.systemPromptDigest;
+    // #9028: capture the ACTUAL prompt text the digest above commits to, so the replay harness's re-query
+    // mode can re-run the model for this exact target. Written here (not at the decision-record persist)
+    // because the text must never travel through findings -- findings reach public render surfaces, and the
+    // prompt embeds the full diff. Keyed by the derivable base record id; an orphan row from a pass that
+    // never finalizes a decision ages out with the table's 30-day retention. Every verdict class is captured
+    // -- a CLEAN decision's action-match rate matters exactly as much as a defect's.
+    /* v8 ignore next -- the no-head arm is a plain skip, not a protection: without a SHA there is nothing to
+     * key the prompt row by, and a ghost PR's decision record is head-keyed too, so requery would have no row
+     * to join even if one were written. */
+    if (args.advisory.headSha) {
+      await persistDecisionReplayPrompt(env, {
+        repoFullName: args.repoFullName,
+        pullNumber: args.pr.number,
+        headSha: args.advisory.headSha,
+        systemPrompt: result.systemPrompt,
+        userPrompt: result.userPrompt,
+      });
+    }
     // #8834: inter-run agreement over the stances this review ALREADY produced (#8229's reviewerVotes) —
     // zero additional AI spend. Computed once and attached to whichever AI-judgment finding is built below,
     // so the decision record carries a per-decision confidence signal for the calibration set (#8835).

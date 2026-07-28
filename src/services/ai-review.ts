@@ -462,6 +462,15 @@ export type LoopOverAiReviewResult =
        *  caller commit to the real prompt sent instead of the base constant alone (a changed
        *  `review.instructions` moves this digest). Always present on an "ok" result. */
       systemPromptDigest: string;
+      /** #9028: the ACTUAL texts sent to the model, so the replay harness's re-query mode can re-run it for
+       *  the same target. BOTH turns, because they split the decision inputs between them: the system prompt
+       *  carries the rubric plus resolved config suffixes (what promptDigest commits to), while the USER turn
+       *  carries the diff/title/body -- re-querying with the system prompt alone would ask the model to
+       *  review nothing. PRIVATE-TABLE-BOUND: travels only as far as decision_replay_prompts (the
+       *  operator-private sibling, 30-day retention) and must never reach the public record or any rendered
+       *  surface. */
+      systemPrompt: string;
+      userPrompt: string;
     };
 
 /** A line-anchored review finding the model can emit for quiet inline PR comments (#inline-comments). `line` is
@@ -3140,6 +3149,8 @@ export async function runLoopOverAiReview(
     valueAssessment,
     reviewDiagnostics,
     systemPromptDigest,
+    systemPrompt: system,
+    userPrompt: user,
   };
 }
 

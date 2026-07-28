@@ -1732,8 +1732,8 @@ export const server = new McpServer({
   version: packageVersion,
 });
 
-// #4777: register a stdio tool under its loopover_ name. Thin wrapper kept so all 37 call sites
-// stay uniform with the rest of this file's registration style.
+// #4777: register a stdio tool under its loopover_ name. Every tool registers through this wrapper,
+// so registration style stays uniform across the file.
 // Telemetry await/flush lives in wrapStdioToolHandler (lib/telemetry.ts, unit-tested) — #6238 / #8690.
 // Reads telemetryState() HERE on purpose: registerStdioTool's second parameter is the TOOL's config and
 // shadows the module-level `config`, so a read inside a nested function would silently see the wrong object.
@@ -2954,68 +2954,9 @@ registerStdioTool(
   async (input: any) => toolResult("LoopOver base-agent public-safe PR packet.", await agentPreparePrPacket(await withClientWorkspaceRoots(input))),
 );
 
-// ── Output schemas for structured tool responses (#291) ──────────────────────
-
-const repoContextOutputSchema = {
-  type: "object",
-  properties: {
-    repoFullName: { type: "string" },
-    lane: { type: "string" },
-    primaryLanguage: { type: ["string", "null"] },
-    openIssueCount: { type: "number" },
-    openPrCount: { type: "number" },
-  },
-  additionalProperties: true,
-};
-
-const preflightOutputSchema = {
-  type: "object",
-  properties: {
-    status: { type: "string", enum: ["pass", "warn", "fail", "unknown"] },
-    signals: { type: "array", items: { type: "object" } },
-    summary: { type: "string" },
-  },
-  additionalProperties: true,
-};
-
-const decisionPackOutputSchema = {
-  type: "object",
-  properties: {
-    login: { type: "string" },
-    decisions: { type: "array", items: { type: "object" } },
-    cachedAt: { type: ["string", "null"] },
-  },
-  additionalProperties: true,
-};
-
-const localStatusOutputSchema = {
-  type: "object",
-  properties: {
-    apiUrl: { type: "string" },
-    package: { type: "object", properties: { name: { type: "string" }, version: { type: "string" } }, additionalProperties: true },
-    hasToken: { type: "boolean" },
-    profile: { type: "object", additionalProperties: true },
-    authLogin: { type: ["string", "null"] },
-    sessionExpiresAt: { type: ["string", "null"] },
-    sourceUploadDefault: { type: "boolean" },
-    sourceUploadSupported: { type: "boolean" },
-    git: { type: "object", additionalProperties: true },
-  },
-  additionalProperties: true,
-};
-
-const agentPlanOutputSchema = {
-  type: "object",
-  properties: {
-    login: { type: "string" },
-    actions: { type: "array", items: { type: "object" } },
-    topAction: { type: ["object", "null"] },
-  },
-  additionalProperties: true,
-};
-
-// Attach outputSchema to key tools via registerTool with zod output schemas.
-// All other tools continue to return unschematized text+structured content.
+// Only this tool declares an outputSchema today; every other tool returns text + unschematized
+// structured content. #9518 finishes the job by registering all of them from @loopover/contract,
+// where each tool's output schema lives beside its input schema and is enforced by validate:mcp.
 
 registerStdioTool(
   "loopover_local_status_structured",
@@ -5192,10 +5133,11 @@ function toolsCommand(args: any) {
   });
 }
 
-// `tools search <query>` — fuzzy discovery across the ~150-tool combined surface (#6300). Matches the
-// query against each registered tool's name AND description (not name-only), so "stake" surfaces
-// get_subnet_stake_quote even though "stake" is only in its description. Reuses this CLI's existing
-// levenshteinDistance for typo tolerance rather than pulling in a fuzzy-match dependency.
+// `tools search <query>` — fuzzy discovery across the whole registered tool surface (#6300). Matches
+// the query against each registered tool's name AND description (not name-only), so "duplicate"
+// surfaces loopover_check_before_start even though "duplicate" is only in its description. Reuses
+// this CLI's existing levenshteinDistance for typo tolerance rather than pulling in a fuzzy-match
+// dependency.
 function toolsSearchCommand(args: any) {
   const options = parseOptions(args);
   const query = args.find((arg: any) => !arg.startsWith("--"));
@@ -6425,10 +6367,6 @@ function optionalNumber(value: any) {
   if (value === undefined || value === true) return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function isValidationStatus(value: any) {
-  return Boolean(normalizeValidationStatus(value));
 }
 
 function normalizeValidationStatus(value: any) {

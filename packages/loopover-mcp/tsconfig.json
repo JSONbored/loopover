@@ -25,7 +25,11 @@
     // Without this, the inherited root value ("./.tsbuildinfo") resolves relative to the ROOT config's
     // location, not this one -- both packages would then read/write the exact same cache file at the
     // repo root and corrupt each other's incremental state.
-    "tsBuildInfoFile": "./.tsbuildinfo"
+    "tsBuildInfoFile": "./.tsbuildinfo",
+    // #9516: five hand-written output-schema literals sat here unreferenced because nothing rejected
+    // dead locals. tsc is the gate now, so the next one fails the build instead of accumulating.
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
   },
   // Every bin/lib runtime module is real TypeScript (#7291, phased across #7328/#7329/#7330): tsc owns
   // the dist/ .js emit, which is gitignored -- contributors and tests never touch it. The glob stays

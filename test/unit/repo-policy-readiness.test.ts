@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { defaultRepositorySettings } from "../../src/db/repositories";
 import { isFocusManifestPublicSafe, parseFocusManifest } from "../../src/signals/focus-manifest";
 import {
   buildRepoPolicyReadiness,
@@ -13,6 +14,9 @@ const FORBIDDEN_PUBLIC_LANGUAGE =
 
 function settings(overrides: Partial<RepositorySettings> = {}): RepositorySettings {
   return {
+    // #9531: the built-in defaults fill the thirteen config-as-code fields this literal used to
+    // silently omit; every explicit value below still overrides them.
+    ...defaultRepositorySettings("fixture/fixture"),
     repoFullName: "owner/repo",
     commentMode: "detected_contributors_only",
     publicAudienceMode: "oss_maintainer",

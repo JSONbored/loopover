@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { defaultRepositorySettings } from "../../src/db/repositories";
 import { buildRepoSettingsPreview, buildSampleCheckRunReadiness, decidePublicSurface, type InstallationHealthSummary } from "../../src/signals/settings-preview";
 import { REQUIRED_INSTALLATION_PERMISSIONS } from "../../src/github/backfill";
 import { RepoSettingsPreviewSchema } from "../../src/openapi/schemas";
@@ -33,6 +34,9 @@ const pullRequests: PullRequestRecord[] = [];
 
 function settings(overrides: Partial<RepositorySettings> = {}): RepositorySettings {
   return {
+    // #9531: the built-in defaults fill the thirteen config-as-code fields this literal used to
+    // silently omit; every explicit value below still overrides them.
+    ...defaultRepositorySettings("fixture/fixture"),
     repoFullName: repo.fullName,
     commentMode: "detected_contributors_only",
     publicAudienceMode: "oss_maintainer",

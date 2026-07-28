@@ -234,8 +234,11 @@ export type RepoSettingsPreview = {
     checkRunDetailLevel: RepositorySettings["checkRunDetailLevel"];
     regateSweepOrderMode: RepositorySettings["regateSweepOrderMode"];
     reviewCheckMode: RepositorySettings["reviewCheckMode"];
-    autoProjectMilestoneMatch: RepositorySettings["autoProjectMilestoneMatch"];
-    autoProjectMilestoneMatchBackend: RepositorySettings["autoProjectMilestoneMatchBackend"];
+    /** Optional, not required-but-undefined (#9531): both are copied straight from settings, where they are
+     *  themselves optional, so `JSON.stringify` drops the key entirely whenever the repo has not configured
+     *  them -- the response genuinely omits the field rather than sending an explicit null. */
+    autoProjectMilestoneMatch?: RepositorySettings["autoProjectMilestoneMatch"];
+    autoProjectMilestoneMatchBackend?: RepositorySettings["autoProjectMilestoneMatchBackend"];
     gatePack: RepositorySettings["gatePack"];
     linkedIssueGateMode: RepositorySettings["linkedIssueGateMode"];
     duplicatePrGateMode: RepositorySettings["duplicatePrGateMode"];

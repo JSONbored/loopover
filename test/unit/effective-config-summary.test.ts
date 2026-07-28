@@ -36,8 +36,12 @@ describe("summarizeEffectiveConfig", () => {
   });
 
   it("renders the blacklist label across configured / default / disabled cases", () => {
+    // #9531: blacklistLabel is required on RepositorySettings now (both DB read paths always populate it), so
+    // "absent" is expressed by omitting the key rather than passing an explicit undefined -- which is what the
+    // summarizer's `?? "slop"` fallback actually guards against for a settings object built elsewhere.
+    const { blacklistLabel: _absent, ...withoutBlacklistLabel } = base();
     expect(summarizeEffectiveConfig(base({ blacklistLabel: "spam" }), "live")).toContain("Blacklist label: `spam`");
-    expect(summarizeEffectiveConfig(base({ blacklistLabel: undefined }), "live")).toContain("Blacklist label: `slop`"); // default
+    expect(summarizeEffectiveConfig(withoutBlacklistLabel as RepositorySettings, "live")).toContain("Blacklist label: `slop`"); // default
     expect(summarizeEffectiveConfig(base({ blacklistLabel: null }), "live")).toContain("Blacklist label: `(disabled)`");
   });
 

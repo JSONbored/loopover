@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { defaultRepositorySettings } from "../../src/db/repositories";
 import { buildMaintainerActivationPreview } from "../../src/services/maintainer-activation";
 import type { PullRequestRecord, RepositoryRecord, RepositorySettings } from "../../src/types";
 
@@ -21,6 +22,9 @@ const repo: RepositoryRecord = {
 
 function settings(overrides: Partial<RepositorySettings> = {}): RepositorySettings {
   return {
+    // #9531: the built-in defaults fill the thirteen config-as-code fields this literal used to
+    // silently omit; every explicit value below still overrides them.
+    ...defaultRepositorySettings("fixture/fixture"),
     repoFullName: repo.fullName,
     commentMode: "detected_contributors_only",
     publicAudienceMode: "oss_maintainer",

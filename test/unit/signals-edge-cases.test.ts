@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { defaultRepositorySettings } from "../../src/db/repositories";
 import {
   buildBountyAdvisory,
   buildCollisionReport,
@@ -2375,6 +2376,9 @@ function pr(repoFullName: string, number: number, title: string, overrides: Part
 
 function repoSettings(repoFullName: string): RepositorySettings {
   return {
+    // #9531: the built-in defaults fill the thirteen config-as-code fields this literal used to
+    // silently omit; every explicit value below still overrides them.
+    ...defaultRepositorySettings("fixture/fixture"),
     repoFullName,
     commentMode: "detected_contributors_only",
     publicAudienceMode: "oss_maintainer",

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { defaultRepositorySettings } from "../../src/db/repositories";
 import {
   buildBountyAdvisory,
   buildBurdenForecast,
@@ -525,6 +526,7 @@ describe("world-class backend signals", () => {
     };
     const detection = { ...detectGittensorContributor("oktofeesh1", currentPr, [currentPr, priorPr], []), source: "official_gittensor_api" as const };
     const settings = {
+      ...defaultRepositorySettings("fixture/fixture"),
       repoFullName: repo.fullName,
       commentMode: "detected_contributors_only" as const,
       publicAudienceMode: "gittensor_only" as const,
@@ -575,6 +577,7 @@ describe("world-class backend signals", () => {
     };
     const detection = { ...detectGittensorContributor("oktofeesh1", currentPr, [currentPr], []), source: "official_gittensor_api" as const };
     const settings: RepositorySettings = {
+      ...defaultRepositorySettings("fixture/fixture"),
       repoFullName: repo.fullName,
       commentMode: "detected_contributors_only",
       publicAudienceMode: "gittensor_only",
@@ -659,6 +662,7 @@ describe("world-class backend signals", () => {
     };
     const detection = detectGittensorContributor("oktofeesh1", currentPr, [currentPr], []);
     const settings: RepositorySettings = {
+      ...defaultRepositorySettings("fixture/fixture"),
       repoFullName: repo.fullName,
       commentMode: "detected_contributors_only",
       publicAudienceMode: "gittensor_only",
@@ -776,6 +780,7 @@ describe("world-class backend signals", () => {
   it("keeps contributor detection and comment modes conservative", () => {
     const currentPr = pullRequests[0]!;
     const settings: RepositorySettings = {
+      ...defaultRepositorySettings("fixture/fixture"),
       repoFullName: repo.fullName,
       commentMode: "off",
       publicAudienceMode: "gittensor_only",

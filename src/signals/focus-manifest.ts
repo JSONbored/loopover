@@ -542,6 +542,25 @@ function applyGateConfigOverrides(effective: RepositorySettings, gate: FocusMani
 }
 
 /**
+ * Drop every key whose value is literally `undefined`, so spreading the result LAYERS over a base value
+ * instead of punching holes in it (#9531).
+ *
+ * `FocusManifestSettings` is a `Partial<Pick<RepositorySettings, ...>>`, so an explicitly-`undefined` key
+ * is indistinguishable from an absent one to the type system but emphatically NOT to a spread: it
+ * overwrites the DB-resolved value with `undefined`. That is wrong for every field (the manifest layer is
+ * an override, and "not overridden" is exactly what an absent value means) and now unrepresentable for the
+ * thirteen config-as-code fields both `getRepositorySettings` paths always populate, which `RepositorySettings`
+ * declares required.
+ */
+function withoutUndefinedValues<T extends object>(value: T): { [K in keyof T]?: Exclude<T[K], undefined> } {
+  const defined: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry !== undefined) defined[key] = entry;
+  }
+  return defined as { [K in keyof T]?: Exclude<T[K], undefined> };
+}
+
+/**
  * Resolve the EFFECTIVE repository settings a webhook should act on: `.loopover.yml` > DB settings >
  * safe defaults. The generic `settings:` override applies first; the friendly `gate:` alias then wins
  * for its fields. This single resolver makes the whole loopover configuration — gate on/off, blocker
@@ -573,7 +592,7 @@ export function resolveEffectiveSettings(
     agentDryRun: agentDryRunOverride,
     ...restManifestSettings
   } = manifest.settings;
-  const effective: RepositorySettings = { ...dbSettings, ...restManifestSettings };
+  const effective: RepositorySettings = { ...dbSettings, ...withoutUndefinedValues(restManifestSettings) };
   // #9049: verified live -- the global default private-config layer carried `agentDryRun: false`, and because
   // the manifest wins a plain spread, that silently discarded `agent_dry_run=1` on EVERY read for EVERY repo.
   // An operator flipping dry-run from the dashboard, `PUT /settings`, `loopover-mcp maintain`, or the

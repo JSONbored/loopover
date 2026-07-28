@@ -1191,7 +1191,7 @@ export type RepositorySettings = {
    *  Default TRUE (matches the prior de-facto behavior before this field existed, when type labels
    *  were gated by `autoLabelEnabled` nested inside the public-surface check). Always populated by
    *  the DB layer; optional so existing settings fixtures/callers need not be touched. */
-  typeLabelsEnabled?: boolean | undefined;
+  typeLabelsEnabled: boolean;
   /** Per-repo override of the TYPE/taxonomy label NAMES, keyed by category (#priority-linked-issue-gate,
    *  #label-modularity). Defaults to `DEFAULT_TYPE_LABELS` (`gittensor:bug`/`gittensor:feature`/
    *  `gittensor:priority`) in `settings/pr-type-label.ts` — a repo can override just one name (e.g. only
@@ -1222,12 +1222,12 @@ export type RepositorySettings = {
    *  inferred from a PR's title, changed files, AI output, or existing PR labels. Default disabled
    *  (`enabled: false`, no mappings) — a self-hoster opts in per repo. Always populated by the DB
    *  layer; optional so existing settings fixtures/callers need not be touched. */
-  linkedIssueLabelPropagation?: LinkedIssueLabelPropagationConfig | undefined;
+  linkedIssueLabelPropagation: LinkedIssueLabelPropagationConfig;
   /** Deterministic linked-issue hard rules. Config-as-code only; set with
    *  `.loopover.yml settings.linkedIssueHardRules` in private/global or per-repo config. These rules close
    *  contributor PRs that link ineligible issues before spending AI review budget: owner/other-assigned,
    *  maintainer-only, or missing point-label issues. Defaults all-off so self-hosters opt into their own policy. */
-  linkedIssueHardRules?: LinkedIssueHardRulesConfig | undefined;
+  linkedIssueHardRules: LinkedIssueHardRulesConfig;
   /** Same-account issue-avoidance guardrail (#unlinked-issue-guardrail). Config-as-code only; set with
    *  `.loopover.yml settings.unlinkedIssueGuardrail` in private/global or per-repo config. Defaults
    *  all-off so a self-hoster opts into their own credibility-gate-farming defense. */
@@ -1257,19 +1257,19 @@ export type RepositorySettings = {
   /** Opt-in for the public per-repo review-quality page (#2568). Always populated by the DB layer
    *  (default false); optional so existing settings fixtures/callers need not be touched. */
   publicQualityMetrics?: boolean | undefined;
-  commandAuthorization?: RepositoryCommandAuthorizationPolicy | undefined;
+  commandAuthorization: RepositoryCommandAuthorizationPolicy;
   /** Per-repo contributor blacklist (#1425, anti-abuse): banned GitHub logins whose PRs/issues the engine
    *  deterministically closes ahead of merit review. Layered the same as other settings (`.loopover.yml` >
    *  DB) and unioned with the shared/global list at the point of use. Always populated by the DB layer
    *  (default `[]`); optional so existing settings fixtures/callers need not be touched. */
-  contributorBlacklist?: ContributorBlacklistEntry[] | undefined;
+  contributorBlacklist: ContributorBlacklistEntry[];
   /** The label applied to a blacklisted contributor's PR (#1425). Configurable per-repo (dashboard/DB +
    *  `.loopover.yml` `settings.blacklistLabel`); defaults to `"slop"` so the disposition works regardless of
    *  the label a repo sets. Explicit `null` closes WITHOUT applying any label (the same load-bearing-null idiom
    *  as {@link contributorOpenPrCap}) -- distinct from omitted/undefined, which uses the default. Always
    *  populated by the DB layer (default `"slop"`); optional so existing settings fixtures/callers need not be
    *  touched (mirrors the sibling `contributorBlacklist`). */
-  blacklistLabel?: string | null | undefined;
+  blacklistLabel: string | null;
   /** Per-contributor open-PR cap (#2270, anti-abuse): the max PRs a single non-owner/admin/bot contributor may
    *  have open on this repo at once. `null`/absent (default) = no cap, byte-identical to today. Layered like
    *  every other settings field (`.loopover.yml` `settings.contributorOpenPrCap` > DB > `null`). Capped at
@@ -1400,7 +1400,7 @@ export type RepositorySettings = {
   /** Agent-layer autonomy dial (#773): per-action-class level. Always populated by the DB layer (default
    *  `{}` = deny-by-default = "observe" for every class); optional so existing settings fixtures/callers
    *  need not be touched. The single source the action layer (#778) reads via `resolveAutonomy`. */
-  autonomy?: AutonomyPolicy | undefined;
+  autonomy: AutonomyPolicy;
   /** Auto-maintain policy (#774): merge method + approval count. Always populated by the DB layer with
    *  defaults (squash / 1 approval); optional so existing settings fixtures/callers need not be touched. */
   autoMaintain?: AutoMaintainPolicy | undefined;
@@ -1422,7 +1422,7 @@ export type RepositorySettings = {
    *  participation in the tally, opting it in/out and narrowing which mechanisms feed it, regardless of
    *  the global default. Always populated by the DB layer; optional so existing settings fixtures/callers
    *  need not be touched. */
-  moderationGateMode?: "inherit" | "off" | "enabled" | undefined;
+  moderationGateMode: "inherit" | "off" | "enabled";
   /** Moderation-rules engine: a per-repo override of WHICH of the anti-abuse mechanisms (contributor cap,
    *  blacklist, review-nag, review-evasion) feed a contributor's shared, cross-repo violation tally.
    *  `undefined`/absent ⇒ inherit the global rule set (`resolveEffectiveModerationRules`'s default shape). */
@@ -1439,7 +1439,7 @@ export type RepositorySettings = {
    *  `"inherit"` (the default) participates; `"off"` excludes this repo's rows from every aggregation;
    *  `"enabled"` is equivalent to `"inherit"`, kept for symmetry with moderationGateMode's tri-state shape.
    *  Always populated by the DB layer; optional so existing settings fixtures/callers need not be touched. */
-  fairnessAnalyticsMode?: "inherit" | "off" | "enabled" | undefined;
+  fairnessAnalyticsMode: "inherit" | "off" | "enabled";
   /** Waste elimination for known automation authors (release-please's github-actions[bot], Renovate,
    *  Dependabot -- settings/agent-actions.ts's PROTECTED_AUTOCLOSE_AUTHORS): skip AI review, gate evaluation,
    *  and public-surface publish entirely for a PR/event genuinely triggered by one of these -- not just
@@ -1483,7 +1483,7 @@ export type RepositorySettings = {
    *  `converted_to_draft` handler, `bumpPullRequestDraftConversionCount`) keeps incrementing regardless, so a
    *  repo re-enabling `"close"` (or removing an `"off"` override, which now also resolves to `"close"`) can
    *  immediately treat a historical off-period cycle as "repeated" on the very next legitimate conversion. */
-  reviewEvasionProtection?: "off" | "close" | undefined;
+  reviewEvasionProtection: "off" | "close";
   /** Draft-PR close policy (#draft-pr-close-policy): distinct from {@link reviewEvasionProtection} above --
    *  that family only enforces AFTER a review has already run against the PR's current head, or on the 2nd+
    *  ready&harr;draft conversion. `"close"` enforces on ANY draft, including the very first one opened
@@ -1498,7 +1498,7 @@ export type RepositorySettings = {
    *  reviewEvasionProtection's own #6443 migration -- `db/repositories.ts`'s `getRepositorySettings`/
    *  `upsertRepositorySettings` always resolve the hardcoded `"off"` default now; only `.loopover.yml`'s
    *  `settings.draftPrClosePolicy` can override it. See `queue/review-evasion.ts`'s `maybeCloseDraftPr`. */
-  draftPrClosePolicy?: "off" | "close" | undefined;
+  draftPrClosePolicy: "off" | "close";
   /** One-shot synchronize-amendment close policy (#synchronize-close-policy): distinct from {@link
    *  reviewEvasionProtection} and {@link draftPrClosePolicy} above -- those families enforce on closing/
    *  converting-to-draft, or on draft usage; this one enforces on the contributor's OWN PR receiving an
@@ -1520,7 +1520,7 @@ export type RepositorySettings = {
    *  label/comment conventions, no need for separate config). Config-as-code only -- no DB column; set via
    *  `.loopover.yml settings.synchronizeClosePolicy`. See `queue/review-evasion.ts`'s
    *  `maybeCloseSynchronizeAmendment`. */
-  synchronizeClosePolicy?: "off" | "close" | undefined;
+  synchronizeClosePolicy: "off" | "close";
   /** Merge-train FIFO gate (#selfhost-merge-train): without this, a PR merges the instant its OWN gate
    *  clears, with zero awareness of an older sibling PR still open in the same repo -- proven live to cause
    *  out-of-order merges and the conflicts that follow. `"off"` (the default) is unchanged behavior.
@@ -1541,7 +1541,7 @@ export type RepositorySettings = {
    *  markup, scoped to the repo's configured labels/paths (`whenLabels`/`whenPaths`, OR-matched). Off by
    *  default (`enabled: false`) -- opt in per repo, mirroring every other anti-abuse mechanism's shape. See
    *  `review/screenshot-table-gate.ts` for the normalizer and the pure evaluator. */
-  screenshotTableGate?: ScreenshotTableGateConfig | undefined;
+  screenshotTableGate: ScreenshotTableGateConfig;
   createdAt?: string | null | undefined;
   updatedAt?: string | null | undefined;
 };

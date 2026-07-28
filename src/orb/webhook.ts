@@ -10,11 +10,12 @@
 import type { Context } from "hono";
 import type { GitHubWebhookPayload } from "../types";
 import { sha256Hex, verifyGitHubSignature } from "../utils/crypto";
-import { parsePositiveInt } from "../utils/json";
+import { errorMessage, parsePositiveInt } from "../utils/json";
 import { resolveOrbWebhookSecret } from "./hosted-webhook-secret";
 import { upsertOrbInstallation } from "./installations";
 import { recordOrbPrOutcome } from "./outcomes";
 import { forwardOrbEvent, persistRelayForwardOutcome } from "./relay";
+import { incr } from "../selfhost/metrics";
 
 const DEFAULT_MAX_ORB_WEBHOOK_BODY_BYTES = 1024 * 1024;
 
@@ -117,8 +118,27 @@ export async function relayForward(
   try {
     const outcome = await forwardOrbEvent(env, args, fetchImpl);
     await persistRelayForwardOutcome(env, args, outcome);
-  } catch {
-    /* v8 ignore next -- fail-safe: a forward/persist error must never surface from the deferred task */
+  } catch (error) {
+    // #9471: this catch used to be completely EMPTY -- no log, no metric. The receiver has already ACKed
+    // GitHub 202 by the time this deferred task runs, so anything thrown here is an event that GitHub
+    // considers delivered and this deployment has silently lost. Since forwardOrbEvent's pull branch and its
+    // enrollment SELECT both sit OUTSIDE its own try/catch, an ordinary transient D1 error there -- exactly
+    // what a near-cap database produces, and this D1 has hit its 10GB ceiling twice -- reached here and
+    // vanished. Still swallowed (a deferred-task throw must never surface), but never again silently.
+    incr("loopover_orb_relay_forward_error_total");
+    console.error(
+      JSON.stringify({
+        level: "error",
+        event: "orb_relay_forward_error",
+        deliveryId: args.deliveryId,
+        eventName: args.eventName,
+        // JSON.stringify omits an undefined value and keeps an explicit null, so no nullish fallback is needed
+        // here -- and adding one would introduce a branch that a null installationId can never actually reach
+        // (forwardOrbEvent short-circuits before any IO for those, so nothing throws).
+        installationId: args.installationId,
+        message: errorMessage(error).slice(0, 200),
+      }),
+    );
   }
 }
 

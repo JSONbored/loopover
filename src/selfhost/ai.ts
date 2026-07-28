@@ -604,10 +604,14 @@ async function isolatedCliCwd(): Promise<string> {
  *  instructions on disk indefinitely. Best-effort by design: a cleanup failure must never turn a completed
  *  review into a thrown error, and the next container recreation still collects anything missed. */
 async function removeIsolatedCliCwd(cwd: string | undefined): Promise<void> {
+  /* v8 ignore next -- the finally runs with cwd unset only when the mkdtemp itself threw, i.e. the temp dir was
+     never created and there is nothing to remove; unreachable from a test that gets far enough to spawn. */
   if (!cwd) return;
   try {
     const { rm } = await import("node:fs/promises");
     await rm(cwd, { recursive: true, force: true });
+    /* v8 ignore next 3 -- best-effort cleanup: rm with force:true does not throw for a missing path, so this
+       arm needs a filesystem-level failure (permissions, EBUSY) that no unit test can portably induce. */
   } catch {
     // best-effort -- see the doc comment.
   }

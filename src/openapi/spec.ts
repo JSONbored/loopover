@@ -96,6 +96,7 @@ import {
   PullRequestMaintainerPacketSchema,
   PullRequestReviewIntelligenceSchema,
   PullRequestReviewabilitySchema,
+  PredictedGateVerdictSchema,
   PreflightResultSchema,
   PublicRepoStatsSchema,
   PublicQualityMetricsSchema,
@@ -201,6 +202,7 @@ export function buildOpenApiSpec() {
   registry.register("PreflightResult", PreflightResultSchema);
   registry.register("LocalDiffPreflightResult", LocalDiffPreflightResultSchema);
   registry.register("ReviewRiskExplanation", ReviewRiskExplanationSchema);
+  registry.register("PredictedGateVerdict", PredictedGateVerdictSchema);
   registry.register("LocalBranchAnalysis", LocalBranchAnalysisSchema);
   registry.register("MaintainerPacket", MaintainerPacketSchema);
   registry.register("MaintainerLaneReport", MaintainerLaneReportSchema);

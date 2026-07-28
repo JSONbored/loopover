@@ -53,7 +53,11 @@ export type PredictedGateVerdict = {
   title: string;
   summary: string;
   readinessScore: number | null;
-  confirmedContributor: boolean | undefined;
+  /** Deliberately `undefined` under the `oss-anti-slop` pack, where confirmed status carries no meaning.
+   *  Optional rather than required-but-undefined (#9531): the value is serialized straight into the
+   *  branch-analysis response, so `JSON.stringify` drops the key outright for those repos and a client
+   *  reading the published spec sees an absent field, not a null one. */
+  confirmedContributor?: boolean | undefined;
   blockers: Array<{ code: string; title: string; detail: string; action?: string | undefined }>;
   warnings: Array<{ code: string; title: string; detail: string; action?: string | undefined }>;
   /** Opt-in conversion funnel (#694): present only under the `oss-anti-slop` pack — a non-Gittensor

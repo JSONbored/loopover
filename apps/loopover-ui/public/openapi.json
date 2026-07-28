@@ -7062,6 +7062,15 @@
           },
           "summary": {
             "type": "string"
+          },
+          "predictedGate": {
+            "$ref": "#/components/schemas/PredictedGateVerdict"
+          },
+          "dataQuality": {
+            "type": "object",
+            "additionalProperties": {
+              "nullable": true
+            }
           }
         },
         "required": [
@@ -7088,7 +7097,9 @@
           "prPacket",
           "nextActions",
           "workspaceIntelligence",
-          "summary"
+          "summary",
+          "predictedGate",
+          "dataQuality"
         ]
       },
       "ScorePreviewResult": {
@@ -16555,6 +16566,135 @@
             "type": "string"
           }
         }
+      },
+      "PredictedGateVerdict": {
+        "type": "object",
+        "properties": {
+          "predicted": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "basis": {
+            "type": "string",
+            "enum": [
+              "public_config"
+            ]
+          },
+          "pack": {
+            "type": "string",
+            "enum": [
+              "gittensor",
+              "oss-anti-slop"
+            ]
+          },
+          "conclusion": {
+            "type": "string",
+            "enum": [
+              "success",
+              "failure",
+              "action_required",
+              "neutral",
+              "skipped"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "readinessScore": {
+            "type": "number",
+            "nullable": true
+          },
+          "confirmedContributor": {
+            "type": "boolean"
+          },
+          "blockers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "detail": {
+                  "type": "string"
+                },
+                "action": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "code",
+                "title",
+                "detail"
+              ]
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "detail": {
+                  "type": "string"
+                },
+                "action": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "code",
+                "title",
+                "detail"
+              ]
+            }
+          },
+          "funnel": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "message": {
+                "type": "string"
+              },
+              "registerUrl": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "registerUrl"
+            ]
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "predicted",
+          "basis",
+          "pack",
+          "conclusion",
+          "title",
+          "summary",
+          "readinessScore",
+          "blockers",
+          "warnings",
+          "funnel",
+          "note"
+        ]
       }
     },
     "parameters": {},

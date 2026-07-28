@@ -236,7 +236,7 @@ npm audit --audit-level=moderate          # the dependency-review job's local eq
 `db:schema-drift:check`, `selfhost:env-reference:check`, `selfhost:validate-observability`,
 `cf-typegen:check`, `typecheck`, `test:coverage`, `test:engine-parity`, `test:live-gate-parity`, `test:driver-parity`, the
 `@loopover/engine` workspace's own test run, `test:workers`, `build:mcp`, `test:mcp-pack`,
-`build:miner`, `test:miner-pack`, `rees:test`, `ui:openapi:check`, `ui:openapi:settings-parity`,
+`build:miner`, `test:miner-pack`, `rees:test`, `ui:openapi:check`,
 `ui:version-audit`, `docs:drift-check`, `manifest:drift-check`, `engine-parity:drift-check`,
 `command-reference:check`, `ui:lint`, `ui:typecheck`, `ui:test`, `ui:build`. If any step fails, fix it
 and re-run — do not push a red tree. (Full per-check table in `reference.md`; check `package.json`'s

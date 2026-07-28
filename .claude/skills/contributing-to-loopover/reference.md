@@ -75,7 +75,7 @@ still compiles and packs cleanly) is unchanged.
 |---|---|---|---|
 | rees → test | `validate-code` → REES build, source-map validation, and tests (L601) | `npm run rees:test` | any failing test under `review-enrichment/` |
 | ui → openapi drift | `validate-code` → OpenAPI drift check (L702) | `npm run ui:openapi:check` | committed `openapi.json` is stale (run `npm run ui:openapi`) |
-| ui → openapi settings-parity | `validate-code` → OpenAPI settings-parity check (L708) | `npm run ui:openapi:settings-parity` | `RepositorySettingsSchema` (src/openapi/schemas.ts) is missing a field the `RepositorySettings` type has |
+| ui → openapi schema/type parity | folded into `typecheck` (#9531 retired the standalone script + CI step) | `npm run typecheck` | a hand-authored Zod schema in src/openapi/schemas.ts drifted from the TS type its handler serializes — tsc names the field, see `test/unit/openapi-schema-type-parity.test.ts` |
 | ui → version audit | `validate-code` → UI/MCP version audit (L714) | `npm run ui:version-audit` | stale MCP version strings / non-`@latest` install copy (hits npm registry) |
 | docs → drift | `validate-code` → Docs drift check (L355) | `npm run docs:drift-check` | a doc makes a claim the mechanical lint can verify is now false |
 | docs → command-reference | `validate-code` → Command reference drift check (L342) | `npm run command-reference:check` | committed command-reference doc is stale (run `npm run command-reference`) |

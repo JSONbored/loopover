@@ -1217,3 +1217,152 @@ describe("POST /v1/orb/relay/pull", () => {
     expect(await res.json()).toEqual({ error: "broker_error" });
   });
 });
+
+// #9471: the receiver ACKs GitHub 202 and forwards in a deferred task, so anything that throws out of
+// forwardOrbEvent is an event GitHub considers delivered and this deployment has silently lost. Only the PUSH
+// branch was inside forwardOrbEvent's try/catch -- the enrollment SELECT and the entire PULL branch (four D1
+// statements) sat outside it, and relayForward's catch was completely empty. A transient D1 error there --
+// exactly what a near-cap database produces, and this D1 has hit its 10GB ceiling twice -- left the event in
+// orb_webhook_events but in NEITHER orb_relay_pending NOR orb_relay_failures, so no retry cron could see it.
+describe("#9471: no forward path may lose an event without a durable retry row", () => {
+  it("REGRESSION: a failing PULL enqueue degrades to 'failed' instead of throwing out of forwardOrbEvent", async () => {
+    const e = brokeredEnv();
+    await seedInstall(e, 907);
+    const secret = ((await issueOrbEnrollment(e, 907)) as { secret: string }).secret;
+    await registerOrbRelay(e, secret, "https://a.example/v1/orb/relay");
+    await db(e).prepare("UPDATE orb_enrollments SET relay_mode = 'pull' WHERE installation_id = 907").run();
+
+    // Break exactly the pull-branch write, leaving the enrollment read healthy.
+    const realPrepare = e.DB.prepare.bind(e.DB);
+    vi.spyOn(e.DB, "prepare").mockImplementation((sql: string) => {
+      if (sql.includes("orb_relay_pending")) throw new Error("D1_ERROR: Exceeded maximum DB size");
+      return realPrepare(sql);
+    });
+
+    // Must classify rather than throw -- "failed" is what routes it into the retry machinery.
+    await expect(forwardOrbEvent(e, { eventName: "pull_request", installationId: 907, deliveryId: "pull-broken", rawBody: "{}" })).resolves.toBe("failed");
+  });
+
+  it("REGRESSION: a failing enrollment READ degrades to 'failed' rather than escaping unclassified", async () => {
+    const e = brokeredEnv();
+    await seedInstall(e, 908);
+    const realPrepare = e.DB.prepare.bind(e.DB);
+    vi.spyOn(e.DB, "prepare").mockImplementation((sql: string) => {
+      if (sql.includes("FROM orb_enrollments")) throw new Error("D1_ERROR: database unavailable");
+      return realPrepare(sql);
+    });
+
+    await expect(forwardOrbEvent(e, { eventName: "pull_request", installationId: 908, deliveryId: "enroll-broken", rawBody: "{}" })).resolves.toBe("failed");
+  });
+
+  it("INVARIANT: a 'failed' outcome persists a durable retry row, so the event is recoverable", async () => {
+    const e = brokeredEnv();
+    await seedInstall(e, 909);
+    // A real PUSH-mode enrollment, so an unreachable container yields "failed" rather than "ignored".
+    const secret = ((await issueOrbEnrollment(e, 909)) as { secret: string }).secret;
+    await registerOrbRelay(e, secret, "https://down.example/v1/orb/relay");
+    await relayForward(e, { eventName: "pull_request", installationId: 909, deliveryId: "recoverable", rawBody: "{}" }, (async () =>
+      new Response("nope", { status: 500 })) as unknown as typeof fetch);
+    // Whatever the classification, the event must be findable by the retry cron rather than gone.
+    const failure = await db(e).prepare("SELECT delivery_id FROM orb_relay_failures WHERE delivery_id = 'recoverable'").first<{ delivery_id: string }>();
+    const pending = await db(e).prepare("SELECT delivery_id FROM orb_relay_pending WHERE delivery_id = 'recoverable'").first<{ delivery_id: string }>();
+    expect(Boolean(failure) || Boolean(pending)).toBe(true);
+  });
+
+  it("REGRESSION: relayForward logs and counts a swallowed forward error instead of vanishing", async () => {
+    const e = brokeredEnv();
+    await seedInstall(e, 910);
+    resetMetrics();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    // Break the failure-persist path too, so relayForward's own catch is the last line of defence.
+    vi.spyOn(e.DB, "prepare").mockImplementation(() => {
+      throw new Error("D1_ERROR: Exceeded maximum DB size");
+    });
+
+    await expect(relayForward(e, { eventName: "pull_request", installationId: 910, deliveryId: "vanished", rawBody: "{}" })).resolves.toBeUndefined();
+
+    expect(counterValue("loopover_orb_relay_forward_error_total")).toBe(1);
+    const logged = errorSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(logged).toContain("orb_relay_forward_error");
+    expect(logged).toContain("vanished"); // the delivery id is in the log, so the event is identifiable
+  });
+});
+
+describe("#9471: the last silent drop path and the retry-tick wedge", () => {
+  it("REGRESSION: the per-installation cap eviction logs and counts what it drops", async () => {
+    // pruneRelayPending and retryFailedRelays each emit an alertable `*_dropped` error with samples; the cap
+    // eviction deleted the OLDEST events with no log at all, and did not even check meta.changes. A pull-mode
+    // container down for hours on an active repo can exceed the cap, and those deliveries vanished silently.
+    const e = brokeredEnv();
+    await seedInstall(e, 921);
+    resetMetrics();
+    const secret = ((await issueOrbEnrollment(e, 921)) as { secret: string }).secret;
+    await registerOrbRelay(e, secret, "https://a.example/v1/orb/relay");
+    await db(e).prepare("UPDATE orb_enrollments SET relay_mode = 'pull' WHERE installation_id = 921").run();
+    const enrollId = (await db(e).prepare("SELECT enroll_id FROM orb_enrollments WHERE installation_id = 921").first<{ enroll_id: string }>())?.enroll_id ?? null;
+
+    // Seed one row beyond the cap so exactly one eviction is due, oldest-first.
+    for (let i = 0; i < 501; i += 1) {
+      await db(e)
+        .prepare("INSERT INTO orb_relay_pending (delivery_id, installation_id, event_name, raw_body, enroll_id, created_at) VALUES (?, 921, 'pull_request', '{}', ?, ?)")
+        .bind(`seed-${String(i).padStart(4, "0")}`, enrollId, new Date(Date.now() - (501 - i) * 1000).toISOString())
+        .run();
+    }
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await enqueueRelayPending(e, { deliveryId: "newest", installationId: 921, eventName: "pull_request", rawBody: "{}", enrollId });
+
+    expect(counterValue("loopover_orb_relay_pending_cap_dropped_total")).toBeGreaterThan(0);
+    const logged = errorSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(logged).toContain("orb_relay_pending_cap_dropped");
+    expect(logged).toContain("\"installationId\":921"); // an operator can see WHICH installation lost events
+  });
+
+  it("INVARIANT: the cap eviction is silent when nothing is actually over the cap", async () => {
+    const e = brokeredEnv();
+    await seedInstall(e, 922);
+    resetMetrics();
+    const secret = ((await issueOrbEnrollment(e, 922)) as { secret: string }).secret;
+    await registerOrbRelay(e, secret, "https://a.example/v1/orb/relay");
+    await db(e).prepare("UPDATE orb_enrollments SET relay_mode = 'pull' WHERE installation_id = 922").run();
+    const enrollId = (await db(e).prepare("SELECT enroll_id FROM orb_enrollments WHERE installation_id = 922").first<{ enroll_id: string }>())?.enroll_id ?? null;
+
+    await enqueueRelayPending(e, { deliveryId: "only-one", installationId: 922, eventName: "pull_request", rawBody: "{}", enrollId });
+
+    expect(counterValue("loopover_orb_relay_pending_cap_dropped_total")).toBe(0);
+  });
+
+  it("REGRESSION: one throwing retry row does not abort the tick or pin the batch head", async () => {
+    // retryFailedRelays is documented as "never throws" and job-dispatch relies on it, but forwardOrbEvent can
+    // throw. One bad row rejected the Promise.all, skipped every later chunk, and -- because finalize never ran
+    // -- left that row's attempts unadvanced, so it stayed first-in-batch and wedged the consumer for its TTL.
+    const e = brokeredEnv();
+    await seedInstall(e, 923);
+    resetMetrics();
+    const secret = ((await issueOrbEnrollment(e, 923)) as { secret: string }).secret;
+    await registerOrbRelay(e, secret, "https://a.example/v1/orb/relay");
+    await storeRelayFailure(e, { deliveryId: "poison", installationId: 923, eventName: "pull_request", rawBody: "{}" });
+    await storeRelayFailure(e, { deliveryId: "healthy", installationId: 923, eventName: "pull_request", rawBody: "{}" });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    // forwardOrbEvent swallows fetch errors by design, so the throw has to come from the row's OWN finalize IO
+    // -- which is exactly the second unguarded call in retryRow. Break it for the poison row only.
+    const realPrepare = e.DB.prepare.bind(e.DB);
+    let finalizeCalls = 0;
+    vi.spyOn(e.DB, "prepare").mockImplementation((sql: string) => {
+      if (sql.includes("UPDATE orb_relay_failures")) {
+        finalizeCalls += 1;
+        if (finalizeCalls === 1) throw new Error("D1_ERROR: finalize failed");
+      }
+      return realPrepare(sql);
+    });
+    const fetchImpl = (async () => new Response("nope", { status: 500 })) as unknown as typeof fetch;
+
+    await expect(retryFailedRelays(e, { fetchImpl })).resolves.toBeUndefined(); // never throws, as documented
+
+    // A finalize failure is swallowed by finalizeRelayFailureRetryRow's own catch, so the tick must still go on
+    // to the remaining rows rather than aborting -- the property that keeps one bad row from wedging the batch.
+    expect(finalizeCalls).toBeGreaterThan(1);
+  });
+});
+

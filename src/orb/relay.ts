@@ -9,6 +9,7 @@ import { githubWebhookCoalesceKey } from "../github/webhook-coalesce";
 import { isSafeHttpUrl } from "../review/content-lane/safe-url";
 import type { GitHubWebhookPayload } from "../types";
 import { decryptSecret, encryptSecret } from "../utils/crypto";
+import { errorMessage } from "../utils/json";
 import { incr } from "../selfhost/metrics";
 
 // The events a brokered container needs to review/act on. Installation-lifecycle + other Orb-internal events are
@@ -353,6 +354,34 @@ export async function enqueueRelayPending(
       .bind(args.installationId, coalesceKey, args.deliveryId)
       .run();
   }
+  // #9471: sample the rows about to be evicted BEFORE deleting them, so the drop is observable. This was the
+  // last silent event-loss path in the relay: its two siblings (pruneRelayPending and retryFailedRelays) each
+  // emit an alertable `*_dropped` error with samples, but the per-installation cap deleted the OLDEST events
+  // with no log and without even checking `meta.changes`. A pull-mode container down for hours on an active
+  // repo can exceed 500 pending events (issue_comment + pull_request + check_suite together), and those
+  // deliveries vanished with zero trace -- inconsistent with this file's own zero-trace-loss doctrine.
+  const { results: evicted } = await env.DB
+    .prepare(
+      `SELECT delivery_id, event_name FROM orb_relay_pending
+       WHERE installation_id = ?
+       ORDER BY created_at DESC, delivery_id DESC
+       LIMIT -1 OFFSET ?`,
+    )
+    .bind(args.installationId, RELAY_PENDING_MAX_PER_INSTALLATION)
+    .all<{ delivery_id: string; event_name: string }>();
+  if (evicted.length > 0) {
+    incr("loopover_orb_relay_pending_cap_dropped_total", undefined, evicted.length);
+    console.error(
+      JSON.stringify({
+        level: "error",
+        event: "orb_relay_pending_cap_dropped",
+        installationId: args.installationId,
+        dropped: evicted.length,
+        cap: RELAY_PENDING_MAX_PER_INSTALLATION,
+        sample: evicted.slice(0, RELAY_DROP_LOG_SAMPLE_SIZE).map((row) => ({ deliveryId: row.delivery_id, eventName: row.event_name })),
+      }),
+    );
+  }
   await env.DB
     .prepare(
       `DELETE FROM orb_relay_pending
@@ -524,13 +553,38 @@ export async function retryFailedRelays(env: Env, opts?: { fetchImpl?: typeof fe
     .all<{ delivery_id: string; event_name: string; installation_id: number; raw_body: string }>();
   if (!results.length) return;
 
+  // #9471: isolated PER ROW. This function is documented as "never throws" and job-dispatch relies on that, but
+  // forwardOrbEvent can throw and finalizeRelayFailureRetryRow does its own IO -- so one bad row rejected the
+  // Promise.all, skipped every later chunk in the tick, and (because finalize never ran) left that row's
+  // attempts/last_attempt_at unadvanced. It therefore stayed first-in-batch and immediately eligible, wedging
+  // the retry consumer's tail until its 1h TTL. Same per-event isolation drainOrbRelayWithMonitor already uses.
   const retryRow = async (row: { delivery_id: string; event_name: string; installation_id: number; raw_body: string }) => {
-    const outcome = await forwardOrbEvent(
-      env,
-      { eventName: row.event_name, installationId: row.installation_id, deliveryId: row.delivery_id, rawBody: row.raw_body },
-      opts?.fetchImpl,
-    );
-    await finalizeRelayFailureRetryRow(env, row, outcome);
+    try {
+      const outcome = await forwardOrbEvent(
+        env,
+        { eventName: row.event_name, installationId: row.installation_id, deliveryId: row.delivery_id, rawBody: row.raw_body },
+        opts?.fetchImpl,
+      );
+      await finalizeRelayFailureRetryRow(env, row, outcome);
+      /* v8 ignore start -- defence in depth: with the enrollment read and the pull branch now guarded above,
+         forwardOrbEvent is total and finalizeRelayFailureRetryRow has its own catch, so nothing in retryRow
+         can currently throw. The isolation stays because retryFailedRelays is DOCUMENTED as never throwing and
+         job-dispatch relies on that -- a future unguarded path here must degrade, not wedge the tick. */
+    } catch (error) {
+      // Advance the row's attempt counter anyway so a deterministically-throwing row cannot pin the batch head.
+      incr("loopover_orb_relay_retry_row_error_total");
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "orb_relay_retry_row_error",
+          deliveryId: row.delivery_id,
+          installationId: row.installation_id,
+          message: errorMessage(error).slice(0, 200),
+        }),
+      );
+      await finalizeRelayFailureRetryRow(env, row, "failed").catch(() => undefined);
+    }
+    /* v8 ignore stop */
   };
 
   for (let i = 0; i < results.length; i += RELAY_RETRY_CONCURRENCY) {
@@ -560,12 +614,22 @@ export async function forwardOrbEvent(
   // enrollment for the same installation (a blue/green swap, or a secret rotated but not yet revoked) is
   // OBSERVABLE — the sibling revoke-on-reissue fix (#9149) narrows the window this can happen in, but a
   // rollout swap can still produce two live consumers for a short time, and that should never be silent.
-  const { results: liveRows } = await env.DB
-    .prepare(
-      "SELECT enroll_id, relay_mode, relay_url, relay_secret_enc, relay_secret_iv, relay_secret_salt FROM orb_enrollments WHERE installation_id = ? AND state = 'enrolled' AND revoked_at IS NULL ORDER BY (relay_registered_at IS NOT NULL) DESC, relay_registered_at DESC, enrolled_at DESC, rowid DESC",
-    )
-    .bind(args.installationId)
-    .all<{ enroll_id: string; relay_mode: string; relay_url: string | null; relay_secret_enc: string | null; relay_secret_iv: string | null; relay_secret_salt: string | null }>();
+  // #9471: a throw here (a transient/near-cap D1 error) used to escape forwardOrbEvent entirely, so the event
+  // was never classified and never persisted for retry. It must degrade to "failed" like every other failure
+  // mode, so the retry cron owns it -- an unreadable enrollment table is precisely when losing events silently
+  // is least acceptable.
+  let liveRows: Array<{ enroll_id: string; relay_mode: string; relay_url: string | null; relay_secret_enc: string | null; relay_secret_iv: string | null; relay_secret_salt: string | null }>;
+  try {
+    const read = await env.DB
+      .prepare(
+        "SELECT enroll_id, relay_mode, relay_url, relay_secret_enc, relay_secret_iv, relay_secret_salt FROM orb_enrollments WHERE installation_id = ? AND state = 'enrolled' AND revoked_at IS NULL ORDER BY (relay_registered_at IS NOT NULL) DESC, relay_registered_at DESC, enrolled_at DESC, rowid DESC",
+      )
+      .bind(args.installationId)
+      .all<{ enroll_id: string; relay_mode: string; relay_url: string | null; relay_secret_enc: string | null; relay_secret_iv: string | null; relay_secret_salt: string | null }>();
+    liveRows = read.results;
+  } catch {
+    return "failed";
+  }
   const row = liveRows[0];
   if (!row) return "ignored"; // not a brokered self-host (or revoked) — nothing to relay to
   if (liveRows.length > 1) incr("loopover_orb_relay_multiple_live_enrollments_total");
@@ -574,8 +638,19 @@ export async function forwardOrbEvent(
   // this enrollment instead of "any secret valid for this installation" — closing the hole where a second,
   // stale-but-still-valid enrollment could drain and destructively-ack this event first.
   if (row.relay_mode === "pull") {
-    await enqueueRelayPending(env, { deliveryId: args.deliveryId, installationId: args.installationId, eventName: args.eventName, rawBody: args.rawBody, enrollId: row.enroll_id });
-    return "queued";
+    // #9471: guarded like the push branch below. enqueueRelayPending runs FOUR D1 statements, and an error in
+    // any of them used to propagate out of forwardOrbEvent into relayForward's (then-empty) catch -- leaving
+    // the event recorded in orb_webhook_events but in NEITHER orb_relay_pending NOR orb_relay_failures, so no
+    // retry cron could ever see it and the review simply never ran. Degrading to "failed" routes it into the
+    // same durable retry machinery the push path already relies on (isRelayFailureRetryTerminal deletes the
+    // row once a retry lands "queued"). A near-cap D1 -- which this database has twice been -- makes exactly
+    // this error ordinary rather than exotic.
+    try {
+      await enqueueRelayPending(env, { deliveryId: args.deliveryId, installationId: args.installationId, eventName: args.eventName, rawBody: args.rawBody, enrollId: row.enroll_id });
+      return "queued";
+    } catch {
+      return "failed";
+    }
   }
   // Push mode with nothing registered (relay_url null) or no decryption key → skip. relay_secret_enc/iv are written
   // atomically with relay_url at registration, so they're non-null whenever relay_url is (asserted below).

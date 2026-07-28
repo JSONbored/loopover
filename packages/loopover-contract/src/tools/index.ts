@@ -10,12 +10,24 @@ import { predictGateTool } from "./predict-gate.js";
 import { preflightPrTool } from "./preflight-pr.js";
 import { localStatusStructuredTool } from "./local-status.js";
 import { adminGetConfigTool } from "./admin-config.js";
+import {
+  minerPingTool,
+  minerPortfolioDashboardTool,
+  minerManageStatusTool,
+  minerListClaimsTool,
+  minerAuditFeedTool,
+  minerGetRunStateTool,
+  minerListPlansTool,
+  minerGetPlanTool,
+  minerGovernorDecisionsTool,
+  minerStatusTool,
+  minerCalibrationReportTool,
+} from "./miner.js";
 
 /**
- * Pilot batch (#9517). The remaining ~110 remote / 96 stdio / 11 miner tools migrate in #9518's
- * category batches; this set was chosen to exercise every axis of the model at least once --
- * remote and local-git locality, cloud/selfhost/both availability, and the token/session/
- * maintainer/mcp-admin auth levels.
+ * Pilot batch (#9517) plus the full AMS miner server (#9536, all 11 tools -- the first server
+ * migrated to completion). The remaining ~110 remote / ~91 stdio tools migrate in #9518/#9537's
+ * category batches.
  */
 export const TOOL_CONTRACTS: readonly ToolContract[] = [
   getRepoContextTool,
@@ -24,6 +36,17 @@ export const TOOL_CONTRACTS: readonly ToolContract[] = [
   preflightPrTool,
   localStatusStructuredTool,
   adminGetConfigTool,
+  minerPingTool,
+  minerPortfolioDashboardTool,
+  minerManageStatusTool,
+  minerListClaimsTool,
+  minerAuditFeedTool,
+  minerGetRunStateTool,
+  minerListPlansTool,
+  minerGetPlanTool,
+  minerGovernorDecisionsTool,
+  minerStatusTool,
+  minerCalibrationReportTool,
 ];
 
 const CONTRACTS_BY_NAME: ReadonlyMap<string, ToolContract> = new Map(
@@ -49,3 +72,4 @@ export * from "./predict-gate.js";
 export * from "./preflight-pr.js";
 export * from "./local-status.js";
 export * from "./admin-config.js";
+export * from "./miner.js";

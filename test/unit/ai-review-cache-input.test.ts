@@ -1,3 +1,5 @@
+import { describe, expect, it, vi } from "vitest";
+import * as aiReviewModule from "../../src/services/ai-review";
 import {
   AI_REVIEW_CACHE_INPUT_VERSION,
   aiReviewCacheInputFingerprint,
@@ -349,5 +351,44 @@ describe("aiReviewCacheInputFingerprint", () => {
     expect(profileAndSecurityFocus).not.toBe(profileOnly);
     expect(profileAndSecurityFocus).not.toBe(securityFocusOn);
     expect(repeated).toBe(original);
+  });
+});
+
+// #9477: getCachedAiReview reuses a cacheable=1 row with NO maxAgeMs, replaying its findings verbatim --
+// including a severity:"critical" ai_consensus_defect. AI_REVIEW_CACHE_INPUT_VERSION was hand-bumped and last
+// moved for #8364, but #8789, #8791, #8833, #8845, #8961, #9035, #9074, #9087, #9114, #9145 and #9445 all
+// changed prompt text or verdict logic WITHOUT a bump. So a PR closed or held under (say) the pre-#9074 "false
+// consensus" rule re-gated at the same head to the SAME stale finding, and the fixed logic never ran for any
+// already-reviewed head. The fingerprint must cover what the model is ASKED, not only the change it is asked
+// about -- and it must do so structurally, not by relying on a human remembering a constant.
+describe("prompt-drift is an automatic cache miss (#9477)", () => {
+  it("REGRESSION: a change to the canonical judge prompt changes the fingerprint", async () => {
+    const before = await aiReviewCacheInputFingerprint(baseInput());
+    const spy = vi.spyOn(aiReviewModule, "buildCanonicalJudgePrompt").mockReturnValue("ENTIRELY DIFFERENT PROMPT TEXT");
+    try {
+      const after = await aiReviewCacheInputFingerprint(baseInput());
+      expect(after).not.toBe(before);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("REGRESSION: the prompt VERSION participates too, so a deliberate bump also invalidates", async () => {
+    const before = await aiReviewCacheInputFingerprint(baseInput());
+    const spy = vi.spyOn(aiReviewModule, "REVIEW_PROMPT_VERSION", "get").mockReturnValue("review-prompt-v2" as typeof aiReviewModule.REVIEW_PROMPT_VERSION);
+    try {
+      expect(await aiReviewCacheInputFingerprint(baseInput())).not.toBe(before);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("INVARIANT: an unchanged prompt and unchanged inputs still produce a STABLE fingerprint", async () => {
+    // The fix must not destroy the cache: identical inputs must keep hitting, or every review re-pays.
+    expect(await aiReviewCacheInputFingerprint(baseInput())).toBe(await aiReviewCacheInputFingerprint(baseInput()));
+  });
+
+  it("INVARIANT: the version constant was bumped, so rows written under the incomplete fingerprint are dead", () => {
+    expect(AI_REVIEW_CACHE_INPUT_VERSION).not.toBe("ai-review-input:v6");
   });
 });

@@ -4,6 +4,7 @@ import type {
   SelfHostAiModelConfig,
 } from "../signals/focus-manifest";
 import { sha256Hex } from "../utils/crypto";
+import { buildCanonicalJudgePrompt, REVIEW_PROMPT_VERSION } from "../services/ai-review";
 
 // Bumped v1→v2 (#2995): `features` gained a `cultureProfile` member. Bumped v2→v3 (#2182-#2186): `features`
 // gained an `impactMap` member. Bumped v3→v4 (#3902): `selfHostAiModelOverride` gained ollamaModel/openaiModel/
@@ -14,7 +15,8 @@ import { sha256Hex } from "../utils/crypto";
 // codexFirstOutputTimeoutMs members. Every prior cached review's fingerprint was computed without those keys,
 // so bumping the version guarantees a clean cache miss on the first review after upgrade rather than silently
 // reusing a hash computed under a different payload shape.
-export const AI_REVIEW_CACHE_INPUT_VERSION = "ai-review-input:v6";
+// #9477: bumped v6 -> v7 to invalidate every row written under the incomplete fingerprint below.
+export const AI_REVIEW_CACHE_INPUT_VERSION = "ai-review-input:v7";
 
 // #regate-churn (root cause, confirmed in production): this fingerprint USED to also hash the PR's live
 // `baseSha`, on the theory that a rebase/retarget can change the diff GitHub reports for an otherwise-unchanged
@@ -130,6 +132,19 @@ export type AiReviewCacheInput = {
 export async function aiReviewCacheInputFingerprint(input: AiReviewCacheInput): Promise<string> {
   const payload = {
     version: AI_REVIEW_CACHE_INPUT_VERSION,
+    // #9477: the fingerprint must cover what the model is ASKED, not just the change it is asked about.
+    //
+    // getCachedAiReview reuses a cacheable=1 row with NO maxAgeMs, replaying its findings verbatim --
+    // including a severity:"critical" ai_consensus_defect. AI_REVIEW_CACHE_INPUT_VERSION was hand-bumped and
+    // last moved for #8364, but #8789, #8791, #8833, #8845, #8961, #9035, #9074, #9087, #9114, #9145 and #9445
+    // all changed prompt text or verdict logic WITHOUT a bump. So a PR closed or held under (say) the pre-#9074
+    // "false consensus" rule re-gated at the same head to the SAME stale finding, and the corrected logic
+    // never ran for any already-reviewed head.
+    //
+    // Folding in the prompt version AND a digest of the canonical judge prompt makes drift an automatic cache
+    // MISS instead of something a human has to remember. Both are pure and available before the call.
+    promptVersion: REVIEW_PROMPT_VERSION,
+    promptDigest: await sha256Hex(buildCanonicalJudgePrompt()),
     title: input.title,
     body: input.body ?? null,
     mode: input.mode,

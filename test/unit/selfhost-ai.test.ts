@@ -22,6 +22,7 @@ import { assertNoLegacySharedAiEnv, buildProvider, claudeErrorStatus, codexError
 import { labelSelfHostReviewerModel, labelSelfHostReviewerModels } from "../../src/selfhost/ai-config";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { initPostHog, resetPostHogForTest } from "../../src/selfhost/posthog";
+import { ollamaContextOptions, ollamaNumCtx } from "../../src/selfhost/ai";
 
 describe("resolveModel (#979 — never leak the Workers-AI default to a self-host backend)", () => {
   const WORKERS_DEFAULT = "@cf/meta/llama-3.1-8b-instruct-fp8-fast";
@@ -2483,5 +2484,40 @@ describe("shouldWarnRagEmbedUnavailable (#8765 boot preflight)", () => {
 
   it("stays silent with no AI configured at all — that absence is already loud for its own reason", () => {
     expect(shouldWarnRagEmbedUnavailable({ LOOPOVER_REVIEW_RAG: "true" })).toBe(false);
+  });
+});
+
+// #9478: Ollama silently LEFT-TRUNCATES anything past num_ctx (typically 4k-8k by default) and then answers
+// confidently over whatever survived -- which is the TAIL of the prompt, i.e. the context sections rather than
+// the diff. The review path sends up to 120k chars of diff plus a 240k-char aggregate context budget, so on the
+// fallback provider a review could be produced from a fraction of the change while carrying the SAME blocker
+// authority and confidence semantics as the primary, with nothing surfacing which provider decided.
+describe("ollama context window (#9478)", () => {
+  afterEach(() => { delete process.env["OLLAMA_NUM_CTX"]; });
+
+  it("REGRESSION: sends an explicit num_ctx for the ollama provider", () => {
+    expect(ollamaContextOptions("ollama", {})).toEqual({ options: { num_ctx: ollamaNumCtx() } });
+  });
+
+  it("INVARIANT: sends nothing for other OpenAI-compatible providers, which may reject an unknown options key", () => {
+    expect(ollamaContextOptions("openai", {})).toEqual({});
+    expect(ollamaContextOptions("openai-compatible", {})).toEqual({});
+    expect(ollamaContextOptions(undefined, {})).toEqual({});
+  });
+
+  it("INVARIANT: an explicit caller providerOptions always wins (the vision path sets its own num_ctx)", () => {
+    const explicit = { num_ctx: 4096, temperature: 0 };
+    expect(ollamaContextOptions("ollama", { providerOptions: explicit })).toEqual({ options: explicit });
+    expect(ollamaContextOptions("openai", { providerOptions: explicit })).toEqual({ options: explicit });
+  });
+
+  it("is overridable, since the window trades GPU memory against how much of a large diff the model can see", () => {
+    process.env["OLLAMA_NUM_CTX"] = "65536";
+    expect(ollamaNumCtx()).toBe(65_536);
+  });
+
+  it.each([[""], ["not-a-number"], ["0"], ["-1"]])("falls back to a sane default for %s", (value) => {
+    process.env["OLLAMA_NUM_CTX"] = value;
+    expect(ollamaNumCtx()).toBeGreaterThan(8_192); // must exceed the truncation-prone stock defaults
   });
 });

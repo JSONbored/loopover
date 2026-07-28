@@ -467,8 +467,16 @@ jobs:
           key: turbo-code-${{ hashFiles('package-lock.json') }}-${{ github.run_id }}
           restore-keys: |
             turbo-code-${{ hashFiles('package-lock.json') }}-
+      # mcp/miner are in this gate because "Typecheck" below already runs for them, and typecheck's real
+      # surface reaches @loopover/engine -- test/** imports it directly, and its "types" resolve to
+      # packages/loopover-engine/dist/index.d.ts, which only exists once this step has run. An mcp-only or
+      # miner-only PR therefore used to run Typecheck against an unbuilt engine and fail with a wall of
+      # phantom "Cannot find module '@loopover/engine'" errors (plus every TS7006 implicit-any that
+      # cascades from them), with no relation to the actual diff. Deliberately the same widening the
+      # Typecheck step itself already received for the mirror-image gap; the two conditions must stay in
+      # sync, since any trigger that typechecks must also have built what typechecking reads.
       - name: Build engine package
-        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.ui == 'true' }}
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.miner == 'true' }}
         run: npx turbo run build --filter=@loopover/engine
       # Mirrors "MCP package check"/"Miner package check" below: the published npm tarball is a
       # different surface than the workspace build above (files field, forbidden paths/content,

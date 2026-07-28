@@ -72,8 +72,34 @@ export function diffAppendedSurfaceEntries(headRaw: string | null, baseRaw: stri
   const headEntries = surfacesOf(safeParseJson(headRaw), field);
   if (headEntries === null) return null;
   const baseEntries = surfacesOf(safeParseJson(baseRaw), field) ?? [];
-  const baseKeys = new Set(baseEntries.map((entry) => JSON.stringify(entry)));
-  return headEntries.filter((entry) => !baseKeys.has(JSON.stringify(entry)));
+  const baseKeys = new Set(baseEntries.map((entry) => canonicalEntryKey(entry)));
+  return headEntries.filter((entry) => !baseKeys.has(canonicalEntryKey(entry)));
+}
+
+/**
+ * #9490: entry identity, KEY-ORDER INVARIANT. Both structural diffs below used raw `JSON.stringify(entry)` as
+ * the identity key, and JSON.stringify preserves insertion order -- so reordering an existing entry's keys
+ * (`{url, kind}` -> `{kind, url}`) read as a FRESH append while simultaneously removing the entry's prior self
+ * from survivingExistingEntries' scope, taking it out of the duplicate check too. That is a recipe for
+ * unbounded content-free auto-merged registry PRs: each one "contributes" a reorder, farms a merge, and leaves
+ * the registry byte-different but semantically identical. Sorting keys recursively makes a reorder read as
+ * exactly what it is -- zero appended entries. Arrays keep their order (order IS meaning there, same rule as
+ * decision-record.ts's canonicalJson).
+ */
+export function canonicalEntryKey(entry: unknown): string {
+  return JSON.stringify(sortKeysDeep(entry));
+}
+
+function sortKeysDeep(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeysDeep);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value as Record<string, unknown>)
+        .sort()
+        .map((key) => [key, sortKeysDeep((value as Record<string, unknown>)[key])]),
+    );
+  }
+  return value;
 }
 
 /**
@@ -100,8 +126,10 @@ export function survivingExistingEntries(headRaw: string | null, baseRaw: string
   const headEntries = surfacesOf(safeParseJson(headRaw), field);
   if (headEntries === null) return [];
   const baseEntries = surfacesOf(safeParseJson(baseRaw), field) ?? [];
-  const headKeys = new Set(headEntries.map((entry) => JSON.stringify(entry)));
-  return baseEntries.filter((entry) => headKeys.has(JSON.stringify(entry)));
+  // #9490: same canonical key as diffAppendedSurfaceEntries, and for the same reason -- a key-reordered entry
+  // must still count as "surviving" so its identity stays inside the duplicate check's scope.
+  const headKeys = new Set(headEntries.map((entry) => canonicalEntryKey(entry)));
+  return baseEntries.filter((entry) => headKeys.has(canonicalEntryKey(entry)));
 }
 
 function fromProvider(assessment: ProviderAssessment): SurfaceReviewResult {
@@ -212,15 +240,38 @@ function pickAggregateAssessment(assessments: Assessment[]): Assessment {
  * for review instead. `makeSurfaceEntryVerifier` is itself written not to throw, so this is a belt-and-braces
  * guard against a future/third-party verifier that is less careful.
  */
+/**
+ * #9490: hard ceiling on live verifications per review run. Each verification fetches up to 2 URLs, each
+ * following up to 5 hops with a 10s per-hop timeout -- so an uncapped run over a spec with
+ * `maxAppendedEntries: Infinity` (metagraphed's documented policy) let a 500-entry PR command thousands of
+ * outbound subrequests from the bot: a request-amplification primitive, and on Workers a subrequest-exhaustion
+ * path that converts into bulk `probe_fetch_failed` holds for everyone else in the isolate. Ten matches
+ * source-evidence.ts's own fan-out cap. Entries past the cap are HELD for a human, never merged unverified --
+ * the cap bounds spend, it must not become a way to sneak entry #11 through unprobed.
+ */
+export const MAX_VERIFIED_ENTRIES_PER_RUN = 10;
+
 async function verifyMergedEntries(
   staticAssessments: Assessment[],
   appendedEntries: readonly unknown[],
   verifyEntry: SurfaceReviewInput["verifyEntry"],
 ): Promise<Assessment[]> {
   if (!verifyEntry) return staticAssessments;
+  let verificationsStarted = 0;
   return await Promise.all(
     staticAssessments.map(async (assessment, idx) => {
       if (assessment.verdict !== "merged") return assessment;
+      // Counted SYNCHRONOUSLY, before any await, so the concurrent map cannot race the budget check --
+      // .map's callbacks run their synchronous prefix in order, so exactly the first N merged entries verify.
+      if (verificationsStarted >= MAX_VERIFIED_ENTRIES_PER_RUN) {
+        return {
+          verdict: "manual-review" as const,
+          summary: `This PR appends more than ${MAX_VERIFIED_ENTRIES_PER_RUN} entries needing live verification; this entry is past that per-run probe budget, so it is routed to review rather than accepted unverified.`,
+          candidate: assessment.candidate,
+          reason: "verification-capacity",
+        };
+      }
+      verificationsStarted += 1;
       try {
         return (await verifyEntry(appendedEntries[idx])) ?? assessment;
       } catch {

@@ -282,9 +282,6 @@ export function computeGrounding(
   const sourceText = evidenceText(source);
   const allText = `${targetText}\n${sourceText}`;
 
-  const netuid = String(candidate?.netuid ?? "").trim();
-  const netuidMentioned = !!netuid && netuidGroundingRegex(netuid).test(allText);
-
   const sourceUrl =
     (candidate?.source_url as string) || (candidate?.source_urls as string[] | undefined)?.[0] || "";
   // A source that is the SAME resource as the url cannot independently corroborate the claim — owner +
@@ -296,6 +293,17 @@ export function computeGrounding(
   const targetKey = stripScheme(candidate?.url);
   const sourceKey = stripScheme(sourceUrl);
   const independentSource = !!sourceUrl && (targetKey == null || sourceKey == null || targetKey !== sourceKey);
+
+  // #9490: netuid was the one signal matched against `allText` -- which INCLUDES the submitted url's own page
+  // -- with no independence requirement, while owner and host both demand one. Since MIN_STRONG is 1, a
+  // submitter's own page asserting "netuid 64" passed grounding entirely self-corroborated. The netuid is the
+  // single highest-value claim here (it IS the subnet identity), so it now holds to the STRICTEST standard of
+  // the three: the mention must come from the INDEPENDENT source's own text, not merely coexist with one.
+  // (owner/host keep their existing allText/source semantics -- their tokens derive from URLs, not from the
+  // claim under test, so the self-corroboration loop this closes does not exist for them.)
+  const netuid = String(candidate?.netuid ?? "").trim();
+  const netuidMentioned = independentSource && !!netuid && netuidGroundingRegex(netuid).test(sourceText);
+
   const tokens = [...new Set([...ownerTokens(sourceUrl), ...ownerTokens(candidate?.url)])];
   const ownerMentioned = independentSource && tokens.some((t) => new RegExp(`\\b${escapeRe(t)}\\b`, "i").test(allText));
 
@@ -640,6 +648,15 @@ export function probeFunctionalSurface(
 ): { served: boolean; detail: string } {
   const k = String(kind);
   const ct = contentType ?? "";
+  // #9490: `ct` comes verbatim from the SUBMITTER'S OWN server, and the details below flow into a finding the
+  // wire marks `alreadyPublicSafe: true` -- the flag that skips sanitizeForCheckRun and the forbidden-terms
+  // scrub, on the stated invariant that surface-lane summaries "come solely from a fixed assessment
+  // vocabulary". Echoing the raw header made that invariant false: a PR author's server answering with an
+  // arbitrary Content-Type got its text posted verbatim by the bot. Only a strictly mime-shaped token
+  // (`type/subtype`, RFC 6838 charset) is ever echoed; anything else renders as "unrecognized". This is an
+  // ALLOWLIST match from the start of the header, not a scrub of it -- there is nothing a hostile header can
+  // contain that survives into the echo beyond word characters, dots, pluses and dashes.
+  const echoedCt = /^[\w.+-]{1,64}\/[\w.+-]{1,64}/.exec(ct.trim())?.[0] ?? (ct.trim() === "" ? "none" : "unrecognized");
   if (k === "openapi") {
     const looksSpec = /"(?:openapi|swagger)"\s*:/i.test(body) || /^\s*(?:openapi|swagger)\s*:/im.test(body);
     const hasPaths = /"paths"\s*:/i.test(body) || /^\s*paths\s*:/im.test(body);
@@ -649,11 +666,11 @@ export function probeFunctionalSurface(
   }
   if (k === "subnet-api") {
     const isJson = /\bjson\b/i.test(ct) || /^\s*[{[]/.test(body);
-    return isJson ? { served: true, detail: "json api surface" } : { served: false, detail: `not a json api surface (content-type:${ct || "none"})` };
+    return isJson ? { served: true, detail: "json api surface" } : { served: false, detail: `not a json api surface (content-type:${echoedCt})` };
   }
   if (k === "sse") {
     const served = /text\/event-stream/i.test(ct);
-    return { served, detail: served ? "text/event-stream" : `not an event stream (content-type:${ct || "none"})` };
+    return { served, detail: served ? "text/event-stream" : `not an event stream (content-type:${echoedCt})` };
   }
   return { served: true, detail: "n/a" };
 }

@@ -47,6 +47,10 @@ const MAX_BUNDLE_AGE_MS = 7 * 86_400_000;
  *  self-hosted instances without opening a meaningful backdating/replay window. */
 const MAX_CLOCK_SKEW_MS = 5 * 60_000;
 
+/** #9490: hard cap on `instanceId` length -- see isBundleBodyShaped's own comment for why this is a
+ *  persistence-integrity bound, not a cosmetic one. */
+export const MAX_INSTANCE_ID_CHARS = 128;
+
 /** How many DISTINCT `instanceId`s a single verifying key may ever contribute to the accepted set (#9148).
  *  Without this, one allowlisted key can mint an unbounded number of fabricated instanceIds and dominate the
  *  peer median outright — the allowlist bounds which KEYS are trusted, not how many PEERS a key may claim to
@@ -90,6 +94,11 @@ export type FederatedRejectionReason =
    *  otherwise-valid bundle (#9148, the persisted high-water mark). Only ever produced by
    *  {@link applyFederatedPeerWatermarks}, which is the one place this pipeline touches the DB. */
   | "replayed_or_rollback"
+  /** #9490: this `instanceId` is already bound to a DIFFERENT verifying key. First-writer-wins: the id was
+   *  admitted under one key's fingerprint, and a bundle for the same id verifying under any other allowlisted
+   *  key is rejected outright — the takeover primitive (shadow an honest peer's id, ratchet its watermark,
+   *  suppress its genuine bundles) must not exist even between two currently-trusted keys. */
+  | "instance_key_conflict"
   /** This `instanceId` is new, and admitting it would push its verifying key over MAX_INSTANCES_PER_KEY —
    *  the per-key Sybil cap (#9148). Only ever produced by {@link applyFederatedPeerWatermarks}. */
   | "sybil_cap_exceeded";
@@ -136,6 +145,13 @@ function isBundleBodyShaped(bundle: FederatedSignalBundle): boolean {
   const nullableNumeric = (value: unknown): boolean => value === null || numeric(value);
   return (
     typeof bundle.instanceId === "string" &&
+    // #9490: bounded, because instanceIds are PERSISTED into the single system_flags peer-state blob. Nothing
+    // else bounded them, and the pull body cap is 1 MB total -- so roughly 3-4 bundles carrying ~600 KB ids
+    // pushed that blob past D1's ~2 MB value limit, writeFederatedPeerState swallowed the failure, and replay/
+    // rollback watermarks silently stopped persisting for EVERY peer. 128 chars fits every reasonable id
+    // scheme (a UUID is 36, a hex fingerprint 64) with headroom.
+    bundle.instanceId.length > 0 &&
+    bundle.instanceId.length <= MAX_INSTANCE_ID_CHARS &&
     typeof bundle.generatedAt === "string" &&
     typeof bundle.signature === "string" &&
     numeric(bundle.windowDays) &&
@@ -345,7 +361,22 @@ async function writeFederatedPeerState(db: D1Database, state: FederatedPeerState
     .prepare("INSERT OR REPLACE INTO system_flags (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)")
     .bind(FEDERATED_PEER_STATE_FLAG_KEY, JSON.stringify(state))
     .run()
-    .catch(() => undefined);
+    .catch((error: unknown) => {
+      // #9490: still fail-open (a write failure must never fail the sync tick), but LOUDLY. This blob carries
+      // the replay/rollback watermarks and the Sybil cap's instance ledger for every peer -- a persistent
+      // write failure silently regresses all of #9148's protections, which an operator needs to SEE, not
+      // infer. error level so the structured-log forwarder picks it up, same convention as
+      // regate_repair_exhausted.
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "federated_peer_state_write_failed",
+          instances: Object.keys(state).length,
+          approxBytes: JSON.stringify(state).length,
+          message: error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200),
+        }),
+      );
+    });
 }
 
 /**
@@ -394,6 +425,19 @@ export async function applyFederatedPeerWatermarks(
     const generatedAtMs = Date.parse(bundle.generatedAt); // already validated finite by importPeerBundles' rejectionFor
     const existing = state[bundle.instanceId];
     if (existing) {
+      // #9490: an instanceId is BOUND to the first key that verified it. Without this, any hostile-but-
+      // allowlisted peer B could claim honest peer A's id: shadow A's bundle in-batch (last-wins dedup keys
+      // on id alone), overwrite the watermark entry's keyFingerprint, then ratchet lastGeneratedAtMs forward
+      // so A's genuine bundles reject as replayed_or_rollback forever -- targeted suppression plus stat
+      // replacement, and a bypass of B's own MAX_INSTANCES_PER_KEY cap (only NEW ids are counted against it).
+      // That sits squarely inside #9148's declared threat model: bound the damage one still-trusted key can
+      // do. The binding is first-writer-wins and permanent for the life of the state entry; a peer that
+      // legitimately rotates keys re-enters under a new id (or after PEER_STATE_PRUNE_AFTER_MS frees the old
+      // one), which is the cheap, honest path -- as opposed to any takeover path existing at all.
+      if (existing.keyFingerprint !== fingerprint) {
+        rejected.push(reject(bundle.instanceId, "instance_key_conflict"));
+        continue;
+      }
       if (generatedAtMs <= existing.lastGeneratedAtMs) {
         rejected.push(reject(bundle.instanceId, "replayed_or_rollback"));
         continue;

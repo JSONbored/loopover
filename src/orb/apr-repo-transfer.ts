@@ -13,10 +13,14 @@ import { upsertRepositorySettings } from "../db/repositories";
 import { createInstallationToken } from "../github/app";
 import { githubHeaders, timeoutFetch } from "../github/client";
 import { loadAprIdeaCompletion, type AprIdeaCompletionLookup } from "./apr-idea-completion";
+import { loadAprRepoBinding as loadAprRepoBindingDefault, type AprRepoBinding, type AprRepoBindingLookup } from "./apr-repo-binding";
 // `Env` is the ambient Cloudflare Worker binding interface (worker-configuration.d.ts) — a global, not imported.
 
 export type { AprIdeaCompletionLookup, AprIdeaCompletionLookupInput } from "./apr-idea-completion";
 export { loadAprIdeaCompletion } from "./apr-idea-completion";
+
+export type { AprRepoBinding, AprRepoBindingLookup } from "./apr-repo-binding";
+export { loadAprRepoBinding } from "./apr-repo-binding";
 
 /**
  * Result of initiating an APR repo transfer.
@@ -54,9 +58,35 @@ export type RequestAprRepoTransferInput = {
  *   GitHub accepted a *pending* transfer (see {@link AprRepoTransferResult}), never "transfer done".
  */
 export type RequestAprRepoTransferResult =
-  | { status: "rejected"; reason: "idea_not_complete" }
+  | { status: "rejected"; reason: "idea_not_complete" | AprRepoTransferBindingRejection }
   | { status: "initiated"; transfer: Extract<AprRepoTransferResult, { initiated: true }> }
   | { status: "failed"; transfer: Extract<AprRepoTransferResult, { initiated: false }> };
+
+/** #9490: the three ways the tenant binding can refuse a transfer. Distinct reasons on purpose — an operator
+ *  debugging a refused transfer needs to know WHICH leg failed, and none of them leak anything the caller did
+ *  not already supply. */
+export type AprRepoTransferBindingRejection =
+  /** No server-side binding record exists for this repo at all — either not an APR repo, or #7664 has not
+   *  persisted its record. Fail closed: an unbound repo is never transferable. */
+  | "repo_not_apr_bound"
+  /** The caller-supplied `newOwner` is not the customer this APR repo is bound to. The whole point: a transfer
+   *  may only ever move a repo to its OWN customer, never to whoever asked. */
+  | "new_owner_not_bound_customer"
+  /** The caller-supplied `installationId` is not the installation the binding records for this repo. */
+  | "installation_not_bound";
+
+/** #9490: pure tenant-binding check, separated from the completion gate so each is independently testable. */
+export function evaluateAprRepoTransferBinding(
+  input: Pick<RequestAprRepoTransferInput, "installationId" | "repoFullName" | "newOwner">,
+  binding: AprRepoBinding | null,
+): { allowed: true } | { allowed: false; reason: AprRepoTransferBindingRejection } {
+  if (binding === null) return { allowed: false, reason: "repo_not_apr_bound" };
+  if (binding.customerLogin.toLowerCase() !== input.newOwner.trim().toLowerCase()) {
+    return { allowed: false, reason: "new_owner_not_bound_customer" };
+  }
+  if (binding.installationId !== input.installationId) return { allowed: false, reason: "installation_not_bound" };
+  return { allowed: true };
+}
 
 /** Decide whether a customer may request an APR repo transfer right now (#7742). Pure and deterministic. */
 export function evaluateAprRepoTransferRequestEligibility(input: {
@@ -116,6 +146,8 @@ export async function requestAprRepoTransfer(
       newOwner: string,
     ) => Promise<AprRepoTransferResult>;
     loadCompletion?: AprIdeaCompletionLookup;
+    /** #9490 seam: the tenant-binding lookup; injectable for tests, fail-closed default. */
+    loadBinding?: AprRepoBindingLookup;
     /** #7741 deliverable 2 seam: how to freeze AMS dispatch once a transfer is pending. Injectable for tests. */
     pauseDispatch?: (env: Env, repoFullName: string) => Promise<void>;
   } = {},
@@ -124,6 +156,15 @@ export async function requestAprRepoTransfer(
   const { ideaComplete } = await loadCompletion(env, { repoFullName: input.repoFullName, ideaId: input.ideaId });
   const eligibility = evaluateAprRepoTransferRequestEligibility({ ideaComplete });
   if (!eligibility.allowed) return { status: "rejected", reason: eligibility.reason };
+
+  // #9490: the tenant binding gates AFTER completion (cheapest rejection first is irrelevant here -- both are
+  // local lookups -- but completion-first keeps today's observable behaviour byte-identical: an incomplete
+  // idea still rejects with the same reason it always did) and BEFORE any GitHub call: a transfer request
+  // that fails authorization must never reach GitHub at all, not even to fail there.
+  const loadBinding = options.loadBinding ?? loadAprRepoBindingDefault;
+  const binding = await loadBinding(env, { repoFullName: input.repoFullName });
+  const bindingCheck = evaluateAprRepoTransferBinding(input, binding);
+  if (!bindingCheck.allowed) return { status: "rejected", reason: bindingCheck.reason };
 
   const initiate = options.initiate ?? initiateAprRepoTransfer;
   const transfer = await initiate(env, input.installationId, input.repoFullName, input.newOwner);
@@ -217,7 +258,21 @@ export async function probeAprRepoTransfer(
     const response = await timeoutFetch(`https://api.github.com/repos/${transfer.repoFullName}`, {
       headers: githubHeaders({ token }),
     });
-    if (response.status === 404) return { state: "access_departed" };
+    // #9490: a plain 404 at the original path is AMBIGUOUS -- ownership moved away, OR the repo was simply
+    // deleted / the App uninstalled. Recording "accepted_departed" (a terminal SUCCESS) for a deleted repo is
+    // a false outcome in the transfer ledger, so departure is only declared once the repo demonstrably
+    // resolves under the TARGET owner. When that corroboration cannot be obtained (a private repo the App can
+    // no longer see), the transfer stays "pending" and the existing expiry clock resolves it -- a bounded,
+    // late, truthful answer over a fast wrong one.
+    if (response.status === 404) {
+      const repoName = transfer.repoFullName.split("/")[1] ?? "";
+      const relocated = repoName ? await timeoutFetch(`https://api.github.com/repos/${transfer.newOwner}/${repoName}`, { headers: githubHeaders({ token }) }).catch(() => null) : null;
+      if (relocated?.ok) {
+        const relocatedBody = (await relocated.json().catch(() => null)) as { owner?: { login?: string } } | null;
+        if (relocatedBody?.owner?.login?.toLowerCase() === transfer.newOwner.toLowerCase()) return { state: "access_departed" };
+      }
+      return { state: "pending" };
+    }
     if (!response.ok) return { state: "pending" };
     const body = (await response.json().catch(() => null)) as { owner?: { login?: string } } | null;
     const owner = body?.owner?.login;

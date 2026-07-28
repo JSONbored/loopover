@@ -123,6 +123,62 @@ describe("fetchSurfaceProbe", () => {
     expect(probe.ok).toBe(false);
   });
 
+  // #9490: the old read was `(await response.text()).slice(...)` -- the FULL hostile body buffered before the
+  // slice, so a streamed multi-hundred-MB response OOMed the isolate before any fail-closed path could run.
+  it("REGRESSION (#9490): a streamed over-limit body is CANCELLED at the cap, never buffered whole", async () => {
+    let chunksServed = 0;
+    let cancelled = false;
+    const chunk = new TextEncoder().encode("x".repeat(16_000));
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        chunksServed += 1;
+        controller.enqueue(chunk);
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const fetchImpl = (async () => new Response(endless, { status: 200, headers: { "content-type": "text/html" } })) as unknown as typeof fetch;
+
+    const probe = await fetchSurfaceProbe(TARGET, fetchImpl);
+
+    expect(probe.ok).toBe(true);
+    expect(probe.body.length).toBeLessThanOrEqual(64_000);
+    expect(cancelled).toBe(true);
+    // The stream is infinite; reaching here at all proves the read stopped at the cap. The chunk count pins
+    // it quantitatively: ~4 chunks reach the cap, so anything this side of a dozen means bounded reading.
+    expect(chunksServed).toBeLessThan(12);
+  });
+
+  it("INVARIANT (#9490): a cancel() that itself rejects is swallowed — the bounded read still returns the capped body", async () => {
+    const chunk = new TextEncoder().encode("x".repeat(70_000));
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(chunk);
+      },
+      cancel() {
+        throw new Error("cancel exploded");
+      },
+    });
+    const fetchImpl = (async () => new Response(stream, { status: 200, headers: { "content-type": "text/html" } })) as unknown as typeof fetch;
+    const probe = await fetchSurfaceProbe(TARGET, fetchImpl);
+    expect(probe.ok).toBe(true);
+    expect(probe.body.length).toBe(64_000);
+  });
+
+  it("INVARIANT (#9490): a small streamed body is read whole through the bounded reader", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"openapi":"3.0.0"}'));
+        controller.close();
+      },
+    });
+    const fetchImpl = (async () => new Response(stream, { status: 200, headers: { "content-type": "application/json" } })) as unknown as typeof fetch;
+    const probe = await fetchSurfaceProbe(TARGET, fetchImpl);
+    expect(probe.ok).toBe(true);
+    expect(probe.body).toBe('{"openapi":"3.0.0"}');
+  });
+
   it("truncates an oversized body to the probe cap", async () => {
     const probe = await fetchSurfaceProbe(TARGET, routes({ [TARGET]: json("x".repeat(MAX_PROBE_BODY_CHARS + 500)) }));
     expect(probe.body).toHaveLength(MAX_PROBE_BODY_CHARS);
@@ -241,12 +297,15 @@ describe("verifySurfaceEntry — grounding (#8908)", () => {
     expect(v.reason).toBe(GROUNDING_INCONCLUSIVE_REASON);
   });
 
-  it("grounds from the TARGET page too, not only the source", async () => {
-    // The source body names neither netuid nor host; the target page names the netuid.
+  it("REGRESSION (#9490): a netuid claimed only by the TARGET's own page no longer grounds — that was the self-corroboration loop", async () => {
+    // Pre-#9490 this exact shape PASSED ("grounds from the TARGET page too"): the submitter's own page
+    // asserting its netuid satisfied MIN_STRONG=1 with the independent source contributing nothing. That is
+    // an unbacked claim wearing a grounding pass. It now fails (holds for a human), and the sibling test
+    // below pins that a source-corroborated netuid still passes.
     const v = await verifySurfaceEntry(groundedEntry, {
       fetchImpl: routes({ [TARGET]: html("<p>Docs for subnet 14</p>"), [SOURCE]: html("<p>readme</p>") }),
     });
-    expect(v.grounding.outcome).toBe("pass");
+    expect(v.grounding.outcome).toBe("fail");
   });
 
   it("still grounds a base-layer wss entry from its source alone (the target is not http-fetchable)", async () => {

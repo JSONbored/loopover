@@ -40,20 +40,19 @@ export interface ReversedTarget {
 
 /** Per-agent health snapshot from review_targets + config invariants. Shared by /status and alerting. */
 export interface AgentHealth {
-  byStatus: Record<string, number>;
-  byVerdict: Record<string, number>;
+  /** #9136: the gate's own decision breakdown (merge / close / hold) from review_audit's gate_decision rows.
+   *  Replaces the former `byStatus` + `byVerdict` pair, which were near-duplicates of each other sourced from
+   *  the orphaned review_targets and had been frozen since the 2026-06-22 cutover. */
+  byDecision: Record<string, number>;
   terminalCount: number;
   nonTerminal: number;
   manualRate: number;
-  stuckRetryable: number;
-  failed: number;
   dlqCount: number;
   dlqTargets?: FailedTarget[];
   reversals: number;
   reversalRate: number;
   /** Merged + closed auto-actions in the 7d anomaly window — the reversalRate denominator. */
   recentAutoActions: number;
-  failedTargets?: FailedTarget[];
   reversedTargets?: ReversedTarget[];
   configIssues: string[];
   frozen?: boolean;
@@ -162,24 +161,11 @@ function rowId(project: string, kind: TargetKind, repo: string, number: number):
   return `${project}:${kind}:${repo}#${number}`;
 }
 
-/** The minimal review_targets row the decision endpoint reads (inlined from reviewbot src/core/db.ts). */
-interface DecisionTargetRow {
-  id: string;
-  repo: string;
-  number: number;
-  kind: string;
-  status: string;
-  verdict: string | null;
-  head_sha: string | null;
-  decided_sha: string | null;
-  attempt_count: number | null;
-  terminal_at: string | null;
-  decision_json: string | null;
-}
+// #9136: DecisionTargetRow and NON_TERMINAL are gone with the last review_targets reads. NON_TERMINAL listed
+// the processing states (queued / reviewing / error_retryable) the convergence cutover removed as a concept;
+// non-terminal is now simply the gate's `hold` count.
 
 // ── Thresholds (byte-faithful from reviewbot src/core/ops.ts) ────────────────────────────────────
-
-const NON_TERMINAL = new Set(["queued", "reviewing", "error_retryable"]);
 
 /** How far back the anomaly signals (failed / reversals) look. */
 const ANOMALY_WINDOW = "-7 days";
@@ -199,6 +185,19 @@ const DLQ_WINDOW = "-6 hours";
 // still live. byStatus/verdictRows/failedRows below are UNCHANGED (still review_targets-sourced, and so still
 // silently zero) -- deferred; see the PR description for the full scope decision and #9136 for the tracked
 // remainder (manualRate/stuckRetryable/failed/calibration bins, submitter-reputation.ts, ams-miner-cohort.ts).
+/**
+ * #9136: a PR accumulates one decision_records row per head sha, and its own header states
+ * "latest-finalize-wins per id". Every calibration read wants the decision that actually stands, so this
+ * restricts to the newest record for each (repo, pull) — the direct analogue of review_targets' single
+ * terminal row per target, and the same shape as submitter-reputation.ts's LATEST_PR_OUTCOME_FILTER.
+ *
+ * Correlated on the alias `dr`, so every query using it must name its decision_records table `dr`.
+ */
+const LATEST_DECISION_RECORD_FILTER = `dr.created_at = (
+       SELECT MAX(newer.created_at) FROM decision_records newer
+       WHERE newer.repo_full_name = dr.repo_full_name AND newer.pull_number = dr.pull_number
+     )`;
+
 function parseReviewAuditTargetId(targetId: string): { repo: string; number: number } | null {
   const hashIndex = targetId.lastIndexOf("#");
   if (hashIndex <= 0) return null;
@@ -235,14 +234,28 @@ export async function computeAgentHealth(env: Env, config: OpsAgentConfig, deps:
   // a few); recent failed/reversal counts + the rate denominator are all 7-day-windowed. `manualRate` is
   // all-time on purpose (a different, lifetime signal).
   const LIST_CAP = 100;
-  const [statusRows, verdictRows, failedRows, reversedRows, recentActionsRow, dlqRows, dlqCountRow] = await Promise.all([
-    storage(env).prepare(`SELECT status, COUNT(*) AS n FROM review_targets WHERE project = ? GROUP BY status`).bind(slug).all<{ status: string; n: number }>(),
-    storage(env).prepare(`SELECT verdict, COUNT(*) AS n FROM review_targets WHERE project = ? AND verdict IS NOT NULL GROUP BY verdict`).bind(slug).all<{ verdict: string; n: number }>(),
+  const [decisionRows, reversedRows, recentActionsRow, dlqRows, dlqCountRow] = await Promise.all([
+    // #9136, the last three review_targets reads in this file. byStatus/byVerdict/failedRows were the only
+    // survivors of the convergence cutover's orphaning, and so returned a frozen set that has been silently
+    // shrinking since 2026-06-22 -- taking manualRate, terminalCount and two Discord alerts down with them.
+    //
+    // Resolved by splitting them on whether a live analogue EXISTS, rather than repointing all three at
+    // something approximate:
+    //
+    //   byStatus/byVerdict -> byDecision, sourced from review_audit's own gate_decision rows. The disposition
+    //     half of the old status vocabulary (merged/closed/manual) maps exactly onto merge/close/hold, and it
+    //     is what terminalCount/nonTerminal/manualRate were really measuring. The two fields also collapse
+    //     into one: separate status and verdict breakdowns were near-duplicates of each other.
+    //
+    //   stuckRetryable / failed / failedTargets -> DELETED, not repointed. `queued/reviewing/error/
+    //     error_retryable` were PROCESSING states, and the cutover removed the concept, not just the table --
+    //     nothing live records them (this file's own comment below the fold said as much). `failed` was
+    //     additionally redundant: dlqCount/dlqTargets already cover "permanently failed", are live, and have
+    //     their own alert. An alert that cannot fire is worse than no alert, because it reads as coverage.
     storage(env).prepare(
-      `SELECT number, repo, verdict, last_error FROM review_targets
-       WHERE project = ? AND status = 'error' AND updated_at > datetime('now', ?)
-       ORDER BY updated_at DESC LIMIT ?`,
-    ).bind(slug, ANOMALY_WINDOW, LIST_CAP).all<{ number: number; repo: string; verdict: string | null; last_error: string | null }>(),
+      `SELECT decision, COUNT(*) AS n FROM review_audit
+       WHERE project = ? AND event_type = 'gate_decision' AND decision IS NOT NULL GROUP BY decision`,
+    ).bind(slug).all<{ decision: string; n: number }>(),
     // #9136: repointed off review_targets (see this file's own header comment above). Recent human reversals
     // of a bot auto-action, read directly from review_audit's own reversal_* rows -- repo/number parsed from
     // target_id, no join. A reopened bot-close the gate SUBSEQUENTLY re-acted on (a LATER gate_decision row
@@ -282,14 +295,13 @@ export async function computeAgentHealth(env: Env, config: OpsAgentConfig, deps:
       `SELECT COUNT(*) AS n FROM review_audit WHERE project = ? AND event_type = 'dead_lettered' AND created_at > datetime('now', ?)`,
     ).bind(slug, DLQ_WINDOW).first<{ n: number }>(),
   ]);
-  const byStatus: Record<string, number> = {};
-  for (const r of statusRows.results ?? []) byStatus[r.status] = r.n;
-  const byVerdict: Record<string, number> = {};
-  for (const r of verdictRows.results ?? []) byVerdict[r.verdict] = r.n;
-  const terminalCount = (byStatus.merged ?? 0) + (byStatus.closed ?? 0) + (byStatus.commented ?? 0) + (byStatus.manual ?? 0) + (byStatus.error ?? 0);
-  const nonTerminal = Object.entries(byStatus).reduce((sum, [s, n]) => (NON_TERMINAL.has(s) ? sum + n : sum), 0);
+  const byDecision: Record<string, number> = {};
+  for (const r of decisionRows.results ?? []) byDecision[r.decision] = r.n;
+  // merge/close are the gate acting; hold is it deferring to a human. That is exactly the terminal /
+  // non-terminal split the old status vocabulary encoded, minus the processing states that no longer exist.
+  const terminalCount = (byDecision.merge ?? 0) + (byDecision.close ?? 0);
+  const nonTerminal = byDecision.hold ?? 0;
   const recentAutoActions = recentActionsRow?.n ?? 0;
-  const failedTargets: FailedTarget[] = (failedRows.results ?? []).map((r) => ({ number: r.number, repo: r.repo, verdict: r.verdict, lastError: r.last_error }));
   // #9136: repo/number parsed from review_audit's own target_id (no review_targets join -- see this file's
   // header comment). A target_id this malformed to parse is skipped (filtered out) rather than crashing the
   // whole snapshot over one bad row -- defensive only; every writer of this column (outcomes-wire.ts,
@@ -312,20 +324,20 @@ export async function computeAgentHealth(env: Env, config: OpsAgentConfig, deps:
     })
     .filter((t): t is FailedTarget => t !== null);
   const reversals = reversedTargets.length;
+  // The share of decisions the gate handed to a human instead of acting on. Denominator is ALL decisions
+  // (including holds), not just the terminal ones -- the old `manual / terminalCount` divided by a
+  // denominator that excluded the very rows it was counting.
+  const allDecisions = terminalCount + nonTerminal;
   return {
-    byStatus,
-    byVerdict,
+    byDecision,
     terminalCount,
     nonTerminal,
-    manualRate: terminalCount ? Number(((byStatus.manual ?? 0) / terminalCount).toFixed(3)) : 0,
-    stuckRetryable: byStatus.error_retryable ?? 0,
-    failed: failedTargets.length,
+    manualRate: allDecisions ? Number((nonTerminal / allDecisions).toFixed(3)) : 0,
     dlqCount: dlqCountRow?.n ?? dlqTargets.length, // true window count (uncapped); dlqTargets is the display sample
     dlqTargets,
     reversals,
     reversalRate: recentAutoActions ? Number((reversals / recentAutoActions).toFixed(3)) : 0,
     recentAutoActions,
-    failedTargets,
     reversedTargets,
     configIssues: deps.validateAgentConfig(config),
     frozen: await deps.isFrozen(env, slug),
@@ -340,20 +352,52 @@ export async function computeAgentHealth(env: Env, config: OpsAgentConfig, deps:
  */
 export async function computeCalibration(env: Env, config: OpsAgentConfig): Promise<Calibration> {
   const slug = config.slug;
+  // #9136: all four reads were sourced from review_targets, which the 2026-06-22 convergence cutover orphaned
+  // (no writer exists anywhere), so every one of them returned a frozen and shrinking set. Repointed onto the
+  // live ledgers: decision_records (#8836, the acted disposition + its reasonCode + the record JSON carrying
+  // aiConfidence) and review_audit (the realized reversal signal).
+  //
+  // This also retires the target_id NAMESPACE MISMATCH that made two of them unfixable even in principle.
+  // review_audit.target_id is `owner/repo#123`; review_targets.id was `project:kind:owner/repo#123`. The
+  // disputed-closes JOIN below could therefore never match a row, and — less visibly — the `reverted` Set a
+  // few lines down was built from review_audit target_ids and tested against review_targets ids, so
+  // `!reverted.has(...)` was ALWAYS true: every merge read as kept, `rev` was always empty, and
+  // recommendedFloor was structurally always null. decision_records keys on
+  // `repo_full_name || '#' || pull_number`, the SAME namespace as review_audit, so both now genuinely match.
+  //
+  // No `project` filter on decision_records: it has no such column because it is written only by this
+  // deployment (one instance, one project), unlike review_audit which carries the slug for historical export.
   const [mergedRows, revRows, closesByReasonRows, disputedRows] = await Promise.all([
-    storage(env).prepare(`SELECT id, decision_json FROM review_targets WHERE project = ? AND status = 'merged'`).bind(slug).all<{ id: string; decision_json: string | null }>(),
+    // Every acted MERGE and the confidence that justified it. Latest record per PR wins, mirroring
+    // decision_records' own "latest-finalize-wins per id" semantics across a PR's successive head shas.
+    storage(env).prepare(
+      `SELECT dr.repo_full_name || '#' || dr.pull_number AS target_id, dr.record_json AS decision_json
+       FROM decision_records dr
+       WHERE dr.action = 'merge' AND ${LATEST_DECISION_RECORD_FILTER}`,
+    ).all<{ target_id: string; decision_json: string | null }>(),
     storage(env).prepare(`SELECT DISTINCT target_id FROM review_audit WHERE project = ? AND event_type = 'reversal_reverted'`).bind(slug).all<{ target_id: string }>(),
     // Close distribution by reasonCode — the denominator for spotting an over-closing gate.
     storage(env).prepare(
-      `SELECT COALESCE(json_extract(decision_json, '$.reasonCode'), '(none)') AS rc, COUNT(*) AS n
-       FROM review_targets WHERE project = ? AND status = 'closed' GROUP BY rc`,
-    ).bind(slug).all<{ rc: string; n: number }>(),
+      `SELECT dr.reason_code AS rc, COUNT(*) AS n
+       FROM decision_records dr
+       WHERE dr.action = 'close' AND ${LATEST_DECISION_RECORD_FILTER}
+       GROUP BY rc`,
+    ).all<{ rc: string; n: number }>(),
     // Disputed closes: a bot-close a human REOPENED that the gate did NOT subsequently re-terminalize.
+    // "Re-terminalized" is now expressed against the live ledger as "a later decision record exists for the
+    // same target", which is what review_targets.terminal_at > a.created_at meant.
     storage(env).prepare(
-      `SELECT COALESCE(json_extract(t.decision_json, '$.reasonCode'), '(none)') AS rc, COUNT(DISTINCT t.id) AS n
-       FROM review_audit a JOIN review_targets t ON t.id = a.target_id
-       WHERE a.project = ? AND a.event_type = 'reversal_reopened'
-         AND NOT (t.terminal_at IS NOT NULL AND t.terminal_at > a.created_at) GROUP BY rc`,
+      `SELECT dr.reason_code AS rc, COUNT(DISTINCT dr.repo_full_name || '#' || dr.pull_number) AS n
+       FROM review_audit a
+       JOIN decision_records dr ON dr.repo_full_name || '#' || dr.pull_number = a.target_id
+       WHERE a.project = ? AND a.event_type = 'reversal_reopened' AND dr.action = 'close'
+         AND ${LATEST_DECISION_RECORD_FILTER}
+         AND NOT EXISTS (
+           SELECT 1 FROM decision_records later
+           WHERE later.repo_full_name = dr.repo_full_name AND later.pull_number = dr.pull_number
+             AND later.created_at > a.created_at
+         )
+       GROUP BY rc`,
     ).bind(slug).all<{ rc: string; n: number }>(),
   ]);
   const disputedByReason = new Map((disputedRows.results ?? []).map((r) => [r.rc, r.n]));
@@ -361,11 +405,18 @@ export async function computeCalibration(env: Env, config: OpsAgentConfig): Prom
     .map((r) => ({ reasonCode: r.rc, closes: r.n, disputed: disputedByReason.get(r.rc) ?? 0 }))
     .sort((a, b) => b.closes - a.closes);
   const disputedCloseCount = [...disputedByReason.values()].reduce((a, b) => a + b, 0);
+  // Both sides are `owner/repo#123` now — see the namespace note on the queries above for why this
+  // membership test silently answered "kept" for every single merge before.
   const reverted = new Set((revRows.results ?? []).map((r) => r.target_id));
+  // #9136: review_targets.decision_json spelled this `confidence`; decision_records' canonical record spells
+  // it `aiConfidence` (see risk-control-wire.ts, which reads the same field off the same JSON). Both are
+  // accepted — reading only the new name would silently yield null for every row and leave the calibration
+  // exactly as dead as the orphaned table left it, which is the failure mode this repoint exists to end.
   const confidenceOf = (j: string | null): number | null => {
     if (!j) return null;
     try {
-      const c = (JSON.parse(j) as { confidence?: unknown }).confidence;
+      const record = JSON.parse(j) as { aiConfidence?: unknown; confidence?: unknown };
+      const c = typeof record.aiConfidence === "number" ? record.aiConfidence : record.confidence;
       return typeof c === "number" ? c : null;
     } catch {
       return null;
@@ -377,7 +428,7 @@ export async function computeCalibration(env: Env, config: OpsAgentConfig): Prom
   for (const r of mergedRows.results ?? []) {
     const c = confidenceOf(r.decision_json);
     if (c == null) continue;
-    const isKept = !reverted.has(r.id);
+    const isKept = !reverted.has(r.target_id);
     binSamples.push({ confidence: c, kept: isKept });
     (isKept ? kept : rev).push(c);
   }
@@ -449,13 +500,11 @@ export async function handleInternalStatus(
 
   return Response.json({
     project: slug,
-    counts: { byStatus: health.byStatus, byVerdict: health.byVerdict },
+    counts: { byDecision: health.byDecision },
     health: {
       frozen: health.frozen ?? false,
       holdOnly: health.holdOnly ?? false,
       nonTerminal: health.nonTerminal,
-      stuckRetryable: health.stuckRetryable,
-      failed: health.failed,
       dlqCount: health.dlqCount,
       aiErrors,
       manualRate: health.manualRate,
@@ -484,40 +533,62 @@ export async function handleInternalDecision(request: Request, env: Env, config:
     return Response.json({ error: "provide ?repo=<owner/repo>&number=<n>" }, { status: 400 });
   }
 
+  // #9136: this endpoint read review_targets, which the convergence cutover orphaned — so it returned 404 for
+  // EVERY pull request opened since 2026-06-22, silently, while still being routed and authenticated. Rebuilt
+  // on the live ledgers: pull_requests for the target's realized state, decision_records for the decision that
+  // explains it, review_audit for the trail.
+  //
+  // The audit lookup is also a namespace fix: it bound `rowId(...)` (`project:kind:owner/repo#n`) against
+  // review_audit.target_id (`owner/repo#n`), so the trail came back empty even when rows existed.
   const id = rowId(config.slug, kind, repo, number);
-  const target = await storage(env).prepare(`SELECT * FROM review_targets WHERE id = ?`).bind(id).first<DecisionTargetRow>();
+  const targetKey = `${repo}#${number}`;
+  const [target, record, audit] = await Promise.all([
+    storage(env).prepare(
+      `SELECT repo_full_name, number, state, head_sha, merged_at, merge_attempt_count
+       FROM pull_requests WHERE repo_full_name = ? AND number = ?`,
+    ).bind(repo, number).first<{ repo_full_name: string; number: number; state: string; head_sha: string | null; merged_at: string | null; merge_attempt_count: number | null }>(),
+    // The decision that stands for this PR — the newest record across its successive head shas.
+    storage(env).prepare(
+      `SELECT head_sha, action, reason_code, record_json, created_at
+       FROM decision_records WHERE repo_full_name = ? AND pull_number = ? ORDER BY created_at DESC LIMIT 1`,
+    ).bind(repo, number).first<{ head_sha: string; action: string; reason_code: string; record_json: string | null; created_at: string }>(),
+    storage(env).prepare(
+      `SELECT event_type, decision, substr(summary, 1, 240) AS summary, created_at
+       FROM review_audit WHERE project = ? AND target_id = ? ORDER BY created_at DESC LIMIT 25`,
+    ).bind(config.slug, targetKey).all<{ event_type: string; decision: string | null; summary: string | null; created_at: string }>(),
+  ]);
   if (!target) return Response.json({ error: "no such target", id }, { status: 404 });
 
   let decision: unknown = null;
-  if (target.decision_json) {
+  if (record?.record_json) {
     try {
-      decision = JSON.parse(target.decision_json);
+      decision = JSON.parse(record.record_json);
     } catch {
       decision = null;
     }
   }
-  const audit = await storage(env).prepare(
-    `SELECT event_type, decision, substr(summary, 1, 240) AS summary, created_at
-     FROM review_audit WHERE project = ? AND target_id = ? ORDER BY created_at DESC LIMIT 25`,
-  )
-    .bind(config.slug, id)
-    .all<{ event_type: string; decision: string | null; summary: string | null; created_at: string }>();
 
   return Response.json({
     project: config.slug,
     target: {
       id,
-      repo: target.repo,
+      repo: target.repo_full_name,
       number: target.number,
-      kind: target.kind,
-      status: target.status,
-      verdict: target.verdict ?? null,
+      kind,
+      // review_targets' status enum (queued/reviewing/error/error_retryable/merged/closed/manual) has no live
+      // equivalent — the cutover kept the realized DISPOSITION and dropped the processing states. Reported as
+      // the disposition, which is the half every consumer of this endpoint actually reads.
+      status: target.merged_at ? "merged" : target.state === "closed" ? "closed" : "open",
+      verdict: record?.action ?? null,
       headSha: target.head_sha ?? null,
-      decidedSha: target.decided_sha ?? null,
-      attemptCount: target.attempt_count ?? 0,
-      terminalAt: target.terminal_at,
+      // The sha the standing decision was actually made on. review_targets' `decided_sha` was a cache of the
+      // same idea; this is the authoritative version rather than a reconstruction of it.
+      decidedSha: record?.head_sha ?? null,
+      attemptCount: target.merge_attempt_count ?? 0,
+      terminalAt: target.merged_at ?? (record && record.action !== "hold" ? record.created_at : null),
+      reasonCode: record?.reason_code ?? null,
     },
-    decision, // the cached terminal GateDecision for decidedSha (null if none cached yet)
+    decision, // the canonical DecisionRecord that explains the standing verdict (null if none recorded yet)
     audit: (audit.results ?? []).map((r) => ({ event: r.event_type, decision: r.decision, summary: r.summary, at: r.created_at })),
   });
 }
@@ -564,8 +635,17 @@ export interface ReviewSourceFreshnessCheck {
  *     again, exactly the shape review_targets' own orphaning took.
  */
 const REVIEW_SOURCE_FRESHNESS_SOURCES: ReadonlyArray<{ table: string; timestampColumn: string; windowDays: number }> = [
-  { table: "review_targets", timestampColumn: "terminal_at", windowDays: 90 },
+  // #9136: review_targets is GONE from this list, with the last reader that consumed it. The table is
+  // permanently frozen (the 2026-06-22 convergence cutover left it with no writer), so a 90-day freshness
+  // probe against it reported `fresh: false` forever — a gauge pinned at 0 that no action could ever clear,
+  // which is alert noise rather than a signal. A staleness check only earns its place while something still
+  // reads the table.
+  //
+  // decision_records takes its slot: it is what the calibration and decision surfaces read now, so IT is the
+  // source whose silence would mean those surfaces have quietly gone dark. 7 days matches review_audit — both
+  // are written on every gate decision, so a week of silence on either is a real outage, not a quiet period.
   { table: "review_audit", timestampColumn: "created_at", windowDays: 7 },
+  { table: "decision_records", timestampColumn: "created_at", windowDays: 7 },
 ];
 
 /** Check every tracked source table for a row inside its own consuming window. Read-only; a per-table

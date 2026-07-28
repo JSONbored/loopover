@@ -10,13 +10,10 @@ import {
 import { createTestEnv } from "../helpers/d1";
 
 const healthy: AgentHealth = {
-  byStatus: {},
-  byVerdict: {},
+  byDecision: {},
   terminalCount: 50,
   nonTerminal: 0,
   manualRate: 0.1,
-  stuckRetryable: 0,
-  failed: 0,
   dlqCount: 0,
   reversals: 0,
   reversalRate: 0,
@@ -27,11 +24,23 @@ describe("detectAnomalies", () => {
   it("returns nothing for a healthy snapshot", () => {
     expect(detectAnomalies(healthy)).toEqual([]);
   });
-  it("flags config issues, failures, manual-rate spikes, and stuck targets", () => {
+  it("flags config issues and manual-rate spikes", () => {
     expect(detectAnomalies({ ...healthy, configIssues: ["bad slug"] })[0]).toMatch(/config invariant/);
-    expect(detectAnomalies({ ...healthy, failed: 2 })[0]).toMatch(/permanently failed/);
     expect(detectAnomalies({ ...healthy, manualRate: 0.8 })[0]).toMatch(/manual-rate 80%/);
-    expect(detectAnomalies({ ...healthy, stuckRetryable: 7 })[0]).toMatch(/stuck in error_retryable/);
+  });
+
+  // #9136: the "permanently failed" and "stuck in error_retryable" alerts are gone, not merely quiet. Both
+  // read review_targets' processing-status enum, which the convergence cutover removed as a CONCEPT, so both
+  // had been structurally unfireable since 2026-06-22 while still reading as live coverage. The real failure
+  // they were meant to catch is what the DLQ alert catches, from a source that is actually written.
+  it("REGRESSION: no alert claims to watch processing states that no longer exist", () => {
+    const noisy = { ...healthy, configIssues: ["bad slug"], manualRate: 0.9, dlqCount: 9, reversals: 4, reversalRate: 0.5 };
+    const all = detectAnomalies(noisy).join("\n");
+    expect(all).not.toMatch(/permanently failed/);
+    expect(all).not.toMatch(/error_retryable/);
+    // ...while the live signals it replaced them with still fire.
+    expect(all).toMatch(/DEAD-LETTERED/);
+    expect(all).toMatch(/manual-rate/);
   });
   it("does NOT flag a high manual-rate on too few decisions", () => {
     expect(detectAnomalies({ ...healthy, terminalCount: 4, manualRate: 1 })).toEqual([]);
@@ -81,31 +90,31 @@ describe("detectAnomalies", () => {
     expect(out.some((a) => /reverted\/reopened/.test(a) && /reversal-rate 2%/.test(a))).toBe(true);
   });
   it("surfaces MULTIPLE simultaneous anomalies together (so a compound regression isn't masked)", () => {
-    const out = detectAnomalies({ ...healthy, failed: 1, manualRate: 0.9, reversals: 3, reversalRate: 0.1 });
+    const out = detectAnomalies({ ...healthy, dlqCount: 5, manualRate: 0.9, reversals: 3, reversalRate: 0.1 });
     expect(out.length).toBe(3);
   });
   it("NAMES the specific PRs (with links) so the alert is actionable, not a mystery count", () => {
     const out = detectAnomalies({
       ...healthy,
-      failed: 2,
-      failedTargets: [
-        { number: 2420, repo: "JSONbored/awesome-claude", verdict: "merge", lastError: "max_attempts_exceeded" },
+      dlqCount: 3,
+      dlqTargets: [
+        { number: 2420, repo: "JSONbored/awesome-claude", verdict: null, lastError: "max_attempts_exceeded" },
         { number: 2318, repo: "JSONbored/awesome-claude", verdict: null, lastError: "max_attempts_exceeded" },
       ],
       reversals: 1,
       reversalRate: 0.01,
       reversedTargets: [{ number: 2643, repo: "JSONbored/awesome-claude", status: "merged", eventType: "reversal_reopened" }],
     });
-    const failedLine = out.find((a) => /permanently failed/.test(a)) ?? "";
-    expect(failedLine).toContain("[#2420](https://github.com/JSONbored/awesome-claude/pull/2420)");
-    expect(failedLine).toContain("merge · max_attempts_exceeded");
-    expect(failedLine).toContain("#2318");
+    const dlqLine = out.find((a) => /DEAD-LETTERED/.test(a)) ?? "";
+    expect(dlqLine).toContain("[#2420](https://github.com/JSONbored/awesome-claude/pull/2420)");
+    expect(dlqLine).toContain("max_attempts_exceeded");
+    expect(dlqLine).toContain("#2318");
     const reversalLine = out.find((a) => /reverted\/reopened/.test(a)) ?? "";
     expect(reversalLine).toContain("[#2643](https://github.com/JSONbored/awesome-claude/pull/2643)");
   });
   it("caps the listed PRs and notes the remainder (keeps the embed readable)", () => {
-    const many = Array.from({ length: 12 }, (_, i) => ({ number: 3000 + i, repo: "o/r", verdict: "close", lastError: "x" }));
-    const line = detectAnomalies({ ...healthy, failed: 12, failedTargets: many }).find((a) => /permanently failed/.test(a)) ?? "";
+    const many = Array.from({ length: 12 }, (_, i) => ({ number: 3000 + i, repo: "o/r", verdict: null, lastError: "x" }));
+    const line = detectAnomalies({ ...healthy, dlqCount: 12, dlqTargets: many }).find((a) => /DEAD-LETTERED/.test(a)) ?? "";
     expect(line).toContain("(+4 more)"); // 12 - MAX_LISTED(8)
   });
   it("flags the accuracy circuit-breaker (holdOnly) FIRST and on its own", () => {
@@ -128,16 +137,8 @@ describe("detectAnomalies", () => {
     expect(line).toContain("[#700](https://github.com/o/r/pull/700)");
     expect(line).not.toContain("·"); // lastError null → no " · <err>" suffix
   });
-  it("omits the '· error' suffix on a permanently-failed PR with no lastError", () => {
-    const out = detectAnomalies({
-      ...healthy,
-      failed: 1,
-      failedTargets: [{ number: 800, repo: "o/r", verdict: "merge", lastError: null }],
-    });
-    const line = out.find((a) => /permanently failed/.test(a)) ?? "";
-    expect(line).toContain("(merge)"); // verdict present, but no " · <err>"
-    expect(line).not.toContain("·");
-  });
+  // (The '· error' suffix branch is covered by its DLQ twin directly above; #9136 removed the
+  // permanently-failed alert that was the second caller of the same listSuffix helper.)
   it("treats an undefined dlqCount as 0 (no DLQ line on a hand-built health object)", () => {
     // dlqCount is the noUncheckedIndexedAccess-style defensive `?? 0` — a hand-built health snapshot may omit it.
     const partial = { ...healthy } as Partial<AgentHealth>;
@@ -203,7 +204,7 @@ function claimEnv(extra: Record<string, unknown> = {}): Env {
 
 const WEBHOOK = "https://discord.com/api/webhooks/123/abc";
 
-const anomalousHealth: AgentHealth = { ...healthy, failed: 1, dlqCount: 3, dlqTargets: [{ number: 9, repo: "o/r", verdict: null, lastError: "storm" }] };
+const anomalousHealth: AgentHealth = { ...healthy, dlqCount: 3, dlqTargets: [{ number: 9, repo: "o/r", verdict: null, lastError: "storm" }] };
 const driftCal: Calibration = {
   currentFloor: 0.9, mergedCount: 50, revertedCount: 2, keptAvgConfidence: 0.95, revertedMaxConfidence: 0.93,
   recommendedFloor: 0.95, note: "raise",

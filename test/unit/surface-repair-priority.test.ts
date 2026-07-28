@@ -7,7 +7,7 @@ import type { PullRequestRecord } from "../../src/types";
 
 const REPO = "owner/repo";
 const REGATE_REPAIR_ATTEMPT_EVENT_TYPE = "agent.sweep.regate.repair_attempt";
-const REGATE_REPAIR_MAX_ATTEMPTS_PER_SHA = 5;
+const REGATE_REPAIR_MAX_ATTEMPTS_PER_PR = 5;
 
 function pr(overrides: Partial<PullRequestRecord> & { number: number }): PullRequestRecord {
   return {
@@ -137,14 +137,15 @@ describe("surfaceRepairPriorityPullNumbers (#orb-stale-recheck-priority)", () =>
       detail: "the base-branch conflict that justified this close has since cleared — action not executed",
       createdAt: new Date().toISOString(),
     });
-    // The SAME per-(repo, pr, headSha) attempt budget the outage-repair path already shares (isRegateRepairExhausted)
-    // applies here too -- once it's exhausted for this exact head SHA, the PR drops out of the priority set even
-    // though the stale-recheck-denial signal above still matches.
-    for (let i = 0; i < REGATE_REPAIR_MAX_ATTEMPTS_PER_SHA; i++) {
+    // The SAME per-(repo, pr) attempt budget the outage-repair path already shares (isRegateRepairExhausted)
+    // applies here too -- once exhausted for this PR, it drops out of the priority set even though the
+    // stale-recheck-denial signal above still matches. #9499 re-keyed this from head SHA to PR number: a
+    // successful rebase mints a new SHA, which reset the budget and let the repair loop run forever.
+    for (let i = 0; i < REGATE_REPAIR_MAX_ATTEMPTS_PER_PR; i++) {
       await recordAuditEvent(env, {
         eventType: REGATE_REPAIR_ATTEMPT_EVENT_TYPE,
         actor: "loopover",
-        targetKey: `${REPO}#9#sha1`,
+        targetKey: `${REPO}#9`,
         outcome: "completed",
         detail: "outage-repair re-review executing",
         createdAt: new Date().toISOString(),

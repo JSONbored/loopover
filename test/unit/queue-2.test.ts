@@ -2226,12 +2226,12 @@ describe("queue processors", () => {
     await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" } });
     await upsertRepoFocusManifest(env, "owner/agent-repo", { settings: { checkRunMode: "off", commentMode: "off", publicSurface: "off", reviewCheckMode: "required" } });
     // PR 1: missing its current Gate check for its current head -- would ordinarily be flagged outage-repair
-    // priority on every tick. Pre-seed REGATE_REPAIR_MAX_ATTEMPTS_PER_SHA=5 (#3998) prior repair-attempt audit
-    // events for this EXACT head SHA to simulate a review that keeps failing (e.g. a timeout) and never
+    // priority on every tick. Pre-seed REGATE_REPAIR_MAX_ATTEMPTS_PER_PR=5 (#3998) prior repair-attempt audit
+    // events for this PR to simulate a review that keeps failing (e.g. a timeout) and never
     // publishes a completed gate check.
     await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 1, title: "Stuck repair", state: "open", user: { login: "c" }, head: { sha: "stuck-sha" }, labels: [], body: "" });
     await repositoriesModule.markPullRequestSurfacePublished(env, "owner/agent-repo", 1, "stuck-sha");
-    const targetKey = "owner/agent-repo#1#stuck-sha";
+    const targetKey = "owner/agent-repo#1"; // #9499: the repair budget is per PR, not per head SHA
     for (let i = 0; i < 5; i += 1) {
       await repositoriesModule.recordAuditEvent(env, {
         eventType: "agent.sweep.regate.repair_attempt",
@@ -2280,7 +2280,7 @@ describe("queue processors", () => {
     await upsertRepoFocusManifest(env, "owner/agent-repo", { settings: { checkRunMode: "off", commentMode: "off", publicSurface: "off", reviewCheckMode: "required" } });
     await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 2, title: "Fresh repair", state: "open", user: { login: "c" }, head: { sha: "fresh-sha" }, labels: [], body: "" });
     await repositoriesModule.markPullRequestSurfacePublished(env, "owner/agent-repo", 2, "fresh-sha");
-    const targetKey = "owner/agent-repo#2#fresh-sha";
+    const targetKey = "owner/agent-repo#2";
     vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
 
     await processJob(env, { type: "agent-regate-sweep", requestedBy: "test", repoFullName: "owner/agent-repo" });
@@ -2296,7 +2296,7 @@ describe("queue processors", () => {
       .first<{ n: number }>();
     expect(attemptsAfterFirst?.n).toBe(1);
 
-    // Manually push this SHA over the REGATE_REPAIR_MAX_ATTEMPTS_PER_SHA=5 cap (#3998), then run the sweep twice
+    // Manually push this SHA over the REGATE_REPAIR_MAX_ATTEMPTS_PER_PR=5 cap (#3998), then run the sweep twice
     // more -- the exhausted event must be recorded only once even though the PR is (re-)evaluated on every tick.
     for (let i = 0; i < 4; i += 1) {
       await repositoriesModule.recordAuditEvent(env, {
@@ -2324,7 +2324,7 @@ describe("queue processors", () => {
     await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, gatePack: "oss-anti-slop" });
     await upsertRepoFocusManifest(env, "owner/agent-repo", { settings: { checkRunMode: "off", commentMode: "off", publicSurface: "off", aiReviewMode: "off", reviewCheckMode: "required" } });
     await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 3, title: "Healthy PR, still waiting on required CI", state: "open", user: { login: "contributor" }, head: { sha: "pending-sha" }, base: { ref: "main" }, labels: [], body: "" });
-    const targetKey = "owner/agent-repo#3#pending-sha";
+    const targetKey = "owner/agent-repo#3";
     vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
     // Same fixture shape as the missing-required-context tests in queue.test.ts: a required status check has
     // simply not posted yet. Time is frozen for this whole test (vi.setSystemTime, never advanced) and no
@@ -2382,7 +2382,7 @@ describe("queue processors", () => {
     await upsertRepoFocusManifest(env, "owner/agent-repo4", { settings: { checkRunMode: "off", commentMode: "off", publicSurface: "off", reviewCheckMode: "required" } });
     // Never marked surface-published for this head -- needsSurfaceConvergence is true, a genuine backlog-convergence candidate.
     await upsertPullRequestFromGitHub(env, "owner/agent-repo4", { number: 1, title: "Stuck convergence", state: "open", user: { login: "c" }, head: { sha: "stuck-sha" }, labels: [], body: "" });
-    const targetKey = "owner/agent-repo4#1#stuck-sha";
+    const targetKey = "owner/agent-repo4#1";
     // Pre-seed the SAME shared budget the main sweep's repair path charges against -- this is the whole point of
     // sharing isRegateRepairExhausted rather than giving backlog-convergence its own independent counter.
     for (let i = 0; i < 5; i += 1) {
@@ -2448,7 +2448,7 @@ describe("queue processors", () => {
         created_at: wedgedCreated[i]!,
         updated_at: wedgedCreated[i]!,
       });
-      const targetKey = `owner/agent-repo6#${number}#${headSha}`;
+      const targetKey = `owner/agent-repo6#${number}`; // #9499: per-PR, not per-head-SHA
       for (let attempt = 0; attempt < 5; attempt += 1) {
         await repositoriesModule.recordAuditEvent(env, {
           eventType: "agent.sweep.regate.repair_attempt",
@@ -2512,7 +2512,7 @@ describe("queue processors", () => {
       labels: [],
       body: "",
     });
-    const targetKey = `owner/agent-repo7#1#${headSha}`;
+    const targetKey = `owner/agent-repo7#1`; // #9499: per-PR, not per-head-SHA
     for (let attempt = 0; attempt < 5; attempt += 1) {
       await repositoriesModule.recordAuditEvent(env, {
         eventType: "agent.sweep.regate.repair_attempt",
@@ -2553,7 +2553,7 @@ describe("queue processors", () => {
     await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo5", autonomy: { merge: "auto" } });
     await upsertRepoFocusManifest(env, "owner/agent-repo5", { settings: { checkRunMode: "off", commentMode: "off", publicSurface: "off", aiReviewMode: "off" } });
     await upsertPullRequestFromGitHub(env, "owner/agent-repo5", { number: 2, title: "Fresh convergence", state: "open", user: { login: "c" }, head: { sha: "fresh-sha" }, base: { ref: "main" }, labels: [], body: "" });
-    const targetKey = "owner/agent-repo5#2#fresh-sha";
+    const targetKey = "owner/agent-repo5#2";
     vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
@@ -2595,7 +2595,7 @@ describe("queue processors", () => {
     await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo3", autonomy: { merge: "auto" } });
     await upsertRepoFocusManifest(env, "owner/agent-repo3", { settings: { checkRunMode: "off", commentMode: "all_prs", publicSurface: "comment_only", aiReviewMode: "off" } });
     await upsertPullRequestFromGitHub(env, "owner/agent-repo3", { number: 5, title: "Healthy PR ready to review", state: "open", user: { login: "contributor" }, head: { sha: "ready-sha" }, base: { ref: "main" }, labels: [], body: "" });
-    const targetKey = "owner/agent-repo3#5#ready-sha";
+    const targetKey = "owner/agent-repo3#5";
     let finalCommentAttempted = false;
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
@@ -2674,7 +2674,7 @@ describe("queue processors", () => {
     await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo4", autonomy: { merge: "auto" } });
     await upsertRepoFocusManifest(env, "owner/agent-repo4", { settings: { checkRunMode: "off", commentMode: "off", publicSurface: "off", aiReviewMode: "off" } });
     await upsertPullRequestFromGitHub(env, "owner/agent-repo4", { number: 6, title: "Healthy PR ready to review", state: "open", user: { login: "contributor" }, head: { sha: "ready-sha-2" }, base: { ref: "main" }, labels: [], body: "" });
-    const targetKey = "owner/agent-repo4#6#ready-sha-2";
+    const targetKey = "owner/agent-repo4#6";
     const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const realPrepare = env.DB.prepare.bind(env.DB);
     // Same poison as "agent re-gate sweep ... swallows a failing re-review" above: only the advisories INSERT

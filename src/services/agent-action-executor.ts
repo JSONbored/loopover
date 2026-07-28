@@ -17,7 +17,7 @@ import {
 } from "../db/repositories";
 import { isPagerDutyEnabled, triggerPagerDutyIncident } from "./notify-pagerduty";
 import { isAuthorBlacklisted } from "../settings/contributor-blacklist";
-import { classifyMergeFailure, INFRA_MERGE_BLOCK_TTL_MS, isMergeConflictMessage, isNoNewBaseCommitsMessage, MERGE_RETRY_CAP } from "./merge-failure";
+import { classifyMergeFailure, INFRA_MERGE_BLOCK_TTL_MS, isMergeConflictMessage, isNoNewBaseCommitsMessage, isWorkflowScopeRefusalMessage, MERGE_RETRY_CAP } from "./merge-failure";
 import { notifyActionToDiscord, notifyActionToSlack, type NotifyOutcome } from "./notify-discord";
 import { recordTerminalActionOutcome, resolveDispositionReason } from "../review/outcomes-wire";
 import { cancelInFlightWorkflowRunsForHeadSha, createInstallationToken, githubErrorStatus, isGitHubRateLimitedError } from "../github/app";
@@ -793,6 +793,12 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
           // (see forceUpdateBranch's own doc comment), exactly like every other "couldn't rebase, review anyway"
           // path. The branch owner, not the bot, needs to resolve the conflict -- paging on every naturally-
           // diverged PR this happens to hit isn't warranted. Still recorded by the audit() call above.
+        } else if (action.actionClass === "update_branch" && isWorkflowScopeRefusalMessage(errorMessage(error))) {
+          // #9498: PERMANENT for this diff shape -- the App may not write .github/workflows/**, and update_branch
+          // merges the base in, so any workflow change on the default branch since the fork makes the merge a
+          // workflow write even when the PR touches none. Retrying cannot change the outcome (one PR was retried
+          // nine times), so this is classified rather than paged, and the caller falls through to reviewing the
+          // current head -- being un-rebasable is not a reason to stop reviewing.
         } else if (action.actionClass === "update_branch" && isNoNewBaseCommitsMessage(errorMessage(error))) {
           // LOOPOVER-24 (regressed shape): a 422 "There are no new commits on the base branch." means the head
           // was already up to date when update-branch fired -- the readiness check acted on a stale/cached

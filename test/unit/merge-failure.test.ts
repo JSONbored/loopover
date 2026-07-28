@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyMergeFailure, isNoNewBaseCommitsMessage, MERGE_RETRY_CAP } from "../../src/services/merge-failure";
+import { classifyMergeFailure, isMergeConflictMessage, isNoNewBaseCommitsMessage, isWorkflowScopeRefusalMessage, MERGE_RETRY_CAP } from "../../src/services/merge-failure";
 
 /** Build an Octokit-style RequestError: an Error carrying an HTTP `.status`. */
 function httpError(status: number, message: string): Error {
@@ -66,5 +66,38 @@ describe("isNoNewBaseCommitsMessage", () => {
   it("does not match unrelated update-branch failures (conflicts, transients)", () => {
     expect(isNoNewBaseCommitsMessage("merge conflict between base and head")).toBe(false);
     expect(isNoNewBaseCommitsMessage("network timeout")).toBe(false);
+  });
+});
+
+// #9498: 48 of 82 update_branch failures in one 7-day window were this class, across 14 PRs, with one PR
+// retried NINE times against an outcome that can never succeed. Crucially it is NOT limited to PRs that touch
+// workflow files: update_branch merges the base INTO the head, so any workflow change on the default branch
+// since the PR forked makes the resulting merge a workflow write -- 4 of the 5 worst offenders touched none.
+describe("isWorkflowScopeRefusalMessage (#9498)", () => {
+  it.each([
+    ["refusing to allow a GitHub App to create or update workflow `.github/workflows/ci.yml` without `workflows` permission"],
+    ["Refusing to allow a GitHub App to create or update workflow file"],
+    ["refusing to allow an integration to create or update workflow .github/workflows/release.yml"],
+    ["refusing to allow an OAuth App to create or update workflow"],
+  ])("recognises %s", (message) => {
+    expect(isWorkflowScopeRefusalMessage(message)).toBe(true);
+  });
+
+  it.each([
+    ["merge conflict between base and head"],
+    ["There are no new commits on the base branch."],
+    ["Base branch was modified. Review and try the merge again."],
+    ["Resource not accessible by integration"],
+    [""],
+  ])("does NOT misclassify %s", (message) => {
+    // Deliberately narrow: a generic permission error must keep its existing handling, and the sibling
+    // update_branch shapes must keep theirs.
+    expect(isWorkflowScopeRefusalMessage(message)).toBe(false);
+  });
+
+  it("INVARIANT: does not overlap the other update_branch classifiers", () => {
+    const workflowRefusal = "refusing to allow a GitHub App to create or update workflow `.github/workflows/ci.yml`";
+    expect(isMergeConflictMessage(workflowRefusal)).toBe(false);
+    expect(isNoNewBaseCommitsMessage(workflowRefusal)).toBe(false);
   });
 });

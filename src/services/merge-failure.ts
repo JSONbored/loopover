@@ -39,6 +39,25 @@ export function isNoNewBaseCommitsMessage(message: string): boolean {
   return /no new commits on the base branch/i.test(message);
 }
 
+/**
+ * #9498: True for GitHub's refusal to let a GitHub App write `.github/workflows/**`
+ * ("refusing to allow a GitHub App to create or update workflow ...").
+ *
+ * PERMANENT for a given diff shape, not transient -- retrying cannot change the outcome. It fires whenever the
+ * resulting push would touch a workflow file, which crucially includes the case where the PR itself touches
+ * NONE: `update_branch` merges the base into the head, so any workflow change on the default branch since the
+ * PR forked makes the merge a workflow write. Measured over one 7-day window, 48 of 82 update_branch failures
+ * were this class across 14 PRs -- 4 of the 5 worst offenders did not touch a workflow file themselves -- and
+ * one PR was retried NINE times against an outcome that could never succeed.
+ *
+ * Treated like the other benign/terminal update_branch shapes: audit-only, no page. The caller already falls
+ * through to reviewing the PR on its current head, which is the correct behaviour -- being un-rebasable is not
+ * a reason to stop reviewing.
+ */
+export function isWorkflowScopeRefusalMessage(message: string): boolean {
+  return /refusing to allow (?:a |an )?(?:github app|oauth app|integration)[^.]*workflow/i.test(message);
+}
+
 /** True for the transient "Base branch was modified. Review and try the merge again." 405 — a benign
  *  TOCTOU race (the base advanced between plan and merge) that a re-attempt against the new base resolves. */
 function isBaseBranchMovedMessage(message: string): boolean {

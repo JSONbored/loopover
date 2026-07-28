@@ -2989,7 +2989,7 @@ describe("queue processors", () => {
     // Full merge-eligible stub set (clean + green + approved), reused across scenarios — mirrors the #2550
     // migration-recheck fixture above. `baseAdvancedAt` stubs the NEW /commits/{baseRef} freshness read;
     // `null` simulates an unreadable base commit (404).
-    function stubFreshRebaseFetch(prNumber: number, opts: { baseAdvancedAt: string | null; mergeableState?: string; headSha?: string }, seen: { merged: boolean; updateBranchCalls: number; baseCommitCalls: number }) {
+    function stubFreshRebaseFetch(prNumber: number, opts: { baseAdvancedAt: string | null; mergeableState?: string; headSha?: string; aheadBy?: number }, seen: { merged: boolean; updateBranchCalls: number; baseCommitCalls: number; compareCalls?: number }) {
       const headSha = opts.headSha ?? "sha1";
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = input.toString();
@@ -3000,6 +3000,10 @@ describe("queue processors", () => {
         if (url.includes(`/pulls/${prNumber}/update-branch`) && method === "PUT") {
           seen.updateBranchCalls += 1;
           return Response.json({ message: "Updating pull request branch." }, { status: 202 });
+        }
+        if (url.includes("/compare/")) {
+          seen.compareCalls = (seen.compareCalls ?? 0) + 1;
+          return Response.json({ ahead_by: opts.aheadBy ?? 0, behind_by: 0 });
         }
         if (url.endsWith("/commits/main")) {
           seen.baseCommitCalls += 1;
@@ -3028,16 +3032,18 @@ describe("queue processors", () => {
       });
     }
 
-    async function seedFreshRebaseRepo(env: Env, prNumber: number, opts: { requireFreshRebaseWindowMinutes?: number | null; autonomy?: Record<string, string> } = {}) {
+    async function seedFreshRebaseRepo(env: Env, prNumber: number, opts: { requireFreshRebaseWindowMinutes?: number | null; staleBaseAheadByThreshold?: number | null; autonomy?: Record<string, string> } = {}) {
       await upsertInstallation(env, {
         installation: { id: 123, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { contents: "write", pull_requests: "write", issues: "write" }, events: [] },
       });
-      await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 123);
+      // default_branch is what the #9497 staleness compare anchors on (getRepository(...).defaultBranch).
+      await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" }, default_branch: "main" }, 123);
       await upsertRepositorySettings(env, {
         repoFullName: "owner/repo",
         autonomy: opts.autonomy ?? { merge: "auto", update_branch: "auto", label: "auto" },
         gatePack: "oss-anti-slop",
         ...(opts.requireFreshRebaseWindowMinutes !== undefined ? { requireFreshRebaseWindowMinutes: opts.requireFreshRebaseWindowMinutes } : {}),
+        ...(opts.staleBaseAheadByThreshold !== undefined ? { staleBaseAheadByThreshold: opts.staleBaseAheadByThreshold } : {}),
       });
       await upsertRepoFocusManifest(env, "owner/repo", { settings: { checkRunMode: "off", commentMode: "off", publicSurface: "off", aiReviewMode: "off", reviewCheckMode: "required", autoMaintain: { requireApprovals: 0, mergeMethod: "squash" } } });
       await upsertPullRequestFromGitHub(env, "owner/repo", { number: prNumber, title: "Fresh rebase PR", state: "open", user: { login: "contributor" }, head: { sha: "sha1" }, base: { ref: "main" }, labels: [], body: "" });
@@ -3056,6 +3062,48 @@ describe("queue processors", () => {
       expect(seen.merged).toBe(true);
       const merge = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("agent.action.merge").first<{ outcome: string }>();
       expect(merge?.outcome).toBe("completed");
+    });
+
+    // #9497: the staleness threshold MOVED here from the readiness gate, so it now inherits the three guards
+    // that path had none of -- imminent merge, clean mergeable state, and the 3-per-PR-per-24h cap keyed on PR
+    // number. In the readiness gate it fired on any review pass, so an unrelated merge advancing the default
+    // branch rebased a whole woken cohort mid-CI; here it fires only for the PR actually about to merge.
+    it("#9497 forces update_branch at the MERGE boundary when the default branch is far enough ahead", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await seedFreshRebaseRepo(env, 95, { staleBaseAheadByThreshold: 5 });
+      const seen = { merged: false, updateBranchCalls: 0, baseCommitCalls: 0, compareCalls: 0 };
+      stubFreshRebaseFetch(95, { baseAdvancedAt: new Date(Date.now() - 60 * 60_000).toISOString(), aheadBy: 10 }, seen);
+
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "stale-threshold-merge-boundary", repoFullName: "owner/repo", prNumber: 95, installationId: 123 });
+
+      expect(seen.compareCalls).toBe(1);
+      expect(seen.updateBranchCalls).toBe(1); // 10 >= threshold 5
+      expect(seen.merged).toBe(false); // the rebase defers the merge; the synchronize re-triggers evaluation
+    });
+
+    it("#9497 does NOT rebase when the default branch is ahead but below the threshold", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await seedFreshRebaseRepo(env, 96, { staleBaseAheadByThreshold: 5 });
+      const seen = { merged: false, updateBranchCalls: 0, baseCommitCalls: 0, compareCalls: 0 };
+      stubFreshRebaseFetch(96, { baseAdvancedAt: new Date(Date.now() - 60 * 60_000).toISOString(), aheadBy: 2 }, seen);
+
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "stale-threshold-below", repoFullName: "owner/repo", prNumber: 96, installationId: 123 });
+
+      expect(seen.updateBranchCalls).toBe(0);
+      expect(seen.merged).toBe(true);
+    });
+
+    it("#9497 INVARIANT: no compare call at all when no threshold is configured (zero added cost)", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await seedFreshRebaseRepo(env, 97, {});
+      const seen = { merged: false, updateBranchCalls: 0, baseCommitCalls: 0, compareCalls: 0 };
+      stubFreshRebaseFetch(97, { baseAdvancedAt: new Date(Date.now() - 60 * 60_000).toISOString(), aheadBy: 999 }, seen);
+
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "stale-threshold-unset", repoFullName: "owner/repo", prNumber: 97, installationId: 123 });
+
+      expect(seen.compareCalls).toBe(0);
+      expect(seen.updateBranchCalls).toBe(0);
+      expect(seen.merged).toBe(true);
     });
 
     it("forces update_branch instead of merging when the base advanced within the freshness window", async () => {

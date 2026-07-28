@@ -1112,21 +1112,33 @@ async function refreshOpenPullRequestsForScheduledSweep(
 // surfaceRepairPriorityPullNumbers has no memory of prior attempts -- if the repair keeps failing for the SAME
 // head SHA (e.g. every AI-provider attempt times out), it would otherwise re-select that PR forever, burning a
 // fresh review attempt every cycle for zero output. These two constants cap that: once a SHA has already had
-// REGATE_REPAIR_MAX_ATTEMPTS_PER_SHA dispatches recorded, it drops back to ordinary staleness-gated candidacy
+// REGATE_REPAIR_MAX_ATTEMPTS_PER_PR dispatches recorded, it drops back to ordinary staleness-gated candidacy
 // (still eventually re-checked, just not on every tick) and a single REGATE_REPAIR_EXHAUSTED_EVENT_TYPE audit
 // event is recorded so the stuck PR is visible instead of silently retried forever. A new commit changes the
 // head SHA, which resets the count naturally (the target key is scoped to repo+PR+SHA).
 const REGATE_REPAIR_ATTEMPT_EVENT_TYPE = "agent.sweep.regate.repair_attempt";
 const REGATE_REPAIR_EXHAUSTED_EVENT_TYPE = "agent.sweep.regate.repair_exhausted";
-const REGATE_REPAIR_MAX_ATTEMPTS_PER_SHA = 5;
+// #9499: renamed from ..._PER_SHA -- the budget is now per PR, since SHA-keying let a rebase reset it.
+const REGATE_REPAIR_MAX_ATTEMPTS_PER_PR = 5;
 const REGATE_REPAIR_ATTEMPT_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 
-function regateRepairTargetKey(repoFullName: string, prNumber: number, headSha: string): string {
-  return `${repoFullName}#${prNumber}#${headSha}`;
+/**
+ * #9499: keyed on PR NUMBER, not head SHA.
+ *
+ * Keying the 5-attempt repair budget on `repo#pr#headSha` meant a SUCCESSFUL rebase -- which mints a new head
+ * SHA -- reset the budget to zero. The repair path then re-ran indefinitely on a PR whose head kept moving,
+ * which is exactly the self-feeding loop the speculative rebase created: rebase -> stale surface -> repair
+ * priority (which bypasses both the freshness guard and #never-endless-reregate) -> re-gate -> rebase.
+ *
+ * This is the identical bug MAX_FRESH_REBASE_FORCES already fixed for the fresh-rebase counter, whose own
+ * comment explains at length why SHA-keying makes a cap unreachable. Same fix, same reasoning.
+ */
+function regateRepairTargetKey(repoFullName: string, prNumber: number, _headSha: string): string {
+  return `${repoFullName}#${prNumber}`;
 }
 
 /**
- * True when `pr`'s current head SHA has already exhausted REGATE_REPAIR_MAX_ATTEMPTS_PER_SHA repair attempts
+ * True when `pr`'s current head SHA has already exhausted REGATE_REPAIR_MAX_ATTEMPTS_PER_PR repair attempts
  * within the lookback window. Records (at most once per SHA) the exhausted audit event + error-level log as a
  * side effect the first time a SHA crosses the cap. Shared by both surfaceRepairPriorityPullNumbers and
  * sweepRepoBacklogConvergence (#orb-retry-storm, backlog-convergence half): both sweeps re-select on the
@@ -1138,7 +1150,7 @@ async function isRegateRepairExhausted(env: Env, repoFullName: string, pr: Pick<
   const sinceIso = new Date(Date.now() - REGATE_REPAIR_ATTEMPT_LOOKBACK_MS).toISOString();
   const targetKey = regateRepairTargetKey(repoFullName, pr.number, headSha);
   const attempts = await countRecentAuditEventsForActorAndTarget(env, "loopover", REGATE_REPAIR_ATTEMPT_EVENT_TYPE, targetKey, sinceIso);
-  if (attempts < REGATE_REPAIR_MAX_ATTEMPTS_PER_SHA) return false;
+  if (attempts < REGATE_REPAIR_MAX_ATTEMPTS_PER_PR) return false;
   const alreadyFlagged = await countRecentAuditEventsForActorAndTarget(env, "loopover", REGATE_REPAIR_EXHAUSTED_EVENT_TYPE, targetKey, sinceIso);
   if (alreadyFlagged === 0) {
     await recordAuditEvent(env, {
@@ -3903,9 +3915,12 @@ async function runAgentMaintenancePlanAndExecute(
   // stages for a human, not an immediate merge). A forced rebase's resulting `synchronize` webhook re-triggers
   // a fresh evaluation on the new head, so this pass stops here rather than executing against stale inputs.
   const requireFreshRebaseWindowMinutes = settings.requireFreshRebaseWindowMinutes;
+  // #9497: the staleness threshold now shares this call site, so it inherits planHasImminentMerge, the
+  // clean-mergeable requirement, and the 3-per-PR-per-24h cap that the readiness-gate version had none of.
+  const staleBaseAheadByThreshold = settings.staleBaseAheadByThreshold;
   const planHasImminentMerge = holdoutOnPlan.some((action) => action.actionClass === "merge" && !action.requiresApproval);
   if (
-    typeof requireFreshRebaseWindowMinutes === "number" &&
+    (typeof requireFreshRebaseWindowMinutes === "number" || typeof staleBaseAheadByThreshold === "number") &&
     baseRef &&
     planHasImminentMerge &&
     (liveMergeState ?? pr.mergeableState) === "clean" &&
@@ -3915,6 +3930,7 @@ async function runAgentMaintenancePlanAndExecute(
       pr,
       settings,
       windowMinutes: requireFreshRebaseWindowMinutes,
+      staleBaseAheadByThreshold,
       baseRef,
       token,
       admissionKey,
@@ -4421,26 +4437,27 @@ async function prReadyForReview(
     if (await forceUpdateBranch("behind base; update-branch before review")) {
       return false; // the rebase fires a synchronize → fresh review runs on the new head
     }
-  } else if (typeof settings.staleBaseAheadByThreshold === "number") {
-    // 1b) #review-grounding stale-base fact companion (metagraphed #7305-class incident): mergeable_state only
-    // ever reports "behind" when the repo's branch protection requires branches to be up to date before
-    // merging -- a repo without that setting can have a branch genuinely dozens of commits behind and GitHub
-    // will never surface it here. A repo that has explicitly opted into a threshold falls back to the SAME
-    // compare-API read #review-grounding already uses (fetchBaseAheadBy, anchored on the PR's real HEAD, never
-    // its live-tracking base.sha) and forces the identical update_branch action once the repo's current
-    // default branch has advanced at least that many commits beyond it. Costs one extra GitHub call per
-    // non-"behind" readiness check on an opted-in repo, which is exactly why this is opt-in rather than a new
-    // default (mirrors requireFreshRebaseWindowMinutes's own opt-in-for-cost rationale).
-    const repo = await getRepository(env, repoFullName);
-    const defaultBranchRef = repo?.defaultBranch;
-    const aheadBy = defaultBranchRef ? await fetchBaseAheadBy(env, repoFullName, headSha, defaultBranchRef, token, admissionKey) : undefined;
-    if (typeof aheadBy === "number" && aheadBy >= settings.staleBaseAheadByThreshold) {
-      const reason = `default branch is ${aheadBy} commits ahead of this PR's head (threshold ${settings.staleBaseAheadByThreshold}); update-branch before review`;
-      if (await forceUpdateBranch(reason)) {
-        return false; // the rebase fires a synchronize → fresh review runs on the new head
-      }
-    }
   }
+  // 1b) MOVED to the merge boundary (#9497). The staleness rebase used to fire here, in the readiness gate --
+  // before the CI-pending wait immediately below, before the gate verdict, before the disposition plan, and
+  // before the merge-train check. Consequences, all confirmed in production:
+  //
+  //   * `.github/workflows/ci.yml` uses `cancel-in-progress: true`, so pushing to a PR whose CI is RUNNING
+  //     cancels that run and starts a fresh one -- the reported "re-runs CI during the middle of their runs".
+  //   * The default branch only advances when a PR merges, so "N commits ahead" literally means "N unrelated
+  //     PRs merged since your head". Every merge wakes up to MERGE_WAKE_MAX_PRS siblings, each of which ran
+  //     this check -- so one unrelated merge rebased a whole cohort. Measured: 7 PRs rebased in 12 seconds,
+  //     44s after an unrelated merge; one cohort force-rebased 3x in 2.5 hours.
+  //   * A rebase resets that cohort to zero-behind SIMULTANEOUSLY, so they stay phase-locked and re-cross the
+  //     threshold together -- the bursts recur on the same PRs forever rather than settling.
+  //   * Running before the plan meant a PR about to be auto-CLOSED, sitting on red CI, or held for manual
+  //     review was rebased first, and that CI run was then thrown away.
+  //
+  // The correctly-gated sibling has always been maybeForceFreshRebase (see its call site in the maintenance
+  // pass): imminent-merge only, mergeableState clean only, and capped per PR per 24h keyed on PR NUMBER rather
+  // than head SHA. Folding the threshold in there inherits all three guards, so a PR is rebased only when it
+  // is the PR about to merge -- and it kills the self-feeding loop, because no speculative rebase means no
+  // stale surface, which means no repair-priority re-gate.
   // 2) wait for CI to finish before running the LoopOver review. Required contexts still define which failures
   // block/close, but hasPending tracks any visible non-bot CI that is not settled yet.
   const ci = await cachedLiveCiAggregate(env, {
@@ -4833,9 +4850,12 @@ async function maybeForceFreshRebase(
     repoFullName: string;
     pr: PullRequestRecord;
     settings: RepositorySettings;
-    // Narrowed by the caller (typeof settings.requireFreshRebaseWindowMinutes === "number") -- re-deriving and
-    // re-checking the same nullable field here would just be an unreachable duplicate of that guard.
-    windowMinutes: number;
+    // #9497: either trigger may be configured; the caller guarantees at least one is. `windowMinutes`
+    // undefined means only the staleness threshold applies, and vice versa.
+    windowMinutes: number | null | undefined;
+    /** #9497: "the default branch is at least this many commits ahead of our head" -- moved here from the
+     *  readiness gate so it inherits the imminent-merge, clean-mergeable and 3-per-PR-per-24h guards. */
+    staleBaseAheadByThreshold: number | null | undefined;
     baseRef: string;
     token: string | undefined;
     admissionKey: GitHubRateLimitAdmissionKey | undefined;
@@ -4845,15 +4865,35 @@ async function maybeForceFreshRebase(
     nowMs: number;
   },
 ): Promise<boolean> {
-  const { installationId, repoFullName, pr, settings, windowMinutes, baseRef, token, admissionKey, deliveryId, nowMs } = args;
+  const { installationId, repoFullName, pr, settings, windowMinutes, staleBaseAheadByThreshold, baseRef, token, admissionKey, deliveryId, nowMs } = args;
   /* v8 ignore next -- structurally unreachable: the caller only invokes this after confirming
    * (liveMergeState ?? pr.mergeableState) === "clean", which GitHub can never compute for a PR with no
    * head commit; the null check is belt-and-suspenders against the field's optional TS type. */
   if (!pr.headSha) return false;
-  const advancedAt = await fetchLiveBaseBranchAdvancedAt(env, repoFullName, baseRef, token, admissionKey);
-  if (!advancedAt) return false; // fail-open: unreadable base commit -> no forced rebase
-  const advancedAtMs = Date.parse(advancedAt);
-  if (!isWithinFreshRebaseWindow({ baseAdvancedAtMs: advancedAtMs, windowMinutes, nowMs })) return false;
+  // Trigger 1 (#requireFreshRebaseWindowMinutes): the base advanced very recently, so the merge would be
+  // computed against a base older than the one it will land on.
+  let triggerReason: string | null = null;
+  if (typeof windowMinutes === "number") {
+    const advancedAt = await fetchLiveBaseBranchAdvancedAt(env, repoFullName, baseRef, token, admissionKey);
+    // fail-open: unreadable base commit -> this trigger simply does not fire
+    if (advancedAt && isWithinFreshRebaseWindow({ baseAdvancedAtMs: Date.parse(advancedAt), windowMinutes, nowMs })) {
+      triggerReason = `base advanced within the last ${windowMinutes} minute(s); update-branch before merge`;
+    }
+  }
+  // Trigger 2 (#9497, moved from the readiness gate): the default branch has run ahead by at least the
+  // configured threshold. mergeable_state only reports "behind" when branch protection requires up-to-date
+  // branches, so a repo without that setting can be dozens of commits behind and GitHub never surfaces it --
+  // this is the compare-API fallback for those repos. It now runs ONLY at the merge boundary, so a PR is
+  // rebased when it is the PR about to merge rather than whenever an unrelated PR happened to merge.
+  if (triggerReason === null && typeof staleBaseAheadByThreshold === "number" && pr.headSha) {
+    const repo = await getRepository(env, repoFullName);
+    const defaultBranchRef = repo?.defaultBranch;
+    const aheadBy = defaultBranchRef ? await fetchBaseAheadBy(env, repoFullName, pr.headSha, defaultBranchRef, token, admissionKey) : undefined;
+    if (typeof aheadBy === "number" && aheadBy >= staleBaseAheadByThreshold) {
+      triggerReason = `default branch is ${aheadBy} commits ahead of this PR's head (threshold ${staleBaseAheadByThreshold}); update-branch before merge`;
+    }
+  }
+  if (triggerReason === null) return false;
 
   const countKey = freshRebaseForceCountKey(repoFullName, pr.number);
   const storedCount = Number(await getTransientKey(env, countKey));
@@ -4864,8 +4904,8 @@ async function maybeForceFreshRebase(
       actor: "loopover",
       targetKey: `${repoFullName}#${pr.number}`,
       outcome: "completed",
-      detail: `base advanced within the ${windowMinutes}m freshness window, but the ${MAX_FRESH_REBASE_FORCES}-attempt forced-rebase cap was already reached for this PR — falling through to a normal merge decision`,
-      metadata: { deliveryId, repoFullName, headSha: pr.headSha, windowMinutes },
+      detail: `${triggerReason}, but the ${MAX_FRESH_REBASE_FORCES}-attempt forced-rebase cap was already reached for this PR — falling through to a normal merge decision`,
+      metadata: { deliveryId, repoFullName, headSha: pr.headSha, windowMinutes: windowMinutes ?? null, staleBaseAheadByThreshold: staleBaseAheadByThreshold ?? null },
     }).catch(
       /* v8 ignore next -- fail-safe: an audit write failure never blocks the caller's fallthrough */
       () => undefined,
@@ -4909,8 +4949,8 @@ async function maybeForceFreshRebase(
     actor: "loopover",
     targetKey: `${repoFullName}#${pr.number}`,
     outcome: "completed",
-    detail: `forced update_branch (attempt ${nextAttempt}/${MAX_FRESH_REBASE_FORCES}) — base advanced within the ${windowMinutes}m freshness window`,
-    metadata: { deliveryId, repoFullName, headSha: pr.headSha, windowMinutes, attempt: nextAttempt },
+    detail: `forced update_branch (attempt ${nextAttempt}/${MAX_FRESH_REBASE_FORCES}) — ${triggerReason}`,
+    metadata: { deliveryId, repoFullName, headSha: pr.headSha, windowMinutes: windowMinutes ?? null, staleBaseAheadByThreshold: staleBaseAheadByThreshold ?? null, attempt: nextAttempt },
   }).catch(
     /* v8 ignore next -- fail-safe: an audit write failure never blocks the caller */
     () => undefined,
@@ -5110,6 +5150,10 @@ async function wakeOverCapSiblingPullRequests(
           repoFullName,
           prNumber,
           installationId,
+          // #9499: the sibling row is already fetched just above for the cooldown key, so threading its
+          // createdAt costs nothing. Without it, jobClaimSortKey falls back to a legacy base that sorts this
+          // wake ahead of every genuinely older contributor PR.
+          ...(sibling?.createdAt ? { prCreatedAt: sibling.createdAt } : {}),
         });
       } catch (error) {
         console.log(

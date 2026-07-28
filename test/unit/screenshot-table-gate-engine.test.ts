@@ -17,7 +17,7 @@ import {
   requiredScreenshotMatrixPairs,
   type ScreenshotMatrixPair,
 } from "../../packages/loopover-engine/src/review/screenshot-table-gate";
-import { matchesAnyWithExclusions } from "../../packages/loopover-engine/src/signals/change-guardrail";
+import { guardrailPathMatches as engineGuardrailPathMatches, matchesAnyWithExclusions } from "../../packages/loopover-engine/src/signals/change-guardrail";
 import type { ScreenshotTableGateConfig } from "../../packages/loopover-engine/src/types/manifest-deps-types";
 
 function config(overrides: Partial<ScreenshotTableGateConfig> = {}): ScreenshotTableGateConfig {
@@ -340,6 +340,23 @@ describe("extractTableRows", () => {
     const body = Array.from({ length: 40 }, () => "| --- |").join("\n");
 
     expect(extractTableRows(body)).toHaveLength(38);
+  });
+
+  it("INVARIANT: a line pair that is not header+separator is skipped, so prose and pipe-bearing text are never rows", () => {
+    // The scan walks EVERY adjacent line pair, so the reject arm is what stops ordinary PR-description prose
+    // from being parsed as a table. Three distinct rejection shapes, each of which alone would produce a bogus
+    // row if the guard were dropped:
+    expect(extractTableRows("just prose\nmore prose")).toEqual([]); // neither line is pipe-delimited
+    expect(extractTableRows("| a | b |\nnot a separator\n| 1 | 2 |")).toEqual([]); // header, but no separator under it
+    expect(extractTableRows("intro text\n| --- | --- |\n| 1 | 2 |")).toEqual([]); // separator with no header above it
+
+    // A pipe inside prose (a shell command, a regex alternation) is the realistic false positive this prevents.
+    expect(extractTableRows("run `cat x | grep y` to check\nand then rerun it")).toEqual([]);
+
+    // ...and the reject arm does not consume a REAL table that follows the rejected prose.
+    expect(extractTableRows("some intro prose\n\n| before | after |\n| --- | --- |\n| a.png | b.png |")).toEqual([
+      ["a.png", "b.png"],
+    ]);
   });
 });
 
@@ -748,6 +765,122 @@ describe("evaluateScreenshotTableGate", () => {
       expect(result).toEqual({ violated: false, reason: null });
     });
   });
+
+  // Matrix mode's staleness checkpoint is covered above; PRESENCE mode runs the identical
+  // evidenceFreshnessForHead correlation through a separate return site, and that site had no headSha test at
+  // all. The gap matters more here than in matrix mode: presence mode is the DEFAULT shape (any image-bearing
+  // table passes), so a stale-evidence miss means one table pasted on push #1 keeps the gate green for every
+  // later push — exactly the #stale-screenshot-table-fix regression, silently un-pinned.
+  describe("presence mode staleness (#stale-screenshot-table-fix)", () => {
+    it("issues a head-keyed checkpoint on the first satisfying push, so a later push has something to compare against", () => {
+      const push1 = evaluateScreenshotTableGate({
+        config: config({ enabled: true }),
+        prBody: TABLE_BODY,
+        prLabels: [],
+        changedFiles: ["apps/ui/src/App.tsx"],
+        headSha: "presence-push-1",
+      });
+      expect(push1.violated).toBe(false);
+      expect(push1.presenceModeSatisfiedState?.headSha).toBe("presence-push-1");
+      expect(push1.presenceModeSatisfiedState?.evidenceFingerprint).toEqual(expect.any(String));
+    });
+
+    it("REGRESSION: the SAME table on a new head is stale — it must not keep passing the gate across pushes", () => {
+      const push1 = evaluateScreenshotTableGate({
+        config: config({ enabled: true }),
+        prBody: TABLE_BODY,
+        prLabels: [],
+        changedFiles: ["apps/ui/src/App.tsx"],
+        headSha: "presence-push-1",
+      });
+      const staleOnPush2 = evaluateScreenshotTableGate({
+        config: config({ enabled: true }),
+        prBody: TABLE_BODY, // byte-identical body: no re-affirmation
+        prLabels: [],
+        changedFiles: ["apps/ui/src/App.tsx"],
+        headSha: "presence-push-2",
+        presenceModeSatisfied: push1.presenceModeSatisfiedState,
+      });
+      expect(staleOnPush2.violated).toBe(true);
+      expect(staleOnPush2.reason).toContain(DEFAULT_SCREENSHOT_CONTRACT_MESSAGE);
+      // No checkpoint is issued on a stale result — re-issuing one would let push #3 compare against push #2
+      // and read as "fresh", laundering the staleness away after a single extra push.
+      expect(staleOnPush2.presenceModeSatisfiedState).toBeUndefined();
+    });
+
+    it("a re-affirmed table (fresh image URLs) on the new head is NOT stale, and re-checkpoints to that head", () => {
+      const push1 = evaluateScreenshotTableGate({
+        config: config({ enabled: true }),
+        prBody: TABLE_BODY,
+        prLabels: [],
+        changedFiles: ["apps/ui/src/App.tsx"],
+        headSha: "presence-push-1",
+      });
+      const push2 = evaluateScreenshotTableGate({
+        config: config({ enabled: true }),
+        prBody: TABLE_BODY.replaceAll(".png", "-v2.png"), // a fresh upload gets a fresh URL
+        prLabels: [],
+        changedFiles: ["apps/ui/src/App.tsx"],
+        headSha: "presence-push-2",
+        presenceModeSatisfied: push1.presenceModeSatisfiedState,
+      });
+      expect(push2.violated).toBe(false);
+      expect(push2.presenceModeSatisfiedState?.headSha).toBe("presence-push-2");
+    });
+
+    it("a custom config.message wins over the default contract text on the stale path too", () => {
+      const push1 = evaluateScreenshotTableGate({
+        config: config({ enabled: true }),
+        prBody: TABLE_BODY,
+        prLabels: [],
+        changedFiles: [],
+        headSha: "presence-push-1",
+      });
+      const stale = evaluateScreenshotTableGate({
+        config: config({ enabled: true, message: "custom contract text" }),
+        prBody: TABLE_BODY,
+        prLabels: [],
+        changedFiles: [],
+        headSha: "presence-push-2",
+        presenceModeSatisfied: push1.presenceModeSatisfiedState,
+      });
+      expect(stale).toEqual({ violated: true, reason: "custom contract text" });
+    });
+
+    it("INVARIANT: no headSha ⇒ byte-identical to pre-fix behavior — no checkpoint issued, no staleness possible", () => {
+      // The caller may have no persistence wired up. Degrading to the old always-pass shape is deliberate:
+      // without a head SHA there is nothing to correlate, and inventing a violation would fail closed on a
+      // deployment that never opted in.
+      const result = evaluateScreenshotTableGate({
+        config: config({ enabled: true }),
+        prBody: TABLE_BODY,
+        prLabels: [],
+        changedFiles: [],
+        presenceModeSatisfied: { headSha: "old", evidenceFingerprint: "anything" },
+      });
+      expect(result).toEqual({ violated: false, reason: null });
+    });
+
+    it("INVARIANT: the SAME head re-evaluated is never stale — a webhook replay must not flip a passing gate", () => {
+      const push1 = evaluateScreenshotTableGate({
+        config: config({ enabled: true }),
+        prBody: TABLE_BODY,
+        prLabels: [],
+        changedFiles: [],
+        headSha: "presence-push-1",
+      });
+      const replay = evaluateScreenshotTableGate({
+        config: config({ enabled: true }),
+        prBody: TABLE_BODY,
+        prLabels: [],
+        changedFiles: [],
+        headSha: "presence-push-1",
+        presenceModeSatisfied: push1.presenceModeSatisfiedState,
+      });
+      expect(replay.violated).toBe(false);
+      expect(replay.presenceModeSatisfiedState?.headSha).toBe("presence-push-1");
+    });
+  });
 });
 
 describe("extractTableRowImageUrls (#4366)", () => {
@@ -818,5 +951,15 @@ describe("matchesAnyWithExclusions via the engine path (#9434)", () => {
     // silently shrink a safety gate's coverage.
     const result = matchesAnyWithExclusions("apps/ui/public/openapi.json", ["apps/ui/public/**", "!apps/*-*-*-x.json"]);
     expect(result).toBe(true);
+  });
+});
+
+// Mirrored from the app suite so BOTH import identities own this branch (CI shards + merges by flag).
+describe("guardrailPathMatches empty-path skip via the engine path", () => {
+  it("INVARIANT: an empty changed path is dropped rather than rendered as a blank filename", () => {
+    expect(engineGuardrailPathMatches([""], ["**"])).toEqual([]);
+    expect(engineGuardrailPathMatches(["", "src/scoring/x.ts"], ["src/scoring/**"])).toEqual([
+      { path: "src/scoring/x.ts", glob: "src/scoring/**" },
+    ]);
   });
 });

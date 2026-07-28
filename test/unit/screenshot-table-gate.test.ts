@@ -822,3 +822,84 @@ describe("whenPaths exclusions via the src re-export (#9434)", () => {
     expect(hasCommittedImageFile(["docs/logo.png"], ["apps/ui/**"])).toBe(false);
   });
 });
+
+// Mirrored from the engine suite so BOTH import identities own these branches: CI shards the coverage run and
+// merges by flag, so a branch proven only through one identity can read as uncovered on the other.
+describe("extractTableRows rejects non-table line pairs", () => {
+  it("INVARIANT: a line pair that is not header+separator is skipped, so prose and pipe-bearing text are never rows", () => {
+    expect(extractTableRows("just prose\nmore prose")).toEqual([]); // neither line is pipe-delimited
+    expect(extractTableRows("| a | b |\nnot a separator\n| 1 | 2 |")).toEqual([]); // header, but no separator under it
+    expect(extractTableRows("intro text\n| --- | --- |\n| 1 | 2 |")).toEqual([]); // separator with no header above it
+    expect(extractTableRows("run `cat x | grep y` to check\nand then rerun it")).toEqual([]); // a pipe inside prose
+    expect(extractTableRows("some intro prose\n\n| before | after |\n| --- | --- |\n| a.png | b.png |")).toEqual([
+      ["a.png", "b.png"],
+    ]);
+  });
+});
+
+// Presence mode is the DEFAULT gate shape (any image-bearing table passes), and its staleness correlation ran
+// through a separate return site from matrix mode's — one that had no headSha test at all. Untested, a stale
+// -evidence miss means one table pasted on push #1 holds the gate green for every later push.
+describe("evaluateScreenshotTableGate presence-mode staleness (#stale-screenshot-table-fix)", () => {
+  const satisfying = { config: config({ enabled: true }), prBody: TABLE_BODY, prLabels: [] as string[], changedFiles: ["apps/ui/src/App.tsx"] };
+
+  it("issues a head-keyed checkpoint on the first satisfying push", () => {
+    const push1 = evaluateScreenshotTableGate({ ...satisfying, headSha: "presence-push-1" });
+    expect(push1.violated).toBe(false);
+    expect(push1.presenceModeSatisfiedState?.headSha).toBe("presence-push-1");
+    expect(push1.presenceModeSatisfiedState?.evidenceFingerprint).toEqual(expect.any(String));
+  });
+
+  it("REGRESSION: the SAME table on a new head is stale — it must not keep passing the gate across pushes", () => {
+    const push1 = evaluateScreenshotTableGate({ ...satisfying, headSha: "presence-push-1" });
+    const stale = evaluateScreenshotTableGate({
+      ...satisfying, // byte-identical body: no re-affirmation
+      headSha: "presence-push-2",
+      presenceModeSatisfied: push1.presenceModeSatisfiedState,
+    });
+    expect(stale.violated).toBe(true);
+    expect(stale.reason).toContain(DEFAULT_SCREENSHOT_CONTRACT_MESSAGE);
+    // No checkpoint on a stale result — re-issuing one would let push #3 compare against push #2 and read as
+    // fresh, laundering the staleness away after a single extra push.
+    expect(stale.presenceModeSatisfiedState).toBeUndefined();
+  });
+
+  it("a re-affirmed table (fresh image URLs) on the new head is NOT stale, and re-checkpoints to that head", () => {
+    const push1 = evaluateScreenshotTableGate({ ...satisfying, headSha: "presence-push-1" });
+    const push2 = evaluateScreenshotTableGate({
+      ...satisfying,
+      prBody: TABLE_BODY.replaceAll(".png", "-v2.png"), // a fresh upload gets a fresh URL
+      headSha: "presence-push-2",
+      presenceModeSatisfied: push1.presenceModeSatisfiedState,
+    });
+    expect(push2.violated).toBe(false);
+    expect(push2.presenceModeSatisfiedState?.headSha).toBe("presence-push-2");
+  });
+
+  it("a custom config.message wins over the default contract text on the stale path too", () => {
+    const push1 = evaluateScreenshotTableGate({ ...satisfying, headSha: "presence-push-1" });
+    const stale = evaluateScreenshotTableGate({
+      ...satisfying,
+      config: config({ enabled: true, message: "custom contract text" }),
+      headSha: "presence-push-2",
+      presenceModeSatisfied: push1.presenceModeSatisfiedState,
+    });
+    expect(stale).toEqual({ violated: true, reason: "custom contract text" });
+  });
+
+  it("INVARIANT: no headSha ⇒ byte-identical to pre-fix behavior — no checkpoint issued, no staleness possible", () => {
+    const result = evaluateScreenshotTableGate({ ...satisfying, presenceModeSatisfied: { headSha: "old", evidenceFingerprint: "anything" } });
+    expect(result).toEqual({ violated: false, reason: null });
+  });
+
+  it("INVARIANT: the SAME head re-evaluated is never stale — a webhook replay must not flip a passing gate", () => {
+    const push1 = evaluateScreenshotTableGate({ ...satisfying, headSha: "presence-push-1" });
+    const replay = evaluateScreenshotTableGate({
+      ...satisfying,
+      headSha: "presence-push-1",
+      presenceModeSatisfied: push1.presenceModeSatisfiedState,
+    });
+    expect(replay.violated).toBe(false);
+    expect(replay.presenceModeSatisfiedState?.headSha).toBe("presence-push-1");
+  });
+});

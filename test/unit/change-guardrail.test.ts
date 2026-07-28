@@ -123,6 +123,25 @@ describe("change-guardrail glob matching", () => {
     expect(isGuardrailHit(["unrelated/file.ts"], [pathological])).toBe(true);
   });
 
+  it("INVARIANT: guardrailPathMatches SKIPS an empty changed path — deliberately diverging from matchesAny's fail-safe", () => {
+    // matchesAny("") returns true for an over-complex glob (asserted above): fail-safe means "match everything
+    // rather than silently disable a maintainer's guardrail". The STRUCTURED form cannot inherit that, because
+    // its output is rendered verbatim into public review text and audit metadata — emitting `{ path: "" }` puts
+    // a blank filename in front of a maintainer, which is worse than useless. So an empty path is dropped here
+    // even though the boolean form would report it, and that asymmetry is intentional, not an oversight.
+    const pathological = `${"**/".repeat(12)}*.ts`;
+    expect(matchesAny("", [pathological])).toBe(true); // the boolean form still fails safe
+    expect(guardrailPathMatches([""], [pathological])).toEqual([]); // ...the structured one does not invent a row
+
+    // The skip is per-path, not a whole-call bail: real paths alongside an empty one are still reported.
+    expect(guardrailPathMatches(["", "src/scoring/x.ts", ""], ["src/scoring/**"])).toEqual([
+      { path: "src/scoring/x.ts", glob: "src/scoring/**" },
+    ]);
+
+    // ...and it holds for ordinary (safe) globs too, so this is a property of the path, not of the glob.
+    expect(guardrailPathMatches([""], ["**"])).toEqual([]);
+  });
+
   it("SECURITY (ReDoS): a glob AT the safe cap (2 wildcards) still compiles and matches NORMALLY (not the fail-safe path)", () => {
     // Exactly 2 stars: at the cap, still safely compiled/evaluated — proves the cap is inclusive, not exclusive,
     // and that ordinary (non-pathological) multi-wildcard globs keep their real matching semantics. This is also

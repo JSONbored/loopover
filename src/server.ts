@@ -48,6 +48,9 @@ import { createOrbRelayRegistrationState, isOrbBrokerMode, registerOrbRelayTarge
 import { exportOrbBatch, getOrCreateAnonSecret } from "./selfhost/orb-collector";
 import { createD1Adapter, nodeSqliteDriver } from "./selfhost/d1-adapter";
 import { loadFileSecrets } from "./selfhost/load-file-secrets";
+import { setFileSourcedSecrets } from "./selfhost/file-sourced-secrets";
+import { setProviderCredentialResolver } from "./selfhost/provider-credential-registry";
+import { getDecryptedProviderCredential } from "./db/repositories";
 import {
   backupAcknowledgedGaugeValue,
   buildHealthBody,
@@ -86,8 +89,8 @@ import {
   listConfigBackupsForScope,
 } from "./selfhost/private-config";
 import { setConfigAdminFunctions } from "./mcp/private-config-admin-registry";
-import { setRedeployTrigger } from "./mcp/redeploy-companion-registry";
-import { triggerRedeploy } from "./selfhost/redeploy-companion-client";
+import { setRedeployTrigger, setSecretRotator } from "./mcp/redeploy-companion-registry";
+import { triggerRedeploy, rotateCompanionSecret } from "./selfhost/redeploy-companion-client";
 import { assertSelfHostPreflight } from "./selfhost/preflight";
 import {
   capturePostHogError,
@@ -333,7 +336,9 @@ async function main(): Promise<void> {
   // but never rethrows or exits).
   /* v8 ignore next -- importing this entrypoint starts the Node server; handler-installation logic itself is unit-tested in selfhost-process-lifecycle.test.ts. */
   installSelfHostCrashHandlers({ captureError: (error, context) => capturePostHogError(error, context), flush: flushPostHog });
-  loadFileSecrets();
+  // The loader's return value records WHICH vars it materialised from a file, so a call-time re-read can
+  // preserve the "an inline `.env` value always wins" precedence secrets/README.md documents (#9543).
+  setFileSourcedSecrets(loadFileSecrets());
   /* v8 ignore next -- importing this entrypoint starts the Node server; pure validation is covered in selfhost-preflight tests. */
   assertSelfHostPreflight(process.env);
   // Error tracking (#1468, epic #8286): opt-in via POSTHOG_API_KEY -- the same var #6235's MCP telemetry
@@ -414,6 +419,13 @@ async function main(): Promise<void> {
   setRedeployTrigger(
     redeployCompanionToken
       ? (image) => triggerRedeploy({ socketPath: redeployCompanionSocketPath, token: redeployCompanionToken }, image)
+      : null,
+  );
+  // Secret rotation (#9543) rides the SAME companion socket and token as the redeploy trigger above -- it is
+  // the same host-side privilege boundary, so it is deliberately not a second credential to configure.
+  setSecretRotator(
+    redeployCompanionToken
+      ? (secret, value) => rotateCompanionSecret({ socketPath: redeployCompanionSocketPath, token: redeployCompanionToken }, secret, value)
       : null,
   );
   // Boot-time visibility (config-drift guardrail): state which config dir is actually in effect, unconditionally
@@ -868,6 +880,13 @@ async function main(): Promise<void> {
     })(),
   } as unknown as Env;
   markEnvReady();
+
+  // Fleet-mode credential resolution (#9543): registered HERE, after `env` is fully constructed, because the
+  // lookup needs the DB binding -- src/selfhost/ai.ts must never import the DB layer itself, so the closure is
+  // injected instead. Safe to register after createSelfHostAi() above: the resolver is only ever invoked at
+  // AI-call time, long after boot. Never throws -- a DB/decrypt failure returns null and resolution falls
+  // through to the secret file / boot env, so a rotation problem degrades a review instead of failing it.
+  setProviderCredentialResolver(async (provider) => getDecryptedProviderCredential(env, provider));
 
   // GitHub App auth: a successful JWT mint proves GITHUB_APP_PRIVATE_KEY is set and parses as a valid signing
   // key. Without this, an invalid/expired key leaves the review pipeline completely dead while /ready still

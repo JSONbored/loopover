@@ -21,7 +21,11 @@ const COMPOSE_RESERVED_FILE_VARS = new Set(["COMPOSE_FILE", "COMPOSE_ENV_FILE"])
 export function loadFileSecrets(
   env: Record<string, string | undefined> = process.env,
   readFile: (path: string) => string = (path) => readFileSync(path, "utf8"),
-): void {
+): string[] {
+  // The names materialised from a file here, returned so server.ts can hand them to
+  // setFileSourcedSecrets() -- the only durable record of "this value came from a file, not from
+  // inline .env", which call-time re-reads depend on to preserve inline precedence (#9543).
+  const fileSourced: string[] = [];
   for (const key of Object.keys(env)) {
     if (!key.endsWith("_FILE") || !env[key] || COMPOSE_RESERVED_FILE_VARS.has(key)) continue;
     const target = key.slice(0, -"_FILE".length);
@@ -65,5 +69,7 @@ export function loadFileSecrets(
       throw new Error(`Secret file for ${key} (${path}) is empty; an empty secret silently reads as unconfigured downstream. Write the value, or unset ${key}.`);
     }
     env[target] = value;
+    fileSourced.push(target);
   }
+  return fileSourced;
 }

@@ -135,7 +135,7 @@ import { computeFleetAnalytics } from "../orb/analytics";
 import { loadMaintainerNoiseReport, maintainerNoiseSummary } from "../services/maintainer-noise";
 import { buildAmsMinerCohortComparison } from "../review/ams-miner-cohort";
 import { getConfigAdminFunctions } from "./private-config-admin-registry";
-import { getRedeployTrigger } from "./redeploy-companion-registry";
+import { getRedeployTrigger, getSecretRotator } from "./redeploy-companion-registry";
 import { getLocalManifestReader } from "../signals/focus-manifest-loader";
 import type { ConfigAdminScope } from "../selfhost/private-config";
 import { buildMaintainerActivationPreview } from "../services/maintainer-activation";
@@ -429,6 +429,29 @@ const adminTriggerRedeployShape = {
     .max(512)
     .regex(/^[^\s"'\\${}`;|&<>]+$/, "must not contain whitespace, quotes, backslashes, compose interpolation, or shell metacharacters")
     .optional(),
+};
+
+// #9543: the secret VALUE is validated identically here and in the companion's own isValidSecretValue --
+// a caller gets a clear MCP-level rejection instead of an opaque host-side one, and the host still refuses
+// independently if this layer is ever bypassed. The single-line/no-comment/no-surrounding-whitespace rule
+// is not cosmetic: src/selfhost/load-file-secrets.ts only .trim()s the file, so a label line above the
+// value silently becomes part of the credential.
+const adminRotateSecretShape = {
+  secret: z.enum(["claude_code_oauth_token", "github_webhook_secret", "loopover_api_token", "loopover_mcp_token", "loopover_mcp_admin_token", "pagerduty_routing_key"]),
+  value: z
+    .string()
+    .min(1)
+    .max(4096)
+    .refine((candidate) => !/[\r\n]/.test(candidate), "must be a single line -- a comment or label line would become part of the credential")
+    .refine((candidate) => candidate.trim() === candidate, "must not have leading or trailing whitespace")
+    .refine((candidate) => !candidate.startsWith("#"), "must not start with '#' -- that is a comment, not a credential"),
+};
+const adminRotateSecretOutputSchema = {
+  configured: z.boolean(),
+  ok: z.boolean().optional(),
+  secret: z.string().optional(),
+  backupPath: z.string().optional(),
+  error: z.string().optional(),
 };
 
 const preflightShape = {
@@ -2176,6 +2199,7 @@ export const MCP_TOOL_CATEGORIES: Record<string, McpToolCategory> = {
   loopover_admin_write_config: "admin",
   loopover_admin_list_config_backups: "admin",
   loopover_admin_trigger_redeploy: "admin",
+  loopover_admin_rotate_secret: "admin",
 };
 
 /** Master opt-in for the "admin" tool category (#7721), default OFF. Same truthy-string convention as every
@@ -3372,6 +3396,16 @@ export class LoopoverMcp {
         },
         async (input) => this.toolResult(await this.adminTriggerRedeploy(input)),
       );
+      register(
+        "loopover_admin_rotate_secret",
+        {
+          description:
+            "Self-hosted-operator only. Rotate one of this instance's own secret files (e.g. claude_code_oauth_token) in place on the host, via the redeploy companion (#7723) -- the app container cannot write these itself, the Compose secrets mount is read-only. The value must be the bare credential: a single line, no comment or label line, no surrounding whitespace (the loader only trims, so anything else silently becomes part of the credential). Backs the previous value up first, and writes in place so the running container's inode-pinned bind mount sees it immediately. For claude_code_oauth_token no restart is needed -- the token is re-read per AI call. Requires LOOPOVER_MCP_ADMIN_TOKEN. Returns configured=false if REDEPLOY_COMPANION_TOKEN is unset or the companion isn't reachable.",
+          inputSchema: adminRotateSecretShape,
+          outputSchema: adminRotateSecretOutputSchema,
+        },
+        async (input) => this.toolResult(await this.adminRotateSecret(input)),
+      );
     }
 
     // ── Miner planning prompts ───────────────────────────────────────────
@@ -4331,6 +4365,58 @@ export class LoopoverMcp {
       return {
         summary: `LoopOver redeploy trigger: could not reach the host companion: ${message}`,
         data: { configured: true, ok: false, exitCode: null, error: message },
+      };
+    }
+  }
+
+  private async adminRotateSecret(input: { secret: string; value: string }): Promise<ToolPayload> {
+    this.requireMcpAdmin();
+    const rotator = getSecretRotator();
+    if (!rotator) {
+      return {
+        summary: "LoopOver secret rotation: not configured (REDEPLOY_COMPANION_TOKEN is unset on this instance, or the companion isn't installed).",
+        data: { configured: false },
+      };
+    }
+    // Everything below is deliberately secret-free: the audit row, the summary, and the tool result carry
+    // only WHICH secret was rotated, never the value or any prefix/suffix of it.
+    try {
+      const result = await rotator(input.secret, input.value);
+      await recordAuditEvent(this.env, {
+        eventType: "instance.secret_rotated",
+        actor: this.identity.actor,
+        targetKey: input.secret,
+        outcome: result.ok ? "success" : "error",
+        detail: result.ok ? `Rotated ${input.secret} on the host.` : `Rotation of ${input.secret} failed: ${result.error ?? "unknown error"}.`,
+        metadata: { secret: input.secret, ok: result.ok },
+      });
+      return {
+        summary: result.ok
+          ? `LoopOver secret rotation: ${input.secret} rotated on the host.${input.secret === "claude_code_oauth_token" ? " No restart needed -- the token is re-read per AI call." : " Restart the loopover service for this to take effect."}`
+          : `LoopOver secret rotation failed for ${input.secret}: ${result.error ?? "unknown error"}.`,
+        data: {
+          configured: true,
+          ok: result.ok,
+          secret: input.secret,
+          ...(result.backupPath !== undefined ? { backupPath: result.backupPath } : {}),
+          ...(result.error !== undefined ? { error: result.error } : {}),
+        },
+      };
+    } catch (error) {
+      // A connection/protocol failure to the companion itself -- distinct from a rotation that ran and
+      // was refused (handled above via result.ok === false).
+      const message = error instanceof Error ? error.message : String(error);
+      await recordAuditEvent(this.env, {
+        eventType: "instance.secret_rotated",
+        actor: this.identity.actor,
+        targetKey: input.secret,
+        outcome: "error",
+        detail: `Could not reach the host companion: ${message}`,
+        metadata: { secret: input.secret, ok: false },
+      });
+      return {
+        summary: `LoopOver secret rotation: could not reach the host companion: ${message}`,
+        data: { configured: true, ok: false, secret: input.secret, error: message },
       };
     }
   }

@@ -139,6 +139,27 @@ export const repositoryLinearKeys = sqliteTable("repository_linear_keys", {
   updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
 });
 
+// Instance-wide subscription-CLI credentials (claude-code / codex), encrypted at rest with AES-256-GCM --
+// the same envelope as repositoryAiKeys above (see src/utils/crypto.ts). This is the FLEET rotation path
+// (#9543): a self-host box can rotate its credential in place on disk, but a multi-instance deployment has
+// no shared filesystem, so the value lives here and every instance resolves it fresh at AI-call time.
+//
+// Keyed by provider, NOT by repo -- unlike the BYOK tables above, this is the instance's own subscription
+// credential, not a per-maintainer key, so there is exactly one row per provider. `last4` is display-only,
+// derived from the plaintext at write time; the plaintext itself is never stored and never returned by the
+// API surface.
+export const providerCredentials = sqliteTable("provider_credentials", {
+  provider: text("provider").primaryKey(),
+  ciphertext: text("ciphertext").notNull(),
+  iv: text("iv").notNull(),
+  salt: text("salt"),
+  keyVersion: integer("key_version").notNull().default(1),
+  last4: text("last4").notNull(),
+  updatedBy: text("updated_by"),
+  createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
+  updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
+});
+
 export const repoSyncState = sqliteTable("repo_sync_state", {
   repoFullName: text("repo_full_name").primaryKey(),
   status: text("status").notNull().default("never_synced"),

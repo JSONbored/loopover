@@ -10,6 +10,8 @@ import { isStructuralProviderConfigError } from "../services/ai-review";
 import type { AiContentBlock, CombineStrategy, OnMerge } from "../services/ai-review";
 import { isConfiguredSelfHostProvider, resolveConfiguredProviderNames } from "./ai-config";
 export { assertNoLegacySharedAiEnv } from "./ai-config";
+import { wasLoadedFromFile } from "./file-sourced-secrets";
+import { getProviderCredentialResolver } from "./provider-credential-registry";
 import { incr, observe } from "./metrics";
 import { capturePostHogAiGeneration, type PostHogAiGenerationRequestKind } from "./posthog";
 import { withReviewSpan } from "./tracing";
@@ -1033,6 +1035,47 @@ function logSelfHostAiProviderFailed(input: {
   );
 }
 
+/**
+ * Resolve the Claude OAuth token AT CALL TIME so an operator can rotate the credential without recreating
+ * the container (#9543) -- mirroring how codex's auth.json is already re-resolved per call by
+ * resolveCodexAuthPath, rather than being frozen into process.env at boot.
+ *
+ * Precedence, highest first:
+ *   1. The fleet-mode DB-backed credential, when one is stored (provider-credential-registry).
+ *   2. A fresh read of CLAUDE_CODE_OAUTH_TOKEN_FILE -- but ONLY when the boot loader actually sourced the
+ *      live value from that file. docker-compose.yml sets `<NAME>_FILE` unconditionally, so an operator
+ *      using an inline `.env` value has both set; re-reading the file for them would silently swap their
+ *      credential and invert the "an inline `.env` value always wins" precedence secrets/README.md
+ *      documents. wasLoadedFromFile() is the only signal that separates the two cases.
+ *   3. The boot-time env value.
+ *
+ * Every failure degrades to the next rung instead of throwing: a half-written file caught mid-rotation, or
+ * a DB blip, must not fail a review that the previous credential could still have served.
+ */
+async function resolveClaudeOauthToken(parentEnv: Record<string, string | undefined>): Promise<string | undefined> {
+  const bootToken = parentEnv.CLAUDE_CODE_OAUTH_TOKEN;
+  const resolver = getProviderCredentialResolver();
+  if (resolver) {
+    try {
+      const stored = (await resolver("claude-code"))?.trim();
+      if (stored) return stored;
+    } catch {
+      // fall through -- a DB/decrypt failure is never fatal to a review that env/file can still serve
+    }
+  }
+  const path = parentEnv.CLAUDE_CODE_OAUTH_TOKEN_FILE;
+  if (!path || !wasLoadedFromFile("CLAUDE_CODE_OAUTH_TOKEN")) return bootToken;
+  try {
+    const { readFile } = await import("node:fs/promises");
+    // An empty file is the state scripts/selfhost-init-secrets.sh leaves behind for an externally-issued
+    // secret nobody has filled in yet, and is also the momentary state of an in-place rewrite -- neither
+    // is a reason to drop a working credential, so both fall back to the last known good value.
+    return (await readFile(path, "utf8")).trim() || bootToken;
+  } catch {
+    return bootToken;
+  }
+}
+
 /** Claude Code subscription (CLAUDE_CODE_OAUTH_TOKEN via `claude setup-token`). Headless, read-only, JSON. */
 export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>, spawnImpl?: SpawnFn): SelfHostAi {
   return {
@@ -1041,7 +1084,7 @@ export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>
       // through to an embed-capable provider (ollama/openai-compatible). Without this throw the chain would treat
       // claude's empty-prompt text answer as "success" and never reach the embed provider → RAG silently breaks.
       if (options.text) throw new Error("claude_code_no_embed");
-      const token = parentEnv.CLAUDE_CODE_OAUTH_TOKEN;
+      const token = await resolveClaudeOauthToken(parentEnv);
       const claudeModel = resolveModel(configuredClaudeModel(parentEnv, options.claudeModel), model, "claude-sonnet-5");
       const effort = resolveEffort(firstConfigured(options.claudeEffort, parentEnv.CLAUDE_AI_EFFORT));
       const timeoutMs = resolveClaudeCliTimeoutMs(parentEnv, options.claudeTimeoutMs);

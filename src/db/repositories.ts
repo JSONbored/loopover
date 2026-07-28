@@ -52,6 +52,7 @@ import {
   repoSnapshots,
   repoSyncSegments,
   repoSyncState,
+  providerCredentials,
   repositoryAiKeys,
   repositoryLinearKeys,
   repositorySettings,
@@ -1229,6 +1230,112 @@ export async function getDecryptedRepositoryAiKey(env: Env, fullName: string): P
   try {
     const key = await decryptSecret(row.ciphertext, row.iv, secret, row.salt);
     return { provider: normalizeAiKeyProvider(row.provider), key, model: row.model ?? null };
+  } catch {
+    return null;
+  }
+}
+
+// ─── Instance subscription-CLI credentials (#9543) ──────────────────────────────────────────────
+// The FLEET rotation path: same isolated-table, encrypted-at-rest shape as the BYOK provider keys above
+// (reuses the same TOKEN_ENCRYPTION_SECRET + encryptSecret/decryptSecret envelope), but keyed by provider
+// rather than by repo -- this is the instance's OWN subscription credential. Resolved fresh at AI-call
+// time via src/selfhost/provider-credential-registry.ts, so a rotation lands on the very next review with
+// no restart on any instance.
+
+/** Providers whose subscription credential can be rotated at runtime. */
+export type RotatableProviderName = "claude-code" | "codex";
+
+/** Secret-free status of a stored instance credential -- the ONLY shape the API surface ever returns. */
+export type ProviderCredentialStatus =
+  | { configured: false }
+  | { configured: true; provider: RotatableProviderName; last4: string; updatedBy: string | null; updatedAt: string };
+
+function normalizeRotatableProvider(value: string): RotatableProviderName {
+  return value === "codex" ? "codex" : "claude-code";
+}
+
+/** Read the secret-free status of a stored instance credential. Never returns the credential itself. */
+export async function getProviderCredentialStatus(env: Env, provider: RotatableProviderName): Promise<ProviderCredentialStatus> {
+  const db = getDb(env.DB);
+  const [row] = await db.select().from(providerCredentials).where(eq(providerCredentials.provider, provider)).limit(1);
+  if (!row) return { configured: false };
+  return { configured: true, provider: normalizeRotatableProvider(row.provider), last4: row.last4, updatedBy: row.updatedBy, updatedAt: row.updatedAt };
+}
+
+/**
+ * Store (or replace) an instance subscription credential, encrypted at rest. Returns the secret-free
+ * status. Throws `missing_encryption_secret` when TOKEN_ENCRYPTION_SECRET is not configured -- callers
+ * must surface that rather than store a credential in the clear.
+ */
+export async function upsertProviderCredential(
+  env: Env,
+  input: { provider: RotatableProviderName; credential: string; updatedBy?: string | null },
+): Promise<ProviderCredentialStatus> {
+  const secret = env.TOKEN_ENCRYPTION_SECRET;
+  if (!secret) throw new Error("missing_encryption_secret");
+  const trimmed = input.credential.trim();
+  if (!trimmed) throw new Error("empty_credential");
+  const existing = await getProviderCredentialStatus(env, input.provider);
+  const { ciphertext, iv, salt, version } = await encryptSecret(trimmed, secret);
+  const last4 = trimmed.slice(-4);
+  const updatedBy = input.updatedBy ?? null;
+  const updatedAt = nowIso();
+  const db = getDb(env.DB);
+  await db
+    .insert(providerCredentials)
+    .values({ provider: input.provider, ciphertext, iv, salt, keyVersion: version, last4, updatedBy, updatedAt })
+    .onConflictDoUpdate({
+      target: providerCredentials.provider,
+      set: { ciphertext, iv, salt, keyVersion: version, last4, updatedBy, updatedAt },
+    });
+  await recordProviderCredentialChange(env, { provider: input.provider, action: existing.configured ? "replace" : "set", last4, actor: updatedBy });
+  return { configured: true, provider: input.provider, last4, updatedBy, updatedAt };
+}
+
+/** Remove a stored instance credential, so resolution falls back to the secret file / boot env. */
+export async function deleteProviderCredential(env: Env, provider: RotatableProviderName, actor?: string | null): Promise<void> {
+  const existing = await getProviderCredentialStatus(env, provider);
+  const db = getDb(env.DB);
+  await db.delete(providerCredentials).where(eq(providerCredentials.provider, provider));
+  if (existing.configured) {
+    await recordProviderCredentialChange(env, { provider, action: "delete", last4: existing.last4, actor: actor ?? null });
+  }
+}
+
+/**
+ * Audit an instance-credential lifecycle change. Stored in ai_usage_events as a non-"ok" status so it
+ * never counts toward the daily neuron budget. NEVER includes any credential material -- only the
+ * display-only last4 and the actor.
+ */
+async function recordProviderCredentialChange(
+  env: Env,
+  input: { provider: RotatableProviderName; action: "set" | "replace" | "delete"; last4: string; actor: string | null },
+): Promise<void> {
+  await recordAiUsageEvent(env, {
+    feature: "provider_credential_change",
+    actor: input.actor,
+    route: "internal.provider_credential",
+    model: `subscription:${input.provider}`,
+    status: input.action,
+    estimatedNeurons: 0,
+    detail: `instance credential ${input.action}`,
+    metadata: { provider: input.provider, action: input.action, last4: input.last4 },
+  });
+}
+
+/**
+ * Decrypt an instance credential for an AI call. Returns null when none is stored OR the encryption
+ * secret is unavailable OR decryption fails -- so resolution silently falls through to the secret-file /
+ * boot-env rungs and a misconfiguration never blocks a review. Used immediately, never cached.
+ */
+export async function getDecryptedProviderCredential(env: Env, provider: RotatableProviderName): Promise<string | null> {
+  const secret = env.TOKEN_ENCRYPTION_SECRET;
+  if (!secret) return null;
+  const db = getDb(env.DB);
+  const [row] = await db.select().from(providerCredentials).where(eq(providerCredentials.provider, provider)).limit(1);
+  if (!row) return null;
+  try {
+    return await decryptSecret(row.ciphertext, row.iv, secret, row.salt);
   } catch {
     return null;
   }

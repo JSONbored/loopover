@@ -22755,6 +22755,217 @@
           }
         ]
       }
+    },
+    "/v1/internal/provider-credentials/{provider}": {
+      "get": {
+        "summary": "Read the secret-free status of a stored instance subscription credential",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "claude-code",
+                "codex"
+              ]
+            },
+            "required": true,
+            "name": "provider",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Credential status. Never includes the credential itself.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "configured": {
+                          "type": "boolean",
+                          "enum": [
+                            false
+                          ]
+                        }
+                      },
+                      "required": [
+                        "configured"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "configured": {
+                          "type": "boolean",
+                          "enum": [
+                            true
+                          ]
+                        },
+                        "provider": {
+                          "type": "string"
+                        },
+                        "last4": {
+                          "type": "string"
+                        },
+                        "updatedBy": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "updatedAt": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "configured",
+                        "provider",
+                        "last4",
+                        "updatedBy",
+                        "updatedAt"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown provider"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      },
+      "post": {
+        "summary": "Store or replace an instance subscription credential, encrypted at rest",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "claude-code",
+                "codex"
+              ]
+            },
+            "required": true,
+            "name": "provider",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "credential": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "credential"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Credential stored. Returns the secret-free status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown provider, or a credential that is empty, padded, or not a single line"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          },
+          "503": {
+            "description": "TOKEN_ENCRYPTION_SECRET is not configured, so the credential cannot be stored encrypted"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      },
+      "delete": {
+        "summary": "Clear a stored instance subscription credential, falling back to the secret file or boot env",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "claude-code",
+                "codex"
+              ]
+            },
+            "required": true,
+            "name": "provider",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Credential cleared",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "configured": {
+                      "type": "boolean",
+                      "enum": [
+                        false
+                      ]
+                    }
+                  },
+                  "required": [
+                    "configured"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown provider"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
     }
   },
   "servers": [

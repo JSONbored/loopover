@@ -31,7 +31,7 @@
 import { createServer } from "node:net";
 import { spawn } from "node:child_process";
 import { timingSafeEqual } from "node:crypto";
-import { unlinkSync, chmodSync, existsSync } from "node:fs";
+import { unlinkSync, chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 
 const SOCKET_PATH = process.env.REDEPLOY_COMPANION_SOCKET_PATH?.trim() || "/run/loopover-redeploy.sock";
 const REPO_ROOT = process.env.REDEPLOY_COMPANION_REPO_ROOT?.trim() || process.cwd();
@@ -56,7 +56,9 @@ function isValidToken(configuredToken: string, candidate: unknown): boolean {
   return timingSafeEqual(configured, supplied);
 }
 
-type RedeployRequest = { token: unknown; image?: unknown };
+// `action` is absent on every pre-#9543 request, and MUST keep meaning "redeploy" -- the app container and
+// the host companion are upgraded independently, so a new companion always has to serve an old client.
+type RedeployRequest = { token: unknown; image?: unknown; action?: unknown; secret?: unknown; value?: unknown };
 
 function parseRequestLine(line: string): RedeployRequest | null {
   let parsed: unknown;
@@ -81,6 +83,82 @@ function parseRequestLine(line: string): RedeployRequest | null {
  *  losing that quoting discipline later. */
 function isSafeImageOverride(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 512 && !/[\s"'\\${}`;|&<>]/.test(value);
+}
+
+// ─── Secret rotation (#9543) ────────────────────────────────────────────────────────────────────
+// The SECOND verb this companion serves. It lives here, host-side, for a hard reason: the app container
+// physically cannot write its own credential -- docker inspect reports the Compose `secrets:` bind mount
+// as rw=false -- so a container-side rotation endpoint is impossible, not merely undesirable.
+//
+// Two footguns this exists to make unhittable, both of which fail SILENTLY (the container stays healthy
+// and the status stays green while reviews degrade to the fallback provider):
+//   1. Shape: src/selfhost/load-file-secrets.ts only .trim()s the file. A human-added label line above the
+//      value becomes part of the credential. Hence the single-line/no-comment/no-whitespace validation.
+//   2. Inode: a Compose secret is a plain bind mount pinned to the INODE. Writing in place propagates to
+//      the running container instantly; write-new-then-rename (`mv`, and several editors' default save)
+//      leaves the container serving the OLD content, and `docker compose up -d` will NOT fix it -- it
+//      reports "Container Running" and changes nothing, because the Compose config is unchanged. So this
+//      writes with truncate-in-place and never renames.
+
+/** Secrets this verb may write, mapped to their path relative to REPO_ROOT. An explicit allowlist rather
+ *  than an arbitrary operator-supplied path: the whole point is that this process runs with more host
+ *  privilege than its caller, so it must never become a general "write any file as me" primitive. */
+const ROTATABLE_SECRETS: Record<string, string> = {
+  claude_code_oauth_token: "secrets/claude_code_oauth_token.txt",
+  github_webhook_secret: "secrets/github_webhook_secret.txt",
+  loopover_api_token: "secrets/loopover_api_token.txt",
+  loopover_mcp_token: "secrets/loopover_mcp_token.txt",
+  loopover_mcp_admin_token: "secrets/loopover_mcp_admin_token.txt",
+  pagerduty_routing_key: "secrets/pagerduty_routing_key.txt",
+};
+
+/** A secret file's value must be exactly the credential -- one line, no comment, no surrounding
+ *  whitespace, non-empty, and bounded. Rejecting here is what turns footgun 1 above into an error the
+ *  operator sees immediately instead of a silent provider downgrade discovered days later. */
+export function isValidSecretValue(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 4096 && !/[\r\n]/.test(value) && value.trim() === value && !value.startsWith("#");
+}
+
+export type RotateSecretResult = { ok: boolean; error?: string; backupPath?: string };
+
+/**
+ * Write a secret file IN PLACE (truncate, never rename) so the running container's bind mount -- pinned to
+ * the inode -- sees the new bytes immediately. Backs the previous value up first, and preserves the 0644
+ * the app's own uid depends on to read it back (secrets/README.md explains why 600 breaks the app).
+ *
+ * Injectable fs/now for tests only; production always uses the real node:fs.
+ */
+export function rotateSecret(
+  name: unknown,
+  value: unknown,
+  io: {
+    readFileSync: typeof readFileSync;
+    writeFileSync: typeof writeFileSync;
+    existsSync: typeof existsSync;
+    chmodSync: typeof chmodSync;
+    now: () => Date;
+  } = { readFileSync, writeFileSync, existsSync, chmodSync, now: () => new Date() },
+): RotateSecretResult {
+  if (typeof name !== "string" || !Object.hasOwn(ROTATABLE_SECRETS, name)) return { ok: false, error: "unknown_secret" };
+  if (!isValidSecretValue(value)) return { ok: false, error: "invalid_secret_value" };
+  const target = `${REPO_ROOT}/${ROTATABLE_SECRETS[name]}`;
+  try {
+    let backupPath: string | undefined;
+    if (io.existsSync(target)) {
+      const previous = io.readFileSync(target, "utf8");
+      // Backups live beside the deploy backups, never inside secrets/ -- that directory is the Compose
+      // `secrets:` source, and a stray file there is one careless glob away from being mounted somewhere.
+      backupPath = `${REPO_ROOT}/.deploy-backups/${name}.txt.bak-${io.now().toISOString().replace(/[:.]/g, "").replace(/-/g, "")}`;
+      io.writeFileSync(backupPath, previous, { mode: 0o600 });
+    }
+    // No trailing newline: secrets/README.md's own `printf '%s'` convention. The loader .trim()s anyway,
+    // so this is about keeping the file byte-identical to the issued credential, not correctness.
+    io.writeFileSync(target, value, { mode: 0o644, flag: "w" });
+    io.chmodSync(target, 0o644); // an existing file keeps its old mode through a plain write -- force it
+    return backupPath ? { ok: true, backupPath } : { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 export type RunDeployResult = { ok: boolean; exitCode: number | null; error?: string };
@@ -116,10 +194,22 @@ export async function handleConnection(
   setBusy: (busy: boolean) => void,
   write: (line: string) => void,
   deploy: typeof runDeploy = runDeploy,
+  rotate: typeof rotateSecret = rotateSecret,
 ): Promise<void> {
   const request = parseRequestLine(requestLine);
   if (!request || !isValidToken(configuredToken, request.token)) {
     write(JSON.stringify({ ok: false, error: "unauthorized" }));
+    return;
+  }
+  // Rotation is answered BEFORE the busy check: it is a single truncating write, not orchestration, so it
+  // neither races a running redeploy nor is worth refusing during one -- and refusing it during a 15-minute
+  // redeploy is exactly when an operator is most likely to need a credential fixed.
+  if (request.action === "rotate-secret") {
+    write(JSON.stringify(rotate(request.secret, request.value)));
+    return;
+  }
+  if (request.action !== undefined && request.action !== "redeploy") {
+    write(JSON.stringify({ ok: false, error: "unknown_action" }));
     return;
   }
   if (isBusy()) {

@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
-import { handleConnection, runDeploy } from "../../scripts/redeploy-companion";
+import { handleConnection, runDeploy, rotateSecret } from "../../scripts/redeploy-companion";
 
 const TOKEN = "companion-test-token";
 
@@ -206,5 +206,147 @@ describe("handleConnection (#7723)", () => {
     await handleConnection(TOKEN, JSON.stringify({ token: TOKEN }), () => false, vi.fn(), (line) => written.push(line), deploy);
 
     expect(written[1]).toBe(JSON.stringify({ ok: false, exitCode: null, error: "bash: not found" }));
+  });
+});
+
+describe("rotateSecret (#9543 — the two silent footguns this exists to prevent)", () => {
+  const io = (overrides: Partial<Parameters<typeof rotateSecret>[2]> = {}) => {
+    const writes: Array<{ path: string; data: string; mode: number | undefined }> = [];
+    return {
+      writes,
+      io: {
+        readFileSync: (() => "previous-value") as never,
+        writeFileSync: ((path: string, data: string, opts?: { mode?: number }) => {
+          writes.push({ path, data, mode: opts?.mode });
+        }) as never,
+        existsSync: (() => true) as never,
+        chmodSync: (() => undefined) as never,
+        now: () => new Date("2026-07-28T00:00:00.000Z"),
+        ...overrides,
+      },
+    };
+  };
+
+  it("rejects an unknown secret name rather than writing an arbitrary path", () => {
+    const { io: fake, writes } = io();
+    expect(rotateSecret("../../etc/passwd", "x", fake)).toEqual({ ok: false, error: "unknown_secret" });
+    expect(writes).toHaveLength(0);
+  });
+
+  it("rejects a non-string secret name", () => {
+    expect(rotateSecret(42, "x", io().io)).toEqual({ ok: false, error: "unknown_secret" });
+  });
+
+  it("REGRESSION: rejects a value with a comment/label line above it", () => {
+    // The exact shape that silently became part of the credential in production: the loader only trims,
+    // so both lines would have been sent to the CLI as one token and every AI call would fail auth.
+    const { io: fake, writes } = io();
+    expect(rotateSecret("claude_code_oauth_token", "# some-account\nsk-ant-oat01-real", fake)).toEqual({ ok: false, error: "invalid_secret_value" });
+    expect(writes).toHaveLength(0);
+  });
+
+  it("rejects a value that is itself a comment, is empty, is padded, or is oversized", () => {
+    const { io: fake } = io();
+    for (const bad of ["#sk-ant-x", "", "  sk-ant-x", "sk-ant-x  ", "sk-ant-x\r\n", "x".repeat(4097)]) {
+      expect(rotateSecret("claude_code_oauth_token", bad, fake)).toEqual({ ok: false, error: "invalid_secret_value" });
+    }
+  });
+
+  it("rejects a non-string value", () => {
+    expect(rotateSecret("claude_code_oauth_token", { token: "x" }, io().io)).toEqual({ ok: false, error: "invalid_secret_value" });
+  });
+
+  it("writes the bare value with no trailing newline, at 0644, and backs up the previous value first", () => {
+    const { io: fake, writes } = io();
+    const result = rotateSecret("claude_code_oauth_token", "sk-ant-oat01-new", fake);
+    expect(result.ok).toBe(true);
+    expect(result.backupPath).toContain(".deploy-backups/claude_code_oauth_token.txt.bak-");
+    // Backup first (mode 600), then the in-place write of the bare value (mode 644).
+    expect(writes[0]!.data).toBe("previous-value");
+    expect(writes[0]!.mode).toBe(0o600);
+    expect(writes[1]!.data).toBe("sk-ant-oat01-new");
+    expect(writes[1]!.mode).toBe(0o644);
+    expect(writes[1]!.path).toContain("secrets/claude_code_oauth_token.txt");
+  });
+
+  it("skips the backup when no prior value exists", () => {
+    const { io: fake, writes } = io({ existsSync: (() => false) as never });
+    expect(rotateSecret("claude_code_oauth_token", "sk-ant-first", fake)).toEqual({ ok: true });
+    expect(writes).toHaveLength(1);
+    expect(writes[0]!.data).toBe("sk-ant-first");
+  });
+
+  it("reports a write failure instead of throwing", () => {
+    const { io: fake } = io({
+      writeFileSync: (() => {
+        throw new Error("EACCES: permission denied");
+      }) as never,
+    });
+    expect(rotateSecret("claude_code_oauth_token", "sk-ant-x", fake)).toEqual({ ok: false, error: "EACCES: permission denied" });
+  });
+
+  it("accepts every allowlisted secret name", () => {
+    const { io: fake } = io();
+    for (const name of ["claude_code_oauth_token", "github_webhook_secret", "loopover_api_token", "loopover_mcp_token", "loopover_mcp_admin_token", "pagerduty_routing_key"]) {
+      expect(rotateSecret(name, "some-value", fake).ok).toBe(true);
+    }
+  });
+});
+
+describe("handleConnection verb dispatch (#9543)", () => {
+  const collect = () => {
+    const lines: string[] = [];
+    return { lines, write: (line: string) => lines.push(line) };
+  };
+
+  it("routes a rotate-secret request to the rotator, not the deployer", async () => {
+    const { lines, write } = collect();
+    const deploy = vi.fn();
+    const rotate = vi.fn(() => ({ ok: true, backupPath: "/b" }));
+    await handleConnection(TOKEN, JSON.stringify({ token: TOKEN, action: "rotate-secret", secret: "claude_code_oauth_token", value: "sk-ant-x" }), () => false, () => {}, write, deploy as never, rotate as never);
+    expect(deploy).not.toHaveBeenCalled();
+    expect(rotate).toHaveBeenCalledWith("claude_code_oauth_token", "sk-ant-x");
+    expect(JSON.parse(lines[0]!)).toEqual({ ok: true, backupPath: "/b" });
+  });
+
+  it("serves a rotation even while a redeploy is in progress", async () => {
+    // A 15-minute redeploy is exactly when an operator is most likely to need a credential fixed, and a
+    // single truncating write races nothing that the deploy is doing.
+    const { lines, write } = collect();
+    const rotate = vi.fn(() => ({ ok: true }));
+    await handleConnection(TOKEN, JSON.stringify({ token: TOKEN, action: "rotate-secret", secret: "claude_code_oauth_token", value: "v" }), () => true, () => {}, write, vi.fn() as never, rotate as never);
+    expect(JSON.parse(lines[0]!)).toEqual({ ok: true });
+  });
+
+  it("rejects a rotation with a bad token before reaching the rotator", async () => {
+    const { lines, write } = collect();
+    const rotate = vi.fn();
+    await handleConnection(TOKEN, JSON.stringify({ token: "wrong", action: "rotate-secret", secret: "claude_code_oauth_token", value: "v" }), () => false, () => {}, write, vi.fn() as never, rotate as never);
+    expect(rotate).not.toHaveBeenCalled();
+    expect(JSON.parse(lines[0]!)).toEqual({ ok: false, error: "unauthorized" });
+  });
+
+  it("rejects an unrecognised action", async () => {
+    const { lines, write } = collect();
+    await handleConnection(TOKEN, JSON.stringify({ token: TOKEN, action: "rm-rf" }), () => false, () => {}, write, vi.fn() as never, vi.fn() as never);
+    expect(JSON.parse(lines[0]!)).toEqual({ ok: false, error: "unknown_action" });
+  });
+
+  it("BACKWARD COMPAT: a request with no action still redeploys", async () => {
+    // The app container and the host companion upgrade independently, so a new companion must keep
+    // serving an old client that has never heard of `action`.
+    const { lines, write } = collect();
+    const deploy = vi.fn(async () => ({ ok: true, exitCode: 0 }));
+    await handleConnection(TOKEN, JSON.stringify({ token: TOKEN }), () => false, () => {}, write, deploy as never, vi.fn() as never);
+    expect(deploy).toHaveBeenCalled();
+    expect(JSON.parse(lines[0]!)).toEqual({ ok: true, exitCode: 0 });
+  });
+
+  it("an explicit action of redeploy behaves identically", async () => {
+    const { lines, write } = collect();
+    const deploy = vi.fn(async () => ({ ok: true, exitCode: 0 }));
+    await handleConnection(TOKEN, JSON.stringify({ token: TOKEN, action: "redeploy" }), () => false, () => {}, write, deploy as never, vi.fn() as never);
+    expect(deploy).toHaveBeenCalled();
+    expect(JSON.parse(lines[0]!)).toEqual({ ok: true, exitCode: 0 });
   });
 });

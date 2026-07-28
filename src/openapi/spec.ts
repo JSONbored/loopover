@@ -1963,6 +1963,55 @@ export function buildOpenApiSpec() {
       },
     });
   }
+  // Instance subscription-CLI credentials (#9543). The response NEVER carries the credential itself --
+  // only configured/last4/timestamps -- so the whole surface is safe to describe publicly.
+  registry.registerPath({
+    method: "get",
+    path: "/v1/internal/provider-credentials/{provider}",
+    summary: "Read the secret-free status of a stored instance subscription credential",
+    request: { params: z.object({ provider: z.enum(["claude-code", "codex"]) }) },
+    responses: {
+      200: {
+        description: "Credential status. Never includes the credential itself.",
+        content: {
+          "application/json": {
+            schema: z.union([
+              z.object({ configured: z.literal(false) }),
+              z.object({ configured: z.literal(true), provider: z.string(), last4: z.string(), updatedBy: z.string().nullable(), updatedAt: z.string() }),
+            ]),
+          },
+        },
+      },
+      400: { description: "Unknown provider" },
+      401: { description: "Invalid internal token" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/internal/provider-credentials/{provider}",
+    summary: "Store or replace an instance subscription credential, encrypted at rest",
+    request: {
+      params: z.object({ provider: z.enum(["claude-code", "codex"]) }),
+      body: { content: { "application/json": { schema: z.object({ credential: z.string() }) } } },
+    },
+    responses: {
+      200: { description: "Credential stored. Returns the secret-free status.", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
+      400: { description: "Unknown provider, or a credential that is empty, padded, or not a single line" },
+      401: { description: "Invalid internal token" },
+      503: { description: "TOKEN_ENCRYPTION_SECRET is not configured, so the credential cannot be stored encrypted" },
+    },
+  });
+  registry.registerPath({
+    method: "delete",
+    path: "/v1/internal/provider-credentials/{provider}",
+    summary: "Clear a stored instance subscription credential, falling back to the secret file or boot env",
+    request: { params: z.object({ provider: z.enum(["claude-code", "codex"]) }) },
+    responses: {
+      200: { description: "Credential cleared", content: { "application/json": { schema: z.object({ configured: z.literal(false) }) } } },
+      400: { description: "Unknown provider" },
+      401: { description: "Invalid internal token" },
+    },
+  });
   registry.registerPath({
     method: "post",
     path: "/v1/internal/jobs/refresh-registry",

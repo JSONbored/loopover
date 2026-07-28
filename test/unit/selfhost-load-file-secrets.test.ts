@@ -154,3 +154,29 @@ describe("empty secret files are fatal, not silently unconfigured (#9487)", () =
     expect(readFile).not.toHaveBeenCalled();
   });
 });
+
+describe("loadFileSecrets return value (#9543 — which vars actually came from a file)", () => {
+  it("returns only the vars it materialised from a file", () => {
+    const env: Record<string, string | undefined> = {
+      FROM_FILE_FILE: "/secrets/a",
+      ALREADY_SET: "inline-value",
+      ALREADY_SET_FILE: "/secrets/b",
+      PLAIN: "not-a-file-var",
+    };
+    const names = loadFileSecrets(env, (path) => (path === "/secrets/a" ? "  file-value\n" : "unused"));
+    // ALREADY_SET is excluded because an inline value wins -- that exclusion is the whole point: a
+    // call-time re-read must not swap an inline operator's credential (secrets/README.md).
+    expect(names).toEqual(["FROM_FILE"]);
+    expect(env.FROM_FILE).toBe("file-value");
+    expect(env.ALREADY_SET).toBe("inline-value");
+  });
+
+  it("returns an empty list when nothing is file-sourced", () => {
+    expect(loadFileSecrets({ PLAIN: "x" }, () => "unused")).toEqual([]);
+  });
+
+  it("excludes Compose's own reserved _FILE vars", () => {
+    const env: Record<string, string | undefined> = { COMPOSE_FILE: "a.yml:b.yml", COMPOSE_ENV_FILE: "/custom/.env" };
+    expect(loadFileSecrets(env, () => "unused")).toEqual([]);
+  });
+});

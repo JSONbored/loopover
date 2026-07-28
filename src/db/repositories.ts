@@ -3564,6 +3564,28 @@ export async function hasAuditEventForDelivery(env: Env, actor: string, eventTyp
   return (row?.count ?? 0) > 0;
 }
 
+/** #9000: how many of ANY of `eventTypes` exist for `targetKey` since `sinceIso`, actor-agnostic. The
+ *  lost-click recovery needs "was this retrigger processed recently, by anyone or by the recovery itself" --
+ *  hasAuditEventForDelivery above is deliberately actor+delivery-keyed for redelivery guarding, which is the
+ *  wrong shape here: a lost delivery has no deliveryId to match, and the processing pass may have run under a
+ *  different actor than whoever ticked the box. */
+export async function countAuditEventsForTargetSince(env: Env, eventTypes: readonly string[], targetKey: string, sinceIso: string): Promise<number> {
+  if (eventTypes.length === 0) return 0;
+  const db = getDb(env.DB);
+  const [row] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(auditEvents)
+    .where(
+      and(
+        inArray(auditEvents.eventType, [...eventTypes]),
+        eq(auditEvents.targetKey, targetKey),
+        gte(auditEvents.createdAt, sinceIso),
+      ),
+    );
+  /* v8 ignore next -- count(*) always returns exactly one row; the empty-array guard only satisfies the destructure type. */
+  return row?.count ?? 0;
+}
+
 /** Whether `eventType` has ALREADY been recorded for this `targetKey` at this EXACT `headSha` -- unlike
  *  `hasAuditEventForDelivery` above (which guards a single redelivered webhook within a short window), this has
  *  no time bound: a head SHA is a stable, permanent identity, so a match at any point in the past is still a

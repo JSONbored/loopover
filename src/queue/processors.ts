@@ -69,6 +69,7 @@ import {
   countRecentAuditEventsForActorInRepo,
   countRecentAuditEventsForActorInRepoWithTargetSuffix,
   recentStaleRecheckDeniedPullNumbers,
+  countAuditEventsForTargetSince,
   hasAuditEventForDelivery,
   hasAuditEventForHeadSha,
   recordGateBlockOutcome,
@@ -4536,7 +4537,29 @@ async function prReadyForReview(
           repoFullName,
           pr.number,
           `${PR_PANEL_COMMENT_MARKER}\n\n${renderWaitingForCiPlaceholder({ reason: waitingReason })}`,
-        ).catch(() => undefined);
+        )
+          .then((placeholderResult) =>
+            // #9000: this placeholder is the FIRST panel overwrite on a deferring pass, so it is where a
+            // lost click would otherwise be erased with the pass never reaching the final publish at all.
+            // A legitimately-deferring retrigger pass is protected by ordering, not luck: its handler now
+            // marks the pending marker BEFORE calling prReadyForReview, so the marker guard inside skips it.
+            maybeRecoverLostPanelRetrigger(env, {
+              previousBody: placeholderResult?.previousBody,
+              forceAiReview: undefined,
+              installationId,
+              repoFullName,
+              prNumber: pr.number,
+              /* v8 ignore next -- the null arm is structurally unreachable here: a falsy headSha makes
+               * prReadyForReview return true unconditionally (its own documented design), so this CI-wait
+               * placeholder never renders for a no-head PR. Type-level guard only. */
+              headSha: pr.headSha ?? null,
+              prCreatedAt: pr.createdAt ?? null,
+              deliveryId,
+            }),
+          ).catch(
+            /* v8 ignore next -- fail-safe: recovery is additive; its failure must never turn a CI-wait deferral into a thrown error. */
+            () => undefined,
+          );
       }
       return false;
     }
@@ -4757,6 +4780,87 @@ const PENDING_PR_PANEL_RETRIGGER_TTL_SECONDS = 24 * 60 * 60;
 
 function pendingPrPanelRetriggerKey(repoFullName: string, prNumber: number, headSha: string): string {
   return `pr-panel-retrigger-pending:${repoFullName.toLowerCase()}#${prNumber}:${headSha}`;
+}
+
+// #9000, the lost-click half. Three checkbox states used to look identical to a maintainer: processed
+// (panel republished, box reset), deferred for CI (box stays ticked, intent persisted by the pending marker
+// above), and DELIVERY LOST (box stays ticked, nothing recorded, nothing will ever happen). Only the third is
+// broken, and it is unrecoverable from our own state alone -- the tick exists only in the live comment body,
+// because the webhook that would have told us about it never became a job (three such losses observed live on
+// #8972, 2026-07-26).
+//
+// The interception point is the panel republish: createOrUpdatePrIntelligenceComment already fetches the
+// existing comment for its marker search, and the publish was about to OVERWRITE the ticked box with the
+// renderer's unconditional `- [ ]` -- erasing the only evidence of the click, on the exact pass best placed
+// to honor it. So recovery costs zero extra API calls and needs no new sweep: any pass that republishes the
+// panel (webhook, re-gate sweep, backlog convergence) doubles as the detector, which is what bounds the
+// issue's "within one sweep interval" acceptance.
+const PR_PANEL_RETRIGGER_RECOVERED_EVENT_TYPE = "github_app.pr_panel_retrigger_recovered";
+
+async function maybeRecoverLostPanelRetrigger(
+  env: Env,
+  args: {
+    previousBody: string | undefined;
+    forceAiReview: boolean | undefined;
+    installationId: number;
+    repoFullName: string;
+    prNumber: number;
+    headSha: string | null;
+    prCreatedAt: string | null;
+    deliveryId: string;
+  },
+): Promise<void> {
+  // The box in the body we just replaced was not ticked -- nothing to recover. This is the overwhelmingly
+  // common case and the only read it costs is a string scan of a body we already held.
+  if (!isCheckedPrPanelRetrigger(args.previousBody)) return;
+  // This pass IS the retrigger being processed (or a recovery pass consuming the marker below): overwriting
+  // its own tick is the normal receipt acknowledgement, not a loss.
+  if (args.forceAiReview === true) return;
+  const targetKey = `${args.repoFullName}#${args.prNumber}`;
+  const sinceIso = new Date(Date.now() - COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS).toISOString();
+  // A recent processed retrigger means the tick we replaced was ALREADY honored -- the delivery raced this
+  // pass rather than being lost. Actor-agnostic on purpose: any recent processing settles the question, and
+  // the audit query helpers are actor-keyed, so this reads the raw ledger.
+  const recent = await countAuditEventsForTargetSince(
+    env,
+    [ "github_app.pr_panel_retriggered", PR_PANEL_RETRIGGER_RECOVERED_EVENT_TYPE ],
+    targetKey,
+    sinceIso,
+  );
+  if (recent > 0) return;
+  // The deferred case (#7626): the click WAS processed and is waiting for CI behind the pending marker. Peek,
+  // never consume -- consumption belongs to the review pass that will honor it.
+  if (args.headSha) {
+    const pending = await getTransientKey(env, pendingPrPanelRetriggerKey(args.repoFullName, args.prNumber, args.headSha));
+    if (pending === PENDING_PR_PANEL_RETRIGGER_MARKER) return;
+  }
+
+  // A genuinely lost click. Honor the intent exactly the way the deferred path does -- persist the pending
+  // marker so the next review pass consumes it as forceAiReview -- and enqueue that pass NOW rather than
+  // waiting for the next natural touch, since "the next natural touch" is precisely what a PR with a lost
+  // click cannot count on. The audit event doubles as the loop guard above and as the named reason #9003's
+  // invariant demands.
+  await recordAuditEvent(env, {
+    eventType: PR_PANEL_RETRIGGER_RECOVERED_EVENT_TYPE,
+    actor: null,
+    targetKey,
+    outcome: "queued",
+    detail: "panel rerun checkbox found ticked with no matching processing -- the delivery was lost; recovering the click as a forced re-review",
+    metadata: { deliveryId: args.deliveryId, repoFullName: args.repoFullName, headSha: args.headSha },
+  }).catch(
+    /* v8 ignore next -- fail-safe: an audit write failure must not abort the recovery it is narrating. */
+    () => undefined,
+  );
+  await markPendingPrPanelRetrigger(env, args.repoFullName, args.prNumber, args.headSha);
+  const job: JobMessage = {
+    type: "agent-regate-pr",
+    deliveryId: `panel-retrigger-recovery:${args.repoFullName}#${args.prNumber}`,
+    repoFullName: args.repoFullName,
+    prNumber: args.prNumber,
+    installationId: args.installationId,
+    ...(args.prCreatedAt ? { prCreatedAt: args.prCreatedAt } : {}),
+  };
+  await env.JOBS.send(job);
 }
 
 /** Persists the pending forceAiReview intent for this exact (repo, PR, headSha) -- best-effort: a storage
@@ -11166,13 +11270,28 @@ async function maybePublishPrPublicSurface(
       if (shouldShowPlaceholderNow) {
         const placeholderBody = `${PR_PANEL_COMMENT_MARKER}\n\n${renderReviewingPlaceholder()}`;
         try {
-          await createOrUpdatePrIntelligenceComment(
+          const placeholderResult = await createOrUpdatePrIntelligenceComment(
             env,
             installationId,
             repoFullName,
             pr.number,
             placeholderBody,
             { mode },
+          );
+          // #9000: on a pass that runs the AI, THIS overwrite (not the final publish) is the one that
+          // replaces whatever the maintainer last saw -- including a ticked box whose delivery was lost.
+          await maybeRecoverLostPanelRetrigger(env, {
+            previousBody: placeholderResult?.previousBody,
+            forceAiReview: webhook.forceAiReview,
+            installationId,
+            repoFullName,
+            prNumber: pr.number,
+            headSha: pr.headSha ?? null,
+            prCreatedAt: pr.createdAt ?? null,
+            deliveryId: webhook.deliveryId,
+          }).catch(
+            /* v8 ignore next -- fail-safe: same additive-surface rule as the CI-wait hook; a recovery failure must not fail the placeholder publish. */
+            () => undefined,
           );
         } catch (error) {
           /* v8 ignore next -- placeholder rate-limit propagation is covered by final-comment rate-limit tests. */
@@ -12855,6 +12974,23 @@ async function maybePublishPrPublicSurface(
       // idempotency check) sets this false -- a real create/update, or the createIfMissing:false null case
       // (not reachable on this call site, which never sets that option), both default true.
       commentContentChanged = commentResult?.changed ?? true;
+      // #9000: the body this publish just replaced may carry a ticked rerun checkbox whose webhook delivery
+      // was lost -- the overwrite above would otherwise be the moment that intent is silently erased. Fire-and-
+      // forget semantics are wrong here (the recovery enqueues a job), but a recovery failure must not fail
+      // the publish that hosted it, hence the terminal catch.
+      await maybeRecoverLostPanelRetrigger(env, {
+        previousBody: commentResult?.previousBody,
+        forceAiReview: webhook.forceAiReview,
+        installationId,
+        repoFullName,
+        prNumber: pr.number,
+        headSha: pr.headSha ?? null,
+        prCreatedAt: pr.createdAt ?? null,
+        deliveryId: webhook.deliveryId,
+      }).catch(
+        /* v8 ignore next -- fail-safe: a recovery failure must not fail the publish that hosted it. */
+        () => undefined,
+      );
       publishedOutputs.push("comment");
       incr("loopover_reviews_published_total", { repo: repoFullName });
       // Real end-to-end review latency (#review-latency-metric): pr.headShaObservedAt is the moment THIS
@@ -14304,6 +14440,13 @@ async function maybeProcessPrPanelRetrigger(
     await refreshPullRequestDetails(env, repoFullName, pr.number, { force: true });
   }
   const liveFacts = createLiveGithubFacts();
+  // #7626 intent persistence, moved BEFORE the readiness check (#9000): prReadyForReview's own CI-wait
+  // placeholder republishes the panel, and the lost-click recovery hooked into every panel republish treats
+  // "ticked box, no recent processing, no pending marker" as a lost delivery. During THIS pass the click is
+  // very much being processed -- marking first is what tells the recovery so. The immediate-readiness path
+  // consumes the marker right back (it threads forceAiReview itself); a crash between mark and consume
+  // degrades to one extra forced review on the next pass, the safe direction for an explicit user click.
+  await markPendingPrPanelRetrigger(env, repoFullName, pr.number, pr.headSha);
   if (
     !(await prReadyForReview(
       env,
@@ -14315,10 +14458,9 @@ async function maybeProcessPrPanelRetrigger(
       liveFacts,
     ))
   ) {
-    // #7626: the explicit forceAiReview intent below is otherwise lost the instant this defers -- persist it
-    // so the next natural re-evaluation of this exact (repo, PR, headSha), whichever entry point reaches it
-    // first once CI settles, can still honor the user's click instead of silently replaying stale content.
-    await markPendingPrPanelRetrigger(env, repoFullName, pr.number, pr.headSha);
+    // The marker set above persists the forceAiReview intent across the deferral -- the next natural
+    // re-evaluation of this exact (repo, PR, headSha), whichever entry point reaches it first once CI
+    // settles, consumes it and forces the fresh review the user asked for.
     await recordAuditEvent(env, {
       eventType: "github_app.pr_panel_retrigger_deferred",
       actor,
@@ -14329,6 +14471,9 @@ async function maybeProcessPrPanelRetrigger(
     }).catch(() => undefined);
     return true;
   }
+  // Immediate-readiness path: this pass threads forceAiReview directly, so the marker set above must not
+  // survive to force a SECOND review on some later, unrelated pass. One-shot consume; result discarded.
+  await consumePendingPrPanelRetrigger(env, repoFullName, pr.number, pr.headSha);
   await maybePublishPrPublicSurface(
     env,
     installationId,

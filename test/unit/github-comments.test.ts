@@ -396,7 +396,9 @@ describe("GitHub PR intelligence comments", () => {
 
     const result = await createOrUpdatePrIntelligenceComment(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "JSONbored/gittensory", 12, body);
 
-    expect(result).toEqual({ id: 101, html_url: "https://github.com/comment/101", changed: false }); // html_url-present branch of the early return; changed:false is the #6724 no-op signal
+    // #9000: previousBody rides every canonical-comment return (identical or PATCHed) — it is how the panel
+    // publish detects a ticked rerun checkbox it is about to overwrite (the lost-click recovery).
+    expect(result).toEqual({ id: 101, html_url: "https://github.com/comment/101", changed: false, previousBody: body }); // html_url-present branch of the early return; changed:false is the #6724 no-op signal
     expect(calls.some((call) => call.startsWith("PATCH "))).toBe(false); // identical body → NO GitHub write
   });
 
@@ -416,7 +418,7 @@ describe("GitHub PR intelligence comments", () => {
 
     const result = await createOrUpdatePrIntelligenceComment(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "JSONbored/gittensory", 12, body);
 
-    expect(result).toEqual({ id: 202, changed: false }); // html_url-absent branch → no html_url key; changed:false is the #6724 no-op signal
+    expect(result).toEqual({ id: 202, changed: false, previousBody: body }); // html_url-absent branch → no html_url key; changed:false is the #6724 no-op signal
     expect(calls.some((call) => call.startsWith("PATCH "))).toBe(false);
   });
 
@@ -439,7 +441,9 @@ describe("GitHub PR intelligence comments", () => {
 
     // The whole point of #9069: a clock-only delta is NOT a content change, so no GitHub write and no
     // self-inflicted issue_comment.edited delivery. changed:false also keeps the #6724 no-op accounting honest.
-    expect(result).toEqual({ id: 303, html_url: "https://github.com/comment/303", changed: false });
+    // previousBody is the POSTED body (what a reader saw), not the re-render — the distinction the
+    // lost-click recovery depends on, since a ticked checkbox only ever exists in the posted copy.
+    expect(result).toEqual({ id: 303, html_url: "https://github.com/comment/303", changed: false, previousBody: posted });
     expect(calls.some((call) => call.startsWith("PATCH "))).toBe(false);
   });
 

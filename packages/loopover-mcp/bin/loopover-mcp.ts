@@ -3494,8 +3494,11 @@ export async function watchCli(args: any) {
     [
       `Watching ${(payload.watching ?? []).length} repo(s) for ${login}${payload.changed ? ` (${sanitizePlainTextTerminalOutput(payload.changed)})` : ""}.`,
       ...(payload.watching ?? []).map((watch) => {
-        const labels = (watch.labels ?? []).length > 0 ? ` [${(watch.labels ?? []).map(sanitizePlainTextTerminalOutput).join(", ")}]` : "";
-        return `- ${sanitizePlainTextTerminalOutput(watch.repoFullName)}${labels}`;
+        // Bound once: repeating `watch.labels ?? []` inside the true arm gave that second fallback no
+        // reachable case, since a nullish `labels` never gets past the length check.
+        const labels = watch.labels ?? [];
+        const rendered = labels.length > 0 ? ` [${labels.map(sanitizePlainTextTerminalOutput).join(", ")}]` : "";
+        return `- ${sanitizePlainTextTerminalOutput(watch.repoFullName)}${rendered}`;
       }),
     ].join("\n");
   const emit = (payload: WatchPayload) => {
@@ -4105,12 +4108,21 @@ ${usageLines}
 `);
 }
 
+/**
+ * The commands with their own `--help` body. Narrowed to the entries that declare a `note`, so the printer
+ * below is total without a fallback branch -- a command with no note has no dedicated printer to reach it.
+ */
+type CliCommandWithNote = {
+  [Name in CliCommand]: (typeof CLI_COMMAND_SPEC)[Name] extends { note: string } ? Name : never;
+}[CliCommand];
+
 /** The `<command> --help` body: its usage lines plus its trailing note, both straight from CLI_COMMAND_SPEC (#9521). */
-function printableUsage(command: CliCommand) {
+function printableUsage(command: CliCommandWithNote) {
   const entry = CLI_COMMAND_SPEC[command];
   const lines = entry.usage.map((line) => `  loopover-mcp ${line}`).join("\n");
-  const note = "note" in entry ? `\n${entry.note}\n` : "";
-  return `Usage:\n${lines}\n${note}`;
+  // Every command with its own --help body carries a note; a spec entry without one would not have a
+  // dedicated printer to reach this.
+  return `Usage:\n${lines}\n\n${entry.note}\n`;
 }
 
 function printCacheHelp() {
@@ -5592,7 +5604,8 @@ function sleep(ms: any) {
  * sites append `?refresh=true` and friends, and the document describes the path, not the query.
  */
 function validatedPathOf(path: string): ValidatedApiPath | null {
-  const base = path.split("?")[0] ?? path;
+  // split always yields at least one element, so this is total without a fallback.
+  const [base] = path.split("?") as [string, ...string[]];
   return Object.hasOwn(CLI_RESPONSE_SCHEMAS, base) ? (base as ValidatedApiPath) : null;
 }
 
@@ -5710,9 +5723,11 @@ function reportedSchemaMismatchMemo(): Set<string> {
  */
 function reportResponseSchemaMismatch(path: ValidatedApiPath, parsed: { success: boolean; error?: z.ZodError }): void {
   if (parsed.success) return;
-  const issue = parsed.error?.issues[0];
-  const where = issue && issue.path.length > 0 ? issue.path.join(".") : "(root)";
-  const message = `LoopOver API response did not match the published schema for ${path}: ${where} — ${issue?.message ?? "unknown issue"}`;
+  // A failed safeParse always carries at least one issue, so `issues[0]` is present here; only its `path`
+  // can be empty (a top-level type error), which is what "(root)" stands in for.
+  const issue = parsed.error!.issues[0]!;
+  const where = issue.path.length > 0 ? issue.path.join(".") : "(root)";
+  const message = `LoopOver API response did not match the published schema for ${path}: ${where} — ${issue.message}`;
   if (/^(1|true|yes|strict)$/i.test(process.env.LOOPOVER_VALIDATE_RESPONSES ?? "")) {
     const error: any = new Error(message);
     error.code = "response_schema_mismatch";

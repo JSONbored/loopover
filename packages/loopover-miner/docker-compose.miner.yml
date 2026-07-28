@@ -26,8 +26,12 @@ services:
       dockerfile: packages/loopover-miner/Dockerfile
     image: loopover-miner:latest
     # ENTRYPOINT is egress-firewall-entrypoint.sh (#7857), which sets up the network-egress firewall as root
-    # then execs `loopover-miner` as the unprivileged `node` user; `run` is the continuous fleet-worker loop.
-    command: ["run"]
+    # then execs `loopover-miner` as the unprivileged `node` user; `loop` is the continuous fleet-worker loop
+    # (`run` was never a registered subcommand -- see packages/loopover-miner/bin/loopover-miner.ts's dispatch
+    # table). REQUIRED: replace <owner/repo> and <login> below -- `loop` needs a real target (or `--search
+    # <query>` instead of a repo target) and the GitHub login it commits/opens PRs as; see DEPLOYMENT.md's
+    # `loopover-miner loop` usage for the full flag set (e.g. `--live` to open real PRs instead of dry-run).
+    command: ["loop", "<owner/repo>", "--miner-login", "<login>"]
     restart: unless-stopped
     # #7857: NET_ADMIN/NET_RAW so the entrypoint's iptables/ipset egress-firewall setup can actually configure
     # rules -- same capability class this repo's own tailscale service already grants (docker-compose.yml), just

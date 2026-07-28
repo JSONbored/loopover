@@ -5,18 +5,29 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL, URL } from "node:url";
 import {
+  assertContainerCommandsInSync,
   assertDeploymentDocsInSync,
+  extractContainerCommandClaim,
   extractEnvVarClaims,
   extractFilePathClaims,
   extractSubcommandClaims,
   scanEnvVarTokens,
   scanRegisteredCommands,
+  type ContainerCommandClaim,
   type DeploymentDocsReality,
 } from "../packages/loopover-miner/lib/deployment-docs-audit";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 const MINER_DIR = resolve(REPO_ROOT, "packages/loopover-miner");
 const DEPLOYMENT_MD = resolve(MINER_DIR, "DEPLOYMENT.md");
+// Fleet-mode container manifests whose command drifting from the real CLI dispatch table is the exact class
+// DEPLOYMENT.md's own subcommand audit above already catches for prose -- a manifest built from a stale command
+// sets up its container, then immediately exits 1 with "Unknown command: <name>" (see docker-compose.miner.yml
+// / k8s/miner-deployment.yaml's own comments for the `run`-was-never-registered regression this guards).
+const CONTAINER_MANIFESTS: readonly { source: string; path: string }[] = [
+  { source: "packages/loopover-miner/docker-compose.miner.yml", path: resolve(MINER_DIR, "docker-compose.miner.yml") },
+  { source: "k8s/miner-deployment.yaml", path: resolve(REPO_ROOT, "k8s/miner-deployment.yaml") },
+];
 // Scans the compiled dist/ output (2026-07-24 migration; see tsconfig.json's outDir comment) --
 // this audit needs a prior `npm run build:miner`, same precondition as everything else that reads
 // real compiled artifacts (ci.yml's own "MCP/Miner package check" steps already run after "Build
@@ -46,6 +57,17 @@ export function buildLiveMinerDeploymentReality(): DeploymentDocsReality {
   };
 }
 
+/** Build the live container-manifest command claims used by the audit (exported for unit tests): each fleet
+ *  manifest in CONTAINER_MANIFESTS that has a `command:`/`args:` list, paired with the subcommand it claims. */
+export function buildLiveContainerCommandClaims(): ContainerCommandClaim[] {
+  const claims: ContainerCommandClaim[] = [];
+  for (const manifest of CONTAINER_MANIFESTS) {
+    const command = extractContainerCommandClaim(readFileSync(manifest.path, "utf8"));
+    if (command !== null) claims.push({ source: manifest.source, command });
+  }
+  return claims;
+}
+
 export type MinerDeploymentAuditResult = {
   ok: boolean;
   failures: string[];
@@ -53,10 +75,12 @@ export type MinerDeploymentAuditResult = {
     envVars: number;
     filePaths: number;
     subcommands: number;
+    containerCommands: number;
   };
 };
 
-/** Run the live DEPLOYMENT.md audit. */
+/** Run the live DEPLOYMENT.md audit, plus the fleet-mode container-manifest command audit (same drift class,
+ *  a different claim source — see docker-compose.miner.yml / k8s/miner-deployment.yaml's own comments). */
 export function runMinerDeploymentDocsAudit(opts: { testMode?: string | null; reality?: DeploymentDocsReality } = {}): MinerDeploymentAuditResult {
   const markdown = readFileSync(DEPLOYMENT_MD, "utf8");
   const claims = {
@@ -73,6 +97,15 @@ export function runMinerDeploymentDocsAudit(opts: { testMode?: string | null; re
     };
   }
   const result = assertDeploymentDocsInSync(claims, reality);
+
+  const containerClaims = buildLiveContainerCommandClaims();
+  // Test-only fixture (mirrors "missing-env" above): forces every container-manifest command "unregistered"
+  // without touching `reality`, so this drift class is exercised independently of the DEPLOYMENT.md audit
+  // above -- both currently claim `loop`, so reusing one shared override would mask which audit actually caught
+  // the regression.
+  const containerReality = opts.testMode === "bad-container-command" ? { ...reality, isRegisteredCommand: () => false } : reality;
+  assertContainerCommandsInSync(containerClaims, containerReality);
+
   return {
     ok: result.ok,
     failures: result.failures,
@@ -80,6 +113,7 @@ export function runMinerDeploymentDocsAudit(opts: { testMode?: string | null; re
       envVars: claims.envVars.length,
       filePaths: claims.filePaths.length,
       subcommands: claims.subcommands.length,
+      containerCommands: containerClaims.length,
     },
   };
 }
@@ -102,7 +136,9 @@ export function main(
     const result = runMinerDeploymentDocsAudit({
       testMode: env.CHECK_MINER_DEPLOYMENT_DOCS_AUDIT_TEST_MODE ?? null,
     });
-    io.log(`Miner deployment docs audit ok: ${result.claimCounts.envVars} env vars, ${result.claimCounts.filePaths} paths, ${result.claimCounts.subcommands} subcommands.`);
+    io.log(
+      `Miner deployment docs audit ok: ${result.claimCounts.envVars} env vars, ${result.claimCounts.filePaths} paths, ${result.claimCounts.subcommands} subcommands, ${result.claimCounts.containerCommands} container commands.`,
+    );
     return 0;
   } catch (error) {
     io.error(error instanceof Error ? error.message : String(error));

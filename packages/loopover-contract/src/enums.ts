@@ -50,13 +50,41 @@ export type ProposeActionClass = (typeof PROPOSE_ACTION_CLASSES)[number];
 export const TEST_FRAMEWORKS = ["vitest", "jest", "pytest", "go-test", "rspec", "cargo-test"] as const;
 export type TestFramework = (typeof TEST_FRAMEWORKS)[number];
 
-/** Lifecycle states of a plan step in the stateless plan-DAG tools. */
-export const PLAN_STEP_STATUSES = ["pending", "in_progress", "completed", "skipped", "failed"] as const;
+/**
+ * Lifecycle states of a plan step.
+ *
+ * One vocabulary, deliberately: the remote server's stateless plan-DAG tools (loopover_build_plan /
+ * plan_status / record_step_result) and the miner's own plan store hold the same steps at different
+ * points in their life, and a step written by one and read by the other must round-trip.
+ *
+ * This list said `in_progress` where both real surfaces say `running` until #9518. Nothing consumed
+ * it yet, so nothing broke -- but the first consumer would have rejected every running step the
+ * plan store has ever persisted.
+ */
+export const PLAN_STEP_STATUSES = ["pending", "running", "completed", "failed", "skipped"] as const;
 export type PlanStepStatus = (typeof PLAN_STEP_STATUSES)[number];
 
 /** Verdicts the pre-start feasibility surfaces return. */
 export const FEASIBILITY_VERDICTS = ["go", "raise", "avoid"] as const;
 export type FeasibilityVerdict = (typeof FEASIBILITY_VERDICTS)[number];
+
+/**
+ * Why LoopOver's automated reviewer deliberately stayed quiet on a PR -- the filter vocabulary the
+ * skipped-PR audit accepts. Mirrors `PUBLIC_SURFACE_SKIP_REASONS`
+ * (src/signals/settings-preview.ts), pinned against it by a meta-test for the same reason the
+ * autonomy enums above are: this package cannot import the Worker's `src/`, and a filter value that
+ * silently stops matching is worse than one that fails loudly.
+ */
+export const PUBLIC_SURFACE_SKIP_REASONS = [
+  "surface_off",
+  "missing_author",
+  "bot_author",
+  "ignored_author",
+  "maintainer_author",
+  "miner_detection_unavailable",
+  "not_official_gittensor_miner",
+] as const;
+export type PublicSurfaceSkipReason = (typeof PUBLIC_SURFACE_SKIP_REASONS)[number];
 
 /**
  * Scope selector for WRITING the self-hosted private config: the deployment-wide default layer, or

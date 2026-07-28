@@ -587,7 +587,7 @@ export const ContributorWatchRequestSchema = z
 
 /**
  * Response body for GET/POST/DELETE /v1/contributors/{login}/watches. Field-level parity with
- * `watchIssuesOutputSchema` (the `loopover_watch_issues` MCP tool `outputSchema`) — #9306.
+ * `WatchIssuesOutput` in @loopover/contract (the `loopover_watch_issues` MCP tool `outputSchema`) — #9306.
  */
 export const ContributorWatchesResponseSchema = z
   .object({
@@ -1101,7 +1101,7 @@ export const ListPendingActionsResponseSchema = z
   })
   .openapi("ListPendingActionsResponse");
 
-// Mirrors proposeActionShape minus owner/repo (both are path params on the REST route), matching the request
+// Mirrors `ProposeActionInput` in @loopover/contract minus owner/repo (both are path params on the REST route), matching the request
 // body proposePendingActionSchema already validates in src/api/routes.ts.
 export const ProposeActionRequestSchema = z
   .object({
@@ -2057,7 +2057,7 @@ export const ClearSelftuneOverrideResponseSchema = z
   .openapi("ClearSelftuneOverrideResponse");
 
 /**
- * Response body for POST /v1/scoring/eligibility-plan. Field-level parity with `eligibilityPlanOutputSchema`
+ * Response body for POST /v1/scoring/eligibility-plan. Field-level parity with `GetEligibilityPlanOutput` in @loopover/contract
  * (the `loopover_get_eligibility_plan` MCP tool `outputSchema`) in src/mcp/server.ts — #9301.
  */
 export const EligibilityPlanResponseSchema = z
@@ -2088,8 +2088,9 @@ export const ScoreBreakdownResponseSchema = z
   .openapi("ScoreBreakdownResponse");
 
 // #9310 — request/response schemas for the two discovery routes below, mirroring the MCP tools'
-// own Zod shapes verbatim (src/mcp/server.ts's findOpportunitiesShape/findOpportunitiesOutputSchema
-// and issueRagShape/issueRagOutputSchema) so the OpenAPI contract can't silently drift from what the
+// own Zod shapes verbatim (src/mcp/server.ts's findOpportunitiesShape/issueRagShape, and
+// FindOpportunitiesOutput/RetrieveIssueContextOutput in @loopover/contract) so the OpenAPI contract
+// can't silently drift from what the
 // MCP tools actually validate.
 export const FindOpportunitiesRequestSchema = z.object({
   targets: z
@@ -2180,7 +2181,7 @@ export const IssueRagRetrieveResponseSchema = z
   .openapi("IssueRagRetrieveResponse");
 
 /**
- * Request body for POST /v1/loop/evaluate-escalation. Field-level parity with `evaluateEscalationShape`
+ * Request body for POST /v1/loop/evaluate-escalation. Field-level parity with `EvaluateEscalationInput` in @loopover/contract
  * (the `loopover_evaluate_escalation` MCP tool `inputSchema`) in src/mcp/server.ts — #9309.
  */
 export const EvaluateEscalationRequestSchema = z
@@ -2193,7 +2194,7 @@ export const EvaluateEscalationRequestSchema = z
   .openapi("EvaluateEscalationRequest");
 
 /**
- * Response body for POST /v1/loop/evaluate-escalation. Field-level parity with `evaluateEscalationOutputSchema`
+ * Response body for POST /v1/loop/evaluate-escalation. Field-level parity with `EvaluateEscalationOutput` in @loopover/contract
  * (the `loopover_evaluate_escalation` MCP tool `outputSchema`) in src/mcp/server.ts — #9309.
  */
 export const EvaluateEscalationResponseSchema = z
@@ -2207,7 +2208,7 @@ export const EvaluateEscalationResponseSchema = z
 
 /**
  * Request body for POST /v1/repos/{owner}/{repo}/validate-linked-issue. Field-level parity with
- * `validateLinkedIssueShape` (the `loopover_validate_linked_issue` MCP tool `inputSchema`) in
+ * `ValidateLinkedIssueInput` in @loopover/contract (the `loopover_validate_linked_issue` MCP tool `inputSchema`) in
  * src/mcp/server.ts — #9304. owner/repo are also path params; the body carries the planned-change context.
  */
 export const ValidateLinkedIssueRequestSchema = z
@@ -2227,7 +2228,7 @@ export const ValidateLinkedIssueRequestSchema = z
 
 /**
  * Response body for POST /v1/repos/{owner}/{repo}/validate-linked-issue. Field-level parity with
- * `validateLinkedIssueOutputSchema` (the `loopover_validate_linked_issue` MCP tool `outputSchema`) — #9304.
+ * `ValidateLinkedIssueOutput` in @loopover/contract (the `loopover_validate_linked_issue` MCP tool `outputSchema`) — #9304.
  */
 export const ValidateLinkedIssueResponseSchema = z
   .object({
@@ -2245,7 +2246,7 @@ export const ValidateLinkedIssueResponseSchema = z
 
 /**
  * Request body for POST /v1/repos/{owner}/{repo}/check-before-start. Field-level parity with
- * `checkBeforeStartShape` (the `loopover_check_before_start` MCP tool `inputSchema`) in src/mcp/server.ts — #9304.
+ * `CheckBeforeStartInput` in @loopover/contract (the `loopover_check_before_start` MCP tool `inputSchema`) — #9304.
  */
 export const CheckBeforeStartRequestSchema = z
   .object({
@@ -2259,7 +2260,7 @@ export const CheckBeforeStartRequestSchema = z
 
 /**
  * Response body for POST /v1/repos/{owner}/{repo}/check-before-start. Field-level parity with
- * `checkBeforeStartOutputSchema` (the `loopover_check_before_start` MCP tool `outputSchema`) — #9304.
+ * `CheckBeforeStartOutput` in @loopover/contract (the `loopover_check_before_start` MCP tool `outputSchema`) — #9304.
  */
 export const CheckBeforeStartResponseSchema = z
   .object({
@@ -2276,7 +2277,7 @@ export const CheckBeforeStartResponseSchema = z
   .openapi("CheckBeforeStartResponse");
 
 /**
- * Request body for POST /v1/loop/results-payload. Field-level parity with `buildResultsPayloadShape`
+ * Request body for POST /v1/loop/results-payload. Field-level parity with `BuildResultsPayloadInput` in @loopover/contract
  * (the `loopover_build_results_payload` MCP tool `inputSchema`) in src/mcp/server.ts — #9309.
  */
 export const BuildResultsPayloadRequestSchema = z
@@ -2293,7 +2294,7 @@ export const BuildResultsPayloadRequestSchema = z
   .openapi("BuildResultsPayloadRequest");
 
 /**
- * Response body for POST /v1/loop/results-payload. Field-level parity with `buildResultsPayloadOutputSchema`
+ * Response body for POST /v1/loop/results-payload. Field-level parity with `BuildResultsPayloadOutput` in @loopover/contract
  * (the `loopover_build_results_payload` MCP tool `outputSchema`) in src/mcp/server.ts — #9309. `diffPreview`
  * and `totals` are intentionally left as opaque `unknown` objects (the tool composes them from caller-supplied
  * metadata; the spec does not re-derive their internal shape).
@@ -2308,7 +2309,7 @@ export const BuildResultsPayloadResponseSchema = z
   .openapi("BuildResultsPayloadResponse");
 
 /**
- * Request body for POST /v1/loop/progress-snapshot. Field-level parity with `buildProgressSnapshotShape`
+ * Request body for POST /v1/loop/progress-snapshot. Field-level parity with `BuildProgressSnapshotInput` in @loopover/contract
  * (the `loopover_build_progress_snapshot` MCP tool `inputSchema`) in src/mcp/server.ts — #9309.
  */
 export const BuildProgressSnapshotRequestSchema = z
@@ -2325,7 +2326,7 @@ export const BuildProgressSnapshotRequestSchema = z
   .openapi("BuildProgressSnapshotRequest");
 
 /**
- * Response body for POST /v1/loop/progress-snapshot. Field-level parity with `buildProgressSnapshotOutputSchema`
+ * Response body for POST /v1/loop/progress-snapshot. Field-level parity with `BuildProgressSnapshotOutput` in @loopover/contract
  * (the `loopover_build_progress_snapshot` MCP tool `outputSchema`) in src/mcp/server.ts — #9309. `recentActivity`
  * is left as opaque `unknown` (the tool passes the caller-supplied activity list through untouched).
  */
@@ -2342,7 +2343,7 @@ export const BuildProgressSnapshotResponseSchema = z
   .openapi("BuildProgressSnapshotResponse");
 
 /**
- * Request body for POST /v1/loop/intake-idea. Field-level parity with `intakeIdeaShape`
+ * Request body for POST /v1/loop/intake-idea. Field-level parity with `IntakeIdeaInput` in @loopover/contract
  * (the `loopover_intake_idea` MCP tool `inputSchema`) in src/mcp/server.ts — #9309. Fields are deliberately
  * loose (matching the tool) so the engine's validateIdeaSubmission owns the real bounds/format checks.
  */
@@ -2363,7 +2364,7 @@ export const IntakeIdeaRequestSchema = z
   .openapi("IntakeIdeaRequest");
 
 /**
- * Response body for POST /v1/loop/intake-idea. Field-level parity with `intakeIdeaOutputSchema`
+ * Response body for POST /v1/loop/intake-idea. Field-level parity with `IntakeIdeaOutput` in @loopover/contract
  * (the `loopover_intake_idea` MCP tool `outputSchema`) in src/mcp/server.ts — #9309. `taskGraph` is left as
  * opaque `unknown` (the assembled task-graph structure is not re-derived in the spec).
  */
@@ -2378,7 +2379,7 @@ export const IntakeIdeaResponseSchema = z
 
 /**
  * Request body for POST /v1/loop/plan-idea-claims. The `loopover_plan_idea_claims` MCP tool reuses the same
- * `intakeIdeaShape` input as intake-idea (src/mcp/server.ts) — kept as its own component for a stable per-route
+ * `IntakeIdeaInput` (@loopover/contract) — kept as its own component for a stable per-route
  * contract — #9309.
  */
 export const PlanIdeaClaimsRequestSchema = z
@@ -2398,7 +2399,7 @@ export const PlanIdeaClaimsRequestSchema = z
   .openapi("PlanIdeaClaimsRequest");
 
 /**
- * Response body for POST /v1/loop/plan-idea-claims. Field-level parity with `planIdeaClaimsOutputSchema`
+ * Response body for POST /v1/loop/plan-idea-claims. Field-level parity with `PlanIdeaClaimsOutput` in @loopover/contract
  * (the `loopover_plan_idea_claims` MCP tool `outputSchema`) in src/mcp/server.ts — #9309. `claimPlan` is left
  * as opaque `unknown` (the disposition structure is not re-derived in the spec).
  */
@@ -3621,7 +3622,7 @@ export const SimulateOpenPrPressureRequestSchema = z
   })
   .openapi("SimulateOpenPrPressureRequest");
 
-/** Response body for POST /v1/lint/open-pr-pressure — parity with `simulateOpenPrPressureOutputSchema`. */
+/** Response body for POST /v1/lint/open-pr-pressure — parity with `SimulateOpenPrPressureOutput` in @loopover/contract. */
 export const SimulateOpenPrPressureResponseSchema = z
   .object({
     repoFullName: z.string().optional(),
@@ -3693,7 +3694,7 @@ export const CheckIssueSlopResponseSchema = z
   })
   .openapi("CheckIssueSlopResponse");
 
-/** Request body for POST /v1/validate/focus-manifest — parity with `validateConfigShape` (loopover_validate_config). */
+/** Request body for POST /v1/validate/focus-manifest — parity with `ValidateConfigInput` in @loopover/contract (loopover_validate_config). */
 export const ValidateFocusManifestRequestSchema = z
   .object({
     content: z.string(),
@@ -3701,7 +3702,7 @@ export const ValidateFocusManifestRequestSchema = z
   })
   .openapi("ValidateFocusManifestRequest");
 
-/** Response body for POST /v1/validate/focus-manifest — parity with `validateConfigOutputSchema`. */
+/** Response body for POST /v1/validate/focus-manifest — parity with `ValidateConfigOutput` in @loopover/contract. */
 export const ValidateFocusManifestResponseSchema = z
   .object({
     present: z.boolean().optional(),

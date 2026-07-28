@@ -23,11 +23,17 @@ import {
   MAINTAIN_ACTION_CLASSES,
   PROPOSE_ACTION_CLASSES,
   PREFLIGHT_LIMITS,
+  SCENARIO_LIMITS,
+  PLAN_STEP_STATUSES,
+  PUBLIC_SURFACE_SKIP_REASONS,
 } from "@loopover/contract";
 import { LocalStatusStructuredInput } from "@loopover/contract/tools";
 import { GetRepoContextInput } from "@loopover/contract/tools";
 import { PREFLIGHT_LIMITS as ENGINE_PREFLIGHT_LIMITS } from "../../packages/loopover-engine/src/signals/preflight-limits.js";
+import { PUBLIC_SURFACE_SKIP_REASONS as SERVER_PUBLIC_SURFACE_SKIP_REASONS } from "../../src/signals/settings-preview";
 import { AUTONOMY_LEVELS as ENGINE_AUTONOMY_LEVELS, AGENT_ACTION_CLASSES as ENGINE_AGENT_ACTION_CLASSES } from "../../packages/loopover-engine/src/settings/autonomy.js";
+import { SCENARIO_MAX_REPO_FULL_NAME_CHARS, SCENARIO_MAX_BRANCH_REF_CHARS } from "../../src/scenarios/input-model";
+import { PLAN_STATUSES } from "../../packages/loopover-miner/lib/plan-store.js";
 
 describe("contract tool registry", () => {
   it("registers at least one tool", () => {
@@ -241,10 +247,38 @@ describe("contract enums", () => {
     }
   });
 
+  it("pins the skipped-PR audit reason codes against the server's live enum", () => {
+    // Same reason as the autonomy pins: the contract cannot import the Worker's src/, and a filter
+    // vocabulary that silently stops matching the server's is worse than one that fails loudly.
+    expect([...PUBLIC_SURFACE_SKIP_REASONS]).toEqual([...SERVER_PUBLIC_SURFACE_SKIP_REASONS]);
+  });
+
   it("pins the preflight input bounds against the engine's live limits", () => {
     // The contract restates PREFLIGHT_LIMITS because it cannot import the engine (zod-only leaf).
     // Without this pin, raising a bound on one side only would produce a schema that either rejects
     // input the server accepts, or accepts input the server silently truncates.
     expect(PREFLIGHT_LIMITS).toEqual(ENGINE_PREFLIGHT_LIMITS);
+  });
+
+  it("pins the repo/branch identifier bounds against the server's live scenario limits", () => {
+    // Same restatement, same hazard: the write-spec tools bound repoFullName and branch refs with
+    // these, and a contract that accepted a longer ref than the server does would advertise input
+    // the server rejects.
+    expect(SCENARIO_LIMITS).toEqual({
+      repoFullNameChars: SCENARIO_MAX_REPO_FULL_NAME_CHARS,
+      branchRefChars: SCENARIO_MAX_BRANCH_REF_CHARS,
+    });
+  });
+
+  it("uses one plan-step vocabulary across the remote plan DAG and the miner plan store", () => {
+    // #9518: this list said `in_progress` where both real surfaces say `running`. Nothing consumed
+    // it yet, so nothing broke -- but the first consumer would have rejected every running step the
+    // plan store has ever persisted. The plan-level statuses are a strict subset (a plan cannot be
+    // `skipped`), which is what makes them safe to compare this way.
+    expect(PLAN_STEP_STATUSES).toContain("running");
+    expect(PLAN_STEP_STATUSES).not.toContain("in_progress");
+    for (const status of PLAN_STATUSES) {
+      expect(PLAN_STEP_STATUSES as readonly string[], status).toContain(status);
+    }
   });
 });

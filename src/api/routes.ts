@@ -577,7 +577,7 @@ const requestAprTransferSchema = z
   })
   .strict();
 
-// #6744: mirrors proposeActionShape in src/mcp/server.ts VERBATIM, minus owner/repo (they are path params), so
+// #6744: mirrors `ProposeActionInput` in @loopover/contract VERBATIM, minus owner/repo (they are path params), so
 // POST /v1/repos/:owner/:repo/agent/pending-actions can never stage an action the loopover_propose_action MCP
 // tool would reject, or vice versa. actionClass stays the 7-value propose set (a subset of AgentActionClass).
 const proposePendingActionSchema = z.object({
@@ -590,7 +590,7 @@ const proposePendingActionSchema = z.object({
   closeComment: z.string().max(60000).optional(),
 });
 
-// #6755: mirrors intakeIdeaShape in src/mcp/server.ts VERBATIM. Fields are deliberately LOOSE here for the same
+// #6755: mirrors `IntakeIdeaInput` in @loopover/contract VERBATIM. Fields are deliberately LOOSE here for the same
 // reason they are on the tool: the engine's validateIdeaSubmission owns the real bounds/format checks and returns
 // the actionable error list, so an empty/malformed submission must reach the handler rather than be rejected
 // upstream by the schema.
@@ -608,7 +608,7 @@ const intakeIdeaSchema = z.object({
     .optional(),
 });
 
-// #6752: mirrors buildResultsPayloadShape in src/mcp/server.ts VERBATIM (same bounds, same optionality) so the
+// #6752: mirrors `BuildResultsPayloadInput` in @loopover/contract VERBATIM (same bounds, same optionality) so the
 // REST surface can never accept an input the MCP tool would reject, or vice versa.
 const resultsPayloadSchema = z.object({
   repoFullName: z.string().min(1),
@@ -621,7 +621,7 @@ const resultsPayloadSchema = z.object({
   status: z.enum(["open", "merged", "closed"]).optional(),
 });
 
-// #6753: mirrors buildProgressSnapshotShape in src/mcp/server.ts VERBATIM (same bounds, same optionality) so the
+// #6753: mirrors `BuildProgressSnapshotInput` in @loopover/contract VERBATIM (same bounds, same optionality) so the
 // REST surface can never accept an input the MCP tool would reject, or vice versa.
 const progressSnapshotSchema = z.object({
   iteration: z.number().int(),

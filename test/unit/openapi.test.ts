@@ -1,28 +1,34 @@
 import { describe, expect, it } from "vitest";
 import { buildOpenApiSpec } from "../../src/openapi/spec";
 import {
-  evaluateEscalationShape,
-  evaluateEscalationOutputSchema,
-  buildResultsPayloadShape,
-  buildResultsPayloadOutputSchema,
-  buildProgressSnapshotShape,
-  buildProgressSnapshotOutputSchema,
-  intakeIdeaShape,
-  intakeIdeaOutputSchema,
-  planIdeaClaimsOutputSchema,
-  eligibilityPlanOutputSchema,
-  scoreBreakdownOutputSchema,
-  listPendingActionsOutputSchema,
-  proposeActionOutputSchema,
-  proposeActionShape,
-  decidePendingActionOutputSchema,
-  maintainerNoiseOutputSchema,
-  amsMinerCohortOutputSchema,
   gatePrecisionOutputSchema,
   maintainerMeasurementReportOutputSchema,
-  activationPreviewOutputSchema,
-  watchIssuesOutputSchema,
 } from "../../src/mcp/server";
+// #9518: these tools' output schemas moved to @loopover/contract as each category migrated. The
+// REST<->MCP parity guards below are unchanged in intent -- they now read the contract (the single
+// source both the MCP server and these assertions derive from) instead of server-local declarations
+// that no longer exist.
+import {
+  GetMaintainerNoiseOutput,
+  GetAmsMinerCohortOutput,
+  GetActivationPreviewOutput,
+  ExplainScoreBreakdownOutput,
+  GetEligibilityPlanOutput,
+  WatchIssuesOutput,
+  EvaluateEscalationInput,
+  EvaluateEscalationOutput,
+  BuildResultsPayloadInput,
+  BuildResultsPayloadOutput,
+  BuildProgressSnapshotInput,
+  BuildProgressSnapshotOutput,
+  IntakeIdeaInput,
+  IntakeIdeaOutput,
+  PlanIdeaClaimsOutput,
+  ListPendingActionsOutput,
+  ProposeActionInput,
+  ProposeActionOutput,
+  DecidePendingActionOutput,
+} from "@loopover/contract/tools";
 
 describe("OpenAPI contract", () => {
   it("exports the modern private-beta backend contract only", () => {
@@ -225,7 +231,7 @@ describe("OpenAPI contract", () => {
     expect(getOp?.responses?.["200"]?.content?.["application/json"]?.schema?.$ref).toBe(
       "#/components/schemas/ListPendingActionsResponse",
     );
-    expect(schemaProps("ListPendingActionsResponse")).toEqual(Object.keys(listPendingActionsOutputSchema).sort());
+    expect(schemaProps("ListPendingActionsResponse")).toEqual(Object.keys(ListPendingActionsOutput.shape).sort());
 
     const proposeOp = spec.paths["/v1/repos/{owner}/{repo}/agent/pending-actions"]?.post as {
       requestBody?: { content?: Record<string, { schema?: { $ref?: string } }> };
@@ -233,14 +239,14 @@ describe("OpenAPI contract", () => {
     };
     expect(proposeOp?.requestBody?.content?.["application/json"]?.schema?.$ref).toBe("#/components/schemas/ProposeActionRequest");
     expect(schemaProps("ProposeActionRequest")).toEqual(
-      Object.keys(proposeActionShape)
+      Object.keys(ProposeActionInput.shape)
         .filter((k) => k !== "owner" && k !== "repo")
         .sort(),
     );
     expect(proposeOp?.responses?.["200"]?.content?.["application/json"]?.schema?.$ref).toBe(
       "#/components/schemas/ProposeActionResponse",
     );
-    expect(schemaProps("ProposeActionResponse")).toEqual(Object.keys(proposeActionOutputSchema).sort());
+    expect(schemaProps("ProposeActionResponse")).toEqual(Object.keys(ProposeActionOutput.shape).sort());
 
     const decideOp = spec.paths["/v1/repos/{owner}/{repo}/agent/pending-actions/{id}/{decision}"]?.post as {
       responses?: Record<string, { content?: Record<string, { schema?: { $ref?: string } }> }>;
@@ -248,7 +254,7 @@ describe("OpenAPI contract", () => {
     expect(decideOp?.responses?.["200"]?.content?.["application/json"]?.schema?.$ref).toBe(
       "#/components/schemas/DecidePendingActionResponse",
     );
-    expect(schemaProps("DecidePendingActionResponse")).toEqual(Object.keys(decidePendingActionOutputSchema).sort());
+    expect(schemaProps("DecidePendingActionResponse")).toEqual(Object.keys(DecidePendingActionOutput.shape).sort());
   });
 
   // #5810: every operation needs a title in the generated spec and the rendered API browser. Iterating the built
@@ -281,37 +287,37 @@ describe("OpenAPI contract", () => {
         path: "/v1/loop/evaluate-escalation",
         request: "EvaluateEscalationRequest",
         response: "EvaluateEscalationResponse",
-        inputShape: evaluateEscalationShape,
-        outputShape: evaluateEscalationOutputSchema,
+        inputShape: EvaluateEscalationInput.shape,
+        outputShape: EvaluateEscalationOutput.shape,
       },
       {
         path: "/v1/loop/results-payload",
         request: "BuildResultsPayloadRequest",
         response: "BuildResultsPayloadResponse",
-        inputShape: buildResultsPayloadShape,
-        outputShape: buildResultsPayloadOutputSchema,
+        inputShape: BuildResultsPayloadInput.shape,
+        outputShape: BuildResultsPayloadOutput.shape,
       },
       {
         path: "/v1/loop/progress-snapshot",
         request: "BuildProgressSnapshotRequest",
         response: "BuildProgressSnapshotResponse",
-        inputShape: buildProgressSnapshotShape,
-        outputShape: buildProgressSnapshotOutputSchema,
+        inputShape: BuildProgressSnapshotInput.shape,
+        outputShape: BuildProgressSnapshotOutput.shape,
       },
       {
         path: "/v1/loop/intake-idea",
         request: "IntakeIdeaRequest",
         response: "IntakeIdeaResponse",
-        inputShape: intakeIdeaShape,
-        outputShape: intakeIdeaOutputSchema,
+        inputShape: IntakeIdeaInput.shape,
+        outputShape: IntakeIdeaOutput.shape,
       },
       {
-        // plan-idea-claims reuses intakeIdeaShape as its input; its output is the claim-plan disposition.
+        // plan-idea-claims reuses IntakeIdeaInput as its input; its output is the claim-plan disposition.
         path: "/v1/loop/plan-idea-claims",
         request: "PlanIdeaClaimsRequest",
         response: "PlanIdeaClaimsResponse",
-        inputShape: intakeIdeaShape,
-        outputShape: planIdeaClaimsOutputSchema,
+        inputShape: IntakeIdeaInput.shape,
+        outputShape: PlanIdeaClaimsOutput.shape,
       },
     ];
 
@@ -429,12 +435,12 @@ describe("OpenAPI contract", () => {
       {
         path: "/v1/scoring/eligibility-plan",
         response: "EligibilityPlanResponse",
-        outputShape: eligibilityPlanOutputSchema,
+        outputShape: GetEligibilityPlanOutput.shape,
       },
       {
         path: "/v1/scoring/explain-breakdown",
         response: "ScoreBreakdownResponse",
-        outputShape: scoreBreakdownOutputSchema,
+        outputShape: ExplainScoreBreakdownOutput.shape,
       },
     ];
 
@@ -462,12 +468,12 @@ describe("OpenAPI contract", () => {
       {
         path: "/v1/repos/{owner}/{repo}/maintainer-noise",
         response: "MaintainerNoiseReport",
-        outputShape: maintainerNoiseOutputSchema,
+        outputShape: GetMaintainerNoiseOutput.shape,
       },
       {
         path: "/v1/repos/{owner}/{repo}/ams-miner-cohort",
         response: "AmsMinerCohortComparison",
-        outputShape: amsMinerCohortOutputSchema,
+        outputShape: GetAmsMinerCohortOutput.shape,
       },
       {
         path: "/v1/repos/{owner}/{repo}/gate-precision",
@@ -482,7 +488,7 @@ describe("OpenAPI contract", () => {
       {
         path: "/v1/repos/{owner}/{repo}/activation-preview",
         response: "ActivationPreviewResponse",
-        outputShape: activationPreviewOutputSchema,
+        outputShape: GetActivationPreviewOutput.shape,
       },
     ];
 
@@ -497,7 +503,7 @@ describe("OpenAPI contract", () => {
 
   // #9306: GET/POST/DELETE /v1/contributors/{login}/watches are the REST mirror of loopover_watch_issues
   // but were missing from the OpenAPI contract. Assert all three verbs are documented with a response
-  // component whose keys match watchIssuesOutputSchema, and POST/DELETE carry the watch request body.
+  // component whose keys match the tool's contract output, and POST/DELETE carry the watch request body.
   it("documents contributor watches GET/POST/DELETE with tool-parity schemas (#9306)", () => {
     const spec = buildOpenApiSpec();
     const schemas = spec.components?.schemas ?? {};
@@ -512,7 +518,7 @@ describe("OpenAPI contract", () => {
 
     expect(schemas.ContributorWatchesResponse).toBeDefined();
     expect(schemas.ContributorWatchRequest).toBeDefined();
-    expect(propKeys("ContributorWatchesResponse")).toEqual(Object.keys(watchIssuesOutputSchema).sort());
+    expect(propKeys("ContributorWatchesResponse")).toEqual(Object.keys(WatchIssuesOutput.shape).sort());
     expect(propKeys("ContributorWatchRequest")).toEqual(["labels", "repoFullName"].sort());
 
     expect(spec.paths[path]?.post?.requestBody).toBeDefined();

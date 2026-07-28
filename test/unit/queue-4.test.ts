@@ -1,83 +1,48 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { generateKeyPairSync } from "node:crypto";
+import { } from "node:crypto";
 import { clearInstallationTokenCacheForTest } from "../../src/github/app";
 import { clearReviewSuppressionCacheForTest } from "../../src/review/review-memory-wire";
-import { PR_PANEL_COMMENT_MARKER } from "../../src/github/comments";
+import { } from "../../src/github/comments";
 import * as backfillModule from "../../src/github/backfill";
-import * as rateLimitModule from "../../src/github/rate-limit";
 import * as repositoriesModule from "../../src/db/repositories";
 import * as reviewEffortModule from "../../src/review/review-effort";
-import * as repositorySettingsModule from "../../src/settings/repository-settings";
 import * as posthogModule from "../../src/selfhost/posthog";
-import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
-import { jobCoalesceKey } from "../../src/selfhost/queue-common";
+import { } from "../../src/selfhost/queue-common";
 import {
-  listCollisionEdges,
-  createAgentRun,
   getCommandUsefulnessSummary,
-  getBurdenForecast,
-  getContributorEvidence,
-  getAgentRun,
-  getContributorScoringProfile,
-  getWebhookEvent,
-  getInstallation,
-  getLatestUpstreamRulesetSnapshot,
   getPullRequest,
-  getPullRequestDetailSyncState,
   upsertPullRequestDetailSyncState,
-  getRepository,
-  listUpstreamDriftReports,
-  listInstallationHealth,
-  listProductUsageDailyRollups,
   listProductUsageEvents,
   listPullRequests,
-  listPullRequestFiles,
-  listRepoSyncStates,
-  listSignalSnapshots,
-  persistSignalSnapshot,
-  recordGateBlockOutcome,
-  markGateOutcomeOverridden,
-  recordProductUsageEvent,
   upsertAgentCommandAnswer,
   upsertCheckSummary,
   upsertIssueFromGitHub,
-  upsertRepoSyncSegment,
   upsertInstallation,
-  updatePullRequestSlopAssessment,
   upsertOfficialMinerDetection,
   upsertPullRequestFile,
   upsertPullRequestFromGitHub,
-  upsertIssueWatchSubscription,
   upsertRepositoryAiKey,
   upsertRepositorySettings,
   upsertRepositoryFromGitHub,
   putCachedAiReview,
   markAiReviewPublished,
-  putCachedAiSlopAdvisory,
-  putCachedLinkedIssueSatisfaction,
   recordReviewSuppression,
-  listReviewSuppressions,
-  setGlobalAgentFrozen,
   persistAdvisory,
 } from "../../src/db/repositories";
-import { agentMaintenanceHeadMatchesGate, changedPathsForGuardrail, claimAiReviewLock, claimPrActuationLock, contributorEvidenceBatchSize, enrichOpenPullRequestsWithChangedFiles, processJob, reconcileLiveDuplicateSiblings, releaseAiReviewLock, releasePrActuationLock, reviewDurationMsSince, SWEEP_FANOUT_RESOLUTION_CONCURRENCY } from "../../src/queue/processors";
-import type { PullRequestRecord } from "../../src/types";
-import { aiReviewCacheInputFingerprint } from "../../src/review/ai-review-cache-input";
+import { claimPrActuationLock, processJob, releasePrActuationLock, } from "../../src/queue/processors";
+import type { } from "../../src/types";
+import { } from "../../src/review/ai-review-cache-input";
 import { fingerprint as reviewMemoryFingerprint } from "../../src/review/review-memory-match";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import * as pixelDiffModule from "../../src/review/visual/pixel-diff";
 import * as scrollGifModule from "../../src/review/visual/scroll-gif";
 import * as shotModule from "../../src/review/visual/shot";
-import * as focusManifestLoaderModule from "../../src/signals/focus-manifest-loader";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
 import {
-  classifyPullRequestFreshness,
   fetchPullRequestFreshness,
 } from "../../src/github/pr-freshness";
 import { asCloudEnv, createTestEnv } from "../helpers/d1";
-import { ISSUE_WAKE_MAX_PRS, MERGE_WAKE_MAX_PRS, SWEEP_MAX_PRS } from "../../src/settings/agent-sweep";
-import { AGENT_LABEL_PENDING_CLOSURE, DEFAULT_LINKED_ISSUE_HARD_RULES } from "../../src/review/linked-issue-hard-rules";
 import { generatePrivateKeyPem } from "../helpers/github-app-key";
 import { AI_REVIEW_CACHE_INPUT_VERSION } from "../../src/review/ai-review-cache-input";
 
@@ -111,20 +76,6 @@ async function sweepAndDrainPerPr(env: Env, repoFullName: string): Promise<impor
 }
 
 
-function completeSegment(repoFullName: string, segment: "labels" | "open_issues" | "open_pull_requests") {
-  return {
-    repoFullName,
-    segment,
-    status: "complete" as const,
-    sourceKind: "test" as const,
-    mode: "resume" as const,
-    fetchedCount: 1,
-    expectedCount: 1,
-    pageCount: 1,
-    completedAt: "2026-05-25T00:00:00.000Z",
-    warnings: [],
-  };
-}
 
 type CommandAnswerFixture = Parameters<typeof upsertAgentCommandAnswer>[1];
 
@@ -186,25 +137,7 @@ function queueMinerSnapshot(login: string) {
   };
 }
 
-function b64(value: string): string {
-  return Buffer.from(value, "utf8").toString("base64");
-}
 
-function withProductUsageInsertFailure(env: Env): Env {
-  const db = env.DB as unknown as { prepare(sql: string): unknown; batch(statements: unknown[]): Promise<unknown> };
-  return {
-    ...env,
-    DB: {
-      prepare(sql: string) {
-        if (sql.includes("product_usage_events")) throw new Error("product usage insert failed");
-        return db.prepare.call(db, sql);
-      },
-      batch(statements: unknown[]) {
-        return db.batch.call(db, statements);
-      },
-    } as unknown as D1Database,
-  };
-}
 
 describe("queue processors", () => {
   // Freshness-SLO fixtures are dated relative to late May 2026; pin the clock so staleness windows

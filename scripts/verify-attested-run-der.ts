@@ -22,7 +22,6 @@ const LONG_LENGTH_MASK = 0x80;
 const LONG_LENGTH_COUNT_MASK = 0x7f;
 const OID_ARC_CONTINUATION_BIT = 0x80;
 const OID_ARC_VALUE_MASK = 0x7f;
-const OID_ARC_SHIFT_BITS = 7;
 
 /** One parsed DER TLV: `tag`, the byte range of its VALUE (not including the tag/length header), and (for a
  *  constructed tag -- SEQUENCE, SET, or a context-specific `[N]` wrapper) its immediate children, parsed one

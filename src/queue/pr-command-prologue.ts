@@ -17,7 +17,7 @@
 // operators and asserted in tests). Centralising them would be a behaviour change wearing a refactor's
 // clothes, and #9541 requirement 1 is explicit that this must be behaviour-preserving.
 import type { GitHubWebhookPayload } from "../types";
-import type { LoopOverActionCommandName, LoopOverMentionCommand, LoopOverMentionCommandName } from "../github/commands";
+import type { LoopOverActionCommandName, LoopOverMentionCommand } from "../github/commands";
 import type { PullRequestRecord, RepositorySettings } from "../types";
 
 /** What the caller must tell the prologue about its own command. */

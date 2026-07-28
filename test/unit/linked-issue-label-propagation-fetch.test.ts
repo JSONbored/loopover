@@ -22,16 +22,6 @@ async function publishAddressedSatisfactionVerdict(env: Env, repoFullName: strin
   });
 }
 
-// `getRepositoryCollaboratorPermission` mints its own installation token internally with no fallback to
-// the public token, so a maintainer-authored-issue test that reaches it (i.e. isn't already short-circuited
-// by a literal-owner or ADMIN_GITHUB_LOGINS match) needs a real signable key or the mint throws before ever
-// reaching the stubbed collaborators endpoint -- mirrors the same helper duplicated across other test files
-// (e.g. `test/unit/queue.test.ts`, `test/unit/github-app.test.ts`).
-// Split so the literal PEM marker text never appears contiguous in source -- the review-safety secrets
-// scanner's private_key_block pattern is a pure text match with no awareness that the bytes between these
-// markers are freshly generated per test run, not a real credential (src/review/safety.ts).
-const PEM_HEADER = ["-----BEGIN", "PRIVATE KEY-----"].join(" ");
-const PEM_FOOTER = ["-----END", "PRIVATE KEY-----"].join(" ");
 
 // #regression-safe-propagation: `fetchLinkedIssueLabelsForPropagation` returns `{labels, inconclusive}`, not a
 // bare `string[]` -- `inconclusive` defaults false (a confirmed result) in every assertion below except the

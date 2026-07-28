@@ -1340,7 +1340,7 @@ function portfolioScoreabilityImpact(decision: RepoDecision, bucket: ActionPortf
   return `Lane fit: ${decision.lane?.lane ?? "unknown"}; direct PR share ${decision.rewardUpside?.directPrShare ?? 0}.`;
 }
 
-function portfolioMaintainerImpact(decision: RepoDecision, bucket: ActionPortfolioBucketName): string {
+function portfolioMaintainerImpact(_decision: RepoDecision, bucket: ActionPortfolioBucketName): string {
   if (bucket === "cleanup") return "Cleanup lowers active-review pressure before adding more queue load.";
   if (bucket === "wait") return "Waiting on merge-ready or stale PR outcomes avoids noisy parallel work.";
   if (bucket === "maintainer_lane") return "Repo-owner work should improve intake quality and contributor routing.";

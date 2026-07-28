@@ -435,7 +435,7 @@ describe("createPgQueue (durable #977)", () => {
     const priorityUpdateSql = "UPDATE _selfhost_jobs SET priority=$1";
     const jobKeyUpdateSql = "UPDATE _selfhost_jobs SET job_key=$1";
     const claimSortUpdateSql = "UPDATE _selfhost_jobs SET claim_sort_key=$1";
-    const fn = vi.fn().mockImplementation(async (sql: unknown, params?: unknown[]) => {
+    const fn = vi.fn().mockImplementation(async (sql: unknown, _params?: unknown[]) => {
       const q = String(sql);
       if (q.includes("SELECT id, payload, priority")) {
         return {

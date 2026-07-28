@@ -433,7 +433,7 @@ async function seedGateEnabledRepo(env: Env): Promise<void> {
 // every finalize-path test needs the live PR to actually resolve, matching prWebhook's own head sha (#gate123)
 // so freshness classifies as "current" rather than "unavailable"/"head_changed".
 function stubFinalizeFetch(confirmedAuthor: string | null): void {
-  vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = input.toString();
     if (url === "https://api.gittensor.io/miners") return Response.json(confirmedAuthor ? [{ uid: 7, githubUsername: confirmedAuthor, githubId: "123", totalPrs: 4, totalMergedPrs: 3, totalOpenPrs: 1, totalClosedPrs: 0, totalOpenIssues: 0, totalClosedIssues: 0, totalSolvedIssues: 0, totalValidSolvedIssues: 0, isEligible: true, credibility: 1, eligibleRepoCount: 1 }] : []);
     if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });

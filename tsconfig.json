@@ -10,6 +10,14 @@
     "exactOptionalPropertyTypes": true,
     "noImplicitOverride": true,
     "noFallthroughCasesInSwitch": true,
+    // #9553. Dead code is the substrate every drift bug in the 2026-07-27 audit grew on: a stale import or an
+    // orphaned constant reads exactly like a live wire, so the next person greps, finds it, and reasons about
+    // a code path that no longer runs. Enabling these made the compiler enumerate all 515 instances, and
+    // triaging them found three real (if latent) problems that were invisible while the noise was tolerated --
+    // see this commit's message. Unused PARAMETERS are positional, so silence one with a leading underscore
+    // (`_unusedArg`), which tsc honours by design; never delete it, or every later argument silently re-binds.
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "skipLibCheck": true,
     "allowSyntheticDefaultImports": true,
     "esModuleInterop": true,

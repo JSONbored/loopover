@@ -534,7 +534,7 @@ async function fetchWithGitHubRetry(input: RequestInfo | URL, init?: GitHubTimeo
 async function fetchAndMaybeCacheGitHubGet(
   input: RequestInfo | URL,
   init: GitHubTimeoutFetchInit | undefined,
-  url: string,
+  _url: string,
   cacheKey: string,
   cls: GitHubCacheClass,
 ): Promise<{ response: Response; cached: CachedGitHubResponse | null }> {

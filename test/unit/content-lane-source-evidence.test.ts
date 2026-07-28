@@ -740,7 +740,7 @@ describe("checkOneSourceUrl branches", () => {
   it("returns immediately from a passing HEAD (no GET) — HEAD `passed` early return", async () => {
     // HEAD returns 200 → checkOneSourceUrl returns head without ever issuing a GET.
     let getCalls = 0;
-    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchImpl = (async (_input: RequestInfo | URL, init?: RequestInit) => {
       const method = ((init?.method as string) || "GET").toUpperCase();
       if (method === "GET") getCalls += 1;
       return new Response("ok", { status: 200 });

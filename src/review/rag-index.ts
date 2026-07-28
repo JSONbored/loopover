@@ -105,7 +105,7 @@ function ghHeaders(token: string | undefined, accept: string): Record<string, st
  * (fail-safe: a tree we can't read = nothing to index). `truncated` is honored (GitHub truncates very large
  * trees) — we index whatever it returned; the MAX_CHUNKS cap is the real bound anyway.
  */
-async function fetchRepoTree(env: Env, repoFullName: string, ref: string, token: string | undefined, admissionKey: GitHubRateLimitAdmissionKey | undefined): Promise<TreeEntry[] | null> {
+async function fetchRepoTree(_env: Env, repoFullName: string, ref: string, token: string | undefined, admissionKey: GitHubRateLimitAdmissionKey | undefined): Promise<TreeEntry[] | null> {
   try {
     const { owner, name } = repoParts(repoFullName);
     const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/git/trees/${encodeURIComponent(ref)}?recursive=1`;
@@ -169,7 +169,7 @@ async function readTextCapped(response: Response, maxBytes: number): Promise<str
 
 /** Fetch a single file's raw text at `ref`. null on any non-OK / oversized / error (fail-safe — skip that file). */
 async function fetchFileText(
-  env: Env,
+  _env: Env,
   repoFullName: string,
   path: string,
   ref: string,

@@ -1,82 +1,65 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { generateKeyPairSync } from "node:crypto";
+import { } from "node:crypto";
 import { clearInstallationTokenCacheForTest } from "../../src/github/app";
 import { clearReviewSuppressionCacheForTest } from "../../src/review/review-memory-wire";
-import { PR_PANEL_COMMENT_MARKER } from "../../src/github/comments";
+import { } from "../../src/github/comments";
 import * as commentsModule from "../../src/github/comments";
 import * as backfillModule from "../../src/github/backfill";
 import * as rateLimitModule from "../../src/github/rate-limit";
 import * as repositoriesModule from "../../src/db/repositories";
-import * as reviewEffortModule from "../../src/review/review-effort";
 import * as repositorySettingsModule from "../../src/settings/repository-settings";
 import { counterValue, renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { REQUIRED_CONTEXTS_UNRESOLVED_METRIC } from "../../src/queue/ci-resolution";
-import { jobCoalesceKey } from "../../src/selfhost/queue-common";
+import { } from "../../src/selfhost/queue-common";
 import { VERDICT_FLIP_ESCALATION_THRESHOLD } from "../../src/review/verdict-flip-guard";
 import {
   listCollisionEdges,
   createAgentRun,
-  getCommandUsefulnessSummary,
   getBurdenForecast,
   getContributorEvidence,
   getAgentRun,
   getContributorScoringProfile,
   getWebhookEvent,
-  getInstallation,
   getLatestUpstreamRulesetSnapshot,
   getPullRequest,
   getPullRequestDetailSyncState,
   upsertPullRequestDetailSyncState,
-  getRepository,
   listUpstreamDriftReports,
-  listInstallationHealth,
   listProductUsageDailyRollups,
   listProductUsageEvents,
-  listPullRequests,
-  listPullRequestFiles,
   listRepoSyncStates,
   listSignalSnapshots,
   persistSignalSnapshot,
-  recordGateBlockOutcome,
-  markGateOutcomeOverridden,
   recordProductUsageEvent,
-  upsertAgentCommandAnswer,
   upsertCheckSummary,
   upsertIssueFromGitHub,
   upsertRepoSyncSegment,
   upsertInstallation,
-  updatePullRequestSlopAssessment,
   upsertOfficialMinerDetection,
   upsertPullRequestFile,
   upsertPullRequestFromGitHub,
-  upsertIssueWatchSubscription,
-  upsertRepositoryAiKey,
   upsertRepositorySettings,
   upsertRepositoryFromGitHub,
   putCachedAiReview,
   markAiReviewPublished,
   putCachedAiSlopAdvisory,
   putCachedLinkedIssueSatisfaction,
-  recordReviewSuppression,
-  listReviewSuppressions,
-  setGlobalAgentFrozen,
 } from "../../src/db/repositories";
-import { agentMaintenanceHeadMatchesGate, buildBurdenForecasts, changedPathsForGuardrail, claimAiReviewLock, claimPrActuationLock, contributorEvidenceBatchSize, enrichOpenPullRequestsWithChangedFiles, fanOutRepoSignalSnapshotJobs, processJob, reconcileLiveDuplicateSiblings, releaseAiReviewLock, releasePrActuationLock, reviewDurationMsSince, SWEEP_FANOUT_RESOLUTION_CONCURRENCY } from "../../src/queue/processors";
-import type { PullRequestRecord } from "../../src/types";
+import { buildBurdenForecasts, claimAiReviewLock, contributorEvidenceBatchSize, fanOutRepoSignalSnapshotJobs, processJob, reviewDurationMsSince, SWEEP_FANOUT_RESOLUTION_CONCURRENCY } from "../../src/queue/processors";
+import type { } from "../../src/types";
 import { aiReviewCacheInputFingerprint } from "../../src/review/ai-review-cache-input";
-import { fingerprint as reviewMemoryFingerprint } from "../../src/review/review-memory-match";
+import { } from "../../src/review/review-memory-match";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import * as focusManifestLoaderModule from "../../src/signals/focus-manifest-loader";
 import * as rulesetModule from "../../src/upstream/ruleset";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
 import {
-  classifyPullRequestFreshness,
   fetchPullRequestFreshness,
 } from "../../src/github/pr-freshness";
 import { asCloudEnv, createTestEnv } from "../helpers/d1";
 import { ISSUE_WAKE_MAX_PRS, MERGE_WAKE_MAX_PRS, SWEEP_MAX_PRS } from "../../src/settings/agent-sweep";
-import { AGENT_LABEL_PENDING_CLOSURE, DEFAULT_LINKED_ISSUE_HARD_RULES } from "../../src/review/linked-issue-hard-rules";
+import { AGENT_LABEL_PENDING_CLOSURE, } from "../../src/review/linked-issue-hard-rules";
 import { generatePrivateKeyPem } from "../helpers/github-app-key";
 
 vi.mock("../../src/github/pr-freshness", async (importOriginal) => {
@@ -124,33 +107,8 @@ function completeSegment(repoFullName: string, segment: "labels" | "open_issues"
   };
 }
 
-type CommandAnswerFixture = Parameters<typeof upsertAgentCommandAnswer>[1];
 
-function commandAnswer(id: string, command: string, overrides: Partial<CommandAnswerFixture> = {}): CommandAnswerFixture {
-  return {
-    id,
-    repoFullName: "JSONbored/gittensory",
-    issueNumber: 77,
-    command,
-    requestCommentId: 7,
-    responseCommentId: 9001,
-    responseUrl: "https://github.com/JSONbored/gittensory/pull/77#issuecomment-9001",
-    actorKind: "maintainer" as const,
-    createdAt: "2026-05-28T00:00:00.000Z",
-    updatedAt: "2026-05-28T00:00:00.000Z",
-    metadata: {},
-    ...overrides,
-  };
-}
 
-function commandAnswerBody(answerId: string, command: string): string {
-  return [
-    "<!-- gittensory-agent-command -->",
-    `<!-- gittensory-agent-command-answer:${answerId} -->`,
-    `Command: \`@loopover ${command}\``,
-    "Feedback is aggregate-only.",
-  ].join("\n");
-}
 
 function queueMinerSnapshot(login: string) {
   return {
@@ -188,21 +146,6 @@ function b64(value: string): string {
   return Buffer.from(value, "utf8").toString("base64");
 }
 
-function withProductUsageInsertFailure(env: Env): Env {
-  const db = env.DB as unknown as { prepare(sql: string): unknown; batch(statements: unknown[]): Promise<unknown> };
-  return {
-    ...env,
-    DB: {
-      prepare(sql: string) {
-        if (sql.includes("product_usage_events")) throw new Error("product usage insert failed");
-        return db.prepare.call(db, sql);
-      },
-      batch(statements: unknown[]) {
-        return db.batch.call(db, statements);
-      },
-    } as unknown as D1Database,
-  };
-}
 
 describe("queue processors", () => {
   // Freshness-SLO fixtures are dated relative to late May 2026; pin the clock so staleness windows
@@ -7707,9 +7650,8 @@ describe("queue processors", () => {
       });
       await seedRegateChurnRepo(env);
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 95, title: "Held behind an orphaned AI-review lock", state: "open", user: { login: "contributor" }, head: { sha: "a95" }, labels: [], body: "Closes #1" });
-      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, _init?: RequestInit) => {
         const url = input.toString();
-        const method = init?.method ?? "GET";
         if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
         if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "maintain" });
         if (url.includes("/pulls/95/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);

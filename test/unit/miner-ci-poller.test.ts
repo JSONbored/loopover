@@ -29,7 +29,7 @@ function checksResponse(checks: unknown[], init: ResponseInit & { totalCount?: n
 
 describe("miner CI check-run poller (#2323)", () => {
   it("fetches PR head SHA and check runs with read-only authenticated GET requests", async () => {
-    const fetchFn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchFn = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/repos/acme/widgets/pulls/42")) return prResponse("head-sha");
       if (url.endsWith("/repos/acme/widgets/commits/head-sha/check-runs?per_page=100&page=1")) {

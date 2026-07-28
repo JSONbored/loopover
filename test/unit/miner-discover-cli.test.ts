@@ -16,7 +16,7 @@ import {
   runDiscover,
   sanitizeDiscoverDisplayText,
 } from "../../packages/loopover-miner/lib/discover-cli";
-import { bin, runCapture } from "./support/miner-cli-harness";
+import { runCapture } from "./support/miner-cli-harness";
 
 const NOW = Date.parse("2026-07-09T12:00:00.000Z");
 
@@ -575,7 +575,7 @@ describe("runDiscover (#4247)", () => {
     const initPolicyVerdictCache = vi.fn();
     const initRankedCandidatesStore = vi.fn();
     const fetchCandidateIssuesWithSummary = vi.fn(
-      async (targets, token, fanOutOptions) => {
+      async (_targets, _token, fanOutOptions) => {
         expect(fanOutOptions).toMatchObject({
           policyDocCache: null,
           policyVerdictCache: null,
@@ -1665,7 +1665,6 @@ describe("runDiscover onResult hook (#6522)", () => {
         ];
         const { opts } = discoverWith(issues, new Map([["acme/widgets", trustworthyProfile]]));
         const { fired, store } = fakeSignalStore();
-        const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
         const exitCode = await runDiscover(["acme/widgets", "--json"], { ...opts, initSignalTrackingStore: () => store });
         expect(exitCode).toBe(0);
         expect(fired).toEqual([
@@ -1678,7 +1677,6 @@ describe("runDiscover onResult hook (#6522)", () => {
         const issues = [fanOutIssue({ issueNumber: 1, labels: ["help wanted"] })];
         const { opts } = discoverWith(issues, new Map([["acme/widgets", trustworthyProfile]]));
         const { fired, store } = fakeSignalStore();
-        const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
         await runDiscover(["acme/widgets", "--json"], { ...opts, initSignalTrackingStore: () => store });
         expect(fired).toEqual([]);
         expect(store.recordRuleFired).not.toHaveBeenCalled();
@@ -1730,7 +1728,6 @@ describe("runDiscover onResult hook (#6522)", () => {
           calls += 1;
           if (calls === 1) throw new Error("write failed");
         });
-        const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
         const exitCode = await runDiscover(["acme/widgets", "--json"], {
           ...opts,
           initSignalTrackingStore: () => ({

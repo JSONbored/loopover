@@ -70,7 +70,7 @@ if (invokedDirectly) {
     console.error("replay-decision: --at requires a Unix-epoch-milliseconds value");
     process.exit(2);
   }
-  const source = argv.filter((arg, index) => index !== atIndex && index !== atIndex + 1)[0];
+  const source = argv.filter((_arg, index) => index !== atIndex && index !== atIndex + 1)[0];
   if (!source) {
     console.error("usage: replay-decision.ts <bundle.json | -> [--at <epoch ms>]");
     process.exit(2);

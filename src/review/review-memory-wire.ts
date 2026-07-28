@@ -89,8 +89,12 @@ export function clearReviewSuppressionCacheForTest(): void {
   reviewSuppressionCache.clear();
 }
 
-const RESOLVE_FINDING_CODE = /^[a-z][a-z0-9_]{0,199}$/;
-export function normalizeResolveFindingRef(raw: string | null | undefined): { ok: true; scope: "whole_pr" } | { ok: true; scope: "single"; findingCode: string } | { ok: false; reason: "malformed_finding_id" } { const trimmed = (raw ?? "").trim(); if (trimmed.length === 0) return { ok: true, scope: "whole_pr" }; const normalized = trimmed.toLowerCase().replace(/^finding-/, ""); if (!RESOLVE_FINDING_CODE.test(normalized)) return { ok: false, reason: "malformed_finding_id" }; return { ok: true, scope: "single", findingCode: normalized }; }
+// #9553: this module carried a SECOND, byte-identical copy of normalizeResolveFindingRef (regex included).
+// Only this copy was reachable from production -- the resolve handler imports it from here -- which left
+// src/github/resolve-command.ts alive solely for its own test, and left two implementations of the same
+// public-safety validation free to drift apart. Re-exported instead, so there is one definition and the
+// original module is genuinely wired.
+export { normalizeResolveFindingRef, type ResolveFindingRef } from "../github/resolve-command";
 export function selectWarningsForResolve(warnings: ReadonlyArray<AdvisoryFinding>, ref: { ok: true; scope: "whole_pr" } | { ok: true; scope: "single"; findingCode: string }): { findings: AdvisoryFinding[]; reason?: "finding_not_found" } { if (ref.scope === "whole_pr") return { findings: [...warnings] }; const matches = warnings.filter((finding) => finding.code === ref.findingCode); if (matches.length === 0) return { findings: [], reason: "finding_not_found" }; return { findings: matches }; }
 
 /** Apply-to-findings wiring (#2181, apply slice of #1964). PURE — no DB I/O (the caller already resolved

@@ -9,14 +9,6 @@ import { createTestEnv } from "../helpers/d1";
 import type { GitHubWebhookPayload, PullRequestRecord, RepositorySettings } from "../../src/types";
 import { generatePrivateKeyPem } from "../helpers/github-app-key";
 
-// #4889: the review-evasion guards' fleet-operator exemptions in per-repo admin mode. Mode OFF (self-host
-// default) keeps the ADMIN_GITHUB_LOGINS shortcut byte-identical — an allowlisted actor is exempt with NO
-// GitHub permission lookup. Mode ON drops that shortcut: the live per-repo collaborator permission is the
-// sole non-owner permission source, so an allowlisted login with no real access on THIS repo stops being
-// exempt. Each test pins which path ran by inspecting exactly which GitHub API calls the guard made.
-
-const PEM_HEADER = ["-----BEGIN", "PRIVATE KEY-----"].join(" ");
-const PEM_FOOTER = ["-----END", "PRIVATE KEY-----"].join(" ");
 
 type StubHandler = (url: string) => Response | undefined;
 

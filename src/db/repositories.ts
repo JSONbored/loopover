@@ -171,7 +171,7 @@ import type { GittensorContributorSnapshot, OfficialGittensorMinerDetection } fr
 import { classifyMcpClientVersion, LATEST_RECOMMENDED_MCP_VERSION, MINIMUM_SUPPORTED_MCP_VERSION } from "../services/mcp-compatibility";
 import { DEFAULT_COMMAND_AUTHORIZATION_POLICY, normalizeCommandAuthorizationPolicy } from "../settings/command-authorization";
 import { normalizeContributorBlacklist } from "../settings/contributor-blacklist";
-import { DEFAULT_GLOBAL_MODERATION_CONFIG, MAX_MODERATION_VIOLATION_DECAY_DAYS, normalizeModerationLabel, normalizeModerationRules, type GlobalModerationConfig, type ModerationRuleType } from "../settings/moderation-rules";
+import { DEFAULT_GLOBAL_MODERATION_CONFIG, MAX_MODERATION_VIOLATION_DECAY_DAYS, normalizeModerationLabel, normalizeModerationRules, type GlobalModerationConfig, } from "../settings/moderation-rules";
 import { normalizeAutonomyPolicy, DEFAULT_AUTO_MAINTAIN_POLICY } from "../settings/autonomy";
 import { DEFAULT_TYPE_LABELS } from "../settings/pr-type-label";
 import { DEFAULT_LINKED_ISSUE_LABEL_PROPAGATION } from "../review/linked-issue-label-propagation";

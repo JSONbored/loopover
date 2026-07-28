@@ -31,7 +31,7 @@ describe("a label change runs the public-surface pipeline immediately (#9059)", 
     await upsertPullRequestDetailSyncState(env, { repoFullName: `owner/${repo}`, pullNumber: number, status: "complete", headSha: head, filesSyncedAt: "2020-01-01T00:00:00.000Z", reviewsSyncedAt: "2020-01-01T00:00:00.000Z", checksSyncedAt: "2020-01-01T00:00:00.000Z", lastSyncedAt: "2020-01-01T00:00:00.000Z" });
   }
 
-  function stubGitHub(repo: string, number: number, head: string): void {
+  function stubGitHub(_repo: string, number: number, head: string): void {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });

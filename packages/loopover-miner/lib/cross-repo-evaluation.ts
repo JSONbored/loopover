@@ -282,7 +282,7 @@ function resolveEvaluationRepoPath(
   return resolveRepoCloneDir(entry.repoFullName, options.env ?? process.env);
 }
 
-function defaultClaimLedger(repoFullName: string): { listClaims: () => never[] } {
+function defaultClaimLedger(_repoFullName: string): { listClaims: () => never[] } {
   return { listClaims: () => [] };
 }
 

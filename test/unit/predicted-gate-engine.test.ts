@@ -1853,10 +1853,6 @@ describe("predicted-gate engine branch coverage (#2283)", () => {
     );
     expect(recentMergedNoLinks.clusters.length).toBeGreaterThan(0);
 
-    const selfAuthoredPathOverlap = buildCollisionReport(BRANCH_REPO.fullName, [], [
-      { ...pr(BRANCH_REPO.fullName, 14, "qwerty alpha"), authorLogin: "alice", changedFiles: ["src/services/upload/retry.ts"] },
-      { ...pr(BRANCH_REPO.fullName, 15, "asdf beta"), authorLogin: "alice", changedFiles: ["src/services/upload/retry.ts"] },
-    ]);
     const differentLinkedIssues = buildCollisionReport(BRANCH_REPO.fullName, [], [
       { ...pr(BRANCH_REPO.fullName, 16, "upload retry client handler"), authorLogin: "alice", linkedIssues: [1], changedFiles: ["src/core/upload.ts"] },
       { ...pr(BRANCH_REPO.fullName, 17, "upload retry service handler"), authorLogin: "bob", linkedIssues: [2], changedFiles: ["src/core/upload.ts"] },

@@ -11,7 +11,6 @@ import { isScreenshotsEnabled } from "../review/visual-wire";
 import { buildFindingTaxonomyDocument } from "../review/finding-taxonomy";
 import { buildEnrichmentAnalyzersTaxonomyDocument } from "../review/enrichment-analyzers-taxonomy";
 import {
-  BROWSER_SESSION_COOKIE,
   GITHUB_OAUTH_STATE_COOKIE,
   authenticateInternalToken,
   authenticatePrivateToken,
@@ -39,13 +38,10 @@ import { SCENARIO_MAX_BRANCH_REF_CHARS, SCENARIO_MAX_LINKED_ISSUE_NUMBERS, SCENA
 import {
   countOpenIssues,
   countOpenPullRequests,
-  countActiveAuthSessions,
-  countActiveDigestSubscriptions,
   countRecentAuditEventsForActorAndTarget,
   getBounty,
   getAgentCommandAnswer,
   getCommandUsefulnessSummary,
-  getFreshOfficialMinerDetection,
   getIssue,
   getInstallation,
   getInstallationHealth,
@@ -110,11 +106,8 @@ import {
   recordProductUsageEvent,
   rollupProductUsageDaily,
   summarizeMcpCompatibilityAdoption,
-  summarizeProductUsageEvents,
   upsertDigestSubscription,
   upsertBounty,
-  upsertContributorEvidence,
-  upsertContributorScoringProfile,
   upsertRepositorySettings,
   clearPullRequestsRegatedAtForOpenPrs,
   getProviderCredentialStatus,
@@ -146,7 +139,7 @@ import {
 import { getRepositoryCollaboratorPermission } from "../github/app";
 import { performRepoDocRefresh } from "../github/repo-doc-refresh-runner";
 import type { LoopOverFooterEnv } from "../github/footer";
-import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } from "../gittensor/api";
+import { fetchGittensorContributorSnapshot } from "../gittensor/api";
 import { fetchPublicContributorProfile, fetchPublicRepoStats } from "../github/public";
 import {
   buildPublicAgentCommandComment,
@@ -250,7 +243,6 @@ import { buildPublicRepoQuality, type PublicRepoQuality } from "../services/publ
 import { loadPublicQualityMetrics } from "../services/public-quality-metrics";
 import { buildShieldsBadge, LABEL as PUBLIC_BADGE_LABEL, renderBadgeSvg, renderUnavailableBadgeSvg } from "./badge";
 import {
-  buildWeeklyValueReport,
   formatWeeklyValueReportMarkdown,
   generateWeeklyValueReport,
   loadWeeklyValueReport,
@@ -265,7 +257,6 @@ import { loadOrComputeRepoOutcomePatternsResponse } from "../services/repo-outco
 import { PREFLIGHT_LIMITS } from "../signals/preflight-limits";
 import {
   buildBountyAdvisory,
-  buildBurdenForecast,
   buildCollisionReport,
   buildConfigQuality,
   buildContributorFit,
@@ -292,7 +283,7 @@ import { buildContributorPrOutcomes } from "../signals/contributor-pr-outcomes";
 import { buildReviewRiskExplanation } from "../signals/review-risk";
 import { buildNotificationFeed, evaluateAndEnqueueNotificationDeliveries } from "../notifications/service";
 import { normalizeAmsNotificationEventInput } from "../notifications/ams-events";
-import { buildPullRequestReviewability, type PullRequestReviewability } from "../signals/reward-risk";
+import { buildPullRequestReviewability, } from "../signals/reward-risk";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
 import { buildIssueSlopAssessment } from "../signals/issue-slop";
 import { buildSlopAssessment } from "../signals/slop";
@@ -347,7 +338,6 @@ import {
 import { fileUpstreamDriftIssues, loadUpstreamStatus, refreshUpstreamDrift, registryHyperparameterDriftWarningsForRepo, resolveAutoFileDriftIssuesManifestOverride } from "../upstream/ruleset";
 import type {
   ControlPanelRoleName,
-  ContributorEvidenceRecord,
   DataQuality,
   InstallationHealthRecord,
   JobMessage,
@@ -6413,35 +6403,6 @@ async function persistSignal(
   });
 }
 
-function contributorEvidenceFromProfile(profile: {
-  login: string;
-  generatedAt: string;
-  evidence: {
-    registeredRepoPullRequests: number;
-    mergedPullRequests: number;
-    openPullRequests: number;
-    stalePullRequests: number;
-    unlinkedPullRequests: number;
-    issueDiscoveryReports: number;
-    languageMatches: number;
-    credibilityAssumption: number;
-  };
-}): ContributorEvidenceRecord {
-  return {
-    login: profile.login,
-    generatedAt: profile.generatedAt,
-    payload: {
-      pullRequests: profile.evidence.registeredRepoPullRequests,
-      mergedPullRequests: profile.evidence.mergedPullRequests,
-      openPullRequests: profile.evidence.openPullRequests,
-      stalePullRequests: profile.evidence.stalePullRequests,
-      unlinkedPullRequests: profile.evidence.unlinkedPullRequests,
-      issueDiscoveryReports: profile.evidence.issueDiscoveryReports,
-      languageMatches: profile.evidence.languageMatches,
-      credibilityAssumption: profile.evidence.credibilityAssumption,
-    },
-  };
-}
 
 const OPPORTUNITIES_FIND_PATH = "/v1/opportunities/find";
 const ISSUE_RAG_RETRIEVE_PATH = "/v1/issue-rag/retrieve";

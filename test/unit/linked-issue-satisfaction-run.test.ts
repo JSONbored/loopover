@@ -23,12 +23,6 @@ import type { Advisory, PullRequestFileRecord, RepositorySettings } from "../../
 import { createTestEnv } from "../helpers/d1";
 import { generatePrivateKeyPem } from "../helpers/github-app-key";
 
-// Split so the literal PEM marker text never appears contiguous in source -- the review-safety secrets
-// scanner's private_key_block pattern is a pure text match with no awareness that the bytes between these
-// markers are freshly generated per test run, not a real credential (src/review/safety.ts). Mirrors the
-// identical helper duplicated across other test files (e.g. test/unit/queue.test.ts).
-const PEM_HEADER = ["-----BEGIN", "PRIVATE KEY-----"].join(" ");
-const PEM_FOOTER = ["-----END", "PRIVATE KEY-----"].join(" ");
 
 function satisfactionJson(over: Partial<{ status: string; rationale: string; confidence: number }> = {}): string {
   return JSON.stringify({

@@ -270,7 +270,7 @@ describe("discovery-index upload-sourcemaps -- PostHog (#8289)", () => {
 
   it("retries release validation until it succeeds, logging a retry warning each time", async () => {
     let validateAttempts = 0;
-    spawnSyncMock.mockImplementation((command: string, args: string[]) => {
+    spawnSyncMock.mockImplementation((_command: string, args: string[]) => {
       if (isPostHogValidateReleaseCall(args)) {
         validateAttempts += 1;
         return validateAttempts < 3 ? { status: 1, stdout: "", stderr: "release not fully propagated yet" } : { status: 0, stdout: "release visible" };
@@ -287,7 +287,7 @@ describe("discovery-index upload-sourcemaps -- PostHog (#8289)", () => {
 
   it("falls back to the default attempt count when DISCOVERY_INDEX_POSTHOG_VALIDATE_ATTEMPTS is invalid", async () => {
     let validateAttempts = 0;
-    spawnSyncMock.mockImplementation((command: string, args: string[]) => {
+    spawnSyncMock.mockImplementation((_command: string, args: string[]) => {
       if (isPostHogValidateReleaseCall(args)) {
         validateAttempts += 1;
         return { status: 1, stdout: "", stderr: "still not visible" };
@@ -303,7 +303,7 @@ describe("discovery-index upload-sourcemaps -- PostHog (#8289)", () => {
 
   it("clamps an oversized DISCOVERY_INDEX_POSTHOG_VALIDATE_ATTEMPTS to its max of 20", async () => {
     let validateAttempts = 0;
-    spawnSyncMock.mockImplementation((command: string, args: string[]) => {
+    spawnSyncMock.mockImplementation((_command: string, args: string[]) => {
       if (isPostHogValidateReleaseCall(args)) {
         validateAttempts += 1;
         return { status: 1, stdout: "", stderr: "still not visible" };
@@ -317,7 +317,7 @@ describe("discovery-index upload-sourcemaps -- PostHog (#8289)", () => {
 
   it("tolerates a validate-release result missing stdout/stderr, and waits between retries", async () => {
     let attempt = 0;
-    spawnSyncMock.mockImplementation((command: string, args: string[]) => {
+    spawnSyncMock.mockImplementation((_command: string, args: string[]) => {
       if (!isPostHogValidateReleaseCall(args)) return spawnSuccess();
       attempt += 1;
       if (attempt === 1) return { status: 1 };
@@ -330,7 +330,7 @@ describe("discovery-index upload-sourcemaps -- PostHog (#8289)", () => {
   });
 
   it("exhausts validation attempts and fails softly (exit 0) when not strict", async () => {
-    spawnSyncMock.mockImplementation((command: string, args: string[]) => {
+    spawnSyncMock.mockImplementation((_command: string, args: string[]) => {
       if (isPostHogValidateReleaseCall(args)) return { status: 1, stdout: "", stderr: "still not visible" };
       return spawnSuccess();
     });
@@ -341,7 +341,7 @@ describe("discovery-index upload-sourcemaps -- PostHog (#8289)", () => {
   });
 
   it("exhausts validation attempts and fails strictly (exit 1) when set to strict", async () => {
-    spawnSyncMock.mockImplementation((command: string, args: string[]) => {
+    spawnSyncMock.mockImplementation((_command: string, args: string[]) => {
       if (isPostHogValidateReleaseCall(args)) return { status: 1, stdout: "", stderr: "still not visible" };
       return spawnSuccess();
     });

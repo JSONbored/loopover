@@ -51,11 +51,6 @@ function recognizedFieldsFor(text: string | null | undefined): string[] {
   );
 }
 
-// Fields retired from TOP_LEVEL_FIELDS that still warrant a migration-specific warning (rather than the
-// generic "unknown field" message) pointing operators at their replacement mechanism.
-const RETIRED_FIELD_MIGRATION_WARNINGS: Record<string, string> = {
-  blockedPaths: "blockedPaths is retired; use settings.hardGuardrailGlobs for path holds.",
-};
 
 // #9167: gate.mergeReadiness is a composite that only FILLS IN a sub-gate mode the operator left UNSET
 // (src/rules/advisory.ts's applyMergeReadinessGate, and its engine twin) -- it never overrides an

@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertScenarioLocalBranchInputSafe } from "@loopover/engine";
 import { isCodeFile, isTestPath as isTestFile } from "@loopover/engine/signals/test-evidence";

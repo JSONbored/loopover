@@ -44,9 +44,9 @@
       "default": "./dist/agent-specs.js"
     },
     "./package.json": "./package.json",
-    "./local-config": {
-      "types": "./dist/local-config.d.ts",
-      "default": "./dist/local-config.js"
+    "./cli-config": {
+      "types": "./dist/cli-config.d.ts",
+      "default": "./dist/cli-config.js"
     },
     "./orb-broker": {
       "types": "./dist/orb-broker.d.ts",

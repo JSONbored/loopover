@@ -7,7 +7,7 @@ import {
   parseLoopoverConfig,
   profileSessionToken,
   resolveLoopoverApiUrl,
-} from "@loopover/contract/local-config";
+} from "@loopover/contract/cli-config";
 
 // #9521: @loopover/mcp writes this config and @loopover/miner reads it, and the miner used to
 // hand-copy the resolution ("kept in sync by hand -- there is no shared module to import"). These

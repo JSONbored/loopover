@@ -5,7 +5,7 @@
 //
 // The config/profile/apiUrl/session resolution this needs used to be hand-copied from loopover-mcp's own
 // bin, because @loopover/miner and @loopover/mcp are separately-installable CLIs and neither publishes the
-// config format as a stable API. It now imports @loopover/contract/local-config (#9521), which both
+// config format as a stable API. It now imports @loopover/contract/cli-config (#9521), which both
 // packages already depend on -- so the hand-sync, and the drift it invited, are gone.
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -19,7 +19,7 @@ import {
   resolveLoopoverApiUrl,
   type LoopoverConfig,
   type LoopoverConfigProfile,
-} from "@loopover/contract/local-config";
+} from "@loopover/contract/cli-config";
 
 // A narrower shape than `typeof fetch` on purpose: this module only ever calls it with a string URL and a
 // plain init object, and the ambient `fetch` type in this repo's TS program is Cloudflare-Workers-flavored

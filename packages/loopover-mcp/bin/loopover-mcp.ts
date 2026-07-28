@@ -6,6 +6,7 @@ import { closeSync, constants as fsConstants, existsSync, fstatSync, mkdirSync, 
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { CLI_RESPONSE_SCHEMAS, type ApiResponse, type ValidatedApiPath } from "@loopover/contract/api-schemas";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { buildFeasibilityVerdict, buildPrTextLint, buildGateDispositions, buildPublicPrBodyDraft } from "@loopover/engine";
@@ -1028,7 +1029,9 @@ registerStdioTool(
     if (since) query.set("since", since);
     if (limit != null) query.set("limit", String(limit));
     const qs = query.toString();
-    return toolResult("LoopOver skipped-PR audit trail.", await apiGet(`/v1/app/skipped-pr-audit${qs ? `?${qs}` : ""}`));
+    // Literal path + concatenated query, not one template: gen-contract-api-schemas's scanner collects the
+    // literal so this response stays in CLI_RESPONSE_SCHEMAS, and validatedPathOf strips the query anyway.
+    return toolResult("LoopOver skipped-PR audit trail.", await apiGet("/v1/app/skipped-pr-audit" + (qs ? `?${qs}` : "")));
   },
 );
 
@@ -1279,8 +1282,9 @@ registerStdioTool(
       ...(input.changedPaths !== undefined ? { changedFiles: input.changedPaths.map((path: any) => ({ path })) } : {}),
     };
     const result = await apiPost("/v1/local/branch-analysis", body);
+    // #9587 declared predictedGate with a real schema, so this is typed straight off the response now.
     const verdict = result.predictedGate;
-    const dispositions = buildGateDispositions(verdict ?? { blockers: [], warnings: [] });
+    const dispositions = buildGateDispositions(verdict);
     const blocking = dispositions.filter((disposition) => disposition.status === "block").length;
     return toolResult(
       `Gate disposition for ${input.owner}/${input.repo} under the ${verdict?.pack ?? "unknown"} pack: ${verdict?.conclusion ?? "unknown"} — ${blocking} blocking rule(s), ${dispositions.length - blocking} advisory.`,
@@ -2529,7 +2533,7 @@ export async function maintainCli(args: any) {
   const [owner, repo] = repoFullName.split("/", 2);
   const repoBase = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
   const queueBase = `${repoBase}/agent/pending-actions`;
-  const emit = (payload: any, line: any) => {
+  const emit = (payload: unknown, line: string) => {
     if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
     else process.stdout.write(`${line}\n`);
   };
@@ -3037,7 +3041,7 @@ async function lintPrTextCli(args: any) {
   }
   process.stdout.write(`PR text lint: ${payload.verdict} (score ${payload.score})\n`);
   process.stdout.write(`${payload.summary}\n`);
-  for (const fix of payload.fixes ?? []) process.stdout.write(`- ${fix}\n`);
+  for (const fix of unspeccedList(payload.fixes)) process.stdout.write(`- ${fix}\n`);
 }
 
 // Strip ANSI escapes + control characters from text this CLI prints as plain text. Rule (#6261): every value that
@@ -3152,7 +3156,7 @@ async function slopRiskCli(args: any) {
   // #6990: the route now returns band + findings only (no numeric score/rubric), matching the MCP tool's
   // blunting; print the band alone so the CLI can't leak the exact score the REST surface no longer sends.
   process.stdout.write(`Slop risk: ${sanitizePlainTextTerminalOutput(payload.band)}\n`);
-  for (const finding of payload.findings ?? [])
+  for (const finding of unspeccedList<{ title: unknown; detail: unknown }>(payload.findings))
     process.stdout.write(`- ${sanitizePlainTextTerminalOutput(finding.title)}: ${sanitizePlainTextTerminalOutput(finding.detail)}\n`);
 }
 
@@ -3197,7 +3201,7 @@ async function improvementPotentialCli(args: any) {
   process.stdout.write(
     `Improvement potential: ${sanitizePlainTextTerminalOutput(payload.improvementScore)} (${sanitizePlainTextTerminalOutput(payload.band)})\n`,
   );
-  for (const finding of payload.findings ?? [])
+  for (const finding of unspeccedList<{ title: unknown; detail: unknown }>(payload.findings))
     process.stdout.write(`- ${sanitizePlainTextTerminalOutput(finding.title)}: ${sanitizePlainTextTerminalOutput(finding.detail)}\n`);
 }
 
@@ -3232,7 +3236,7 @@ async function issueSlopCli(args: any) {
   }
   // #6990: band + findings only, matching the route's blunting (no numeric score/rubric leaked through the CLI).
   process.stdout.write(`Issue slop risk: ${sanitizePlainTextTerminalOutput(payload.band)}\n`);
-  for (const finding of payload.findings ?? [])
+  for (const finding of unspeccedList<{ title: unknown; detail: unknown }>(payload.findings))
     process.stdout.write(`- ${sanitizePlainTextTerminalOutput(finding.title)}: ${sanitizePlainTextTerminalOutput(finding.detail)}\n`);
 }
 
@@ -3483,15 +3487,18 @@ export async function watchCli(args: any) {
   if (!login) throw new Error("Pass --login <github-login>, log in with `loopover-mcp login`, or set LOOPOVER_LOGIN.");
   // The API chooses `changed` / repo / label text, so the plain-text path is sanitized (#6261); `login` is the
   // user's own value.
-  const render = (payload: any) =>
+  // /v1/contributors/:login/watched-repos is not in the published document yet (#9531), so the shape
+  // here is the CLI's own read of it -- typed to exactly the fields rendered, no `any`.
+  type WatchPayload = { watching?: Array<{ repoFullName?: string; labels?: string[] }>; changed?: string };
+  const render = (payload: WatchPayload) =>
     [
       `Watching ${(payload.watching ?? []).length} repo(s) for ${login}${payload.changed ? ` (${sanitizePlainTextTerminalOutput(payload.changed)})` : ""}.`,
-      ...(payload.watching ?? []).map((watch: any) => {
-        const labels = (watch.labels ?? []).length > 0 ? ` [${watch.labels.map(sanitizePlainTextTerminalOutput).join(", ")}]` : "";
+      ...(payload.watching ?? []).map((watch) => {
+        const labels = (watch.labels ?? []).length > 0 ? ` [${(watch.labels ?? []).map(sanitizePlainTextTerminalOutput).join(", ")}]` : "";
         return `- ${sanitizePlainTextTerminalOutput(watch.repoFullName)}${labels}`;
       }),
     ].join("\n");
-  const emit = (payload: any) => {
+  const emit = (payload: WatchPayload) => {
     if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
     else process.stdout.write(`${render(payload)}\n`);
   };
@@ -3700,12 +3707,33 @@ export { runAgentCli };
 // -- a bare (zero-arg) invocation is otherwise only reachable via subprocess spawn, which coverage can't see.
 export { runCli };
 
-function outputAgentPayload(payload: any, options: any, summary: any) {
+// The agent-run payload fields this printer reads. The /v1/agent/* runs endpoints' 200s are inline in the
+// document (#9531), so this is the CLI's own contract with what it prints -- structural, not `any`.
+type AgentRunOutputPayload = {
+  prPacket?: { markdown?: unknown } | null | undefined;
+  actions?: Array<AgentRunOutputAction> | undefined;
+  nextActions?: Array<AgentRunOutputAction> | undefined;
+  summary?: string | null | undefined;
+  recommendedRerunCondition?: string | null | undefined;
+  status?: string | null | undefined;
+  runId?: string | null | undefined;
+};
+type AgentRunOutputAction = {
+  actionType?: string | null | undefined;
+  actionKind?: string | null | undefined;
+  recommendation?: string | null | undefined;
+  summary?: string | null | undefined;
+  payload?: { prPacket?: { markdown?: unknown } | null | undefined } | null | undefined;
+  explanationCard?: { whyNow?: string; expectedImpact?: string; rerunWhen?: string } | null | undefined;
+  rerunWhen?: string | null | undefined;
+};
+
+function outputAgentPayload(payload: AgentRunOutputPayload, options: { json?: boolean }, summary: string) {
   if (options.json) {
     process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
     return;
   }
-  const packetMarkdown = payload?.prPacket?.markdown ?? payload?.actions?.find((action: any) => action?.actionType === "prepare_pr_packet")?.payload?.prPacket?.markdown;
+  const packetMarkdown = payload?.prPacket?.markdown ?? payload?.actions?.find((action) => action?.actionType === "prepare_pr_packet")?.payload?.prPacket?.markdown;
   if (typeof packetMarkdown === "string" && packetMarkdown.trim()) {
     const safeMarkdown = requirePublicSafePacketMarkdown(packetMarkdown);
     return process.stdout.write(safeMarkdown.endsWith("\n") ? safeMarkdown : `${safeMarkdown}\n`);
@@ -5171,13 +5199,16 @@ async function getRepoDecisionWithCache(login: any, owner: any, repo: any) {
   }
 }
 
-function decisionPackToolSummary(login: any, payload: any) {
+// /v1/contributors/:login/decision-pack and its repo sibling are unvalidated template paths (#9531);
+// these summaries read three fields, typed as such.
+type DecisionPackSummaryPayload = { source?: string; freshness?: string };
+function decisionPackToolSummary(login: string, payload: DecisionPackSummaryPayload | null | undefined) {
   if (payload?.source === "local_cache") return `LoopOver decision pack for ${login} (stale local cache).`;
   if (payload?.freshness === "stale" || payload?.freshness === "rebuilding") return `LoopOver decision pack for ${login} (${payload.freshness}).`;
   return `LoopOver decision pack for ${login}.`;
 }
 
-function repoDecisionToolSummary(login: any, repoFullName: any, payload: any) {
+function repoDecisionToolSummary(login: string, repoFullName: string, payload: DecisionPackSummaryPayload | null | undefined) {
   if (payload?.source === "local_cache") return `LoopOver repo decision for ${login} in ${repoFullName} (stale local cache).`;
   return `LoopOver repo decision for ${login} in ${repoFullName}.`;
 }
@@ -5210,19 +5241,19 @@ function postMarkNotificationsRead(login: any, ids: any) {
 
 // Mirror the API's own `summary` when it sends one, so the CLI and the loopover_monitor_open_prs MCP
 // tool (which returns monitor.summary verbatim) never drift into two different sentences for one payload.
-function openPrMonitorToolSummary(login: any, payload: any) {
+function openPrMonitorToolSummary(login: string, payload: { summary?: unknown } | null | undefined) {
   const summary = typeof payload?.summary === "string" ? payload.summary.trim() : "";
   if (summary) return summary;
   return `LoopOver open-PR monitor for ${login}.`;
 }
 
-function prOutcomesToolSummary(login: any, payload: any) {
+function prOutcomesToolSummary(login: string, payload: { summary?: unknown } | null | undefined) {
   const summary = typeof payload?.summary === "string" ? payload.summary.trim() : "";
   if (summary) return summary;
   return `LoopOver post-merge outcomes for ${login}.`;
 }
 
-function isCacheableDecisionPack(payload: any, login: any) {
+function isCacheableDecisionPack(payload: { status?: string; login?: unknown } | null | undefined, login: string) {
   return payload?.status === "ready" && typeof payload.login === "string" && payload.login.toLowerCase() === login.toLowerCase();
 }
 
@@ -5238,7 +5269,7 @@ function decisionPackCachePath(login: any, authCacheKey = decisionPackAuthCacheK
   return join(decisionPackCacheDir, `${key}.json`);
 }
 
-function writeDecisionPackCache(login: any, payload: any) {
+function writeDecisionPackCache(login: string, payload: { apiVersion?: unknown }) {
   const authCacheKey = decisionPackAuthCacheKey();
   if (!authCacheKey) return { status: "skipped", reason: "missing_auth" };
   const cachedAt = new Date().toISOString();
@@ -5556,19 +5587,44 @@ function sleep(ms: any) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function apiGet(path: any) {
+/**
+ * The API path with its query string removed, which is how CLI_RESPONSE_SCHEMAS keys it (#9521): call
+ * sites append `?refresh=true` and friends, and the document describes the path, not the query.
+ */
+function validatedPathOf(path: string): ValidatedApiPath | null {
+  const base = path.split("?")[0] ?? path;
+  return Object.hasOwn(CLI_RESPONSE_SCHEMAS, base) ? (base as ValidatedApiPath) : null;
+}
+
+/**
+ * Every api* helper is overloaded on the path (#9521): a LITERAL path the document describes with a named
+ * 200 returns that schema's inferred type, so `payload.pendingActions` is checked against the shape the
+ * Worker documents rather than being an `any` nobody verified. Anything else keeps the old untyped return
+ * -- those are the paths the document does not describe yet (#9531), and narrowing them to `unknown` here
+ * would be a false claim about how much is actually validated.
+ */
+async function apiGet<Path extends ValidatedApiPath>(path: Path): Promise<ApiResponse<Path>>;
+async function apiGet(path: string): Promise<any>;
+async function apiGet(path: string) {
   return apiFetch(path, { method: "GET" });
 }
 
-async function apiPost(path: any, body: any) {
+async function apiPost<Path extends ValidatedApiPath>(path: Path, body: unknown): Promise<ApiResponse<Path>>;
+async function apiPost(path: string, body: unknown): Promise<any>;
+async function apiPost(path: string, body: unknown) {
   return apiFetch(path, { method: "POST", body: JSON.stringify(body) });
 }
 
-async function apiDelete(path: any, body: any) {
+async function apiDelete(path: string, body: unknown) {
   return apiFetch(path, { method: "DELETE", body: JSON.stringify(body) });
 }
 
-async function apiFetch(path: any, init: any, options: any = {}) {
+/**
+ * The raw primitive under apiGet/apiPost (#9521). Returns `any` on purpose: the TYPED surface is the
+ * overloads above, which narrow every path in CLI_RESPONSE_SCHEMAS; the direct apiFetch call sites are the
+ * auth/device endpoints whose 200s the document still describes inline (#9531).
+ */
+async function apiFetch(path: string, init: RequestInit, options: { token?: string; auth?: boolean; timeoutMs?: number } = {}): Promise<any> {
   const token = options.token ?? getApiToken();
   if (options.auth !== false && !token) {
     const error: any = new Error("Run `loopover-mcp login`, or set LOOPOVER_API_TOKEN, LOOPOVER_MCP_TOKEN, or LOOPOVER_TOKEN before starting the MCP wrapper.");
@@ -5592,7 +5648,10 @@ async function apiFetch(path: any, init: any, options: any = {}) {
     },
   }).finally(() => clearTimeout(timeout));
   const text = await response.text();
-  let payload: any = {};
+  // `unknown` at the boundary (#9521): the typed apiGet/apiPost overloads narrow the VALIDATED paths from
+  // CLI_RESPONSE_SCHEMAS, and everything else stays behind the untyped overload -- but this local must not
+  // be `any`, or the error-shaping below stops being checked.
+  let payload: unknown = {};
   if (text) {
     try {
       payload = JSON.parse(text);
@@ -5607,7 +5666,66 @@ async function apiFetch(path: any, init: any, options: any = {}) {
     error.status = response.status;
     throw error;
   }
+  // #9521: validate at the boundary, once, for every path the document describes with a named 200 --
+  // under #9519's recorded posture, which is deliberate about what validation may and may not do:
+  // "failures logged + captured as errors, never 500ing an otherwise-good response".
+  //
+  // So this REPORTS a mismatch and returns the payload untouched. It never returns `parsed.data`: zod
+  // strips unknown keys, and the document under-describes several of these responses today (#9531), so
+  // handing back the parse would silently delete real fields the CLI relies on -- exactly the failure
+  // this validation exists to prevent, introduced by the fix for it.
+  const validated = validatedPathOf(path);
+  if (validated) reportResponseSchemaMismatch(validated, CLI_RESPONSE_SCHEMAS[validated].safeParse(payload));
   return payload;
+}
+
+/**
+ * A response list field the published schema declares as `z.unknown()` (#9521 surfaced these; typing them
+ * properly is #9531's response-schema work). Until the document says what the elements are, treat anything
+ * that is not an array as empty rather than asserting an element type the contract never promised.
+ */
+function unspeccedList<Element = unknown>(value: unknown): Element[] {
+  return Array.isArray(value) ? (value as Element[]) : [];
+}
+
+/**
+ * Paths already reported this process, so a polling loop cannot flood stderr with the same mismatch.
+ * `var`, not `const`: the CLI entrypoint awaits runCli during module evaluation, before any const this
+ * far down initializes -- the same TDZ that forced cliCommandHandlers() to be a hoisted function. A
+ * hoisted `var` is undefined-but-accessible at that point, and the accessor below fills it on first use.
+ */
+var reportedSchemaMismatches: Set<string> | undefined;
+function reportedSchemaMismatchMemo(): Set<string> {
+  reportedSchemaMismatches ??= new Set<string>();
+  return reportedSchemaMismatches;
+}
+
+/**
+ * Surface a response that no longer matches the published contract (#9521/#9519).
+ *
+ * Default is a one-line stderr warning naming the endpoint and the first offending field -- stderr, never
+ * stdout, which carries both `--json` output and the stdio MCP protocol frames. `LOOPOVER_VALIDATE_RESPONSES`
+ * set to a truthy value makes it throw instead, which is what CI and the self-host container run with, per
+ * that posture's (a)/(b) split.
+ */
+function reportResponseSchemaMismatch(path: ValidatedApiPath, parsed: { success: boolean; error?: z.ZodError }): void {
+  if (parsed.success) return;
+  const issue = parsed.error?.issues[0];
+  const where = issue && issue.path.length > 0 ? issue.path.join(".") : "(root)";
+  const message = `LoopOver API response did not match the published schema for ${path}: ${where} — ${issue?.message ?? "unknown issue"}`;
+  if (/^(1|true|yes|strict)$/i.test(process.env.LOOPOVER_VALIDATE_RESPONSES ?? "")) {
+    const error: any = new Error(message);
+    error.code = "response_schema_mismatch";
+    throw error;
+  }
+  if (reportedSchemaMismatchMemo().has(path)) return;
+  reportedSchemaMismatchMemo().add(path);
+  process.stderr.write(`warning: ${message}\n`);
+}
+
+/** Test-only: clear the once-per-path warning memo so one test's mismatch cannot mask the next one's. */
+export function resetResponseSchemaReportingForTesting(): void {
+  reportedSchemaMismatchMemo().clear();
 }
 
 async function fetchLatestPackageVersion() {
@@ -5618,7 +5736,7 @@ async function fetchLatestPackageVersion() {
     signal: controller.signal,
     headers: { accept: "application/json" },
   }).finally(() => clearTimeout(timeout));
-  const payload: any = await response.json().catch(() => ({}));
+  const payload = (await response.json().catch(() => ({}))) as { version?: unknown };
   if (!response.ok || typeof payload.version !== "string") throw new Error("npm_latest_version_unavailable");
   return { status: "ok", version: payload.version };
 }

@@ -55,6 +55,10 @@
     "./public-api": {
       "types": "./dist/public-api.d.ts",
       "default": "./dist/public-api.js"
+    },
+    "./api-schemas": {
+      "types": "./dist/api-schemas.d.ts",
+      "default": "./dist/api-schemas.js"
     }
   },
   "files": [

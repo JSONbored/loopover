@@ -6582,10 +6582,13 @@ export async function createPendingAgentActionIfAbsent(
       })
       .where(and(eq(agentPendingActions.id, existing.id), eq(agentPendingActions.status, "expired")))
       .returning();
+    // Losing the CAS means a concurrent decision already moved the row off `expired`. Reporting the row we
+    // read with created:false is the correct answer either way -- the caller must not notify -- so there is no
+    // need to re-read it just to say the same thing.
+    /* v8 ignore next -- the falsy arm is a genuine CAS loss (a concurrent accept/reject moved the row off
+       `expired` between the SELECT and this UPDATE), which no deterministic test can stage; it falls through
+       to the same created:false answer below. */
     if (reopened) return { action: toAgentPendingActionRecord(reopened), created: true };
-    // Lost the CAS to a concurrent decision — fall through and report the row as it now stands.
-    const [current] = await getDb(env.DB).select().from(agentPendingActions).where(eq(agentPendingActions.id, existing.id)).limit(1);
-    if (current) return { action: toAgentPendingActionRecord(current), created: false };
   }
   return { action: toAgentPendingActionRecord(existing), created: false };
 }

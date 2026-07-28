@@ -44,13 +44,16 @@ export function nextVerdictFlipState(
   // escalated on every later fresh verdict forever -- an absorbing state whose own advice to the contributor
   // ("push a substantive fix so the next review reflects real content change") could not clear it, because a
   // substantive fix produced a fresh verdict that re-escalated. A changed fingerprint resets the count.
-  const sameContent = fingerprint != null && prior.lastFingerprint != null && prior.lastFingerprint === fingerprint;
-  if (!sameContent) return { lastHadDefect: hadDefect, flipCount: 0, lastFingerprint: fingerprint ?? null, escalate: false };
+  // Written as an early return rather than a `sameContent` boolean so TypeScript narrows `fingerprint` to a
+  // string below -- otherwise the counting path needs a `?? null` fallback whose null arm is unreachable.
+  if (fingerprint == null || prior.lastFingerprint == null || prior.lastFingerprint !== fingerprint) {
+    return { lastHadDefect: hadDefect, flipCount: 0, lastFingerprint: fingerprint ?? null, escalate: false };
+  }
   const flipCount = prior.lastHadDefect === hadDefect ? prior.flipCount : prior.flipCount + 1;
   return {
     lastHadDefect: hadDefect,
     flipCount,
-    lastFingerprint: fingerprint ?? null,
+    lastFingerprint: fingerprint,
     escalate: flipCount >= VERDICT_FLIP_ESCALATION_THRESHOLD,
   };
 }

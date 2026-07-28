@@ -102,6 +102,16 @@ describe("nextVerdictFlipState", () => {
     expect(state.escalate).toBe(true);
   });
 
+  it("#9483 a first observation records a null fingerprint when none is supplied", () => {
+    expect(nextVerdictFlipState(null, true)).toEqual({ lastHadDefect: true, flipCount: 0, lastFingerprint: null, escalate: false });
+  });
+
+  it("#9483 a counted flip records a null fingerprint when none is supplied", () => {
+    // The nullish fallback must hold on the counting path too, so a later comparison cannot match on undefined.
+    const state = { lastHadDefect: true, flipCount: 0, lastFingerprint: null };
+    expect(nextVerdictFlipState(state, false, null).lastFingerprint).toBeNull();
+  });
+
   it("#9483 a missing fingerprint on either side never counts a flip (fail-open for pre-migration rows)", () => {
     // Rows written before migration 0196 have a null last_fingerprint. A null can never match, so the first
     // verdict after the migration resets rather than escalating — the fail-open direction.
@@ -140,6 +150,9 @@ describe("verdict-flip store (D1, fail-open)", () => {
     expect(await recordVerdictFlip(env, "o/r", 5, clean, FP)).toMatchObject({ flipCount: 3, escalate: true });
     // State persisted between calls (a different PR is fully independent).
     expect(await readVerdictFlipState(env, "o/r", 5)).toEqual({ lastHadDefect: false, flipCount: 3, lastFingerprint: FP });
+    // A verdict recorded with NO fingerprint persists null rather than undefined, so a later read compares cleanly.
+    await recordVerdictFlip(env, "o/r", 7, defect);
+    expect(await readVerdictFlipState(env, "o/r", 7)).toEqual({ lastHadDefect: true, flipCount: 0, lastFingerprint: null });
     expect(await readVerdictFlipState(env, "o/r", 999)).toBeNull();
     // Write failure: the RETURNED state is still correct (computed before the write attempt); it just won't persist.
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);

@@ -259,6 +259,22 @@ describe("re-staging after expiry (#9481)", () => {
     },
   );
 
+  it("reopens with a null reason when the re-plan supplies none", async () => {
+    const env = createTestEnv();
+    const first = await stage(env, "original");
+    await setPendingAgentActionStatus(env, first.action.id, { status: "expired", decidedBy: "system" });
+    const restaged = await createPendingAgentActionIfAbsent(env, {
+      repoFullName: "acme/widgets",
+      pullNumber: 42,
+      installationId: 5,
+      actionClass: "merge",
+      autonomyLevel: "auto_with_approval",
+      params: {},
+    });
+    expect(restaged.created).toBe(true);
+    expect(restaged.action.reason).toBeNull();
+  });
+
   it("a reopened row can be expired and reopened again (no one-shot recovery)", async () => {
     const env = createTestEnv();
     const first = await stage(env, "one");

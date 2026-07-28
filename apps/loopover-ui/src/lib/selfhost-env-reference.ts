@@ -374,6 +374,10 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/selfhost/ai.ts",
   },
   {
+    name: "OLLAMA_NUM_CTX",
+    firstReference: "src/selfhost/ai.ts",
+  },
+  {
     name: "OPENAI_AI_BASE_URL",
     firstReference: "src/selfhost/ai.ts",
   },
@@ -754,6 +758,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `OLLAMA_AI_API_KEY` | `src/selfhost/ai.ts` |",
   "| `OLLAMA_AI_BASE_URL` | `src/selfhost/ai.ts` |",
   "| `OLLAMA_AI_MODEL` | `src/selfhost/ai.ts` |",
+  "| `OLLAMA_NUM_CTX` | `src/selfhost/ai.ts` |",
   "| `OPENAI_AI_BASE_URL` | `src/selfhost/ai.ts` |",
   "| `OPENAI_AI_MODEL` | `src/selfhost/ai.ts` |",
   "| `OPENAI_API_KEY` | `src/selfhost/ai-config.ts` |",

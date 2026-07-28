@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import { clearInstallationTokenCacheForTest } from "../../src/github/app";
+import { jobClaimSortKey } from "../../src/selfhost/queue-common";
 import { clearReviewSuppressionCacheForTest } from "../../src/review/review-memory-wire";
 import { PR_PANEL_COMMENT_MARKER } from "../../src/github/comments";
 import * as backfillModule from "../../src/github/backfill";
@@ -5316,6 +5317,105 @@ describe("auto-action convergence: end-to-end plan+execute for the general heuri
     const trailing = scheduled.find((s) => s.message.type === "agent-regate-pr" && "prNumber" in s.message && s.message.prNumber === 63);
     expect(trailing).toBeDefined();
     expect(trailing?.options).toEqual({ delaySeconds: 60 });
+    // #9499 INVARIANT: this fixture's payload carries no `created_at`, so the stored row has none either and
+    // the producer degrades to the legacy sort base — exactly as before. The field is threaded, not forced:
+    // a caller without a timestamp must still enqueue rather than throw or send an empty value.
+    const trailingMessage = trailing?.message as { prCreatedAt?: string } | undefined;
+    expect(trailingMessage?.prCreatedAt).toBeUndefined();
+  });
+
+  // #9499: the same producer WITH a real creation time — the case that was actually broken. Without the
+  // field, jobClaimSortKey falls back to LEGACY_AGENT_REGATE_SORT_BASE_MS + prNumber, which sorts this
+  // re-check AHEAD of every genuinely older contributor PR instead of behind them. That does not merely lose
+  // the oldest-first ordering, it inverts it for this producer's jobs.
+  it("REGRESSION (#9499): the trailing mergeable-state re-check carries the PR's createdAt, keeping its place in the oldest-first ordering", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await setupAutoActionRepo(env, { autonomy: { merge: "auto", approve: "auto" }, linkedIssueGateMode: "off" });
+    await upsertOfficialMinerDetection(env, "contributor", { status: "confirmed", snapshot: queueMinerSnapshot("contributor") }, 60_000);
+    const scheduled: Array<{ message: import("../../src/types").JobMessage; options?: { delaySeconds?: number } }> = [];
+    const originalSend = env.JOBS.send.bind(env.JOBS);
+    env.JOBS.send = (async (message: import("../../src/types").JobMessage, options?: { delaySeconds?: number }) => {
+      scheduled.push(options ? { message, options } : { message });
+      return originalSend(message, options);
+    }) as typeof env.JOBS.send;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url === "https://api.github.com/graphql") return Response.json({ data: { repository: { pullRequest: { reviewDecision: "APPROVED" } } } });
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/65/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/pulls/65/reviews")) return Response.json([]);
+      if (url.includes("/pulls/65/commits")) return Response.json([]);
+      if (url.endsWith("/pulls/65/merge") && method === "PUT") return Response.json({ merged: true });
+      if (url.endsWith("/pulls/65")) return Response.json({ number: 65, state: "open", user: { login: "contributor" }, head: { sha: "conv65" }, mergeable_state: "unknown" });
+      if (url.includes("/commits/conv65/check-runs")) {
+        return Response.json({ total_count: 1, check_runs: [{ name: "CI", status: "completed", conclusion: "success", app: { slug: "github-actions" } }] });
+      }
+      if (url.includes("/commits/conv65/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/65/labels")) return Response.json([]);
+      if (url.includes("/issues/65/comments")) return Response.json([]);
+      return Response.json({});
+    });
+
+    const createdAt = "2026-03-04T05:06:07Z";
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "merge-race-created-at",
+      eventName: "pull_request",
+      payload: prPayload({ number: 65, head: { sha: "conv65" }, body: "Closes #1", action: "synchronize", created_at: createdAt }),
+    });
+
+    const trailing = scheduled.find((s) => s.message.type === "agent-regate-pr" && "prNumber" in s.message && s.message.prNumber === 65);
+    expect(trailing).toBeDefined();
+    const message = trailing?.message as { prCreatedAt?: string };
+    expect(message.prCreatedAt).toBe(createdAt);
+    // The property that actually matters: the job now sorts by the PR's real age, not the legacy base.
+    expect(jobClaimSortKey(JSON.stringify(trailing?.message), 0)).toBe(Date.parse(createdAt));
+  });
+
+  it("INVARIANT (#9499): a failing enqueue of the trailing re-check never fails the webhook pass", async () => {
+    // Fail-open, matching every other trailing-schedule call site in this file: the re-check is a best-effort
+    // guarantee on top of the periodic sweep, so losing one must degrade to "the sweep gets it" rather than
+    // failing the pass that had already done its real work.
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await setupAutoActionRepo(env, { autonomy: { merge: "auto", approve: "auto" }, linkedIssueGateMode: "off" });
+    await upsertOfficialMinerDetection(env, "contributor", { status: "confirmed", snapshot: queueMinerSnapshot("contributor") }, 60_000);
+    env.JOBS.send = (async (message: import("../../src/types").JobMessage) => {
+      if (message.type === "agent-regate-pr") throw new Error("queue unavailable");
+    }) as unknown as typeof env.JOBS.send;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url === "https://api.github.com/graphql") return Response.json({ data: { repository: { pullRequest: { reviewDecision: "APPROVED" } } } });
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/66/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/pulls/66/reviews")) return Response.json([]);
+      if (url.includes("/pulls/66/commits")) return Response.json([]);
+      if (url.endsWith("/pulls/66/merge") && method === "PUT") return Response.json({ merged: true });
+      if (url.endsWith("/pulls/66")) return Response.json({ number: 66, state: "open", user: { login: "contributor" }, head: { sha: "conv66" }, mergeable_state: "unknown" });
+      if (url.includes("/commits/conv66/check-runs")) {
+        return Response.json({ total_count: 1, check_runs: [{ name: "CI", status: "completed", conclusion: "success", app: { slug: "github-actions" } }] });
+      }
+      if (url.includes("/commits/conv66/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/66/labels")) return Response.json([]);
+      if (url.includes("/issues/66/comments")) return Response.json([]);
+      return Response.json({});
+    });
+
+    await expect(
+      processJob(env, {
+        type: "github-webhook",
+        deliveryId: "merge-race-enqueue-fails",
+        eventName: "pull_request",
+        payload: prPayload({ number: 66, head: { sha: "conv66" }, body: "Closes #1", action: "synchronize", created_at: "2026-03-04T05:06:07Z" }),
+      }),
+    ).resolves.not.toThrow();
+
+    // And the pass still recorded its real decision -- the enqueue failure changed nothing upstream of it.
+    const holdAudit = await env.DB.prepare("select detail from audit_events where event_type = 'agent.action.hold' order by created_at desc limit 1").first<{ detail: string }>();
+    expect(holdAudit?.detail).toContain("mergeable_state is unknown");
   });
 
   it("REGRESSION (#merge-race): a real, stable non-clean mergeable_state (dirty) does NOT schedule a trailing re-check — only the transient \"unknown\" value does", async () => {

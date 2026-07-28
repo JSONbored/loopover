@@ -1071,6 +1071,20 @@ describe("self-host queue common helpers", () => {
     expect(jobCoalesceKey(payload({ type: "selftune", requestedBy: "schedule" }))).toBe("selftune");
   });
 
+  // #9499: the legacy fallback is not a neutral default — it actively INVERTS the ordering. This pins the
+  // magnitude relationship that makes an omitted prCreatedAt a bug rather than a lost optimization, and is
+  // the property scripts/check-regate-sort-key.ts exists to protect.
+  it("REGRESSION (#9499): the legacy fallback sorts AHEAD of every real PR, so an omitted prCreatedAt inverts the ordering", () => {
+    const withCreatedAt = jobClaimSortKey(
+      payload({ type: "agent-regate-pr", repoFullName: "owner/repo", prNumber: 1, prCreatedAt: "2026-01-01T00:00:00.000Z" }),
+      999,
+    );
+    // A very HIGH pr number on the fallback path — the most favourable case for the fallback — still sorts
+    // ahead of the OLDEST plausible real 2026 PR.
+    const withoutCreatedAt = jobClaimSortKey(payload({ type: "agent-regate-pr", repoFullName: "owner/repo", prNumber: 999_999 }), 999);
+    expect(withoutCreatedAt).toBeLessThan(withCreatedAt);
+  });
+
   it("orders per-PR re-gate jobs by GitHub PR creation time, with a deterministic legacy fallback", () => {
     expect(
       jobClaimSortKey(

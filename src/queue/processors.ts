@@ -2935,7 +2935,7 @@ function buildAgentMaintenancePlanInput(args: {
       mergeBlockedSha: activeMergeBlockedSha(pr, pr.headSha, args.decisionNowMs),
       mergeBlockedReason: pr.mergeBlockedReason,
       approvedHeadSha: pr.approvedHeadSha,
-      authorLogin: pr.authorLogin,
+      authorLogin: pr.authorLogin ?? null,
       linkedIssues: pr.linkedIssues,
     },
   };
@@ -3154,7 +3154,7 @@ async function maybeCloseForContributorCapOnOpen(
         headSha: pr.headSha,
         // #9055: threaded so the executor's live pre-merge check denies a merge/approve into a base the diff,
         // review, and CI it is acting on were never computed against.
-        expectedBaseRef: pr.baseRef,
+        expectedBaseRef: pr.baseRef ?? null,
         autonomy: settings.autonomy,
         agentPaused: settings.agentPaused,
         agentDryRun: settings.agentDryRun,
@@ -3971,12 +3971,12 @@ async function runAgentMaintenancePlanAndExecute(
       repoFullName,
       pullNumber: pr.number,
       headSha: pr.headSha,
-      expectedBaseRef: pr.baseRef,
+      expectedBaseRef: pr.baseRef ?? null,
       autonomy: settings.autonomy,
       agentPaused: settings.agentPaused,
       agentDryRun: settings.agentDryRun,
       installationPermissions,
-      authorLogin: pr.authorLogin,
+      authorLogin: pr.authorLogin ?? null,
       mergeTrainMode: settings.mergeTrainMode,
       pullRequestCreatedAt: pr.createdAt,
       pullRequestLinkedIssues: pr.linkedIssues,
@@ -4433,7 +4433,11 @@ async function prReadyForReview(
         agentPaused: settings.agentPaused,
         agentDryRun: settings.agentDryRun,
         installationPermissions: installation?.permissions ?? null,
-        authorLogin: pr.authorLogin,
+        authorLogin: pr.authorLogin ?? null,
+        // #9541: both null on purpose. `update_branch` only -- no merge whose base could be retargeted, and
+        // no enforcement close for the moderation ladder to score.
+        expectedBaseRef: null,
+        moderationSettings: null,
         // #9134: required on every ctx, though this path only ever plans `update_branch` (never merge/close),
         // so the decision-record path inside the executor is never actually exercised for it.
         decisionRecord: { configDigest: await contentDigest(settings) },
@@ -4947,7 +4951,12 @@ async function maybeForceFreshRebase(
       agentDryRun: settings.agentDryRun,
       /* v8 ignore next -- an installed-App PR webhook always carries an installation record; the null is defensive (mirrors runAgentMaintenancePlanAndExecute's own identical merge-time read). */
       installationPermissions: installation?.permissions ?? null,
-      authorLogin: pr.authorLogin,
+      authorLogin: pr.authorLogin ?? null,
+      // #9541: both null on purpose, now that the type forces the choice to be stated. This path plans only
+      // `update_branch` -- never a merge -- so there is no base to protect against a retarget, and no
+      // enforcement close for the moderation ladder to score.
+      expectedBaseRef: null,
+      moderationSettings: null,
       // #9134: required on every ctx, though this path only ever plans `update_branch` (never merge/close), so
       // the decision-record path inside the executor is never actually exercised for it.
       decisionRecord: { configDigest: await contentDigest(settings) },
@@ -14928,8 +14937,11 @@ async function maybeThrottleReviewNagPing(
       agentPaused: settings.agentPaused,
       agentDryRun: settings.agentDryRun,
       installationPermissions: installation?.permissions ?? null,
-      authorLogin: pr.authorLogin,
+      authorLogin: pr.authorLogin ?? null,
       moderationSettings: { moderationGateMode: settings.moderationGateMode, moderationRules: settings.moderationRules, moderationWarningLabel: settings.moderationWarningLabel, moderationBannedLabel: settings.moderationBannedLabel },
+      // #9541: null on purpose. #9055's base-retarget guard protects a MERGE from landing in an abandoned
+      // base; this path only ever closes, where the base is irrelevant.
+      expectedBaseRef: null,
       // #9134: this review-nag close previously wrote NO decision record at all -- exactly the kind of
       // contributor-disputable close the issue flagged as biasing the risk-control calibration join.
       decisionRecord: { configDigest: await contentDigest(settings) },
@@ -15138,8 +15150,10 @@ async function maybeThrottleMonitoredMentions(
       agentPaused: settings.agentPaused,
       agentDryRun: settings.agentDryRun,
       installationPermissions: installation?.permissions ?? null,
-      authorLogin: pr.authorLogin,
+      authorLogin: pr.authorLogin ?? null,
       moderationSettings: { moderationGateMode: settings.moderationGateMode, moderationRules: settings.moderationRules, moderationWarningLabel: settings.moderationWarningLabel, moderationBannedLabel: settings.moderationBannedLabel },
+      // #9541: null for the same reason as its cooldown sibling above -- a close has no base to protect.
+      expectedBaseRef: null,
       // #9134: this review-nag close (the @loopover-mention variant) previously wrote NO decision record at
       // all -- the same gap as its comment-thread-cooldown sibling immediately above.
       decisionRecord: { configDigest: await contentDigest(settings) },

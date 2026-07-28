@@ -98,6 +98,10 @@ function ctx(over: Partial<AgentActionExecutionContext> = {}): AgentActionExecut
     repoFullName: "owner/repo",
     pullNumber: 7,
     headSha: "sha7",
+    // #9541: required on the context now, so the fixture states them like every real caller must.
+    expectedBaseRef: null,
+    authorLogin: null,
+    moderationSettings: null,
     autonomy: { label: "auto", request_changes: "auto", approve: "auto", merge: "auto", close: "auto", update_branch: "auto" },
     agentPaused: false,
     agentDryRun: false,
@@ -1881,7 +1885,7 @@ describe("moderation-rules engine escalation (#selfhost-mod-engine)", () => {
   it("no escalation for a close with no author login (defensive -- should not happen for a real PR/issue)", async () => {
     const env = createTestEnv({});
     await upsertGlobalModerationConfig(env, { enabled: true });
-    await executeAgentMaintenanceActions(env, ctx({ authorLogin: undefined }), [coupledClose, coupledLabel]);
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: null }), [coupledClose, coupledLabel]);
     expect(ensurePullRequestLabel).not.toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", expect.anything());
   });
 
@@ -2052,6 +2056,9 @@ function issueCtx(over: Partial<IssueActionExecutionContext> = {}): IssueActionE
     installationId: 123,
     repoFullName: "owner/repo",
     issueNumber: 42,
+    // #9541: required on the ISSUE context too.
+    authorLogin: null,
+    moderationSettings: null,
     autonomy: { label: "auto", close: "auto" },
     agentPaused: false,
     agentDryRun: false,
@@ -2523,7 +2530,7 @@ describe("pre-merge contributor-cap re-check (#7284-fix, TOCTOU race)", () => {
   it("no authorLogin on ctx: the lock key degrades to an empty-string author rather than throwing", async () => {
     const env = createTestEnv({});
     const recheck = vi.fn(async () => true);
-    const outcomes = await executeAgentMaintenanceActions(env, ctx({ authorLogin: undefined, contributorCapMergeRecheck: recheck }), [merge]);
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ authorLogin: null, contributorCapMergeRecheck: recheck }), [merge]);
     expect(outcomes[0]?.outcome).toBe("completed");
     expect(mergePullRequest).toHaveBeenCalled();
   });

@@ -344,4 +344,3 @@ export function aggregateReviewEffort(perPrMinutes: number[]): ReviewEffortAggre
     totalEstimatedMinutes: perPrMinutes.reduce((sum, minutes) => sum + minutes, 0),
   };
 }
-

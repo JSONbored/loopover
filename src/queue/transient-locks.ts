@@ -175,7 +175,8 @@ export function startLockHeartbeat(
   let stopped = false;
   const timer = setInterval(() => {
     void (async () => {
-      if (stopped) return;
+      // No pre-await `stopped` guard: stop() clears the interval, so a callback can never START after it.
+      // The check that matters is the one AFTER the await below, where stop() CAN have landed mid-renewal.
       try {
         const stillOurs = await cache.renewIfValue!(key, ownerToken, ttlSeconds);
         if (!stillOurs && !stopped) {

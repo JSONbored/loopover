@@ -46,7 +46,10 @@ export const tenantCreateTool = defineTool({
 export const TenantListInput = z.object({});
 
 export const TenantListOutput = z.looseObject({
-  tenants: z.array(z.looseObject({ createdAt: z.string().optional(), updatedAt: z.string().optional() })),
+  configured: z.boolean().optional().describe("False when this deployment administers no hosted tenants."),
+  // Optional because the not-configured answer has no list to give -- a required `tenants` made that
+  // perfectly valid response fail its own output schema with -32602.
+  tenants: z.array(z.looseObject({ createdAt: z.string().optional(), updatedAt: z.string().optional() })).optional(),
 });
 
 export const tenantListTool = defineTool({

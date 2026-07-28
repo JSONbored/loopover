@@ -51,12 +51,23 @@ runs:
       with:
         path: |
           node_modules
-          apps/loopover-ui/node_modules
+          apps/*/node_modules
+          packages/*/node_modules
         # hashFiles('.nvmrc') matters as much as the package manifests and lockfile: a Node bump
         # with no lockfile change would otherwise still hit and silently reuse node_modules whose
         # native addons (sharp, workerd, fsevents) were compiled against the OLD Node's ABI. The
         # manifests matter too because npm ci validates package.json/package-lock.json consistency
         # and runs lifecycle scripts from package.json; a package.json-only change must not skip it.
+        #
+        # The path list must cover EVERY workspace's own node_modules, not just the root and one app.
+        # npm decides per dependency whether it hoists to the root or nests under a workspace, and that
+        # decision moves whenever a version range changes: the #8608 eslint-10 bump nested `@eslint/js`
+        # under both UI apps, so on a cache HIT `apps/loopover-miner-ui/node_modules` did not exist at all
+        # and `eslint .` died with "Cannot find module '@eslint/js'" -- a failure that reproduces on no
+        # developer machine, because a real `npm ci`/`npm install` always creates those directories.
+        # Globbing `apps/*` + `packages/*` (the workspace globs from package.json) makes the cache follow
+        # npm's layout automatically instead of re-breaking on the next hoist change. review-enrichment
+        # and control-plane are NOT workspaces -- they have their own installs and their own cache steps.
         key: npm-${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true) && 'fork' || 'trusted' }}-${{ hashFiles('.nvmrc') }}-${{ hashFiles('package.json', 'apps/*/package.json', 'packages/*/package.json', 'package-lock.json') }}
 
     - name: Install dependencies (retry on transient failures)
@@ -82,5 +93,6 @@ runs:
       with:
         path: |
           node_modules
-          apps/loopover-ui/node_modules
+          apps/*/node_modules
+          packages/*/node_modules
         key: ${{ steps.node-modules-cache.outputs.cache-primary-key }}

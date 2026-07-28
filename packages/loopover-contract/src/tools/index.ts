@@ -143,6 +143,12 @@ import {
  * every remote-server category (#9518) -- the second server migrated to completion. The stdio
  * server is the last one left, and has its own issue (#9537).
  */
+import { OPS_TOOLS } from "./ops.js";
+import { FLEET_TOOLS } from "./fleet.js";
+import { TENANT_TOOLS } from "./tenant.js";
+import { INSTANCE_OPS_TOOLS } from "./instance-ops.js";
+import { adminRotateSecretTool } from "./admin-config.js";
+
 export const TOOL_CONTRACTS: readonly ToolContract[] = [
   getRepoContextTool,
   getPrReviewabilityTool,
@@ -269,6 +275,13 @@ export const TOOL_CONTRACTS: readonly ToolContract[] = [
   minerGovernorDecisionsTool,
   minerStatusTool,
   minerCalibrationReportTool,
+  // #9522's management families. Spread rather than listed one-by-one so adding a tool to a family file is
+  // the only edit -- the registry cannot fall behind a family the way the old hand-listed map did.
+  adminRotateSecretTool,
+  ...INSTANCE_OPS_TOOLS,
+  ...OPS_TOOLS,
+  ...FLEET_TOOLS,
+  ...TENANT_TOOLS,
 ];
 
 const CONTRACTS_BY_NAME: ReadonlyMap<string, ToolContract> = new Map(
@@ -301,3 +314,7 @@ export * from "./discovery-utility.js";
 export * from "./agent.js";
 export * from "./local-branch.js";
 export * from "./miner.js";
+export * from "./ops.js";
+export * from "./fleet.js";
+export * from "./tenant.js";
+export * from "./instance-ops.js";

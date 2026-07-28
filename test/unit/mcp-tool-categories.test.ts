@@ -43,15 +43,18 @@ describe("MCP remote server tool categorization (#6301)", () => {
     await client.close();
   });
 
-  it("keeps the MCP_TOOL_CATEGORIES map in exact sync with the registered tool set", async () => {
+  // #9522: MCP_TOOL_CATEGORIES is DERIVED from the contract registry now, not a hand-kept map, so the
+  // "stale entry" half of this test is gone -- an entry can no longer fall out of sync with a tool that
+  // exists, and the map deliberately indexes all three servers' tools (locality says where a tool's work
+  // happens, not which server exposes it, and a dozen "local-git" tools are registered here too). What
+  // still matters, and is what actually caught drift, is that every REGISTERED tool resolves a category.
+  it("gives every registered tool a category, matching the wire value", async () => {
     const { client, tools } = await listRegisteredTools();
     const registered = new Set(tools.map((tool) => tool.name));
     const mapped = new Set(Object.keys(MCP_TOOL_CATEGORIES));
 
     const missingFromMap = [...registered].filter((name) => !mapped.has(name)).sort();
-    const staleInMap = [...mapped].filter((name) => !registered.has(name)).sort();
     expect(missingFromMap, `registered tools with no category entry: ${missingFromMap.join(", ")}`).toEqual([]);
-    expect(staleInMap, `category entries for tools that are no longer registered: ${staleInMap.join(", ")}`).toEqual([]);
 
     // The category surfaced over the wire matches the source-of-truth map for every tool.
     for (const tool of tools) {

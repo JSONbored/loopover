@@ -20,11 +20,9 @@ import {
   buildClearedBrowserSessionCookie,
   buildClearedGitHubOAuthStateCookie,
   buildGitHubOAuthStateCookie,
-  createOpaqueToken,
   extractBearerToken,
   extractBrowserSessionToken,
   extractCookieValue,
-  hashToken,
   isAuthorizedGitHubSessionLogin,
   isMcpReadRepoAllowed,
   isMcpReadUnscoped,
@@ -156,6 +154,7 @@ import { requestAprRepoTransfer } from "../orb/apr-repo-transfer";
 import { handleOrbIngest, readOrbIngestBody } from "../orb/ingest";
 import { handleAmsIngest } from "../ams/ingest";
 import { handleOrbWebhook } from "../orb/webhook";
+import { listFleetInstallations, listFleetInstances, registerFleetInstallation, registerFleetInstance } from "../orb/fleet-admin";
 import { backfillOrbInstallations } from "../orb/installations";
 import { handleOrbOAuthCallback } from "../orb/oauth";
 import {
@@ -4672,15 +4671,7 @@ export function createApp() {
   });
 
   app.get("/v1/internal/orb/instances", async (c) => {
-    const rows = await c.env.DB
-      .prepare(
-        `SELECT i.instance_id AS instanceId, i.registered AS registered, i.first_seen_at AS firstSeenAt,
-                i.last_seen_at AS lastSeenAt, i.registered_at AS registeredAt,
-                (SELECT COUNT(*) FROM orb_signals s WHERE s.instance_id = i.instance_id) AS signalCount
-         FROM orb_instances i ORDER BY i.last_seen_at DESC`,
-      )
-      .all<{ instanceId: string; registered: number; firstSeenAt: string; lastSeenAt: string; registeredAt: string | null; signalCount: number }>();
-    return c.json({ instances: (rows.results ?? []).map((r) => ({ ...r, registered: r.registered === 1 })) });
+    return c.json(await listFleetInstances(c.env));
   });
 
   // Opt an instance into (or out of) fleet calibration. Body: { instanceId, registered? } (registered
@@ -4695,19 +4686,7 @@ export function createApp() {
     const payload = (await c.req.json().catch(() => null)) as { instanceId?: unknown; registered?: unknown } | null;
     const instanceId = typeof payload?.instanceId === "string" ? payload.instanceId : "";
     if (!instanceId) return c.json({ error: "instanceId required" }, 400);
-    const registered = payload?.registered === false ? 0 : 1;
-    const instanceSecret = registered === 1 ? createOpaqueToken("orbis") : null;
-    const instanceSecretHash = instanceSecret ? await hashToken(instanceSecret) : null;
-    await c.env.DB
-      .prepare(
-        `INSERT INTO orb_instances (instance_id, registered, registered_at, ingest_secret_hash) VALUES (?, ?, CURRENT_TIMESTAMP, ?)
-         ON CONFLICT(instance_id) DO UPDATE SET registered = excluded.registered,
-           registered_at = CASE WHEN excluded.registered = 1 THEN CURRENT_TIMESTAMP ELSE NULL END,
-           ingest_secret_hash = CASE WHEN excluded.registered = 1 THEN excluded.ingest_secret_hash ELSE orb_instances.ingest_secret_hash END`,
-      )
-      .bind(instanceId, registered, instanceSecretHash)
-      .run();
-    return c.json({ instanceId, registered: registered === 1, ...(instanceSecret ? { instanceSecret } : {}) });
+    return c.json(await registerFleetInstance(c.env, { instanceId, ...(payload?.registered === false ? { registered: false } : {}) }));
   });
 
   // Central Orb GitHub App installation registry — the onboarding gate. Every installation the Orb App webhook
@@ -4721,16 +4700,7 @@ export function createApp() {
   // JOIN: each installation has at most a handful of enrollment rows, so this stays cheap without reshaping the
   // one-row-per-installation result set a GROUP BY would require.
   app.get("/v1/internal/orb/installations", async (c) => {
-    const rows = await c.env.DB
-      .prepare(
-        `SELECT installation_id AS installationId, account_login AS accountLogin, account_type AS accountType,
-                repository_selection AS repositorySelection, registered, suspended_at AS suspendedAt,
-                removed_at AS removedAt, first_seen_at AS firstSeenAt, last_event_at AS lastEventAt,
-                (SELECT COUNT(*) FROM orb_enrollments oe WHERE oe.installation_id = orb_github_installations.installation_id AND oe.state = 'enrolled' AND oe.revoked_at IS NULL) AS liveEnrollmentCount
-         FROM orb_github_installations ORDER BY last_event_at DESC`,
-      )
-      .all<{ installationId: number; accountLogin: string | null; accountType: string | null; repositorySelection: string | null; registered: number; suspendedAt: string | null; removedAt: string | null; firstSeenAt: string; lastEventAt: string; liveEnrollmentCount: number }>();
-    return c.json({ installations: (rows.results ?? []).map((r) => ({ ...r, registered: r.registered === 1 })) });
+    return c.json(await listFleetInstallations(c.env));
   });
 
   // Opt an installation into (or out of) the registry. Body: { installationId, registered? } (registered defaults
@@ -4741,11 +4711,9 @@ export function createApp() {
     const payload = (await c.req.json().catch(() => null)) as { installationId?: unknown; registered?: unknown } | null;
     const installationId = Number(payload?.installationId);
     if (!Number.isInteger(installationId) || installationId <= 0) return c.json({ error: "installationId required" }, 400);
-    const existing = await c.env.DB.prepare("SELECT installation_id FROM orb_github_installations WHERE installation_id = ?").bind(installationId).first();
-    if (!existing) return c.json({ error: "installation_not_found" }, 404);
-    const registered = payload?.registered === false ? 0 : 1;
-    await c.env.DB.prepare("UPDATE orb_github_installations SET registered = ?, self_enrollment_disabled = ? WHERE installation_id = ?").bind(registered, registered === 1 ? 0 : 1, installationId).run();
-    return c.json({ installationId, registered: registered === 1 });
+    const result = await registerFleetInstallation(c.env, { installationId, ...(payload?.registered === false ? { registered: false } : {}) });
+    if ("error" in result) return c.json(result, 404);
+    return c.json(result);
   });
 
   // Operator-triggered reconciliation of the installation registry against GitHub's authoritative install list —

@@ -100,3 +100,89 @@ export type ConfigAdminWriteScope = (typeof CONFIG_ADMIN_WRITE_SCOPES)[number];
  */
 export const CONFIG_ADMIN_READ_SCOPES = ["effective", ...CONFIG_ADMIN_WRITE_SCOPES] as const;
 export type ConfigAdminReadScope = (typeof CONFIG_ADMIN_READ_SCOPES)[number];
+
+/**
+ * The secret files `loopover_admin_rotate_secret` may rotate (#9543). Closed on purpose: rotation writes to
+ * a host path through the redeploy companion, so an open string would let a caller name any file the
+ * companion can reach.
+ */
+export const ROTATABLE_SECRET_NAMES = [
+  "claude_code_oauth_token",
+  "github_webhook_secret",
+  "loopover_api_token",
+  "loopover_mcp_token",
+  "loopover_mcp_admin_token",
+  "pagerduty_routing_key",
+] as const;
+
+/**
+ * Every `/v1/internal/jobs/*` maintenance job, and which modes each offers -- the input surface of the one
+ * `loopover_fleet_run_job` tool that replaces ~30 bespoke per-job tools (#9522).
+ *
+ * Transcribed from the live route table and PINNED to it by test/unit/mcp-fleet-job-parity.test.ts in both
+ * directions: a job route added or removed without updating this fails there, which is the only thing that
+ * keeps a closed enum honest against a table it does not import (the contract package cannot reach src/).
+ */
+export const INTERNAL_JOB_NAMES = [
+  "backfill-contributor-gate-history",
+  "backfill-pr-details",
+  "backfill-registered-repos",
+  "backfill-repo-segment",
+  "build-burden-forecasts",
+  "build-contributor-decision-packs",
+  "build-contributor-evidence",
+  "file-upstream-drift-issues",
+  "generate-review-recap",
+  "generate-signal-snapshots",
+  "generate-weekly-value-report",
+  "rag-index",
+  "refresh-contributor-activity",
+  "refresh-installation-health",
+  "refresh-registry",
+  "refresh-scoring-model",
+  "refresh-upstream-drift",
+  "regate-pr",
+  "repair-data-fidelity",
+  "rollup-product-usage",
+] as const;
+
+export type InternalJobName = (typeof INTERNAL_JOB_NAMES)[number];
+
+/** `enqueue` queues the job for the worker; `run` executes it inline and returns its result. */
+export const INTERNAL_JOB_RUN_MODES = ["enqueue", "run"] as const;
+export type InternalJobRunMode = (typeof INTERNAL_JOB_RUN_MODES)[number];
+
+/** Not every job offers both modes; the tool rejects an unsupported pairing with the supported list. */
+export const INTERNAL_JOB_MODES: Record<InternalJobName, readonly InternalJobRunMode[]> = {
+  "backfill-contributor-gate-history": ["run"],
+  "backfill-pr-details": ["enqueue", "run"],
+  "backfill-registered-repos": ["enqueue", "run"],
+  "backfill-repo-segment": ["enqueue", "run"],
+  "build-burden-forecasts": ["enqueue"],
+  "build-contributor-decision-packs": ["enqueue", "run"],
+  "build-contributor-evidence": ["enqueue"],
+  "file-upstream-drift-issues": ["enqueue", "run"],
+  "generate-review-recap": ["enqueue", "run"],
+  "generate-signal-snapshots": ["enqueue", "run"],
+  "generate-weekly-value-report": ["enqueue", "run"],
+  "rag-index": ["enqueue"],
+  "refresh-contributor-activity": ["enqueue", "run"],
+  "refresh-installation-health": ["run"],
+  "refresh-registry": ["enqueue", "run"],
+  "refresh-scoring-model": ["enqueue", "run"],
+  "refresh-upstream-drift": ["enqueue", "run"],
+  "regate-pr": ["enqueue"],
+  "repair-data-fidelity": ["enqueue"],
+  "rollup-product-usage": ["enqueue", "run"],
+};
+
+/**
+ * The hosted control plane's tenant products (#9522). The routes key their registry by `${product}:${name}`
+ * (#8024) and reject a product-specific field paired with the wrong product, so this stays closed.
+ */
+export const TENANT_PRODUCTS = ["ams", "orb"] as const;
+export type TenantProduct = (typeof TENANT_PRODUCTS)[number];
+
+/** One doctor check's verdict (#9522). `warn` exists so a degraded-but-working instance is not reported as broken. */
+export const INSTANCE_CHECK_STATUSES = ["pass", "warn", "fail"] as const;
+export type InstanceCheckStatus = (typeof INSTANCE_CHECK_STATUSES)[number];

@@ -11,7 +11,7 @@
 // Node entry ever fills.
 import { z } from "zod";
 import { defineTool } from "../tool-definition.js";
-import { CONFIG_ADMIN_READ_SCOPES, CONFIG_ADMIN_WRITE_SCOPES } from "../enums.js";
+import { CONFIG_ADMIN_READ_SCOPES, CONFIG_ADMIN_WRITE_SCOPES, ROTATABLE_SECRET_NAMES } from "../enums.js";
 
 /**
  * `repoFullName` is CONDITIONALLY required -- mandatory for scope "effective" and "repo", ignored
@@ -161,4 +161,50 @@ export const adminTriggerRedeployTool = defineTool({
   annotations: { readOnlyHint: false, destructiveHint: true },
   input: AdminTriggerRedeployInput,
   output: AdminTriggerRedeployOutput,
+});
+
+/**
+ * `loopover_admin_rotate_secret` (#9543) -- migrated into the registry by #9522, which found it was the one
+ * live remote tool #9518 missed: it was registered in src/mcp/server.ts with inline shapes and had its own
+ * test file, but no contract entry, so validate:mcp never saw it.
+ *
+ * The VALUE rules are not cosmetic and are duplicated on purpose: the companion's own isValidSecretValue
+ * enforces them host-side too, so a caller gets a clear MCP-level rejection while the host still refuses
+ * independently if this layer is ever bypassed. src/selfhost/load-file-secrets.ts only `.trim()`s the file,
+ * so a label or comment line above the value silently becomes part of the credential.
+ */
+export const AdminRotateSecretInput = z.object({
+  secret: z.enum(ROTATABLE_SECRET_NAMES),
+  value: z
+    .string()
+    .min(1)
+    .max(4096)
+    .refine((candidate) => !/[\r\n]/.test(candidate), "must be a single line -- a comment or label line would become part of the credential")
+    .refine((candidate) => candidate.trim() === candidate, "must not have leading or trailing whitespace")
+    .refine((candidate) => !candidate.startsWith("#"), "must not start with '#' -- that is a comment, not a credential"),
+});
+
+export const AdminRotateSecretOutput = z.looseObject({
+  configured: z.boolean(),
+  ok: z.boolean().optional(),
+  secret: z.string().optional(),
+  backupPath: z.string().optional(),
+  error: z.string().optional(),
+});
+
+export type AdminRotateSecretInput = z.infer<typeof AdminRotateSecretInput>;
+export type AdminRotateSecretOutput = z.infer<typeof AdminRotateSecretOutput>;
+
+export const adminRotateSecretTool = defineTool({
+  name: "loopover_admin_rotate_secret",
+  title: "Rotate an instance secret",
+  description:
+    "Self-hosted-operator only. Rotate one of this instance's own secret files (e.g. claude_code_oauth_token) in place on the host, via the redeploy companion (#7723) -- the app container cannot write these itself, the Compose secrets mount is read-only. The value must be the bare credential: a single line, no comment or label line, no surrounding whitespace (the loader only trims, so anything else silently becomes part of the credential). Backs the previous value up first, and writes in place so the running container's inode-pinned bind mount sees it immediately. For claude_code_oauth_token no restart is needed -- the token is re-read per AI call. Requires LOOPOVER_MCP_ADMIN_TOKEN. Returns configured=false if REDEPLOY_COMPANION_TOKEN is unset or the companion isn't reachable.",
+  category: "admin",
+  auth: "mcp-admin",
+  locality: "remote",
+  availability: "selfhost",
+  annotations: { readOnlyHint: false, destructiveHint: true },
+  input: AdminRotateSecretInput,
+  output: AdminRotateSecretOutput,
 });

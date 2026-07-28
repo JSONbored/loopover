@@ -434,7 +434,7 @@ import {
 // #4013 step 7: same shim shape for runRetentionPrune -- imported here for processJob's own internal call
 // below, and re-exported so test/unit/retention.test.ts and test/unit/selfhost-pg-retention.test.ts's
 // existing `import { ... } from "../../src/queue/processors"` keeps working unchanged.
-import { runPrCommandPrologue, type PrCommandPrologueOutcome, type PrCommandPrologueSpec } from "./pr-command-prologue";
+import { runPrCommandPrologue, type PrCommandPrologueSpec } from "./pr-command-prologue";
 export { runRetentionPrune } from "./retention";
 // #4013 step 8: same shim shape for the gate-check policy/publish/audit functions -- imported here for
 // this file's own many disposition/publish call sites, and re-exported so
@@ -13344,7 +13344,7 @@ async function maybeProcessResolveCommand(env: Env, deliveryId: string, payload:
   });
   if (outcome.status === "notMine") return false;
   if (outcome.status === "handled") return true;
-  const { req, targetKey, pr, settings, authorization, command } = outcome;
+  const { req, targetKey, pr, settings, command } = outcome;
   const { normalizeResolveFindingRef, selectWarningsForResolve } = await import("../review/review-memory-wire");
   const findingRef = normalizeResolveFindingRef(command.reason);
   if (!findingRef.ok) { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_skipped", actor: req.actor, targetKey, outcome: "completed", detail: findingRef.reason, metadata: { deliveryId, repoFullName: req.repoFullName, reason: findingRef.reason } }); await recordGithubProductUsage(env, "finding_resolved_skipped", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "skipped", metadata: { reason: findingRef.reason } }); return true; }
@@ -13392,7 +13392,7 @@ async function maybeProcessReviewCommand(env: Env, deliveryId: string, payload: 
   });
   if (outcome.status === "notMine") return false;
   if (outcome.status === "handled") return true;
-  const { req, targetKey, pr, settings, authorization, command } = outcome;
+  const { req, targetKey, settings, authorization } = outcome;
   // Same dry-run/paused gate every other action command respects (pause/resolve/explain/gate-override/
   // generate-tests) -- a paused or dry-run repo must not dispatch a live re-review or post a confirmation.
   const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), instanceMode: forcedSelfhostMode(env), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
@@ -13521,7 +13521,7 @@ async function maybeProcessResumeCommand(env: Env, deliveryId: string, payload: 
   });
   if (outcome.status === "notMine") return false;
   if (outcome.status === "handled") return true;
-  const { req, targetKey, pr, settings, authorization, command } = outcome;
+  const { req, targetKey, authorization } = outcome;
   const confirmation = sanitizePublicComment([AGENT_COMMAND_COMMENT_MARKER, "", "> [!NOTE]", `> **Auto-review resumed by @${req.actor}**`, "> Auto-review is resumed for this PR. Gate enforcement and the one-shot disposition were never affected by pause.", "", "---", loopoverFooter(env)].join("\n"));
   await createIssueComment(env, req.installationId, req.repoFullName, req.pr.number, confirmation);
   await recordAuditEvent(env, { eventType: "github_app.autoreview_resumed", actor: req.actor, targetKey, outcome: "completed", detail: "Auto-review resumed.", metadata: { deliveryId, repoFullName: req.repoFullName } });
@@ -13581,7 +13581,7 @@ async function maybeProcessExplainCommand(env: Env, deliveryId: string, payload:
   });
   if (outcome.status === "notMine") return false;
   if (outcome.status === "handled") return true;
-  const { req, targetKey, pr, settings, authorization, command } = outcome;
+  const { req, targetKey, pr, settings, command } = outcome;
   // Lazy on purpose (unchanged): review-memory-wire is only needed once a command is authorized, so a webhook
   // that never reaches here never pays for the module.
   const { normalizeResolveFindingRef, selectWarningsForResolve } = await import("../review/review-memory-wire");
@@ -13662,7 +13662,7 @@ async function maybeProcessGenerateTestsCommand(env: Env, deliveryId: string, pa
   });
   if (outcome.status === "notMine") return false;
   if (outcome.status === "handled") return true;
-  const { req, targetKey, pr, settings, authorization, command } = outcome;
+  const { req, targetKey, pr, settings } = outcome;
   const manifest = await loadRepoFocusManifest(env, req.repoFullName).catch(() => null);
   if (!resolveConvergedFeature(env, manifest, "e2eTests", req.repoFullName)) {
     await postGenerateTestsNotEnabledComment(env, req.installationId, req.repoFullName, req.pr.number);

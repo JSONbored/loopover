@@ -15,7 +15,7 @@
 // schema is strict", and this Worker already bundles posthog-node for #6235, so there is no bundle
 // argument for avoiding it here. (#9525's issue text assumed metagraphed's situation, where the
 // bundle cost was real.)
-import type { McpToolCallTelemetry } from "@loopover/contract";
+import type {  } from "@loopover/contract";
 import { capturePostHogWorkerError, isWorkerPostHogConfigured, type WorkerPostHogEnv } from "../api/worker-posthog";
 import { MCP_TOOL_CALL_EVENT, MCP_USAGE_EVENT } from "@loopover/contract";
 import type { DispatchTelemetrySink } from "./dispatch-telemetry";

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createApp } from "../../src/api/routes";
 import { getDb } from "../../src/db/client";
-import { dedupeSignalSnapshots, pruneExpiredRecords, RETENTION_COMPOSITE_PK_TABLES, RETENTION_PK_COLUMN, RETENTION_POLICY } from "../../src/db/retention";
+import { dedupeSignalSnapshots, pruneExpiredRecords, RETENTION_COMPOSITE_PK_TABLES, RETENTION_PK_COLUMN, RETENTION_POLICY, retentionCutoffIsoForTable } from "../../src/db/retention";
+import { getOrbGlobalStats } from "../../src/orb/outcomes";
 import { agentContextSnapshots, aiReviewCache, aiSlopCache, aiUsageEvents, groundingFileContentCache, linkedIssueSatisfactionCache, webhookEvents } from "../../src/db/schema";
 import { processJob, runRetentionPrune } from "../../src/queue/processors";
 import { REPO_FOCUS_MANIFEST_SIGNAL, REPO_PUBLIC_FOCUS_MANIFEST_SIGNAL } from "../../src/signals/focus-manifest-loader";
@@ -786,5 +787,173 @@ describe("dedupeSignalSnapshots survivor selection (#9470)", () => {
 
     expect(await dedupeSignalSnapshots(env)).toEqual([{ signalType: "repo-culture-profile", deleted: 0 }]);
     expect(await countSignalSnapshots(env, "repo-culture-profile")).toBe(1);
+  });
+});
+
+// #9474: orb_pr_outcomes feeds a CUMULATIVE public counter -- getOrbGlobalStats SUMs the whole table and
+// public-stats folds it into the homepage's all-time merged/closed/handled totals. #9415's 90-day window,
+// left alone, would have made those "all-time" numbers plateau and then visibly DECREASE (~2026-10-25). The
+// prune now folds every row it deletes into the durable orb_outcome_rollups totals in the SAME transaction,
+// and getOrbGlobalStats adds them back -- so retention never changes the meaning of a published number.
+describe("orb_pr_outcomes fold-before-delete (#9474)", () => {
+  const RULE = { table: "orb_pr_outcomes", column: "occurred_at", days: 90 } as (typeof RETENTION_POLICY)[number];
+  const seedOutcomes = async (env: Env) => {
+    await env.DB.prepare("INSERT INTO orb_github_installations (installation_id, account_login, registered) VALUES (1, 'acme', 1), (2, 'JSONbored', 1), (3, 'stranger', 0)").run();
+    await env.DB.prepare(
+      `INSERT INTO orb_pr_outcomes (repository_full_name, pr_number, installation_id, outcome, occurred_at) VALUES
+        ('acme/widgets', 1, 1, 'merged', ?1),
+        ('acme/widgets', 2, 1, 'closed', ?1),
+        ('jsonbored/loopover', 3, 2, 'merged', ?1),
+        ('stranger/repo', 4, 3, 'merged', ?1),
+        ('acme/widgets', 5, 1, 'merged', ?2)`,
+    )
+      .bind(daysAgo(100), daysAgo(1))
+      .run();
+  };
+
+  it("REGRESSION: the cumulative public total is IDENTICAL before and after the prune, and the aged raw rows are gone", async () => {
+    const env = createTestEnv();
+    await seedOutcomes(env);
+    const before = await getOrbGlobalStats(env);
+    expect(before).toEqual({ merged: 3, closed: 1, total: 4 }); // unregistered install 3 never counted
+
+    const results = await pruneExpiredRecords(env, { nowMs: NOW, policy: [RULE] });
+
+    expect(results[0]?.deleted).toBe(4); // ALL aged rows deleted, including the never-counted unregistered one
+    const remaining = await env.DB.prepare("SELECT pr_number FROM orb_pr_outcomes").all<{ pr_number: number }>();
+    expect(remaining.results.map((row) => row.pr_number)).toEqual([5]);
+    expect(await getOrbGlobalStats(env)).toEqual(before);
+  });
+
+  it("INVARIANT: rows the live query never counted are deleted WITHOUT folding — an unregistered install and an own-ledger-published PR do not join the total on prune day", async () => {
+    const env = createTestEnv();
+    await seedOutcomes(env);
+    // acme/widgets#1 was already counted by the own ledger (published surface): the live query excludes it,
+    // so the fold must too -- otherwise the public total would JUMP by one the day retention runs.
+    await env.DB.prepare(
+      "INSERT INTO audit_events (id, event_type, target_key, outcome, created_at) VALUES ('evt-1', 'github_app.pr_public_surface_published', 'acme/widgets#1', 'success', ?)",
+    )
+      .bind(daysAgo(100))
+      .run();
+    const before = await getOrbGlobalStats(env);
+    expect(before).toEqual({ merged: 2, closed: 1, total: 3 });
+
+    await pruneExpiredRecords(env, { nowMs: NOW, policy: [RULE] });
+
+    expect(await getOrbGlobalStats(env)).toEqual(before);
+    const rollup = await env.DB.prepare("SELECT SUM(total) AS n FROM orb_outcome_rollups").first<{ n: number }>();
+    expect(rollup?.n).toBe(2); // acme/widgets#2 + jsonbored/loopover#3; NOT the published #1, NOT the unregistered #4
+  });
+
+  it("INVARIANT: a second prune run does not double-count — the fold and delete are one transaction, so re-running folds nothing new", async () => {
+    const env = createTestEnv();
+    await seedOutcomes(env);
+    const before = await getOrbGlobalStats(env);
+
+    await pruneExpiredRecords(env, { nowMs: NOW, policy: [RULE] });
+    const second = await pruneExpiredRecords(env, { nowMs: NOW, policy: [RULE] });
+
+    expect(second[0]?.deleted).toBe(0);
+    expect(await getOrbGlobalStats(env)).toEqual(before);
+  });
+
+  it("INVARIANT: excludeAccount still de-dups against FOLDED totals — the rollup keys on lowercased account_login", async () => {
+    const env = createTestEnv();
+    await seedOutcomes(env);
+    const beforeExcluded = await getOrbGlobalStats(env, { excludeAccount: "jsonbored" });
+    expect(beforeExcluded).toEqual({ merged: 2, closed: 1, total: 3 });
+
+    await pruneExpiredRecords(env, { nowMs: NOW, policy: [RULE] });
+
+    expect(await getOrbGlobalStats(env, { excludeAccount: "jsonbored" })).toEqual(beforeExcluded);
+  });
+
+  // Review feedback on #9532: the first revision deleted the whole aged cohort in ONE unbatched statement,
+  // arguing the daily volume is small. True today, and exactly the argument that ages badly -- one fleet-wide
+  // backfill makes it a multi-million-row statement, removing the batching safety net this file enforces for
+  // every other table. Slices are bounded now, and each slice's fold+delete still commit together.
+  it("REGRESSION: deletes in BOUNDED slices, not one unbatched statement — and the cumulative total is still exact", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare("INSERT INTO orb_github_installations (installation_id, account_login, registered) VALUES (1, 'acme', 1)").run();
+    // 25 aged rows with DISTINCT timestamps, so slicing has real boundaries to find.
+    const values = Array.from({ length: 25 }, (_, i) => `('acme/widgets', ${i + 1}, 1, '${i % 2 === 0 ? "merged" : "closed"}', '${daysAgo(200 - i)}')`).join(",");
+    await env.DB.prepare(`INSERT INTO orb_pr_outcomes (repository_full_name, pr_number, installation_id, outcome, occurred_at) VALUES ${values}`).run();
+    const before = await getOrbGlobalStats(env);
+    expect(before.total).toBe(25);
+
+    const results = await pruneExpiredRecords(env, { nowMs: NOW, policy: [RULE], batchSize: 10 });
+
+    expect(results[0]?.deleted).toBe(25); // every aged row removed, across multiple bounded slices
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM orb_pr_outcomes").first<{ n: number }>())?.n).toBe(0);
+    expect(await getOrbGlobalStats(env)).toEqual(before); // the public counter is untouched by the slicing
+  });
+
+  it("INVARIANT: a run of rows sharing ONE timestamp still makes progress — the inclusive slice boundary cannot spin", async () => {
+    // An exclusive `<` boundary against a tie run selects zero rows and loops forever. All 12 rows here share
+    // one occurred_at, so the first slice's boundary IS that timestamp: inclusive is what guarantees progress.
+    const env = createTestEnv();
+    await env.DB.prepare("INSERT INTO orb_github_installations (installation_id, account_login, registered) VALUES (1, 'acme', 1)").run();
+    const tied = daysAgo(150);
+    const values = Array.from({ length: 12 }, (_, i) => `('acme/widgets', ${i + 1}, 1, 'merged', '${tied}')`).join(",");
+    await env.DB.prepare(`INSERT INTO orb_pr_outcomes (repository_full_name, pr_number, installation_id, outcome, occurred_at) VALUES ${values}`).run();
+
+    const results = await pruneExpiredRecords(env, { nowMs: NOW, policy: [RULE], batchSize: 5 });
+
+    expect(results[0]?.deleted).toBe(12);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM orb_pr_outcomes").first<{ n: number }>())?.n).toBe(0);
+    expect((await getOrbGlobalStats(env)).total).toBe(12); // all 12 folded exactly once, no double-count
+  });
+
+  it("INVARIANT: maxPerTable still caps one run, leaving the remainder (and its rollup) for the next", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare("INSERT INTO orb_github_installations (installation_id, account_login, registered) VALUES (1, 'acme', 1)").run();
+    const values = Array.from({ length: 20 }, (_, i) => `('acme/widgets', ${i + 1}, 1, 'merged', '${daysAgo(200 - i)}')`).join(",");
+    await env.DB.prepare(`INSERT INTO orb_pr_outcomes (repository_full_name, pr_number, installation_id, outcome, occurred_at) VALUES ${values}`).run();
+
+    const first = await pruneExpiredRecords(env, { nowMs: NOW, policy: [RULE], batchSize: 5, maxPerTable: 10 });
+    expect(first[0]?.deleted).toBe(10);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM orb_pr_outcomes").first<{ n: number }>())?.n).toBe(10);
+    // The cumulative total is exact at EVERY point, not only once the cohort is fully drained.
+    expect((await getOrbGlobalStats(env)).total).toBe(20);
+
+    const second = await pruneExpiredRecords(env, { nowMs: NOW, policy: [RULE], batchSize: 5, maxPerTable: 10 });
+    expect(second[0]?.deleted).toBe(10);
+    expect((await getOrbGlobalStats(env)).total).toBe(20);
+  });
+
+  it("INVARIANT: dryRun counts without folding or deleting", async () => {
+    const env = createTestEnv();
+    await seedOutcomes(env);
+
+    const results = await pruneExpiredRecords(env, { dryRun: true, nowMs: NOW, policy: [RULE] });
+
+    expect(results[0]?.deleted).toBe(4);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM orb_pr_outcomes").first<{ n: number }>())?.n).toBe(5);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM orb_outcome_rollups").first<{ n: number }>())?.n).toBe(0);
+  });
+
+  it("ORDERING GUARD: orb_pr_outcomes prunes BEFORE audit_events, so the fold's own-ledger exclusion still sees the audit rows it needs", () => {
+    const tables = RETENTION_POLICY.map((rule) => rule.table);
+    expect(tables.indexOf("orb_pr_outcomes")).toBeGreaterThanOrEqual(0);
+    expect(tables.indexOf("orb_pr_outcomes")).toBeLessThan(tables.indexOf("audit_events"));
+  });
+});
+
+// #9474: the exported cutoff helper is what lets a consumer reason about a table's IMPERMANENCE instead of
+// silently assuming permanence -- verifyDecisionLedger keys its pruned-record tolerance on it, so the two can
+// never drift apart the way the retention rule and the verifier originally did.
+describe("retentionCutoffIsoForTable (#9474)", () => {
+  it("returns the policy cutoff for a covered table and null for a table with no rule", () => {
+    const cutoff = retentionCutoffIsoForTable("decision_records", NOW);
+    expect(cutoff).toBe(daysAgo(180)); // the published decision_records window, not a second hand-typed copy
+    expect(retentionCutoffIsoForTable("decision_ledger", NOW)).toBeNull(); // ledger rows are kept forever
+    expect(retentionCutoffIsoForTable("no_such_table", NOW)).toBeNull();
+  });
+
+  it("defaults to the current clock when nowMs is omitted", () => {
+    const cutoff = retentionCutoffIsoForTable("decision_records");
+    expect(cutoff).not.toBeNull();
+    // Within a second of a locally computed 180-day cutoff -- pins the default-arg arm without clock flake.
+    expect(Math.abs(Date.parse(cutoff!) - (Date.now() - 180 * 86_400_000))).toBeLessThan(1000);
   });
 });

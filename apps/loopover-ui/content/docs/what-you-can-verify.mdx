@@ -29,8 +29,24 @@ hash, so any edit to history breaks the chain at a point you can locate.
 curl -s "https://api.loopover.ai/v1/public/decision-ledger/verify" | jq
 ```
 
-Returns `{ ok, checked, nextAfterSeq, tipSeq, tipHash, totalCount }`, and a `break` object with a
-`409` status if the chain is inconsistent. No API key — **anyone** can run it.
+Returns `{ ok, checked, nextAfterSeq, tipSeq, tipHash, totalCount, prunedRecords }`, and a `break`
+object with a `409` status if the chain is inconsistent. No API key — **anyone** can run it.
+
+Two response fields encode deliberate, published semantics rather than tolerance for tampering:
+
+- **`prunedRecords`** — decision *records* (the preimages) are retained for 180 days; ledger rows are
+  kept forever. A ledger row whose hash-chained `createdAt` is older than that window may therefore
+  reference a pruned record: the chain checks still hold for it, only the content re-check is
+  impossible, and it is counted here instead of reported as `missing_record`. The tolerance keys on
+  the *ledger row's* timestamp, which is inside the hash chain — backdating it to sneak a fresh
+  deletion under the window breaks `row_hash_mismatch` first. What pruning genuinely gives up: the
+  row's committed digest stays published, but only a challenger holding the original preimage can
+  still prove a historical rewrite of it.
+- **Append grace (5 minutes)** — a record and its chain row are two writes moments apart, so a
+  record younger than the grace window with no chain entry is "append in flight", not a break. Older
+  than that, it is reported: past the verified tip as `short_tail` (the truncated-tail signature),
+  or behind it as `unchained_record` (the failed-append signature — interior orphans are found by an
+  anti-join over the whole record set, not just the tail).
 
 <Callout variant="note">
   **Trust assumption: tamper-evident, externally anchored.** The check above still catches sequence

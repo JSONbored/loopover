@@ -41,6 +41,7 @@
 // #9135 (also v4): `divertedByHoldout` records when the randomized close-audit holdout (#8831) converted this
 // decision's plan from a heuristic close to a hold — see that field's own doc comment.
 import { errorMessage, nowIso } from "../utils/json";
+import { retentionCutoffIsoForTable } from "../db/retention";
 
 /** Bump when the record's FIELD SET changes meaning — consumers compare records only within a version. */
 export const DECISION_RECORD_SCHEMA_VERSION = "5"; // v5 (#8834): + aiAgreement (inter-run agreement folded with the verbalized confidence); v4 (#9124/#9135): configDigest digests the resolved policy (+ settingsDigest split out), promptDigest digests the actual sent prompt, modelId -> modelIds (real identities), ciState populated, + divertedByHoldout; v3 (#8962): + salvageability {score, factors}; v2 (#8834): + aiConfidence, model/prompt commitments
@@ -397,7 +398,27 @@ export type LedgerBreak =
   // #9078: a ledger row commits to a decision_records id that no longer has a row at all — the one preimage
   // the chain vouched for is simply gone (a direct-DB deletion, or some other operation none of the
   // gap/predecessor/hash checks above can see, since those only ever compare ledger rows against each other).
-  | { kind: "missing_record"; atSeq: number; recordId: string };
+  // #9474: NOT reported for a record whose hash-chained ledger created_at is older than the published
+  // decision_records retention window — that absence is the retention policy doing its job, and reporting it
+  // as tampering would make legitimate pruning indistinguishable from evidence destruction. The verify result
+  // counts such rows in `prunedRecords` instead.
+  | { kind: "missing_record"; atSeq: number; recordId: string }
+  // #9489: a record older than the append grace window with NO ledger row vouching for it, at a created_at at
+  // or before the verified tail — i.e. an INTERIOR orphan the short_tail check could never see, because that
+  // check only ever compared the tail. A permanently failed appendDecisionLedger call, or a targeted deletion
+  // of one interior ledger row... except the latter also breaks the seq chain, so in practice this is the
+  // failed-append signature.
+  | { kind: "unchained_record"; atSeq: number; recordId: string };
+
+/**
+ * #9489: how old a decision_records row must be before its lack of a ledger row is treated as a break rather
+ * than an append still in flight. persistDecisionRecord inserts the record and appends its chain row in the
+ * same call, ordinarily milliseconds apart — but a verification running in that gap used to report
+ * `short_tail`, i.e. "tampering", on a PUBLIC endpoint, for a state every healthy write passes through. Five
+ * minutes is orders of magnitude beyond any healthy insert-to-append latency while still bounding how long a
+ * genuinely failed append (its own error-level alarm fires at the moment it happens) can hide from verify.
+ */
+export const LEDGER_APPEND_GRACE_MS = 5 * 60 * 1000;
 
 /**
  * Verify a window of the chain, resumable via `afterSeq` (0 = genesis). Reports the FIRST break with its
@@ -417,8 +438,13 @@ export async function verifyDecisionLedger(
   env: Env,
   afterSeq = 0,
   limit = 500,
-): Promise<{ ok: boolean; checked: number; nextAfterSeq: number | null; tipSeq: number; tipHash: string; totalCount: number; break?: LedgerBreak }> {
+): Promise<{ ok: boolean; checked: number; nextAfterSeq: number | null; tipSeq: number; tipHash: string; totalCount: number; prunedRecords: number; break?: LedgerBreak }> {
   const bounded = Math.max(1, Math.min(1000, limit));
+  // #9474: rows whose record preimage was legitimately pruned by the published retention policy (see the
+  // missing-record branch below). Surfaced in the result so "the chain is clean but N old preimages are no
+  // longer independently checkable" is an explicit, countable statement rather than silent.
+  let prunedRecords = 0;
+  const decisionRecordsPruneCutoff = retentionCutoffIsoForTable("decision_records");
   const [totalRow, globalTip, prior] = await Promise.all([
     env.DB.prepare("SELECT COUNT(*) AS n FROM decision_ledger").first<{ n: number }>(),
     env.DB.prepare("SELECT seq, row_hash AS rowHash FROM decision_ledger ORDER BY seq DESC LIMIT 1").first<{ seq: number; rowHash: string }>(),
@@ -430,7 +456,7 @@ export async function verifyDecisionLedger(
   const tipSeq = globalTip?.seq ?? 0;
   const tipHash = globalTip?.rowHash ?? LEDGER_GENESIS_HASH;
   // `== null` deliberately: D1 drivers disagree on .first() returning null vs undefined for no-row.
-  if (afterSeq > 0 && prior == null) return { ok: false, checked: 0, nextAfterSeq: null, tipSeq, tipHash, totalCount, break: { kind: "sequence_gap", atSeq: afterSeq, expectedSeq: afterSeq } };
+  if (afterSeq > 0 && prior == null) return { ok: false, checked: 0, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, break: { kind: "sequence_gap", atSeq: afterSeq, expectedSeq: afterSeq } };
   let prevHash = prior?.rowHash ?? LEDGER_GENESIS_HASH;
   let expectedSeq = afterSeq + 1;
   const { results } = await env.DB.prepare(
@@ -456,23 +482,39 @@ export async function verifyDecisionLedger(
   // from) so a call that finds ZERO new rows still has an anchor to reconcile against.
   let lastVerifiedCreatedAt = prior?.createdAt ?? null;
   for (const row of results) {
-    if (row.seq !== expectedSeq) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, break: { kind: "sequence_gap", atSeq: row.seq, expectedSeq } };
-    if (row.prevHash !== prevHash) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, break: { kind: "predecessor_mismatch", atSeq: row.seq } };
+    if (row.seq !== expectedSeq) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, break: { kind: "sequence_gap", atSeq: row.seq, expectedSeq } };
+    if (row.prevHash !== prevHash) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, break: { kind: "predecessor_mismatch", atSeq: row.seq } };
     const recomputed = await ledgerRowHash(prevHash, { seq: row.seq, recordId: row.recordId, recordDigest: row.recordDigest, createdAt: row.createdAt });
-    if (recomputed !== row.rowHash) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, break: { kind: "row_hash_mismatch", atSeq: row.seq } };
+    if (recomputed !== row.rowHash) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, break: { kind: "row_hash_mismatch", atSeq: row.seq } };
     // #9078: the promised record/ledger reconciliation — a row_hash chained cleanly can still commit to a
     // digest whose CONTENT has since been rewritten (or whose preimage is simply gone). Neither is visible to
     // the chain-only checks above, since those only ever compare ledger rows against each other.
     const storedRecord = recordsById.get(row.recordId);
-    if (!storedRecord) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, break: { kind: "missing_record", atSeq: row.seq, recordId: row.recordId } };
-    let recomputedContentDigest: string | null = null;
-    try {
-      recomputedContentDigest = await contentDigest(JSON.parse(storedRecord.recordJson));
-    } catch {
-      // Unparseable record_json is itself proof the content no longer matches whatever the chain committed to.
-      recomputedContentDigest = null;
+    if (!storedRecord) {
+      // #9474: decision_records carries a 180-day retention window while ledger rows are kept forever, so
+      // roughly 180 days after that rule first bit, EVERY full-chain verification would have reported
+      // missing_record at the first pruned row -- a false tamper signal manufactured by a legitimate,
+      // published retention policy, on the one endpoint whose whole point is that a skeptic can trust it.
+      // The tolerance keys on the LEDGER row's created_at, which is inside the hash chain: backdating it to
+      // sneak a fresh deletion under the cutoff breaks row_hash_mismatch above first. What is genuinely
+      // given up is exactly what pruning gives up -- the content reconciliation for that row -- while the
+      // chain checks (already passed above) still hold; the digest the chain committed to remains published,
+      // so a challenger holding the original preimage can still prove a historical rewrite by hand.
+      if (decisionRecordsPruneCutoff !== null && row.createdAt < decisionRecordsPruneCutoff) {
+        prunedRecords += 1;
+      } else {
+        return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, break: { kind: "missing_record", atSeq: row.seq, recordId: row.recordId } };
+      }
+    } else {
+      let recomputedContentDigest: string | null = null;
+      try {
+        recomputedContentDigest = await contentDigest(JSON.parse(storedRecord.recordJson));
+      } catch {
+        // Unparseable record_json is itself proof the content no longer matches whatever the chain committed to.
+        recomputedContentDigest = null;
+      }
+      if (recomputedContentDigest !== row.recordDigest) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, break: { kind: "content_mismatch", atSeq: row.seq, recordId: row.recordId } };
     }
-    if (recomputedContentDigest !== row.recordDigest) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, break: { kind: "content_mismatch", atSeq: row.seq, recordId: row.recordId } };
     prevHash = row.rowHash;
     lastVerifiedCreatedAt = row.createdAt;
     expectedSeq = row.seq + 1;
@@ -490,15 +532,46 @@ export async function verifyDecisionLedger(
   // (`nextAfterSeq === null`; a paginated window still has more to verify first) and only when there is an
   // actual tip to anchor the comparison on (an entirely empty, never-yet-populated ledger has nothing to
   // truncate FROM, and predates this reconciliation by definition).
+  //
+  // #9489 reshaped this reconciliation twice over:
+  //   1. GRACE — the record INSERT and its ledger append are two writes milliseconds apart, and a verify
+  //      landing between them used to report short_tail ("tampering") on a public endpoint for a state every
+  //      healthy write passes through. A record younger than LEDGER_APPEND_GRACE_MS is now simply not yet
+  //      due for reconciliation; a genuinely failed append still surfaces here on the next verify after the
+  //      grace lapses (and fired its own error-level alarm at the moment it happened).
+  //   2. INTERIOR ORPHANS — the old check only compared created_at against the verified TAIL, so the moment
+  //      any newer record chained cleanly, an unchained record behind it became invisible forever. The
+  //      NOT EXISTS anti-join (indexed via decision_ledger_record_id, migration 0198) asks the real
+  //      question — "does ANY ledger row vouch for this record?" — which catches both positions. The newest
+  //      orphan decides the break kind: past the tail it is the truncated-tail signature short_tail always
+  //      meant; at or before the tail it is an interior unchained_record.
+  // Records legitimately pruned by retention cannot false-positive here in either direction: pruning deletes
+  // the RECORD row, and this reconciliation only ever reports records that still exist.
   if (nextAfterSeq === null && lastVerifiedCreatedAt !== null) {
-    const orphaned = await env.DB.prepare("SELECT COUNT(*) AS n FROM decision_records WHERE created_at > ?").bind(lastVerifiedCreatedAt).first<{ n: number }>();
-    /* v8 ignore next -- defensive: a bare COUNT(*) always returns exactly one row (even {n: 0}); the `?? 0`
-     * only satisfies .first<T>()'s optional-by-signature TS return type. */
-    if ((orphaned?.n ?? 0) > 0) {
-      return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, break: { kind: "short_tail", atSeq: expectedSeq - 1 } };
+    const graceCutoffIso = new Date(Date.parse(nowIso()) - LEDGER_APPEND_GRACE_MS).toISOString();
+    const orphan = await env.DB.prepare(
+      "SELECT id, created_at AS createdAt FROM decision_records r WHERE r.created_at <= ? AND NOT EXISTS (SELECT 1 FROM decision_ledger l WHERE l.record_id = r.id) ORDER BY r.created_at DESC LIMIT 1",
+    )
+      .bind(graceCutoffIso)
+      .first<{ id: string; createdAt: string }>();
+    // `== null` deliberately: D1 drivers disagree on .first() returning null vs undefined for no-row.
+    if (orphan != null) {
+      return {
+        ok: false,
+        checked,
+        nextAfterSeq: null,
+        tipSeq,
+        tipHash,
+        totalCount,
+        prunedRecords,
+        break:
+          orphan.createdAt > lastVerifiedCreatedAt
+            ? { kind: "short_tail", atSeq: expectedSeq - 1 }
+            : { kind: "unchained_record", atSeq: expectedSeq - 1, recordId: orphan.id },
+      };
     }
   }
-  return { ok: true, checked, nextAfterSeq, tipSeq, tipHash, totalCount };
+  return { ok: true, checked, nextAfterSeq, tipSeq, tipHash, totalCount, prunedRecords };
 }
 
 /** One ledger row, exactly as chained -- the shape `GET /v1/public/decision-ledger/row/:seq` returns. */

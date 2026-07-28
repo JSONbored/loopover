@@ -710,7 +710,8 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     const env = {
       DB: {
         prepare: (sql: string) => {
-          if (sql.includes("orb_pr_outcomes")) {
+          // #9474: getOrbGlobalStats now ALSO reads the durable orb_outcome_rollups fold (empty here).
+          if (sql.includes("orb_pr_outcomes") || sql.includes("orb_outcome_rollups")) {
             return {
               bind: () => ({ first: async () => ({ merged: 0, closed: 0, total: 0 }) }),
             };
@@ -731,6 +732,13 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     const env = {
       DB: {
         prepare: (sql: string) => {
+          // #9474: the rollup read must return the no-rows aggregate shape (all-NULL SUMs), so this test
+          // also pins that live-scan totals are NOT double-counted through the rollup arm.
+          if (sql.includes("orb_outcome_rollups")) {
+            return {
+              bind: () => ({ first: async () => ({ merged: null, closed: null, total: null }) }),
+            };
+          }
           if (sql.includes("orb_pr_outcomes")) {
             return {
               bind: () => ({ first: async () => ({ merged: 12, closed: 8, total: 20 }) }),

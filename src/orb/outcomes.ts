@@ -64,10 +64,19 @@ export async function getOrbGlobalStats(env: Env, opts: { excludeAccount?: strin
   // excludeAccount de-dups an account already counted by another source. "" = include all.
   const exclude = (opts.excludeAccount ?? "").toLowerCase();
   let row: { merged: number | null; closed: number | null; total: number | null } | null;
+  let rollup: { merged: number | null; closed: number | null; total: number | null } | null;
   // #8879: guard ONLY the query. A D1 error degrades to zeros, mirroring computeFleetAnalytics's try/catch
   // (src/orb/analytics.ts) so a failure on this join drops just the orb aggregate instead of 503-ing the entire
   // /v1/public/stats payload (accuracyTrend/reuseRateTrend/reviewVolumeTrend/rulePrecision) via the route catch.
   try {
+    // #9474: rows older than the 90-day retention window are folded into orb_outcome_rollups by the prune
+    // (atomically with their deletion -- see pruneExpiredRecords) precisely so THIS cumulative total never
+    // shrinks. Rollup rows key on the lowercased account_login, so the same excludeAccount de-dup applies.
+    rollup = await env.DB.prepare(
+      `SELECT SUM(merged) AS merged, SUM(closed) AS closed, SUM(total) AS total FROM orb_outcome_rollups WHERE (?1 = '' OR account_login <> ?1)`,
+    )
+      .bind(exclude)
+      .first<{ merged: number | null; closed: number | null; total: number | null }>();
     row = await env.DB.prepare(
       `SELECT
        SUM(CASE WHEN o.outcome = 'merged' THEN 1 ELSE 0 END) AS merged,
@@ -88,5 +97,10 @@ export async function getOrbGlobalStats(env: Env, opts: { excludeAccount?: strin
   }
   /* v8 ignore next -- an aggregate query always returns exactly one row; this guards the nullable .first() type only */
   if (!row) return { merged: 0, closed: 0, total: 0 };
-  return { merged: row.merged ?? 0, closed: row.closed ?? 0, total: row.total ?? 0 };
+  // The SUM() arms are genuinely reachable NULLs, not defensive: an aggregate over zero rows returns NULL.
+  return {
+    merged: (row.merged ?? 0) + (rollup?.merged ?? 0),
+    closed: (row.closed ?? 0) + (rollup?.closed ?? 0),
+    total: (row.total ?? 0) + (rollup?.total ?? 0),
+  };
 }

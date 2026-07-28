@@ -121,6 +121,18 @@ export function githubRateLimitAdmissionKeyForPublicToken(): GitHubRateLimitAdmi
   return "public-token";
 }
 
+/**
+ * #9494: the App JWT has its OWN 5000/hr bucket, entirely separate from any installation token's. Recording a
+ * JWT-authenticated response's headers under `installation:{id}` (as getAppInstallation did) periodically wrote
+ * a HEALTHY remaining count over a genuinely exhausted installation's newest observation -- and the admission
+ * readers take only the newest REST row per key. `refresh-installation-health` runs unconditionally every 30
+ * minutes, so an exhausted installation's parked jobs were re-admitted on that cadence, burned their retries
+ * against 403s, and re-parked, for the whole exhaustion window.
+ */
+export function githubRateLimitAdmissionKeyForAppJwt(): GitHubRateLimitAdmissionKey {
+  return "app-jwt";
+}
+
 /** The SINGLE token→admission-key resolver, so every GitHub read attributes consistently and a token can never
  *  travel without its matching key: the public bucket for the shared public token, the installation bucket for an
  *  installation token with a known installation id, else undefined (unattributed). Callers pass whichever token
@@ -420,16 +432,43 @@ export async function isRateLimitedResponse(response: Response): Promise<boolean
   }
 }
 
+/** The server-instructed wait in ms when Retry-After is present and valid, else null. Kept separate from
+ *  {@link rateLimitRetryMs} so a caller can ask "would honoring this exceed what we're willing to sleep
+ *  inline?" WITHOUT the cap already having been applied (#9494). */
+export function retryAfterMs(response: Response): number | null {
+  const retryAfterHeader = response.headers.get("retry-after");
+  if (retryAfterHeader == null) return null;
+  const retryAfter = Number(retryAfterHeader);
+  if (!Number.isFinite(retryAfter) || retryAfter < 0) return null;
+  return retryAfter * 1000;
+}
+
+/**
+ * #9494: a secondary-limit Retry-After is typically 60s, but the inline budget is 8s -- so the old code
+ * truncated the server's instruction and retried up to 3 times inside the window GitHub explicitly asked us to
+ * stay out of, which its own docs warn can extend or escalate a secondary block. When the instructed wait
+ * exceeds the inline cap the right move is to stop retrying here and let the response surface: the QUEUE layer
+ * already honors Retry-After properly, with jitter (githubRateLimitRetryDelayMs / rateLimitRetryDelayWithJitter,
+ * src/selfhost/queue-common.ts), and defers sibling jobs for the same admission target too.
+ */
+export function exceedsInlineRetryBudget(response: Response): boolean {
+  const instructed = retryAfterMs(response);
+  return instructed !== null && instructed > GITHUB_RATE_LIMIT_MAX_DELAY_MS;
+}
+
 /** How long to wait before the next rate-limit retry: honor a valid Retry-After (seconds), else exponential
  *  backoff — each capped so a review can never stall on one call. A sustained PRIMARY limit (reset up to an hour
- *  out) simply exhausts the few inline retries and the queue retries the job later. Exported for tests. */
+ *  out) simply exhausts the few inline retries and the queue retries the job later. Exported for tests.
+ *
+ *  #9494: jittered. Up to QUEUE_CONCURRENCY workers can trip the same limit within milliseconds of each other;
+ *  a fixed 500/1000/2000 ladder had them all retry in lockstep, concentrating every attempt into the same
+ *  instants. The jitter is deterministic in `attempt` only insofar as it is bounded -- the randomness is what
+ *  spreads the herd, and a rate-limit retry has no replay/determinism contract to preserve. */
 export function rateLimitRetryMs(response: Response, attempt: number): number {
-  const retryAfterHeader = response.headers.get("retry-after");
-  if (retryAfterHeader != null) {
-    const retryAfter = Number(retryAfterHeader);
-    if (Number.isFinite(retryAfter) && retryAfter >= 0) return Math.min(retryAfter * 1000, GITHUB_RATE_LIMIT_MAX_DELAY_MS);
-  }
-  return Math.min(500 * 2 ** attempt, GITHUB_RATE_LIMIT_MAX_DELAY_MS);
+  const instructed = retryAfterMs(response);
+  if (instructed !== null) return Math.min(instructed, GITHUB_RATE_LIMIT_MAX_DELAY_MS);
+  const base = Math.min(500 * 2 ** attempt, GITHUB_RATE_LIMIT_MAX_DELAY_MS);
+  return Math.min(base + Math.floor(Math.random() * (base / 2)), GITHUB_RATE_LIMIT_MAX_DELAY_MS);
 }
 
 function responseFromCached(hit: CachedGitHubResponse, replayKind: "hit" | "coalesced"): Response {
@@ -483,6 +522,10 @@ async function fetchWithGitHubRetry(input: RequestInfo | URL, init?: GitHubTimeo
       attempt >= GITHUB_RATE_LIMIT_MAX_RETRIES ? "exhausted" : "scheduled",
     );
     if (attempt >= GITHUB_RATE_LIMIT_MAX_RETRIES) break;
+    // #9494: GitHub asked for longer than we are willing to sleep inline -- surface the response instead of
+    // retrying inside the window it told us to avoid. The queue's own rate-limit path honors the full
+    // Retry-After with jitter and defers sibling jobs for the same target.
+    if (exceedsInlineRetryBudget(response)) break;
     await sleep(rateLimitRetryMs(response, attempt));
   }
   return response;

@@ -9,6 +9,7 @@ import {
   clearGitHubResponseCacheForTest,
   forcedSelfhostMode,
   githubHeaders,
+  githubRateLimitAdmissionKeyForAppJwt,
   githubRateLimitAdmissionKeyForInstallation,
   makeInstallationOctokit,
   timeoutFetch,
@@ -43,9 +44,11 @@ export {
 } from "../review/check-names";
 export type { CachedGitHubResponse, GitHubResponseCache } from "./client";
 export {
+  exceedsInlineRetryBudget,
   isCacheableGithubUrl,
   isRateLimitedResponse,
   rateLimitRetryMs,
+  retryAfterMs,
   setGitHubResponseCache,
 } from "./client";
 export {
@@ -403,7 +406,10 @@ export async function getAppInstallation(
   installationId: number,
 ): Promise<NonNullable<GitHubWebhookPayload["installation"]>> {
   const jwt = await createAppJwt(env);
-  const admissionKey = githubRateLimitAdmissionKeyForInstallation(installationId);
+  // #9494: this call authenticates with the App JWT, whose rate-limit bucket is separate from the
+  // installation's -- so its headers must NOT be recorded under `installation:{id}`. See
+  // githubRateLimitAdmissionKeyForAppJwt's own doc for the 30-minute false-clear this produced.
+  const admissionKey = githubRateLimitAdmissionKeyForAppJwt();
   const path = `/app/installations/${installationId}`;
   // Deliberately NOT passed as timeoutFetch's githubRateLimitAdmissionKey option here: that option also drives the
   // GET response-cache key (responseCacheKey, ./client), and `installation:{id}` collides across different calling

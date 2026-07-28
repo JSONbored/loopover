@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -1603,9 +1603,15 @@ describe("subscription CLI helpers + fail-safe", () => {
     const systemAppend = "REPOSITORY REVIEW INSTRUCTIONS: Follow async-error conventions.";
     let seen: string[] = [];
     let capturedInput = "";
+    // #9479: the per-call temp dir is now removed once the subprocess finishes, so the appended-prompt file
+    // must be read WHILE the CLI would still be running -- i.e. inside the spawn stub -- not after the call
+    // returns. Reading it here also matches reality more closely: the file exists exactly for the CLI's lifetime.
+    let capturedSystemAppendFile: string | undefined;
     const cap: StubSpawn = async (_c, a, o) => {
       seen = a;
       capturedInput = o.input ?? "";
+      const flagAt = a.indexOf("--append-system-prompt-file");
+      if (flagAt > -1) capturedSystemAppendFile = readFileSync(a[flagAt + 1] as string, "utf8");
       return { stdout: JSON.stringify({ type: "result", result: "ok" }), code: 0 };
     };
     await createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, cap).run("", {
@@ -1625,8 +1631,10 @@ describe("subscription CLI helpers + fail-safe", () => {
     expect(capturedInput).toContain("Review this diff.");
     const flagIndex = seen.indexOf("--append-system-prompt-file");
     expect(flagIndex).toBeGreaterThan(-1);
-    const filePath = seen[flagIndex + 1] as string;
-    expect(readFileSync(filePath, "utf8")).toBe(systemAppend);
+    expect(capturedSystemAppendFile).toBe(systemAppend);
+    // ... and the directory holding it does not outlive the call (#9479): these dirs accumulated on the
+    // container's writable layer forever, with repo review instructions left on disk.
+    expect(existsSync(seen[flagIndex + 1] as string)).toBe(false);
 
     await createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, cap).run("", {
       prompt: "Review this diff.",

@@ -598,6 +598,21 @@ async function isolatedCliCwd(): Promise<string> {
   return mkdtemp(join(tmpdir(), "loopover-ai-"));
 }
 
+/** #9479: remove a per-call temp dir once the subprocess is done with it. Nothing removed these: every AI review
+ *  call minted one (and, when repo review instructions are configured, wrote the composed system prompt into it),
+ *  so they accumulated on the container's writable overlay layer until it was recreated -- and left those repo
+ *  instructions on disk indefinitely. Best-effort by design: a cleanup failure must never turn a completed
+ *  review into a thrown error, and the next container recreation still collects anything missed. */
+async function removeIsolatedCliCwd(cwd: string | undefined): Promise<void> {
+  if (!cwd) return;
+  try {
+    const { rm } = await import("node:fs/promises");
+    await rm(cwd, { recursive: true, force: true });
+  } catch {
+    // best-effort -- see the doc comment.
+  }
+}
+
 /** Write `systemAppend` into `cwd` (the SAME per-call isolated temp dir already used for the subprocess's
  *  cwd, so it shares that directory's lifecycle) and return its path, for `--append-system-prompt-file`.
  *  Keeps repo review instructions out of argv/`ps aux` (#3951's concern) WITHOUT falling back to smuggling
@@ -903,6 +918,13 @@ async function defaultSpawn(): Promise<SpawnFn> {
         resolve({ stdout, code, stderr });
       });
       if (o.input != null) {
+        // #9479: `child.on("error")` catches SPAWN failures only -- it never receives stdio stream errors. If
+        // the CLI exits before draining stdin (an unknown flag on an upgraded binary, an immediate auth abort,
+        // an OOM kill), this ~250KB write fails with EPIPE on an emitter with no "error" listener, which Node
+        // escalates to an uncaught exception -> installSelfHostCrashHandlers -> exit(1), taking down every
+        // in-flight queue job in the container. The real failure is already surfaced by the exit-code and
+        // empty-output guards below, so swallowing the stream error here loses no diagnostic.
+        child.stdin?.on("error", () => undefined);
         child.stdin?.write(o.input);
         child.stdin?.end();
       }
@@ -997,6 +1019,7 @@ export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>
       );
       let attempted = false;
       let stdoutForMetrics = "";
+      let cliCwd: string | undefined;
       try {
         if (!token) throw new Error("claude_code_no_oauth_token");
         // Usage telemetry (#claude-code-otel-passthrough): the allowlist deliberately excludes these -- they are
@@ -1019,7 +1042,8 @@ export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>
         const systemAppend = normalizedSystemAppend(options);
         const prompt = toCliPrompt(options, systemAppend);
         const spawn = spawnImpl ?? (await defaultSpawn());
-        const cwd = await isolatedCliCwd();
+        cliCwd = await isolatedCliCwd();
+        const cwd = cliCwd;
         // Keep bypassPermissions (not "plan") only to avoid a headless approval prompt; the actual boundary is
         // tool removal. --tools "" removes every built-in tool, --strict-mcp-config prevents user/home MCP config
         // from loading, and mcp__* is a defense-in-depth deny for CLIs that still have MCP tools available. This
@@ -1088,6 +1112,7 @@ export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>
         throw error;
       } finally {
         if (attempted) recordCliUsageMetrics("claude-code", claudeModel, effort, stdoutForMetrics);
+        await removeIsolatedCliCwd(cliCwd);
       }
     },
   };
@@ -1119,6 +1144,7 @@ export function createCodexAi(
       );
       let attempted = false;
       let stdoutForMetrics = "";
+      let cliCwd: string | undefined;
       try {
         assertCodexCredentialIsolation(parentEnv);
         await authCheckImpl(parentEnv);
@@ -1136,7 +1162,7 @@ export function createCodexAi(
           input: prompt,
           timeoutMs,
           firstOutputTimeoutMs,
-          cwd: await isolatedCliCwd(),
+          cwd: (cliCwd = await isolatedCliCwd()),
         });
         stdoutForMetrics = stdout;
         if (timedOut && stalledNoOutput) {
@@ -1190,6 +1216,7 @@ export function createCodexAi(
         throw error;
       } finally {
         if (attempted) recordCliUsageMetrics("codex", codexModel, effort, stdoutForMetrics);
+        await removeIsolatedCliCwd(cliCwd);
       }
     },
   };

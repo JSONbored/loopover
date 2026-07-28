@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, URL } from "node:url";
+import { createRequire } from "node:module";
 
 /** Normalize c8's SF: paths to forward slashes for Codecov. Swallows only a missing report
  *  (ENOENT on read) — CI's "Verify REES coverage report exists" step fails closed downstream.
@@ -36,7 +37,11 @@ function collectTests(dir: string, out: string[] = []): string[] {
 
 function main() {
   const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
-  const c8Bin = join(root, "review-enrichment", "node_modules", "c8", "bin", "c8.js");
+  // #8608: resolved through Node's own algorithm FROM the workspace rather than a hardcoded
+  // review-enrichment/node_modules path -- npm is free to hoist c8 to the root (it did, on the c8@12 bump),
+  // and a hardcoded nested path breaks on exactly that. createRequire anchored in the workspace finds the
+  // binary wherever the install put it.
+  const c8Bin = createRequire(join(root, "review-enrichment", "package.json")).resolve("c8/bin/c8.js");
   const reportDir = join(root, "review-enrichment", "coverage");
   const testRoot = join(root, "review-enrichment", "test");
   const chdirPreload = join(root, "scripts", "rees-coverage-chdir.cjs");

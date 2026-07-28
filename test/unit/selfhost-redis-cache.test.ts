@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   assertSelfhostTransientCacheOwnershipRelease,
   createRedisCache,
+  isSingleInstanceDeployment,
   flushOrphanedLocksAtBoot,
   isWebhookDeliveryDuplicate,
   ORPHANED_LOCK_KEY_PATTERNS,
@@ -219,4 +220,24 @@ describe("flushOrphanedLocksAtBoot (#9021)", () => {
     expect(redis._store.has("ai-review-lock:owner/repo#1@sha1:block")).toBe(false);
     expect(redis._store.has("contributor-cap-lock:owner/repo:alice")).toBe(false);
   });
+});
+
+// #9468: the boot-time orphaned-lock flush deletes EVERY key matching the lock patterns, which is only sound
+// when no sibling process can be holding one. Nothing enforced that -- the same Redis is shared across replicas
+// for the token cache, and the pg queue backend exists to support more than one instance -- so a restarting
+// replica freed a live sibling's in-flight ai-review and pr-actuation locks and let the next pass duplicate
+// that review and its actuation, with no TTL expiry involved.
+describe("isSingleInstanceDeployment (#9468)", () => {
+  it.each([["1"], ["true"], ["TRUE"], ["yes"], ["on"]])("treats %s as an explicit opt-in", (value) => {
+    expect(isSingleInstanceDeployment({ LOOPOVER_SINGLE_INSTANCE: value })).toBe(true);
+  });
+
+  it.each([[undefined], [""], ["0"], ["false"], ["no"], ["off"], ["maybe"]])(
+    "defaults to false for %s — the flush must be opted into, never assumed",
+    (value) => {
+      // Fail-safe direction: skipping the flush costs a genuinely orphaned lock riding out its TTL (which
+      // #9008's steal path already recovers on demand); flushing wrongly costs a double close or merge.
+      expect(isSingleInstanceDeployment(value === undefined ? {} : { LOOPOVER_SINGLE_INSTANCE: value })).toBe(false);
+    },
+  );
 });

@@ -19,21 +19,31 @@
  */
 
 type HeldLockRelease = () => Promise<void>;
+type HeldLockEntry = { ownerToken: string; release: HeldLockRelease };
 
-const heldLocks = new Map<string, HeldLockRelease>();
+const heldLocks = new Map<string, HeldLockEntry>();
 
-/** Record that this process now holds `key`, with `release` as how to give it up. Call the moment a claim
- *  actually succeeds with real ownership (a fail-open "acquired but nothing to release" claim has nothing
- *  worth registering — see the call site's own guard). */
-export function registerHeldLock(key: string, release: HeldLockRelease): void {
-  heldLocks.set(key, release);
+/** Record that this process now holds `key` under `ownerToken`, with `release` as how to give it up. Call the
+ *  moment a claim actually succeeds with real ownership (a fail-open "acquired but nothing to release" claim
+ *  has nothing worth registering — see the call site's own guard). */
+export function registerHeldLock(key: string, ownerToken: string, release: HeldLockRelease): void {
+  heldLocks.set(key, { ownerToken, release });
 }
 
-/** Record that this process no longer holds `key` (its own release already ran). A shutdown racing the same
- *  release is harmless either way: `releaseTransientLockIfOwner`'s compare-and-delete makes a second release
- *  attempt against an already-released key a safe no-op. */
-export function unregisterHeldLock(key: string): void {
-  heldLocks.delete(key);
+/**
+ * Record that this process no longer holds `key` under `ownerToken` (its own release already ran).
+ *
+ * #9468: the unregister is CONDITIONAL on the token, mirroring the store-side compare-and-delete. Keyed by
+ * lock key alone, a later holder's entry could be deleted by an earlier holder's cleanup: a maintainer's
+ * forced re-run STEALS a live lock in the same process (#9008), overwriting the registry entry with the
+ * stealer's release; when the original pass then finished, its `releaseTransientLockIfOwner` correctly no-oped
+ * (wrong token) but its unregister still deleted the STEALER's entry. A SIGTERM during the stealer's
+ * still-running review then skipped that key entirely, stranding it for the full 1800s TTL after a hard kill —
+ * precisely the #8998 incident this registry exists to prevent. The same shape occurs when a fail-open claim
+ * (null token from a Redis blip) later "releases".
+ */
+export function unregisterHeldLock(key: string, ownerToken: string): void {
+  if (heldLocks.get(key)?.ownerToken === ownerToken) heldLocks.delete(key);
 }
 
 /** Best-effort release every lock currently on record, clearing the registry as it goes. Never throws: a
@@ -45,9 +55,9 @@ export async function releaseAllHeldLocksAtShutdown(): Promise<number> {
   const entries = [...heldLocks.entries()];
   heldLocks.clear();
   let attempted = 0;
-  for (const [, release] of entries) {
+  for (const [, entry] of entries) {
     attempted += 1;
-    await release().catch(() => undefined);
+    await entry.release().catch(() => undefined);
   }
   return attempted;
 }

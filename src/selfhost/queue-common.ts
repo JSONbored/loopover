@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 
-import { retryableJobDelayMs } from "../queue/retryable";
+import { ATTEMPT_FREE_RETRY_DEADLINE_MS, isAttemptFreeRetry, retryableJobDelayMs } from "../queue/retryable";
+
+export { ATTEMPT_FREE_RETRY_DEADLINE_MS, isAttemptFreeRetry };
 import {
   LOW_REST_RATE_LIMIT_REMAINING,
   MAINTENANCE_RESERVED_HEADROOM,

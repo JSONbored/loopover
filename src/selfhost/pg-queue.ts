@@ -10,7 +10,9 @@ import { withReviewSpan } from "./tracing";
 import { withOtelSpan } from "./otel";
 import { capturePostHogError, withPostHogMonitor } from "./posthog";
 import {
+  ATTEMPT_FREE_RETRY_DEADLINE_MS,
   consumingRetryDelayMs,
+  isAttemptFreeRetry,
   deterministicJitterMs,
   FOREGROUND_QUEUE_PRIORITY_FLOOR,
   errorMessageWithCause,
@@ -1582,6 +1584,31 @@ export function createPgQueue(
         }
         const attempts = Number(job.attempts) + 1;
         const errMsg = errorMessageWithCause(error);
+        // #9465: lock contention is "not our turn yet", not a failure -- charging it an attempt killed jobs
+        // after ~25s of contention against a lock designed to be held for minutes, losing a reopen-reclose
+        // enforcement outright in production. Re-pend WITHOUT consuming the budget, exactly as the sibling
+        // rate-limit path below does, bounded by the job's age so a genuinely wedged lock still converges to a
+        // dead job instead of deferring forever.
+        if (isAttemptFreeRetry(error) && Date.now() - Number(job.created_at) < ATTEMPT_FREE_RETRY_DEADLINE_MS) {
+          const retryDelayMs = consumingRetryDelayMs(error, backoff(attempts));
+          await pool.query(
+            `UPDATE ${TABLE} SET status='pending', run_after=$1, last_error=$2, deferred_by='lock_contended' WHERE id=$3`,
+            [Date.now() + retryDelayMs, errMsg, job.id],
+          );
+          await recordQueueMetric("loopover_jobs_lock_contended_deferred_total");
+          logAudit({
+            event: "job_lock_contended",
+            ts: Date.now(),
+            job_id: job.id,
+            payload_type: extractPayloadType(job.payload),
+            ...payloadContext,
+            latency_ms: Date.now() - claimedAt,
+            attempts: Number(job.attempts),
+            retry_after_ms: retryDelayMs,
+            error: errMsg,
+          }, jobTraceParent);
+          return true;
+        }
         const rateLimitDelayMs = githubRateLimitRetryDelayMs(error);
         if (rateLimitDelayMs !== null) {
           const now = Date.now();

@@ -2,6 +2,8 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nodeSqliteDriver } from "../../src/selfhost/d1-adapter";
 import { createSqliteQueue } from "../../src/selfhost/sqlite-queue";
+import { PrActuationLockContendedError } from "../../src/queue/transient-locks";
+import { ATTEMPT_FREE_RETRY_DEADLINE_MS } from "../../src/queue/retryable";
 import { jobCoalesceKey, queueSnapshotFromBinding } from "../../src/selfhost/queue-common";
 import { DEFAULT_FOREGROUND_LANE_MAX_STARVE_AGE_MS } from "../../src/selfhost/queue-fairness";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
@@ -4473,5 +4475,70 @@ describe("createSqliteQueue (durable #980)", () => {
         await q.stop();
       }
     });
+  });
+});
+
+// #9465: lock contention is "not our turn yet", not a failure. It used to be charged an attempt like any other
+// error, so with a flat 5s retry and maxRetries 5 a waiter DIED after roughly 25 seconds -- against a lock
+// designed to be held for minutes (PR_ACTUATION_LOCK_TTL_SECONDS is 600, spanning a whole publish -> AI review
+// -> maintain pass). Confirmed in production: the only dead-lettered jobs in a 7-day window were three
+// actuation-lock contentions, one a reopen-reclose whose single webhook-gated trigger and absent reconciler
+// meant that one-shot enforcement was lost outright.
+describe("attempt-free deferral on lock contention (#9465)", () => {
+  beforeEach(() => { vi.spyOn(process.stdout, "write").mockImplementation(() => true); });
+  afterEach(() => { vi.useRealTimers(); resetMetrics(); vi.restoreAllMocks(); });
+
+  const contend = () => {
+    throw new PrActuationLockContendedError("acme/widgets", 7, "public-surface-publish");
+  };
+
+  it("REGRESSION: re-pends WITHOUT consuming an attempt, so a waiter cannot die while the lock is legitimately held", async () => {
+    const driver = makeDriver();
+    const q = createSqliteQueue(driver, async () => contend(), { maxRetries: 2 });
+    await q.binding.send(msg("agent-regate-pr"));
+
+    // Far more contended passes than maxRetries would ever allow. Each retry schedules a future run_after, so
+    // clear it between drains to actually re-process rather than silently no-op.
+    for (let i = 0; i < 8; i += 1) {
+      driver.query("UPDATE _selfhost_jobs SET run_after = 0", []);
+      await q.drain();
+    }
+
+    const { rows } = driver.query("SELECT status, attempts, deferred_by FROM _selfhost_jobs LIMIT 1", []);
+    const row = (rows as Array<{ status: string; attempts: number; deferred_by: string | null }>)[0];
+    expect(row?.status).toBe("pending"); // NOT dead
+    expect(row?.attempts).toBe(0); // budget untouched
+    expect(row?.deferred_by).toBe("lock_contended"); // distinguishable from a rate-limit defer
+  });
+
+  it("INVARIANT: a genuine failure still consumes its budget and converges to dead — the deferral is narrow", async () => {
+    const driver = makeDriver();
+    const q = createSqliteQueue(driver, async () => {
+      throw new Error("a real failure");
+    }, { maxRetries: 2 });
+    await q.binding.send(msg("agent-regate-pr"));
+    for (let i = 0; i < 5; i += 1) {
+      driver.query("UPDATE _selfhost_jobs SET run_after = 0", []);
+      await q.drain();
+    }
+
+    const { rows } = driver.query("SELECT status FROM _selfhost_jobs LIMIT 1", []);
+    expect((rows as Array<{ status: string }>)[0]?.status).toBe("dead");
+  });
+
+  it("INVARIANT: past the attempt-free deadline a wedged lock still converges to dead, rather than deferring forever", async () => {
+    const driver = makeDriver();
+    const q = createSqliteQueue(driver, async () => contend(), { maxRetries: 1 });
+    await q.binding.send(msg("agent-regate-pr"));
+    // Age the job beyond ATTEMPT_FREE_RETRY_DEADLINE_MS so the deferral no longer applies.
+    driver.query("UPDATE _selfhost_jobs SET created_at = ?", [Date.now() - (ATTEMPT_FREE_RETRY_DEADLINE_MS + 60_000)]);
+
+    for (let i = 0; i < 4; i += 1) {
+      driver.query("UPDATE _selfhost_jobs SET run_after = 0", []);
+      await q.drain();
+    }
+
+    const { rows } = driver.query("SELECT status FROM _selfhost_jobs LIMIT 1", []);
+    expect((rows as Array<{ status: string }>)[0]?.status).toBe("dead"); // an operator can see it
   });
 });

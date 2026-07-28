@@ -129,7 +129,7 @@ export async function claimAiReviewLock(
   // no-op adapter, actually owns the key) so a shutdown signal can release it immediately instead of only via
   // graceful drain or the full 1800s TTL. A fail-open claim (ownerToken null) has nothing to release.
   if (claim.acquired && claim.ownerToken !== null) {
-    registerHeldLock(key, () => releaseTransientLockIfOwner(env, key, claim.ownerToken));
+    registerHeldLock(key, claim.ownerToken, () => releaseTransientLockIfOwner(env, key, claim.ownerToken));
   }
   return claim;
 }
@@ -148,7 +148,10 @@ export async function releaseAiReviewLock(
   // #8998: this process no longer holds it -- a later shutdown must not attempt to release a key it already
   // gave up (harmless either way, since the compare-and-delete release is idempotent, but there is no reason
   // to carry a stale entry).
-  unregisterHeldLock(key);
+  // #9468: token-scoped, so a pass whose lock was STOLEN from it (#9008) cannot delete the stealer's live
+  // registry entry on its way out. A null token means this pass never really owned the key (fail-open claim),
+  // so there is nothing of its own to unregister either.
+  if (ownerToken !== null) unregisterHeldLock(key, ownerToken);
 }
 
 /**

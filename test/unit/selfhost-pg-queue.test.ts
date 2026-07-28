@@ -3,6 +3,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Pool, QueryResult } from "pg";
 import { createPgQueue, setPgRetryPoolQueryDelayMsForTest } from "../../src/selfhost/pg-queue";
+import { PrActuationLockContendedError } from "../../src/queue/transient-locks";
+import { ATTEMPT_FREE_RETRY_DEADLINE_MS } from "../../src/queue/retryable";
 import { queueSnapshotFromBinding } from "../../src/selfhost/queue-common";
 import { DEFAULT_FOREGROUND_LANE_MAX_STARVE_AGE_MS } from "../../src/selfhost/queue-fairness";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
@@ -69,7 +71,8 @@ interface MockPool {
   fn: MockFn;
   enqueueResult(r: Partial<QueryResult>): void;
   /** Pre-load a job to be returned by the next RETURNING claim query. */
-  enqueueJob(id: string, payload: object, attempts?: number, jobKey?: string | null): void;
+  /** #9465: `createdAt` backs the attempt-free-deferral deadline, which is evaluated against job age. */
+  enqueueJob(id: string, payload: object, attempts?: number, jobKey?: string | null, createdAt?: number): void;
   setDeferUpdateRowCount(rowCount: number): void;
   /** Queues per-call rowCounts for the "AND status='dead'" revive UPDATE, one entry consumed per call in order
    *  (default 1 when the queue is empty) — lets a test simulate an overlapping reviver already winning the race
@@ -268,8 +271,8 @@ function makePool(): MockPool {
     pool: { query: fn } as unknown as Pool,
     fn: fn as unknown as MockFn,
     enqueueResult(r) { results.push(r); },
-    enqueueJob(id, payload, attempts = 0, jobKey = null) {
-      results.push({ rows: [{ id, payload: JSON.stringify(payload), attempts, job_key: jobKey }], rowCount: 1 });
+    enqueueJob(id, payload, attempts = 0, jobKey = null, createdAt = Date.now()) {
+      results.push({ rows: [{ id, payload: JSON.stringify(payload), attempts, job_key: jobKey, created_at: createdAt }], rowCount: 1 });
     },
     setDeferUpdateRowCount(rowCount) {
       deferUpdateRowCount = rowCount;
@@ -1097,6 +1100,44 @@ describe("createPgQueue (durable #977)", () => {
     const calls = (m.fn as unknown as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => String(c[0]));
     expect(calls.some((sql) => sql.includes("status='dead'"))).toBe(false);
     expect(calls.some((sql) => sql.includes("attempts=$1, run_after=$2"))).toBe(false);
+  });
+
+  // #9465: parity with the sqlite backend. Lock contention is "not our turn yet", not a failure -- charging it
+  // an attempt killed waiters after ~25s against a lock designed to be held for minutes, losing a reopen-reclose
+  // enforcement outright in production.
+  it("REGRESSION (#9465): lock contention re-pends WITHOUT consuming an attempt, and is tagged distinctly", async () => {
+    const m = makePool();
+    m.enqueueJob("1", { type: "agent-regate-pr" });
+    const consume = vi.fn().mockImplementation(async () => {
+      throw new PrActuationLockContendedError("acme/widgets", 7, "public-surface-publish");
+    });
+    const q = createPgQueue(m.pool, consume);
+    await q.init();
+    await q.drain();
+
+    const calls = (m.fn as unknown as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => String(c[0]));
+    // Re-pended under its own provenance tag, distinguishable from a rate-limit defer in the audit trail.
+    expect(calls.some((sql) => sql.includes("deferred_by='lock_contended'"))).toBe(true);
+    // Crucially: NOT the attempts-consuming retry UPDATE, and NOT a dead-letter.
+    expect(calls.some((sql) => sql.includes("attempts=$1, run_after=$2"))).toBe(false);
+    expect(calls.some((sql) => sql.includes("status='dead'"))).toBe(false);
+  });
+
+  it("INVARIANT (#9465): past the attempt-free deadline a wedged lock converges to the normal retry path", async () => {
+    // The deferral is bounded by job age so a lock that is somehow never released still surfaces as a dead job
+    // an operator can see, rather than deferring forever.
+    const m = makePool();
+    m.enqueueJob("1", { type: "agent-regate-pr" }, 0, null, Date.now() - (ATTEMPT_FREE_RETRY_DEADLINE_MS + 60_000));
+    const consume = vi.fn().mockImplementation(async () => {
+      throw new PrActuationLockContendedError("acme/widgets", 7, "public-surface-publish");
+    });
+    const q = createPgQueue(m.pool, consume);
+    await q.init();
+    await q.drain();
+
+    const calls = (m.fn as unknown as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(calls.some((sql) => sql.includes("deferred_by='lock_contended'"))).toBe(false);
+    expect(calls.some((sql) => sql.includes("attempts=$1, run_after=$2") || sql.includes("status='dead'"))).toBe(true);
   });
 
   it("regression: a GENERIC network error from consume() (e.g. GitHub API, not Postgres) still goes through normal retry, not silent reclaim", async () => {

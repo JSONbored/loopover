@@ -383,6 +383,13 @@ jobs:
       - name: Command redelivery-guard check
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
         run: npm run command-redelivery-guards:check
+
+      # #9003: a gate that can suppress a review or an action must be able to say WHY. A forceAiReview pass
+      # once finished with no fresh review and no audit event explaining it (#9000), costing hours of
+      # elimination -- this makes "nothing happened and nothing says why" fail CI instead.
+      - name: Dispatch gate-reason check
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
+        run: npm run dispatch-gate-reasons:check
       # Mechanical drift tripwire for the hand-duplicated src/{review,settings,signals} <-> loopover-engine
       # twin files, plus a version-skew check on the installed @loopover/engine (#4260). Same
       # local-only-until-now gap as the drift checks above. Also gated on `miner`: the reverse-direction

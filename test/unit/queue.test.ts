@@ -6926,13 +6926,11 @@ describe("queue processors", () => {
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 77, title: "Flip-flop PR", state: "open", user: { login: "contributor" }, head: { sha: headSha }, labels: [], body: "Closes #1" });
       await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 77, status: "complete", reviewsSyncedAt: new Date().toISOString() });
       await upsertPullRequestFile(env, { repoFullName: "JSONbored/gittensory", pullNumber: 77, path: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, payload: { patch: "@@\n+export const roll = final;" } });
-      // Pre-seed: last fresh verdict HAD a defect, and it has already flipped VERDICT_FLIP_ESCALATION_THRESHOLD
-      // times. The next verdict CHANGE (clean, i.e. no defect) crosses the threshold.
-      await env.DB.prepare(
-        "INSERT INTO ai_review_verdict_flips (repo_full_name, pull_number, last_had_defect, flip_count, updated_at) VALUES (?, ?, 1, ?, ?)",
-      )
-        .bind("JSONbored/gittensory", 77, VERDICT_FLIP_ESCALATION_THRESHOLD, new Date().toISOString())
-        .run();
+      // #9483: a flip now only counts when the review's content fingerprint MATCHES the prior verdict's --
+      // re-rolling UNCHANGED content is the exploit; honest iteration on changed content is not. So the prior
+      // state cannot simply be inserted with a null fingerprint (that would reset, by design). Instead run one
+      // real pass to establish the fingerprint for this exact content, then force the counter to the threshold
+      // and re-roll the SAME content, which is precisely the abuse pattern this guard exists to stop.
 
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = input.toString();
@@ -6951,6 +6949,17 @@ describe("queue processors", () => {
         if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
         return Response.json({});
       });
+
+      // Pass 1: establishes last_fingerprint for this content.
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "flip-seed", repoFullName: "JSONbored/gittensory", prNumber: 77, installationId: 123 });
+      // Force the counter to the threshold with the OPPOSITE prior verdict, keeping the fingerprint pass 1
+      // recorded, so the next roll of the same content is a flip that crosses the threshold.
+      await env.DB.prepare("UPDATE ai_review_verdict_flips SET last_had_defect = 1, flip_count = ? WHERE repo_full_name = ? AND pull_number = ?")
+        .bind(VERDICT_FLIP_ESCALATION_THRESHOLD, "JSONbored/gittensory", 77)
+        .run();
+      // Drop the cached review so pass 2 is a genuinely FRESH verdict -- a cache hit is a reuse, not a new roll,
+      // and deliberately does not count toward the flip state.
+      await env.DB.prepare("DELETE FROM ai_review_cache").run();
 
       await processJob(env, { type: "agent-regate-pr", deliveryId: "flip-final", repoFullName: "JSONbored/gittensory", prNumber: 77, installationId: 123 });
 

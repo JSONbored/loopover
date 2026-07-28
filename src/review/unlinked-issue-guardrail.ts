@@ -88,8 +88,8 @@ function hasUnlinkedIssueVerifyAiBinding(env: Env): boolean {
 /** Has this actor already run the AI verifier at or beyond the rate ceiling in the last window, across every
  *  repo/PR? Fail-safe: a read error resolves to "not rate-limited," so the pre-#4515 unconditional-
  *  verification behavior takes over rather than a DB hiccup silently disabling this guardrail. */
-async function isOverUnlinkedIssueVerifyRateCeiling(env: Env, authorLogin: string): Promise<boolean> {
-  const sinceIso = new Date(Date.now() - VERIFY_RATE_CEILING_WINDOW_MS).toISOString();
+async function isOverUnlinkedIssueVerifyRateCeiling(env: Env, authorLogin: string, nowMs: number): Promise<boolean> {
+  const sinceIso = new Date(nowMs - VERIFY_RATE_CEILING_WINDOW_MS).toISOString();
   const count = await countRecentAuditEventsForActor(env, authorLogin, UNLINKED_ISSUE_VERIFY_ATTEMPT_AUDIT_EVENT_TYPE, sinceIso).catch(() => 0);
   return count >= VERIFY_RATE_CEILING_MAX_ATTEMPTS;
 }
@@ -178,6 +178,12 @@ export type ResolveUnlinkedIssueMatchDispositionInput = {
    *  a login is renameable and a freed one is reclaimable, so matching a `confirmed_miner`-gated exception on
    *  username alone would let a squatter who claims a former miner's old login inherit it. */
   prAuthorGithubId?: number | null | undefined;
+  /** #9492: the decision pass's ONE recorded wall-clock instant (processors.ts's `decisionClock.nowMs`).
+   *  This module reads the clock in three places, and the one at the velocity exception below decides CLOSE
+   *  vs HOLD — a decision input, not telemetry. Optional so every existing caller/test keeps today's
+   *  behaviour byte-identically (`Date.now()` when omitted), which also keeps this module directly testable
+   *  without threading a clock through fixtures that do not care about it. */
+  nowMs?: number | undefined;
 };
 
 function unlinkedIssueMatchTargetKey(repoFullName: string, pullNumber: number): string {
@@ -188,8 +194,8 @@ function unlinkedIssueMatchTargetKey(repoFullName: string, pullNumber: number): 
  *  recency window, and if so when? Fail-safe: a read error resolves to "no prior match" (never wrongly
  *  escalates on a DB hiccup). Timestamp (not just a boolean) so the caller can apply the #4512 velocity
  *  exception. */
-async function priorUnlinkedIssueMatchTimestamp(env: Env, authorLogin: string, currentTargetKey: string): Promise<string | null> {
-  const sinceIso = new Date(Date.now() - UNLINKED_ISSUE_MATCH_REPEAT_WINDOW_MS).toISOString();
+async function priorUnlinkedIssueMatchTimestamp(env: Env, authorLogin: string, currentTargetKey: string, nowMs: number): Promise<string | null> {
+  const sinceIso = new Date(nowMs - UNLINKED_ISSUE_MATCH_REPEAT_WINDOW_MS).toISOString();
   return mostRecentAuditEventForOtherTarget(env, authorLogin, UNLINKED_ISSUE_MATCH_AUDIT_EVENT_TYPE, currentTargetKey, sinceIso).catch(() => null);
 }
 
@@ -228,6 +234,9 @@ async function recordUnlinkedIssueVerifyAttempt(env: Env, repoFullName: string, 
 export async function resolveUnlinkedIssueMatchDisposition(env: Env, input: ResolveUnlinkedIssueMatchDispositionInput): Promise<UnlinkedIssueMatchDisposition | undefined> {
   if (input.config.mode !== "hold") return undefined;
   if (input.linkedIssueCount > 0) return undefined;
+  // #9492: resolved ONCE here so all three clock-dependent reads below share one instant — two of them
+  // bound DB lookback windows and the third decides close-vs-hold, and they must agree.
+  const nowMs = input.nowMs ?? Date.now();
   const openIssues = await listOpenIssues(env, input.repoFullName);
   const candidateIssues: CandidateOpenIssue[] = openIssues.map((issue) => ({
     number: issue.number,
@@ -245,7 +254,7 @@ export async function resolveUnlinkedIssueMatchDisposition(env: Env, input: Reso
   const authorLogin = input.prAuthorLogin?.trim() || null;
   // #4515: cost-control gates ahead of the AI loop below. An unidentifiable author can't be rate-limited
   // individually (nothing to key the ceiling on), so only the shared budget check applies to them.
-  if (authorLogin && (await isOverUnlinkedIssueVerifyRateCeiling(env, authorLogin))) return unlinkedIssueVerifyCapacityHold("rate");
+  if (authorLogin && (await isOverUnlinkedIssueVerifyRateCeiling(env, authorLogin, nowMs))) return unlinkedIssueVerifyCapacityHold("rate");
   if (await isUnlinkedIssueVerifyBudgetExceeded(env, candidates.length)) return unlinkedIssueVerifyCapacityHold("budget");
   for (const candidate of candidates) {
     // #8356: mirror the spend-budget gate below — missing/no-op AI bindings fail closed to NO_MATCH
@@ -271,10 +280,10 @@ export async function resolveUnlinkedIssueMatchDisposition(env: Env, input: Reso
       };
     }
     const currentTargetKey = unlinkedIssueMatchTargetKey(input.repoFullName, input.pullNumber);
-    const priorMatchIso = await priorUnlinkedIssueMatchTimestamp(env, authorLogin, currentTargetKey);
+    const priorMatchIso = await priorUnlinkedIssueMatchTimestamp(env, authorLogin, currentTargetKey, nowMs);
     await recordUnlinkedIssueMatchOccurrence(env, input.repoFullName, input.pullNumber, authorLogin, candidate.issue.number);
     if (priorMatchIso) {
-      const gapMs = Date.now() - new Date(priorMatchIso).getTime();
+      const gapMs = nowMs - new Date(priorMatchIso).getTime();
       // #4512 velocity exception: gated on CONFIRMED miner identity, not on speed alone -- an unverified
       // account repeating this fast is the MORE suspicious case, not less, and still escalates to close.
       const velocityExceptionApplies = gapMs >= 0 && gapMs < VELOCITY_EXCEPTION_MAX_GAP_MS && (await isConfirmedOfficialMiner(env, authorLogin, input.prAuthorGithubId).catch(() => false));

@@ -52,6 +52,44 @@ describe("MCP miner write-tools (#780)", () => {
     }
   });
 
+  // #2315/#9492: buildSoftClaimSpec shipped in #2813 and was never registered as a tool — a silently dead
+  // feature, invisible to coverage because its own unit test exercised the builder perfectly well. It is the
+  // exact shape scripts/check-dead-source-files.ts now guards against; this test pins the wire-up itself.
+  it("post_soft_claim returns a runnable comment spec, and its body carries the advisory (not-an-assignment) framing", async () => {
+    const client = await connect();
+    const result = await client.callTool({
+      name: "loopover_post_soft_claim",
+      arguments: { repoFullName: "o/r", number: 7, minerId: "miner-a", claimedAt: "2026-07-28T00:00:00.000Z", expiresAt: "2026-07-28T06:00:00.000Z" },
+    });
+    expect(result.isError).toBeFalsy();
+    const spec = result.structuredContent as Spec;
+    expect(spec.command).toContain("gh issue comment 7 --repo 'o/r'");
+    // Reuses buildPostEligibilityCommentSpec's single-quote escaping rather than re-implementing it, so the
+    // whole body arrives inside one quoted argument.
+    expect(spec.command).toContain("miner-a");
+    expect(spec.command).toContain("expires at 2026-07-28T06:00:00.000Z");
+    expect(spec.command).toContain("not an assignment");
+  });
+
+  it("post_soft_claim omits the expiry sentence entirely when no expiresAt is supplied", async () => {
+    const client = await connect();
+    const result = await client.callTool({
+      name: "loopover_post_soft_claim",
+      arguments: { repoFullName: "o/r", number: 7, minerId: "miner-a", claimedAt: "2026-07-28T00:00:00.000Z" },
+    });
+    expect(result.isError).toBeFalsy();
+    expect((result.structuredContent as Spec).command).not.toContain("expires at");
+  });
+
+  it("post_soft_claim rejects a non-ISO claimedAt rather than embedding it in a comment", async () => {
+    const client = await connect();
+    const result = await client.callTool({
+      name: "loopover_post_soft_claim",
+      arguments: { repoFullName: "o/r", number: 7, minerId: "miner-a", claimedAt: "yesterday" },
+    });
+    expect(result.isError).toBeTruthy();
+  });
+
   // #2188 (boundary-safe test-generation slice of #1972).
   it("generate_tests returns a local-execution spec naming the framework and target files; loopover performs no write", async () => {
     const client = await connect();

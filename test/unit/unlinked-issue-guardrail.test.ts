@@ -213,6 +213,96 @@ describe("resolveUnlinkedIssueMatchDisposition", () => {
       expect(result?.kind).toBe("hold");
     });
 
+    // #9492: this module reads the wall clock in three places, and the velocity-exception gap at the third
+    // decides CLOSE vs HOLD. That made the choice a decision INPUT that the decision pass never recorded --
+    // and because replayDecision pins `action` and only re-derives evaluateGateCheck, replaying such a
+    // decision reported `verdict: "match"`: a FALSE CERTIFICATION, not a caught divergence.
+    describe("recorded decision clock (#9492)", () => {
+      // Uses a CONFIRMED miner deliberately: the velocity exception only applies to one, so this is the only
+      // configuration in which the wall-clock GAP is what decides close-vs-hold. For an unconfirmed author a
+      // repeat closes regardless of gap, which would make the assertion pass without exercising the clock.
+      function stubConfirmedMinerFetch(githubUsername: string) {
+        return vi.fn(async (input: RequestInfo | URL) => {
+          const url = input.toString();
+          if (url === "https://api.gittensor.io/miners") return Response.json([{ githubUsername, githubId: "123", totalPrs: 2, totalMergedPrs: 2, isEligible: true, credibility: 1 }]);
+          if (url === "https://api.gittensor.io/miners/123/prs") return Response.json([]);
+          if (url === "https://api.gittensor.io/miners/123") return Response.json({});
+          if (url === "https://mirror.gittensor.io/api/v1/miners/123/issues") return Response.json({ issues: [] });
+          return Response.json({});
+        });
+      }
+
+      it("REGRESSION: the velocity exception is evaluated at the SUPPLIED instant, not the live clock", async () => {
+        const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict()) }));
+        const env = createTestEnv({ AI: { run } as unknown as Ai });
+        await seedIssue(env, 7, "webhook retry duplicate bug", "retries duplicate events under load, needs a dedup key");
+        vi.stubGlobal("fetch", stubConfirmedMinerFetch("contributor-a"));
+        try {
+          const first = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, config: config() });
+          expect(first?.kind).toBe("hold");
+
+          // The LIVE clock would score this repeat as seconds later — inside the 1h window, so the velocity
+          // exception would HOLD it. The recorded instant places it 2 hours on, past the window, so it must
+          // CLOSE. The two answers differ, which is exactly what makes the recorded instant load-bearing.
+          const second = await resolveUnlinkedIssueMatchDisposition(env, {
+            ...BASE_INPUT,
+            pullNumber: 102,
+            config: config(),
+            nowMs: Date.now() + 2 * 60 * 60 * 1000,
+          });
+          expect(second?.kind).toBe("close");
+        } finally {
+          vi.unstubAllGlobals();
+        }
+      });
+
+      it("INVARIANT: with the SAME confirmed miner and no supplied instant, the live clock still holds — the pair pins the clock as the deciding input", async () => {
+        const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict()) }));
+        const env = createTestEnv({ AI: { run } as unknown as Ai });
+        await seedIssue(env, 7, "webhook retry duplicate bug", "retries duplicate events under load, needs a dedup key");
+        vi.stubGlobal("fetch", stubConfirmedMinerFetch("contributor-a"));
+        try {
+          expect((await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, config: config() }))?.kind).toBe("hold");
+          const second = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, pullNumber: 102, config: config() });
+          expect(second?.kind).toBe("hold");
+        } finally {
+          vi.unstubAllGlobals();
+        }
+      });
+
+      it("INVARIANT: omitting nowMs preserves the live-clock behaviour exactly — every existing caller is unaffected", async () => {
+        const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict()) }));
+        const env = createTestEnv({ AI: { run } as unknown as Ai });
+        await seedIssue(env, 7, "webhook retry duplicate bug", "retries duplicate events under load, needs a dedup key");
+
+        const first = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, config: config() });
+        expect(first?.kind).toBe("hold");
+        // No nowMs: an immediate repeat is inside the window, and an UNCONFIRMED author escalates as before.
+        const second = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, pullNumber: 102, config: config() });
+        expect(second?.kind).toBe("close");
+      });
+
+      it("INVARIANT: one supplied instant governs the repeat LOOKBACK too, not just the velocity gap", async () => {
+        const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict()) }));
+        const env = createTestEnv({ AI: { run } as unknown as Ai });
+        await seedIssue(env, 7, "webhook retry duplicate bug", "retries duplicate events under load, needs a dedup key");
+
+        const first = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, config: config() });
+        expect(first?.kind).toBe("hold");
+
+        // Far past the repeat-detection window: the prior occurrence falls out of the lookback entirely, so
+        // this reads as a FIRST offence and holds. Pins that the lookback shares the same instant -- were it
+        // still on the live clock, the prior row would remain in range and this would close.
+        const second = await resolveUnlinkedIssueMatchDisposition(env, {
+          ...BASE_INPUT,
+          pullNumber: 102,
+          config: config(),
+          nowMs: Date.now() + 400 * 24 * 60 * 60 * 1000,
+        });
+        expect(second?.kind).toBe("hold");
+      });
+    });
+
     describe("velocity exception for a CONFIRMED official miner (#4512)", () => {
       function stubMinerFetch(githubUsername: string) {
         return vi.fn(async (input: RequestInfo | URL) => {

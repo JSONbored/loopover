@@ -2793,6 +2793,13 @@ function buildAgentMaintenancePlanInput(args: {
   // existing test/caller that hasn't been updated to pass it keeps today's (pre-#9160) behavior exactly.
   scopedLinkedIssueClaimedAt?: string | null | undefined;
   manualReviewLockContentionResolved: AgentActionPlanInput["manualReviewLockContentionResolved"];
+  // #9492: the decision pass's ONE captured wall-clock instant (runAgentMaintenancePlanAndExecute's
+  // `decisionClock`). Required, not optional: this builder's `mergeBlockedSha` used to call `Date.now()`
+  // itself, which was a SECOND, unrecorded clock read in the very same pass that captures decisionClock --
+  // so the recorded instant and the instant that actually decided the merge-blocked reason code could differ,
+  // and a replay could never reproduce the latter. Typed as required so a future call site cannot reintroduce
+  // the gap by simply omitting it (the #9482 lesson: ad-hoc optional context fields are how these drift).
+  decisionNowMs: number;
 }): AgentActionPlanInput {
   const {
     gate,
@@ -2922,7 +2929,8 @@ function buildAgentMaintenancePlanInput(args: {
       // token, exhausted rate-limit window) carries an expiry; once it lapses the planner must see no block at
       // all and re-probe the merge, so a fleet-wide token blip stops stranding green, approved PRs forever.
       // Resolved here rather than in the planner so the planner stays a pure function of its inputs, clock-free.
-      mergeBlockedSha: activeMergeBlockedSha(pr, pr.headSha, Date.now()),
+      // #9492: the pass's recorded instant, not a fresh read — see decisionNowMs's own doc above.
+      mergeBlockedSha: activeMergeBlockedSha(pr, pr.headSha, args.decisionNowMs),
       mergeBlockedReason: pr.mergeBlockedReason,
       approvedHeadSha: pr.approvedHeadSha,
       authorLogin: pr.authorLogin,
@@ -3419,6 +3427,9 @@ async function runAgentMaintenancePlanAndExecute(
           changedPaths,
           diff: buildAiReviewDiff(changedFiles),
           prAuthorLogin: pr.authorLogin,
+          // #9492: the pass's recorded instant — the guardrail's velocity exception decides CLOSE vs HOLD off
+          // a wall-clock gap, so an unrecorded read there made that decision unreplayable.
+          nowMs: decisionClock.nowMs,
         })
       : undefined;
   const unlinkedIssueMatchHold = unlinkedIssueMatchDisposition?.kind === "hold" ? unlinkedIssueMatchDisposition : undefined;
@@ -3517,7 +3528,10 @@ async function runAgentMaintenancePlanAndExecute(
   if (typeof accountAgeThresholdDays === "number" && pr.authorLogin && !authorIsOwner && !authorIsAdmin && !authorIsAutomationBot) {
     const createdAt = await getGithubUserCreatedAt(env, installationId, pr.authorLogin);
     if (createdAt) {
-      const ageDays = (Date.now() - Date.parse(createdAt)) / (24 * 60 * 60 * 1000);
+      // #9492: the pass's recorded instant. This read decides `isNewAccount`, which HALVES the contributor
+      // open-PR cap and can therefore flip a cap CLOSE — a decision input, not telemetry. It sat inside a
+      // function that already had `decisionClock` in scope and simply didn't use it.
+      const ageDays = (decisionClock.nowMs - Date.parse(createdAt)) / (24 * 60 * 60 * 1000);
       isNewAccount = ageDays < accountAgeThresholdDays;
     }
     if (isNewAccount && resolveAutonomy(settings.autonomy, "review_state_label") === "auto") {
@@ -3629,6 +3643,7 @@ async function runAgentMaintenancePlanAndExecute(
       duplicateWinnerEnabled,
       scopedLinkedIssueClaimedAt,
       manualReviewLockContentionResolved: hadPriorLockContentionHold && !aiReviewLockContentionThisPass,
+      decisionNowMs: decisionClock.nowMs,
     }),
   );
   // Accuracy circuit-breakers (#self-improve / GAP-4): two INDEPENDENT, fail-open precision breakers, chained.

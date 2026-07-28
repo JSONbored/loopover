@@ -140,6 +140,29 @@ import {
   WorkboardItemSchema,
 } from "./schemas";
 
+/**
+ * The operationId and tag for a route registered from a loop (#9531).
+ *
+ * The literal `registerPath` calls above carry both inline; the handful registered from a table
+ * cannot, so they derive them here from the same rules. Derived rather than hand-listed because
+ * these tables exist precisely so that adding a sibling route is a one-line change -- requiring a
+ * second hand-written entry per route would give that up.
+ */
+function loopOperationMeta(method: string, path: string, tag: string): { operationId: string; tags: [string, ...string[]] } {
+  const stem = path
+    .split("/")
+    .filter((segment) => segment && segment !== "v1")
+    .map((segment) =>
+      segment
+        .split(/[-.]/)
+        .filter(Boolean)
+        .map((word) => `${word[0]!.toUpperCase()}${word.slice(1)}`)
+        .join(""),
+    )
+    .join("");
+  return { operationId: `${method}${stem}`, tags: [tag] };
+}
+
 export function buildOpenApiSpec() {
   const registry = new OpenAPIRegistry();
   registry.register("Health", HealthSchema);
@@ -273,6 +296,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/health",
+    operationId: "getHealth",
+    tags: ["Meta"],
     summary: "Service liveness probe",
     responses: {
       200: { description: "Service health", content: { "application/json": { schema: HealthSchema } } },
@@ -281,6 +306,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/mcp/compatibility",
+    operationId: "getMcpCompatibility",
+    tags: ["MCP"],
     summary: "Public-safe API and MCP client compatibility metadata",
     responses: {
       200: { description: "Public-safe API and MCP compatibility metadata", content: { "application/json": { schema: McpCompatibilitySchema } } },
@@ -289,6 +316,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/public/stats",
+    operationId: "listPublicStats",
+    tags: ["Public"],
     summary: "Public homepage aggregate stats",
     responses: {
       200: { description: "Public-safe homepage stats: lifetime PRs handled/merged/closed, gate + slop blocks, and reversal-grounded accuracy. Aggregate counts only.", content: { "application/json": { schema: PublicStatsSchema } } },
@@ -299,6 +328,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/public/github/repos/{owner}/{repo}/stats",
+    operationId: "listPublicGithubReposByOwnerByRepoStats",
+    tags: ["Public"],
     summary: "Public GitHub stars and forks for an allowlisted repository",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
@@ -310,6 +341,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/public/repos/{owner}/{repo}/quality",
+    operationId: "getPublicReposByOwnerByRepoQuality",
+    tags: ["Public"],
     summary: "Public repository quality summary for an opted-in repository",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
@@ -325,6 +358,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/registry/snapshot",
+    operationId: "getRegistrySnapshot",
+    tags: ["Registry"],
     summary: "Latest Gittensor registry snapshot",
     responses: {
       200: { description: "Latest Gittensor registry snapshot", content: { "application/json": { schema: RegistrySnapshotSchema } } },
@@ -333,6 +368,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/registry/changes",
+    operationId: "listRegistryChanges",
+    tags: ["Registry"],
     summary: "Diff between the two latest registry snapshots",
     responses: {
       200: { description: "Diff between latest registry snapshots", content: { "application/json": { schema: RegistryChangeReportSchema } } },
@@ -341,6 +378,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/scoring/model",
+    operationId: "getScoringModel",
+    tags: ["Scoring"],
     summary: "Latest scoring model snapshot",
     responses: {
       200: { description: "Latest private scoring model snapshot", content: { "application/json": { schema: ScoringModelSnapshotSchema } } },
@@ -349,6 +388,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/finding-taxonomy",
+    operationId: "getFindingTaxonomy",
+    tags: ["API"],
     summary: "Canonical AI-review finding taxonomy",
     responses: {
       200: { description: "Finding categories and the severity ladder", content: { "application/json": { schema: FindingTaxonomyDocumentSchema } } },
@@ -357,6 +398,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/enrichment-analyzers",
+    operationId: "listEnrichmentAnalyzers",
+    tags: ["API"],
     summary: "REES enrichment analyzer taxonomy",
     responses: {
       200: { description: "Default profile and the registered enrichment analyzers", content: { "application/json": { schema: EnrichmentAnalyzersTaxonomyDocumentSchema } } },
@@ -365,6 +408,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/upstream/status",
+    operationId: "listUpstreamStatus",
+    tags: ["Registry"],
     summary: "Upstream Gittensor source and ruleset drift status",
     responses: {
       200: { description: "Upstream Gittensor source/ruleset drift status", content: { "application/json": { schema: UpstreamStatusSchema } } },
@@ -373,6 +418,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/upstream/ruleset",
+    operationId: "getUpstreamRuleset",
+    tags: ["Registry"],
     summary: "Latest normalized upstream Gittensor ruleset snapshot",
     responses: {
       200: { description: "Latest normalized upstream Gittensor ruleset snapshot", content: { "application/json": { schema: UpstreamRulesetSnapshotSchema } } },
@@ -382,6 +429,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/upstream/drift",
+    operationId: "getUpstreamDrift",
+    tags: ["Registry"],
     summary: "Open and historical upstream drift reports",
     responses: {
       200: {
@@ -401,6 +450,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/scoring/preview",
+    operationId: "postScoringPreview",
+    tags: ["Scoring"],
     summary: "Generate a scoring preview artifact for a candidate contribution",
     responses: {
       200: { description: "Private scoring preview artifact", content: { "application/json": { schema: ScorePreviewSchema } } },
@@ -410,6 +461,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/scoring/eligibility-plan",
+    operationId: "postScoringEligibilityPlan",
+    tags: ["Scoring"],
     summary: "Derive a contributor eligibility plan from a scoring preview — REST mirror of loopover_get_eligibility_plan (#9301)",
     responses: {
       200: {
@@ -423,6 +476,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/scoring/explain-breakdown",
+    operationId: "postScoringExplainBreakdown",
+    tags: ["Scoring"],
     summary: "Explain a score breakdown from a scoring preview — REST mirror of loopover_explain_score_breakdown (#9301)",
     responses: {
       200: {
@@ -436,6 +491,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/sync/status",
+    operationId: "listSyncStatus",
+    tags: ["API"],
     summary: "Repository and installation sync status",
     responses: {
       200: { description: "Repository and installation sync status", content: { "application/json": { schema: SyncStatusSchema } } },
@@ -444,6 +501,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/readiness",
+    operationId: "listReadiness",
+    tags: ["API"],
     summary: "Operational readiness summary for the hosted API",
     responses: {
       200: { description: "Operational readiness summary for hosted API, signal fidelity, and public-review preparation", content: { "application/json": { schema: ReadinessSchema } } },
@@ -452,6 +511,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/installations",
+    operationId: "listInstallations",
+    tags: ["API"],
     summary: "List GitHub App installations and their health",
     responses: {
       200: {
@@ -470,6 +531,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/installations/{id}/health",
+    operationId: "getInstallationsByIdHealth",
+    tags: ["API"],
     summary: "GitHub App installation health detail",
     request: { params: z.object({ id: z.string() }) },
     responses: {
@@ -480,6 +543,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/installations/{id}/repair",
+    operationId: "getInstallationsByIdRepair",
+    tags: ["API"],
     summary: "GitHub App installation repair diagnostics",
     request: { params: z.object({ id: z.string() }) },
     responses: {
@@ -490,6 +555,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/installations/{id}/repair/refresh",
+    operationId: "postInstallationsByIdRepairRefresh",
+    tags: ["API"],
     summary: "Recompute GitHub App installation repair diagnostics",
     request: { params: z.object({ id: z.string() }) },
     responses: {
@@ -500,6 +567,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/app/notification-model",
+    operationId: "getAppNotificationModel",
+    tags: ["Control panel"],
     summary: "Opt-in notification model and PWA-readiness metadata",
     responses: {
       200: {
@@ -540,6 +609,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos",
+    operationId: "listRepos",
+    tags: ["API"],
     summary: "List known repositories",
     responses: {
       200: { description: "Known repositories", content: { "application/json": { schema: RepositorySchema.array() } } },
@@ -548,6 +619,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}",
+    operationId: "getReposByOwnerByRepo",
+    tags: ["Repositories"],
     summary: "Repository detail",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
@@ -558,6 +631,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/intelligence",
+    operationId: "getReposByOwnerByRepoIntelligence",
+    tags: ["Repositories"],
     summary: "Canonical repository intelligence bundle",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
@@ -567,6 +642,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/issue-quality",
+    operationId: "getReposByOwnerByRepoIssueQuality",
+    tags: ["Repositories"],
     summary: "Repository issue quality report",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
@@ -577,6 +654,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/gate-config/effective",
+    operationId: "getReposByOwnerByRepoGateConfigEffective",
+    tags: ["Repositories"],
     summary: "Current effective self-tuned gate config for a repo (#6247)",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
@@ -591,6 +670,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/selftune/overrides/audit",
+    operationId: "getReposByOwnerByRepoSelftuneOverridesAudit",
+    tags: ["Repositories"],
     summary: "Self-tune gate override audit trail for a repo (#9303)",
     request: {
       params: z.object({ owner: z.string(), repo: z.string() }),
@@ -613,6 +694,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "delete",
     path: "/v1/repos/{owner}/{repo}/selftune/overrides",
+    operationId: "deleteReposByOwnerByRepoSelftuneOverrides",
+    tags: ["Repositories"],
     summary: "Clear the live self-tune gate override for a repo (#9303)",
     request: {
       params: z.object({ owner: z.string(), repo: z.string() }),
@@ -637,6 +720,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/repos/{owner}/{repo}/validate-linked-issue",
+    operationId: "postReposByOwnerByRepoValidateLinkedIssue",
+    tags: ["Repositories"],
     summary: "Validate a linked issue for a planned change — REST mirror of loopover_validate_linked_issue (#9304)",
     request: {
       params: z.object({ owner: z.string(), repo: z.string() }),
@@ -657,6 +742,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/repos/{owner}/{repo}/check-before-start",
+    operationId: "postReposByOwnerByRepoCheckBeforeStart",
+    tags: ["Repositories"],
     summary: "Pre-work claim/duplicate check before starting an issue — REST mirror of loopover_check_before_start (#9304)",
     request: {
       params: z.object({ owner: z.string(), repo: z.string() }),
@@ -677,6 +764,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/loop/evaluate-escalation",
+    operationId: "postLoopEvaluateEscalation",
+    tags: ["Loop"],
     summary: "Evaluate whether a loop outcome should escalate — REST mirror of loopover_evaluate_escalation (#9309)",
     request: {
       body: {
@@ -695,6 +784,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/loop/results-payload",
+    operationId: "postLoopResultsPayload",
+    tags: ["Loop"],
     summary: "Compose a loop results-delivery payload — REST mirror of loopover_build_results_payload (#9309)",
     request: {
       body: {
@@ -713,6 +804,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/loop/progress-snapshot",
+    operationId: "postLoopProgressSnapshot",
+    tags: ["Loop"],
     summary: "Compose a running-loop progress snapshot — REST mirror of loopover_build_progress_snapshot (#9309)",
     request: {
       body: {
@@ -731,6 +824,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/loop/intake-idea",
+    operationId: "postLoopIntakeIdea",
+    tags: ["Loop"],
     summary: "Validate an idea submission and assemble its task-graph — REST mirror of loopover_intake_idea (#9309)",
     request: {
       body: {
@@ -749,6 +844,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/loop/plan-idea-claims",
+    operationId: "postLoopPlanIdeaClaims",
+    tags: ["Loop"],
     summary: "Disposition an idea's task-graph into a claim plan — REST mirror of loopover_plan_idea_claims (#9309)",
     request: {
       body: {
@@ -767,6 +864,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/lint/pr-text",
+    operationId: "postLintPrText",
+    tags: ["Advisory checks"],
     summary: "Lint a PR's commit messages + body — REST mirror of loopover_lint_pr_text (#9308)",
     request: { body: { content: { "application/json": { schema: LintPrTextRequestSchema } } } },
     responses: {
@@ -780,6 +879,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/lint/slop-risk",
+    operationId: "postLintSlopRisk",
+    tags: ["Advisory checks"],
     summary: "Assess a changeset's slop risk — REST mirror of loopover_check_slop_risk (#9308)",
     request: { body: { content: { "application/json": { schema: CheckSlopRiskRequestSchema } } } },
     responses: {
@@ -793,6 +894,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/lint/improvement-potential",
+    operationId: "postLintImprovementPotential",
+    tags: ["Advisory checks"],
     summary: "Score a changeset's structural improvement potential — REST mirror of loopover_check_improvement_potential (#9308)",
     request: { body: { content: { "application/json": { schema: CheckImprovementPotentialRequestSchema } } } },
     responses: {
@@ -806,6 +909,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/lint/open-pr-pressure",
+    operationId: "postLintOpenPrPressure",
+    tags: ["Advisory checks"],
     summary: "Simulate open-PR queue pressure for a repo — REST mirror of loopover_simulate_open_pr_pressure (#9308)",
     request: { body: { content: { "application/json": { schema: SimulateOpenPrPressureRequestSchema } } } },
     responses: {
@@ -819,6 +924,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/lint/boundary-tests",
+    operationId: "postLintBoundaryTests",
+    tags: ["Advisory checks"],
     summary: "Suggest boundary tests for a changeset — REST mirror of loopover_suggest_boundary_tests (#9308)",
     request: { body: { content: { "application/json": { schema: SuggestBoundaryTestsRequestSchema } } } },
     responses: {
@@ -832,6 +939,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/lint/test-evidence",
+    operationId: "postLintTestEvidence",
+    tags: ["Advisory checks"],
     summary: "Classify a changeset's test evidence — REST mirror of loopover_check_test_evidence (#9308)",
     request: { body: { content: { "application/json": { schema: CheckTestEvidenceRequestSchema } } } },
     responses: {
@@ -845,6 +954,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/lint/issue-slop",
+    operationId: "postLintIssueSlop",
+    tags: ["Advisory checks"],
     summary: "Assess an issue's slop risk from its title/body — REST mirror of loopover_check_issue_slop (#9308)",
     request: { body: { content: { "application/json": { schema: CheckIssueSlopRequestSchema } } } },
     responses: {
@@ -858,6 +969,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/validate/focus-manifest",
+    operationId: "postValidateFocusManifest",
+    tags: ["Advisory checks"],
     summary: "Validate a .loopover focus-manifest config — REST mirror of loopover_validate_config (#9308)",
     request: { body: { content: { "application/json": { schema: ValidateFocusManifestRequestSchema } } } },
     responses: {
@@ -871,6 +984,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/live-gate-thresholds",
+    operationId: "listReposByOwnerByRepoLiveGateThresholds",
+    tags: ["Repositories"],
     summary: "Live self-tuned gate thresholds for AMS probe (#6486)",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
@@ -885,6 +1000,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/maintainer-noise",
+    operationId: "getReposByOwnerByRepoMaintainerNoise",
+    tags: ["Repositories"],
     summary: "Maintainer queue-noise triage report for a repository (#9302)",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
@@ -900,6 +1017,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/ams-miner-cohort",
+    operationId: "getReposByOwnerByRepoAmsMinerCohort",
+    tags: ["Repositories"],
     summary: "AMS-vs-human contributor-mix cohort comparison for a repository (#9302)",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
@@ -915,6 +1034,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/gate-precision",
+    operationId: "getReposByOwnerByRepoGatePrecision",
+    tags: ["Repositories"],
     summary: "Per-gate-type false-positive precision measurement for a repository (#9302)",
     request: {
       params: z.object({ owner: z.string(), repo: z.string() }),
@@ -933,6 +1054,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/outcome-calibration",
+    operationId: "getReposByOwnerByRepoOutcomeCalibration",
+    tags: ["Repositories"],
     summary: "Slop-band and recommendation outcome calibration for a repository (#9302)",
     request: {
       params: z.object({ owner: z.string(), repo: z.string() }),
@@ -951,6 +1074,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/activation-preview",
+    operationId: "getReposByOwnerByRepoActivationPreview",
+    tags: ["Repositories"],
     summary: "Deterministic maintainer activation preview for a repository (#9302)",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
@@ -966,6 +1091,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/outcome-patterns",
+    operationId: "listReposByOwnerByRepoOutcomePatterns",
+    tags: ["Repositories"],
     summary: "Accepted and rejected pull request outcome patterns for a repository",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
@@ -976,6 +1103,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/registration-readiness",
+    operationId: "listReposByOwnerByRepoRegistrationReadiness",
+    tags: ["Repositories"],
     summary: "Gittensor registration readiness signal for repository owners",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
@@ -985,6 +1114,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/gittensor-config-recommendation",
+    operationId: "getReposByOwnerByRepoGittensorConfigRecommendation",
+    tags: ["Repositories"],
     summary: "Recommended Gittensor configuration for a repository",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
@@ -994,6 +1125,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/focus-manifest",
+    operationId: "getReposByOwnerByRepoFocusManifest",
+    tags: ["Repositories"],
     summary: "Repository focus manifest and compiled policy",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
@@ -1004,6 +1137,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/repos/{owner}/{repo}/focus-manifest/refresh",
+    operationId: "postReposByOwnerByRepoFocusManifestRefresh",
+    tags: ["Repositories"],
     summary: "Refresh the persisted focus manifest from the repository file",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
@@ -1014,6 +1149,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "put",
     path: "/v1/repos/{owner}/{repo}/focus-manifest",
+    operationId: "putReposByOwnerByRepoFocusManifest",
+    tags: ["Repositories"],
     summary: "Persist an API-backed focus manifest for a repository",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
@@ -1025,6 +1162,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/agent/pending-actions",
+    operationId: "listReposByOwnerByRepoAgentPendingActions",
+    tags: ["Repositories"],
     summary: "Maintainer-scoped agent approval queue of pending staged actions",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
@@ -1038,6 +1177,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/repos/{owner}/{repo}/agent/pending-actions",
+    operationId: "postReposByOwnerByRepoAgentPendingActions",
+    tags: ["Repositories"],
     summary: "Stage an agent action into the approval queue for maintainer review",
     request: {
       params: z.object({ owner: z.string(), repo: z.string() }),
@@ -1056,6 +1197,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/repos/{owner}/{repo}/agent/pending-actions/{id}/{decision}",
+    operationId: "postReposByOwnerByRepoAgentPendingActionsByIdByDecision",
+    tags: ["Repositories"],
     summary: "Accept (execute) or reject a staged agent action in the approval queue",
     request: { params: z.object({ owner: z.string(), repo: z.string(), id: z.string(), decision: z.enum(["accept", "reject"]) }) },
     responses: {
@@ -1072,6 +1215,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/agent/audit-feed",
+    operationId: "getReposByOwnerByRepoAgentAuditFeed",
+    tags: ["Repositories"],
     summary: "Maintainer-scoped agent audit feed of executed actions and approval decisions",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
@@ -1119,6 +1264,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/repos/{owner}/{repo}/pulls/{number}/incident-reports",
+    operationId: "postReposByOwnerByRepoPullsByNumberIncidentReports",
+    tags: ["Repositories"],
     summary: "Record a post-merge incident report for a pull request",
     request: {
       params: z.object({ owner: z.string(), repo: z.string(), number: z.string() }),
@@ -1149,6 +1296,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/app/incident-reports",
+    operationId: "postAppIncidentReports",
+    tags: ["Control panel"],
     summary: "Record a post-merge incident report from the operator side",
     request: {
       body: {
@@ -1180,6 +1329,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/app/self-dogfood/registration-pack",
+    operationId: "getAppSelfDogfoodRegistrationPack",
+    tags: ["Control panel"],
     summary: "Self-dogfood registration pack for the LoopOver repository",
     responses: {
       200: { description: "Private self-dogfood registration pack for the LoopOver repo", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
@@ -1189,6 +1340,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/self-dogfood-registration-pack",
+    operationId: "getReposByOwnerByRepoSelfDogfoodRegistrationPack",
+    tags: ["Repositories"],
     summary: "Self-dogfood registration pack when the repository matches the configured target",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
@@ -1199,6 +1352,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/onboarding-pack/preview",
+    operationId: "getReposByOwnerByRepoOnboardingPackPreview",
+    tags: ["Repositories"],
     summary: "Preview the onboarding pack for an accepted repository",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
@@ -1210,6 +1365,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/repos/{owner}/{repo}/contributor-issue-drafts/generate",
+    operationId: "postReposByOwnerByRepoContributorIssueDraftsGenerate",
+    tags: ["Repositories"],
     summary: "Generate maintainer-reviewed contributor issue drafts",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
@@ -1221,6 +1378,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/repos/{owner}/{repo}/issue-plan-drafts/generate",
+    operationId: "postReposByOwnerByRepoIssuePlanDraftsGenerate",
+    tags: ["Repositories"],
     summary: "AI-plan repo issue drafts from a maintainer goal",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
@@ -1232,6 +1391,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/settings",
+    operationId: "listReposByOwnerByRepoSettings",
+    tags: ["Repositories"],
     summary: "Repository automation settings",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
@@ -1241,6 +1402,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/automation-state",
+    operationId: "getReposByOwnerByRepoAutomationState",
+    tags: ["Repositories"],
     summary: "Derived agent automation state for a repository",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
@@ -1254,6 +1417,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/repos/{owner}/{repo}/repo-docs/refresh",
+    operationId: "postReposByOwnerByRepoRepoDocsRefresh",
+    tags: ["Repositories"],
     summary: "Open (or find the already-open) AGENTS.md/CLAUDE.md generation pull request",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
@@ -1263,6 +1428,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/repos/{owner}/{repo}/settings-preview",
+    operationId: "postReposByOwnerByRepoSettingsPreview",
+    tags: ["Repositories"],
     summary: "Dry-run the public surface decision for a sample pull request",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
@@ -1273,6 +1440,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/pulls/{number}/maintainer-packet",
+    operationId: "getReposByOwnerByRepoPullsByNumberMaintainerPacket",
+    tags: ["Repositories"],
     summary: "Maintainer review packet for a pull request",
     request: { params: z.object({ owner: z.string(), repo: z.string(), number: z.string() }) },
     responses: {
@@ -1282,6 +1451,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/pulls/{number}/reviewability",
+    operationId: "getReposByOwnerByRepoPullsByNumberReviewability",
+    tags: ["Repositories"],
     summary: "Pull request reviewability score and maintainer action",
     request: { params: z.object({ owner: z.string(), repo: z.string(), number: z.string() }) },
     responses: {
@@ -1291,6 +1462,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/pulls/{number}/ai-review-findings",
+    operationId: "listReposByOwnerByRepoPullsByNumberAiReviewFindings",
+    tags: ["Repositories"],
     summary: "A PR author's own structured, published AI-review findings",
     request: {
       params: z.object({ owner: z.string(), repo: z.string(), number: z.string() }),
@@ -1311,6 +1484,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/contributors/{login}/profile",
+    operationId: "getContributorsByLoginProfile",
+    tags: ["Contributors"],
     summary: "Contributor evidence profile",
     request: { params: z.object({ login: z.string() }) },
     responses: {
@@ -1320,6 +1495,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/contributors/{login}/decision-pack",
+    operationId: "getContributorsByLoginDecisionPack",
+    tags: ["Contributors"],
     summary: "Canonical contributor decision pack",
     request: { params: z.object({ login: z.string() }) },
     responses: {
@@ -1333,6 +1510,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/contributors/{login}/open-pr-monitor",
+    operationId: "getContributorsByLoginOpenPrMonitor",
+    tags: ["Contributors"],
     summary: "Contributor open-PR monitor with classifications and next-step packets",
     request: { params: z.object({ login: z.string() }) },
     responses: {
@@ -1345,6 +1524,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/contributors/{login}/pr-outcomes",
+    operationId: "listContributorsByLoginPrOutcomes",
+    tags: ["Contributors"],
     summary: "Contributor post-merge PR outcome history",
     request: {
       params: z.object({ login: z.string() }),
@@ -1360,6 +1541,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/contributors/{login}/notifications",
+    operationId: "listContributorsByLoginNotifications",
+    tags: ["Contributors"],
     summary: "Contributor badge notification feed",
     request: { params: z.object({ login: z.string() }) },
     responses: {
@@ -1372,6 +1555,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/contributors/{login}/notifications/read",
+    operationId: "postContributorsByLoginNotificationsRead",
+    tags: ["Contributors"],
     summary: "Mark contributor notifications read",
     request: {
       params: z.object({ login: z.string() }),
@@ -1394,6 +1579,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/contributors/{login}/watches",
+    operationId: "listContributorsByLoginWatches",
+    tags: ["Contributors"],
     summary: "List contributor issue-watch subscriptions — REST mirror of loopover_watch_issues action=list (#9306)",
     request: { params: z.object({ login: z.string() }) },
     responses: {
@@ -1408,6 +1595,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/contributors/{login}/watches",
+    operationId: "postContributorsByLoginWatches",
+    tags: ["Contributors"],
     summary: "Subscribe to a repo's new issues — REST mirror of loopover_watch_issues action=watch (#9306)",
     request: {
       params: z.object({ login: z.string() }),
@@ -1428,6 +1617,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "delete",
     path: "/v1/contributors/{login}/watches",
+    operationId: "deleteContributorsByLoginWatches",
+    tags: ["Contributors"],
     summary: "Unsubscribe from a repo's issue watches — REST mirror of loopover_watch_issues action=unwatch (#9306)",
     request: {
       params: z.object({ login: z.string() }),
@@ -1448,6 +1639,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/contributors/{login}/repos/{owner}/{repo}/decision",
+    operationId: "getContributorsByLoginReposByOwnerByRepoDecision",
+    tags: ["Contributors"],
     summary: "Repository-specific contributor decision",
     request: { params: z.object({ login: z.string(), owner: z.string(), repo: z.string() }) },
     responses: {
@@ -1458,6 +1651,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/preflight/pr",
+    operationId: "postPreflightPr",
+    tags: ["Preflight"],
     summary: "Run submission preflight for a pull request",
     responses: {
       200: { description: "Submission preflight result", content: { "application/json": { schema: PreflightResultSchema } } },
@@ -1467,6 +1662,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/preflight/review-risk",
+    operationId: "postPreflightReviewRisk",
+    tags: ["Preflight"],
     summary: "Explain review risk for a planned pull request",
     responses: {
       200: { description: "Review-risk explanation with preflight, role context, and recommendation", content: { "application/json": { schema: ReviewRiskExplanationSchema } } },
@@ -1477,6 +1674,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/preflight/local-diff",
+    operationId: "postPreflightLocalDiff",
+    tags: ["Preflight"],
     summary: "Run preflight against a local diff",
     responses: {
       200: { description: "Local diff preflight result", content: { "application/json": { schema: LocalDiffPreflightResultSchema } } },
@@ -1486,6 +1685,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/local/branch-analysis",
+    operationId: "postLocalBranchAnalysis",
+    tags: ["Local"],
     summary: "Analyze a local branch for MCP clients",
     responses: {
       200: { description: "Private local branch analysis for MCP clients", content: { "application/json": { schema: LocalBranchAnalysisSchema } } },
@@ -1496,6 +1697,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/agent/runs",
+    operationId: "postAgentRuns",
+    tags: ["Agent automation"],
     summary: "Queue an agent run",
     responses: {
       202: { description: "Copilot-only agent run queued", content: { "application/json": { schema: AgentRunBundleSchema } } },
@@ -1506,6 +1709,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/agent/runs",
+    operationId: "listAgentRuns",
+    tags: ["Agent automation"],
     summary: "List persisted agent runs for an actor",
     request: {
       query: z.object({
@@ -1538,6 +1743,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/agent/runs/{id}",
+    operationId: "getAgentRunsById",
+    tags: ["Agent automation"],
     summary: "Persisted agent run bundle",
     request: { params: z.object({ id: z.string() }) },
     responses: {
@@ -1548,6 +1755,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/opportunities/find",
+    operationId: "postOpportunitiesFind",
+    tags: ["Discovery"],
     summary: "Find cross-repo contribution opportunities (#9310)",
     request: {
       body: {
@@ -1567,6 +1776,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/issue-rag/retrieve",
+    operationId: "postIssueRagRetrieve",
+    tags: ["Discovery"],
     summary: "Retrieve issue-centric RAG context for the miner analyze phase (#9310)",
     request: {
       body: {
@@ -1592,6 +1803,7 @@ export function buildOpenApiSpec() {
     registry.registerPath({
       method: "post",
       path,
+      ...loopOperationMeta("post", path, "Agent automation"),
       summary,
       responses: {
         200: { description: "Agent run completed with deterministic ranked actions", content: { "application/json": { schema: AgentRunBundleSchema } } },
@@ -1604,6 +1816,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/bounties",
+    operationId: "listBounties",
+    tags: ["Bounties"],
     summary: "List known bounty records",
     responses: {
       200: { description: "Known bounty records", content: { "application/json": { schema: BountySchema.array() } } },
@@ -1612,6 +1826,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/bounties/{id}/advisory",
+    operationId: "getBountiesByIdAdvisory",
+    tags: ["Bounties"],
     summary: "Bounty lifecycle advisory",
     request: { params: z.object({ id: z.string() }) },
     responses: {
@@ -1622,6 +1838,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/bounties/{id}/lifecycle",
+    operationId: "getBountiesByIdLifecycle",
+    tags: ["Bounties"],
     summary: "Bounty lifecycle transition history",
     request: { params: z.object({ id: z.string() }) },
     responses: {
@@ -1632,6 +1850,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/github/webhook",
+    operationId: "postGithubWebhook",
+    tags: ["Webhooks"],
     summary: "Receive a GitHub webhook delivery",
     responses: {
       202: { description: "Webhook queued" },
@@ -1641,6 +1861,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/public/decision-ledger/verify",
+    operationId: "getPublicDecisionLedgerVerify",
+    tags: ["Public"],
     summary: "Verify a window of the hash-chained decision ledger (resumable via afterSeq)",
     responses: {
       200: { description: "Window verified clean; nextAfterSeq is the resume cursor (null at the tip). Every response also carries tipSeq/tipHash/totalCount for third-party checkpointing, and prunedRecords — the count of rows whose record preimage was legitimately pruned by the published retention window (chain checks still hold for them; only the content re-check is impossible, and the committed digest stays published)." },
@@ -1650,6 +1872,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/public/decision-ledger/row/{seq}",
+    operationId: "getPublicDecisionLedgerRowBySeq",
+    tags: ["Public"],
     summary: "Fetch one decision-ledger row by seq, so an external anchor can be bound back to the live chain",
     request: { params: z.object({ seq: z.string() }) },
     responses: {
@@ -1661,6 +1885,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/public/decision-ledger/anchor-key",
+    operationId: "getPublicDecisionLedgerAnchorKey",
+    tags: ["Public"],
     summary: "Published anchor-signing public keys with their full rotation history, for verifying an externally-published ledger anchor",
     responses: {
       200: { description: "{ keys: [{ keyId, publicKeySpki, notBefore, notAfter }], currentKeyId } — retired keys are retained so anchors signed under them stay verifiable; currentKeyId is null when unconfigured or the rotation state is ambiguous" },
@@ -1669,6 +1895,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/public/decision-ledger/anchors",
+    operationId: "listPublicDecisionLedgerAnchors",
+    tags: ["Public"],
     summary: "Every external anchoring attempt, success and failure, paginated newest-first — anchoring's own health as a public fact",
     request: { query: z.object({ backend: z.enum(["rekor", "git", "ots"]).optional(), before: z.string().optional(), limit: z.string().optional() }) },
     responses: {
@@ -1678,6 +1906,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/public/decision-records/{owner}/{repo}/{pull}",
+    operationId: "getPublicDecisionRecordsByOwnerByRepoByPull",
+    tags: ["Public"],
     summary: "Fetch the latest published decision record for a PR, verbatim, plus its content digest",
     request: { params: z.object({ owner: z.string(), repo: z.string(), pull: z.string() }) },
     responses: {
@@ -1689,6 +1919,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/public/eval-scores",
+    operationId: "listPublicEvalScores",
+    tags: ["Public"],
     summary: "Fetch EvalScoreRecords (#9215) -- the objective-eval-provider transport, digest-committed and independently re-derivable",
     request: { query: z.object({ subject: z.string().optional(), since: z.string().optional() }) },
     responses: {
@@ -1699,6 +1931,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/orb/ingest",
+    operationId: "postOrbIngest",
+    tags: ["ORB"],
     summary: "Ingest a batch of Orb events",
     responses: {
       200: { description: "Batch accepted; returns { accepted: number }" },
@@ -1708,6 +1942,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/auth/github/start",
+    operationId: "getAuthGithubStart",
+    tags: ["Auth"],
     summary: "Start GitHub web OAuth",
     responses: {
       302: { description: "Redirects to GitHub web OAuth" },
@@ -1717,6 +1953,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/auth/github/callback",
+    operationId: "getAuthGithubCallback",
+    tags: ["Auth"],
     summary: "Complete GitHub web OAuth and redirect to the app",
     responses: {
       302: { description: "Completes GitHub web OAuth and redirects to the app" },
@@ -1731,6 +1969,7 @@ export function buildOpenApiSpec() {
     registry.registerPath({
       method: "post",
       path,
+      ...loopOperationMeta("post", path, "Auth"),
       summary,
       responses: {
         200: { description: "Auth request completed" },
@@ -1744,6 +1983,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/auth/session",
+    operationId: "getAuthSession",
+    tags: ["Auth"],
     summary: "Current authentication session",
     responses: {
       200: { description: "Current auth session, or signed_out when no app session is present" },
@@ -1752,6 +1993,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/auth/github/token",
+    operationId: "postAuthGithubToken",
+    tags: ["Auth"],
     summary: "Fetch the current session's live GitHub token (for AMS git operations)",
     responses: {
       200: { description: "The session's GitHub token", content: { "application/json": { schema: z.object({ token: z.string() }) } } },
@@ -1763,6 +2006,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/app/overview",
+    operationId: "getAppOverview",
+    tags: ["Control panel"],
     summary: "Live app overview assembled from backend data",
     responses: {
       200: { description: "Live app overview assembled from backend data", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
@@ -1784,6 +2029,7 @@ export function buildOpenApiSpec() {
     registry.registerPath({
       method: "get",
       path,
+      ...loopOperationMeta("get", path, "Control panel"),
       summary,
       responses: {
         200: { description: "Live app API response", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
@@ -1794,6 +2040,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/app/selfhost/queue/dead/{id}/replay",
+    operationId: "postAppSelfhostQueueDeadByIdReplay",
+    tags: ["Control panel"],
     summary: "Replay a dead-letter queue job",
     request: {
       params: z.object({
@@ -1812,6 +2060,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "delete",
     path: "/v1/app/selfhost/queue/dead/{id}",
+    operationId: "deleteAppSelfhostQueueDeadById",
+    tags: ["Control panel"],
     summary: "Delete a dead-letter queue job",
     request: {
       params: z.object({
@@ -1830,6 +2080,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "delete",
     path: "/v1/app/selfhost/queue/dead",
+    operationId: "deleteAppSelfhostQueueDead",
+    tags: ["Control panel"],
     summary: "Purge all dead-letter queue jobs",
     responses: {
       200: { description: "Dead-letter jobs purged", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
@@ -1841,6 +2093,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/app/selfhost/queue/dead",
+    operationId: "getAppSelfhostQueueDead",
+    tags: ["Control panel"],
     summary: "List dead-letter queue jobs",
     request: {
       query: z.object({
@@ -1865,6 +2119,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/app/analytics/weekly-value-report",
+    operationId: "getAppAnalyticsWeeklyValueReport",
+    tags: ["Control panel"],
     summary: "Weekly value report",
     request: {
       query: z.object({
@@ -1905,6 +2161,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/app/skipped-pr-audit",
+    operationId: "getAppSkippedPrAudit",
+    tags: ["Control panel"],
     summary: "Audit of pull requests the review agent skipped",
     request: {
       query: z.object({
@@ -1940,6 +2198,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/app/commands/preview",
+    operationId: "postAppCommandsPreview",
+    tags: ["Control panel"],
     summary: "Dry-run a sanitized @loopover command response",
     responses: {
       200: { description: "Maintainer dry-run preview of a sanitized @loopover command response (no GitHub mutation)", content: { "application/json": { schema: CommandPreviewResponseSchema } } },
@@ -1956,6 +2216,7 @@ export function buildOpenApiSpec() {
     registry.registerPath({
       method: "post",
       path,
+      ...loopOperationMeta("post", path, "Control panel"),
       summary,
       responses: {
         200: { description: "Live app mutation or preview response", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
@@ -1970,6 +2231,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/internal/provider-credentials/{provider}",
+    operationId: "getInternalProviderCredentialsByProvider",
+    tags: ["Internal"],
     summary: "Read the secret-free status of a stored instance subscription credential",
     request: { params: z.object({ provider: z.enum(["claude-code", "codex"]) }) },
     responses: {
@@ -1991,6 +2254,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/internal/provider-credentials/{provider}",
+    operationId: "postInternalProviderCredentialsByProvider",
+    tags: ["Internal"],
     summary: "Store or replace an instance subscription credential, encrypted at rest",
     request: {
       params: z.object({ provider: z.enum(["claude-code", "codex"]) }),
@@ -2006,6 +2271,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "delete",
     path: "/v1/internal/provider-credentials/{provider}",
+    operationId: "deleteInternalProviderCredentialsByProvider",
+    tags: ["Internal"],
     summary: "Clear a stored instance subscription credential, falling back to the secret file or boot env",
     request: { params: z.object({ provider: z.enum(["claude-code", "codex"]) }) },
     responses: {
@@ -2017,6 +2284,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/internal/jobs/refresh-registry",
+    operationId: "postInternalJobsRefreshRegistry",
+    tags: ["Internal"],
     summary: "Queue a registry refresh job",
     responses: {
       202: { description: "Registry refresh queued" },
@@ -2026,6 +2295,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/internal/jobs/backfill-registered-repos",
+    operationId: "postInternalJobsBackfillRegisteredRepos",
+    tags: ["Internal"],
     summary: "Queue a registered-repository backfill job",
     responses: {
       202: { description: "Registered repo backfill queued" },
@@ -2035,6 +2306,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/internal/jobs/backfill-repo-segment",
+    operationId: "postInternalJobsBackfillRepoSegment",
+    tags: ["Internal"],
     summary: "Queue a repository segment backfill job",
     responses: {
       202: { description: "Repository segment backfill queued" },
@@ -2045,6 +2318,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/internal/jobs/backfill-pr-details",
+    operationId: "postInternalJobsBackfillPrDetails",
+    tags: ["Internal"],
     summary: "Queue an open pull request detail backfill job",
     responses: {
       202: { description: "Open PR detail backfill queued" },
@@ -2055,6 +2330,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/internal/jobs/generate-review-recap",
+    operationId: "postInternalJobsGenerateReviewRecap",
+    tags: ["Internal"],
     summary: "Queue a maintainer review recap digest job",
     responses: {
       202: { description: "Maintainer review recap digest queued (#1963)" },
@@ -2076,6 +2353,7 @@ export function buildOpenApiSpec() {
     registry.registerPath({
       method: "post",
       path,
+      ...loopOperationMeta("post", path, "Internal"),
       summary,
       responses: {
         202: { description: "Internal job queued" },
@@ -2086,6 +2364,8 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/internal/bounties/import",
+    operationId: "postInternalBountiesImport",
+    tags: ["Internal"],
     summary: "Import a bounty snapshot",
     responses: {
       200: { description: "Bounty snapshot imported" },

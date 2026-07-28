@@ -792,3 +792,33 @@ describe("extractTableRowImageUrls (#4366)", () => {
     ]);
   });
 });
+
+// #9434: the same exclusion behaviour asserted in screenshot-table-gate-engine.test.ts, but reached through
+// the `src/review/screenshot-table-gate` re-export shim rather than the engine source path.
+//
+// Not redundant: the two import paths are DISTINCT coverage identities (the shim is its own real file), and
+// CI sharding means a given shard may run only one of the two suites. Exercising the exclusion from both
+// sides keeps these lines attributed under either identity in whichever shard picks them up — the
+// misattribution class vitest.config.ts's own coverage-include comment documents from the 2026-07-24
+// codecov/patch incident.
+describe("whenPaths exclusions via the src re-export (#9434)", () => {
+  const scoped = ["apps/ui/public/**", "!apps/ui/public/openapi.json"];
+
+  it("carves a generated file out of an otherwise-in-scope directory", () => {
+    expect(isScreenshotTableGateInScope(config({ whenPaths: scoped }), [], ["apps/ui/public/openapi.json"])).toBe(false);
+    expect(isScreenshotTableGateInScope(config({ whenPaths: scoped }), [], ["apps/ui/public/hero.png"])).toBe(true);
+  });
+
+  it("applies the SAME exclusion to the committed-image check, so the two cannot disagree on what is scoped", () => {
+    // A path excluded from gate scope must not still count as a stray committed image — that disagreement is
+    // exactly what sharing one matcher prevents.
+    expect(hasCommittedImageFile(["apps/ui/public/openapi.json"], scoped)).toBe(false);
+    expect(hasCommittedImageFile(["apps/ui/public/hero.png"], scoped)).toBe(true);
+  });
+
+  it("INVARIANT: a plain whenPaths list with no exclusions behaves exactly as before", () => {
+    expect(isScreenshotTableGateInScope(config({ whenPaths: ["apps/ui/**"] }), [], ["apps/ui/src/App.tsx"])).toBe(true);
+    expect(hasCommittedImageFile(["apps/ui/src/logo.png"], ["apps/ui/**"])).toBe(true);
+    expect(hasCommittedImageFile(["docs/logo.png"], ["apps/ui/**"])).toBe(false);
+  });
+});

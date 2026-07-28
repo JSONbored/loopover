@@ -17,6 +17,7 @@ import {
   requiredScreenshotMatrixPairs,
   type ScreenshotMatrixPair,
 } from "../../packages/loopover-engine/src/review/screenshot-table-gate";
+import { matchesAnyWithExclusions } from "../../packages/loopover-engine/src/signals/change-guardrail";
 import type { ScreenshotTableGateConfig } from "../../packages/loopover-engine/src/types/manifest-deps-types";
 
 function config(overrides: Partial<ScreenshotTableGateConfig> = {}): ScreenshotTableGateConfig {
@@ -793,5 +794,29 @@ describe("extractTableRowImageUrls (#4366)", () => {
       ["https://x/1-before.png", "https://x/1-after.png"],
       ["https://x/2-before.png", "https://x/2-after.png"],
     ]);
+  });
+});
+
+// #9434: the exclusion matcher exercised through the ENGINE source path (change-guardrail.test.ts reaches the
+// same function through the `src/signals/change-guardrail` re-export shim, a distinct coverage identity).
+// Both paths are asserted so the lines stay attributed under either identity regardless of how CI shards the
+// suites — the misattribution class vitest.config.ts's coverage-include comment documents.
+describe("matchesAnyWithExclusions via the engine path (#9434)", () => {
+  it("excludes a generated file from a directory glob, and leaves the rest matching", () => {
+    const globs = ["apps/ui/public/**", "!apps/ui/public/openapi.json"];
+    expect(matchesAnyWithExclusions("apps/ui/public/openapi.json", globs)).toBe(false);
+    expect(matchesAnyWithExclusions("apps/ui/public/hero.png", globs)).toBe(true);
+  });
+
+  it("requires an include: an all-exclude list never matches, and a non-matching path stays false", () => {
+    expect(matchesAnyWithExclusions("apps/ui/public/x.png", ["!apps/ui/public/**"])).toBe(false);
+    expect(matchesAnyWithExclusions("docs/readme.md", ["apps/ui/**", "!apps/ui/public/**"])).toBe(false);
+  });
+
+  it("SECURITY: an over-complex exclude glob excludes NOTHING — it can only widen gate scope, never shrink it", () => {
+    // Opposite fail direction from an include: an unsafe exclude resolving to 'matches everything' would
+    // silently shrink a safety gate's coverage.
+    const result = matchesAnyWithExclusions("apps/ui/public/openapi.json", ["apps/ui/public/**", "!apps/*-*-*-x.json"]);
+    expect(result).toBe(true);
   });
 });

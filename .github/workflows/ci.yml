@@ -376,6 +376,13 @@ jobs:
       - name: Re-gate sort-key check
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
         run: npm run regate-sort-key:check
+
+      # #9563: every webhook-owned handler must decide about #9312's redelivery guard out loud. Three had
+      # silently skipped it -- one writing duplicate permanent suppression rows, two spending a second paid
+      # model call -- because the family is written in two signature formattings and a grep sees only half.
+      - name: Command redelivery-guard check
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
+        run: npm run command-redelivery-guards:check
       # Mechanical drift tripwire for the hand-duplicated src/{review,settings,signals} <-> loopover-engine
       # twin files, plus a version-skew check on the installed @loopover/engine (#4260). Same
       # local-only-until-now gap as the drift checks above. Also gated on `miner`: the reverse-direction

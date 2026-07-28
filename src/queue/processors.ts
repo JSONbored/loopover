@@ -13167,6 +13167,15 @@ async function maybeProcessGateOverrideCommand(
     return true;
   }
 
+  // #9312: webhook-redelivery guard. Deliberately placed BEFORE resolveOverrideHeadSha below, because that
+  // call is the whole hazard: it re-fetches the LIVE head on purpose (see its own comment), so a replay does
+  // not merely repeat the original override -- if a commit landed in between, it neutralizes the Gate on a
+  // NEWER commit the maintainer never overrode, breaking this handler's own "no permanent bypass, this commit
+  // only" invariant. The check-run PATCH and the marker comment are individually idempotent, which is exactly
+  // why this was easy to miss; the audit and product-usage rows also stop double-writing.
+  const redeliverySinceIso = new Date(Date.now() - COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS).toISOString();
+  if (await hasAuditEventForDelivery(env, actor, "github_app.gate_overridden", `${repoFullName}#${pr.number}`, deliveryId, redeliverySinceIso)) return true;
+
   // Respect pause/dry-run/global-freeze like every other agent-driven write in this file (#2256). Without this,
   // an operator's pause or the DB kill-switch does not stop a maintainer's @loopover gate-override from
   // flipping the live Gate check-run to neutral and posting a real confirmation comment.
@@ -13326,8 +13335,16 @@ async function maybeProcessResolveCommand(env: Env, deliveryId: string, payload:
   const { normalizeResolveFindingRef, selectWarningsForResolve } = await import("../review/review-memory-wire");
   const req = classifyPrCommandRequest(payload, getInstallationId(payload));
   if (!req.ok) { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_skipped", actor: req.actor, targetKey: req.targetKey, outcome: "completed", detail: req.reason, metadata: { deliveryId, repoFullName: req.repoFullName ?? null, reason: req.reason } }); await recordGithubProductUsage(env, "finding_resolved_skipped", { actor: req.actor, repoFullName: req.repoFullName, targetKey: req.targetKey, outcome: "skipped", metadata: { reason: req.reason } }); return true; }
-  const [pr, settings] = await Promise.all([getPullRequest(env, req.repoFullName, req.pr.number), resolveRepositorySettings(env, req.repoFullName)]);
   const targetKey = `${req.repoFullName}#${req.pr.number}`;
+  // #9312: webhook-redelivery guard, mirroring maybeThrottleReviewNagPing's #8681 short-circuit. GitHub can
+  // redeliver the same issue_comment (the job queue's max_retries:3 plus the dlq re-drive reuse the identical
+  // deliveryId); without this, the replay re-runs recordReviewSuppression, writing a SECOND permanent
+  // review-memory suppression row per finding, and re-posts the confirmation. Resolve was the one command
+  // handler #9312 missed -- its five siblings sit 100..300 lines below it in a different formatting style, so
+  // it did not read as a sixth site (scripts/check-command-redelivery-guards.ts now fails CI on a seventh).
+  const redeliverySinceIso = new Date(Date.now() - COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS).toISOString();
+  if (await hasAuditEventForDelivery(env, req.actor, "github_app.finding_resolved", targetKey, deliveryId, redeliverySinceIso)) return true;
+  const [pr, settings] = await Promise.all([getPullRequest(env, req.repoFullName, req.pr.number), resolveRepositorySettings(env, req.repoFullName)]);
   if (!pr) { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_skipped", actor: req.actor, targetKey, outcome: "completed", detail: "cached_pr_missing", metadata: { deliveryId, repoFullName: req.repoFullName, reason: "cached_pr_missing" } }); await recordGithubProductUsage(env, "finding_resolved_skipped", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "skipped", metadata: { reason: "cached_pr_missing" } }); return true; }
   const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "resolve" as LoopOverMentionCommandName, settings, pr, needsMinerDetection: true });
   if (!authorization.authorized) { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_denied", actor: req.actor, targetKey, outcome: "denied", detail: authorization.reason, metadata: { deliveryId, repoFullName: req.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "resolve") } }); await recordGithubProductUsage(env, "finding_resolved_denied", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "denied", metadata: { reason: authorization.reason, actorKind: authorization.actorKind, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "resolve") } }); return true; }
@@ -14260,6 +14277,22 @@ async function maybeProcessPrPanelRetrigger(
     return true;
   }
 
+  // #9312: webhook-redelivery guard. This handler is the most expensive one to replay in the whole family:
+  // the publish below passes forceAiReview, which by design bypasses BOTH the AI-review cache and the
+  // cross-head fingerprint cache, and steals the review lock ("a duplicate LLM call is the explicitly accepted
+  // cost"). That trade-off is right for a maintainer deliberately re-ticking the box; it is not right for a
+  // queue retry nobody asked for, which then spends a second full paid review and -- LLM output being
+  // non-deterministic -- can overwrite the first verdict in the published surface.
+  //
+  // The panel rewriting its own checkbox does NOT cover this: the trigger above reads the delivered PAYLOAD
+  // snapshot (isCheckedPrPanelRetrigger over comment.body), so a replay still carries the checked body no
+  // matter what the live panel looks like now.
+  const redeliverySinceIso = new Date(Date.now() - COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS).toISOString();
+  // actor is non-null for the same reason maybeProcessPrPanelGenerateTests documents at its own
+  // runE2eTestGenerationAndDeliver call: authorization.authorized above is only ever true when actor resolved
+  // to a real login, since evaluateCommandAuthorization cannot match a role off a null commenterLogin.
+  if (await hasAuditEventForDelivery(env, actor!, "github_app.pr_panel_retriggered", `${repoFullName}#${pr.number}`, deliveryId, redeliverySinceIso)) return true;
+
   const { repo, advisory, otherOpenPullRequests } = await buildAuthorizedPrActionAdvisory(
     env,
     repoFullName,
@@ -14440,6 +14473,18 @@ async function maybeProcessPrPanelGenerateTests(
     });
     return true;
   }
+
+  // #9312: webhook-redelivery guard, byte-for-byte the same event type and targetKey its text-command twin
+  // maybeProcessGenerateTestsCommand already guards -- both paths write that row through the same
+  // runE2eTestGenerationAndDeliver below. The panel twin simply never got it. A replay re-runs a real AI
+  // generation and posts a BRAND-NEW public comment (createIssueComment, not the in-place marker kind), every
+  // time. The existing hasAuditEventForHeadSha guard does not cover this: it is explicitly scoped to the
+  // auto-trigger, and its own comment says the explicit command deliberately does not consult it.
+  //
+  // As with the retrigger twin above, the checkbox state is no protection -- the trigger reads the delivered
+  // payload snapshot, so a replay still carries the checked body.
+  const redeliverySinceIso = new Date(Date.now() - COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS).toISOString();
+  if (await hasAuditEventForDelivery(env, actor!, "github_app.e2e_tests_generation", `${repoFullName}#${pr.number}`, deliveryId, redeliverySinceIso)) return true;
 
   // Defense in depth: re-check the feature is STILL enabled -- the repo's own .loopover.yml could have
   // changed between when this comment was posted (checkbox rendered) and when it was actually clicked.
@@ -15610,6 +15655,31 @@ async function maybeProcessLoopOverMentionCommand(
     })
   ) {
     return true;
+  }
+
+  // #9312/#9563: webhook-redelivery guard for the ~20 commands this dispatcher answers INLINE (the whole Q&A
+  // catalog plus the maintainer digests -- the 8 action commands returned at the top of this function and are
+  // guarded in their own handlers).
+  //
+  // maybeThrottleLoopOverCommand above contains its own redelivery short-circuit, but it is NOT a substitute:
+  // it returns early on `policy === "off"`, and commandRateLimitPolicy DEFAULTS to "off" (migration 0097), so
+  // on a default-configured repo that suppression never runs at all.
+  //
+  // Placed before answerId, because a fresh UUID per pass is what makes the downstream writes non-idempotent:
+  // upsertAgentCommandAnswer conflicts on `id`, so a replay INSERTS a new row rather than updating; the marker
+  // comment embeds answerId, so its body is never byte-identical and the createOrUpdateAgentCommandComment
+  // no-op path never engages (re-editing the panel and orphaning the answer row existing reactions were minted
+  // against); and `ask`/`chat` post through createIssueComment, a genuinely new public comment every time.
+  // Ahead of it all sits a second full agent run plus its LLM summary.
+  //
+  // BOTH event types are checked. The completed event is only written on a live mode, but a dry-run/paused
+  // original still spent the agent run and the AI summary (attachPrivateAiSummary bails only on "paused", and
+  // generateChatQaAnswer has no mode check) while recording the *_skipped event instead -- so keying on the
+  // live event alone would leave exactly the replays that already cost money unguarded.
+  const redeliverySinceIso = new Date(Date.now() - COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS).toISOString();
+  const mentionTargetKey = `${repoFullName}#${issue.number}`;
+  for (const priorEventType of ["github_app.agent_command_replied", "github_app.agent_command_reply_skipped"]) {
+    if (await hasAuditEventForDelivery(env, commenter, priorEventType, mentionTargetKey, deliveryId, redeliverySinceIso)) return true;
   }
 
   const answerId = crypto.randomUUID();

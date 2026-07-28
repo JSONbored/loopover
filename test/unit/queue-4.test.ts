@@ -2376,6 +2376,72 @@ describe("queue processors", () => {
     expect(audit?.outcome).toBe("completed");
   });
 
+  it("#9562 REGRESSION: a redelivered panel rerun does not re-run the forced review a second time", async () => {
+    // This is the most expensive replay in the handler family. The publish path passes forceAiReview, which by
+    // design bypasses BOTH the AI-review cache and the cross-head fingerprint cache AND steals the review lock
+    // ("a duplicate LLM call is the explicitly accepted cost") -- correct for a maintainer deliberately
+    // re-ticking the box, wrong for a queue retry nobody asked for. The checkbox state is no protection: the
+    // trigger reads the delivered payload snapshot, so a replay still carries the checked body.
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      autoLabelEnabled: false,
+      slopGateMode: "advisory",
+      commandAuthorization: { default: ["maintainer", "collaborator", "confirmed_miner"], commands: { "review-now": ["maintainer"] } },
+    });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { commentMode: "all_prs", publicAudienceMode: "oss_maintainer", publicSignalLevel: "standard", publicSurface: "comment_only", checkRunMode: "off", includeMaintainerAuthors: true } });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 47, title: "Refresh panel twice", state: "open", user: { login: "contributor" },
+      author_association: "CONTRIBUTOR", head: { sha: "panel147" }, labels: [], body: "Validation: npm test",
+    });
+    const checkedPanel = ["<!-- gittensory-pr-panel:v1 -->", "", "- [x] <!-- gittensory-rerun-review:v1 --> Re-run LoopOver review"].join("\n");
+    const calls = { pullsFiles: 0 };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.endsWith("/users/contributor")) return Response.json({ login: "contributor", public_repos: 2, followers: 1 });
+      if (url.includes("/users/contributor/repos")) return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "maintain" });
+      // The forced refresh is the expensive part; counting it counts the replay.
+      if (url.includes("/pulls/47/files")) { calls.pullsFiles += 1; return Response.json([{ filename: "src/app.ts", status: "modified", additions: 5, deletions: 1, changes: 6 }]); }
+      if (url.includes("/pulls/47/reviews")) return Response.json([]);
+      if (url.includes("/commits/panel147/check-runs")) return Response.json({ check_runs: [] });
+      if (url.includes("/issues/47/comments") && method === "GET") return Response.json([{ id: 778, body: checkedPanel, user: { login: "loopover-orb[bot]", type: "Bot" } }]);
+      if (url.includes("/issues/comments/778") && method === "PATCH") return Response.json({ id: 778 });
+      return new Response("not found", { status: 404 });
+    });
+
+    // GitHub redelivery: the identical deliveryId + payload arrive twice.
+    const job = {
+      type: "github-webhook" as const,
+      deliveryId: "panel-retrigger-9562-redeliver",
+      eventName: "issue_comment",
+      payload: {
+        action: "edited",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 47, title: "Refresh panel twice", state: "open", user: { login: "contributor" }, pull_request: {} },
+        comment: { id: 778, body: checkedPanel, user: { login: "loopover-orb[bot]", type: "Bot" } },
+        sender: { login: "maintainer", type: "User" },
+      },
+    } as unknown as Parameters<typeof processJob>[1];
+
+    await processJob(env, job);
+    const filesAfterFirst = calls.pullsFiles;
+    expect(filesAfterFirst).toBeGreaterThanOrEqual(1); // the original delivery genuinely did the forced refresh
+
+    await processJob(env, job);
+
+    expect(calls.pullsFiles).toBe(filesAfterFirst); // the replay re-fetched nothing — it short-circuited
+    const retriggered = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
+      .bind("github_app.pr_panel_retriggered", "JSONbored/gittensory#47")
+      .first<{ n: number }>();
+    expect(retriggered?.n).toBe(1);
+  });
+
   it("skips PR panel reruns from confirmed-miner PR authors because the checkbox is maintainer-only", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);

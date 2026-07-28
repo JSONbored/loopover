@@ -33,6 +33,31 @@ curl http://localhost:8787/ready
 curl http://localhost:8787/metrics`}
 />
 
+## Running maintenance jobs
+
+Every `/v1/internal/jobs/*` maintenance job is reachable three ways, and all three run the same dispatcher —
+a job run one way cannot behave differently from the same job run another way.
+
+- **Interactively, over MCP.** `loopover_fleet_run_job` takes a `job` name and `mode`: `enqueue` queues it
+  for the worker, `run` executes it inline and waits. This is the path to use when debugging one job against
+  one instance. It requires the `INTERNAL_JOB_TOKEN` credential, and answers with the supported modes if you
+  ask for one a job does not offer (not every job has an inline runner).
+- **Directly, over HTTP.** `POST /v1/internal/jobs/<job>` to enqueue, `POST /v1/internal/jobs/<job>/run` to
+  run inline — the same bearer token.
+- **On a schedule, fleet-wide.** The `self-host-maintenance` GitHub workflow sweeps every configured
+  instance. That remains the batch path.
+
+<CodeBlock
+  lang="bash"
+  code={`# enqueue one job on this instance
+curl -X POST http://localhost:8787/v1/internal/jobs/refresh-registry \\
+  -H "authorization: Bearer $INTERNAL_JOB_TOKEN"
+
+# run it inline and see the result
+curl -X POST http://localhost:8787/v1/internal/jobs/refresh-registry/run \\
+  -H "authorization: Bearer $INTERNAL_JOB_TOKEN"`}
+/>
+
 ## Important log events
 
 <CodeBlock

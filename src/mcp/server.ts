@@ -264,6 +264,18 @@ import {
   FleetRunJobOutput,
   fleetConfigPushTool,
   fleetRunJobTool,
+  TenantCreateInput,
+  TenantCreateOutput,
+  TenantListInput,
+  TenantListOutput,
+  TenantSetOrbInstallationInput,
+  TenantSetOrbInstallationOutput,
+  TenantDestroyInput,
+  TenantDestroyOutput,
+  tenantCreateTool,
+  tenantListTool,
+  tenantSetOrbInstallationTool,
+  tenantDestroyTool,
 } from "@loopover/contract/tools";
 import { TOOL_CATEGORIES, type ToolCategory } from "@loopover/contract";
 import {
@@ -378,6 +390,7 @@ import { computeFleetAnalytics } from "../orb/analytics";
 import { listFleetInstallations, listFleetInstances, registerFleetInstallation, registerFleetInstance } from "../orb/fleet-admin";
 import { backfillOrbInstallations } from "../orb/installations";
 import { pushFleetConfig } from "../orb/fleet-config-push";
+import { createTenant, destroyTenant, isControlPlaneConfigured, listTenants, setTenantOrbInstallation } from "../orb/control-plane-client";
 import { processJob } from "../queue/job-dispatch";
 import { backfillContributorGateHistory } from "../review/contributor-gate-history-backfill";
 import { refreshInstallationHealth } from "../github/backfill";
@@ -2651,6 +2664,28 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.fleetRunJob(input)),
     );
 
+    // ── #9522 hosted-tenant tools ──────────────────────────────────────
+    register(
+      "loopover_tenant_create",
+      { description: tenantCreateTool.description, inputSchema: TenantCreateInput.shape, outputSchema: TenantCreateOutput, annotations: contractAnnotations(tenantCreateTool) },
+      async (input) => this.toolResult(await this.tenantCreate(input)),
+    );
+    register(
+      "loopover_tenant_list",
+      { description: tenantListTool.description, inputSchema: TenantListInput.shape, outputSchema: TenantListOutput, annotations: contractAnnotations(tenantListTool) },
+      async () => this.toolResult(await this.tenantList()),
+    );
+    register(
+      "loopover_tenant_set_orb_installation",
+      { description: tenantSetOrbInstallationTool.description, inputSchema: TenantSetOrbInstallationInput.shape, outputSchema: TenantSetOrbInstallationOutput, annotations: contractAnnotations(tenantSetOrbInstallationTool) },
+      async (input) => this.toolResult(await this.tenantSetOrbInstallation(input)),
+    );
+    register(
+      "loopover_tenant_destroy",
+      { description: tenantDestroyTool.description, inputSchema: TenantDestroyInput.shape, outputSchema: TenantDestroyOutput, annotations: contractAnnotations(tenantDestroyTool) },
+      async (input, extra) => this.toolResult(await this.tenantDestroy(input, extra, server)),
+    );
+
     // #2225 — read-only taxonomy discovery for AI review finding categories + severity ladder.
     server.registerResource(
       "loopover_finding_taxonomy",
@@ -3722,6 +3757,73 @@ export class LoopoverMcp {
       outcome: "completed",
       metadata: { job, surface: "mcp", ...metadata },
     });
+  }
+
+  // ── #9522 hosted-tenant handlers ──────────────────────────────────────
+  //
+  // These reach the control plane, a separate Worker with its own admin credential. A deployment without
+  // one answers `configured: false` -- the same structured "this capability is not wired here" shape the
+  // self-host tools use -- rather than erroring, because not administering hosted tenants is a normal
+  // state for every deployment except one.
+  private controlPlaneUnavailable(action: string): ToolPayload {
+    return { summary: `LoopOver cannot ${action}: the hosted control plane is not configured on this deployment.`, data: { configured: false } };
+  }
+
+  private async tenantCreate(input: { name: string; product: "ams" | "orb"; schedule?: string | undefined; orbInstallationId?: number | undefined }): Promise<ToolPayload> {
+    this.requireInternal();
+    if (!isControlPlaneConfigured(this.env)) return this.controlPlaneUnavailable("create a tenant");
+    const record = await createTenant(this.env, input);
+    await recordAuditEvent(this.env, {
+      eventType: "operator.tenant_created",
+      actor: this.identity.actor,
+      targetKey: `tenant#${input.product}:${input.name}`,
+      outcome: "completed",
+      metadata: { name: input.name, product: input.product, surface: "mcp" },
+    });
+    return { summary: `LoopOver created ${input.product} tenant ${input.name}.`, data: { configured: true, ...record } };
+  }
+
+  private async tenantList(): Promise<ToolPayload> {
+    this.requireInternal();
+    if (!isControlPlaneConfigured(this.env)) return this.controlPlaneUnavailable("list tenants");
+    const payload = await listTenants(this.env);
+    const tenants = Array.isArray(payload.tenants) ? payload.tenants : [];
+    return { summary: `LoopOver hosted tenants: ${tenants.length}.`, data: { configured: true, ...payload } };
+  }
+
+  private async tenantSetOrbInstallation(input: { name: string; orbInstallationId: number }): Promise<ToolPayload> {
+    this.requireInternal();
+    if (!isControlPlaneConfigured(this.env)) return this.controlPlaneUnavailable("set a tenant's installation");
+    const record = await setTenantOrbInstallation(this.env, input);
+    await recordAuditEvent(this.env, {
+      eventType: "operator.tenant_orb_installation_set",
+      actor: this.identity.actor,
+      targetKey: `tenant#orb:${input.name}`,
+      outcome: "completed",
+      metadata: { name: input.name, orbInstallationId: input.orbInstallationId, surface: "mcp" },
+    });
+    return { summary: `LoopOver pointed tenant ${input.name} at installation ${input.orbInstallationId}.`, data: { configured: true, ...record } };
+  }
+
+  private async tenantDestroy(input: { name: string; product: "ams" | "orb" }, extra?: McpToolExtra, mcpServer?: McpServer): Promise<ToolPayload> {
+    this.requireInternal();
+    if (!isControlPlaneConfigured(this.env)) return this.controlPlaneUnavailable("destroy a tenant");
+    const confirmation = await this.confirmDestructive(
+      `Destroy ${input.product} tenant ${input.name}?`,
+      "Its container, database, and secrets are torn down. The tenant's data does not survive.",
+      extra,
+      mcpServer,
+    );
+    if (confirmation.declined) return { summary: `LoopOver left tenant ${input.name} standing (declined).`, data: { declined: true, name: input.name } };
+    const record = await destroyTenant(this.env, input);
+    await recordAuditEvent(this.env, {
+      eventType: "operator.tenant_destroyed",
+      actor: this.identity.actor,
+      targetKey: `tenant#${input.product}:${input.name}`,
+      outcome: "completed",
+      metadata: { name: input.name, product: input.product, surface: "mcp" },
+    });
+    return { summary: `LoopOver destroyed ${input.product} tenant ${input.name}.`, data: { configured: true, ...record } };
   }
 
   private requireMcpAdmin(): void {

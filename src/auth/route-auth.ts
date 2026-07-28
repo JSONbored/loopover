@@ -48,6 +48,13 @@ export function requiresApiToken(path: string): boolean {
   if (path === "/v1/public/decision-ledger/anchor-key") return false;
   // #9271: the public anchor-attempt listing, added in the SAME PR as its route.
   if (path === "/v1/public/decision-ledger/anchors") return false;
+  // #9277: the current tip's signed checkpoint, for the operator's off-Worker Bittensor submitter (and
+  // anyone else — it is the same payload the Rekor/git backends already publish externally). Added in the
+  // SAME PR as its route, per the #9120 lesson.
+  if (path === "/v1/public/decision-ledger/anchor-payload") return false;
+  // #9277: the submitter's report route carries its OWN bearer gate (isAuthorizedIngest against
+  // LOOPOVER_LEDGER_ANCHOR_REPORT_TOKEN, fails closed when unset) — same posture as /v1/orb/ingest below.
+  if (path === "/v1/decision-ledger/anchor-attempts") return false;
   // #9123: the new public decision-record read route — same unauthenticated posture as its ledger-verify
   // sibling immediately above, added in the SAME PR so the two can never drift apart the way #9120 did. The
   // pull segment matches any non-slash text (not just digits): an invalid pull number is the ROUTE's 400 to

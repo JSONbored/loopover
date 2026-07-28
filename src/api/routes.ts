@@ -305,9 +305,10 @@ import { getContributorTrustProfile } from "../review/contributor-trust-profile"
 import { backfillContributorGateHistory } from "../review/contributor-gate-history-backfill";
 import { isFairnessAnalyticsEnabled, resolveFairnessAnalyticsManifestOverride } from "../review/contributor-trust-profile-wire";
 import { isRagEnabled } from "../review/rag-wire";
-import { loadPublicDecisionRecord, loadPublicLedgerRow, verifyDecisionLedger } from "../review/decision-record";
+import { loadDecisionLedgerTip, loadPublicDecisionRecord, loadPublicLedgerRow, verifyDecisionLedger } from "../review/decision-record";
 import { buildEvalScoreRecordsFromRulePrecision, filterEvalScoreRecords } from "../review/eval-score-records";
-import { currentAnchorKey, parseAnchorPublicKeys } from "../review/ledger-anchor";
+import { anchorSigningInput, buildLedgerAnchorPayload, currentAnchorKey, parseAnchorPublicKeys, signLedgerAnchorPayload } from "../review/ledger-anchor";
+import { ingestBittensorAnchorReport, parseBittensorAnchorReport } from "../review/ledger-anchor-bittensor";
 import { loadPublicLedgerAnchors } from "../review/ledger-anchor-persistence";
 import { getPublicStats, isPublicStatsEnabled, resolvePublicStatsManifestOverride } from "../review/public-stats";
 import { loadPublicAccuracyTrend } from "../services/public-accuracy-trend";
@@ -1339,7 +1340,7 @@ export function createApp() {
     // Built with spreads, not literal undefined-valued keys: exactOptionalPropertyTypes means an optional
     // filter field must be OMITTED to mean "no filter", not present-with-value-undefined.
     const backendParam = c.req.query("backend");
-    const backend = backendParam === "rekor" || backendParam === "git" || backendParam === "ots" ? backendParam : undefined;
+    const backend = backendParam === "rekor" || backendParam === "git" || backendParam === "ots" || backendParam === "bittensor" ? backendParam : undefined;
     const before = c.req.query("before");
     const limit = Number(c.req.query("limit")) || undefined;
     const result = await loadPublicLedgerAnchors(c.env, {
@@ -1349,6 +1350,48 @@ export function createApp() {
     });
     c.header("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
     return c.json(result);
+  });
+
+  // #9277 (epic #9267): the current tip's SIGNED checkpoint, for the operator's off-Worker Bittensor
+  // commitment submitter to fetch and commit on-chain (sha256 of `signingInput` is the exact 32 bytes
+  // `Data::Sha256` holds). Unauthenticated like every /v1/public/* sibling: it is the same payload the
+  // Rekor/git backends already publish externally on every checkpoint — hashes, a seq, a timestamp and a
+  // key id, nothing else. `no-store`: `at` is minted per call, so a cached copy would just make two
+  // submitters commit two different payload hashes for the same tip for no reason.
+  app.get("/v1/public/decision-ledger/anchor-payload", async (c) => {
+    const keys = parseAnchorPublicKeys(c.env.LOOPOVER_LEDGER_ANCHOR_KEYS);
+    const current = currentAnchorKey(keys);
+    if (!current || !c.env.LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY) return c.json({ error: "anchor_signing_unconfigured" }, 404);
+    const tip = await loadDecisionLedgerTip(c.env);
+    if (tip.seq === 0) return c.json({ error: "empty_ledger" }, 404);
+    const payload = buildLedgerAnchorPayload(tip, nowIso());
+    const signed = await signLedgerAnchorPayload(payload, c.env.LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY, current.keyId);
+    c.header("Cache-Control", "no-store");
+    return c.json({ signed, signingInput: anchorSigningInput(payload) });
+  });
+
+  // #9277 (epic #9267): the operator's off-Worker Bittensor submitter reports each on-chain anchor attempt
+  // (success AND failure) back into #9271's public attempt log. Bearer-gated, FAILS CLOSED when the token is
+  // unset (isAuthorizedIngest, same posture as /v1/orb/ingest). Authentication alone is deliberately not
+  // enough for an `ok` row: the report's signed payload must verify against a PUBLISHED anchor key and its
+  // (seq, rowHash) must match the LIVE chain row — the public log asserting on-chain corroboration that a
+  // buggy submitter never actually anchored would be worse than no log at all. A `failed` report skips those
+  // checks: "the submitter is broken" is exactly what the attempt log exists to make publicly visible.
+  app.post("/v1/decision-ledger/anchor-attempts", async (c) => {
+    if (!(await isAuthorizedIngest(c.env.LOOPOVER_LEDGER_ANCHOR_REPORT_TOKEN, extractBearerToken(c.req.header("authorization"))))) return c.json({ error: "unauthorized" }, 401);
+    const body = await readOrbIngestBody(c.req.raw, c.req.header("content-length"));
+    if (body === null) return c.json({ error: "payload_too_large" }, 413);
+    let raw: unknown;
+    try {
+      raw = JSON.parse(body || "");
+    } catch {
+      return c.json({ error: "invalid_json" }, 400);
+    }
+    const parsed = parseBittensorAnchorReport(raw);
+    if ("error" in parsed) return c.json({ error: "invalid_report", detail: parsed.error }, 400);
+    const outcome = await ingestBittensorAnchorReport(c.env, parsed.report);
+    if (!outcome.recorded) return c.json({ error: outcome.reason }, 422);
+    return c.json({ recorded: true, status: outcome.status }, 200);
   });
 
   // #9123: the decision record itself was persisted (decision_records) but never published anywhere a

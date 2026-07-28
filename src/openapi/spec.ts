@@ -1901,9 +1901,34 @@ export function buildOpenApiSpec() {
     operationId: "listPublicDecisionLedgerAnchors",
     tags: ["Public"],
     summary: "Every external anchoring attempt, success and failure, paginated newest-first — anchoring's own health as a public fact",
-    request: { query: z.object({ backend: z.enum(["rekor", "git", "ots"]).optional(), before: z.string().optional(), limit: z.string().optional() }) },
+    request: { query: z.object({ backend: z.enum(["rekor", "git", "ots", "bittensor"]).optional(), before: z.string().optional(), limit: z.string().optional() }) },
     responses: {
       200: { description: "{ anchors: [{ id, seq, rowHash, keyId, backend, backendRef, status, error, createdAt }], nextBefore } — a failed attempt is returned identically to a successful one, never filtered out or reshaped" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/public/decision-ledger/anchor-payload",
+    operationId: "getPublicDecisionLedgerAnchorPayload",
+    tags: ["Public"],
+    summary: "The current ledger tip as a freshly signed checkpoint, for an external anchoring submitter to commit",
+    responses: {
+      200: { description: "{ signed: { payload, keyId, signature }, signingInput } — `sha256(signingInput)` is the exact 32 bytes an on-chain commitment holds. Never cached: `payload.at` is minted per call" },
+      404: { description: "Anchor signing is not configured, or the ledger is empty — nothing is claimed to be anchorable yet" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/decision-ledger/anchor-attempts",
+    operationId: "reportDecisionLedgerAnchorAttempt",
+    tags: ["Public"],
+    summary: "Report one off-Worker anchoring attempt (success or failure) into the public attempt log",
+    responses: {
+      200: { description: "{ recorded: true, status: 'ok' | 'failed' }" },
+      400: { description: "Unparseable body, or a report whose named field failed validation" },
+      401: { description: "Missing or wrong bearer token; also returned when no report token is configured (fails closed)" },
+      413: { description: "Body exceeded the ingest ceiling" },
+      422: { description: "Authenticated but unverifiable: unknown_key, bad_signature, row_not_found, or row_hash_mismatch — an `ok` report must verify against a published key AND match the live chain row" },
     },
   });
   registry.registerPath({

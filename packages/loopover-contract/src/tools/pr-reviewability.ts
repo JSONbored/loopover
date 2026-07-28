@@ -19,12 +19,17 @@ import { defineTool } from "../tool-definition.js";
 import { ownerRepoPullInput } from "../shared.js";
 
 /** `PullRequestReviewability` (packages/loopover-engine/src/reward-risk.ts). All ten fields are
- *  required and non-nullable on the type; `PullRequestReviewabilitySchema` in src/openapi/schemas.ts
- *  is a field-for-field match, so REST and MCP genuinely agree on this shape. */
+ *  required and non-nullable on the type when freshly computed; `PullRequestReviewabilitySchema` in
+ *  src/openapi/schemas.ts is a field-for-field match there, so REST and a fresh MCP computation
+ *  genuinely agree on this shape. `generatedAt` is optional here specifically because the cached
+ *  path can serve an older persisted snapshot row: the remote handler's own fallback chain
+ *  (`cached.generatedAt || payload.generatedAt || new Date().toISOString()`) only exists because a
+ *  stored payload's `generatedAt` is not guaranteed -- the schema has to describe that real,
+ *  defended-against case, not just the freshly-computed one. */
 export const pullRequestReviewabilitySchema = z.looseObject({
   repoFullName: z.string(),
   pullNumber: z.number(),
-  generatedAt: z.string(),
+  generatedAt: z.string().optional(),
   score: z.number(),
   action: z.enum(["review_now", "needs_author", "likely_duplicate", "close_or_redirect", "watch", "maintainer_lane"]),
   noiseSources: z.array(z.string()),

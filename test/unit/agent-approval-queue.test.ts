@@ -92,6 +92,10 @@ function ctx(over: Partial<AgentActionExecutionContext> = {}): AgentActionExecut
     repoFullName: "owner/repo",
     pullNumber: 7,
     headSha: "h7",
+    // #9541: required on the context now, so the fixture states them like every real caller must.
+    expectedBaseRef: null,
+    authorLogin: null,
+    moderationSettings: null,
     autonomy: { merge: "auto_with_approval" },
     agentPaused: false,
     agentDryRun: false,

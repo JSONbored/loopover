@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createApp } from "../../src/api/routes";
 import { getDb } from "../../src/db/client";
-import { dedupeSignalSnapshots, pruneExpiredRecords, RETENTION_POLICY } from "../../src/db/retention";
+import { dedupeSignalSnapshots, pruneExpiredRecords, RETENTION_COMPOSITE_PK_TABLES, RETENTION_PK_COLUMN, RETENTION_POLICY } from "../../src/db/retention";
 import { agentContextSnapshots, aiReviewCache, aiSlopCache, aiUsageEvents, groundingFileContentCache, linkedIssueSatisfactionCache, webhookEvents } from "../../src/db/schema";
 import { processJob, runRetentionPrune } from "../../src/queue/processors";
 import { REPO_FOCUS_MANIFEST_SIGNAL, REPO_PUBLIC_FOCUS_MANIFEST_SIGNAL } from "../../src/signals/focus-manifest-loader";
@@ -561,7 +561,7 @@ describe("dedupeSignalSnapshots", () => {
       DB: {
         prepare: (sql: string) => ({
           bind: (..._binds: unknown[]) =>
-            sql.includes("SELECT DISTINCT")
+            sql.includes("DISTINCT signal_type")
               ? { all: async () => ({ results: [{ signal_type: "repo-culture-profile" }] }) }
               : { first: async () => undefined }, // count query returns no row → `row?.n ?? 0` fallback fires
         }),
@@ -576,7 +576,7 @@ describe("dedupeSignalSnapshots", () => {
       DB: {
         prepare: (sql: string) => ({
           bind: (..._binds: unknown[]) =>
-            sql.includes("SELECT DISTINCT")
+            sql.includes("DISTINCT signal_type")
               ? { all: async () => ({ results: [{ signal_type: "repo-culture-profile" }] }) }
               : { run: async () => ({}) }, // no meta → `result.meta?.changes ?? 0` fallback fires, so changes = 0 < batchSize
         }),
@@ -683,5 +683,108 @@ describe("retention preview route", () => {
     expect(body.signalSnapshotDuplicates).toEqual([{ signalType: "repo-culture-profile", deleted: 1 }]);
     expect(await countWebhook(env)).toBe(3); // preview is read-only
     expect(await countSignalSnapshots(env)).toBe(2); // preview is read-only
+  });
+});
+
+// #9472 drift guard: #9415 added five tables to RETENTION_POLICY but shipped neither a RETENTION_PK_COLUMN
+// entry nor an index migration for any of them, so every batched delete fell back to `rowid` (-> `ctid` on
+// Postgres) and ran as a full sequential scan plus a full sort -- hourly, on the two largest tables in the
+// database. Nothing caught it, because nothing asserted the three sites stay in step. These tests are that
+// assertion: a future policy entry cannot ship without its PK mapping and its retention-column index.
+describe("RETENTION_POLICY completeness (drift guard, #9472)", () => {
+  it("every policy table is either PK-mapped or explicitly listed as composite-PK (never silently unmapped)", () => {
+    // An absent entry used to mean either "composite PK, rowid fallback is correct" or "someone forgot" --
+    // indistinguishable, which is how #9415's five shipped unmapped. Now it must be a deliberate choice.
+    const unaccounted = RETENTION_POLICY.filter((rule) => !(rule.table in RETENTION_PK_COLUMN) && !RETENTION_COMPOSITE_PK_TABLES.has(rule.table)).map(
+      (rule) => rule.table,
+    );
+    expect(unaccounted).toEqual([]);
+  });
+
+  it("no table claims both a single-column PK and a composite-PK exemption", () => {
+    const both = Object.keys(RETENTION_PK_COLUMN).filter((table) => RETENTION_COMPOSITE_PK_TABLES.has(table));
+    expect(both).toEqual([]);
+  });
+
+  it("every policy table has an index leading with its retention column somewhere in migrations/", async () => {
+    const { readdir, readFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const dir = join(process.cwd(), "migrations");
+    const files = (await readdir(dir)).filter((name) => name.endsWith(".sql"));
+    const sql = (await Promise.all(files.map((name) => readFile(join(dir, name), "utf8")))).join("\n").toLowerCase();
+    // The index must LEAD with the retention column -- a trailing position cannot serve the ordered range
+    // scan the batched delete performs (that was 0193's whole point).
+    const missing = RETENTION_POLICY.filter((rule) => !sql.includes(`on ${rule.table}(${rule.column})`) && !sql.includes(`on ${rule.table} (${rule.column})`)).map(
+      (rule) => `${rule.table}(${rule.column})`,
+    );
+    expect(missing).toEqual([]);
+  });
+
+  it("every RETENTION_PK_COLUMN entry names a table the policy actually prunes (no dead mappings)", () => {
+    const policyTables = new Set(RETENTION_POLICY.map((rule) => rule.table));
+    const orphaned = Object.keys(RETENTION_PK_COLUMN).filter((table) => !policyTables.has(table));
+    expect(orphaned).toEqual([]);
+  });
+});
+
+// #9470 regression: dedupe kept the row with the highest `rowid`, which pg-dialect rewrites to `ctid` -- a
+// PHYSICAL heap location. Once the age-prune frees pages, a NEWER row inserted into a reclaimed early page
+// gets a LOWER ctid than an older row on a later page, so MAX(ctid) selected a STALE snapshot and this delete
+// removed the genuinely newest one. Confirmed live on production Postgres (2026-07-27): ~36% of multi-row
+// keys for contributor-evidence-graph had ctid order disagreeing with recency, across ~344 keys of
+// dedupe-eligible types, with the dedupe deleting thousands of rows per daily run.
+//
+// SQLite cannot reproduce ctid page reuse, so these tests pin the property that makes the bug impossible
+// either way: the survivor is chosen by (generated_at, id), never by physical/insertion order. The row
+// inserted LAST here is deliberately the OLDEST by generated_at -- under the old MAX(rowid) rule it would
+// have survived and the newest would have been deleted.
+describe("dedupeSignalSnapshots survivor selection (#9470)", () => {
+  it("keeps the newest row by generated_at even when it was inserted FIRST", async () => {
+    const env = createTestEnv();
+    await insertSignalSnapshot(env, "s-newest", "repo-culture-profile", "JSONbored/loopover", "2026-06-13T00:00:00.000Z");
+    await insertSignalSnapshot(env, "s-middle", "repo-culture-profile", "JSONbored/loopover", "2026-06-11T00:00:00.000Z");
+    await insertSignalSnapshot(env, "s-oldest", "repo-culture-profile", "JSONbored/loopover", "2026-06-10T00:00:00.000Z");
+
+    const results = await dedupeSignalSnapshots(env);
+
+    expect(results).toEqual([{ signalType: "repo-culture-profile", deleted: 2 }]);
+    const survivor = await env.DB.prepare("SELECT id FROM signal_snapshots WHERE signal_type = ?").bind("repo-culture-profile").first<{ id: string }>();
+    expect(survivor?.id).toBe("s-newest");
+  });
+
+  it("breaks a generated_at tie deterministically on id, keeping exactly one row per key", async () => {
+    // generated_at CAN tie (it was the original reason rowid was chosen); the id tiebreak restores the total
+    // ordering without depending on physical layout.
+    const env = createTestEnv();
+    const tied = "2026-06-12T00:00:00.000Z";
+    await insertSignalSnapshot(env, "s-aaa", "repo-culture-profile", "JSONbored/loopover", tied);
+    await insertSignalSnapshot(env, "s-zzz", "repo-culture-profile", "JSONbored/loopover", tied);
+
+    const results = await dedupeSignalSnapshots(env);
+
+    expect(results).toEqual([{ signalType: "repo-culture-profile", deleted: 1 }]);
+    const survivor = await env.DB.prepare("SELECT id FROM signal_snapshots WHERE signal_type = ?").bind("repo-culture-profile").first<{ id: string }>();
+    expect(survivor?.id).toBe("s-zzz"); // highest id wins the tie
+  });
+
+  it("dedupes each target_key independently, keeping the newest row of every key", async () => {
+    const env = createTestEnv();
+    await insertSignalSnapshot(env, "a-new", "repo-culture-profile", "JSONbored/loopover", "2026-06-13T00:00:00.000Z");
+    await insertSignalSnapshot(env, "a-old", "repo-culture-profile", "JSONbored/loopover", "2026-06-01T00:00:00.000Z");
+    await insertSignalSnapshot(env, "b-new", "repo-culture-profile", "JSONbored/metagraphed", "2026-06-13T00:00:00.000Z");
+    await insertSignalSnapshot(env, "b-old", "repo-culture-profile", "JSONbored/metagraphed", "2026-06-01T00:00:00.000Z");
+
+    await dedupeSignalSnapshots(env);
+
+    const rows = await env.DB.prepare("SELECT id FROM signal_snapshots WHERE signal_type = ? ORDER BY id").bind("repo-culture-profile").all<{ id: string }>();
+    expect(rows.results.map((row) => row.id)).toEqual(["a-new", "b-new"]);
+  });
+
+  it("leaves a single-row key untouched (nothing to dedupe)", async () => {
+    const env = createTestEnv();
+    await insertSignalSnapshot(env, "only", "repo-culture-profile", "JSONbored/loopover", "2026-06-13T00:00:00.000Z");
+
+    expect(await dedupeSignalSnapshots(env)).toEqual([{ signalType: "repo-culture-profile", deleted: 0 }]);
+    expect(await countSignalSnapshots(env, "repo-culture-profile")).toBe(1);
   });
 });

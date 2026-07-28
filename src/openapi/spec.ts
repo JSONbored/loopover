@@ -1,4 +1,5 @@
 import { OpenApiGeneratorV3, OpenAPIRegistry } from "@asteasolutions/zod-to-openapi";
+import { requiresApiToken } from "../auth/route-auth";
 import { registerOrbAndControlRouteSpecs } from "./orb-and-control-route-specs";
 import { registerInternalAndPublicRouteSpecs } from "./internal-and-public-route-specs";
 import { z } from "zod";
@@ -1995,6 +1996,12 @@ export function buildOpenApiSpec() {
     path: "/v1/auth/github/token",
     operationId: "postAuthGithubToken",
     tags: ["Auth"],
+    // #9531: SESSION ONLY, declared rather than inferred. Both former models got this wrong in
+    // different directions -- isProtectedPath published the generic bearer+cookie pair (a bearer
+    // alone gets a 403 from this handler: it checks `identity.kind !== "session"`), and the real
+    // token gate exempts all of `/v1/auth/*`, which would publish it as needing nothing. It is
+    // gated, in the handler, on a browser session specifically.
+    security: [{ LoopOverSessionCookie: [] }],
     summary: "Fetch the current session's live GitHub token (for AMS git operations)",
     responses: {
       200: { description: "The session's GitHub token", content: { "application/json": { schema: z.object({ token: z.string() }) } } },
@@ -2397,6 +2404,16 @@ type GeneratedOperation = NonNullable<GeneratedOpenApiDocument["paths"][string]>
   security?: Array<Record<string, string[]>>;
 };
 
+/**
+ * Attach the security schemes, and the per-operation stanza derived from the REAL gate (#9531).
+ *
+ * This used to consult `isProtectedPath`, a second path-prefix model of the same policy that had
+ * already drifted out of agreement with the middleware -- it called every `/v1/*` route protected
+ * bar a short literal list, so the document advertised a bearer requirement on the entire
+ * `/v1/public/decision-ledger/*` family, all of which answer 200 unauthenticated. Now it asks
+ * `requiresApiToken`, the function the app itself gates on, so the document cannot claim something
+ * the runtime does not enforce.
+ */
 function applySecurityMetadata(document: GeneratedOpenApiDocument): GeneratedOpenApiDocument {
   document.components = {
     ...(document.components ?? {}),
@@ -2430,18 +2447,26 @@ function applySecurityMetadata(document: GeneratedOpenApiDocument): GeneratedOpe
     },
   };
   for (const [path, pathItem] of Object.entries(document.paths)) {
-    if (!pathItem || !isProtectedPath(path)) continue;
+    if (!pathItem) continue;
+    // The document writes `{param}`; the gate matches the concrete path a caller sends. Substituting
+    // a placeholder segment keeps the two comparable -- every exemption in requiresApiToken that
+    // covers a dynamic route is a regex over non-slash segments, which any placeholder satisfies.
+    const gated = requiresApiToken(path.replace(/\{[^}]+\}/g, "_"));
     for (const method of ["get", "post", "put", "patch", "delete"] as const) {
       const operation = pathItem[method] as GeneratedOperation | undefined;
-      if (operation) operation.security = [{ LoopOverBearer: [] }, { LoopOverSessionCookie: [] }];
+      if (!operation) continue;
+      // NEVER overwrite a declared stanza. Routes registered through defineRoute already carry the
+      // scheme their own `auth` implies -- OrbBearer for the AMS ingress, a signature header for the
+      // webhook, bearer-only for `/v1/internal/*`, `[]` for public -- and clobbering that with the
+      // generic pair is precisely the bug this function used to have: every auth level in the
+      // published document compiled to the same requirement, so it advertised a LoopOver bearer on
+      // the ORB ingress route whose own comment says it takes a shared-secret header instead.
+      if (operation.security !== undefined) continue;
+      // Only the legacy registerPath calls reach here -- they declare no auth, so the gate is the
+      // only thing that knows.
+      if (gated) operation.security = [{ LoopOverBearer: [] }, { LoopOverSessionCookie: [] }];
     }
   }
   return document;
 }
 
-function isProtectedPath(path: string): boolean {
-  if (path === "/health" || path === "/openapi.json" || path === "/mcp" || path === "/v1/mcp/compatibility" || path === "/v1/public/stats" || path === "/v1/public/github/repos/{owner}/{repo}/stats" || path === "/v1/public/repos/{owner}/{repo}/quality") return false;
-  if (path.startsWith("/v1/auth/")) return path === "/v1/auth/github/token";
-  if (path === "/v1/github/webhook") return false;
-  return path.startsWith("/v1/");
-}

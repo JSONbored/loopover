@@ -187,7 +187,10 @@ describe("OpenAPI contract", () => {
     expect(spec.paths["/v1/app/overview"]?.get?.security).toEqual([{ LoopOverBearer: [] }, { LoopOverSessionCookie: [] }]);
     expect(spec.paths["/v1/auth/session"]?.get?.security).toBeUndefined();
     expect(spec.paths["/v1/auth/logout"]?.post?.security).toBeUndefined();
-    expect(spec.paths["/v1/auth/github/token"]?.post?.security).toEqual([{ LoopOverBearer: [] }, { LoopOverSessionCookie: [] }]);
+    // #9531: session-only, not the generic pair. This handler returns 403 to a bearer-only caller
+    // (`identity.kind !== "session"`), so advertising LoopOverBearer as sufficient was a published
+    // lie -- one neither of the two former security models got right.
+    expect(spec.paths["/v1/auth/github/token"]?.post?.security).toEqual([{ LoopOverSessionCookie: [] }]);
   });
 
   // #9303: selftune-override routes were live but undocumented; assert both paths, their HTTP methods, and the

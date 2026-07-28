@@ -20570,14 +20570,6 @@
             "description": "First break found: sequence_gap | predecessor_mismatch | row_hash_mismatch | missing_record | content_mismatch | short_tail (a record newer than the verified tip has no chain entry — the truncated-tail signature) | unchained_record (an INTERIOR record has no chain entry — the failed-append signature). Records younger than the 5-minute append grace window are not reported: the record insert and its chain append are two writes moments apart, and a verify landing between them is not evidence of tampering."
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
         "operationId": "getPublicDecisionLedgerVerify",
         "tags": [
           "Public"
@@ -20608,14 +20600,6 @@
             "description": "No ledger row at that seq (never appended -- distinct from a row with empty fields)"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
         "operationId": "getPublicDecisionLedgerRowBySeq",
         "tags": [
           "Public"
@@ -20630,14 +20614,6 @@
             "description": "{ keys: [{ keyId, publicKeySpki, notBefore, notAfter }], currentKeyId } — retired keys are retained so anchors signed under them stay verifiable; currentKeyId is null when unconfigured or the rotation state is ambiguous"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
         "operationId": "getPublicDecisionLedgerAnchorKey",
         "tags": [
           "Public"
@@ -20683,14 +20659,6 @@
             "description": "{ anchors: [{ id, seq, rowHash, keyId, backend, backendRef, status, error, createdAt }], nextBefore } — a failed attempt is returned identically to a successful one, never filtered out or reshaped"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
         "operationId": "listPublicDecisionLedgerAnchors",
         "tags": [
           "Public"
@@ -20737,14 +20705,6 @@
             "description": "No decision record persisted yet for this PR"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
         "operationId": "getPublicDecisionRecordsByOwnerByRepoByPull",
         "tags": [
           "Public"
@@ -20780,14 +20740,6 @@
             "description": "Public stats disabled (same flag as /v1/public/stats)"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
         "operationId": "listPublicEvalScores",
         "tags": [
           "Public"
@@ -20805,14 +20757,6 @@
             "description": "Malformed JSON or invalid payload shape"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
         "operationId": "postOrbIngest",
         "tags": [
           "ORB"
@@ -21000,17 +20944,14 @@
             "description": "Rate limited"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
         "operationId": "postAuthGithubToken",
         "tags": [
           "Auth"
+        ],
+        "security": [
+          {
+            "LoopOverSessionCookie": []
+          }
         ]
       }
     },
@@ -21930,9 +21871,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "operationId": "queueRefreshRegistryJob",
@@ -21956,9 +21894,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "operationId": "queueBackfillRegisteredReposJob",
@@ -21982,9 +21917,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "operationId": "queueBackfillRepoSegmentJob",
@@ -22008,9 +21940,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "operationId": "queueBackfillPrDetailsJob",
@@ -22034,9 +21963,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "operationId": "queueGenerateReviewRecapJob",
@@ -22060,9 +21986,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "operationId": "queueRefreshScoringModelJob",
@@ -22086,9 +22009,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "operationId": "queueRefreshUpstreamDriftJob",
@@ -22112,9 +22032,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "operationId": "queueFileUpstreamDriftIssuesJob",
@@ -22135,14 +22052,6 @@
             "description": "Invalid internal token"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
         "operationId": "postInternalJobsBuildContributorEvidence",
         "tags": [
           "Internal"
@@ -22163,9 +22072,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "operationId": "queueBuildContributorDecisionPacksJob",
@@ -22186,14 +22092,6 @@
             "description": "Invalid internal token"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
         "operationId": "postInternalJobsBuildBurdenForecasts",
         "tags": [
           "Internal"
@@ -22214,9 +22112,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "operationId": "queueGenerateSignalSnapshotsJob",
@@ -22240,9 +22135,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "operationId": "queueGenerateWeeklyValueReportJob",
@@ -22263,14 +22155,6 @@
             "description": "Invalid internal token"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
         "operationId": "postInternalJobsRepairDataFidelity",
         "tags": [
           "Internal"
@@ -22288,14 +22172,6 @@
             "description": "Invalid internal token"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
         "operationId": "postInternalBountiesImport",
         "tags": [
           "Internal"
@@ -23510,14 +23386,6 @@
             "description": "Invalid internal token"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
         "operationId": "getInternalProviderCredentialsByProvider",
         "tags": [
           "Internal"
@@ -23580,14 +23448,6 @@
             "description": "TOKEN_ENCRYPTION_SECRET is not configured, so the credential cannot be stored encrypted"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
         "operationId": "postInternalProviderCredentialsByProvider",
         "tags": [
           "Internal"
@@ -23638,14 +23498,6 @@
             "description": "Invalid internal token"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ],
         "operationId": "deleteInternalProviderCredentialsByProvider",
         "tags": [
           "Internal"
@@ -23661,10 +23513,7 @@
         "summary": "Mint an ORB instance token",
         "security": [
           {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
+            "OrbBearer": []
           }
         ],
         "responses": {
@@ -23689,10 +23538,7 @@
         "summary": "Relay one ORB event to the hosted control plane",
         "security": [
           {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
+            "OrbBearer": []
           }
         ],
         "responses": {
@@ -23717,10 +23563,7 @@
         "summary": "Register a self-hosted ORB instance with the relay",
         "security": [
           {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
+            "OrbBearer": []
           }
         ],
         "responses": {
@@ -23745,10 +23588,7 @@
         "summary": "Pull queued relay work for an ORB instance",
         "security": [
           {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
+            "OrbBearer": []
           }
         ],
         "responses": {
@@ -23770,10 +23610,7 @@
         "summary": "Receive a signed ORB webhook",
         "security": [
           {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
+            "OrbWebhookSignature": []
           }
         ],
         "responses": {
@@ -23804,14 +23641,7 @@
             "description": "Missing or invalid OAuth code"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ]
+        "security": []
       }
     },
     "/v1/internal/orb/instances": {
@@ -23825,9 +23655,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -23851,9 +23678,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -23880,9 +23704,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -23906,9 +23727,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -23935,9 +23753,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -23961,9 +23776,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -23990,9 +23802,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -24487,9 +24296,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -24529,9 +24335,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -24574,9 +24377,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -24761,9 +24561,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -24803,9 +24600,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -24848,9 +24642,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -24941,9 +24732,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -24967,9 +24755,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -24993,9 +24778,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25019,9 +24801,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25045,9 +24824,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25071,9 +24847,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25097,9 +24870,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25123,9 +24893,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25149,9 +24916,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25175,9 +24939,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25201,9 +24962,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25227,9 +24985,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25253,9 +25008,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25279,9 +25031,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25305,9 +25054,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25331,9 +25077,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25357,9 +25100,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25383,9 +25123,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25412,9 +25149,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25440,9 +25174,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25465,9 +25196,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25490,9 +25218,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25515,9 +25240,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25540,9 +25262,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25565,9 +25284,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25590,9 +25306,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25615,9 +25328,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25640,9 +25350,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25665,9 +25372,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25690,9 +25394,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25715,9 +25416,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25740,9 +25438,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25765,9 +25460,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "parameters": [
@@ -25803,9 +25495,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25831,9 +25520,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25859,9 +25545,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "responses": {
@@ -25888,9 +25571,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "parameters": [
@@ -25930,9 +25610,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "parameters": [
@@ -25977,9 +25654,6 @@
         "security": [
           {
             "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
           }
         ],
         "parameters": [
@@ -26024,7 +25698,8 @@
           "200": {
             "description": "The OpenAPI 3 document"
           }
-        }
+        },
+        "security": []
       }
     },
     "/loopover/shot": {
@@ -26038,7 +25713,8 @@
           "200": {
             "description": "Preview image"
           }
-        }
+        },
+        "security": []
       }
     },
     "/v1/public/subnet-interface": {
@@ -26053,14 +25729,7 @@
             "description": "Subnet interface"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ]
+        "security": []
       }
     },
     "/v1/public/repos/{owner}/{repo}/badge.json": {
@@ -26093,14 +25762,7 @@
             "description": "Badge payload"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ]
+        "security": []
       }
     },
     "/v1/public/repos/{owner}/{repo}/badge.svg": {
@@ -26133,14 +25795,7 @@
             "description": "SVG badge"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ]
+        "security": []
       }
     },
     "/v1/mcp/finding-taxonomy": {
@@ -26155,14 +25810,7 @@
             "description": "Finding taxonomy"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ]
+        "security": []
       }
     },
     "/v1/mcp/enrichment-analyzers": {
@@ -26177,14 +25825,7 @@
             "description": "Analyzer descriptions"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ]
+        "security": []
       }
     },
     "/v1/drafts": {
@@ -26205,14 +25846,7 @@
             "description": "Draft submission is disabled"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ]
+        "security": []
       }
     },
     "/v1/drafts/{id}": {
@@ -26240,14 +25874,7 @@
             "description": "No such draft, or draft submission is disabled"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ]
+        "security": []
       }
     },
     "/v1/drafts/auth/callback": {
@@ -26265,14 +25892,7 @@
             "description": "Missing or invalid OAuth code"
           }
         },
-        "security": [
-          {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
-          }
-        ]
+        "security": []
       }
     },
     "/v1/ams/ingest": {
@@ -26284,10 +25904,7 @@
         "summary": "Ingest an AMS miner telemetry batch",
         "security": [
           {
-            "LoopOverBearer": []
-          },
-          {
-            "LoopOverSessionCookie": []
+            "OrbBearer": []
           }
         ],
         "responses": {

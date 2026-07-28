@@ -76,7 +76,11 @@ function toSpecPath(path: string): string {
  * from the LoopOver bearer check, which is what made them look public to the old path-prefix model.
  */
 function securityFor(auth: RouteAuth): RouteConfig["security"] {
-  if (auth === "public") return undefined;
+  // `[]`, not undefined: an empty security array is OpenAPI's explicit "this operation needs no
+  // credential", where an ABSENT one means "not stated". The distinction is load-bearing here --
+  // applySecurityMetadata fills in the legacy `registerPath` calls that never declared anything, and
+  // it can only tell those apart from a deliberately public route if public says so out loud.
+  if (auth === "public") return [];
   if (auth === "internal") return [{ LoopOverBearer: [] }];
   if (auth === "orb") return [{ OrbBearer: [] }];
   if (auth === "webhook") return [{ OrbWebhookSignature: [] }];

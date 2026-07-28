@@ -240,11 +240,22 @@ export const prOutcomeTool = defineTool({
 
 // ── PR AI review findings ───────────────────────────────────────────────────────────────────────
 
+/**
+ * The one tool whose two servers disagreed on a FIELD NAME: the stdio server has always taken
+ * `number` (like every other PR-scoped tool here, and like `ownerRepoPullInput`), the remote server
+ * `pullNumber`. Both are accepted, and the handler reads `number ?? pullNumber`, because narrowing
+ * to either one alone would break live callers of the other -- this is a published CLI on one side
+ * and a hosted API on the other. `number` is canonical; `pullNumber` is the compatibility alias.
+ *
+ * `login` is optional for the same reason it is elsewhere in this migration: both servers resolve
+ * it themselves (session on stdio, authenticated identity on the remote).
+ */
 export const GetPrAiReviewFindingsInput = z.object({
-  login: z.string().min(1),
+  login: z.string().min(1).optional(),
   owner: z.string().min(1),
   repo: z.string().min(1),
-  pullNumber: z.number().int().positive(),
+  number: z.number().int().positive().optional(),
+  pullNumber: z.number().int().positive().optional(),
 });
 export const GetPrAiReviewFindingsOutput = z.looseObject({
   status: z.enum(["ready", "not_found", "ai_review_off"]),
@@ -349,8 +360,12 @@ const linkedIssueContextSchema = z.object({
  * the score. That transform stays in the SERVER's schema, deliberately not relocated here: a
  * transform is a runtime coercion, and putting it in the shared contract would make the advertised
  * JSON Schema describe the post-transform shape rather than what a caller may actually send.
+ *
+ * STRICT, restored in #9537: both servers wrapped this as `z.object(shape).strict()` before the
+ * migration and the relocation dropped it, which would have turned a caller inventing an
+ * eligibility field from a rejected call into a silently-stripped one.
  */
-const callerBranchEligibilitySchema = z.object({
+export const callerBranchEligibilitySchema = z.strictObject({
   status: z.enum(["eligible", "ineligible", "unknown"]),
   source: z.enum(["github_metadata", "local_metadata", "registry", "user_supplied"]).optional(),
   reason: z.string().optional(),
@@ -385,6 +400,13 @@ export const ExplainScoreBreakdownInput = z.object({
   projectedCredibility: z.number().min(0).max(1).optional(),
   scenarioNotes: z.array(z.string()).max(20).optional(),
   branchEligibility: callerBranchEligibilitySchema.optional(),
+  // #9537: the stdio server passes its local-diff shape to this tool, so these five are part of
+  // what a caller may send even though the remote server ignores them.
+  cwd: z.string().optional(),
+  baseRef: z.string().optional(),
+  tests: z.array(z.string()).optional(),
+  commitMessage: z.string().optional(),
+  scorePreviewCommand: z.string().optional(),
 });
 export const ExplainScoreBreakdownOutput = z.looseObject({
   repoFullName: z.string().optional(),

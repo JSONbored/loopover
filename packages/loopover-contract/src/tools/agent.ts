@@ -598,6 +598,17 @@ export const ListPendingActionsOutput = z.looseObject({
   status: z.string().optional(),
   pendingActions: z.array(pendingActionEntrySchema).optional(),
 });
+/**
+ * The stdio server's narrowed variant, DERIVED rather than restated.
+ *
+ * `GET /agent/pending-actions` takes no query parameters and hardcodes status "pending", so the
+ * stdio server cannot honour the filter its remote counterpart offers. An agent reads the published
+ * schema to decide what to send, so advertising a filter that silently does nothing is worse than
+ * not advertising it -- this is the one place in the migration where a server deliberately serves
+ * LESS than the contract, and it says so in code rather than by omission.
+ */
+export const ListPendingActionsStdioInput = ListPendingActionsInput.omit({ status: true });
+
 export const listPendingActionsTool = defineTool({
   name: "loopover_list_pending_actions",
   title: "List pending actions",
@@ -644,12 +655,15 @@ export const GetAgentAuditFeedOutput = z.looseObject({
   repoFullName: z.string().optional(),
   events: z
     .array(
+      // `.nullish()`, not `.nullable()`: the REST route this proxies OMITS these for an event that
+      // has none rather than sending an explicit null, and modelling them as merely nullable made
+      // every real audit feed fail output validation (#9537).
       z.looseObject({
         eventType: z.string(),
-        pullNumber: z.number().nullable(),
+        pullNumber: z.number().nullish(),
         outcome: z.string(),
-        actor: z.string().nullable(),
-        detail: z.string().nullable(),
+        actor: z.string().nullish(),
+        detail: z.string().nullish(),
         createdAt: z.string(),
       }),
     )

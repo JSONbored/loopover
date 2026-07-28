@@ -117,7 +117,10 @@ describe("loopover_explain_gate_disposition stdio mirror (#6740)", () => {
     const tool = payload.tools.find(
       (entry) => entry.name === "loopover_explain_gate_disposition",
     );
-    expect(tool?.description).toMatch(/per-rule dispositions/i);
+    // #9537: the description now comes from @loopover/contract, so both servers advertise the same
+    // wording for this tool -- the remote server's, which says "rule by rule" rather than "per-rule
+    // dispositions". Same claim, one source.
+    expect(tool?.description).toMatch(/rule by rule/i);
     expect(tool?.description.trim().length).toBeGreaterThan(0);
   });
 });

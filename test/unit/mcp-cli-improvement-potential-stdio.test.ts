@@ -59,7 +59,7 @@ describe("bin loopover_check_improvement_potential stdio tool (in-process, #7759
       const { tools } = await client.listTools();
       const tool = tools.find((entry) => entry.name === "loopover_check_improvement_potential");
       expect(tool).toBeDefined();
-      expect(tool?.description).toMatch(/improvement/i);
+      expect(tool?.description).toMatch(/improve/i);
 
       const result = await client.callTool({
         name: "loopover_check_improvement_potential",

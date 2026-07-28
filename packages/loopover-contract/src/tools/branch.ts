@@ -49,6 +49,10 @@ const validationEntrySchema = z.strictObject({
 // ── preflight local diff (input + output: no transform) ─────────────────────────────────────────
 
 export const PreflightLocalDiffInput = PreflightPrInput.extend({
+  // #9537: `cwd`/`baseRef` name a checkout only the stdio server can read; the remote server
+  // ignores them. Widening the shared input is the safe direction.
+  cwd: z.string().optional(),
+  baseRef: z.string().optional(),
   changedLineCount: z.number().int().min(0).optional(),
   testFiles: z.array(z.string().max(PREFLIGHT_LIMITS.changedFileChars)).max(PREFLIGHT_LIMITS.changedFiles).optional(),
   commitMessage: z.string().max(PREFLIGHT_LIMITS.bodyChars).optional(),

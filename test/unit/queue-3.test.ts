@@ -3093,6 +3093,40 @@ describe("queue processors", () => {
       expect(seen.merged).toBe(true);
     });
 
+    it("#9497 skips the compare read when the repo has no stored default branch (nothing to compare against)", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await seedFreshRebaseRepo(env, 98, { staleBaseAheadByThreshold: 5 });
+      // Clear the stored default branch so the compare has no ref to anchor on.
+      await env.DB.prepare("UPDATE repositories SET default_branch = NULL WHERE full_name = ?").bind("owner/repo").run();
+      const seen = { merged: false, updateBranchCalls: 0, baseCommitCalls: 0, compareCalls: 0 };
+      stubFreshRebaseFetch(98, { baseAdvancedAt: new Date(Date.now() - 60 * 60_000).toISOString(), aheadBy: 999 }, seen);
+
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "stale-threshold-no-default-branch", repoFullName: "owner/repo", prNumber: 98, installationId: 123 });
+
+      expect(seen.compareCalls).toBe(0);
+      expect(seen.updateBranchCalls).toBe(0);
+      expect(seen.merged).toBe(true);
+    });
+
+    it("#9497 records the cap-exceeded audit with the staleness trigger named, once the 24h cap is spent", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await seedFreshRebaseRepo(env, 99, { staleBaseAheadByThreshold: 5 });
+      const seen = { merged: false, updateBranchCalls: 0, baseCommitCalls: 0, compareCalls: 0 };
+      stubFreshRebaseFetch(99, { baseAdvancedAt: new Date(Date.now() - 60 * 60_000).toISOString(), aheadBy: 10 }, seen);
+
+      // Spend the per-PR forced-rebase budget so the next attempt hits the cap branch.
+      for (let i = 0; i < 3; i += 1) {
+        await processJob(env, { type: "agent-regate-pr", deliveryId: `stale-cap-${i}`, repoFullName: "owner/repo", prNumber: 99, installationId: 123 });
+      }
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "stale-cap-final", repoFullName: "owner/repo", prNumber: 99, installationId: 123 });
+
+      const capped = await env.DB.prepare("select detail from audit_events where event_type = ? order by created_at desc limit 1")
+        .bind("agent.action.fresh_rebase_window_cap_exceeded")
+        .first<{ detail: string }>();
+      // The audit names WHICH trigger fired, not just the freshness window it used to hardcode.
+      expect(capped?.detail).toContain("commits ahead");
+    });
+
     it("#9497 INVARIANT: no compare call at all when no threshold is configured (zero added cost)", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
       await seedFreshRebaseRepo(env, 97, {});

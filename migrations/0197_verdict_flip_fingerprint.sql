@@ -1,4 +1,4 @@
--- #9483: the verdict-flip guard (#9016) counted a flip whenever the fresh verdict's direction changed, keyed
+-- #9483 (renumbered 0196 -> 0197: the retention index migration took 0196 first): the verdict-flip guard (#9016) counted a flip whenever the fresh verdict's direction changed, keyed
 -- per (repo, pull) with no content dimension. The exploit it defends against is re-rolling a non-deterministic
 -- reviewer against the SAME content until a lucky clean roll lands -- but an honest contributor iterating on
 -- real feedback produces exactly the same signal: defect(head A) -> fix -> clean(head B) is flip 1, a new real

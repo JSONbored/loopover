@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { run } from "./support/mcp-cli-harness";
+import { CLI_COMMAND_SPEC } from "../../packages/loopover-mcp/bin/loopover-mcp";
 
 // #6260: CLI_COMMAND_SPEC's `cache` entry read ["status", "clear"] while runCacheCli has always accepted
 // `list`/`ls` too. That single stale entry is the sole source for buildBash/Zsh/Fish/PowershellCompletion AND
@@ -11,20 +12,15 @@ import { run } from "./support/mcp-cli-harness";
 //
 // Pinning only "cache list completes" would fix today's miss and let the next entry rot the same way. So this
 // asserts the INVARIANT instead: every canonical subcommand a run*Cli really accepts must appear in the spec.
-// The source is parsed rather than imported because bin/loopover-mcp.js is an executable entrypoint that starts
-// a server on import — reading it is how a test can inspect the spec without launching one.
+// #9521: the SPEC is imported directly now that CLI_COMMAND_SPEC is exported -- it used to be
+// regex-scraped out of the built bundle, which meant the assertion could pass against a stale
+// dist/ and could not see a type error at all. The HANDLER side is still read from source: each
+// run*Cli parses its subcommands inline, so what a handler accepts is only knowable by reading it.
 const SOURCE = readFileSync(join(process.cwd(), "packages/loopover-mcp/dist/bin/loopover-mcp.js"), "utf8");
 
-/** The declared spec, read out of the committed source. */
-function declaredSpec(): Record<string, string[]> {
-  const block = /const CLI_COMMAND_SPEC = \{([\s\S]*?)\n\};/.exec(SOURCE)?.[1] ?? "";
-  const spec: Record<string, string[]> = {};
-  for (const match of block.matchAll(/^\s*"?([a-z-]+)"?:\s*\[([^\]]*)\],/gm)) {
-    const name = match[1]!;
-    const rawSubs = match[2]!;
-    spec[name] = [...rawSubs.matchAll(/"([^"]+)"/g)].map((m) => m[1]!);
-  }
-  return spec;
+/** The declared spec, imported from the one table that also drives dispatch, help, and the README. */
+function declaredSpec(): Record<string, readonly string[]> {
+  return Object.fromEntries(Object.entries(CLI_COMMAND_SPEC).map(([command, entry]) => [command, entry.subcommands]));
 }
 
 /** Every `subcommand === "x"` a handler really accepts — excluding help and any `--flag` form. */

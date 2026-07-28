@@ -211,42 +211,83 @@ function isProcessEntrypoint() {
 }
 const runAsCliEntrypoint = isProcessEntrypoint();
 const defaultProfileName = "default";
-// Single source of truth for shell-completion: top-level command -> its subcommands (if any).
+/**
+ * THE CLI surface, as one typed table (#9521).
+ *
+ * Everything a user can see about a command derives from this: `runCli` dispatch (the
+ * `cliCommandHandlers()` Record below is exhaustiveness-checked against these keys by tsc),
+ * `printHelp`, shell completion, and the README's command block (generated between markers by
+ * scripts/gen-mcp-tool-reference.ts). Before this there were FOUR hand-kept copies -- this table,
+ * a 34-branch if-chain, a hand-written help string, and the README -- and printHelp had already
+ * silently dropped commands.
+ *
+ * `usage` is the full argument syntax shown in help and the README; `subcommands` also drives
+ * completion. An entry with no usage lines still appears in help as its bare name.
+ */
 const CLI_COMMAND_SPEC = {
-  login: [],
-  logout: [],
-  whoami: [],
-  config: [],
-  status: [],
-  changelog: [],
-  completion: [],
-  version: [],
-  tools: ["search"],
-  doctor: [],
-  telemetry: ["enable", "disable", "status"],
-  "init-client": [],
-  "decision-pack": [],
-  "repo-decision": [],
-  "contributor-profile": [],
-  "monitor-open-prs": [],
-  "pr-outcomes": [],
-  "explain-review-risk": [],
-  notifications: [],
-  "notifications-read": [],
-  watch: ["list", "add", "remove"],
-  "analyze-branch": [],
-  preflight: [],
-  "review-pr": [],
-  "lint-pr-text": [],
-  "validate-config": [],
-  "slop-risk": [],
-  "improvement-potential": [],
-  "issue-slop": [],
-  profile: ["list", "create", "switch", "remove"],
-  cache: ["status", "clear", "list"],
-  agent: ["start", "plan", "status", "explain", "packet"],
-  maintain: ["status", "queue", "propose", "approve", "reject", "pause", "resume", "set-level", "precision", "selftune-audit", "outcome-calibration", "onboarding-pack", "audit-feed", "automation-state", "refresh-docs", "generate-issue-drafts", "plan-issues"],
-};
+  login: { subcommands: [], usage: ["login [--profile name] [--github-token <token>] [--json]"] },
+  logout: { subcommands: [], usage: ["logout [--profile name] [--all] [--json]"] },
+  whoami: { subcommands: [], usage: ["whoami [--profile name] [--json]"] },
+  config: { subcommands: [], usage: ["config [--profile name] [--json]"] },
+  status: { subcommands: [], usage: ["status [--profile name] [--json]"] },
+  changelog: { subcommands: [], usage: ["changelog [--json]"] },
+  completion: { subcommands: [], usage: ["completion bash|zsh|fish|powershell [--json]"] },
+  version: { subcommands: [], usage: ["version [--json]"] },
+  tools: { subcommands: ["search"], usage: ["tools [--json]", "tools search <query> [--json]"] },
+  doctor: { subcommands: [], usage: ["doctor [--profile name] [--cwd path] [--exit-code] [--json]"] },
+  telemetry: { subcommands: ["enable", "disable", "status"], usage: ["telemetry enable|disable|status [--json]"] },
+  "init-client": { subcommands: [], usage: ["init-client --print codex|claude|cursor|mcp|vscode [--agent-profile miner-planner|maintainer-triage|repo-owner-intake] [--json]"] },
+  "decision-pack": { subcommands: [], usage: ["decision-pack --login <github-login> [--json]"] },
+  "repo-decision": { subcommands: [], usage: ["repo-decision --login <github-login> --repo owner/repo [--json]"] },
+  "contributor-profile": { subcommands: [], usage: ["contributor-profile [--login <github-login>] [--json]"] },
+  "monitor-open-prs": { subcommands: [], usage: ["monitor-open-prs --login <github-login> [--json]"] },
+  "pr-outcomes": { subcommands: [], usage: ["pr-outcomes --login <github-login> [--limit N] [--json]"] },
+  "explain-review-risk": { subcommands: [], usage: ["explain-review-risk --repo owner/repo --title <text> [--login <github-login>] [--body <text>] [--json]"] },
+  notifications: { subcommands: [], usage: ["notifications --login <github-login> [--json]"] },
+  "notifications-read": { subcommands: [], usage: ["notifications-read --login <github-login> [--id <delivery-id>]... [--json]"] },
+  watch: { subcommands: ["list", "add", "remove"], usage: ["watch <list|add|remove> [owner/repo] [--labels a,b] [--login <github-login>] [--json]"] },
+  "analyze-branch": {
+    subcommands: [],
+    usage: [
+      'analyze-branch --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--scenario-note "..."] [--validation "passed|npm test|summary"] [--format table] [--json]',
+    ],
+  },
+  preflight: {
+    subcommands: [],
+    usage: [
+      'preflight --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--validation "passed|npm test|summary"] [--format table] [--json]',
+    ],
+  },
+  "review-pr": {
+    subcommands: [],
+    usage: ["review-pr --login <github-login> [--repo owner/repo] [--base origin/main] [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]"],
+  },
+  "lint-pr-text": { subcommands: [], usage: ["lint-pr-text [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]"] },
+  "validate-config": { subcommands: [], usage: ["validate-config --file <path> [--source repo_file|api_record|none] [--json]"] },
+  "slop-risk": { subcommands: [], usage: ["slop-risk [--description <text>] [--description-file <path>] [--changed-file <path[:additions:deletions]>]... [--test <command>]... [--test-file <path>]... [--json]"] },
+  "improvement-potential": { subcommands: [], usage: ["improvement-potential [--changed-file <path[:additions:deletions]>]... [--test <command>]... [--test-file <path>]... [--patch-coverage-delta <percent>] [--json]"] },
+  "issue-slop": { subcommands: [], usage: ["issue-slop [--title <text>] [--body <text>] [--body-file <path>] [--json]"] },
+  profile: { subcommands: ["list", "create", "switch", "remove"], usage: ["profile list|create|switch|remove [name] [--json]"] },
+  cache: { subcommands: ["status", "clear", "list"], usage: ["cache status|list|clear [--json]"] },
+  agent: {
+    subcommands: ["start", "plan", "status", "explain", "packet"],
+    usage: [
+      "agent plan --login <github-login> [--repo owner/repo] [--json]",
+      "agent status <run-id> [--json]",
+      "agent explain <run-id> [--json]",
+      "agent packet --login <github-login> [--repo owner/repo] [--base origin/main] [--json]",
+    ],
+  },
+  maintain: {
+    subcommands: ["status", "queue", "propose", "approve", "reject", "pause", "resume", "set-level", "precision", "selftune-audit", "outcome-calibration", "onboarding-pack", "audit-feed", "automation-state", "refresh-docs", "generate-issue-drafts", "plan-issues"],
+    usage: [
+      "maintain status|queue|approve|reject|pause|resume|set-level|precision|selftune-audit|outcome-calibration|onboarding-pack|audit-feed|automation-state|refresh-docs|generate-issue-drafts --repo owner/repo [--json] (see `loopover-mcp maintain --help`)",
+    ],
+  },
+} as const satisfies Record<string, { subcommands: readonly string[]; usage: readonly string[] }>;
+
+export type CliCommand = keyof typeof CLI_COMMAND_SPEC;
+export { CLI_COMMAND_SPEC };
 const COMPLETION_SHELLS = ["bash", "zsh", "fish", "powershell"];
 const AGENT_PROFILE_IDS = ["miner-planner", "miner-auto-dev", "maintainer-triage", "repo-owner-intake"];
 // #784 maintain set-level — the autonomy dial's action classes + levels.
@@ -2711,45 +2752,77 @@ export async function maintainCli(args: any) {
   );
 }
 
+/**
+ * One handler per CLI_COMMAND_SPEC key, exhaustiveness-CHECKED by the Record type (#9521): a
+ * command added to the table without a handler -- or a handler for a command the table does not
+ * declare -- is a tsc error, not a silently unreachable branch. This replaces a 34-branch if-chain
+ * that tsc could not audit.
+ *
+ * Handlers receive the RAW argv tail; the ones that only need parsed options parse inline, matching
+ * what the old chain did for each command.
+ *
+ * This is a hoisted FUNCTION, not a `const` table, and must stay one: the entrypoint above awaits
+ * runCli() during module evaluation, long before a `const` down here would initialize -- so a table
+ * would throw "Cannot access it before initialization" for every CLI invocation.
+ * The old if-chain was accidentally safe because it called hoisted function declarations.
+ */
+function cliCommandHandlers(): Record<CliCommand, (args: string[]) => unknown> {
+  return {
+    version: (args) => printVersion(parseOptions(args)),
+    completion: (args) => completionCommand(args),
+    tools: (args) => toolsCommand(args),
+    agent: (args) => runAgentCli(args),
+    cache: (args) => runCacheCli(args),
+    maintain: (args) => maintainCli(args),
+    telemetry: (args) => telemetryCommand(args),
+    login: (args) => login(parseOptions(args)),
+    logout: (args) => logout(parseOptions(args)),
+    profile: (args) => profileCommand(args),
+    whoami: (args) => whoami(parseOptions(args)),
+    config: (args) => configCommand(parseOptions(args)),
+    status: (args) => status(parseOptions(args)),
+    changelog: (args) => changelog(parseOptions(args)),
+    doctor: (args) => doctor(parseOptions(args)),
+    "init-client": (args) => initClient(parseOptions(args)),
+    "lint-pr-text": (args) => lintPrTextCli(args),
+    "validate-config": (args) => validateConfigCli(args),
+    "slop-risk": (args) => slopRiskCli(args),
+    "improvement-potential": (args) => improvementPotentialCli(args),
+    "issue-slop": (args) => issueSlopCli(args),
+    "decision-pack": (args) => decisionPackCli(parseOptions(args)),
+    "repo-decision": (args) => repoDecisionCli(parseOptions(args)),
+    "contributor-profile": (args) => contributorProfileCli(parseOptions(args)),
+    "monitor-open-prs": (args) => monitorOpenPrsCli(parseOptions(args)),
+    "pr-outcomes": (args) => prOutcomesCli(parseOptions(args)),
+    "explain-review-risk": (args) => explainReviewRiskCli(parseOptions(args)),
+    notifications: (args) => notificationsCli(parseOptions(args)),
+    "notifications-read": (args) => notificationsReadCli(parseOptions(args)),
+    watch: (args) => watchCli(args),
+    "review-pr": (args) => reviewPrCli(parseOptions(args)),
+    "analyze-branch": (args) => analyzeOrPreflightCli("analyze-branch", args),
+    preflight: (args) => analyzeOrPreflightCli("preflight", args),
+  };
+}
+
 async function runCli(args: any) {
   const command = args[0];
   if (command === undefined || command === "--help" || command === "help") return printHelp();
-  if (command === "--version" || command === "-v" || command === "version") return printVersion(parseOptions(args.slice(1)));
-  if (command === "completion") return completionCommand(args.slice(1));
-  if (command === "tools") return toolsCommand(args.slice(1));
-  if (command === "agent") return runAgentCli(args.slice(1));
-  if (command === "cache") return runCacheCli(args.slice(1));
-  if (command === "maintain") return maintainCli(args.slice(1));
-  if (command === "telemetry") return telemetryCommand(args.slice(1));
-  const options = parseOptions(args.slice(1));
-  if (command === "login") return login(options);
-  if (command === "logout") return logout(options);
-  if (command === "profile" || command === "profiles") return profileCommand(args.slice(1));
-  if (command === "whoami") return whoami(options);
-  if (command === "config") return configCommand(options);
-  if (command === "status") return status(options);
-  if (command === "changelog") return changelog(options);
-  if (command === "doctor") return doctor(options);
-  if (command === "init-client") return initClient(options);
-  if (command === "lint-pr-text") return lintPrTextCli(args.slice(1));
-  if (command === "validate-config") return validateConfigCli(args.slice(1));
-  if (command === "slop-risk") return slopRiskCli(args.slice(1));
-  if (command === "improvement-potential") return improvementPotentialCli(args.slice(1));
-  if (command === "issue-slop") return issueSlopCli(args.slice(1));
-  if (command === "decision-pack") return decisionPackCli(options);
-  if (command === "repo-decision") return repoDecisionCli(options);
-  if (command === "contributor-profile") return contributorProfileCli(options);
-  if (command === "monitor-open-prs") return monitorOpenPrsCli(options);
-  if (command === "pr-outcomes") return prOutcomesCli(options);
-  if (command === "explain-review-risk") return explainReviewRiskCli(options);
-  if (command === "notifications") return notificationsCli(options);
-  if (command === "notifications-read") return notificationsReadCli(options);
-  if (command === "watch") return watchCli(args.slice(1));
-  if (command === "review-pr") return reviewPrCli(options);
-  if (command !== "analyze-branch" && command !== "preflight") {
-    const suggestion = suggestCommand(command);
-    throw new Error(`Unknown command: ${command}.${suggestion ? ` Did you mean \`${suggestion}\`?` : ""} Run \`loopover-mcp --help\` to list commands.`);
+  // Aliases kept from the old dispatch chain: they are spellings, not commands, so they live here
+  // rather than in the table (completion and help advertise the canonical form only).
+  if (command === "--version" || command === "-v") return printVersion(parseOptions(args.slice(1)));
+  if (command === "profiles") return profileCommand(args.slice(1));
+  const handlers = cliCommandHandlers();
+  if (Object.hasOwn(handlers, command)) {
+    return handlers[command as CliCommand](args.slice(1));
   }
+  const suggestion = suggestCommand(command);
+  throw new Error(`Unknown command: ${command}.${suggestion ? ` Did you mean \`${suggestion}\`?` : ""} Run \`loopover-mcp --help\` to list commands.`);
+}
+
+/** The shared analyze-branch/preflight body, verbatim from the old chain's tail. */
+async function analyzeOrPreflightCli(command: "analyze-branch" | "preflight", rest: string[]) {
+  const args = [command, ...rest];
+  const options = parseOptions(args.slice(1));
   // Match every other subcommand: honor --help before requiring --login / hitting git+network (#6256).
   if (options.help === true) return printHelp();
   const contributorLogin = options.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
@@ -3810,7 +3883,9 @@ function completionCommand(args: any) {
 
 function buildCompletionScript(shell: any) {
   const topLevel = [...Object.keys(CLI_COMMAND_SPEC), "help"];
-  const withSubcommands = Object.entries(CLI_COMMAND_SPEC).filter(([, subcommands]) => subcommands.length > 0);
+  const withSubcommands = Object.entries(CLI_COMMAND_SPEC)
+    .map(([command, entry]) => [command, entry.subcommands] as const)
+    .filter(([, subcommands]) => subcommands.length > 0);
   if (shell === "bash") return buildBashCompletion(topLevel, withSubcommands);
   if (shell === "zsh") return buildZshCompletion(topLevel, withSubcommands);
   if (shell === "fish") return buildFishCompletion(topLevel, withSubcommands);
@@ -3937,45 +4012,15 @@ ${subcommandEntries}
 }
 
 function printHelp() {
+  // Derived from CLI_COMMAND_SPEC (#9521): a command added to the table appears here by
+  // construction, which the old hand-written string provably did not guarantee -- it had already
+  // dropped commands. `--stdio` is the one non-command entry, listed first because it is the mode
+  // MCP clients launch.
+  const usageLines = ["--stdio", ...Object.values(CLI_COMMAND_SPEC).flatMap((entry) => entry.usage)]
+    .map((line) => `  loopover-mcp ${line}`.replace("loopover-mcp --stdio", "loopover-mcp --stdio"))
+    .join("\n");
   process.stdout.write(`Usage:
-  loopover-mcp --stdio
-  loopover-mcp version [--json]
-  loopover-mcp tools [--json]
-  loopover-mcp tools search <query> [--json]
-  loopover-mcp completion bash|zsh|fish|powershell [--json]
-  loopover-mcp login [--profile name] [--github-token <token>] [--json]
-  loopover-mcp logout [--profile name] [--all] [--json]
-  loopover-mcp whoami [--profile name] [--json]
-  loopover-mcp config [--profile name] [--json]
-  loopover-mcp status [--profile name] [--json]
-  loopover-mcp telemetry enable|disable|status [--json]
-  loopover-mcp profile list|create|switch|remove [name] [--json]
-  loopover-mcp changelog [--json]
-  loopover-mcp doctor [--profile name] [--cwd path] [--exit-code] [--json]
-  loopover-mcp cache status|list|clear [--json]
-  loopover-mcp init-client --print codex|claude|cursor|mcp|vscode [--agent-profile miner-planner|maintainer-triage|repo-owner-intake] [--json]
-  loopover-mcp maintain status|queue|approve|reject|pause|resume|set-level|precision|selftune-audit|outcome-calibration|onboarding-pack|audit-feed|automation-state|refresh-docs|generate-issue-drafts --repo owner/repo [--json] (see \`loopover-mcp maintain --help\`)
-  loopover-mcp decision-pack --login <github-login> [--json]
-  loopover-mcp repo-decision --login <github-login> --repo owner/repo [--json]
-  loopover-mcp contributor-profile [--login <github-login>] [--json]
-  loopover-mcp monitor-open-prs --login <github-login> [--json]
-  loopover-mcp pr-outcomes --login <github-login> [--limit N] [--json]
-  loopover-mcp explain-review-risk --repo owner/repo --title <text> [--login <github-login>] [--body <text>] [--json]
-  loopover-mcp notifications --login <github-login> [--json]
-  loopover-mcp notifications-read --login <github-login> [--id <delivery-id>]... [--json]
-  loopover-mcp watch <list|add|remove> [owner/repo] [--labels a,b] [--login <github-login>] [--json]
-  loopover-mcp analyze-branch --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--scenario-note "..."] [--validation "passed|npm test|summary"] [--format table] [--json]
-  loopover-mcp preflight --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--validation "passed|npm test|summary"] [--format table] [--json]
-  loopover-mcp review-pr --login <github-login> [--repo owner/repo] [--base origin/main] [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]
-  loopover-mcp lint-pr-text [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]
-  loopover-mcp validate-config --file <path> [--source repo_file|api_record|none] [--json]
-  loopover-mcp slop-risk [--description <text>] [--description-file <path>] [--changed-file <path[:additions:deletions]>]... [--test <command>]... [--test-file <path>]... [--json]
-  loopover-mcp improvement-potential [--changed-file <path[:additions:deletions]>]... [--test <command>]... [--test-file <path>]... [--patch-coverage-delta <percent>] [--json]
-  loopover-mcp issue-slop [--title <text>] [--body <text>] [--body-file <path>] [--json]
-  loopover-mcp agent plan --login <github-login> [--repo owner/repo] [--json]
-  loopover-mcp agent status <run-id> [--json]
-  loopover-mcp agent explain <run-id> [--json]
-  loopover-mcp agent packet --login <github-login> [--repo owner/repo] [--base origin/main] [--json]
+${usageLines}
 
   Environment:
   LOOPOVER_API_URL

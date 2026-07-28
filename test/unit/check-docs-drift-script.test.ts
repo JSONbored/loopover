@@ -618,7 +618,7 @@ describe("check-docs-drift script", () => {
 describe("checkDocsDrift — MCP tool mentions (#9521)", () => {
   // These cases exercise ONLY the docs-page scan, so every non-docs read defers to the real repo
   // files -- the same posture as running the script for real, minus the real docs directory.
-  const base = () => (root: string, relativePath: string): string =>
+  const base = () => (_root: string, relativePath: string): string =>
     readFileSync(join(process.cwd(), relativePath), "utf8");
 
   it("accepts a docs page whose tool mentions all exist in the registry", () => {

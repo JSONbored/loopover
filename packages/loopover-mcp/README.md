@@ -26,55 +26,47 @@ npm link --workspace @loopover/mcp
 
 ## Commands
 
+<!-- GENERATED:MCP-CLI-COMMANDS:BEGIN — edit CLI_COMMAND_SPEC in bin/loopover-mcp.ts, then `npm run mcp:tool-reference` -->
 ```sh
-loopover-mcp version
-loopover-mcp version --json
-loopover-mcp tools
-loopover-mcp tools --json
-loopover-mcp login
-loopover-mcp logout
-loopover-mcp whoami
-loopover-mcp config
-loopover-mcp config --json
-loopover-mcp status
-loopover-mcp changelog
-loopover-mcp doctor
-loopover-mcp doctor --exit-code
-loopover-mcp telemetry status
-loopover-mcp telemetry enable
-loopover-mcp telemetry disable
-loopover-mcp telemetry enable --json
-loopover-mcp profile list
-loopover-mcp profile create work
-loopover-mcp profile switch work
-loopover-mcp cache status
-loopover-mcp cache list
-loopover-mcp cache clear
-loopover-mcp init-client --print codex
-loopover-mcp init-client --print claude
-loopover-mcp init-client --print cursor
-loopover-mcp init-client --print vscode
-loopover-mcp init-client --print codex --agent-profile miner-planner
-loopover-mcp completion bash
-loopover-mcp completion zsh
-loopover-mcp completion fish
-loopover-mcp completion powershell
-loopover-mcp decision-pack --login jsonbored --json
-loopover-mcp repo-decision --login jsonbored --repo we-promise/sure --json
-loopover-mcp monitor-open-prs --login jsonbored --json
-loopover-mcp analyze-branch --login jsonbored --json
-loopover-mcp preflight --login jsonbored --json
-loopover-mcp review-pr --login jsonbored --commit "feat(mcp): add doctor grouping" --body "Fixes #160. Validated with npm test." --linked-issue 160 --json
-loopover-mcp lint-pr-text --commit "feat(mcp): add doctor grouping" --body "Fixes #160. Validated with npm test." --linked-issue 160 --json
-loopover-mcp validate-config --file ./.loopover.yml --json
-loopover-mcp slop-risk --changed-file src/widget.ts:80:2 --description "Adds retry handling." --test-file test/unit/widget.test.ts --json
-loopover-mcp issue-slop --title "Add retry handling" --body "Widget reconnects fail without bounded retries." --json
-loopover-mcp agent plan --login jsonbored --json
-loopover-mcp agent packet --login jsonbored --json
-loopover-mcp agent status <run-id> --json
-loopover-mcp agent explain <run-id> --json
-loopover-mcp --stdio
+loopover-mcp login [--profile name] [--github-token <token>] [--json]
+loopover-mcp logout [--profile name] [--all] [--json]
+loopover-mcp whoami [--profile name] [--json]
+loopover-mcp config [--profile name] [--json]
+loopover-mcp status [--profile name] [--json]
+loopover-mcp changelog [--json]
+loopover-mcp completion bash|zsh|fish|powershell [--json]
+loopover-mcp version [--json]
+loopover-mcp tools [--json]
+loopover-mcp tools search <query> [--json]
+loopover-mcp doctor [--profile name] [--cwd path] [--exit-code] [--json]
+loopover-mcp telemetry enable|disable|status [--json]
+loopover-mcp init-client --print codex|claude|cursor|mcp|vscode [--agent-profile miner-planner|maintainer-triage|repo-owner-intake] [--json]
+loopover-mcp decision-pack --login <github-login> [--json]
+loopover-mcp repo-decision --login <github-login> --repo owner/repo [--json]
+loopover-mcp contributor-profile [--login <github-login>] [--json]
+loopover-mcp monitor-open-prs --login <github-login> [--json]
+loopover-mcp pr-outcomes --login <github-login> [--limit N] [--json]
+loopover-mcp explain-review-risk --repo owner/repo --title <text> [--login <github-login>] [--body <text>] [--json]
+loopover-mcp notifications --login <github-login> [--json]
+loopover-mcp notifications-read --login <github-login> [--id <delivery-id>]... [--json]
+loopover-mcp watch <list|add|remove> [owner/repo] [--labels a,b] [--login <github-login>] [--json]
+loopover-mcp analyze-branch --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--scenario-note "..."] [--validation "passed|npm test|summary"] [--format table] [--json]
+loopover-mcp preflight --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--validation "passed|npm test|summary"] [--format table] [--json]
+loopover-mcp review-pr --login <github-login> [--repo owner/repo] [--base origin/main] [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]
+loopover-mcp lint-pr-text [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]
+loopover-mcp validate-config --file <path> [--source repo_file|api_record|none] [--json]
+loopover-mcp slop-risk [--description <text>] [--description-file <path>] [--changed-file <path[:additions:deletions]>]... [--test <command>]... [--test-file <path>]... [--json]
+loopover-mcp improvement-potential [--changed-file <path[:additions:deletions]>]... [--test <command>]... [--test-file <path>]... [--patch-coverage-delta <percent>] [--json]
+loopover-mcp issue-slop [--title <text>] [--body <text>] [--body-file <path>] [--json]
+loopover-mcp profile list|create|switch|remove [name] [--json]
+loopover-mcp cache status|list|clear [--json]
+loopover-mcp agent plan --login <github-login> [--repo owner/repo] [--json]
+loopover-mcp agent status <run-id> [--json]
+loopover-mcp agent explain <run-id> [--json]
+loopover-mcp agent packet --login <github-login> [--repo owner/repo] [--base origin/main] [--json]
+loopover-mcp maintain status|queue|approve|reject|pause|resume|set-level|precision|selftune-audit|outcome-calibration|onboarding-pack|audit-feed|automation-state|refresh-docs|generate-issue-drafts --repo owner/repo [--json] (see `loopover-mcp maintain --help`)
 ```
+<!-- GENERATED:MCP-CLI-COMMANDS:END -->
 
 `loopover-mcp version` (aliases `--version` and `-v`) prints the installed package version, the targeted API version, and the Node.js runtime version:
 

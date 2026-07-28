@@ -19,13 +19,29 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { LEGACY_MCP_TELEMETRY_PROPERTY_KEYS, listToolDefinitions, type McpToolDefinition } from "@loopover/contract";
-import { STDIO_TOOL_NAMES } from "../packages/loopover-mcp/bin/loopover-mcp";
+import { CLI_COMMAND_SPEC, STDIO_TOOL_NAMES } from "../packages/loopover-mcp/bin/loopover-mcp";
 
 const CHECK = process.argv.includes("--check");
 const ROOT = process.cwd();
 
 const BEGIN = "<!-- GENERATED:MCP-TOOLS:BEGIN — edit the @loopover/contract registry, then `npm run mcp:tool-reference` -->";
 const END = "<!-- GENERATED:MCP-TOOLS:END -->";
+const CLI_BEGIN = "<!-- GENERATED:MCP-CLI-COMMANDS:BEGIN — edit CLI_COMMAND_SPEC in bin/loopover-mcp.ts, then `npm run mcp:tool-reference` -->";
+const CLI_END = "<!-- GENERATED:MCP-CLI-COMMANDS:END -->";
+
+/** The README command block, from the same table that drives dispatch, help, and completion. */
+function cliCommandBlock(): string {
+  const lines = Object.values(CLI_COMMAND_SPEC).flatMap((entry) => entry.usage.map((usage) => `loopover-mcp ${usage}`));
+  return "```sh\n" + lines.join("\n") + "\n```";
+}
+
+function replaceCliSection(source: string): string {
+  const begin = source.indexOf(CLI_BEGIN);
+  const end = source.indexOf(CLI_END);
+  if (begin === -1 || end === -1) throw new Error("packages/loopover-mcp/README.md is missing the GENERATED:MCP-CLI-COMMANDS markers.");
+  return source.slice(0, begin + CLI_BEGIN.length) + "\n" + cliCommandBlock() + "\n" + source.slice(end);
+}
+
 const TELEMETRY_BEGIN = "<!-- GENERATED:MCP-TELEMETRY-PROPS:BEGIN — edit LEGACY_MCP_TELEMETRY_PROPERTY_KEYS in @loopover/contract, then `npm run mcp:tool-reference` -->";
 const TELEMETRY_END = "<!-- GENERATED:MCP-TELEMETRY-PROPS:END -->";
 
@@ -105,7 +121,7 @@ function main(): void {
     {
       file: "packages/loopover-mcp/README.md",
       next: (current) =>
-        replaceTelemetrySection(replaceBetweenMarkers(current, toolTable(all.filter((tool) => stdioNames.has(tool.name))), "packages/loopover-mcp/README.md")),
+        replaceCliSection(replaceTelemetrySection(replaceBetweenMarkers(current, toolTable(all.filter((tool) => stdioNames.has(tool.name))), "packages/loopover-mcp/README.md"))),
     },
     {
       file: "packages/loopover-miner/README.md",

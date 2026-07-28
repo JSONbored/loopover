@@ -3123,6 +3123,48 @@ describe("GitHub rate-limit handling (#ratelimit-resilience)", () => {
     await expect(createInstallationToken(env, 5252)).rejects.toThrow();
     expect(calls).toBe(4); // initial + GITHUB_RATE_LIMIT_MAX_RETRIES (3)
   });
+
+  // #9494 regression: a secondary-limit Retry-After is typically 60s against an 8s inline cap. The old code
+  // took Math.min(retryAfter, cap) and retried up to 3 times INSIDE the window GitHub explicitly asked us to
+  // stay out of -- which its own docs warn can extend or escalate a secondary block. Surface it instead: the
+  // queue honors the full Retry-After with jitter and defers sibling jobs for the same admission target.
+  it("timeoutFetch stops retrying inline when Retry-After exceeds the inline budget (#9494)", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    clearInstallationTokenCacheForTest();
+    let calls = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) {
+        calls += 1;
+        return new Response("secondary rate limit", {
+          status: 403,
+          headers: { "retry-after": "60" }, // far beyond GITHUB_RATE_LIMIT_MAX_DELAY_MS
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    await expect(createInstallationToken(env, 5353)).rejects.toThrow();
+    expect(calls).toBe(1); // ONE attempt -- not 4. The wait belongs to the queue, not this loop.
+  });
+
+  it("timeoutFetch still uses its full inline budget when Retry-After fits within it (#9494)", async () => {
+    // Guards against over-broadening: a short instructed wait is exactly what the inline retries are for.
+    const privateKey = await generatePrivateKeyPem();
+    clearInstallationTokenCacheForTest();
+    let calls = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) {
+        calls += 1;
+        return new Response("secondary rate limit", { status: 403, headers: { "retry-after": "0" } });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    await expect(createInstallationToken(env, 5454)).rejects.toThrow();
+    expect(calls).toBe(4);
+  });
 });
 
 describe("repoFullName segment-count + whitespace guard (#8311)", () => {

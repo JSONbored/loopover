@@ -62,6 +62,54 @@ class PgStatement implements SelfHostD1PreparedStatement {
   }
 }
 
+/**
+ * #9486: adapter -> pool registry, so a caller that needs a DEDICATED connection (not a pooled statement) can
+ * find it. A Postgres session advisory lock is held by the connection that took it, so it cannot be acquired
+ * through `prepare()`/`batch()` -- those hand back a pooled client per call. Kept as a WeakMap rather than a
+ * property on the adapter so the D1Database surface stays exactly the shape every other backend implements.
+ */
+const adapterPools = new WeakMap<D1Database, Pool>();
+
+/** The pool backing `db`, when it is a Postgres adapter; undefined for SQLite/D1. */
+export function pgPoolForAdapter(db: D1Database): Pool | undefined {
+  return adapterPools.get(db);
+}
+
+/**
+ * #9486: run `fn` while holding a Postgres session advisory lock, so two instances booting concurrently
+ * cannot apply migrations at the same time.
+ *
+ * Without it, instance A applies a migration atomically while instance B's identical transaction fails
+ * "already exists" -- which `runSelfHostMigrations` treats as DRIFT and retries statement-by-statement, so a
+ * table-rebuild `INSERT ... SELECT` or an UPDATE backfill RE-EXECUTES against the already-migrated schema.
+ * B then dies on the ledger INSERT's unique violation, whose message matches neither "duplicate column" nor
+ * "already exists", and crash-loops a cycle. #9027 made a single migration atomic against a crash; this makes
+ * the whole run atomic against a concurrent boot.
+ *
+ * Falls through to running `fn` directly on a non-Postgres backend (SQLite is single-process by construction).
+ */
+export async function withPgMigrationLock<T>(db: D1Database, fn: () => Promise<T>): Promise<T> {
+  const pool = adapterPools.get(db);
+  if (!pool) return fn();
+  const client = await pool.connect();
+  try {
+    // A stable, arbitrary key derived from the purpose; any instance using this same constant serializes.
+    await client.query("SELECT pg_advisory_lock($1)", [MIGRATION_ADVISORY_LOCK_KEY]);
+    try {
+      return await fn();
+    } finally {
+      /* v8 ignore next -- best-effort: if the unlock query itself fails the session is already broken, and
+         releasing the client below drops the lock with it. */
+      await client.query("SELECT pg_advisory_unlock($1)", [MIGRATION_ADVISORY_LOCK_KEY]).catch(() => undefined);
+    }
+  } finally {
+    client.release();
+  }
+}
+
+/** Arbitrary but stable: every instance must use the SAME key for the lock to serialize them. */
+export const MIGRATION_ADVISORY_LOCK_KEY = 8_140_9486;
+
 export function createPgAdapter(pool: Pool): D1Database {
   const adapter: SelfHostD1Database = {
     prepare: (sql: string) => new PgStatement(pool, sql),
@@ -116,7 +164,9 @@ export function createPgAdapter(pool: Pool): D1Database {
       return new ArrayBuffer(0); // unused; present for D1 surface completeness
     },
   };
-  return adapter as unknown as D1Database;
+  const built = adapter as unknown as D1Database;
+  adapterPools.set(built, pool);
+  return built;
 }
 
 // #2543: github_rate_limit_observations receives one INSERT per outbound GitHub API response and is pruned in

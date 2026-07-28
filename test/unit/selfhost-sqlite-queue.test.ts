@@ -4542,3 +4542,51 @@ describe("attempt-free deferral on lock contention (#9465)", () => {
     expect((rows as Array<{ status: string }>)[0]?.status).toBe("dead"); // an operator can see it
   });
 });
+
+// #9485: stop() used to wait `while (active > 0)` with NO deadline, so a redeploy blocked on an in-flight
+// multi-minute AI review until the orchestrator's grace period expired and SIGKILLed the process. Because the
+// killed job's lease had been heartbeated right up to the kill, reclaimExpiredProcessingJobs -- which only
+// recovers rows older than QUEUE_PROCESSING_TIMEOUT_MS (30 min by default) -- left it stalled for another
+// 20-30 minutes. Against a 1-5 minute latency target with AUTOMATED redeploys, that was the single largest
+// source of "a review silently stalled for half an hour".
+describe("bounded shutdown drain (#9485)", () => {
+  beforeEach(() => { vi.spyOn(process.stdout, "write").mockImplementation(() => true); });
+  afterEach(() => { vi.useRealTimers(); resetMetrics(); vi.restoreAllMocks(); delete process.env["QUEUE_SHUTDOWN_DRAIN_DEADLINE_MS"]; });
+
+  it("REGRESSION: stop() returns rather than hanging on a job that outlives the deadline", async () => {
+    process.env["QUEUE_SHUTDOWN_DRAIN_DEADLINE_MS"] = "50";
+    const driver = makeDriver();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const q = createSqliteQueue(driver, async () => { await blocked; });
+    await q.binding.send(msg("agent-regate-pr"));
+    void q.drain();
+    await new Promise((r) => setTimeout(r, 20)); // let the job be claimed
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await q.stop(); // must not hang on the still-running job
+
+    const logged = warn.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(logged).toContain("selfhost_queue_shutdown_drain_deadline");
+    // The abandoned row is re-pended, so the next process retries it immediately instead of waiting out the
+    // lease -- that recovery delay is the whole defect.
+    const { rows } = driver.query("SELECT status FROM _selfhost_jobs LIMIT 1", []);
+    expect((rows as Array<{ status: string }>)[0]?.status).toBe("pending");
+    release();
+  });
+
+  it("INVARIANT: a job that finishes inside the deadline drains normally and is NOT re-pended", async () => {
+    process.env["QUEUE_SHUTDOWN_DRAIN_DEADLINE_MS"] = "5000";
+    const driver = makeDriver();
+    const q = createSqliteQueue(driver, async () => undefined);
+    await q.binding.send(msg("agent-regate-pr"));
+    await q.drain();
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await q.stop();
+
+    expect(warn.mock.calls.map((c) => String(c[0])).join("\n")).not.toContain("shutdown_drain_deadline");
+    const { rows } = driver.query("SELECT count(*) AS n FROM _selfhost_jobs", []);
+    expect((rows as Array<{ n: number }>)[0]?.n).toBe(0); // completed and deleted, not re-pended
+  });
+});

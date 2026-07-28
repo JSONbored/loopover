@@ -586,6 +586,10 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/selfhost/queue-common.ts",
   },
   {
+    name: "QUEUE_SHUTDOWN_DRAIN_DEADLINE_MS",
+    firstReference: "src/selfhost/queue-common.ts",
+  },
+  {
     name: "QUEUE_STARTUP_JITTER_MIN_JOBS",
     firstReference: "src/selfhost/queue-common.ts",
   },
@@ -807,6 +811,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `QUEUE_PROCESSING_TIMEOUT_MS` | `src/selfhost/queue-common.ts` |",
   "| `QUEUE_RATE_LIMIT_JITTER_MS` | `src/selfhost/queue-common.ts` |",
   "| `QUEUE_RECOVERY_JITTER_MS` | `src/selfhost/queue-common.ts` |",
+  "| `QUEUE_SHUTDOWN_DRAIN_DEADLINE_MS` | `src/selfhost/queue-common.ts` |",
   "| `QUEUE_STARTUP_JITTER_MIN_JOBS` | `src/selfhost/queue-common.ts` |",
   "| `QUEUE_STARTUP_JITTER_MS` | `src/selfhost/queue-common.ts` |",
   "| `REDEPLOY_COMPANION_SOCKET_PATH` | `src/server.ts` |",

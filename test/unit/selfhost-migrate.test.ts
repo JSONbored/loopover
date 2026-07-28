@@ -7,6 +7,8 @@ import { describe, expect, it } from "vitest";
 import { createD1Adapter, nodeSqliteDriver } from "../../src/selfhost/d1-adapter";
 import { runSelfHostMigrations } from "../../src/selfhost/migrate";
 import { normalizePostgresValue } from "../../scripts/migrate-selfhost-sqlite-to-postgres";
+import type { Pool } from "pg";
+import { createPgAdapter, MIGRATION_ADVISORY_LOCK_KEY, pgPoolForAdapter, withPgMigrationLock } from "../../src/selfhost/pg-adapter";
 
 const sha256 = (sql: string) => createHash("sha256").update(sql, "utf8").digest("hex");
 
@@ -167,5 +169,84 @@ describe("SQLite-to-Postgres migrator helpers", () => {
     expect(normalizePostgresValue("plain text")).toBe("plain text");
     expect(normalizePostgresValue(null)).toBeNull();
     expect(normalizePostgresValue(42)).toBe(42);
+  });
+});
+
+// #9486: two instances booting concurrently could both apply migrations. Instance A applies one atomically;
+// B's identical transaction fails "already exists", which runSelfHostMigrations treats as DRIFT and retries
+// statement-by-statement -- so a table-rebuild INSERT ... SELECT or an UPDATE backfill RE-EXECUTES against the
+// already-migrated schema. B then dies on the ledger INSERT's unique violation, whose message matches neither
+// "duplicate column" nor "already exists", and crash-loops a cycle. #9027 made a single migration atomic
+// against a crash; this makes the whole RUN atomic against a concurrent boot.
+describe("withPgMigrationLock (#9486)", () => {
+  it("runs straight through on a non-Postgres backend (SQLite is single-process by construction)", async () => {
+    // Any db that was not built by createPgAdapter has no registered pool, so there is no lock to take.
+    const notPg = {} as unknown as D1Database;
+    let ran = false;
+    const result = await withPgMigrationLock(notPg, async () => {
+      ran = true;
+      return 42;
+    });
+    expect(ran).toBe(true);
+    expect(result).toBe(42);
+  });
+
+  it("takes and releases a session advisory lock on the Postgres adapter, around the work", async () => {
+    const queries: string[] = [];
+    const client = {
+      query: async (sql: string) => {
+        queries.push(sql);
+        return { rows: [], rowCount: 0 };
+      },
+      release: () => undefined,
+    };
+    const pool = { connect: async () => client } as unknown as Pool;
+    const db = createPgAdapter(pool);
+
+    const order: string[] = [];
+    const out = await withPgMigrationLock(db, async () => {
+      order.push("work");
+      return "done";
+    });
+
+    expect(out).toBe("done");
+    // Locked BEFORE the work and unlocked after -- an unlock-before-work ordering would serialize nothing.
+    expect(queries[0]).toContain("pg_advisory_lock");
+    expect(queries.at(-1)).toContain("pg_advisory_unlock");
+    expect(order).toEqual(["work"]);
+  });
+
+  it("INVARIANT: releases the lock and the client even when the work THROWS", async () => {
+    // A migration failure must not strand the advisory lock -- every later boot would block on it forever.
+    const queries: string[] = [];
+    let released = false;
+    const client = {
+      query: async (sql: string) => {
+        queries.push(sql);
+        return { rows: [], rowCount: 0 };
+      },
+      release: () => { released = true; },
+    };
+    const pool = { connect: async () => client } as unknown as Pool;
+    const db = createPgAdapter(pool);
+
+    await expect(withPgMigrationLock(db, async () => { throw new Error("migration blew up"); })).rejects.toThrow("migration blew up");
+
+    expect(queries.some((q) => q.includes("pg_advisory_unlock"))).toBe(true);
+    expect(released).toBe(true);
+  });
+
+  it("registers the pool so a caller needing a DEDICATED connection can find it", () => {
+    // A session advisory lock is held by its connection, so it cannot be taken through the pooled adapter --
+    // hence the registry rather than a new statement on the D1 surface.
+    const pool = { connect: async () => ({ query: async () => ({ rows: [], rowCount: 0 }), release: () => undefined }) } as unknown as Pool;
+    const db = createPgAdapter(pool);
+    expect(pgPoolForAdapter(db)).toBe(pool);
+    expect(pgPoolForAdapter({} as unknown as D1Database)).toBeUndefined();
+  });
+
+  it("uses one stable key, so separate instances actually serialize against each other", () => {
+    expect(typeof MIGRATION_ADVISORY_LOCK_KEY).toBe("number");
+    expect(Number.isInteger(MIGRATION_ADVISORY_LOCK_KEY)).toBe(true);
   });
 });

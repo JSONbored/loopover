@@ -551,9 +551,11 @@ async function main(): Promise<void> {
       }),
     );
 
-  const applied = await runSelfHostMigrations(
-    backend.db,
-    process.env.MIGRATIONS_DIR ?? "migrations",
+  // #9486: serialize the whole migration run across instances. On Postgres this takes a session advisory
+  // lock; on SQLite (single-process by construction) it runs straight through.
+  const { withPgMigrationLock } = await import("./selfhost/pg-adapter");
+  const applied = await withPgMigrationLock(backend.db, () =>
+    runSelfHostMigrations(backend.db, process.env.MIGRATIONS_DIR ?? "migrations"),
   );
   console.log(
     JSON.stringify({ event: "selfhost_migrations_applied", count: applied }),

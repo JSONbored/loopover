@@ -75,6 +75,22 @@ export const RETENTION_POLICY: readonly RetentionRule[] = [
   { table: "repo_github_totals_snapshots", column: "fetched_at", days: 30 },
   { table: "recent_merged_pull_requests", column: "updated_at", days: 30 },
   { table: "orb_pr_outcomes", column: "occurred_at", days: 90 },
+  // #9473: four more members of the same re-derivable/per-event class #9415 bounded, found by an audit sweep
+  // for tables written per event with NO delete path anywhere in src/. Two have a pruned sibling, which is
+  // what makes the omission clearly unintentional rather than a retention decision:
+  //   - pull_request_reviews is the SIXTH GitHub mirror alongside pull_request_files/check_summaries above,
+  //     synced by the same backfill segment machinery and re-fetched on the next sync.
+  //   - predicted_gate_calibration_ledger is per (login, project, PR, COMMIT); its sibling
+  //     predicted_gate_calls is already pruned at 90d.
+  //   - contributor_gate_history is per (login, project, PR, HEAD_SHA), so every push adds a row, and every
+  //     reader is already windowed (contributor-gate-eval / predicted-gate-agreement both use created_at >= ?)
+  //     -- aged rows are pure dead weight.
+  //   - decision_replay_inputs holds one replay_json blob per decision record, whose parent decision_records
+  //     is pruned at 180d above; without a matching rule these rows outlive the thing they describe.
+  { table: "pull_request_reviews", column: "updated_at", days: 30 },
+  { table: "predicted_gate_calibration_ledger", column: "created_at", days: 90 },
+  { table: "contributor_gate_history", column: "created_at", days: 90 },
+  { table: "decision_replay_inputs", column: "created_at", days: 180 },
 ];
 
 // #9083: a real, single-column, indexable primary key for the ordered-range delete below, keyed by table
@@ -88,7 +104,7 @@ export const RETENTION_POLICY: readonly RetentionRule[] = [
 // inner SELECT is an index range scan, not a scan of its own. A table absent from this map (a composite
 // primary key, or a caller-supplied ad-hoc rule in a test) falls back to rowid/ctid -- still correct, just
 // not scan-optimal, which is acceptable for the lower row counts of the tables that fall back today.
-const RETENTION_PK_COLUMN: Readonly<Record<string, string>> = {
+export const RETENTION_PK_COLUMN: Readonly<Record<string, string>> = {
   audit_events: "id",
   ai_usage_events: "id",
   product_usage_events: "id",
@@ -103,7 +119,43 @@ const RETENTION_PK_COLUMN: Readonly<Record<string, string>> = {
   review_audit: "id",
   decision_records: "id",
   orb_webhook_events: "delivery_id",
+  // #9472: #9415 added the five tables below to RETENTION_POLICY but not here, so pkColumnFor() fell back to
+  // `rowid` -- which pg-dialect rewrites to `ctid`, turning each batched delete's outer `IN` into a full
+  // sequential scan of the whole table, hourly. All five have a single-column `id TEXT PRIMARY KEY`.
+  check_summaries: "id",
+  pull_request_files: "id",
+  repo_github_totals_snapshots: "id",
+  recent_merged_pull_requests: "id",
+  // #9473's additions carry their own single-column primary keys for the same reason.
+  pull_request_reviews: "id",
+  predicted_gate_calibration_ledger: "id",
+  contributor_gate_history: "id",
+  // decision_replay_inputs keys on record_id (decision_records.id), not an `id` column.
+  decision_replay_inputs: "record_id",
 };
+
+/**
+ * Policy tables that legitimately have NO single-column primary key, so {@link RETENTION_PK_COLUMN} cannot
+ * name one and pkColumnFor() falls back to `rowid` for them. Listing them explicitly (rather than letting an
+ * absence mean either "composite PK" or "someone forgot") is what lets the completeness guard in
+ * test/unit/retention.test.ts be strict: every policy table must appear in one of the two, so a new entry
+ * cannot ship unmapped by accident the way #9415's five did.
+ *
+ * NOTE the cost of being here: on the self-host Postgres backend `rowid` is rewritten to `ctid`, so the
+ * batched delete's outer `IN` is a sequential scan of the whole table. The retention-column index from
+ * 0193/0196 still serves the inner SELECT, so the scan is bounded by batch size rather than table size, but a
+ * future table with a genuinely high row count should prefer adding a surrogate `id` over joining this list.
+ */
+export const RETENTION_COMPOSITE_PK_TABLES: ReadonlySet<string> = new Set([
+  // PRIMARY KEY (repository_full_name, pr_number)
+  "orb_pr_outcomes",
+  // PRIMARY KEY (repo_full_name, path, head_sha)
+  "grounding_file_content_cache",
+  // PRIMARY KEY (repo_full_name, pull_number, head_sha[, linked_issue_number])
+  "ai_review_cache",
+  "ai_slop_cache",
+  "linked_issue_satisfaction_cache",
+]);
 
 function pkColumnFor(table: string): string {
   return RETENTION_PK_COLUMN[table] ?? "rowid";
@@ -247,9 +299,17 @@ export const LATEST_ONLY_SIGNAL_SNAPSHOT_TYPES = [
  * for its trend/change reader. This keeps only the latest row per
  * (signal_type, target_key), batched PER signal_type (not one table-wide window-function delete) so
  * each statement stays within D1's per-statement CPU budget -- the same batching split used during
- * the incident's manual remediation. "Latest" is the highest rowid per key: signal_snapshots is
- * populated by a single sequential batch job, so insertion order and generated_at agree, and rowid
- * (unlike generated_at) can never tie.
+ * the incident's manual remediation.
+ *
+ * "Latest" is `(generated_at, id)` DESC per key -- NOT rowid (#9470). rowid was chosen because it "can never
+ * tie" where generated_at can, but on the self-host Postgres backend pg-dialect's translateRowid rewrites every
+ * `rowid` to `ctid`, which is a PHYSICAL heap location, not insertion order: once the age-prune frees pages, a
+ * NEWER row inserted into a reclaimed early page gets a LOWER ctid than an older row on a later page, so
+ * MAX(ctid) selected a STALE row and this delete removed the genuinely newest snapshot. Confirmed on production
+ * (2026-07-27): ~36% of multi-row keys for contributor-evidence-graph had ctid order disagreeing with recency.
+ * translateRowid's own doc says it is only safe for bookkeeping resolved WITHIN one statement and "never for
+ * durable application-facing row identity" -- deciding which row survives a DELETE is exactly that. The id
+ * tiebreak restores the total ordering rowid was providing, without depending on physical layout.
  */
 export async function dedupeSignalSnapshots(
   env: Env,
@@ -266,7 +326,10 @@ export async function dedupeSignalSnapshots(
     .all<{ signal_type: string }>();
 
   for (const { signal_type: signalType } of types.results) {
-    const staleCondition = `signal_type = ?1 AND rowid NOT IN (SELECT MAX(rowid) FROM signal_snapshots WHERE signal_type = ?1 GROUP BY target_key)`;
+    // One index-backed lookup per distinct target_key (signal_snapshots_target_idx covers
+    // (signal_type, target_key, generated_at)), rather than a table-wide window function -- same
+    // per-statement-budget discipline as the batching above.
+    const staleCondition = `signal_type = ?1 AND id NOT IN (SELECT (SELECT newest.id FROM signal_snapshots AS newest WHERE newest.signal_type = ?1 AND newest.target_key = keys.target_key ORDER BY newest.generated_at DESC, newest.id DESC LIMIT 1) FROM (SELECT DISTINCT target_key FROM signal_snapshots WHERE signal_type = ?1) AS keys)`;
 
     if (dryRun) {
       const row = await env.DB.prepare(`SELECT count(*) AS n FROM signal_snapshots WHERE ${staleCondition}`).bind(signalType).first<{ n: number }>();
@@ -276,7 +339,9 @@ export async function dedupeSignalSnapshots(
 
     let deleted = 0;
     for (;;) {
-      const result = await env.DB.prepare(`DELETE FROM signal_snapshots WHERE rowid IN (SELECT rowid FROM signal_snapshots WHERE ${staleCondition} LIMIT ${batchSize})`)
+      // Batch by the real primary key, not rowid -- see the #9470 note above: on Postgres `rowid` becomes
+      // `ctid`, so the outer `IN` degrades to a full seq scan AND carries the same physical-location semantics.
+      const result = await env.DB.prepare(`DELETE FROM signal_snapshots WHERE id IN (SELECT id FROM signal_snapshots WHERE ${staleCondition} LIMIT ${batchSize})`)
         .bind(signalType)
         .run();
       const changes = Number(result.meta?.changes ?? 0);

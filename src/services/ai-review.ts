@@ -1380,6 +1380,25 @@ function isSubscriptionCliTimeout(error: unknown): boolean {
   return error instanceof Error && error.message === "subscription_cli_timeout";
 }
 
+/**
+ * #9476: the CLI adapter's OTHER non-transient deadline signal, and in practice the one that actually fires.
+ * `claude --output-format json` buffers its whole response, so any run that exceeds its effort timeout has
+ * produced zero stdout bytes when the deadline lands -- which trips the first-output watchdog
+ * (`resolveClaudeFirstOutputTimeoutMs`, clamped to `timeoutMs - 1`) rather than the plain timeout. The adapter
+ * therefore throws `claude_stalled_no_output: <detail>` and `subscription_cli_timeout` is effectively
+ * unreachable for claude-code, so the strict-equality check above never matched and every timed-out review
+ * burned all three attempts: 3 x 180s at default effort, 3 x 600s at the top tier, before the fallback model
+ * was even tried. With QUEUE_CONCURRENCY defaulting to 8 that parks the whole queue during a provider
+ * slowdown, and the per-provider circuit breaker needs three FULL-LENGTH failures before it trips.
+ *
+ * Matched by PREFIX because these carry a `: detail` suffix -- the strict equality that missed this case is
+ * exactly the bug.
+ */
+function isStalledNoOutput(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return error.message.startsWith("claude_stalled_no_output") || error.message.startsWith("codex_stalled_no_output");
+}
+
 /** True for a provider's own HTTP-429 signal (`src/selfhost/ai.ts`'s `claude_code_error_429` /
  *  `ai_http_429` / `anthropic_http_429`, and the generic Workers-AI equivalent). #5385-sentry
  *  (GITTENSORY-K/8): an immediate same-model retry against a rate limit that is still in its window has
@@ -1633,7 +1652,7 @@ async function runWorkersOpinion(
         // A structural config error (missing/expired credentials) is stronger still: it is DETERMINISTIC, not
         // just unlikely to clear in time -- the same model will fail the identical way on attempt 2 and 3 too,
         // confirmed live (GITTENSORY-K/8: 2094 + 544 events over 16 days from one never-fixed misconfiguration).
-        if (isSubscriptionCliTimeout(error) || isRateLimitError(error) || isStructuralProviderConfigError(error)) break;
+        if (isSubscriptionCliTimeout(error) || isStalledNoOutput(error) || isRateLimitError(error) || isStructuralProviderConfigError(error)) break;
       }
     }
   }

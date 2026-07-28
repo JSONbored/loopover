@@ -3515,6 +3515,46 @@ describe("pure helpers", () => {
     expect(run).toHaveBeenCalledTimes(2); // 1 primary (timed out) + 1 fallback (succeeded on its first try).
   });
 
+  // #9476 regression: `claude --output-format json` buffers its whole response, so ANY run that exceeds its
+  // effort timeout has produced zero stdout when the deadline lands -- tripping the first-output watchdog and
+  // throwing `claude_stalled_no_output: <detail>` rather than `subscription_cli_timeout`. The break condition
+  // tested above used strict equality, so it never matched: every timed-out review burned all three attempts
+  // (3 x 180s at default effort, 3 x 600s at the top tier) before the fallback was even tried, and at
+  // QUEUE_CONCURRENCY=8 that parks the whole queue during a provider slowdown. The suffix is why prefix
+  // matching is required -- strict equality is the original bug.
+  it.each([
+    ["claude_stalled_no_output: no stdout within firstOutputTimeoutMs — claude likely hung"],
+    ["codex_stalled_no_output: no stdout within firstOutputTimeoutMs — codex likely hung reading stdin"],
+  ])("REGRESSION (#9476): runWorkersOpinion stops retrying after ONE %s", async (message) => {
+    let primaryAttempts = 0;
+    const run = vi.fn(async (model: string) => {
+      if (model === "fallback") return { response: reviewJson() };
+      primaryAttempts += 1;
+      throw new Error(message);
+    });
+    const env = createTestEnv({ AI: { run } as unknown as Ai });
+    const diagnostics: Array<{ status: string; model: string }> = [];
+    const parsed = await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256, diagnostics as never);
+    expect(parsed.review?.assessment).toContain("reasonable");
+    expect(primaryAttempts).toBe(1); // NOT 3 -- the stall short-circuits further retries of this model.
+    expect(run).toHaveBeenCalledTimes(2); // 1 primary (stalled) + 1 fallback (succeeded on its first try).
+  });
+
+  it("REGRESSION (#9476): a genuinely transient error still gets the FULL retry budget (the break is narrow)", async () => {
+    // Guards against over-broadening the break: only the non-transient deadline/rate-limit/config signals
+    // short-circuit. A dropped connection must still be retried up to the budget.
+    let primaryAttempts = 0;
+    const run = vi.fn(async (model: string) => {
+      if (model === "fallback") return { response: reviewJson() };
+      primaryAttempts += 1;
+      throw new Error("ECONNRESET");
+    });
+    const env = createTestEnv({ AI: { run } as unknown as Ai });
+    const diagnostics: Array<{ status: string; model: string }> = [];
+    await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256, diagnostics as never);
+    expect(primaryAttempts).toBe(3);
+  });
+
   it("REGRESSION (#5385-sentry, GITTENSORY-K/8): runWorkersOpinion stops retrying a model after ONE 429 rate-limit error, same as a CLI timeout", async () => {
     let primaryAttempts = 0;
     const run = vi.fn(async (model: string) => {

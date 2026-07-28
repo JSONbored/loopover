@@ -67,7 +67,7 @@ export async function createOrUpdatePrIntelligenceComment(
   pullNumber: number,
   body: string,
   options: { createIfMissing?: boolean | undefined; mode?: AgentActionMode } = {},
-): Promise<{ id: number; html_url?: string; changed: boolean } | null> {
+): Promise<{ id: number; html_url?: string; changed: boolean; previousBody?: string } | null> {
   return createOrUpdateIssueCommentWithMarker(env, installationId, repoFullName, pullNumber, body, PR_INTELLIGENCE_COMMENT_MARKER, options);
 }
 
@@ -130,7 +130,7 @@ async function createOrUpdateIssueCommentWithMarker(
   body: string,
   marker: string,
   options: { createIfMissing?: boolean | undefined; mode?: AgentActionMode } = {},
-): Promise<{ id: number; html_url?: string; changed: boolean } | null> {
+): Promise<{ id: number; html_url?: string; changed: boolean; previousBody?: string } | null> {
   const parts = repoFullName.split("/");
   const owner = parts[0];
   const repo = parts[1];
@@ -168,12 +168,19 @@ async function createOrUpdateIssueCommentWithMarker(
       // marker — also collapses a duplicate webhook delivery for the same commit.
       // #9069: compared through comparableCommentBody so the panel's per-pass "Review updated" timestamp — which
       // changes on every render and made this check unreachable for the panel — no longer counts as a change.
+      // #9000: the body we are ABOUT to overwrite, surfaced to the caller. The panel renderer always emits
+      // its interactive checkboxes unticked, so a tick lives only in the live comment -- and this PATCH is
+      // the exact moment a lost-delivery click (a box the user ticked whose webhook never became a job) would
+      // otherwise be silently erased, leaving the maintainer certain ORB ignored them. Returning the previous
+      // body costs nothing (it was already fetched for the marker search) and lets the publish path notice
+      // and honor the intent instead of destroying the only evidence it existed.
       /* v8 ignore next -- `?? ""` is a type-level guard only: the marker filter above requires
        * `comment.body?.includes(candidate)`, so any comment that becomes `canonical` provably has a non-empty
        * string body. Kept because IssueComment types `body` as `string | null | undefined`. */
-      if (comparableCommentBody(canonical.body ?? "") === comparableCommentBody(body)) {
+      const previousBody = canonical.body ?? "";
+      if (comparableCommentBody(previousBody) === comparableCommentBody(body)) {
         await deleteDuplicateMarkerComments(octokit, owner, repo, existing, canonical.id);
-        return { id: canonical.id, ...(canonical.html_url !== undefined ? { html_url: canonical.html_url } : {}), changed: false };
+        return { id: canonical.id, ...(canonical.html_url !== undefined ? { html_url: canonical.html_url } : {}), changed: false, previousBody };
       }
       const response = await octokit.request("PATCH /repos/{owner}/{repo}/issues/comments/{comment_id}", {
         owner,
@@ -182,7 +189,7 @@ async function createOrUpdateIssueCommentWithMarker(
         body,
       });
       await deleteDuplicateMarkerComments(octokit, owner, repo, existing, canonical.id);
-      return { ...(response.data as { id: number; html_url?: string }), changed: true };
+      return { ...(response.data as { id: number; html_url?: string }), changed: true, previousBody };
     }
     if (options.createIfMissing === false) return null;
     const response = await octokit.request("POST /repos/{owner}/{repo}/issues/{issue_number}/comments", {

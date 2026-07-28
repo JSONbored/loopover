@@ -276,9 +276,12 @@ describe("PR-panel retrigger pending force-review marker (#7626)", () => {
       .bind("github_app.pr_panel_retriggered", "JSONbored/gittensory#702")
       .first<{ outcome: string }>();
     expect(retriggeredAudit?.outcome).toBe("completed"); // the immediate path really did run (sanity)
-    // No pending-retrigger marker was ever written -- the immediate-success path sets forceAiReview directly
-    // and never touches markPendingPrPanelRetrigger (that only runs on the DEFER branch).
-    expect([...cache.values.keys()].some((key) => key.startsWith("pr-panel-retrigger-pending:"))).toBe(false);
+    // No pending-retrigger INTENT survives the immediate path. (#9000 changed the mechanism: the handler now
+    // marks the pending intent BEFORE the readiness check -- so the lost-click recovery hooked into the
+    // CI-wait placeholder can tell a mid-processing click from a lost one -- and consumes it right back on
+    // this immediate branch. Consumption may leave the one-shot "consumed" sentinel behind on adapters
+    // without a real delete, so the invariant is "no key still holds the PENDING value", not key absence.)
+    expect([...cache.values.entries()].some(([key, value]) => key.startsWith("pr-panel-retrigger-pending:") && value === "1")).toBe(false);
   });
 
   it("a new commit (different head SHA) after a pending-but-unhonored marker does not inherit the old marker's forceAiReview intent", async () => {

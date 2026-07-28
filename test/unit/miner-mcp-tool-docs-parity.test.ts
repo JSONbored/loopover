@@ -1,18 +1,24 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { listToolDefinitions } from "@loopover/contract/tools";
 
-const MCP_BIN_PATH = join(process.cwd(), "packages/loopover-miner/dist/bin/loopover-miner-mcp.js");
 const README_PATH = join(process.cwd(), "packages/loopover-miner/README.md");
 const CODING_AGENT_DRIVER_DOC_PATH = join(process.cwd(), "packages/loopover-miner/docs/coding-agent-driver.md");
 
-/** Every `server.registerTool("loopover_miner_...", ...)` name in the real MCP bin -- the source of truth
- *  this test pins the README's "MCP server" section against, so the two can never silently drift (#5162). */
+/**
+ * Every miner-locality tool name from `@loopover/contract` -- the source of truth this test pins
+ * the README's "MCP server" section against (#5162, #9536).
+ *
+ * Previously regex-scraped `server.registerTool("loopover_miner_...", ...)` calls out of the
+ * *compiled* dist bundle, which meant (a) it needed a fresh `npm run build:miner` to see a real
+ * change and (b) any reformatting of the registration call (the exact pattern #9517's own
+ * investigation flagged as fragile in the sibling stdio-completion test) silently broke the guard
+ * instead of the code. The registry removes both failure modes: it is the same list every server
+ * registers from, read directly, no build step and no regex between this test and reality.
+ */
 function registeredMinerMcpToolNames(): string[] {
-  const source = readFileSync(MCP_BIN_PATH, "utf8");
-  const names = [...source.matchAll(/server\.registerTool\(\s*\n?\s*"(loopover_miner_\w+)"/g)]
-    .map((m) => m[1])
-    .filter((name): name is string => name !== undefined);
+  const names = listToolDefinitions({ locality: ["miner"] }).map((tool) => tool.name);
   expect(names.length).toBeGreaterThan(0);
   return names;
 }

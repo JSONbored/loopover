@@ -162,3 +162,263 @@ export const minerListClaimsTool = defineTool({
   input: MinerListClaimsInput,
   output: MinerListClaimsOutput,
 });
+
+// ── audit feed ──────────────────────────────────────────────────────────────────────────────────
+
+export const MinerAuditFeedInput = z.object({
+  repoFullName: z.string().min(1).optional(),
+  since: z.number().int().nonnegative().optional(),
+  type: z.string().min(1).optional(),
+});
+
+/** `{ repoFullName?, events }` -- `collectEventLedgerAuditFeed`'s real return shape. Each event is
+ *  metadata only: `payload_json` and other raw ledger columns are never included by construction
+ *  (an explicit named-column read, not a redaction step). */
+export const MinerAuditFeedOutput = z.looseObject({
+  repoFullName: z.string().optional(),
+  events: z.array(
+    z.looseObject({
+      eventType: z.string(),
+      repoFullName: z.string().nullable(),
+      outcome: z.string().nullable(),
+      actor: z.string().nullable(),
+      detail: z.string().nullable(),
+      createdAt: z.string(),
+    }),
+  ),
+});
+
+export const minerAuditFeedTool = defineTool({
+  name: "loopover_miner_get_audit_feed",
+  title: "Miner audit feed",
+  description:
+    "Read-only, metadata-only audit feed from the local append-only event ledger: eventType, repoFullName, outcome, actor, detail, and createdAt per row. Wraps collectEventLedgerAuditFeed() (no new query logic) -- the same read filters as `loopover-miner ledger list` (--repo, --since, --type). Never returns payload_json or other raw ledger columns; never writes to the ledger.",
+  category: "agent",
+  auth: "public",
+  locality: "miner",
+  availability: "selfhost",
+  input: MinerAuditFeedInput,
+  output: MinerAuditFeedOutput,
+});
+
+// ── run state ───────────────────────────────────────────────────────────────────────────────────
+
+/** `RunState` (packages/loopover-miner/lib/run-state.ts). */
+export const MINER_RUN_STATES = ["idle", "discovering", "planning", "preparing"] as const;
+
+export const MinerGetRunStateInput = z.object({
+  repoFullName: z.string().min(1).optional(),
+});
+
+/** Two distinct shapes depending on whether `repoFullName` was supplied -- a single-repo lookup
+ *  (whose `state` is null when nothing has been recorded yet) versus the full listing. Both fields
+ *  optional here so one schema describes both without a discriminated union, which the MCP output
+ *  schema does not need to enforce mutual exclusivity to be useful. */
+export const MinerGetRunStateOutput = z.looseObject({
+  repoFullName: z.string().optional(),
+  state: z.enum(MINER_RUN_STATES).nullable().optional(),
+  states: z.array(z.looseObject({ repoFullName: z.string(), state: z.enum(MINER_RUN_STATES).nullable() })).optional(),
+});
+
+export const minerGetRunStateTool = defineTool({
+  name: "loopover_miner_get_run_state",
+  title: "Miner run state",
+  description:
+    "Read-only per-repo miner run-state (idle/discovering/planning/preparing). Pass repoFullName for a single repo (a null state means none has been recorded for it yet), or omit it to list every repo's state. The read-only analog of ORB's loopover_get_automation_state; adds no state-set or mutation capability.",
+  category: "agent",
+  auth: "public",
+  locality: "miner",
+  availability: "selfhost",
+  input: MinerGetRunStateInput,
+  output: MinerGetRunStateOutput,
+});
+
+// ── plan store ──────────────────────────────────────────────────────────────────────────────────
+
+/** `PlanStatus` (packages/loopover-miner/lib/plan-store.ts). */
+export const MINER_PLAN_STATUSES = ["pending", "running", "completed", "failed"] as const;
+
+/** `PlanStepStatus`, same file. */
+export const MINER_PLAN_STEP_STATUSES = ["pending", "running", "completed", "failed", "skipped"] as const;
+
+/** `PlanStep`. `lastError` is nullish (both unset and explicit null appear -- the store's own type
+ *  spells it `string | null | undefined`). */
+export const minerPlanStepSchema = z.looseObject({
+  id: z.string(),
+  title: z.string(),
+  actionClass: z.string().optional(),
+  dependsOn: z.array(z.string()),
+  status: z.enum(MINER_PLAN_STEP_STATUSES),
+  attempts: z.number(),
+  maxAttempts: z.number(),
+  lastError: z.string().nullish(),
+});
+
+/** `PlanDag`. */
+export const minerPlanDagSchema = z.looseObject({
+  steps: z.array(minerPlanStepSchema),
+});
+
+/** `PlanRecord`. */
+export const minerPlanRecordSchema = z.looseObject({
+  planId: z.string(),
+  plan: minerPlanDagSchema,
+  status: z.enum(MINER_PLAN_STATUSES),
+  updatedAt: z.string(),
+});
+
+export const MinerListPlansInput = z.object({
+  status: z.enum(MINER_PLAN_STATUSES).optional(),
+});
+
+export const MinerListPlansOutput = z.looseObject({
+  plans: z.array(minerPlanRecordSchema),
+});
+
+export const minerListPlansTool = defineTool({
+  name: "loopover_miner_list_plans",
+  title: "List miner plans",
+  description:
+    "Read-only list of the miner's PERSISTED plan store (planId, plan DAG, status, updatedAt), optionally filtered by status. Wraps plan-store.js's existing listPlans query -- no new logic, no mutation. NOTE: this is the store-backed AMS plan store; it is distinct from ORB's stateless loopover_plan_status tool, which reads the caller's in-memory plan object rather than any persisted store.",
+  category: "agent",
+  auth: "public",
+  locality: "miner",
+  availability: "selfhost",
+  input: MinerListPlansInput,
+  output: MinerListPlansOutput,
+});
+
+export const MinerGetPlanInput = z.object({
+  planId: z.string().min(1),
+});
+
+/** `{ planId, found: false }` for an unknown id, or `{ found: true, plan }` -- deliberately not a
+ *  discriminated union in the schema for the same reason as get_run_state above. */
+export const MinerGetPlanOutput = z.looseObject({
+  planId: z.string().optional(),
+  found: z.boolean(),
+  plan: minerPlanRecordSchema.optional(),
+});
+
+export const minerGetPlanTool = defineTool({
+  name: "loopover_miner_get_plan",
+  title: "Get miner plan",
+  description:
+    "Read-only fetch of one persisted plan record by planId (the full plan DAG, status, updatedAt), or an explicit { planId, found: false } for an unknown id. Wraps plan-store.js's existing loadPlan lookup -- no mutation, no DAG/planning logic. Store-backed AMS plan store; distinct from ORB's stateless loopover_plan_status tool.",
+  category: "agent",
+  auth: "public",
+  locality: "miner",
+  availability: "selfhost",
+  input: MinerGetPlanInput,
+  output: MinerGetPlanOutput,
+});
+
+// ── governor decisions ──────────────────────────────────────────────────────────────────────────
+
+export const MinerGovernorDecisionsInput = z.object({
+  repoFullName: z.string().optional(),
+});
+
+/** `GovernorDecisionEntry` = `Omit<GovernorLedgerEntry, "payload">` -- the raw `payload` column is
+ *  excluded by an explicit named-column SELECT, not filtered after the fact. */
+export const MinerGovernorDecisionsOutput = z.looseObject({
+  decisions: z.array(
+    z.looseObject({
+      id: z.number(),
+      ts: z.string(),
+      eventType: z.string(),
+      repoFullName: z.string().nullable(),
+      actionClass: z.string(),
+      decision: z.string(),
+      reason: z.string(),
+    }),
+  ),
+});
+
+export const minerGovernorDecisionsTool = defineTool({
+  name: "loopover_miner_get_governor_decisions",
+  title: "Miner governor decisions",
+  description:
+    "Read-only governor decision log: every accept/deny decision the local governor recorded, with its reason -- an explicit named-column SELECT, never SELECT *. Optional repoFullName filter (the only filter the ledger's readGovernorDecisions accepts). Excludes the raw payload column by construction; adds no decision-making, override, or write capability.",
+  category: "agent",
+  auth: "public",
+  locality: "miner",
+  availability: "selfhost",
+  input: MinerGovernorDecisionsInput,
+  output: MinerGovernorDecisionsOutput,
+});
+
+// ── status + doctor ─────────────────────────────────────────────────────────────────────────────
+
+export const MinerStatusInput = z.object({});
+
+/** `{ status: MinerStatus, doctor: DoctorCheck[] }`. `MinerStatus`/`DoctorCheck`/`MinerDriverStatus`
+ *  are all in packages/loopover-miner/lib/status.ts. Deliberately names/booleans/paths only, never
+ *  an env-var VALUE, token, key, or credential -- `modelEnvVar` is the variable's NAME. */
+export const MinerStatusOutput = z.looseObject({
+  status: z.looseObject({
+    package: z.looseObject({ name: z.string(), version: z.string().nullable() }),
+    engine: z.looseObject({ name: z.string(), version: z.string().nullable() }),
+    node: z.string(),
+    stateDir: z.string(),
+    configFile: z.string().nullable(),
+    driver: z.looseObject({
+      provider: z.string().nullable(),
+      modelEnvVar: z.string().nullable(),
+      cliPresent: z.boolean().nullable(),
+    }),
+  }),
+  doctor: z.array(z.looseObject({ name: z.string(), ok: z.boolean(), detail: z.string() })),
+});
+
+export const minerStatusTool = defineTool({
+  name: "loopover_miner_status",
+  title: "Miner status and doctor",
+  description:
+    "Read-only miner status + doctor diagnostics. Returns { status, doctor }: status = package/engine versions (+ skew), node version, state-dir path, config-file path, and the resolved coding-agent driver (provider name, the model ENV-VAR NAME -- never its value -- and a CLI-present boolean); doctor = the same checks `loopover-miner doctor` runs (Docker/CLI presence, config validity, ...) as { name, ok, detail }. Reuses collectStatus/runDoctorChecks so it can never drift from the CLI. Only names / booleans / paths -- never any env-var value, token, key, or credential. Read-only; no writes or state changes.",
+  category: "utility",
+  auth: "public",
+  locality: "miner",
+  availability: "selfhost",
+  input: MinerStatusInput,
+  output: MinerStatusOutput,
+});
+
+// ── calibration report ──────────────────────────────────────────────────────────────────────────
+
+export const MinerCalibrationReportInput = z.object({});
+
+/** `CalibrationReport` (packages/loopover-miner/lib/calibration-types.ts). `hasSignal` is true once
+ *  at least one project has enough decided samples to read meaningfully; the two precision fields
+ *  are null until then, not zero. */
+export const MinerCalibrationReportOutput = z.looseObject({
+  rows: z.array(
+    z.looseObject({
+      project: z.string(),
+      wouldMerge: z.number(),
+      mergeConfirmed: z.number(),
+      mergeFalse: z.number(),
+      wouldClose: z.number(),
+      closeConfirmed: z.number(),
+      closeFalse: z.number(),
+      hold: z.number(),
+      decided: z.number(),
+      mergePrecision: z.number().nullable(),
+      closePrecision: z.number().nullable(),
+    }),
+  ),
+  hasSignal: z.boolean(),
+});
+
+export const minerCalibrationReportTool = defineTool({
+  name: "loopover_miner_get_calibration_report",
+  title: "Miner calibration report",
+  description:
+    "Read-only miner-local prediction-accuracy report: per-project merge/close precision, joining this miner's own recorded gate predictions (prediction ledger) with the realized PR outcomes it later observed (pr_outcome events). Wraps calibration-cli.js's existing toPredictionRecords/toOutcomeRecords mappers and calibration.js's buildCalibrationReport composer -- no new join/scoring logic, no mutation. Strictly local and offline; distinct from ORB's hosted, maintainer-authenticated loopover_get_outcome_calibration tool, which reads a different (D1) data source. Takes no arguments.",
+  category: "agent",
+  auth: "public",
+  locality: "miner",
+  availability: "selfhost",
+  input: MinerCalibrationReportInput,
+  output: MinerCalibrationReportOutput,
+});

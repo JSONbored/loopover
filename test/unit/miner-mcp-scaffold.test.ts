@@ -7,6 +7,7 @@ import {
   type MinerMcpServerOptions,
 } from "../../packages/loopover-miner/bin/loopover-miner-mcp";
 import { collectPortfolioDashboard } from "../../packages/loopover-miner/lib/portfolio-dashboard";
+import { listToolDefinitions } from "@loopover/contract/tools";
 
 // Tests for the loopover-miner MCP server: the #5153 ping scaffold and the #5155 read-only
 // portfolio-dashboard tool. Drives the real server over an in-memory transport (no child process); the
@@ -87,22 +88,17 @@ function fakeLedger(rows: Array<{ repoFullName: string; status: string }>): Fake
 }
 
 describe("loopover-miner MCP server (#5153 scaffold)", () => {
-  it("exposes the ping, portfolio-dashboard, and list-claims tools", async () => {
+  it("exposes exactly the miner-locality tools the contract registry declares (#9536)", async () => {
+    // Asserted against the registry rather than a hand-copied name list: a tool added to
+    // @loopover/contract/tools with locality "miner" is picked up here automatically, so adding one
+    // can no longer silently miss this test the way a hardcoded array would let it.
     const client = await connectedClient();
     const { tools } = await client.listTools();
-    expect(tools.map((tool) => tool.name).sort()).toEqual([
-      "loopover_miner_get_audit_feed",
-      "loopover_miner_get_calibration_report",
-      "loopover_miner_get_governor_decisions",
-      "loopover_miner_get_manage_status",
-      "loopover_miner_get_plan",
-      "loopover_miner_get_portfolio_dashboard",
-      "loopover_miner_get_run_state",
-      "loopover_miner_list_claims",
-      "loopover_miner_list_plans",
-      "loopover_miner_ping",
-      "loopover_miner_status",
-    ]);
+    const expectedNames = listToolDefinitions({ locality: ["miner"] })
+      .map((tool) => tool.name)
+      .sort();
+    expect(expectedNames.length).toBeGreaterThan(0);
+    expect(tools.map((tool) => tool.name).sort()).toEqual(expectedNames);
   });
 
   it("loopover_miner_ping returns the static, non-secret status object", async () => {

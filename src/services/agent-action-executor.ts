@@ -178,13 +178,24 @@ export type AgentActionExecutionContext = {
   // the HEAD unchanged — the freshness check that already gates every merge/approve mutation sees nothing wrong
   // in that case, since it only compares head SHAs. Threaded through so the SAME live fetch that proves the
   // head also proves the base, denying a merge into an abandoned base rather than silently completing it.
-  expectedBaseRef?: string | null | undefined;
+  //
+  // #9541 (deliverable 3): REQUIRED, not optional. `null` remains a valid value meaning "no base to check";
+  // what is no longer expressible is OMITTING it. #9482 found this silently absent on the approval-accept
+  // path, which made #9055's base-retarget guard inert there -- a wrong-merge class -- purely because the
+  // type allowed the omission. Follows #9539's required `decisionNowMs` precedent: a protection whose
+  // ABSENCE disables it rather than degrading it must be a type error to leave out.
+  expectedBaseRef: string | null;
   autonomy: AutonomyPolicy | null | undefined;
   agentPaused?: boolean | undefined;
   agentDryRun?: boolean | undefined;
   installationPermissions: Record<string, string> | null | undefined;
   // PR author login — surfaced as the "Submitter" in the per-repo Discord action notification.
-  authorLogin?: string | null | undefined;
+  //
+  // #9541: REQUIRED for the same reason, and this one had TWO silent failures when omitted (#9482). Step 8c's
+  // cap-lock key degrades to `contributor-cap-lock:<repo>:` with an empty author -- zero exclusion, and every
+  // accept-path merge in the repo contending on one shared key. And maybeEscalateModeration early-returns on
+  // a falsy author, so enforcement closes recorded no violation and never counted toward the ban threshold.
+  authorLogin: string | null;
   // CI-run cancellation on a contributor_cap close (#2462, anti-abuse): the CALLER resolves this (repo setting
   // ?? the CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT env var) before building the context — the executor itself has no
   // settings access, only whatever ctx carries, mirroring how agentPaused/agentDryRun are already threaded in.
@@ -206,7 +217,11 @@ export type AgentActionExecutionContext = {
   // GLOBAL config itself (whole-layer enabled, threshold, decay, auto-blacklist) is read directly by the
   // executor via getGlobalModerationConfig -- a single extra DB read only on the rare path where a
   // moderation-tracked close actually completed, not threaded through every caller.
-  moderationSettings?: ModerationContextSettings | undefined;
+  //
+  // #9541: REQUIRED. `null` means "inherit the global config's defaults" -- exactly what an absent value used
+  // to mean. The difference is that choosing it is now visible at the call site rather than being the
+  // accidental result of forgetting the field.
+  moderationSettings: ModerationContextSettings | null;
   // Effective required CI contexts (#selfhost-ci-verification), resolved by the CALLER (same "the executor has
   // no settings access" shape as the fields above): the final pre-mutation live-CI re-verification (step 8 below)
   // must honor the SAME branch-protection-plus-expected required-contexts view the planning pass already
@@ -911,7 +926,7 @@ export function buildModerationEscalationComment(args: {
  */
 export async function applyModerationEscalationForRule(
   env: Env,
-  args: { installationId: number; repoFullName: string; number: number; authorLogin: string; rule: ModerationRuleType; moderationSettings: ModerationContextSettings | undefined },
+  args: { installationId: number; repoFullName: string; number: number; authorLogin: string; rule: ModerationRuleType; moderationSettings: ModerationContextSettings | null | undefined },
 ): Promise<void> {
   const globalConfig = await getGlobalModerationConfig(env);
   if (!resolveModerationGateEnabled(globalConfig.enabled, args.moderationSettings?.moderationGateMode ?? "inherit")) return;
@@ -989,7 +1004,7 @@ export async function applyModerationEscalationForRule(
  */
 async function maybeEscalateModeration(
   env: Env,
-  args: { installationId: number; repoFullName: string; number: number; authorLogin?: string | null | undefined; mode: AgentActionMode; moderationSettings: ModerationContextSettings | undefined },
+  args: { installationId: number; repoFullName: string; number: number; authorLogin?: string | null | undefined; mode: AgentActionMode; moderationSettings: ModerationContextSettings | null | undefined },
   planned: PlannedAgentAction[],
   outcomes: AgentActionOutcome[],
 ): Promise<void> {
@@ -1079,8 +1094,11 @@ export type IssueActionExecutionContext = {
   agentPaused?: boolean | undefined;
   agentDryRun?: boolean | undefined;
   // Issue author login -- needed for the moderation-rules engine's violation ledger (#selfhost-mod-engine).
-  authorLogin?: string | null | undefined;
-  moderationSettings?: ModerationContextSettings | undefined;
+  // #9541: REQUIRED on the ISSUE path too. #9482 only audited the PR context, but this one carries the same
+  // two fields with the same silent-omission hazard -- fixing one type and not its twin is exactly the drift
+  // this deliverable exists to end.
+  authorLogin: string | null;
+  moderationSettings: ModerationContextSettings | null;
 };
 
 /**

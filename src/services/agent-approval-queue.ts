@@ -511,7 +511,7 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
       // blacklist / contributor-cap / review-nag close recorded NO moderation violation at all -- a
       // contributor whose enforcement closes always route through approval accumulated zero standing
       // violations toward the warning/ban ladder.
-      authorLogin: pr?.authorLogin,
+      authorLogin: pr?.authorLogin ?? null,
       moderationSettings: {
         moderationGateMode: settings.moderationGateMode,
         moderationRules: settings.moderationRules,
@@ -523,7 +523,7 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
       // closes the common case (a retarget between staging and accept is visible here) but not the full one:
       // catching a retarget that the webhook already wrote back requires the STAGING-TIME base persisted into
       // AgentPendingActionParams, which has no field for it. Tracked as the remaining half of #9482.
-      expectedBaseRef: pr?.baseRef,
+      expectedBaseRef: pr?.baseRef ?? null,
       pullRequestCreatedAt: pr?.createdAt,
       pullRequestLinkedIssues: pr?.linkedIssues,
       pullRequestChangedFiles: pr?.changedFiles,

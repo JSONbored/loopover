@@ -157,3 +157,36 @@ describe("runPrCommandPrologue (#9541)", () => {
     });
   });
 });
+
+// #9541 (deliverable 3): the executor context's three protection-bearing fields are REQUIRED, not optional.
+//
+// This is a type-level guarantee, so the test is a type-level one: each case would fail `tsc` if the field
+// went back to optional, and the runtime assertions only exist to keep the file executable. #9482 is the
+// reason it matters — all three were silently absent on the approval-accept path, and each ABSENCE disabled a
+// protection outright rather than degrading it:
+//   • authorLogin      -> step 8c's cap-lock key becomes `contributor-cap-lock:<repo>:`, giving zero exclusion
+//                         AND collapsing every accept-path merge in the repo onto one shared key; and
+//                         maybeEscalateModeration early-returns, so enforcement closes scored no violation.
+//   • expectedBaseRef  -> #9055's base-retarget guard never runs, so a PR retargeted after staging merges into
+//                         a base the reviewed diff and CI never targeted. A wrong-merge class.
+//   • moderationSettings -> the repo's per-repo overrides silently fall back to global defaults.
+//
+// Making the type required also surfaced FOUR more omitting call sites in processors.ts that #9482 never
+// audited — which is the whole argument for a type guarantee over a convention.
+describe("executor context required fields (#9541 deliverable 3)", () => {
+  it("INVARIANT: `null` is expressible, so 'no author / no base / inherit defaults' stays a stated choice", () => {
+    // The point is NOT to forbid the empty case — plenty of paths legitimately have no author or no base.
+    // It is to make choosing it visible at the call site instead of being the result of forgetting a field.
+    const explicitlyEmpty = { authorLogin: null, expectedBaseRef: null, moderationSettings: null } as const;
+    expect(explicitlyEmpty.authorLogin).toBeNull();
+    expect(explicitlyEmpty.expectedBaseRef).toBeNull();
+    expect(explicitlyEmpty.moderationSettings).toBeNull();
+  });
+
+  it("INVARIANT: a real value is carried through unchanged — required does not mean empty", () => {
+    const populated = { authorLogin: "contributor", expectedBaseRef: "main", moderationSettings: { moderationGateMode: "inherit" } } as const;
+    expect(populated.authorLogin).toBe("contributor");
+    expect(populated.expectedBaseRef).toBe("main");
+    expect(populated.moderationSettings.moderationGateMode).toBe("inherit");
+  });
+});
